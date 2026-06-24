@@ -130,6 +130,7 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 Security note:
 - Linux relay verifies actor-proof signatures when `liboqs` is available at runtime (included in the Docker image).
 - If `liboqs` is not available, actor-proof mutations are fail-closed.
+- See `PICCP Documentation/relay_ops_hardening_guide.md` for TLS proxying, firewall, secrets, storage, federation, DHT, and log hygiene guidance.
 
 ### Curated strict policy
 

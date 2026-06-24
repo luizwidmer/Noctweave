@@ -145,6 +145,9 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
   - `PICCPCoreTests` coordinator directory snapshot verification paths now exercise ML-DSA-65 signatures.
   - `RelayStoreParityTests.testFederationDirectorySignatureUsesMLDSAAndRejectsTampering` verifies Linux relay signing and tamper rejection when runtime `liboqs` is available, and skips explicitly when the local dynamic runtime is absent.
 
+- `PICCP Documentation/relay_ops_hardening_guide.md`
+  - Adds operator guidance for TLS reverse proxying, firewall exposure, secret handling, storage persistence, federation mode selection, DHT/open-overlay constraints, log hygiene, upgrade checks, and incident response.
+
 ## Remaining Findings
 
 ### High

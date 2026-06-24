@@ -39,7 +39,7 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 ## Documentation updates
 - [x] Relay docs updated for forwarding timeout and transport flags
 - [x] Whitepaper alignment notes refreshed
-- [ ] Publish a concise “ops hardening guide” for relay operators (TLS/reverse proxy/firewall/log hygiene)
+- [x] Publish a concise ops hardening guide for relay operators (TLS/reverse proxy/firewall/log hygiene)
 
 ## Deferred / open decisions
 - [x] Revisit open federation mode design and re-enable open-federation UX paths with coordinator throttles + reachability checks
