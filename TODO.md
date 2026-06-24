@@ -2,6 +2,18 @@
 
 This checklist tracks current implementation status (not the legacy roadmap draft).
 
+## Active Goal Completion Gate
+The current security/DHT goal is complete when all of the following are true:
+
+- [ ] Security audit is current, with threat scenarios documented for client, relay, federation, DHT discovery, storage, and transport.
+- [ ] All high- and medium-severity audit findings discovered in this cycle are patched, covered by tests, or explicitly deferred with a rationale and release blocker status.
+- [ ] Open-federation relay discovery has a documented final stance: coordinator-only, HTTP sidecar gateway, custom overlay, BEP5, libp2p, or a deliberate combination.
+- [ ] If autonomous public-DHT bootstrap remains in scope, the BEP5/libp2p adapter is feature-gated, bounded, tested against poisoning/churn/flood cases, and disabled by default in release builds.
+- [ ] If autonomous public-DHT bootstrap is rejected or deferred, that decision is documented with threat, operations, and maintenance rationale.
+- [ ] Linux relay and mac relay feature parity is verified for the selected federation/discovery mode.
+- [ ] Release verification covers relay tests, SBOM checks, package pin checks, and optional container scanning hooks.
+- [ ] The final TODO and audit documents identify no open security/DHT items except external validation work that requires third parties or CI infrastructure.
+
 ## Core protocol + client
 - [x] PQ identity + continuity model (ML-DSA identity assertions, continuity events)
 - [x] Session establishment with prekey bundle flow (PQ-X3DH-style)
