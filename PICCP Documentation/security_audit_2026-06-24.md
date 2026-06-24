@@ -180,8 +180,9 @@ No high-severity implementation findings remain from this pass. This does not re
    - Current: dependency SBOM and release signing policy are documented, with a deterministic machine-readable SBOM snapshot and local release verification script.
    - Required: CI enforcement, required container vulnerability scanning, signed provenance attestations, and external audit.
 
-2. **Swift 6 readiness warnings remain tracked**
-   - Required before Swift 6 migration: NIO/sendability cleanup.
+2. **Swift 6 package mode remains pending**
+   - Current: NIO sendability compatibility warnings are suppressed at the Swift 5 compatibility boundary with `@preconcurrency import NIOCore`; `swift test` passes.
+   - Required before Swift 6 migration: migrate the Linux package after upstream NIO concurrency annotations and local strict-concurrency settings are verified together.
 
 ## Verification Plan
 

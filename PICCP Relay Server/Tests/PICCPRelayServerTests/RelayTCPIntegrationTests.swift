@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 import Crypto
-import NIOCore
+@preconcurrency import NIOCore
 import NIOPosix
 import NIOFoundationCompat
 @testable import PICCPRelayServer

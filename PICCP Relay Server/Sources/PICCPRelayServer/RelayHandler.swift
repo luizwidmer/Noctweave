@@ -1,6 +1,6 @@
 import Foundation
 import Crypto
-import NIOCore
+@preconcurrency import NIOCore
 import NIOFoundationCompat
 import NIOPosix
 import NIOConcurrencyHelpers

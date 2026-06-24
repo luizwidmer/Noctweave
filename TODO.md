@@ -60,4 +60,4 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 - [ ] Independent external security audit (firm-selected report)
 - [ ] Enforce release verification, container scanning, and signed provenance in CI
 - [ ] Replace snapshot-in-SQLite persistence with normalized transactional tables
-- [ ] Resolve Swift 6/NIO sendability warnings before moving the Linux package to Swift 6 mode
+- [x] Resolve Swift 6/NIO sendability warnings before moving the Linux package to Swift 6 mode

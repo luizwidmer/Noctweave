@@ -1,5 +1,5 @@
 import Foundation
-import NIOCore
+@preconcurrency import NIOCore
 import NIOPosix
 import NIOHTTP1
 import NIOWebSocket
