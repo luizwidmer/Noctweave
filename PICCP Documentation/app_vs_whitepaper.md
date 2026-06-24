@@ -59,4 +59,4 @@ Last reviewed: June 20, 2026.
 - Design and prototype PIR/mixnet transport upgrade path.
 - Specify whether to keep relay-backed groups or migrate to an MLS-based group cryptographic model.
 - Prepare external security audit package and publish implementation threat-model delta.
-- Move coordinator directory signatures from Ed25519 to ML-DSA and normalize relay SQLite storage.
+- Normalize relay SQLite storage into transactional tables with migration and corruption-recovery tests.

@@ -417,22 +417,29 @@ if relayConfiguration.kind == .coordinator {
     if relayConfiguration.coordinatorDirectorySigningPrivateKey == nil,
        let dataDir = config.dataDir {
         let keyURL = dataDir.appendingPathComponent("coordinator_directory_signing_key")
-        if let existing = try? Data(contentsOf: keyURL),
-           existing.count == 32 {
-            relayConfiguration.coordinatorDirectorySigningPrivateKey = existing
-        } else {
-            let generated = FederationDirectorySignature.privateKeyData(from: nil)
-            try generated.write(to: keyURL, options: [.atomic])
+        let existing = try? Data(contentsOf: keyURL)
+        let normalized = FederationDirectorySignature.privateKeyData(from: existing)
+        guard !normalized.isEmpty else {
+            print("[relay] Coordinator mode requires runtime liboqs support for ML-DSA-65 directory signing.")
+            exit(2)
+        }
+        if existing != normalized {
+            try normalized.write(to: keyURL, options: [.atomic])
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o600],
                 ofItemAtPath: keyURL.path
             )
-            relayConfiguration.coordinatorDirectorySigningPrivateKey = generated
         }
+        relayConfiguration.coordinatorDirectorySigningPrivateKey = normalized
     }
-    relayConfiguration.coordinatorDirectorySigningPrivateKey = FederationDirectorySignature.privateKeyData(
+    let normalizedSigningKey = FederationDirectorySignature.privateKeyData(
         from: relayConfiguration.coordinatorDirectorySigningPrivateKey
     )
+    guard !normalizedSigningKey.isEmpty else {
+        print("[relay] Coordinator mode requires runtime liboqs support for ML-DSA-65 directory signing.")
+        exit(2)
+    }
+    relayConfiguration.coordinatorDirectorySigningPrivateKey = normalizedSigningKey
     if config.dataDir == nil, config.coordinatorDirectorySigningPrivateKey == nil {
         print("[relay] Warning: coordinator signing key is ephemeral in memory-only mode; provide --coordinator-directory-signing-key for stable trust.")
     }

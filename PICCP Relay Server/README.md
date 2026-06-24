@@ -241,7 +241,7 @@ Inbound client `authToken` is not forwarded; configure `--federation-forwarding-
     "curatedStrictPolicyEnabled": true,
     "curatedCoordinatorQuorum": 1,
     "curatedRequireSignedDirectory": true,
-    "federationDirectoryPublicKey": "base64-optional",
+    "federationDirectoryPublicKey": "base64-ml-dsa-65-public-key",
     "knownOpenPeers": [{ "host": "relay-open.example.org", "port": 9443, "useTLS": true }],
     "temporalBucketSeconds": 300,
     "temporalBucketScheduleSeconds": [60, 120, 300],
@@ -253,6 +253,8 @@ Inbound client `authToken` is not forwarded; configure `--federation-forwarding-
   }
 }
 ```
+
+`federationDirectoryPublicKey` is the coordinator's ML-DSA-65 public key for signed federation directory snapshots. Linux relay signing and verification use runtime `liboqs`; coordinator mode fails closed for signed snapshot generation if the runtime signer is unavailable.
 
 ### Federation Coordinator APIs
 

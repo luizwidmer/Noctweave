@@ -112,6 +112,67 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(store.coordinatorDirectoryCacheSnapshot(), [node])
     }
 
+    func testFederationDirectorySignatureUsesMLDSAAndRejectsTampering() throws {
+        guard OQSSignatureVerifier.shared.isAvailable else {
+            throw XCTSkip("liboqs runtime is unavailable")
+        }
+
+        let privateKey = FederationDirectorySignature.privateKeyData(from: nil)
+        let publicKey = try XCTUnwrap(FederationDirectorySignature.publicKeyData(from: privateKey))
+        let node = FederationNodeRecord(
+            endpoint: RelayEndpoint(host: "relay.example.org", port: 9339, useTLS: true, transport: .websocket),
+            relayInfo: RelayInfo(
+                kind: .standard,
+                federation: FederationDescriptor(mode: .open, name: "open-mesh", description: nil),
+                tlsEnabled: true,
+                temporalBucketSeconds: 60,
+                relayName: "Edge 1",
+                operatorNote: nil,
+                softwareVersion: "test",
+                groupCreationMode: .allowed,
+                requiresPassword: false,
+                federationCoordinatorEndpoints: nil,
+                coordinatorReportedRelayCount: nil,
+                curatedStrictPolicyEnabled: nil,
+                curatedCoordinatorQuorum: nil,
+                curatedRequireSignedDirectory: nil,
+                federationDirectoryPublicKey: nil,
+                knownOpenPeers: nil,
+                advertisedAt: Date()
+            ),
+            lastHeartbeatAt: Date(),
+            expiresAt: Date().addingTimeInterval(120)
+        )
+        let unsigned = FederationDirectorySnapshot(
+            version: 1,
+            mode: .open,
+            federationName: "open-mesh",
+            issuedAt: Date(),
+            validUntil: Date().addingTimeInterval(120),
+            maxStalenessSeconds: 60,
+            nodes: [node],
+            signatureAlgorithm: nil,
+            signature: nil
+        )
+
+        let signed = try FederationDirectorySignature.signedSnapshot(from: unsigned, privateKeyData: privateKey)
+        XCTAssertEqual(signed.signatureAlgorithm, FederationDirectorySignature.algorithm)
+        XCTAssertTrue(FederationDirectorySignature.verify(snapshot: signed, trustedPublicKey: publicKey))
+
+        let tampered = FederationDirectorySnapshot(
+            version: signed.version,
+            mode: signed.mode,
+            federationName: "different-mesh",
+            issuedAt: signed.issuedAt,
+            validUntil: signed.validUntil,
+            maxStalenessSeconds: signed.maxStalenessSeconds,
+            nodes: signed.nodes,
+            signatureAlgorithm: signed.signatureAlgorithm,
+            signature: signed.signature
+        )
+        XCTAssertFalse(FederationDirectorySignature.verify(snapshot: tampered, trustedPublicKey: publicKey))
+    }
+
     func testRelayInfoCarriesTemporalBucketSchedule() {
         let configuration = RelayConfiguration(
             temporalBucketSeconds: 300,

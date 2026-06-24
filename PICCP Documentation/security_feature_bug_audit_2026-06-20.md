@@ -141,12 +141,12 @@ independent third-party audit.
 
 ## Remaining Risks and Recommended Work
 
-1. **Coordinator signatures are Ed25519.** Curated directory metadata is not
-   post-quantum. Migrate this profile to ML-DSA with an explicit versioned
-   transition.
-2. **Relay persistence uses SQLite as a snapshot blob.** It is bounded and
+1. **Relay persistence uses SQLite as a snapshot blob.** It is bounded and
    durable, but normalized tables and transactions would improve concurrency,
    partial updates, corruption recovery, and operational inspection.
+2. **Coordinator completeness is a trust assumption.** ML-DSA directory
+   signatures prove authorship and freshness, but a malicious or colluding
+   coordinator quorum can still omit healthy relays or bias topology.
 3. **Swift memory erasure is best effort.** Copy-on-write, compiler behavior,
    and framework internals prevent a strong guarantee that all plaintext RAM
    copies are overwritten.

@@ -19,16 +19,18 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 - [x] Forwarded auth-token isolation (client token never reused for relay-to-relay)
 - [x] Actor-proof nonce replay cache and replay rejection
 - [x] Forwarding timeout controls to prevent stalled peer exhaustion
-- [x] Coordinator heartbeat + freshness filtering + signed snapshot validation
+- [x] Coordinator heartbeat + freshness filtering + ML-DSA signed snapshot validation
 - [x] Bounded relay mailboxes, groups, prekeys, attachments, announcements, and replay caches
 - [x] Open-federation SSRF controls with public routing and TLS requirements
 - [x] Stable coordinator directory-signing keys across relay restarts
+- [x] Migrated coordinator directory signatures from Ed25519 to ML-DSA-65
 - [x] Operator-selectable text-only mode and optional temporal-bucketing disablement
 
 ## Linux relay parity with mac relay
 - [x] HTTP/WebSocket bridge support with same request/response schema
 - [x] Relay metadata parity fields (including advertised transport)
 - [x] Actor-proof verification parity path via runtime `liboqs` verifier
+- [x] Coordinator directory signing parity path via runtime `liboqs` signer/verifier
 - [x] Docker image updated to include `liboqs` runtime for verified actor proofs
 - [x] Docker image pins liboqs/dependencies and runs as a non-root user
 - [x] Integration tests for auth isolation, replay rejection, and forwarding timeout behavior
@@ -50,6 +52,5 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 ## External validation
 - [ ] Independent external security audit (firm-selected report)
 - [ ] Dependency audit + SBOM + release signing policy
-- [ ] Migrate coordinator directory signatures from Ed25519 to a PQ signature profile
 - [ ] Replace snapshot-in-SQLite persistence with normalized transactional tables
 - [ ] Resolve Swift 6/NIO sendability warnings before moving the Linux package to Swift 6 mode

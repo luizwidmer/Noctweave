@@ -1,30 +1,48 @@
-import CryptoKit
 import Foundation
 
 public enum FederationDirectorySignature {
-    public static let algorithm = "ed25519"
+    public static let algorithm = "ML-DSA-65"
 
     public static func privateKeyData(from raw: Data?) -> Data {
-        if let raw, let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw) {
-            return key.rawRepresentation
+        if let raw,
+           let bundle = try? PICCPCoder.decode(DirectorySigningKeyBundle.self, from: raw),
+           bundle.algorithm == algorithm,
+           SigningKeyPair.isValidPublicKey(bundle.publicKeyData),
+           (try? SigningKeyPair(privateKeyData: bundle.privateKeyData, publicKeyData: bundle.publicKeyData)) != nil {
+            return raw
         }
-        return Curve25519.Signing.PrivateKey().rawRepresentation
+        let keyPair = SigningKeyPair()
+        let bundle = DirectorySigningKeyBundle(
+            algorithm: algorithm,
+            privateKeyData: keyPair.privateKeyData,
+            publicKeyData: keyPair.publicKeyData
+        )
+        return (try? PICCPCoder.encode(bundle, sortedKeys: true)) ?? Data()
     }
 
     public static func publicKeyData(from privateKeyData: Data) -> Data? {
-        guard let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData) else {
+        guard let bundle = try? PICCPCoder.decode(DirectorySigningKeyBundle.self, from: privateKeyData),
+              bundle.algorithm == algorithm,
+              SigningKeyPair.isValidPublicKey(bundle.publicKeyData) else {
             return nil
         }
-        return key.publicKey.rawRepresentation
+        return bundle.publicKeyData
     }
 
     public static func signedSnapshot(
         from unsigned: FederationDirectorySnapshot,
         privateKeyData: Data
     ) throws -> FederationDirectorySnapshot {
-        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData)
+        let bundle = try PICCPCoder.decode(DirectorySigningKeyBundle.self, from: privateKeyData)
+        guard bundle.algorithm == algorithm else {
+            throw CryptoError.invalidPrivateKey
+        }
+        let key = try SigningKeyPair(
+            privateKeyData: bundle.privateKeyData,
+            publicKeyData: bundle.publicKeyData
+        )
         let payload = try signingPayloadData(from: unsigned)
-        let signature = try key.signature(for: payload)
+        let signature = try key.sign(payload)
         return FederationDirectorySnapshot(
             version: unsigned.version,
             mode: unsigned.mode,
@@ -42,13 +60,18 @@ public enum FederationDirectorySignature {
         snapshot: FederationDirectorySnapshot,
         trustedPublicKey: Data
     ) -> Bool {
-        guard snapshot.signatureAlgorithm?.lowercased() == algorithm,
+        guard snapshot.signatureAlgorithm == algorithm,
               let signature = snapshot.signature,
-              let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: trustedPublicKey),
               let payload = try? signingPayloadData(from: snapshot) else {
             return false
         }
-        return publicKey.isValidSignature(signature, for: payload)
+        return SigningKeyPair.verify(signature: signature, data: payload, publicKeyData: trustedPublicKey)
+    }
+
+    private struct DirectorySigningKeyBundle: Codable {
+        let algorithm: String
+        let privateKeyData: Data
+        let publicKeyData: Data
     }
 
     private struct SnapshotSigningPayload: Codable {

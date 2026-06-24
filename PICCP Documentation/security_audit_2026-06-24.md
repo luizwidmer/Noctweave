@@ -7,7 +7,7 @@
 
 The current implementation has materially strong application-layer controls for message confidentiality, authenticated inbox access, relay forwarding gates, signed group operations, bounded storage, and relay password isolation. The highest-value remaining risk area is not message encryption; it is network metadata, relay discovery trust, and coordinator/DHT poisoning.
 
-This pass found one concrete SSRF-style hardening gap in public open-federation endpoint validation. The relay rejected private IPv4, loopback, link-local, and IPv4-mapped IPv6 addresses, but did not explicitly handle IPv6 transition addresses that can encode private IPv4 destinations. This has been patched in both `PICCPCore` and the Linux relay package.
+This pass found one concrete SSRF-style hardening gap in public open-federation endpoint validation. The relay rejected private IPv4, loopback, link-local, and IPv4-mapped IPv6 addresses, but did not explicitly handle IPv6 transition addresses that can encode private IPv4 destinations. This has been patched in both `PICCPCore` and the Linux relay package. Coordinator directory signatures were also migrated from Ed25519 to ML-DSA-65 so federation directory authenticity uses the same post-quantum signature family as identity continuity.
 
 The DHT/torrent research supports a cautious path: use DHT-style discovery only for open-federation relay bootstrap hints, never as authority. Public torrent infrastructure can help find candidate relays, but every result must be signed, short-lived, TLS-reachable, bounded, and independently probed before it enters a routing set. The signed-record primitive for this path now exists in core as `OpenFederationDHTRecord`, the feature-gated candidate acceptance layer exists as `OpenFederationDHTCandidateCache`, and `OpenFederationDHTTransport`/`OpenFederationDHTDiscoveryEngine` define the publish/query boundary. A real BEP5/libp2p/custom DHT adapter remains deliberately unimplemented.
 
@@ -22,7 +22,7 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 ### Malicious coordinator
 - Can bias directory membership, omit relays, or advertise stale topology.
 - Mitigations present: signed freshness-limited directory snapshots, pinned coordinator signing keys, quorum support for curated mode, freshness filtering.
-- Residual risk: coordinator directory signatures are still Ed25519 rather than ML-DSA. This is the main post-quantum gap in federation metadata.
+- Residual risk: a compromised or colluding coordinator quorum can still omit healthy relays or bias topology. Signatures prove directory authorship and freshness, not fairness or completeness.
 
 ### Open-federation poisoning
 - Attacker floods a coordinator or DHT namespace with bogus relays.
@@ -110,13 +110,24 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
   - `PICCPCoreTests.testOpenFederationDHTDiscoveryEngineRejectsInvalidLocalAdvertisementBeforePublish`
   - `PICCPCoreTests.testOpenFederationDHTDiscoveryEngineHonorsTransportQueryLimit`
 
+- `PICCPCore/Sources/PICCPCore/FederationDirectorySignature.swift`
+  - Replaces coordinator directory Ed25519 signing with an ML-DSA-65 signing key bundle.
+  - Stores the coordinator private and public key together so directory public keys can be advertised consistently.
+  - Rejects snapshots unless the advertised signature algorithm is `ML-DSA-65`.
+
+- `PICCP Relay Server/Sources/PICCPRelayServer/FederationDirectorySignature.swift`
+  - Adds Linux relay parity for ML-DSA-65 coordinator directory signing.
+  - Uses the runtime `liboqs` signer/verifier and fails closed if the runtime signer is unavailable.
+  - Normalizes persisted coordinator signing keys at startup.
+
+- Regression tests:
+  - `PICCPCoreTests` coordinator directory snapshot verification paths now exercise ML-DSA-65 signatures.
+  - `RelayStoreParityTests.testFederationDirectorySignatureUsesMLDSAAndRejectsTampering` verifies Linux relay signing and tamper rejection when runtime `liboqs` is available, and skips explicitly when the local dynamic runtime is absent.
+
 ## Remaining Findings
 
 ### High
-1. **Coordinator directory signatures are not post-quantum**
-   - Current: Ed25519.
-   - Required: versioned ML-DSA directory signature profile.
-   - Risk: long-lived federation directory authenticity is not PQ.
+No high-severity implementation findings remain from this pass. This does not replace an independent external audit.
 
 ### Medium
 1. **No real public-DHT adapter exists**

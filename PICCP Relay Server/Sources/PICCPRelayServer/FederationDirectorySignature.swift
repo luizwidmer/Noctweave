@@ -1,30 +1,57 @@
-import Crypto
 import Foundation
 
 enum FederationDirectorySignature {
-    static let algorithm = "ed25519"
+    static let algorithm = "ML-DSA-65"
 
     static func privateKeyData(from raw: Data?) -> Data {
-        if let raw, let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: raw) {
-            return key.rawRepresentation
+        if let raw,
+           let bundle = try? RelayCodec.decoder().decode(DirectorySigningKeyBundle.self, from: raw),
+           bundle.algorithm == algorithm,
+           let probeSignature = OQSSignatureVerifier.shared.sign(
+                data: Self.probePayload,
+                privateKey: bundle.privateKeyData,
+                publicKey: bundle.publicKeyData
+           ),
+           OQSSignatureVerifier.shared.verify(
+                signature: probeSignature,
+                data: Self.probePayload,
+                publicKey: bundle.publicKeyData
+           ) {
+            return raw
         }
-        return Curve25519.Signing.PrivateKey().rawRepresentation
+        guard let keyPair = OQSSignatureVerifier.shared.generateKeyPair() else {
+            return Data()
+        }
+        let bundle = DirectorySigningKeyBundle(
+            algorithm: algorithm,
+            privateKeyData: keyPair.privateKey,
+            publicKeyData: keyPair.publicKey
+        )
+        return (try? RelayCodec.encoder(sortedKeys: true).encode(bundle)) ?? Data()
     }
 
     static func publicKeyData(from privateKeyData: Data) -> Data? {
-        guard let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData) else {
+        guard let bundle = try? RelayCodec.decoder().decode(DirectorySigningKeyBundle.self, from: privateKeyData),
+              bundle.algorithm == algorithm else {
             return nil
         }
-        return key.publicKey.rawRepresentation
+        return bundle.publicKeyData
     }
 
     static func signedSnapshot(
         from unsigned: FederationDirectorySnapshot,
         privateKeyData: Data
     ) throws -> FederationDirectorySnapshot {
-        let key = try Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData)
+        let bundle = try RelayCodec.decoder().decode(DirectorySigningKeyBundle.self, from: privateKeyData)
         let payload = try signingPayloadData(from: unsigned)
-        let signature = try key.signature(for: payload)
+        guard bundle.algorithm == algorithm,
+              let signature = OQSSignatureVerifier.shared.sign(
+                data: payload,
+                privateKey: bundle.privateKeyData,
+                publicKey: bundle.publicKeyData
+              ) else {
+            throw DirectorySigningError.signingUnavailable
+        }
         return FederationDirectorySnapshot(
             version: unsigned.version,
             mode: unsigned.mode,
@@ -39,13 +66,28 @@ enum FederationDirectorySignature {
     }
 
     static func verify(snapshot: FederationDirectorySnapshot, trustedPublicKey: Data) -> Bool {
-        guard snapshot.signatureAlgorithm?.lowercased() == algorithm,
+        guard snapshot.signatureAlgorithm == algorithm,
               let signature = snapshot.signature,
-              let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: trustedPublicKey),
               let payload = try? signingPayloadData(from: snapshot) else {
             return false
         }
-        return publicKey.isValidSignature(signature, for: payload)
+        return OQSSignatureVerifier.shared.verify(
+            signature: signature,
+            data: payload,
+            publicKey: trustedPublicKey
+        )
+    }
+
+    private static let probePayload = Data("noctyra-directory-key-probe-v1".utf8)
+
+    private enum DirectorySigningError: Error {
+        case signingUnavailable
+    }
+
+    private struct DirectorySigningKeyBundle: Codable {
+        let algorithm: String
+        let privateKeyData: Data
+        let publicKeyData: Data
     }
 
     private struct SnapshotSigningPayload: Codable {
