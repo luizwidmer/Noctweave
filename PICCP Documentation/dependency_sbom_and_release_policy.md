@@ -1,0 +1,126 @@
+# Noctyra Dependency SBOM And Release Policy
+
+Last updated: June 24, 2026
+
+This document records the current software bill of materials and the minimum release checks for Noctyra client, core, and relay builds. It is a project-maintained SBOM, not an independent vulnerability assessment.
+
+## Scope
+
+- `PICCPCore`
+- `PICCP Relay Server`
+- `PICCP Messaging Client`
+- `PICCP Server`
+- Docker relay image
+
+## Cryptographic Dependencies
+
+| Component | Source | Version / pin | Notes |
+| --- | --- | --- | --- |
+| `liboqs.xcframework` | `PICCPCore/Vendor/liboqs.xcframework` | vendored binary | Used by Apple-platform core/client/server builds for ML-KEM/ML-DSA operations. Treat replacement as a cryptographic supply-chain event. |
+| `liboqs` | Docker build from `open-quantum-safe/liboqs` | `0.15.0` default build arg | Built in the Linux relay Docker image and copied into the runtime layer. Required for Linux actor-proof and coordinator-signature verification. |
+| Apple CryptoKit | platform SDK | OS supplied | Used for symmetric crypto and local cryptographic helpers in Apple builds. |
+| Swift Crypto | SwiftPM | `3.15.1`, revision `95ba0316a9b733e92bb6b071255ff46263bbe7dc` | Used by Linux relay for hashing and crypto primitives available through Swift Crypto. |
+
+## Swift Package Dependencies
+
+`PICCPCore` has no remote SwiftPM dependency besides its local `liboqs` binary target.
+
+`PICCP Relay Server` pins these packages in `Package.resolved`:
+
+| Package | Version | Revision | Purpose |
+| --- | --- | --- | --- |
+| `swift-nio` | `2.92.0` | `a1605a3303a28e14d822dec8aaa53da8a9490461` | TCP, HTTP, WebSocket relay networking. |
+| `swift-crypto` | `3.15.1` | `95ba0316a9b733e92bb6b071255ff46263bbe7dc` | Hashing and crypto support in Linux relay. |
+| `swift-asn1` | `1.5.1` | `810496cf121e525d660cd0ea89a758740476b85f` | Transitive dependency. |
+| `swift-atomics` | `1.3.0` | `b601256eab081c0f92f059e12818ac1d4f178ff7` | Transitive dependency. |
+| `swift-collections` | `1.3.0` | `7b847a3b7008b2dc2f47ca3110d8c782fb2e5c7e` | Transitive dependency. |
+| `swift-system` | `1.6.3` | `395a77f0aa927f0ff73941d7ac35f2b46d47c9db` | Transitive dependency. |
+
+## Docker Base And Build Inputs
+
+| Item | Current value | Notes |
+| --- | --- | --- |
+| Build image | `swift:5.9-jammy` | Builder stage. |
+| Runtime image | `swift:5.9-jammy` | Runtime stage. |
+| Runtime user | `noctyra:noctyra`, UID/GID `10001` | Non-root runtime user. |
+| Data path | `/data` | Mount as a persistent volume with restrictive permissions. |
+| Exposed raw port | `9339` | Prefer keeping raw TCP behind a reverse proxy or firewall. |
+| Optional HTTP bridge | configured by `--http-port` | Usually proxied behind TLS. |
+
+For reproducible releases, pin Docker base images by digest before tagging a public build. Floating tags are acceptable during development but not for release artifacts.
+
+## Dependency Audit Procedure
+
+Before a release:
+
+1. Run package resolution from a clean checkout:
+
+```bash
+cd "PICCP Relay Server"
+swift package resolve
+git diff --exit-code Package.resolved
+```
+
+2. Confirm direct package versions still match `Package.swift` exact pins:
+
+```bash
+swift package show-dependencies
+```
+
+3. Build and test the relay:
+
+```bash
+swift test
+swift build -c release
+```
+
+4. Build the Docker image with an explicit `liboqs` version:
+
+```bash
+docker build --build-arg LIBOQS_VERSION=0.15.0 -t noctyra-relay:<version> "PICCP Relay Server"
+```
+
+5. Record final artifact hashes:
+
+```bash
+shasum -a 256 <artifact>
+docker image inspect noctyra-relay:<version> --format '{{.Id}}'
+```
+
+6. Review upstream security advisories for:
+   - SwiftNIO
+   - Swift Crypto
+   - Open Quantum Safe `liboqs`
+   - Docker base image packages
+   - Apple SDK release notes for CryptoKit/security fixes
+
+## Release Signing Policy
+
+Every release should have:
+
+- A signed Git tag.
+- SHA-256 checksums for archives, Docker image digests, and generated PDFs.
+- Apple app builds signed with the project Developer ID / App Store signing identity.
+- macOS builds notarized when distributed outside the App Store.
+- Docker images pushed by digest and tagged immutably.
+- Release notes that identify dependency changes, cryptographic dependency changes, and migration requirements.
+
+Cryptographic dependency updates require a dedicated release note section and should not be bundled silently with unrelated UI changes.
+
+## Red Flags
+
+Do not release if:
+
+- `Package.resolved` changed unexpectedly.
+- `liboqs` changed without explicit review.
+- Docker base image changed without a vulnerability and compatibility review.
+- Tests skip unexpectedly beyond known local-runtime `liboqs` skips.
+- A release artifact cannot be reproduced from the tagged commit.
+- Signing or notarization fails.
+
+## Open Work
+
+- Automate SBOM generation into CI.
+- Add machine-readable CycloneDX or SPDX output.
+- Add container vulnerability scanning.
+- Add signed provenance attestations for Docker and Apple artifacts.

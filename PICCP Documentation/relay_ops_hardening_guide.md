@@ -154,6 +154,8 @@ Before upgrading:
 5. Run health checks on `/health` and client relay test connection.
 6. For federation, verify `/info` advertises the expected relay name, mode, transport, TLS state, and coordinator metadata.
 
+For release dependency review, use `dependency_sbom_and_release_policy.md`.
+
 ## Incident Response
 
 If a relay token leaks:

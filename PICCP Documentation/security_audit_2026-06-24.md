@@ -148,6 +148,9 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 - `PICCP Documentation/relay_ops_hardening_guide.md`
   - Adds operator guidance for TLS reverse proxying, firewall exposure, secret handling, storage persistence, federation mode selection, DHT/open-overlay constraints, log hygiene, upgrade checks, and incident response.
 
+- `PICCP Documentation/dependency_sbom_and_release_policy.md`
+  - Adds a maintained dependency inventory, Docker build input inventory, dependency audit steps, and release signing policy.
+
 ## Remaining Findings
 
 ### High
@@ -168,7 +171,8 @@ No high-severity implementation findings remain from this pass. This does not re
 
 ### Low
 1. **Release engineering remains incomplete**
-   - Required: SBOM, dependency audit automation, signed release artifacts, and external audit.
+   - Current: dependency SBOM and release signing policy are documented.
+   - Required: automated machine-readable SBOM generation, container vulnerability scanning, signed provenance attestations, and external audit.
 
 2. **Swift 6 readiness warnings remain tracked**
    - Required before Swift 6 migration: NIO/sendability cleanup.

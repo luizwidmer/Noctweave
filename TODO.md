@@ -40,6 +40,7 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 - [x] Relay docs updated for forwarding timeout and transport flags
 - [x] Whitepaper alignment notes refreshed
 - [x] Publish a concise ops hardening guide for relay operators (TLS/reverse proxy/firewall/log hygiene)
+- [x] Document dependency SBOM and release signing policy
 
 ## Deferred / open decisions
 - [x] Revisit open federation mode design and re-enable open-federation UX paths with coordinator throttles + reachability checks
@@ -55,6 +56,6 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 
 ## External validation
 - [ ] Independent external security audit (firm-selected report)
-- [ ] Dependency audit + SBOM + release signing policy
+- [ ] Automate dependency audit, machine-readable SBOM, container scanning, and signed provenance
 - [ ] Replace snapshot-in-SQLite persistence with normalized transactional tables
 - [ ] Resolve Swift 6/NIO sendability warnings before moving the Linux package to Swift 6 mode
