@@ -499,6 +499,77 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(protocolHarness.requestCount, 1)
     }
 
+    func testOpenFederationDHTHTTPGatewayRefreshAppliesPoisoningAndFloodGuards() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "gateway-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let valid = try makeDHTRecord(host: "relay-a.gateway.example.org", federationName: federationName, issuedAt: now)
+        let wrongFederation = try makeDHTRecord(host: "relay-b.gateway.example.org", federationName: "other-net", issuedAt: now)
+        let tampered = OpenFederationDHTRecord(
+            namespace: valid.namespace,
+            relayIdentityDigest: valid.relayIdentityDigest,
+            endpoint: RelayEndpoint(host: "poison.gateway.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: valid.federationName,
+            issuedAt: valid.issuedAt,
+            expiresAt: valid.expiresAt,
+            relaySigningPublicKey: valid.relaySigningPublicKey,
+            signature: valid.signature
+        )
+        let flooded = try (0..<3).map { index in
+            try makeDHTRecord(
+                host: "crowded.gateway.example.org",
+                federationName: federationName,
+                issuedAt: now.addingTimeInterval(Double(index + 1))
+            )
+        }
+        let response = try PICCPCoder.encode(
+            DHTGatewayQueryResponseProbe(records: [valid, wrongFederation, tampered] + flooded),
+            sortedKeys: true
+        )
+        let protocolHarness = DHTGatewayURLProtocolHarness()
+        protocolHarness.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
+            let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+            XCTAssertEqual(query["namespace"], namespace)
+            XCTAssertEqual(query["limit"], "12")
+            return (200, response)
+        }
+        let transport = OpenFederationDHTHTTPGatewayTransport(
+            baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
+            session: protocolHarness.makeSession()
+        )
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 8,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 12
+            )
+        )
+
+        let result = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: now
+        )
+
+        XCTAssertEqual(result.ingestResult.accepted.count, 3)
+        XCTAssertEqual(
+            result.ingestResult.rejected.map(\.reason),
+            [
+                .validationFailed(.namespaceMismatch),
+                .validationFailed(.invalidSignature),
+                .hostLimitExceeded
+            ]
+        )
+        XCTAssertEqual(result.nodes.count, 3)
+        XCTAssertEqual(protocolHarness.requestCount, 1)
+    }
+
     func testOpenFederationDHTHTTPGatewayTransportRejectsOversizedResponse() async throws {
         let protocolHarness = DHTGatewayURLProtocolHarness()
         protocolHarness.handler = { _ in

@@ -122,10 +122,12 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
   - `PICCPCoreTests.testOpenFederationDHTHTTPGatewayTransportPublishesWithAuthHeader`
   - `PICCPCoreTests.testOpenFederationDHTHTTPGatewayTransportQueriesRecords`
   - `PICCPCoreTests.testOpenFederationDHTHTTPGatewayTransportRejectsOversizedResponse`
+  - `PICCPCoreTests.testOpenFederationDHTHTTPGatewayRefreshAppliesPoisoningAndFloodGuards`
   - `RelayStoreParityTests.testOpenFederationDHTRecordUsesMLDSAAndRejectsTampering`
   - `RelayStoreParityTests.testOpenFederationDHTHTTPGatewayTransportPublishesWithAuthHeader`
   - `RelayStoreParityTests.testOpenFederationDHTHTTPGatewayTransportQueriesRecords`
   - `RelayStoreParityTests.testOpenFederationDHTHTTPGatewayTransportRejectsOversizedResponse`
+  - `RelayStoreParityTests.testOpenFederationDHTHTTPGatewayRefreshAppliesPoisoningAndFloodGuards`
 
 - `PICCPCore/Sources/PICCPCore/FederationDirectorySignature.swift`
   - Replaces coordinator directory Ed25519 signing with an ML-DSA-65 signing key bundle.
@@ -148,8 +150,8 @@ No high-severity implementation findings remain from this pass. This does not re
 
 ### Medium
 1. **No native public-DHT participant exists**
-   - Current: coordinator-assisted discovery plus peer hints; signed DHT records, a feature-gated candidate cache, a mocked publish/query transport seam, and an HTTP gateway/sidecar transport exist in core and the Linux relay package.
-   - Required before release exposure: relay-only BEP5/libp2p/custom native adapter, live reachability probe integration, transport-level churn/poisoning simulation, and operator UI warnings.
+   - Current: coordinator-assisted discovery plus peer hints; signed DHT records, a feature-gated candidate cache, a mocked publish/query transport seam, and an HTTP gateway/sidecar transport exist in core and the Linux relay package. Poisoning and host-flood rejection are now tested through the concrete HTTP gateway adapter.
+   - Required before release exposure: relay-only BEP5/libp2p/custom native adapter, live reachability probe integration, native-adapter churn/poisoning simulation, and operator UI warnings.
 
 2. **Network anonymity remains out of scope**
    - Current: metadata reduction only.
@@ -181,6 +183,7 @@ No high-severity implementation findings remain from this pass. This does not re
   - disabled feature flag preventing transport access (mock transport covered)
   - invalid local advertisement rejected before publication (mock transport covered)
   - query-limit enforcement at transport boundary (mock transport covered)
+  - poisoned and host-flooded results after HTTP gateway decode (gateway transport covered)
 
 ## References
 
