@@ -40,6 +40,16 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 - Mitigations present: app lock, secure typing, screenshot/screen-capture hiding, encrypted-at-rest storage, scoped attachment decryption.
 - Residual risk: Swift memory erasure is best effort and cannot prove all framework copies are scrubbed.
 
+### Storage compromise or corruption
+- Attacker obtains relay disk files, local client storage, backups, or intentionally corrupts persistence files.
+- Mitigations present: client-side encrypted payloads and attachments, encrypted client storage options, relay attachment TTL, bounded relay queues, SQLite-backed relay state file instead of plain JSON, and relay RAM-only mode for operators who do not want persistence.
+- Residual risk: relay persistence currently stores a single encoded state snapshot inside SQLite rather than normalized transactional tables. A corrupted snapshot can still affect availability and recovery more broadly than row-scoped corruption.
+
+### Transport downgrade or proxy misconfiguration
+- Attacker or operator misconfiguration routes open-federation traffic over cleartext, advertises a LAN/private endpoint, strips TLS at the wrong boundary, or exposes the relay directly when it was intended to sit behind a reverse proxy.
+- Mitigations present: relay metadata advertises transport/TLS state, open federation requires TLS and public-routable endpoints by default, HTTP mode supports HTTPS reverse proxies, relay-managed TLS exists for direct exposure, and relay password plus federation forwarding tokens separate client and inter-relay authentication.
+- Residual risk: the software cannot prove that a reverse proxy is correctly configured end-to-end. Operators must validate Cloudflare/nginx/NPM forwarding, firewall scope, certificate renewal, and advertised endpoint consistency.
+
 ### Group authorization abuse
 - Unauthorized member tries to mutate group membership or stale actor proof is replayed.
 - Mitigations present: actor proofs, signing-key matching, nonce replay cache, timestamp limits.
@@ -65,6 +75,22 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 3. Keep public-DHT experimentation outside the release relay binary through relay-operator HTTP sidecars.
 4. Clients should consume signed coordinator or trusted-relay directories first; direct public-DHT lookup should remain off by default.
 5. Curated federation may use DHT only as a non-authoritative hint to find candidate coordinator endpoints, never to accept relay membership.
+
+## Relay Parity For Selected Discovery Mode
+
+The selected release discovery mode is coordinator snapshots plus bounded relay-protocol peer exchange plus optional HTTP sidecar gateway.
+
+Verified mac/shared-core support:
+- `PICCPCore/Sources/PICCPCore/RelayServer.swift` advertises coordinator snapshot state and `knownOpenPeers` peer hints through `/info` responses.
+- `PICCPCore/Sources/PICCPCore/OpenFederationDHTGatewayTransport.swift` provides the sidecar gateway client used to publish/query signed records without trusting raw public-network output.
+- `PICCPCore/Sources/PICCPCore/OpenFederationDHTDiscovery.swift` and `OpenFederationDHTRecord.swift` provide the same signed-record validation, TTL, host cap, and total cap boundary.
+
+Verified Linux relay support:
+- `PICCP Relay Server/Sources/PICCPRelayServer/RelayHandler.swift` advertises coordinator snapshot state and `knownOpenPeers` peer hints through relay info responses.
+- `PICCP Relay Server/Sources/PICCPRelayServer/OpenFederationDHTGatewayTransport.swift` mirrors the sidecar gateway client behavior.
+- `PICCP Relay Server/Sources/PICCPRelayServer/OpenFederationDHTDiscovery.swift` and `OpenFederationDHTRecord.swift` mirror the signed-record validation boundary.
+
+Linux also contains native relay-protocol DHT publish/list routes and a native overlay walker. Those are experimental parity-plus surfaces, not required for the selected release discovery stance.
 
 ## Patched in This Pass
 
@@ -166,14 +192,17 @@ No high-severity implementation findings remain from this pass. This does not re
 1. **Autonomous BEP5/libp2p public-DHT participation is deferred**
    - Current: coordinator-assisted discovery plus peer hints; signed DHT records, a feature-gated candidate cache, a mocked publish/query transport seam, an HTTP gateway/sidecar transport, and a Linux relay-protocol native overlay exist. Poisoning and host-flood rejection are tested through the concrete HTTP gateway adapter and the native overlay adapter.
    - Release stance: this is not a release blocker because autonomous public-DHT routing is not in release scope. If a later release reopens it, the required work is a relay-only BEP5/libp2p adapter, live reachability probe integration, native public-network churn/poisoning simulation, and operator UI warnings.
+   - Release blocker: no.
 
 2. **Network anonymity remains out of scope**
    - Current: metadata reduction only.
    - Required for stronger claims: PIR, mixnet, onion routing, or cover traffic.
+   - Release blocker: no, provided the product does not claim network anonymity beyond metadata reduction.
 
 3. **Relay persistence still has operational hardening work**
    - Current docs indicate SQLite-backed snapshot-style persistence remains to be normalized.
    - Required: transactional normalized tables, corruption recovery tests, and migration policy.
+   - Release blocker: yes for a hardening-complete relay release; acceptable for development builds and explicit test deployments.
 
 ### Low
 1. **Release engineering remains incomplete**
