@@ -9,7 +9,7 @@ The current implementation has materially strong application-layer controls for 
 
 This pass found one concrete SSRF-style hardening gap in public open-federation endpoint validation. The relay rejected private IPv4, loopback, link-local, and IPv4-mapped IPv6 addresses, but did not explicitly handle IPv6 transition addresses that can encode private IPv4 destinations. This has been patched in both `PICCPCore` and the Linux relay package.
 
-The DHT/torrent research supports a cautious path: use DHT-style discovery only for open-federation relay bootstrap hints, never as authority. Public torrent infrastructure can help find candidate relays, but every result must be signed, short-lived, TLS-reachable, and independently probed before it enters a routing set. The signed-record primitive for this path now exists in core as `OpenFederationDHTRecord`; the network DHT client/publisher remains deliberately unimplemented.
+The DHT/torrent research supports a cautious path: use DHT-style discovery only for open-federation relay bootstrap hints, never as authority. Public torrent infrastructure can help find candidate relays, but every result must be signed, short-lived, TLS-reachable, bounded, and independently probed before it enters a routing set. The signed-record primitive for this path now exists in core as `OpenFederationDHTRecord`, and the feature-gated candidate acceptance layer exists as `OpenFederationDHTCandidateCache`; the network DHT client/publisher remains deliberately unimplemented.
 
 ## Threat Scenarios Reviewed
 
@@ -28,7 +28,7 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 - Attacker floods a coordinator or DHT namespace with bogus relays.
 - Mitigations present: coordinator registration throttling, live relay-info reachability checks, TLS/public-routability requirements, federation mode/name matching, peer hint caps.
 - Patched in this pass: public endpoint policy now handles Teredo, 6to4, and NAT64 IPv4-embedded private destinations.
-- Residual risk: no autonomous DHT implementation yet; when added, record signatures and poisoning simulations are mandatory.
+- Residual risk: no autonomous DHT publish/query transport yet; when added, poisoning simulations must be extended to the live transport path.
 
 ### Cross-network federation confusion
 - Open nodes and curated nodes must not form one mixed trust domain.
@@ -91,6 +91,20 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
   - `PICCPCoreTests.testOpenFederationDHTRecordRejectsExpiredAndOverlongRecords`
   - `PICCPCoreTests.testOpenFederationDHTRecordRequiresSecureHttpOrWebSocketEndpoint`
 
+- `PICCPCore/Sources/PICCPCore/OpenFederationDHTDiscovery.swift`
+  - Adds a disabled-by-default DHT candidate cache for relay operators.
+  - Accepts only records that pass the signed-record validator.
+  - Deduplicates by relay identity, prefers newer records, caps total records, caps per-host concentration, and evicts expired entries.
+  - Emits normal `FederationNodeRecord` values so later relay integration can reuse existing federation directory handling.
+
+- Regression/simulation tests:
+  - `PICCPCoreTests.testOpenFederationDHTDiscoveryIsFeatureGated`
+  - `PICCPCoreTests.testOpenFederationDHTDiscoveryAcceptsValidatedSignedRecords`
+  - `PICCPCoreTests.testOpenFederationDHTDiscoveryRejectsPoisonedRecords`
+  - `PICCPCoreTests.testOpenFederationDHTDiscoveryCapsHostFloods`
+  - `PICCPCoreTests.testOpenFederationDHTDiscoveryCapsTotalRecords`
+  - `PICCPCoreTests.testOpenFederationDHTDiscoveryHandlesChurnAndStaleRecords`
+
 ## Remaining Findings
 
 ### High
@@ -100,9 +114,9 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
    - Risk: long-lived federation directory authenticity is not PQ.
 
 ### Medium
-1. **No DHT implementation or poisoning simulation exists**
-   - Current: coordinator-assisted discovery plus peer hints.
-   - Required before release exposure: signed DHT record schema, relay-only prototype, churn/poisoning simulation, and operator UI warnings.
+1. **No DHT publish/query transport exists**
+   - Current: coordinator-assisted discovery plus peer hints; signed DHT records and a feature-gated candidate cache exist in core.
+   - Required before release exposure: relay-only network transport, live reachability probe integration, transport-level churn/poisoning simulation, and operator UI warnings.
 
 2. **Network anonymity remains out of scope**
    - Current: metadata reduction only.
@@ -125,12 +139,12 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 - Run `swift test` in `PICCP Relay Server`.
 - Build macOS client and server if UI/config changes are made.
 - For DHT prototype work, add simulation tests covering:
-  - poisoned record flood
-  - stale record eviction
-  - federation-name mismatch
-  - TLS/public-routing rejection
-  - signature mismatch
-  - Sybil concentration limits
+  - poisoned record flood (core cache covered)
+  - stale record eviction (core cache covered)
+  - federation-name mismatch (core cache covered)
+  - TLS/public-routing rejection (record validation covered)
+  - signature mismatch (record validation covered)
+  - Sybil concentration limits (host and total caps covered; network-level Sybil simulation still required)
 
 ## References
 

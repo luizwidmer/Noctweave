@@ -150,6 +150,168 @@ final class PICCPCoreTests: XCTestCase {
         }
     }
 
+    func testOpenFederationDHTDiscoveryIsFeatureGated() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let record = try makeDHTRecord(host: "relay.example.org", federationName: "gated-net", issuedAt: now)
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: false,
+                federationName: "gated-net",
+                requirePublicEndpoint: false
+            )
+        )
+
+        let result = cache.ingest([record], now: now)
+
+        XCTAssertTrue(result.accepted.isEmpty)
+        XCTAssertEqual(result.rejected.map(\.reason), [.discoveryDisabled])
+        XCTAssertEqual(cache.count, 0)
+    }
+
+    func testOpenFederationDHTDiscoveryAcceptsValidatedSignedRecords() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let record = try makeDHTRecord(host: "relay-a.example.org", federationName: "open-net", issuedAt: now)
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false
+            )
+        )
+
+        let result = cache.ingest([record], now: now)
+        let nodes = cache.federationNodes(now: now)
+
+        XCTAssertEqual(result.accepted, [record])
+        XCTAssertTrue(result.rejected.isEmpty)
+        XCTAssertEqual(nodes.count, 1)
+        XCTAssertEqual(nodes[0].endpoint, record.endpoint)
+        XCTAssertEqual(nodes[0].relayInfo.federation.mode, .open)
+        XCTAssertEqual(nodes[0].relayInfo.federation.name, "open-net")
+    }
+
+    func testOpenFederationDHTDiscoveryRejectsPoisonedRecords() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let valid = try makeDHTRecord(host: "relay-a.example.org", federationName: "open-net", issuedAt: now)
+        let wrongFederation = try makeDHTRecord(host: "relay-b.example.org", federationName: "other-net", issuedAt: now)
+        let tampered = OpenFederationDHTRecord(
+            namespace: valid.namespace,
+            relayIdentityDigest: valid.relayIdentityDigest,
+            endpoint: RelayEndpoint(host: "poison.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: valid.federationName,
+            issuedAt: valid.issuedAt,
+            expiresAt: valid.expiresAt,
+            relaySigningPublicKey: valid.relaySigningPublicKey,
+            signature: valid.signature
+        )
+        let insecure = try makeDHTRecord(
+            endpoint: RelayEndpoint(host: "plain.example.org", port: 80, useTLS: false, transport: .http),
+            federationName: "open-net",
+            issuedAt: now
+        )
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false
+            )
+        )
+
+        let result = cache.ingest([valid, wrongFederation, tampered, insecure], now: now)
+
+        XCTAssertEqual(result.accepted, [valid])
+        XCTAssertEqual(
+            result.rejected.map(\.reason),
+            [
+                .validationFailed(.namespaceMismatch),
+                .validationFailed(.invalidSignature),
+                .validationFailed(.insecureEndpoint)
+            ]
+        )
+        XCTAssertEqual(cache.records(now: now), [valid])
+    }
+
+    func testOpenFederationDHTDiscoveryCapsHostFloods() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let records = try (0..<5).map { index in
+            try makeDHTRecord(host: "crowded.example.org", federationName: "open-net", issuedAt: now.addingTimeInterval(Double(index)))
+        }
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false,
+                maxRecords: 10,
+                maxRecordsPerHost: 2
+            )
+        )
+
+        let result = cache.ingest(records, now: now)
+
+        XCTAssertEqual(result.accepted.count, 2)
+        XCTAssertEqual(result.rejected.map(\.reason), [.hostLimitExceeded, .hostLimitExceeded, .hostLimitExceeded])
+        XCTAssertEqual(cache.records(now: now).count, 2)
+    }
+
+    func testOpenFederationDHTDiscoveryCapsTotalRecords() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let records = try (0..<5).map { index in
+            try makeDHTRecord(
+                host: "relay-\(index).example.org",
+                federationName: "open-net",
+                issuedAt: now.addingTimeInterval(Double(index)),
+                lifetimeSeconds: 300 + Double(index)
+            )
+        }
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false,
+                maxRecords: 3,
+                maxRecordsPerHost: 2
+            )
+        )
+
+        _ = cache.ingest(records, now: now)
+        let keptHosts = cache.records(now: now).map(\.endpoint.host)
+
+        XCTAssertEqual(cache.count, 3)
+        XCTAssertEqual(keptHosts, ["relay-4.example.org", "relay-3.example.org", "relay-2.example.org"])
+    }
+
+    func testOpenFederationDHTDiscoveryHandlesChurnAndStaleRecords() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let signingKey = SigningKeyPair()
+        let older = try makeDHTRecord(
+            host: "relay.example.org",
+            federationName: "open-net",
+            signingKey: signingKey,
+            issuedAt: now,
+            lifetimeSeconds: 120
+        )
+        let newer = try makeDHTRecord(
+            host: "relay-new.example.org",
+            federationName: "open-net",
+            signingKey: signingKey,
+            issuedAt: now.addingTimeInterval(60),
+            lifetimeSeconds: 300
+        )
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false
+            )
+        )
+
+        XCTAssertEqual(cache.ingest([newer, older], now: now.addingTimeInterval(60)).rejected.map(\.reason), [.staleDuplicate])
+        XCTAssertEqual(cache.records(now: now.addingTimeInterval(60)), [newer])
+
+        cache.evictExpired(now: newer.expiresAt.addingTimeInterval(1))
+        XCTAssertTrue(cache.records(now: newer.expiresAt.addingTimeInterval(1)).isEmpty)
+    }
+
     func testContactOfferCodeRoundTrip() throws {
         let identity = Identity(displayName: "Alice")
         let relay = RelayEndpoint(host: "localhost", port: 9339)
@@ -3066,6 +3228,38 @@ final class PICCPCoreTests: XCTestCase {
             ],
             unreadCount: 1,
             ratchetState: .active
+        )
+    }
+
+    private func makeDHTRecord(
+        host: String,
+        federationName: String?,
+        signingKey: SigningKeyPair = SigningKeyPair(),
+        issuedAt: Date,
+        lifetimeSeconds: TimeInterval = 300
+    ) throws -> OpenFederationDHTRecord {
+        try makeDHTRecord(
+            endpoint: RelayEndpoint(host: host, port: 443, useTLS: true, transport: .websocket),
+            federationName: federationName,
+            signingKey: signingKey,
+            issuedAt: issuedAt,
+            lifetimeSeconds: lifetimeSeconds
+        )
+    }
+
+    private func makeDHTRecord(
+        endpoint: RelayEndpoint,
+        federationName: String?,
+        signingKey: SigningKeyPair = SigningKeyPair(),
+        issuedAt: Date,
+        lifetimeSeconds: TimeInterval = 300
+    ) throws -> OpenFederationDHTRecord {
+        try OpenFederationDHTRecord.signed(
+            endpoint: endpoint,
+            federationName: federationName,
+            signingKey: signingKey,
+            issuedAt: issuedAt,
+            lifetimeSeconds: lifetimeSeconds
         )
     }
 }
