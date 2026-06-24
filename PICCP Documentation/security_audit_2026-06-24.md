@@ -9,7 +9,7 @@ The current implementation has materially strong application-layer controls for 
 
 This pass found one concrete SSRF-style hardening gap in public open-federation endpoint validation. The relay rejected private IPv4, loopback, link-local, and IPv4-mapped IPv6 addresses, but did not explicitly handle IPv6 transition addresses that can encode private IPv4 destinations. This has been patched in both `PICCPCore` and the Linux relay package.
 
-The DHT/torrent research supports a cautious path: use DHT-style discovery only for open-federation relay bootstrap hints, never as authority. Public torrent infrastructure can help find candidate relays, but every result must be signed, short-lived, TLS-reachable, and independently probed before it enters a routing set.
+The DHT/torrent research supports a cautious path: use DHT-style discovery only for open-federation relay bootstrap hints, never as authority. Public torrent infrastructure can help find candidate relays, but every result must be signed, short-lived, TLS-reachable, and independently probed before it enters a routing set. The signed-record primitive for this path now exists in core as `OpenFederationDHTRecord`; the network DHT client/publisher remains deliberately unimplemented.
 
 ## Threat Scenarios Reviewed
 
@@ -79,6 +79,17 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 - Regression tests:
   - `PICCPCoreTests.testPublicRelayEndpointPolicyRejectsIPv6TransitionPrivateTargets`
   - `RelayTCPIntegrationTests.testPublicRelayEndpointPolicyRejectsIPv6TransitionPrivateTargets`
+
+- `PICCPCore/Sources/PICCPCore/OpenFederationDHTRecord.swift`
+  - Defines an ML-DSA-signed, short-lived open-federation relay advertisement record.
+  - Validates namespace, relay identity digest, expiry/lifetime, signature, TLS transport, and optional public-routability policy.
+
+- Regression tests:
+  - `PICCPCoreTests.testOpenFederationDHTRecordValidatesSignedRelayAdvertisement`
+  - `PICCPCoreTests.testOpenFederationDHTRecordRejectsTamperedEndpoint`
+  - `PICCPCoreTests.testOpenFederationDHTRecordRejectsNamespaceMismatch`
+  - `PICCPCoreTests.testOpenFederationDHTRecordRejectsExpiredAndOverlongRecords`
+  - `PICCPCoreTests.testOpenFederationDHTRecordRequiresSecureHttpOrWebSocketEndpoint`
 
 ## Remaining Findings
 

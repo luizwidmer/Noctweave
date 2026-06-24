@@ -18,6 +18,138 @@ final class PICCPCoreTests: XCTestCase {
         }
     }
 
+    func testOpenFederationDHTRecordValidatesSignedRelayAdvertisement() throws {
+        let signingKey = SigningKeyPair()
+        let endpoint = RelayEndpoint(
+            host: "relay.example.org",
+            port: 443,
+            useTLS: true,
+            transport: .websocket
+        )
+        let record = try OpenFederationDHTRecord.signed(
+            endpoint: endpoint,
+            federationName: "Example Open Net",
+            signingKey: signingKey
+        )
+
+        XCTAssertNoThrow(
+            try record.validate(
+                expectedFederationName: "example open net",
+                requirePublicEndpoint: false
+            )
+        )
+        XCTAssertEqual(record.signatureAlgorithm, OpenFederationDHTRecord.signatureAlgorithm)
+        XCTAssertEqual(
+            record.relayIdentityDigest,
+            OpenFederationDHTRecord.relayIdentityDigest(publicKey: signingKey.publicKeyData)
+        )
+    }
+
+    func testOpenFederationDHTRecordRejectsTamperedEndpoint() throws {
+        let signingKey = SigningKeyPair()
+        let record = try OpenFederationDHTRecord.signed(
+            endpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: "poison-test",
+            signingKey: signingKey
+        )
+        let tampered = OpenFederationDHTRecord(
+            namespace: record.namespace,
+            relayIdentityDigest: record.relayIdentityDigest,
+            endpoint: RelayEndpoint(host: "evil.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: record.federationName,
+            issuedAt: record.issuedAt,
+            expiresAt: record.expiresAt,
+            relaySigningPublicKey: record.relaySigningPublicKey,
+            signature: record.signature
+        )
+
+        XCTAssertThrowsError(
+            try tampered.validate(expectedFederationName: "poison-test", requirePublicEndpoint: false)
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .invalidSignature)
+        }
+    }
+
+    func testOpenFederationDHTRecordRejectsNamespaceMismatch() throws {
+        let record = try OpenFederationDHTRecord.signed(
+            endpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: "one-open-net",
+            signingKey: SigningKeyPair()
+        )
+
+        XCTAssertThrowsError(
+            try record.validate(expectedFederationName: "other-open-net", requirePublicEndpoint: false)
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .namespaceMismatch)
+        }
+    }
+
+    func testOpenFederationDHTRecordRejectsExpiredAndOverlongRecords() throws {
+        let signingKey = SigningKeyPair()
+        let endpoint = RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket)
+        let expired = try OpenFederationDHTRecord.signed(
+            endpoint: endpoint,
+            federationName: "expiry-test",
+            signingKey: signingKey,
+            issuedAt: Date(timeIntervalSince1970: 100),
+            lifetimeSeconds: 60
+        )
+        XCTAssertThrowsError(
+            try expired.validate(expectedFederationName: "expiry-test", now: Date(), requirePublicEndpoint: false)
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .expired)
+        }
+
+        let overlong = OpenFederationDHTRecord(
+            namespace: OpenFederationDHTRecord.namespace(federationName: "expiry-test"),
+            relayIdentityDigest: OpenFederationDHTRecord.relayIdentityDigest(publicKey: signingKey.publicKeyData),
+            endpoint: endpoint,
+            federationName: "expiry-test",
+            issuedAt: Date(timeIntervalSince1970: 100),
+            expiresAt: Date(timeIntervalSince1970: 10_000),
+            relaySigningPublicKey: signingKey.publicKeyData,
+            signature: Data()
+        )
+        let signedOverlong = OpenFederationDHTRecord(
+            namespace: overlong.namespace,
+            relayIdentityDigest: overlong.relayIdentityDigest,
+            endpoint: overlong.endpoint,
+            federationName: overlong.federationName,
+            issuedAt: overlong.issuedAt,
+            expiresAt: overlong.expiresAt,
+            relaySigningPublicKey: overlong.relaySigningPublicKey,
+            signature: try signingKey.sign(PICCPCoder.encode(
+                [
+                    "endpoint": "force-invalid-signature-for-overlong-record"
+                ],
+                sortedKeys: true
+            ))
+        )
+        XCTAssertThrowsError(
+            try signedOverlong.validate(
+                expectedFederationName: "expiry-test",
+                now: Date(timeIntervalSince1970: 200),
+                requirePublicEndpoint: false
+            )
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .invalidLifetime)
+        }
+    }
+
+    func testOpenFederationDHTRecordRequiresSecureHttpOrWebSocketEndpoint() throws {
+        let record = try OpenFederationDHTRecord.signed(
+            endpoint: RelayEndpoint(host: "relay.example.org", port: 9339, useTLS: false, transport: .tcp),
+            federationName: "secure-only",
+            signingKey: SigningKeyPair()
+        )
+
+        XCTAssertThrowsError(
+            try record.validate(expectedFederationName: "secure-only", requirePublicEndpoint: false)
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .insecureEndpoint)
+        }
+    }
+
     func testContactOfferCodeRoundTrip() throws {
         let identity = Identity(displayName: "Alice")
         let relay = RelayEndpoint(host: "localhost", port: 9339)

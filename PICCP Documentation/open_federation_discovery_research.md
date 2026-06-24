@@ -100,6 +100,8 @@ Not recommended:
 
 ## DHT Record Sketch
 
+Status: the core signed-record primitive is implemented as `OpenFederationDHTRecord` in `PICCPCore`. The project still does not publish to, query, or depend on a public DHT. This is intentional: the record schema and validator exist first so any later network discovery path has a hard acceptance boundary.
+
 ```json
 {
   "version": 1,
