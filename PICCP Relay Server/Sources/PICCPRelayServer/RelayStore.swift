@@ -30,6 +30,9 @@ final class RelayStore {
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
     private var groups: [UUID: RelayGroupDescriptor] = [:]
     private var groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:]
+    private var openFederationDHTCache = OpenFederationDHTCandidateCache(
+        configuration: OpenFederationDHTDiscoveryConfiguration(isEnabled: false)
+    )
     private let queue = DispatchQueue(label: "piccp.relay.store")
     private let fileURL: URL?
     private let maxInboxMessages: Int?
@@ -107,6 +110,33 @@ final class RelayStore {
         }
         performSync {
             saveLocked()
+        }
+    }
+
+    func ingestOpenFederationDHTRecords(
+        _ records: [OpenFederationDHTRecord],
+        configuration: OpenFederationDHTDiscoveryConfiguration,
+        now: Date = Date()
+    ) -> OpenFederationDHTDiscoveryIngestResult {
+        performSync {
+            openFederationDHTCache.configuration = configuration
+            return openFederationDHTCache.ingest(records, now: now)
+        }
+    }
+
+    func listOpenFederationDHTRecords(
+        configuration: OpenFederationDHTDiscoveryConfiguration,
+        now: Date = Date(),
+        limit: Int?
+    ) -> [OpenFederationDHTRecord] {
+        performSync {
+            openFederationDHTCache.configuration = configuration
+            openFederationDHTCache.evictExpired(now: now)
+            let boundedLimit = max(0, min(limit ?? configuration.maxQueryRecords, configuration.maxQueryRecords))
+            guard boundedLimit > 0 else {
+                return []
+            }
+            return Array(openFederationDHTCache.records(now: now).prefix(boundedLimit))
         }
     }
 

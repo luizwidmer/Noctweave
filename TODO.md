@@ -49,8 +49,9 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 - [x] Add feature-gated DHT publish/query transport seam with transport simulation tests
 - [x] Add HTTP gateway/sidecar adapter for relay-operator DHT publish/query integration
 - [x] Extend DHT poisoning/flood simulation through the HTTP gateway adapter
-- [ ] Implement native public-DHT participation (BEP5/libp2p/custom overlay) behind the existing feature flag
-- [ ] Extend DHT poisoning/churn simulations to the real network adapter before exposing DHT discovery in release builds
+- [x] Add Linux relay native custom-overlay DHT routes and bounded PEX-style traversal tests
+- [ ] Implement autonomous public-DHT participation (BEP5/libp2p) behind the existing feature flag if release plans still need public-network bootstrap
+- [ ] Extend DHT poisoning/churn simulations to any autonomous public-network adapter before exposing DHT discovery in release builds
 
 ## External validation
 - [ ] Independent external security audit (firm-selected report)

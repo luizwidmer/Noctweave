@@ -112,7 +112,7 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 - `--coordinator-heartbeat-seconds <seconds>`: relay heartbeat interval to coordinators (default: `45`, min `15`)
 - `--coordinator-directory-max-staleness-seconds <seconds>`: max acceptable heartbeat age for coordinator directory listings (default: `300`)
 - `--relay-peer-exchange-limit <count>`: max open-federation peer hints advertised in relay info (default: `12`)
-- `--coordinator-directory-signing-key <base64>`: optional Curve25519 private key for deterministic coordinator snapshot signing
+- `--coordinator-directory-signing-key <base64>`: optional ML-DSA-65 private key bundle for deterministic coordinator snapshot signing
 - `--advertised-endpoint <host:port|https://host:port|wss://host:port>`: endpoint this relay publishes to coordinators
 - `--advertise-tls <true|false>`: override TLS status in `relayInfo.tlsEnabled` (defaults to advertised endpoint scheme when set)
 - `--temporal-bucket-seconds <seconds>`: advertise temporal bucketing seconds (default: `300`)
@@ -281,6 +281,15 @@ Gateway contract:
 ```
 
 The gateway may also return a raw JSON array of records. Relay validation still rejects wrong namespaces, invalid ML-DSA signatures, stale records, insecure endpoints, non-public endpoints when public routing is required, per-host floods, and over-large gateway responses.
+
+### Native Open-Federation Overlay
+
+The Linux relay also exposes native relay-protocol DHT routes for open non-coordinator relays:
+
+- `publishOpenFederationDHTRecord`: publish one signed short-lived DHT record into the receiving relay's ephemeral cache.
+- `listOpenFederationDHTRecords`: list accepted records for the relay's configured open-federation namespace.
+
+`OpenFederationDHTNativeOverlayTransport` uses those routes plus capped `knownOpenPeers` hints from `info` responses to walk a small PEX-style overlay without a gateway sidecar. It is still a discovery hint path, not membership authority. Records are ephemeral, namespace-bound, signature-checked, lifetime-limited, and revalidated by the same candidate cache used by the gateway path.
 
 ### Federation Coordinator APIs
 

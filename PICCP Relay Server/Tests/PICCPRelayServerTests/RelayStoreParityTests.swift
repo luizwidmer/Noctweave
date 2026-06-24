@@ -333,6 +333,112 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(protocolHarness.requestCount, 1)
     }
 
+    func testOpenFederationDHTNativeOverlayTransportWalksPeerHintsWithBounds() async throws {
+        let namespace = OpenFederationDHTRecord.namespace(federationName: "native-net")
+        let seed = RelayEndpoint(host: "seed.example.org", port: 443, useTLS: true, transport: .http)
+        let peerA = RelayEndpoint(host: "peer-a.example.org", port: 443, useTLS: true, transport: .http)
+        let peerB = RelayEndpoint(host: "peer-b.example.org", port: 443, useTLS: true, transport: .http)
+        let client = MockOpenFederationDHTRelayQueryClient(
+            infoByEndpoint: [
+                seed: relayInfo(name: "native-net", knownOpenPeers: [peerA, peerB]),
+                peerA: relayInfo(name: "native-net", knownOpenPeers: [seed]),
+                peerB: relayInfo(name: "native-net")
+            ],
+            recordsByEndpoint: [
+                seed: [makeUnsignedDHTRecord(host: "seed-record.example.org", federationName: "native-net")],
+                peerA: [makeUnsignedDHTRecord(host: "peer-record.example.org", federationName: "native-net")],
+                peerB: [makeUnsignedDHTRecord(host: "ignored-record.example.org", federationName: "native-net")]
+            ]
+        )
+        let transport = OpenFederationDHTNativeOverlayTransport(
+            seedEndpoints: [seed],
+            client: client,
+            maxVisitedEndpoints: 2,
+            maxPeerHintsPerEndpoint: 2
+        )
+
+        let records = try await transport.query(namespace: namespace, limit: 8)
+        let visited = await client.visitedHosts()
+
+        XCTAssertEqual(records.map(\.endpoint.host), ["seed-record.example.org", "peer-record.example.org"])
+        XCTAssertEqual(visited, ["seed.example.org", "peer-a.example.org"])
+    }
+
+    func testOpenFederationDHTNativeOverlayRefreshAppliesPoisoningAndFloodGuards() async throws {
+        guard OQSSignatureVerifier.shared.isAvailable,
+              let keyPair = OQSSignatureVerifier.shared.generateKeyPair() else {
+            throw XCTSkip("liboqs runtime is unavailable")
+        }
+
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "native-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let seed = RelayEndpoint(host: "seed.example.org", port: 443, useTLS: true, transport: .http)
+        let valid = try makeSignedDHTRecord(host: "relay-a.native.example.org", federationName: federationName, keyPair: keyPair, issuedAt: now)
+        let wrongFederation = try makeSignedDHTRecord(host: "relay-b.native.example.org", federationName: "other-net", keyPair: keyPair, issuedAt: now)
+        let tampered = OpenFederationDHTRecord(
+            namespace: valid.namespace,
+            relayIdentityDigest: valid.relayIdentityDigest,
+            endpoint: RelayEndpoint(host: "poison.native.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: valid.federationName,
+            issuedAt: valid.issuedAt,
+            expiresAt: valid.expiresAt,
+            relaySigningPublicKey: valid.relaySigningPublicKey,
+            signature: valid.signature
+        )
+        let flooded = try (0..<3).map { index in
+            try makeSignedDHTRecord(
+                host: "crowded.native.example.org",
+                federationName: federationName,
+                keyPair: keyPair,
+                issuedAt: now.addingTimeInterval(Double(index + 1))
+            )
+        }
+        let client = MockOpenFederationDHTRelayQueryClient(
+            infoByEndpoint: [seed: relayInfo(name: federationName)],
+            recordsByEndpoint: [seed: [valid, wrongFederation, tampered] + flooded]
+        )
+        let transport = OpenFederationDHTNativeOverlayTransport(
+            seedEndpoints: [seed],
+            client: client,
+            maxVisitedEndpoints: 4,
+            maxPeerHintsPerEndpoint: 2
+        )
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 8,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 12
+            )
+        )
+
+        let result = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            privateKey: nil,
+            publicKey: nil,
+            now: now
+        )
+
+        XCTAssertEqual(result.ingestResult.accepted.count, 3)
+        XCTAssertEqual(
+            result.ingestResult.rejected.map(\.reason),
+            [
+                .validationFailed(.namespaceMismatch),
+                .validationFailed(.invalidSignature),
+                .hostLimitExceeded
+            ]
+        )
+        let publishCount = await client.publishCount()
+        let queryNamespaces = await client.queryNamespaces()
+        XCTAssertEqual(result.nodes.count, 3)
+        XCTAssertEqual(publishCount, 0)
+        XCTAssertEqual(queryNamespaces, [namespace])
+    }
+
     func testOpenFederationDHTHTTPGatewayTransportRejectsOversizedResponse() async throws {
         let protocolHarness = DHTGatewayURLProtocolHarness()
         protocolHarness.handler = { _ in
@@ -452,6 +558,19 @@ final class RelayStoreParityTests: XCTestCase {
             privateKey: keyPair.privateKey,
             publicKey: keyPair.publicKey,
             issuedAt: issuedAt
+        )
+    }
+
+    private func relayInfo(name: String, knownOpenPeers: [RelayEndpoint]? = nil) -> RelayInfo {
+        RelayInfo(
+            kind: .standard,
+            federation: FederationDescriptor(mode: .open, name: name),
+            tlsEnabled: true,
+            transport: .http,
+            temporalBucketSeconds: 300,
+            groupCreationMode: .allowed,
+            knownOpenPeers: knownOpenPeers,
+            advertisedAt: Date(timeIntervalSince1970: 1_000)
         )
     }
 }
@@ -601,5 +720,56 @@ private final class DHTGatewayURLProtocol: URLProtocol {
         lock.lock()
         defer { lock.unlock() }
         return harnesses[token]
+    }
+}
+
+private actor MockOpenFederationDHTRelayQueryClient: OpenFederationDHTRelayQueryClient {
+    private let infoByEndpoint: [RelayEndpoint: RelayInfo]
+    private let recordsByEndpoint: [RelayEndpoint: [OpenFederationDHTRecord]]
+    private var visited: [String] = []
+    private var published: [OpenFederationDHTRecord] = []
+    private var namespaces: [String] = []
+
+    init(
+        infoByEndpoint: [RelayEndpoint: RelayInfo],
+        recordsByEndpoint: [RelayEndpoint: [OpenFederationDHTRecord]]
+    ) {
+        self.infoByEndpoint = infoByEndpoint
+        self.recordsByEndpoint = recordsByEndpoint
+    }
+
+    func send(_ request: RelayRequest, to endpoint: RelayEndpoint) async throws -> RelayResponse {
+        switch request.type {
+        case .info:
+            visited.append(endpoint.host)
+            guard let info = infoByEndpoint[endpoint] else {
+                return .error("No relay info")
+            }
+            return .info(info)
+        case .publishOpenFederationDHTRecord:
+            if let record = request.publishOpenFederationDHTRecord?.record {
+                published.append(record)
+            }
+            return .ok()
+        case .listOpenFederationDHTRecords:
+            if let namespace = request.listOpenFederationDHTRecords?.namespace {
+                namespaces.append(namespace)
+            }
+            return .openFederationDHTRecords(recordsByEndpoint[endpoint] ?? [])
+        default:
+            return .error("Unsupported request")
+        }
+    }
+
+    func visitedHosts() -> [String] {
+        visited
+    }
+
+    func publishCount() -> Int {
+        published.count
+    }
+
+    func queryNamespaces() -> [String] {
+        namespaces
     }
 }

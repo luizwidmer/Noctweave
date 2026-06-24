@@ -398,13 +398,13 @@ struct Envelope: Codable, Equatable {
     }
 }
 
-enum RelayEndpointTransport: String, Codable, CaseIterable {
+enum RelayEndpointTransport: String, Codable, CaseIterable, Hashable {
     case tcp
     case http
     case websocket
 }
 
-struct RelayEndpoint: Codable, Equatable {
+struct RelayEndpoint: Codable, Equatable, Hashable {
     let host: String
     let port: UInt16
     let useTLS: Bool
@@ -556,6 +556,8 @@ enum RelayRequestType: String, Codable {
     case rejectGroupJoin
     case registerFederationNode
     case listFederationNodes
+    case publishOpenFederationDHTRecord
+    case listOpenFederationDHTRecords
 }
 
 struct FederationNodeRegistrationRequest: Codable, Equatable {
@@ -633,6 +635,16 @@ struct FederationDirectorySnapshot: Codable, Equatable {
     }
 }
 
+struct PublishOpenFederationDHTRecordRequest: Codable, Equatable {
+    let namespace: String
+    let record: OpenFederationDHTRecord
+}
+
+struct ListOpenFederationDHTRecordsRequest: Codable, Equatable {
+    let namespace: String
+    let limit: Int?
+}
+
 struct RelayRequest: Codable, Equatable {
     let type: RelayRequestType
     let authToken: String?
@@ -659,6 +671,8 @@ struct RelayRequest: Codable, Equatable {
     let rejectGroupJoin: RejectGroupJoinRequest?
     let registerFederationNode: FederationNodeRegistrationRequest?
     let listFederationNodes: ListFederationNodesRequest?
+    let publishOpenFederationDHTRecord: PublishOpenFederationDHTRecordRequest?
+    let listOpenFederationDHTRecords: ListOpenFederationDHTRecordsRequest?
 
     init(
         type: RelayRequestType,
@@ -685,7 +699,9 @@ struct RelayRequest: Codable, Equatable {
         approveGroupJoin: ApproveGroupJoinRequest? = nil,
         rejectGroupJoin: RejectGroupJoinRequest? = nil,
         registerFederationNode: FederationNodeRegistrationRequest? = nil,
-        listFederationNodes: ListFederationNodesRequest? = nil
+        listFederationNodes: ListFederationNodesRequest? = nil,
+        publishOpenFederationDHTRecord: PublishOpenFederationDHTRecordRequest? = nil,
+        listOpenFederationDHTRecords: ListOpenFederationDHTRecordsRequest? = nil
     ) {
         self.type = type
         self.authToken = authToken
@@ -712,6 +728,8 @@ struct RelayRequest: Codable, Equatable {
         self.rejectGroupJoin = rejectGroupJoin
         self.registerFederationNode = registerFederationNode
         self.listFederationNodes = listFederationNodes
+        self.publishOpenFederationDHTRecord = publishOpenFederationDHTRecord
+        self.listOpenFederationDHTRecords = listOpenFederationDHTRecords
     }
 
     static func deliver(_ request: DeliverRequest) -> RelayRequest {
@@ -1062,6 +1080,14 @@ struct RelayRequest: Codable, Equatable {
         RelayRequest(type: .listFederationNodes, listFederationNodes: request)
     }
 
+    static func publishOpenFederationDHTRecord(_ request: PublishOpenFederationDHTRecordRequest) -> RelayRequest {
+        RelayRequest(type: .publishOpenFederationDHTRecord, publishOpenFederationDHTRecord: request)
+    }
+
+    static func listOpenFederationDHTRecords(_ request: ListOpenFederationDHTRecordsRequest) -> RelayRequest {
+        RelayRequest(type: .listOpenFederationDHTRecords, listOpenFederationDHTRecords: request)
+    }
+
     func withAuthToken(_ token: String?) -> RelayRequest {
         RelayRequest(
             type: type,
@@ -1088,7 +1114,9 @@ struct RelayRequest: Codable, Equatable {
             approveGroupJoin: approveGroupJoin,
             rejectGroupJoin: rejectGroupJoin,
             registerFederationNode: registerFederationNode,
-            listFederationNodes: listFederationNodes
+            listFederationNodes: listFederationNodes,
+            publishOpenFederationDHTRecord: publishOpenFederationDHTRecord,
+            listOpenFederationDHTRecords: listOpenFederationDHTRecords
         )
     }
 }
@@ -1129,6 +1157,7 @@ enum RelayResponseType: String, Codable {
     case groups
     case groupJoinRequests
     case federationNodes
+    case openFederationDHTRecords
     case error
 }
 
@@ -1150,6 +1179,7 @@ struct RelayResponse: Codable, Equatable {
     let groupJoinRequests: [RelayGroupJoinRequest]?
     let federationNodes: [FederationNodeRecord]?
     let federationSnapshot: FederationDirectorySnapshot?
+    let openFederationDHTRecords: [OpenFederationDHTRecord]?
     let error: String?
 
     init(
@@ -1166,6 +1196,7 @@ struct RelayResponse: Codable, Equatable {
         groupJoinRequests: [RelayGroupJoinRequest]? = nil,
         federationNodes: [FederationNodeRecord]? = nil,
         federationSnapshot: FederationDirectorySnapshot? = nil,
+        openFederationDHTRecords: [OpenFederationDHTRecord]? = nil,
         error: String? = nil
     ) {
         self.type = type
@@ -1181,6 +1212,7 @@ struct RelayResponse: Codable, Equatable {
         self.groupJoinRequests = groupJoinRequests
         self.federationNodes = federationNodes
         self.federationSnapshot = federationSnapshot
+        self.openFederationDHTRecords = openFederationDHTRecords
         self.error = error
     }
 
@@ -1354,6 +1386,10 @@ struct RelayResponse: Codable, Equatable {
         snapshot: FederationDirectorySnapshot? = nil
     ) -> RelayResponse {
         RelayResponse(type: .federationNodes, federationNodes: nodes, federationSnapshot: snapshot)
+    }
+
+    static func openFederationDHTRecords(_ records: [OpenFederationDHTRecord]) -> RelayResponse {
+        RelayResponse(type: .openFederationDHTRecords, openFederationDHTRecords: records)
     }
 
     static func error(_ message: String) -> RelayResponse {

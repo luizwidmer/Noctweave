@@ -723,6 +723,42 @@ final class RelayHandler: ChannelInboundHandler {
             }
             return fetchCoordinatorNodeDirectory(request: listRequest, on: context.eventLoop)
                 .map { .federationNodes($0) }
+        case .publishOpenFederationDHTRecord:
+            guard let dhtConfiguration = openFederationDHTConfiguration() else {
+                return context.eventLoop.makeSucceededFuture(.error("Open-federation DHT is available only on open non-coordinator relays."))
+            }
+            guard let publish = request.publishOpenFederationDHTRecord else {
+                return context.eventLoop.makeSucceededFuture(.error("Missing open-federation DHT record payload"))
+            }
+            let expectedNamespace = OpenFederationDHTRecord.namespace(federationName: dhtConfiguration.federationName)
+            guard publish.namespace == expectedNamespace else {
+                return context.eventLoop.makeSucceededFuture(.error("Open-federation DHT namespace mismatch."))
+            }
+            let result = store.ingestOpenFederationDHTRecords(
+                [publish.record],
+                configuration: dhtConfiguration
+            )
+            guard !result.accepted.isEmpty else {
+                let reason = result.rejected.first.map { "\($0.reason)" } ?? "record rejected"
+                return context.eventLoop.makeSucceededFuture(.error("Open-federation DHT record rejected: \(reason)"))
+            }
+            return context.eventLoop.makeSucceededFuture(.ok())
+        case .listOpenFederationDHTRecords:
+            guard let dhtConfiguration = openFederationDHTConfiguration() else {
+                return context.eventLoop.makeSucceededFuture(.error("Open-federation DHT is available only on open non-coordinator relays."))
+            }
+            guard let list = request.listOpenFederationDHTRecords else {
+                return context.eventLoop.makeSucceededFuture(.error("Missing open-federation DHT list payload"))
+            }
+            let expectedNamespace = OpenFederationDHTRecord.namespace(federationName: dhtConfiguration.federationName)
+            guard list.namespace == expectedNamespace else {
+                return context.eventLoop.makeSucceededFuture(.error("Open-federation DHT namespace mismatch."))
+            }
+            let records = store.listOpenFederationDHTRecords(
+                configuration: dhtConfiguration,
+                limit: list.limit
+            )
+            return context.eventLoop.makeSucceededFuture(.openFederationDHTRecords(records))
         }
     }
 
@@ -885,6 +921,21 @@ final class RelayHandler: ChannelInboundHandler {
             }
             return response.relayInfo
         }
+    }
+
+    private func openFederationDHTConfiguration() -> OpenFederationDHTDiscoveryConfiguration? {
+        guard relayConfiguration.federation.mode == .open,
+              relayConfiguration.kind != .coordinator else {
+            return nil
+        }
+        return OpenFederationDHTDiscoveryConfiguration(
+            isEnabled: true,
+            federationName: relayConfiguration.federation.name,
+            requirePublicEndpoint: !relayConfiguration.allowPrivateFederationEndpoints,
+            maxRecords: 256,
+            maxRecordsPerHost: 4,
+            maxQueryRecords: 256
+        )
     }
 
     private func validateFederationRegistrationReachability(
