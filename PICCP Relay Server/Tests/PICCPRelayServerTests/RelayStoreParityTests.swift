@@ -173,6 +173,108 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertFalse(FederationDirectorySignature.verify(snapshot: tampered, trustedPublicKey: publicKey))
     }
 
+    func testOpenFederationDHTRecordUsesMLDSAAndRejectsTampering() throws {
+        guard OQSSignatureVerifier.shared.isAvailable,
+              let keyPair = OQSSignatureVerifier.shared.generateKeyPair() else {
+            throw XCTSkip("liboqs runtime is unavailable")
+        }
+
+        let now = Date(timeIntervalSince1970: 1_000)
+        let record = try OpenFederationDHTRecord.signed(
+            endpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: "open-mesh",
+            privateKey: keyPair.privateKey,
+            publicKey: keyPair.publicKey,
+            issuedAt: now
+        )
+
+        XCTAssertNoThrow(try record.validate(expectedFederationName: "open-mesh", now: now, requirePublicEndpoint: false))
+        let tampered = OpenFederationDHTRecord(
+            namespace: record.namespace,
+            relayIdentityDigest: record.relayIdentityDigest,
+            endpoint: RelayEndpoint(host: "evil.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: record.federationName,
+            issuedAt: record.issuedAt,
+            expiresAt: record.expiresAt,
+            relaySigningPublicKey: record.relaySigningPublicKey,
+            signature: record.signature
+        )
+        XCTAssertThrowsError(try tampered.validate(expectedFederationName: "open-mesh", now: now, requirePublicEndpoint: false)) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .invalidSignature)
+        }
+    }
+
+    func testOpenFederationDHTHTTPGatewayTransportPublishesWithAuthHeader() async throws {
+        let namespace = OpenFederationDHTRecord.namespace(federationName: "gateway-net")
+        let record = makeUnsignedDHTRecord(host: "relay.gateway.example.org", federationName: "gateway-net")
+        let protocolHarness = DHTGatewayURLProtocolHarness()
+        protocolHarness.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/mesh/v1/open-federation/dht/records")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer gateway-token")
+            let body = try XCTUnwrap(DHTGatewayURLProtocolHarness.bodyData(from: request))
+            let decoded = try RelayCodec.decoder().decode(DHTGatewayPublishRequestProbe.self, from: body)
+            XCTAssertEqual(decoded.namespace, namespace)
+            XCTAssertEqual(decoded.record, record)
+            return (200, Data())
+        }
+        let transport = OpenFederationDHTHTTPGatewayTransport(
+            baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org/mesh")),
+            session: protocolHarness.makeSession(),
+            authToken: " gateway-token "
+        )
+
+        try await transport.publish(record, namespace: namespace)
+        XCTAssertEqual(protocolHarness.requestCount, 1)
+    }
+
+    func testOpenFederationDHTHTTPGatewayTransportQueriesRecords() async throws {
+        let namespace = OpenFederationDHTRecord.namespace(federationName: "gateway-net")
+        let records = (0..<3).map {
+            makeUnsignedDHTRecord(host: "relay-\($0).gateway.example.org", federationName: "gateway-net")
+        }
+        let response = try RelayCodec.encoder(sortedKeys: true).encode(
+            DHTGatewayQueryResponseProbe(records: records)
+        )
+        let protocolHarness = DHTGatewayURLProtocolHarness()
+        protocolHarness.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/v1/open-federation/dht/records")
+            let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
+            let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+            XCTAssertEqual(query["namespace"], namespace)
+            XCTAssertEqual(query["limit"], "2")
+            return (200, response)
+        }
+        let transport = OpenFederationDHTHTTPGatewayTransport(
+            baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
+            session: protocolHarness.makeSession()
+        )
+
+        let queried = try await transport.query(namespace: namespace, limit: 2)
+        XCTAssertEqual(queried, Array(records.prefix(2)))
+        XCTAssertEqual(protocolHarness.requestCount, 1)
+    }
+
+    func testOpenFederationDHTHTTPGatewayTransportRejectsOversizedResponse() async throws {
+        let protocolHarness = DHTGatewayURLProtocolHarness()
+        protocolHarness.handler = { _ in
+            (200, Data(repeating: 0x41, count: 2_048))
+        }
+        let transport = OpenFederationDHTHTTPGatewayTransport(
+            baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
+            session: protocolHarness.makeSession(),
+            maxResponseBytes: 1_024
+        )
+
+        do {
+            _ = try await transport.query(namespace: "oversized", limit: 1)
+            XCTFail("Expected oversized DHT gateway response to be rejected")
+        } catch {
+            XCTAssertEqual(error as? OpenFederationDHTGatewayTransportError, .responseTooLarge)
+        }
+    }
+
     func testRelayInfoCarriesTemporalBucketSchedule() {
         let configuration = RelayConfiguration(
             temporalBucketSeconds: 300,
@@ -244,5 +346,168 @@ final class RelayStoreParityTests: XCTestCase {
             ),
             signature: Data([0x99, 0x98, 0x97])
         )
+    }
+
+    private func makeUnsignedDHTRecord(host: String, federationName: String) -> OpenFederationDHTRecord {
+        let publicKey = Data("test-public-key-\(host)".utf8)
+        let issuedAt = Date(timeIntervalSince1970: 1_000)
+        return OpenFederationDHTRecord(
+            namespace: OpenFederationDHTRecord.namespace(federationName: federationName),
+            relayIdentityDigest: OpenFederationDHTRecord.relayIdentityDigest(publicKey: publicKey),
+            endpoint: RelayEndpoint(host: host, port: 443, useTLS: true, transport: .websocket),
+            federationName: federationName,
+            issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(300),
+            relaySigningPublicKey: publicKey,
+            signature: Data("test-signature-\(host)".utf8)
+        )
+    }
+}
+
+private struct DHTGatewayPublishRequestProbe: Codable {
+    let namespace: String
+    let record: OpenFederationDHTRecord
+}
+
+private struct DHTGatewayQueryResponseProbe: Codable {
+    let records: [OpenFederationDHTRecord]
+}
+
+private final class DHTGatewayURLProtocolHarness {
+    typealias Handler = (URLRequest) throws -> (status: Int, body: Data)
+
+    private let state = LockedState()
+
+    var handler: Handler? {
+        get { state.handler }
+        set { state.handler = newValue }
+    }
+
+    var requestCount: Int {
+        state.requests.count
+    }
+
+    func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DHTGatewayURLProtocol.self]
+        let token = UUID().uuidString
+        configuration.httpAdditionalHeaders = ["X-Noctyra-Test-Token": token]
+        DHTGatewayURLProtocol.register(harness: self, token: token)
+        return URLSession(configuration: configuration)
+    }
+
+    fileprivate func handle(_ request: URLRequest) throws -> (status: Int, body: Data) {
+        state.requests.append(request)
+        guard let handler = state.handler else {
+            return (500, Data())
+        }
+        return try handler(request)
+    }
+
+    static func bodyData(from request: URLRequest) -> Data? {
+        if let body = request.httpBody {
+            return body
+        }
+        guard let stream = request.httpBodyStream else {
+            return nil
+        }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count > 0 {
+                data.append(buffer, count: count)
+            } else {
+                break
+            }
+        }
+        return data
+    }
+
+    private final class LockedState {
+        private let lock = NSLock()
+        private var _handler: Handler?
+        private var _requests: [URLRequest] = []
+
+        var handler: Handler? {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return _handler
+            }
+            set {
+                lock.lock()
+                _handler = newValue
+                lock.unlock()
+            }
+        }
+
+        var requests: [URLRequest] {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return _requests
+            }
+            set {
+                lock.lock()
+                _requests = newValue
+                lock.unlock()
+            }
+        }
+    }
+}
+
+private final class DHTGatewayURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var harnesses: [String: DHTGatewayURLProtocolHarness] = [:]
+
+    static func register(harness: DHTGatewayURLProtocolHarness, token: String) {
+        lock.lock()
+        harnesses[token] = harness
+        lock.unlock()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.value(forHTTPHeaderField: "X-Noctyra-Test-Token") != nil
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let token = request.value(forHTTPHeaderField: "X-Noctyra-Test-Token"),
+              let harness = Self.harness(for: token),
+              let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: OpenFederationDHTGatewayTransportError.invalidURL)
+            return
+        }
+
+        do {
+            let result = try harness.handle(request)
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: result.status,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            if !result.body.isEmpty {
+                client?.urlProtocol(self, didLoad: result.body)
+            }
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+
+    private static func harness(for token: String) -> DHTGatewayURLProtocolHarness? {
+        lock.lock()
+        defer { lock.unlock() }
+        return harnesses[token]
     }
 }

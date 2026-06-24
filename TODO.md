@@ -31,6 +31,7 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 - [x] Relay metadata parity fields (including advertised transport)
 - [x] Actor-proof verification parity path via runtime `liboqs` verifier
 - [x] Coordinator directory signing parity path via runtime `liboqs` signer/verifier
+- [x] Open-federation DHT signed-record/cache/gateway parity path
 - [x] Docker image updated to include `liboqs` runtime for verified actor proofs
 - [x] Docker image pins liboqs/dependencies and runs as a non-root user
 - [x] Integration tests for auth isolation, replay rejection, and forwarding timeout behavior

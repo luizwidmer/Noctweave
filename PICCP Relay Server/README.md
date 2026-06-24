@@ -256,6 +256,32 @@ Inbound client `authToken` is not forwarded; configure `--federation-forwarding-
 
 `federationDirectoryPublicKey` is the coordinator's ML-DSA-65 public key for signed federation directory snapshots. Linux relay signing and verification use runtime `liboqs`; coordinator mode fails closed for signed snapshot generation if the runtime signer is unavailable.
 
+### Open-Federation DHT Gateway
+
+Native public-DHT participation is intentionally not built into the relay binary yet. Operators that want experimental open-federation discovery can run a separate BEP5/libp2p/custom sidecar and expose a narrow HTTP gateway. The relay-side gateway client accepts only Noctyra signed DHT records and keeps the same validation boundary as coordinator discovery.
+
+Gateway contract:
+
+- Publish: `POST /v1/open-federation/dht/records`
+- Query: `GET /v1/open-federation/dht/records?namespace=<namespace>&limit=<n>`
+- Optional auth: `Authorization: Bearer <token>`
+- Publish body:
+
+```json
+{
+  "namespace": "noctyra-open-v1:<federation-name-hash>",
+  "record": { "...": "signed OpenFederationDHTRecord" }
+}
+```
+
+- Query response:
+
+```json
+{ "records": [{ "...": "signed OpenFederationDHTRecord" }] }
+```
+
+The gateway may also return a raw JSON array of records. Relay validation still rejects wrong namespaces, invalid ML-DSA signatures, stale records, insecure endpoints, non-public endpoints when public routing is required, per-host floods, and over-large gateway responses.
+
 ### Federation Coordinator APIs
 
 Register/heartbeat relay metadata at a coordinator:

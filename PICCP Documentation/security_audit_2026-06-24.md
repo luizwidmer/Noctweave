@@ -103,6 +103,11 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
   - Uses `POST /v1/open-federation/dht/records` for publish and `GET /v1/open-federation/dht/records?namespace=...&limit=...` for query.
   - Supports bearer-token authentication, bounded response bodies, status-code checks, and both envelope and raw-array query responses.
 
+- `PICCP Relay Server/Sources/PICCPRelayServer/OpenFederationDHT*.swift`
+  - Adds Linux relay parity for the signed open-federation DHT record, candidate cache, discovery engine, and HTTP gateway transport.
+  - Keeps the same validation boundary as core: ML-DSA signatures, namespace matching, short lifetimes, TLS HTTP/WSS endpoints, public endpoint policy, host caps, and total record caps.
+  - Enables relay-operator sidecar integration without making the Linux relay trust raw gateway results.
+
 - Regression/simulation tests:
   - `PICCPCoreTests.testOpenFederationDHTDiscoveryIsFeatureGated`
   - `PICCPCoreTests.testOpenFederationDHTDiscoveryAcceptsValidatedSignedRecords`
@@ -117,6 +122,10 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
   - `PICCPCoreTests.testOpenFederationDHTHTTPGatewayTransportPublishesWithAuthHeader`
   - `PICCPCoreTests.testOpenFederationDHTHTTPGatewayTransportQueriesRecords`
   - `PICCPCoreTests.testOpenFederationDHTHTTPGatewayTransportRejectsOversizedResponse`
+  - `RelayStoreParityTests.testOpenFederationDHTRecordUsesMLDSAAndRejectsTampering`
+  - `RelayStoreParityTests.testOpenFederationDHTHTTPGatewayTransportPublishesWithAuthHeader`
+  - `RelayStoreParityTests.testOpenFederationDHTHTTPGatewayTransportQueriesRecords`
+  - `RelayStoreParityTests.testOpenFederationDHTHTTPGatewayTransportRejectsOversizedResponse`
 
 - `PICCPCore/Sources/PICCPCore/FederationDirectorySignature.swift`
   - Replaces coordinator directory Ed25519 signing with an ML-DSA-65 signing key bundle.
@@ -139,7 +148,7 @@ No high-severity implementation findings remain from this pass. This does not re
 
 ### Medium
 1. **No native public-DHT participant exists**
-   - Current: coordinator-assisted discovery plus peer hints; signed DHT records, a feature-gated candidate cache, a mocked publish/query transport seam, and an HTTP gateway/sidecar transport exist in core.
+   - Current: coordinator-assisted discovery plus peer hints; signed DHT records, a feature-gated candidate cache, a mocked publish/query transport seam, and an HTTP gateway/sidecar transport exist in core and the Linux relay package.
    - Required before release exposure: relay-only BEP5/libp2p/custom native adapter, live reachability probe integration, transport-level churn/poisoning simulation, and operator UI warnings.
 
 2. **Network anonymity remains out of scope**
