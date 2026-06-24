@@ -42,8 +42,8 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 
 ### Storage compromise or corruption
 - Attacker obtains relay disk files, local client storage, backups, or intentionally corrupts persistence files.
-- Mitigations present: client-side encrypted payloads and attachments, encrypted client storage options, relay attachment TTL, bounded relay queues, SQLite-backed relay state file instead of plain JSON, and relay RAM-only mode for operators who do not want persistence.
-- Residual risk: relay persistence currently stores a single encoded state snapshot inside SQLite rather than normalized transactional tables. A corrupted snapshot can still affect availability and recovery more broadly than row-scoped corruption.
+- Mitigations present: client-side encrypted payloads and attachments, encrypted client storage options, relay attachment TTL, bounded relay queues, SQLite-backed relay state file instead of plain JSON, relay RAM-only mode for operators who do not want persistence, and a previous-good-snapshot fallback when the primary SQLite snapshot blob is corrupted.
+- Residual risk: relay persistence currently stores encoded state snapshots inside SQLite rather than normalized transactional tables. The backup snapshot improves recovery from primary snapshot corruption, but row-scoped recovery and migrations still require a normalized schema.
 
 ### Transport downgrade or proxy misconfiguration
 - Attacker or operator misconfiguration routes open-federation traffic over cleartext, advertises a LAN/private endpoint, strips TLS at the wrong boundary, or exposes the relay directly when it was intended to sit behind a reverse proxy.
@@ -200,8 +200,8 @@ No high-severity implementation findings remain from this pass. This does not re
    - Release blocker: no, provided the product does not claim network anonymity beyond metadata reduction.
 
 3. **Relay persistence still has operational hardening work**
-   - Current docs indicate SQLite-backed snapshot-style persistence remains to be normalized.
-   - Required: transactional normalized tables, corruption recovery tests, and migration policy.
+   - Current: SQLite-backed snapshot-style persistence now keeps a previous-good backup snapshot and restores from it if the primary snapshot blob cannot be decoded. Core and Linux relay tests cover primary snapshot corruption fallback.
+   - Required: transactional normalized tables and migration policy.
    - Release blocker: yes for a hardening-complete relay release; acceptable for development builds and explicit test deployments.
 
 ### Low
@@ -230,6 +230,7 @@ No high-severity implementation findings remain from this pass. This does not re
   - query-limit enforcement at transport boundary (mock transport covered)
   - poisoned and host-flooded results after HTTP gateway decode (gateway transport covered)
   - bounded peer-hint traversal and poisoned/host-flooded results after native overlay decode (Linux native overlay covered)
+  - primary relay snapshot corruption fallback to previous-good snapshot (core and Linux relay store covered)
 
 ## References
 

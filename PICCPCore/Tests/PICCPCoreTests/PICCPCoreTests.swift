@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import XCTest
 @testable import PICCPCore
 
@@ -1358,6 +1359,42 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(fetched.first?.signature, envelope.signature)
     }
 
+    func testRelayStoreDiskPersistenceFallsBackToBackupSnapshot() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
+        let requestedURL = tempDirectory.appendingPathComponent("relay_store.json")
+        let sqliteURL = tempDirectory.appendingPathComponent("relay_store.sqlite")
+        let first = Envelope(
+            conversationId: "conv",
+            senderFingerprint: "fingerprint",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([0x01]), tag: Data()),
+            signature: Data([0x11])
+        )
+        let second = Envelope(
+            conversationId: "conv",
+            senderFingerprint: "fingerprint",
+            sentAt: Date(),
+            messageCounter: 2,
+            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([0x02]), tag: Data()),
+            signature: Data([0x22])
+        )
+
+        let writer = RelayStore(storeURL: requestedURL)
+        _ = try await writer.deliver(first, to: "sqlite-inbox")
+        _ = try await writer.deliver(second, to: "sqlite-inbox")
+        try overwriteRelaySnapshot(at: sqliteURL, with: Data([0xDE, 0xAD, 0xBE, 0xEF]))
+
+        let reloaded = RelayStore(storeURL: requestedURL)
+        try await reloaded.loadFromDisk()
+        let fetched = try await reloaded.fetch(inboxId: "sqlite-inbox")
+        XCTAssertEqual(fetched.map(\.id), [first.id])
+    }
+
     func testRelayStoreRejectsInvalidAttachmentPayload() async throws {
         let store = RelayStore()
         let attachmentId = UUID()
@@ -1379,6 +1416,31 @@ final class PICCPCoreTests: XCTestCase {
             // Expected.
         } catch {
             XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    private func overwriteRelaySnapshot(at sqliteURL: URL, with data: Data) throws {
+        var db: OpaquePointer?
+        guard sqlite3_open(sqliteURL.path, &db) == SQLITE_OK, let db else {
+            throw NSError(domain: "PICCPCoreTests.SQLite", code: 1)
+        }
+        defer { sqlite3_close(db) }
+
+        let sql = "UPDATE relay_state SET value = ?1 WHERE key = 'relay_snapshot_v1';"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            throw NSError(domain: "PICCPCoreTests.SQLite", code: 2)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        let bindResult = data.withUnsafeBytes { buffer in
+            sqlite3_bind_blob(statement, 1, buffer.baseAddress, Int32(buffer.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        guard bindResult == SQLITE_OK else {
+            throw NSError(domain: "PICCPCoreTests.SQLite", code: 3)
+        }
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw NSError(domain: "PICCPCoreTests.SQLite", code: 4)
         }
     }
 

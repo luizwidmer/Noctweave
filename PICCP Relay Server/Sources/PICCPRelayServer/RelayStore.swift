@@ -96,7 +96,17 @@ final class RelayStore {
             do {
                 let sqliteURL = sqliteStoreURL(for: fileURL)
                 if let snapshotData = try SQLiteRelayStateStore.loadSnapshot(at: sqliteURL) {
-                    try applySnapshotData(snapshotData)
+                    do {
+                        try applySnapshotData(snapshotData)
+                    } catch {
+                        guard let backupData = try SQLiteRelayStateStore.loadBackupSnapshot(at: sqliteURL) else {
+                            throw error
+                        }
+                        try applySnapshotData(backupData)
+                        try SQLiteRelayStateStore.restorePrimarySnapshot(backupData, at: sqliteURL)
+                    }
+                } else if let backupData = try SQLiteRelayStateStore.loadBackupSnapshot(at: sqliteURL) {
+                    try applySnapshotData(backupData)
                 }
             } catch {
                 print("[relay] Failed to load store: \(error)")
@@ -1204,6 +1214,7 @@ private enum SQLiteRelayStateStoreError: Error, CustomStringConvertible {
 private enum SQLiteRelayStateStore {
     private static let tableName = "relay_state"
     private static let snapshotKey = "relay_snapshot_v1"
+    private static let backupSnapshotKey = "relay_snapshot_backup_v1"
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     static func loadSnapshot(at url: URL) throws -> Data? {
@@ -1213,6 +1224,50 @@ private enum SQLiteRelayStateStore {
         guard let db else { return nil }
 
         try ensureSchema(in: db)
+        return try loadValue(forKey: snapshotKey, in: db)
+    }
+
+    static func loadBackupSnapshot(at url: URL) throws -> Data? {
+        var db: OpaquePointer?
+        try openDatabase(at: url, handle: &db)
+        defer { sqlite3_close(db) }
+        guard let db else { return nil }
+
+        try ensureSchema(in: db)
+        return try loadValue(forKey: backupSnapshotKey, in: db)
+    }
+
+    static func saveSnapshot(_ snapshot: Data, at url: URL) throws {
+        var db: OpaquePointer?
+        try openDatabase(at: url, handle: &db)
+        defer { sqlite3_close(db) }
+        guard let db else { return }
+
+        try ensureSchema(in: db)
+        try execute("BEGIN IMMEDIATE TRANSACTION;", in: db)
+        do {
+            if let currentSnapshot = try loadValue(forKey: snapshotKey, in: db) {
+                try saveValue(currentSnapshot, forKey: backupSnapshotKey, in: db)
+            }
+            try saveValue(snapshot, forKey: snapshotKey, in: db)
+            try execute("COMMIT;", in: db)
+        } catch {
+            _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            throw error
+        }
+    }
+
+    static func restorePrimarySnapshot(_ snapshot: Data, at url: URL) throws {
+        var db: OpaquePointer?
+        try openDatabase(at: url, handle: &db)
+        defer { sqlite3_close(db) }
+        guard let db else { return }
+
+        try ensureSchema(in: db)
+        try saveValue(snapshot, forKey: snapshotKey, in: db)
+    }
+
+    private static func loadValue(forKey key: String, in db: OpaquePointer) throws -> Data? {
         let sql = "SELECT value FROM \(tableName) WHERE key = ?1 LIMIT 1;"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -1221,7 +1276,7 @@ private enum SQLiteRelayStateStore {
         defer { sqlite3_finalize(statement) }
         guard let statement else { return nil }
 
-        guard sqlite3_bind_text(statement, 1, snapshotKey, -1, transient) == SQLITE_OK else {
+        guard sqlite3_bind_text(statement, 1, key, -1, transient) == SQLITE_OK else {
             throw SQLiteRelayStateStoreError.bind(lastError(in: db))
         }
         let step = sqlite3_step(statement)
@@ -1238,13 +1293,7 @@ private enum SQLiteRelayStateStore {
         throw SQLiteRelayStateStoreError.step(lastError(in: db))
     }
 
-    static func saveSnapshot(_ snapshot: Data, at url: URL) throws {
-        var db: OpaquePointer?
-        try openDatabase(at: url, handle: &db)
-        defer { sqlite3_close(db) }
-        guard let db else { return }
-
-        try ensureSchema(in: db)
+    private static func saveValue(_ value: Data, forKey key: String, in db: OpaquePointer) throws {
         let sql = """
         INSERT INTO \(tableName) (key, value) VALUES (?1, ?2)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value;
@@ -1256,10 +1305,10 @@ private enum SQLiteRelayStateStore {
         defer { sqlite3_finalize(statement) }
         guard let statement else { return }
 
-        guard sqlite3_bind_text(statement, 1, snapshotKey, -1, transient) == SQLITE_OK else {
+        guard sqlite3_bind_text(statement, 1, key, -1, transient) == SQLITE_OK else {
             throw SQLiteRelayStateStoreError.bind(lastError(in: db))
         }
-        let bindResult = snapshot.withUnsafeBytes { buffer in
+        let bindResult = value.withUnsafeBytes { buffer in
             sqlite3_bind_blob(statement, 2, buffer.baseAddress, Int32(buffer.count), transient)
         }
         guard bindResult == SQLITE_OK else {
@@ -1292,6 +1341,12 @@ private enum SQLiteRelayStateStore {
             value BLOB NOT NULL
         );
         """
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.execute(lastError(in: db))
+        }
+    }
+
+    private static func execute(_ sql: String, in db: OpaquePointer) throws {
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw SQLiteRelayStateStoreError.execute(lastError(in: db))
         }

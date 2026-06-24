@@ -37,6 +37,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Stable coordinator directory-signing keys across relay restarts
 - [x] Migrated coordinator directory signatures from Ed25519 to ML-DSA-65
 - [x] Operator-selectable text-only mode and optional temporal-bucketing disablement
+- [x] Relay SQLite snapshot backup and corruption fallback recovery tests
 
 ## Linux relay parity with mac relay
 - [x] HTTP/WebSocket bridge support with same request/response schema
@@ -71,5 +72,5 @@ The current security/DHT goal is complete when all of the following are true:
 ## External validation
 - [ ] Independent external security audit (firm-selected report)
 - [ ] Enforce release verification, container scanning, and signed provenance in CI
-- [ ] Replace snapshot-in-SQLite persistence with normalized transactional tables
+- [ ] Replace snapshot-in-SQLite persistence with normalized transactional tables after the current backup/fallback recovery layer
 - [x] Resolve Swift 6/NIO sendability warnings before moving the Linux package to Swift 6 mode
