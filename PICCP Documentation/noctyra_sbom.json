@@ -1,0 +1,114 @@
+{
+  "components": [
+    {
+      "name": "PICCPCore",
+      "source": "PICCPCore",
+      "type": "local-source"
+    },
+    {
+      "name": "PICCP Relay Server",
+      "source": "PICCP Relay Server",
+      "type": "local-source"
+    },
+    {
+      "name": "PICCP Messaging Client",
+      "source": "PICCP Messaging Client",
+      "type": "local-source"
+    },
+    {
+      "name": "PICCP Server",
+      "source": "PICCP Server",
+      "type": "local-source"
+    },
+    {
+      "name": "swift-asn1",
+      "pinFile": "PICCP Relay Server/Package.resolved",
+      "revision": "810496cf121e525d660cd0ea89a758740476b85f",
+      "source": "https://github.com/apple/swift-asn1.git",
+      "type": "swift-package",
+      "version": "1.5.1"
+    },
+    {
+      "name": "swift-atomics",
+      "pinFile": "PICCP Relay Server/Package.resolved",
+      "revision": "b601256eab081c0f92f059e12818ac1d4f178ff7",
+      "source": "https://github.com/apple/swift-atomics.git",
+      "type": "swift-package",
+      "version": "1.3.0"
+    },
+    {
+      "name": "swift-collections",
+      "pinFile": "PICCP Relay Server/Package.resolved",
+      "revision": "7b847a3b7008b2dc2f47ca3110d8c782fb2e5c7e",
+      "source": "https://github.com/apple/swift-collections.git",
+      "type": "swift-package",
+      "version": "1.3.0"
+    },
+    {
+      "name": "swift-crypto",
+      "pinFile": "PICCP Relay Server/Package.resolved",
+      "revision": "95ba0316a9b733e92bb6b071255ff46263bbe7dc",
+      "source": "https://github.com/apple/swift-crypto.git",
+      "type": "swift-package",
+      "version": "3.15.1"
+    },
+    {
+      "name": "swift-nio",
+      "pinFile": "PICCP Relay Server/Package.resolved",
+      "revision": "a1605a3303a28e14d822dec8aaa53da8a9490461",
+      "source": "https://github.com/apple/swift-nio.git",
+      "type": "swift-package",
+      "version": "2.92.0"
+    },
+    {
+      "name": "swift-system",
+      "pinFile": "PICCP Relay Server/Package.resolved",
+      "revision": "395a77f0aa927f0ff73941d7ac35f2b46d47c9db",
+      "source": "https://github.com/apple/swift-system.git",
+      "type": "swift-package",
+      "version": "1.6.3"
+    },
+    {
+      "name": "swift:5.9-jammy",
+      "pinFile": "PICCP Relay Server/Dockerfile",
+      "revision": null,
+      "source": "Dockerfile FROM",
+      "stage": "builder",
+      "type": "container-base-image",
+      "version": null
+    },
+    {
+      "name": "swift:5.9-jammy",
+      "pinFile": "PICCP Relay Server/Dockerfile",
+      "revision": null,
+      "source": "Dockerfile FROM",
+      "stage": "stage-2",
+      "type": "container-base-image",
+      "version": null
+    },
+    {
+      "name": "liboqs",
+      "pinFile": "PICCP Relay Server/Dockerfile",
+      "revision": "0.15.0",
+      "source": "https://github.com/open-quantum-safe/liboqs.git",
+      "type": "source-build",
+      "version": "0.15.0"
+    },
+    {
+      "fileCount": 46,
+      "name": "liboqs.xcframework",
+      "revision": "043adb04c4a9401c9461a7eedb09da74340b5575436ac6be568998d9cd6fc52d",
+      "source": "PICCPCore/Vendor/liboqs.xcframework",
+      "type": "vendored-binary",
+      "version": null
+    }
+  ],
+  "generatedBy": "scripts/generate-sbom.py",
+  "inputs": [
+    "PICCP Relay Server/Package.resolved",
+    "PICCP Relay Server/Dockerfile",
+    "PICCPCore/Vendor/liboqs.xcframework"
+  ],
+  "name": "Noctyra",
+  "schema": "noctyra-sbom-v1"
+}
