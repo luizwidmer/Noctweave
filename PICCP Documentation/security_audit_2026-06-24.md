@@ -154,6 +154,9 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 - `scripts/generate-sbom.py` and `PICCP Documentation/noctyra_sbom.json`
   - Adds deterministic machine-readable SBOM generation from `Package.resolved`, the relay Dockerfile, and the vendored `liboqs.xcframework` tree hash.
 
+- `scripts/verify-release.sh`
+  - Adds a local release gate for SBOM freshness, package pin drift, Linux relay tests, Dockerfile syntax checks, and optional Trivy scanning when installed.
+
 ## Remaining Findings
 
 ### High
@@ -174,8 +177,8 @@ No high-severity implementation findings remain from this pass. This does not re
 
 ### Low
 1. **Release engineering remains incomplete**
-   - Current: dependency SBOM and release signing policy are documented, with a deterministic machine-readable SBOM snapshot.
-   - Required: CI enforcement, container vulnerability scanning, signed provenance attestations, and external audit.
+   - Current: dependency SBOM and release signing policy are documented, with a deterministic machine-readable SBOM snapshot and local release verification script.
+   - Required: CI enforcement, required container vulnerability scanning, signed provenance attestations, and external audit.
 
 2. **Swift 6 readiness warnings remain tracked**
    - Required before Swift 6 migration: NIO/sendability cleanup.

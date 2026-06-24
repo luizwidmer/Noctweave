@@ -51,7 +51,15 @@ For reproducible releases, pin Docker base images by digest before tagging a pub
 
 ## Dependency Audit Procedure
 
-Before a release:
+Before a release, run the local verifier:
+
+```bash
+scripts/verify-release.sh
+```
+
+It refreshes the SBOM, verifies the checked-in snapshot is current, checks package resolution, runs the Linux relay test suite, and runs optional Docker/Trivy checks when those tools are installed.
+
+Manual equivalent:
 
 1. Refresh and verify the machine-readable SBOM:
 
@@ -127,7 +135,7 @@ Do not release if:
 
 ## Open Work
 
-- Automate SBOM verification in CI.
+- Wire `scripts/verify-release.sh` into CI.
 - Add CycloneDX or SPDX export if an external auditor requires that format.
-- Add container vulnerability scanning.
+- Require container vulnerability scanning in CI.
 - Add signed provenance attestations for Docker and Apple artifacts.
