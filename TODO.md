@@ -40,7 +40,9 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 
 ## Deferred / open decisions
 - [x] Revisit open federation mode design and re-enable open-federation UX paths with coordinator throttles + reachability checks
-- [ ] Evaluate optional DHT namespace for open federation (post-stability)
+- [x] Evaluate optional DHT namespace and torrent-infrastructure feasibility for open federation
+- [ ] Prototype relay-operator DHT discovery behind a feature flag with signed short-lived relay records
+- [ ] Add DHT poisoning/churn simulations before exposing DHT discovery in release builds
 
 ## External validation
 - [ ] Independent external security audit (firm-selected report)

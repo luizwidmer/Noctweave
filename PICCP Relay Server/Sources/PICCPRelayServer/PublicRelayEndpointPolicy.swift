@@ -79,6 +79,15 @@ enum PublicRelayEndpointPolicy {
             if bytes[0] == 0x20, bytes[1] == 0x01, bytes[2] == 0x0d, bytes[3] == 0xb8 {
                 return false
             }
+            if bytes[0] == 0x20, bytes[1] == 0x01, bytes[2] == 0x00, bytes[3] == 0x00 {
+                return false
+            }
+            if bytes[0] == 0x20, bytes[1] == 0x02 {
+                return isPublicIPv4(Array(bytes[2...5]))
+            }
+            if bytes.prefix(12).elementsEqual([0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0]) {
+                return isPublicIPv4(Array(bytes[12...15]))
+            }
             return true
         }
     }

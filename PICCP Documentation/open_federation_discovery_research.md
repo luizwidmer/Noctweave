@@ -1,6 +1,6 @@
 # Open Federation Discovery Research (Tor/IPFS/BitTorrent)
 
-Last updated: March 6, 2026
+Last updated: June 24, 2026
 
 ## Goal
 Design a practical way for open-federation relays to discover each other quickly, maintain healthy node lists, and avoid unsafe trust assumptions.
@@ -38,6 +38,27 @@ References:
 - https://libp2p.io/docs/kademlia-dht/
 - https://docs.ipfs.tech/concepts/dht/
 
+## Feasibility: Reusing Torrent Infrastructure
+
+Public BitTorrent DHT infrastructure is attractive because it already provides a large UDP Kademlia network, bootstrapping conventions, and peer-location semantics. It is not suitable as a direct trust substrate for Noctyra relays.
+
+Main issues:
+- **DHT records are discovery hints, not authority.** BEP 5 token checks limit spoofed announces by source IP, but they do not authenticate that an announced endpoint is a valid Noctyra relay.
+- **Metadata is public by design.** Relays advertising into a public torrent-style DHT expose endpoints, timing, and federation interest to observers crawling that namespace.
+- **Poisoning and Sybil resistance are weak.** A popular namespace can be flooded with bogus endpoints unless every discovered record is independently signed, freshness-limited, and reachability-probed.
+- **Curated federation cannot use it as authority.** Curated universes require operator-selected trust roots, signed directories, and quorum rules. A public DHT can only be a bootstrap hint, not an allow-list replacement.
+
+Feasible uses:
+1. **Open federation bootstrap hints:** derive an infohash-like namespace from `noctyra-open-v1 || federationName`, query peers, then accept only ML-DSA-signed Noctyra relay records after HTTPS/WSS reachability checks.
+2. **Operator-only discovery:** relays may query DHT; ordinary clients should prefer signed coordinator snapshots or trusted relay-provided directories to reduce client-side metadata exposure.
+3. **PEX-style acceleration:** once a relay is connected to known healthy open peers, it can exchange a capped list of live peers, using BitTorrent PEX constraints as a model.
+
+Not recommended:
+- Publishing contact/user information into any public DHT.
+- Treating public DHT results as trusted membership.
+- Mixing curated and open federation records.
+- Making mobile clients depend on UDP DHT reachability.
+
 ## Recommended Noctyra Open-Federation Design
 
 ### Phase 1 (near-term): coordinator-first, signed directory snapshots
@@ -61,14 +82,47 @@ References:
 ### Phase 3: optional decentralized overlay
 1. Introduce a lightweight federation DHT namespace for open federation only.
 2. Store signed endpoint records keyed by federation namespace + relay identity digest.
-3. Keep coordinator mode available as a fallback and abuse-control anchor.
-4. Do not mix curated and open entries in any path.
+3. Require each record to include:
+   - relay endpoint and advertised transport
+   - relay identity digest
+   - federation mode/name
+   - issued/expiry timestamps
+   - supported protocol version
+   - ML-DSA signature over the canonical record
+4. Accept a DHT result only after:
+   - record signature verification
+   - endpoint public-routability policy
+   - TLS or WSS requirement
+   - live `/info` or equivalent relay-info probe
+   - federation mode/name match
+5. Keep coordinator mode available as a fallback and abuse-control anchor.
+6. Do not mix curated and open entries in any path.
+
+## DHT Record Sketch
+
+```json
+{
+  "version": 1,
+  "namespace": "noctyra-open-v1:<federation-name-hash>",
+  "relayIdentity": "<ml-dsa-public-key-hash>",
+  "endpoint": "wss://relay.example.org",
+  "federationMode": "open",
+  "federationName": "example-open-net",
+  "issuedAt": "2026-06-24T00:00:00Z",
+  "expiresAt": "2026-06-24T00:10:00Z",
+  "signatureAlgorithm": "ML-DSA-65",
+  "signature": "<base64>"
+}
+```
+
+The record is deliberately small and short-lived. Relays republish periodically; stale records are ignored. Discovery should be probabilistic and opportunistic, not a hard dependency for message delivery.
 
 ## Safety Controls (required before enabling open mode in UI)
 - Signed relay advertisements (ML-DSA identity signing).
 - Endpoint proof-of-reachability before accepting registration.
 - Rate-limited register/list APIs with per-source quotas.
 - Health-score decay and eviction of stale/failed nodes.
+- Public endpoint policy that rejects private, local, documentation, multicast, and IPv6-transition addresses that embed private IPv4 destinations.
 - Strict federation-mode isolation:
   - curated nodes never consume open node records
   - open nodes never import curated allowlists as authority
@@ -78,7 +132,14 @@ References:
 2. Client/relay cache policy with stale-read fallback.
 3. R-PEX with strict caps and health validation.
 4. Open-mode UI re-enable behind a feature flag.
-5. Optional DHT research spike (only after 1-4 are stable).
+5. Optional DHT prototype behind a relay-operator feature flag.
+6. Public-DHT load/poisoning simulation before exposing the option in release builds.
 
 ## Why this fits current codebase
 The relay already has coordinator registration and node listing APIs. This plan extends existing coordinator logic first, then adds peer-exchange acceleration, and defers full DHT complexity until operational telemetry justifies it.
+
+## Source Notes
+- BitTorrent BEP 5 defines a UDP Kademlia-like DHT and token-protected announces, which is useful as a discovery pattern but insufficient as Noctyra relay authority.
+- BitTorrent BEP 11 constrains PEX to verified live peers, one update per minute, and capped update sizes. Noctyra R-PEX should follow those principles.
+- Tor directory consensus demonstrates the operational value of signed directory documents, freshness windows, and multiple authorities.
+- IPFS/libp2p DHT design demonstrates separating peer records/provider records and tuning Kademlia parameters for churn.

@@ -2,6 +2,22 @@ import XCTest
 @testable import PICCPCore
 
 final class PICCPCoreTests: XCTestCase {
+    func testPublicRelayEndpointPolicyRejectsIPv6TransitionPrivateTargets() {
+        let endpoints = [
+            RelayEndpoint(host: "64:ff9b::7f00:1", port: 443, useTLS: true),
+            RelayEndpoint(host: "64:ff9b::0a00:1", port: 443, useTLS: true),
+            RelayEndpoint(host: "2002:0a00:0001::1", port: 443, useTLS: true),
+            RelayEndpoint(host: "2001:0000:4136:e378:8000:63bf:3fff:fdd2", port: 443, useTLS: true)
+        ]
+
+        for endpoint in endpoints {
+            XCTAssertFalse(
+                PublicRelayEndpointPolicy.permits(endpoint),
+                "Expected public endpoint policy to reject \(endpoint.host)"
+            )
+        }
+    }
+
     func testContactOfferCodeRoundTrip() throws {
         let identity = Identity(displayName: "Alice")
         let relay = RelayEndpoint(host: "localhost", port: 9339)
