@@ -21,7 +21,7 @@ Last reviewed: June 20, 2026.
 - Attachment chunk TTL/integrity enforcement and relay-side quotas/policies.
 - Capability-style inbox/routing usage and temporal bucketing support in relay storage.
 - Federation policy enforcement for curated vs open network separation at protocol/config level.
-- Open federation mode is available in server UX with coordinator throttling + registration reachability checks; DHT/discovery overlay remains deferred.
+- Open federation mode is available in server UX with coordinator throttling + registration reachability checks; signed DHT records, cache policy, and an HTTP gateway/sidecar transport exist, while native public-DHT participation remains deferred.
 
 ### Client UX & Safety
 - Contact Book with per-contact post-burn continuity controls.
@@ -55,7 +55,7 @@ Last reviewed: June 20, 2026.
 - **Not aligned yet**: mixnet/PIR transport and MLS-class group cryptographic architecture.
 
 ## Next Alignment Targets
-- Continue hardening open federation (coordinator anti-abuse controls + optional DHT namespace research).
+- Continue hardening open federation (native DHT adapter simulations, reachability probes, and operator warnings).
 - Design and prototype PIR/mixnet transport upgrade path.
 - Specify whether to keep relay-backed groups or migrate to an MLS-based group cryptographic model.
 - Prepare external security audit package and publish implementation threat-model delta.

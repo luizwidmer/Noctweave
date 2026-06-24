@@ -9,7 +9,7 @@ The current implementation has materially strong application-layer controls for 
 
 This pass found one concrete SSRF-style hardening gap in public open-federation endpoint validation. The relay rejected private IPv4, loopback, link-local, and IPv4-mapped IPv6 addresses, but did not explicitly handle IPv6 transition addresses that can encode private IPv4 destinations. This has been patched in both `PICCPCore` and the Linux relay package. Coordinator directory signatures were also migrated from Ed25519 to ML-DSA-65 so federation directory authenticity uses the same post-quantum signature family as identity continuity.
 
-The DHT/torrent research supports a cautious path: use DHT-style discovery only for open-federation relay bootstrap hints, never as authority. Public torrent infrastructure can help find candidate relays, but every result must be signed, short-lived, TLS-reachable, bounded, and independently probed before it enters a routing set. The signed-record primitive for this path now exists in core as `OpenFederationDHTRecord`, the feature-gated candidate acceptance layer exists as `OpenFederationDHTCandidateCache`, and `OpenFederationDHTTransport`/`OpenFederationDHTDiscoveryEngine` define the publish/query boundary. A real BEP5/libp2p/custom DHT adapter remains deliberately unimplemented.
+The DHT/torrent research supports a cautious path: use DHT-style discovery only for open-federation relay bootstrap hints, never as authority. Public torrent infrastructure can help find candidate relays, but every result must be signed, short-lived, TLS-reachable, bounded, and independently probed before it enters a routing set. The signed-record primitive for this path now exists in core as `OpenFederationDHTRecord`, the feature-gated candidate acceptance layer exists as `OpenFederationDHTCandidateCache`, and `OpenFederationDHTTransport`/`OpenFederationDHTDiscoveryEngine` define the publish/query boundary. `OpenFederationDHTHTTPGatewayTransport` now provides a real gateway/sidecar adapter for relay operators. Native BEP5/libp2p/custom public-DHT participation remains deliberately unimplemented.
 
 ## Threat Scenarios Reviewed
 
@@ -98,6 +98,11 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
   - Emits normal `FederationNodeRecord` values so later relay integration can reuse existing federation directory handling.
   - Adds `OpenFederationDHTTransport` and `OpenFederationDHTDiscoveryEngine` so publish/query adapters can be tested without allowing raw DHT results to bypass validation.
 
+- `PICCPCore/Sources/PICCPCore/OpenFederationDHTGatewayTransport.swift`
+  - Adds an HTTP gateway/sidecar transport for operator-controlled DHT publish/query integration.
+  - Uses `POST /v1/open-federation/dht/records` for publish and `GET /v1/open-federation/dht/records?namespace=...&limit=...` for query.
+  - Supports bearer-token authentication, bounded response bodies, status-code checks, and both envelope and raw-array query responses.
+
 - Regression/simulation tests:
   - `PICCPCoreTests.testOpenFederationDHTDiscoveryIsFeatureGated`
   - `PICCPCoreTests.testOpenFederationDHTDiscoveryAcceptsValidatedSignedRecords`
@@ -109,6 +114,9 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
   - `PICCPCoreTests.testOpenFederationDHTDiscoveryEngineDisabledDoesNotTouchTransport`
   - `PICCPCoreTests.testOpenFederationDHTDiscoveryEngineRejectsInvalidLocalAdvertisementBeforePublish`
   - `PICCPCoreTests.testOpenFederationDHTDiscoveryEngineHonorsTransportQueryLimit`
+  - `PICCPCoreTests.testOpenFederationDHTHTTPGatewayTransportPublishesWithAuthHeader`
+  - `PICCPCoreTests.testOpenFederationDHTHTTPGatewayTransportQueriesRecords`
+  - `PICCPCoreTests.testOpenFederationDHTHTTPGatewayTransportRejectsOversizedResponse`
 
 - `PICCPCore/Sources/PICCPCore/FederationDirectorySignature.swift`
   - Replaces coordinator directory Ed25519 signing with an ML-DSA-65 signing key bundle.
@@ -130,9 +138,9 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 No high-severity implementation findings remain from this pass. This does not replace an independent external audit.
 
 ### Medium
-1. **No real public-DHT adapter exists**
-   - Current: coordinator-assisted discovery plus peer hints; signed DHT records, a feature-gated candidate cache, and a mocked publish/query transport seam exist in core.
-   - Required before release exposure: relay-only BEP5/libp2p/custom adapter, live reachability probe integration, transport-level churn/poisoning simulation, and operator UI warnings.
+1. **No native public-DHT participant exists**
+   - Current: coordinator-assisted discovery plus peer hints; signed DHT records, a feature-gated candidate cache, a mocked publish/query transport seam, and an HTTP gateway/sidecar transport exist in core.
+   - Required before release exposure: relay-only BEP5/libp2p/custom native adapter, live reachability probe integration, transport-level churn/poisoning simulation, and operator UI warnings.
 
 2. **Network anonymity remains out of scope**
    - Current: metadata reduction only.

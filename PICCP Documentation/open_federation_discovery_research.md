@@ -100,7 +100,7 @@ Not recommended:
 
 ## DHT Record Sketch
 
-Status: the core signed-record primitive is implemented as `OpenFederationDHTRecord` in `PICCPCore`. A feature-gated `OpenFederationDHTCandidateCache` now models the relay-operator acceptance layer: it ingests only validated short-lived records, deduplicates by relay identity, caps records per host and overall, evicts stale entries, and exposes normal federation node records for later relay integration. `OpenFederationDHTTransport` and `OpenFederationDHTDiscoveryEngine` define the publish/query seam and testable refresh cycle. The project still does not ship a BEP5/libp2p/custom public-DHT adapter. This is intentional: the record schema, candidate cache, and transport boundary exist first so any later network adapter has a hard acceptance boundary.
+Status: the core signed-record primitive is implemented as `OpenFederationDHTRecord` in `PICCPCore`. A feature-gated `OpenFederationDHTCandidateCache` now models the relay-operator acceptance layer: it ingests only validated short-lived records, deduplicates by relay identity, caps records per host and overall, evicts stale entries, and exposes normal federation node records for later relay integration. `OpenFederationDHTTransport` and `OpenFederationDHTDiscoveryEngine` define the publish/query seam and testable refresh cycle. `OpenFederationDHTHTTPGatewayTransport` provides a concrete HTTP gateway/sidecar adapter so an operator can connect Noctyra to a separately managed BEP5/libp2p/custom discovery process without letting raw network results bypass Noctyra validation. The project still does not ship native public-DHT participation. This is intentional: the signed record schema, candidate cache, and gateway boundary exist first so any later network adapter has a hard acceptance boundary.
 
 ```json
 {
@@ -134,8 +134,9 @@ The record is deliberately small and short-lived. Relays republish periodically;
 2. Client/relay cache policy with stale-read fallback.
 3. R-PEX with strict caps and health validation.
 4. Open-mode UI re-enable behind a feature flag.
-5. Implement the optional BEP5/libp2p/custom DHT adapter behind the existing relay-operator feature flag.
-6. Extend load/poisoning simulation from the core candidate cache and mocked transport to the real network adapter before exposing the option in release builds.
+5. Use the HTTP gateway adapter for operator-run discovery sidecars.
+6. Implement optional native BEP5/libp2p/custom DHT participation behind the existing relay-operator feature flag only after gateway deployments provide operational data.
+7. Extend load/poisoning simulation from the core candidate cache and mocked/gateway transport to the native network adapter before exposing it in release builds.
 
 ## Why this fits current codebase
 The relay already has coordinator registration and node listing APIs. This plan extends existing coordinator logic first, then adds peer-exchange acceleration, and defers full DHT complexity until operational telemetry justifies it.

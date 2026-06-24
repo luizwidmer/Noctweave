@@ -46,7 +46,8 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 - [x] Define signed short-lived open-federation DHT relay record schema and validation tests
 - [x] Add feature-gated signed DHT candidate cache with poisoning/churn simulation tests
 - [x] Add feature-gated DHT publish/query transport seam with transport simulation tests
-- [ ] Implement a real relay-operator DHT adapter (BEP5/libp2p/custom overlay) behind the existing feature flag
+- [x] Add HTTP gateway/sidecar adapter for relay-operator DHT publish/query integration
+- [ ] Implement native public-DHT participation (BEP5/libp2p/custom overlay) behind the existing feature flag
 - [ ] Extend DHT poisoning/churn simulations to the real network adapter before exposing DHT discovery in release builds
 
 ## External validation
