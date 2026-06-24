@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Xcode
+DerivedData/
+build/
+.xcodebuild/
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+Packages/
+Package.resolved
+.clang-module-cache/
+
+# Local logs and scratch output
+.relay-data/
+*.log
+*.tmp
+*.swp
+
+# Local archives and exports
+*.zip
+*.tar
+*.tar.gz
+
+# Nested repositories kept with their own history
+PICCP Messaging Client/
+PICCP Server/
+PICCPCore/liboqs/

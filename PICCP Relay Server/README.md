@@ -1,0 +1,394 @@
+# PICCP Relay Server (Linux)
+
+A relay server that matches the line-delimited JSON protocol used by the Noctyra clients, with optional HTTP/WebSocket bridge support.
+
+## What it does
+
+- Accepts a single JSON request per TCP connection, delimited by `\\n`.
+- Optional HTTP/WebSocket bridge endpoint at `POST /relay` and `ws(s)://.../relay`.
+- Supports `deliver`, `fetch`, `health`, `info`, prekey bundle upload/fetch, pairing discovery requests, and attachment chunk relay.
+- Supports federation coordinator directory APIs (`registerFederationNode`, `listFederationNodes`).
+- Persists mailboxes + attachment chunks to `relay_store.sqlite` (unless `--memory-only`).
+
+## Build (local)
+
+```bash
+cd "PICCP Relay Server"
+swift build
+```
+
+Release build:
+
+```bash
+swift build -c release
+```
+
+## Run (local)
+
+```bash
+.build/debug/PICCPRelayServer --host 0.0.0.0 --port 9339 --data-dir /tmp/piccp
+```
+
+In-memory only (no disk writes):
+
+```bash
+.build/debug/PICCPRelayServer --memory-only
+```
+
+## Docker
+
+The image pins liboqs 0.15.0 for reproducible cryptographic builds and runs the
+relay as an unprivileged `noctyra` user. Mount `/data` as a writable volume
+owned by UID/GID `10001`. Coordinator nodes persist their directory-signing key
+inside this volume; back it up with the relay database to preserve client trust
+across rebuilds.
+
+For secrets, prefer environment variables over command-line flags so values do
+not appear in process listings:
+
+- `NOCTYRA_RELAY_PASSWORD`
+- `NOCTYRA_COORDINATOR_REGISTRATION_TOKEN`
+- `NOCTYRA_FEDERATION_FORWARDING_TOKEN`
+- `NOCTYRA_COORDINATOR_SIGNING_KEY` (base64)
+
+Use `--attachments-enabled false` for a text-only relay. Attachment upload and
+download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
+bucket schedule to disable temporal bucketing.
+
+```bash
+docker build -t piccp-relay ./"PICCP Relay Server"
+docker run --rm -p 9339:9339 -v piccp-data:/data piccp-relay
+```
+
+### Docker + Let's Encrypt (automatic TLS)
+
+Use the bundled Caddy stack when you want public TLS certs without manual PKCS#12 handling.
+
+1. Copy env template and set your domain/email:
+
+```bash
+cd "PICCP Relay Server"
+cp .env.letsencrypt.example .env
+```
+
+2. Edit `.env`:
+- `RELAY_DOMAIN`: public DNS name pointing to this host
+- `ACME_EMAIL`: Let's Encrypt contact email
+
+3. Start TLS stack:
+
+```bash
+docker compose -f docker-compose.letsencrypt.yml up -d --build
+```
+
+The relay listens internally on raw TCP `9339` and HTTP/WebSocket bridge `9340`.
+Caddy exposes TLS on `443` with automatic issuance/renewal and forwards `/relay` to the bridge.
+Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443/relay`.
+
+### Flags
+
+- `--host <ip>`: listen interface (default: `0.0.0.0`)
+- `--port <port>`: listen port (default: `9339`)
+- `--http-port <port>`: optional HTTP/WebSocket bridge port (disabled by default). Serves `POST /relay` and WebSocket `/relay`.
+- `--data-dir <path>`: store messages to `relay_store.sqlite` inside this directory (default: `/data`)
+- `--memory-only`: disable persistence
+- `--max-inbox <count>`: max messages stored per inbox (default: `1000`, `0` disables)
+- `--max-message-bytes <bytes>`: reject requests larger than this payload size (default: `524288`, `0` disables)
+- `--max-line-bytes <bytes>`: reject lines larger than this size before decoding (default: `655360`, `0` disables)
+- `--forwarding-timeout-seconds <seconds>`: timeout for relay-to-relay TCP/HTTP forwarding and federation checks (default: `8`, min `1`)
+- `--relay-kind <standard|discovery|bridge|archive|privateRelay|coordinator>`: advertise the relay kind (default: `standard`)
+- `--transport <tcp|http|websocket>`: advertised transport in relay info when no advertised endpoint is set (default: `tcp`)
+- `--federation-mode <solo|curated|open>`: advertise federation mode (default: `solo`)
+- `--federation-name <name>`: optional federation name
+- `--federation-description <text>`: optional federation description
+- `--federation-allow <host:port,host:port>`: allow-list relays for curated federation (repeat or comma-separated)
+- `--allow-private-federation-endpoints <true|false>`: permit open-federation registration/forwarding to loopback, LAN, or private addresses (default: `false`; use only for an isolated development network)
+- `--curated-strict-policy <true|false>`: enforce allow-list + coordinator quorum for curated forwarding (default: `true`)
+- `--curated-coordinator-quorum <count>`: minimum coordinators that must report destination relay as healthy (default: `1`)
+- `--curated-require-signed-directory <true|false>`: require signed coordinator snapshots when validating curated routes (default: `true`)
+- `--federation-coordinator <host:port[,host:port]>`: federation coordinator endpoint(s) used for relay directory + heartbeat registration
+- `--coordinator-registration-token <token>`: shared secret required by coordinator relays for `registerFederationNode`
+- `--federation-forwarding-auth-token <token>`: optional token used only for relay-to-relay `deliver` forwarding authentication
+- `--coordinator-heartbeat-seconds <seconds>`: relay heartbeat interval to coordinators (default: `45`, min `15`)
+- `--coordinator-directory-max-staleness-seconds <seconds>`: max acceptable heartbeat age for coordinator directory listings (default: `300`)
+- `--relay-peer-exchange-limit <count>`: max open-federation peer hints advertised in relay info (default: `12`)
+- `--coordinator-directory-signing-key <base64>`: optional Curve25519 private key for deterministic coordinator snapshot signing
+- `--advertised-endpoint <host:port|https://host:port|wss://host:port>`: endpoint this relay publishes to coordinators
+- `--advertise-tls <true|false>`: override TLS status in `relayInfo.tlsEnabled` (defaults to advertised endpoint scheme when set)
+- `--temporal-bucket-seconds <seconds>`: advertise temporal bucketing seconds (default: `300`)
+- `--temporal-bucket-minutes <minutes>`: convenience flag (overrides seconds)
+- `--temporal-bucket-schedule-seconds <csv>`: optional per-message bucket set (e.g. `60,120,300`)
+- `--temporal-bucket-schedule-minutes <csv>`: minutes variant (e.g. `1,2,5`)
+- `--attachment-default-ttl-seconds <seconds>`: default attachment retention TTL (default: `3600`)
+- `--attachment-default-ttl-minutes <minutes>`: default attachment retention TTL in minutes
+- `--attachment-max-ttl-seconds <seconds>`: max accepted attachment TTL (default: `21600`)
+- `--attachment-max-ttl-minutes <minutes>`: max accepted attachment TTL in minutes
+- `--relay-name <name>`: advertise a relay display name
+- `--operator-note <text>`: optional operator note for clients
+- `--software-version <text>`: optional software version string
+
+Security note:
+- Linux relay verifies actor-proof signatures when `liboqs` is available at runtime (included in the Docker image).
+- If `liboqs` is not available, actor-proof mutations are fail-closed.
+
+### Curated strict policy
+
+When `federation.mode=curated`, strict policy is enabled by default and forwarding is allowed only if all checks pass:
+
+1. Destination relay endpoint is present in static `--federation-allow`.
+2. At least `--curated-coordinator-quorum` coordinators report destination as healthy in the current directory.
+3. Directory response signature is valid when `--curated-require-signed-directory=true`.
+4. Destination relay advertises `federation.mode=curated` and matching federation name (if set).
+
+## Protocol
+
+The relay supports:
+- Raw TCP mode: one JSON object per connection, newline-delimited.
+- HTTP mode: `POST /relay` with JSON request body and JSON response body.
+- WebSocket mode: connect to `/relay`, send one request JSON frame, receive one response JSON frame.
+
+Raw TCP behavior: one JSON request line and one JSON response line, then close. If `destinationRelay` is provided on deliver, the relay forwards the envelope to the destination server and returns its response.
+Inbound client `authToken` is not forwarded; configure `--federation-forwarding-auth-token` when destination relays require auth.
+
+### Deliver
+
+**Request**
+
+```json
+{
+  "type": "deliver",
+  "deliver": {
+    "inboxId": "bob-inbox",
+    "routingToken": "optional-bech32-routing-token",
+    "envelope": {
+      "id": "C8B8F0E0-6C2D-4A2E-8D31-0C31B25C7B7A",
+      "conversationId": "base64-conversation-id",
+      "sessionId": "base64-session-id",
+      "senderFingerprint": "base64-fingerprint",
+      "sentAt": "2025-12-27T21:36:12Z",
+      "messageCounter": 0,
+      "kemCiphertext": "base64-optional",
+      "payload": {
+        "nonce": "base64",
+        "ciphertext": "base64",
+        "tag": "base64"
+      },
+      "signature": "base64"
+    },
+    "destinationRelay": { "host": "relay.example.com", "port": 9339 }
+  }
+}
+```
+
+**Response**
+
+```json
+{
+  "type": "delivered",
+  "delivered": { "storedCount": 1 }
+}
+```
+
+### Fetch
+
+**Request**
+
+```json
+{
+  "type": "fetch",
+  "fetch": { "inboxId": "bob-inbox", "routingToken": "optional-bech32-routing-token", "maxCount": 50 }
+}
+```
+
+**Response**
+
+```json
+{
+  "type": "messages",
+  "messages": [ { "id": "...", "conversationId": "...", "...": "..." } ]
+}
+```
+
+### Health
+
+**Request**
+
+```json
+{ "type": "health" }
+```
+
+**Response**
+
+```json
+{ "type": "ok" }
+```
+
+### Info
+
+```json
+{ "type": "info" }
+```
+
+```json
+{
+  "type": "info",
+  "relayInfo": {
+    "kind": "standard",
+    "federation": { "mode": "solo", "name": null, "description": null },
+    "tlsEnabled": true,
+    "federationCoordinatorEndpoints": [{ "host": "coord.example.org", "port": 9339 }],
+    "coordinatorReportedRelayCount": null,
+    "curatedStrictPolicyEnabled": true,
+    "curatedCoordinatorQuorum": 1,
+    "curatedRequireSignedDirectory": true,
+    "federationDirectoryPublicKey": "base64-optional",
+    "knownOpenPeers": [{ "host": "relay-open.example.org", "port": 9443, "useTLS": true }],
+    "temporalBucketSeconds": 300,
+    "temporalBucketScheduleSeconds": [60, 120, 300],
+    "attachmentDefaultTTLSeconds": 3600,
+    "attachmentMaxTTLSeconds": 21600,
+    "operatorNote": "Optional operator message",
+    "softwareVersion": "1.0.0",
+    "advertisedAt": "2026-02-02T12:00:00Z"
+  }
+}
+```
+
+### Federation Coordinator APIs
+
+Register/heartbeat relay metadata at a coordinator:
+
+```json
+{
+  "type": "registerFederationNode",
+  "registerFederationNode": {
+    "endpoint": { "host": "relay-x.example.org", "port": 9339 },
+    "relayInfo": { "...": "..." },
+    "ttlSeconds": 120
+  }
+}
+```
+
+List currently healthy federation relays from a coordinator:
+
+```json
+{
+  "type": "listFederationNodes",
+  "listFederationNodes": {
+    "mode": "curated",
+    "federationName": "MyFederation",
+    "onlyHealthy": true,
+    "maxStalenessSeconds": 300,
+    "requireSignedSnapshot": true
+  }
+}
+```
+
+Coordinator responses now include `federationSnapshot` (signed directory snapshot with `issuedAt` / `validUntil` / `signature`), when available.
+
+### Pairing Discovery
+
+Announce a contact offer for insecure pairing discovery:
+
+```json
+{
+  "type": "announce",
+  "announce": { "offer": { "...": "..." }, "ttlSeconds": 120 }
+}
+```
+
+List announcements:
+
+```json
+{ "type": "listAnnouncements", "listAnnouncements": { "limit": 50 } }
+```
+
+Send a pairing request to a specific fingerprint:
+
+```json
+{
+  "type": "sendPairRequest",
+  "sendPairRequest": { "targetFingerprint": "base64", "offer": { "...": "..." } }
+}
+```
+
+Fetch pending pairing requests:
+
+```json
+{
+  "type": "fetchPairRequests",
+  "fetchPairRequests": { "fingerprint": "base64", "maxCount": 5 }
+}
+```
+
+### Attachments
+
+Attachments are uploaded as encrypted chunks and fetched by attachment ID + chunk index.
+
+Upload chunk:
+
+```json
+{
+  "type": "uploadAttachment",
+  "uploadAttachment": {
+    "attachmentId": "C8B8F0E0-6C2D-4A2E-8D31-0C31B25C7B7A",
+    "chunkIndex": 0,
+    "payload": { "nonce": "base64", "ciphertext": "base64", "tag": "base64" },
+    "ttlSeconds": 1800
+  }
+}
+```
+
+Fetch chunk:
+
+```json
+{
+  "type": "fetchAttachment",
+  "fetchAttachment": {
+    "attachmentId": "C8B8F0E0-6C2D-4A2E-8D31-0C31B25C7B7A",
+    "chunkIndex": 0
+  }
+}
+```
+
+### Prekey Bundles
+
+Upload a signed + one-time prekey bundle:
+
+```json
+{
+  "type": "uploadPrekeys",
+  "uploadPrekeys": {
+    "fingerprint": "base64",
+    "bundle": { "...": "..." },
+    "ttlSeconds": 86400
+  }
+}
+```
+
+Fetch a prekey bundle (returns one-time prekey if available):
+
+```json
+{
+  "type": "fetchPrekeyBundle",
+  "fetchPrekeyBundle": { "fingerprint": "base64" }
+}
+```
+
+### Error
+
+```json
+{ "type": "error", "error": "Human-readable message" }
+```
+
+## Storage
+
+- File path: `<data-dir>/relay_store.sqlite`
+- Format: SQLite database with relay state snapshot blob
+- Message removal: messages are deleted after `fetch`
+- Attachment removal: chunks expire after their TTL
+
+## Compatibility
+
+- Compatible with the SwiftUI client in this repository.
+- The client uses a pure ML‑KEM‑768 session bootstrap; the first message includes `kemCiphertext`.

@@ -1,0 +1,11 @@
+NOCTYRA RELAY PRIVACY POLICY (DRAFT FOR LEGAL REVIEW)
+Version: 1.0-draft
+Date: February 16, 2026
+
+This relay software stores, routes, and forwards encrypted envelopes, but network and relay metadata can still be exposed.
+
+Operators and network observers may observe timestamps, IP addresses, inbox identifiers, relay topology, and traffic patterns.
+
+You are solely responsible for infrastructure security, lawful operation, data retention choices, backup handling, and jurisdictional compliance.
+
+No developer-hosted relay infrastructure is provided.

@@ -1,0 +1,52 @@
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9339"
+      - --http-port
+      - "9340"
+      - --data-dir
+      - /data
+      - --advertised-endpoint
+      - https://${RELAY_DOMAIN}:443
+      - --advertise-tls
+      - "true"
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+    networks:
+      - relay-net
+
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy-l4
+    depends_on:
+      - relay
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+      RELAY_DOMAIN: ${RELAY_DOMAIN}
+      RELAY_HTTP_UPSTREAM: relay:9340
+    volumes:
+      - ./Caddyfile.layer4:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+    networks:
+      - relay-net
+
+volumes:
+  relay-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  relay-net:

@@ -1,0 +1,39 @@
+NOCTYRA LEGAL REVIEW PACKET (DRAFT FOR COUNSEL)
+Version: 1.0-draft
+Date: February 16, 2026
+
+This packet consolidates current in-app legal language for lawyer review.
+
+-----------------------------------------------------------------
+CLIENT PRIVACY POLICY
+-----------------------------------------------------------------
+Noctyra stores selected profile data locally on your device and transmits encrypted envelopes through relays you configure.
+Even with end-to-end encryption, relay operators and network observers may infer metadata such as timing, source IP, destination relay, online status, and traffic volume patterns.
+You are solely responsible for selecting trustworthy relays, hardening your devices, controlling backups, and evaluating metadata exposure in your threat model.
+No developer-hosted relay infrastructure is provided.
+
+-----------------------------------------------------------------
+CLIENT TERMS OF USE
+-----------------------------------------------------------------
+By continuing, you agree this software is provided "as is" and "as available" without warranties or guarantees of any kind, express or implied, including merchantability, fitness for a particular purpose, availability, non-infringement, or security outcomes.
+There are no developer-hosted relays, managed infrastructure, moderation services, abuse handling services, recovery guarantees, legal compliance guarantees, or promised uptime.
+You are solely responsible for lawful use, key management, relay operation choices, compliance obligations, and operational security.
+To the maximum extent permitted by law, the software provider is not liable for any use or misuse of the software, including unlawful activity, data loss, compromise, metadata exposure, service interruption, account or identity loss, or any direct, indirect, incidental, consequential, special, exemplary, or punitive damages.
+You agree to indemnify and hold harmless the software provider from claims, liabilities, losses, and expenses arising from your use, deployment, or operation of the software.
+
+-----------------------------------------------------------------
+RELAY PRIVACY POLICY
+-----------------------------------------------------------------
+This relay software stores, routes, and forwards encrypted envelopes, but network and relay metadata can still be exposed.
+Operators and network observers may observe timestamps, IP addresses, inbox identifiers, relay topology, and traffic patterns.
+You are solely responsible for infrastructure security, lawful operation, data retention choices, backup handling, and jurisdictional compliance.
+No developer-hosted relay infrastructure is provided.
+
+-----------------------------------------------------------------
+RELAY TERMS OF USE
+-----------------------------------------------------------------
+By continuing, you agree this software is provided "as is" and "as available" without warranties or guarantees of any kind, express or implied, including merchantability, fitness for a particular purpose, availability, non-infringement, or security outcomes.
+There are no developer-hosted relays, managed infrastructure, moderation services, abuse handling services, legal compliance guarantees, or uptime guarantees.
+You are solely responsible for relay policy decisions, lawful operation, abuse reporting duties, and compliance with local regulations.
+To the maximum extent permitted by law, the software provider is not liable for any use or misuse of this software, including unlawful acts, data loss, metadata exposure, downtime, compromise, operational failures, or any direct, indirect, incidental, consequential, special, exemplary, or punitive damages.
+You agree to indemnify and hold harmless the software provider from claims, liabilities, losses, and expenses arising from your deployment or operation of the relay.
