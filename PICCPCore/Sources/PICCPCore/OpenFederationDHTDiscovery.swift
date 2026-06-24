@@ -6,20 +6,29 @@ public struct OpenFederationDHTDiscoveryConfiguration: Codable, Equatable {
     public var requirePublicEndpoint: Bool
     public var maxRecords: Int
     public var maxRecordsPerHost: Int
+    public var maxQueryRecords: Int
 
     public init(
         isEnabled: Bool = false,
         federationName: String? = nil,
         requirePublicEndpoint: Bool = true,
         maxRecords: Int = 64,
-        maxRecordsPerHost: Int = 4
+        maxRecordsPerHost: Int = 4,
+        maxQueryRecords: Int = 256
     ) {
         self.isEnabled = isEnabled
         self.federationName = federationName
         self.requirePublicEndpoint = requirePublicEndpoint
         self.maxRecords = max(1, maxRecords)
         self.maxRecordsPerHost = max(1, maxRecordsPerHost)
+        self.maxQueryRecords = max(1, maxQueryRecords)
     }
+}
+
+public enum OpenFederationDHTDiscoveryError: Error, Equatable {
+    case disabled
+    case transportUnavailable
+    case invalidLocalAdvertisement(OpenFederationDHTRecordError)
 }
 
 public enum OpenFederationDHTRecordRejectionReason: Equatable {
@@ -49,6 +58,85 @@ public struct OpenFederationDHTDiscoveryIngestResult: Equatable {
     ) {
         self.accepted = accepted
         self.rejected = rejected
+    }
+}
+
+public protocol OpenFederationDHTTransport: AnyObject {
+    func publish(_ record: OpenFederationDHTRecord, namespace: String) async throws
+    func query(namespace: String, limit: Int) async throws -> [OpenFederationDHTRecord]
+}
+
+public struct OpenFederationDHTDiscoveryCycleResult: Equatable {
+    public let publishedRecord: OpenFederationDHTRecord?
+    public let ingestResult: OpenFederationDHTDiscoveryIngestResult
+    public let nodes: [FederationNodeRecord]
+
+    public init(
+        publishedRecord: OpenFederationDHTRecord?,
+        ingestResult: OpenFederationDHTDiscoveryIngestResult,
+        nodes: [FederationNodeRecord]
+    ) {
+        self.publishedRecord = publishedRecord
+        self.ingestResult = ingestResult
+        self.nodes = nodes
+    }
+}
+
+public struct OpenFederationDHTDiscoveryEngine {
+    public private(set) var cache: OpenFederationDHTCandidateCache
+
+    public init(configuration: OpenFederationDHTDiscoveryConfiguration) {
+        self.cache = OpenFederationDHTCandidateCache(configuration: configuration)
+    }
+
+    public mutating func refresh(
+        transport: OpenFederationDHTTransport?,
+        localEndpoint: RelayEndpoint?,
+        signingKey: SigningKeyPair?,
+        now: Date = Date()
+    ) async throws -> OpenFederationDHTDiscoveryCycleResult {
+        let configuration = cache.configuration
+        guard configuration.isEnabled else {
+            throw OpenFederationDHTDiscoveryError.disabled
+        }
+        guard let transport else {
+            throw OpenFederationDHTDiscoveryError.transportUnavailable
+        }
+
+        let namespace = OpenFederationDHTRecord.namespace(federationName: configuration.federationName)
+        var publishedRecord: OpenFederationDHTRecord?
+        if let localEndpoint, let signingKey {
+            let record = try OpenFederationDHTRecord.signed(
+                endpoint: localEndpoint,
+                federationName: configuration.federationName,
+                signingKey: signingKey,
+                issuedAt: now
+            )
+            do {
+                try record.validate(
+                    expectedFederationName: configuration.federationName,
+                    now: now,
+                    requirePublicEndpoint: configuration.requirePublicEndpoint
+                )
+            } catch let error as OpenFederationDHTRecordError {
+                throw OpenFederationDHTDiscoveryError.invalidLocalAdvertisement(error)
+            } catch {
+                throw OpenFederationDHTDiscoveryError.invalidLocalAdvertisement(.invalidSignature)
+            }
+            try await transport.publish(record, namespace: namespace)
+            publishedRecord = record
+        }
+
+        let queriedRecords = try await transport.query(
+            namespace: namespace,
+            limit: configuration.maxQueryRecords
+        )
+        let ingestResult = cache.ingest(queriedRecords, now: now)
+        return OpenFederationDHTDiscoveryCycleResult(
+            publishedRecord: publishedRecord,
+            ingestResult: ingestResult,
+            nodes: cache.federationNodes(now: now)
+        )
     }
 }
 

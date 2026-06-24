@@ -312,6 +312,131 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertTrue(cache.records(now: newer.expiresAt.addingTimeInterval(1)).isEmpty)
     }
 
+    func testOpenFederationDHTDiscoveryEnginePublishesAndQueriesBehindFeatureFlag() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "open-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let localEndpoint = RelayEndpoint(host: "local-relay.example.org", port: 443, useTLS: true, transport: .websocket)
+        let localKey = SigningKeyPair()
+        let remoteRecord = try makeDHTRecord(host: "remote-relay.example.org", federationName: federationName, issuedAt: now)
+        let transport = MockOpenFederationDHTTransport(recordsByNamespace: [namespace: [remoteRecord]])
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 8,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 16
+            )
+        )
+
+        let result = try await engine.refresh(
+            transport: transport,
+            localEndpoint: localEndpoint,
+            signingKey: localKey,
+            now: now
+        )
+
+        let publishedRecords = await transport.publishedRecords()
+        let lastQueryLimit = await transport.lastQueryLimit()
+        XCTAssertEqual(result.publishedRecord?.endpoint, localEndpoint)
+        XCTAssertEqual(publishedRecords.count, 1)
+        XCTAssertEqual(lastQueryLimit, 16)
+        XCTAssertEqual(Set(result.nodes.map(\.endpoint.host)), ["local-relay.example.org", "remote-relay.example.org"])
+    }
+
+    func testOpenFederationDHTDiscoveryEngineDisabledDoesNotTouchTransport() async throws {
+        let transport = MockOpenFederationDHTTransport()
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: false,
+                federationName: "disabled-net",
+                requirePublicEndpoint: false
+            )
+        )
+
+        do {
+            _ = try await engine.refresh(
+                transport: transport,
+                localEndpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket),
+                signingKey: SigningKeyPair(),
+                now: Date(timeIntervalSince1970: 1_000)
+            )
+            XCTFail("Expected disabled DHT discovery to throw before transport access")
+        } catch {
+            XCTAssertEqual(error as? OpenFederationDHTDiscoveryError, .disabled)
+        }
+
+        let publishedRecords = await transport.publishedRecords()
+        let queryCount = await transport.queryCount()
+        XCTAssertTrue(publishedRecords.isEmpty)
+        XCTAssertEqual(queryCount, 0)
+    }
+
+    func testOpenFederationDHTDiscoveryEngineRejectsInvalidLocalAdvertisementBeforePublish() async throws {
+        let transport = MockOpenFederationDHTTransport()
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "public-net",
+                requirePublicEndpoint: true
+            )
+        )
+
+        do {
+            _ = try await engine.refresh(
+                transport: transport,
+                localEndpoint: RelayEndpoint(host: "127.0.0.1", port: 443, useTLS: true, transport: .websocket),
+                signingKey: SigningKeyPair(),
+                now: Date(timeIntervalSince1970: 1_000)
+            )
+            XCTFail("Expected non-public local advertisement to be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? OpenFederationDHTDiscoveryError,
+                .invalidLocalAdvertisement(.nonPublicEndpoint)
+            )
+        }
+
+        let publishedRecords = await transport.publishedRecords()
+        let queryCount = await transport.queryCount()
+        XCTAssertTrue(publishedRecords.isEmpty)
+        XCTAssertEqual(queryCount, 0)
+    }
+
+    func testOpenFederationDHTDiscoveryEngineHonorsTransportQueryLimit() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "limited-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let records = try (0..<5).map { index in
+            try makeDHTRecord(host: "relay-\(index).example.org", federationName: federationName, issuedAt: now)
+        }
+        let transport = MockOpenFederationDHTTransport(recordsByNamespace: [namespace: records])
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 10,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 2
+            )
+        )
+
+        let result = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: now
+        )
+
+        let lastQueryLimit = await transport.lastQueryLimit()
+        XCTAssertEqual(lastQueryLimit, 2)
+        XCTAssertEqual(result.ingestResult.accepted.count, 2)
+        XCTAssertEqual(Set(result.nodes.map(\.endpoint.host)), ["relay-0.example.org", "relay-1.example.org"])
+    }
+
     func testContactOfferCodeRoundTrip() throws {
         let identity = Identity(displayName: "Alice")
         let relay = RelayEndpoint(host: "localhost", port: 9339)
@@ -3291,5 +3416,39 @@ private extension Array {
                 swapAt(index, swapIndex)
             }
         }
+    }
+}
+
+private actor MockOpenFederationDHTTransport: OpenFederationDHTTransport {
+    private var recordsByNamespace: [String: [OpenFederationDHTRecord]]
+    private var published: [OpenFederationDHTRecord] = []
+    private var queries = 0
+    private var mostRecentLimit: Int?
+
+    init(recordsByNamespace: [String: [OpenFederationDHTRecord]] = [:]) {
+        self.recordsByNamespace = recordsByNamespace
+    }
+
+    func publish(_ record: OpenFederationDHTRecord, namespace: String) async throws {
+        published.append(record)
+        recordsByNamespace[namespace, default: []].append(record)
+    }
+
+    func query(namespace: String, limit: Int) async throws -> [OpenFederationDHTRecord] {
+        queries += 1
+        mostRecentLimit = limit
+        return Array((recordsByNamespace[namespace] ?? []).prefix(limit))
+    }
+
+    func publishedRecords() -> [OpenFederationDHTRecord] {
+        published
+    }
+
+    func queryCount() -> Int {
+        queries
+    }
+
+    func lastQueryLimit() -> Int? {
+        mostRecentLimit
     }
 }

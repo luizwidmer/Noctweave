@@ -43,8 +43,9 @@ This checklist tracks current implementation status (not the legacy roadmap draf
 - [x] Evaluate optional DHT namespace and torrent-infrastructure feasibility for open federation
 - [x] Define signed short-lived open-federation DHT relay record schema and validation tests
 - [x] Add feature-gated signed DHT candidate cache with poisoning/churn simulation tests
-- [ ] Wire relay-operator DHT publish/query transport behind a feature flag
-- [ ] Extend DHT poisoning/churn simulations to the network transport before exposing DHT discovery in release builds
+- [x] Add feature-gated DHT publish/query transport seam with transport simulation tests
+- [ ] Implement a real relay-operator DHT adapter (BEP5/libp2p/custom overlay) behind the existing feature flag
+- [ ] Extend DHT poisoning/churn simulations to the real network adapter before exposing DHT discovery in release builds
 
 ## External validation
 - [ ] Independent external security audit (firm-selected report)
