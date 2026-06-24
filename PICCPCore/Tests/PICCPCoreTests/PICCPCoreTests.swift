@@ -1,9 +1,26 @@
 import Foundation
+import CryptoKit
 import SQLite3
 import XCTest
 @testable import PICCPCore
 
 final class PICCPCoreTests: XCTestCase {
+    func testRatchetRecoveryPolicyClassifiesRecoverableFailures() throws {
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.invalidPayload), .recover)
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterOutOfOrder), .recover)
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterWindowExceeded), .recover)
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterReplay), .acknowledge)
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.invalidSignature), .acknowledge)
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.operationFailed), .retryLater)
+
+        let key = SymmetricKey(size: .bits256)
+        let wrongKey = SymmetricKey(size: .bits256)
+        let sealed = try AES.GCM.seal(Data("message".utf8), using: key)
+        XCTAssertThrowsError(try AES.GCM.open(sealed, using: wrongKey)) { error in
+            XCTAssertEqual(RatchetRecoveryPolicy.decision(for: error), .recover)
+        }
+    }
+
     func testPublicRelayEndpointPolicyRejectsIPv6TransitionPrivateTargets() {
         let endpoints = [
             RelayEndpoint(host: "64:ff9b::7f00:1", port: 443, useTLS: true),
