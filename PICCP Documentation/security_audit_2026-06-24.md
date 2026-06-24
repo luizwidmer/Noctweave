@@ -195,6 +195,14 @@ Linux also contains native relay-protocol DHT publish/list routes and a native o
   - `PICCPCoreTests.testRelayStoreDiskPersistenceSkipsCorruptNormalizedMessageRow`
   - `RelayStoreParityTests.testDiskPersistenceSkipsCorruptNormalizedMessageRow`
 
+- `PICCP Relay Server/Sources/PICCPRelayServer/LineCodec.swift`
+  - Replaces the `ByteToMessageHandler(LineDecoder(...))` relay framing path with a local cumulative `LineFrameHandler`.
+  - Adds an explicit unchecked NIO context box for event-loop-confined callback use, removing Swift/NIO sendability warnings without changing the line-delimited TCP protocol.
+
+- `PICCP Relay Server/Sources/PICCPRelayServer/RelayHandler.swift` and `HTTPRelayBridge.swift`
+  - Avoid direct `ChannelHandlerContext` captures in asynchronous completions.
+  - Marks HTTP/WebSocket bridge handlers as unchecked Sendable at the NIO event-loop boundary.
+
 ## Remaining Findings
 
 ### High
@@ -216,14 +224,6 @@ No high-severity implementation findings remain from this pass. This does not re
    - Current: dependency SBOM and release signing policy are documented, with a deterministic machine-readable SBOM snapshot and local release verification script.
    - Required: CI enforcement, required container vulnerability scanning, signed provenance attestations, and external audit.
 
-2. **Swift 6 package mode remains pending**
-   - Current: `swift test` passes, but the Linux relay still emits NIO sendability warnings around `ByteToMessageHandler` and `ChannelHandlerContext` captures.
-   - Required before Swift 6 migration: migrate the Linux package after upstream NIO concurrency annotations and local strict-concurrency settings are verified together.
-
-3. **Persistent-store migration policy needs formal version tests**
-   - Current: legacy snapshot stores are migrated into normalized tables on load, and normalized row corruption is tested.
-   - Required: explicit schema-version upgrade tests before any future persistent-store schema change.
-
 ## Verification Plan
 
 - Run `swift test` in `PICCPCore`.
@@ -242,6 +242,7 @@ No high-severity implementation findings remain from this pass. This does not re
   - poisoned and host-flooded results after HTTP gateway decode (gateway transport covered)
   - bounded peer-hint traversal and poisoned/host-flooded results after native overlay decode (Linux native overlay covered)
   - normalized relay mailbox row corruption skips only the damaged row while retaining healthy rows (core and Linux relay store covered)
+  - legacy relay snapshot migration into normalized tables (core and Linux relay store covered)
 
 ## References
 

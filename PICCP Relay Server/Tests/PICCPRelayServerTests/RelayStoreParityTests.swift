@@ -538,6 +538,38 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(fetched.map(\.id), [first.id])
     }
 
+    func testDiskPersistenceMigratesLegacySnapshotIntoNormalizedTables() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
+        let requestedURL = tempDirectory.appendingPathComponent("relay_store.json")
+        let sqliteURL = tempDirectory.appendingPathComponent("relay_store.sqlite")
+        let inboxId = InboxAddress.generate()
+        let envelope = makeEnvelope()
+        let legacySnapshot = LegacyRelayStoreSnapshot(
+            mailboxes: [
+                inboxId: [
+                    LegacyStoredEnvelope(envelope: envelope, storedAt: Date())
+                ]
+            ]
+        )
+        try insertRelayStateValue(
+            at: sqliteURL,
+            key: "relay_snapshot_v1",
+            value: RelayCodec.encoder().encode(legacySnapshot)
+        )
+
+        let reader = RelayStore(fileURL: requestedURL, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        reader.load()
+        let fetched = reader.fetch(inboxId: inboxId, maxCount: nil)
+
+        XCTAssertEqual(fetched.map(\.id), [envelope.id])
+        XCTAssertTrue(try relayStateMetaExists(at: sqliteURL, key: "normalized_schema_v1"))
+        XCTAssertEqual(try sqliteRowCount(at: sqliteURL, table: "relay_mailbox_envelopes"), 1)
+    }
+
     private func makeEnvelope() -> Envelope {
         Envelope(
             conversationId: "parity-conversation",
@@ -553,6 +585,15 @@ final class RelayStoreParityTests: XCTestCase {
             ),
             signature: Data([0x99, 0x98, 0x97])
         )
+    }
+
+    private struct LegacyRelayStoreSnapshot: Codable {
+        let mailboxes: [String: [LegacyStoredEnvelope]]
+    }
+
+    private struct LegacyStoredEnvelope: Codable {
+        let envelope: Envelope
+        let storedAt: Date
     }
 
     private func overwriteMailboxEnvelope(at sqliteURL: URL, envelopeId: UUID, with data: Data) throws {
@@ -582,6 +623,77 @@ final class RelayStoreParityTests: XCTestCase {
             throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 9)
         }
         XCTAssertEqual(sqlite3_changes(db), 1)
+    }
+
+    private func insertRelayStateValue(at sqliteURL: URL, key: String, value: Data) throws {
+        var db: OpaquePointer?
+        guard sqlite3_open(sqliteURL.path, &db) == SQLITE_OK, let db else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 10)
+        }
+        defer { sqlite3_close(db) }
+        guard sqlite3_exec(
+            db,
+            "CREATE TABLE IF NOT EXISTS relay_state (key TEXT PRIMARY KEY, value BLOB NOT NULL);",
+            nil,
+            nil,
+            nil
+        ) == SQLITE_OK else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 11)
+        }
+        let sql = "INSERT INTO relay_state (key, value) VALUES (?1, ?2);"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 12)
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_bind_text(statement, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self)) == SQLITE_OK else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 13)
+        }
+        let bindBlobResult = value.withUnsafeBytes { buffer in
+            sqlite3_bind_blob(statement, 2, buffer.baseAddress, Int32(buffer.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        guard bindBlobResult == SQLITE_OK else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 14)
+        }
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 15)
+        }
+    }
+
+    private func relayStateMetaExists(at sqliteURL: URL, key: String) throws -> Bool {
+        var db: OpaquePointer?
+        guard sqlite3_open(sqliteURL.path, &db) == SQLITE_OK, let db else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 16)
+        }
+        defer { sqlite3_close(db) }
+        let sql = "SELECT 1 FROM relay_state_meta WHERE key = ?1 LIMIT 1;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 17)
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_bind_text(statement, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self)) == SQLITE_OK else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 18)
+        }
+        return sqlite3_step(statement) == SQLITE_ROW
+    }
+
+    private func sqliteRowCount(at sqliteURL: URL, table: String) throws -> Int {
+        var db: OpaquePointer?
+        guard sqlite3_open(sqliteURL.path, &db) == SQLITE_OK, let db else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 19)
+        }
+        defer { sqlite3_close(db) }
+        let sql = "SELECT COUNT(*) FROM \(table);"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 20)
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw NSError(domain: "PICCPRelayServerTests.SQLite", code: 21)
+        }
+        return Int(sqlite3_column_int64(statement, 0))
     }
 
     private func makeUnsignedDHTRecord(host: String, federationName: String) -> OpenFederationDHTRecord {

@@ -2,8 +2,8 @@ import Foundation
 import XCTest
 import Crypto
 @preconcurrency import NIOCore
-import NIOPosix
-import NIOFoundationCompat
+@preconcurrency import NIOPosix
+@preconcurrency import NIOFoundationCompat
 @testable import PICCPRelayServer
 
 final class RelayTCPIntegrationTests: XCTestCase {
@@ -420,7 +420,7 @@ private final class RelayTCPHarness {
             .serverChannelOption(ChannelOptions.backlog, value: 64)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { channel in
-                channel.pipeline.addHandler(ByteToMessageHandler(LineDecoder(maxLength: maxLineBytes))).flatMap {
+                channel.pipeline.addHandler(LineFrameHandler(maxLength: maxLineBytes)).flatMap {
                     channel.pipeline.addHandler(
                         RelayHandler(
                             store: store,
@@ -460,7 +460,7 @@ private final class RelayTCPHarness {
         let completion = TCPResponseCompletion()
 
         let bootstrap = ClientBootstrap(group: group).channelInitializer { channel in
-            channel.pipeline.addHandler(ByteToMessageHandler(LineDecoder(maxLength: self.maxLineBytes))).flatMap {
+            channel.pipeline.addHandler(LineFrameHandler(maxLength: self.maxLineBytes)).flatMap {
                 channel.pipeline.addHandler(
                     TCPResponseHandler(
                         requestData: data,

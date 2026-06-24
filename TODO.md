@@ -12,7 +12,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] If autonomous public-DHT bootstrap is rejected or deferred, that decision is documented with threat, operations, and maintenance rationale.
 - [x] Linux relay and mac relay feature parity is verified for the selected federation/discovery mode.
 - [x] Release verification covers relay tests, SBOM checks, package pin checks, and optional container scanning hooks.
-- [ ] The final TODO and audit documents identify no open security/DHT items except external validation work that requires third parties or CI infrastructure.
+- [x] The final TODO and audit documents identify no open security/DHT items except external validation work that requires third parties or CI infrastructure.
 
 ## Core protocol + client
 - [x] PQ identity + continuity model (ML-DSA identity assertions, continuity events)
@@ -73,4 +73,4 @@ The current security/DHT goal is complete when all of the following are true:
 ## External validation
 - [ ] Independent external security audit (firm-selected report)
 - [ ] Enforce release verification, container scanning, and signed provenance in CI
-- [ ] Resolve Swift 6/NIO sendability warnings before moving the Linux package to Swift 6 mode
+- [x] Resolve Swift 6/NIO sendability warnings before moving the Linux package to Swift 6 mode

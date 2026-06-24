@@ -1,6 +1,6 @@
 import Foundation
 @preconcurrency import NIOCore
-import NIOPosix
+@preconcurrency import NIOPosix
 
 struct ServerConfig {
     var host: String
@@ -452,7 +452,7 @@ let bootstrap = ServerBootstrap(group: group)
     .serverChannelOption(ChannelOptions.backlog, value: 256)
     .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
     .childChannelInitializer { channel in
-            channel.pipeline.addHandler(ByteToMessageHandler(LineDecoder(maxLength: config.maxLineBytes))).flatMap {
+            channel.pipeline.addHandler(LineFrameHandler(maxLength: config.maxLineBytes)).flatMap {
                 channel.pipeline.addHandler(RelayHandler(
                     store: store,
                     maxMessageBytes: config.maxMessageBytes,

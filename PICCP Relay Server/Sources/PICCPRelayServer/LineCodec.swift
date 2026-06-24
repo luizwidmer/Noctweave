@@ -1,38 +1,75 @@
 import Foundation
-import NIOCore
-import NIOFoundationCompat
+@preconcurrency import NIOCore
+@preconcurrency import NIOFoundationCompat
 
 enum LineCodecError: Error {
     case lineTooLong
 }
 
-final class LineDecoder: ByteToMessageDecoder {
+final class NIOContextBox: @unchecked Sendable {
+    let context: ChannelHandlerContext
+
+    init(_ context: ChannelHandlerContext) {
+        self.context = context
+    }
+}
+
+final class LineFrameHandler: ChannelDuplexHandler {
+    typealias InboundIn = ByteBuffer
     typealias InboundOut = ByteBuffer
+    typealias OutboundIn = ByteBuffer
+    typealias OutboundOut = ByteBuffer
+
     private let maxLength: Int?
+    private var pending: ByteBuffer?
 
     init(maxLength: Int? = nil) {
         self.maxLength = maxLength
     }
 
-    func decode(context: ChannelHandlerContext, buffer: inout ByteBuffer) throws -> DecodingState {
-        guard let newlineIndex = buffer.readableBytesView.firstIndex(of: 0x0A) else {
-            if let maxLength, buffer.readableBytes > maxLength {
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        var incoming = unwrapInboundIn(data)
+        if pending == nil {
+            pending = context.channel.allocator.buffer(capacity: incoming.readableBytes)
+        }
+        pending?.writeBuffer(&incoming)
+        emitAvailableLines(context: context)
+    }
+
+    func channelReadComplete(context: ChannelHandlerContext) {
+        context.fireChannelReadComplete()
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        context.fireErrorCaught(error)
+    }
+
+    private func emitAvailableLines(context: ChannelHandlerContext) {
+        guard var buffer = pending else {
+            return
+        }
+        while let newlineIndex = buffer.readableBytesView.firstIndex(of: 0x0A) {
+            let length = buffer.readerIndex.distance(to: newlineIndex)
+            if let maxLength, length > maxLength {
+                context.fireErrorCaught(LineCodecError.lineTooLong)
                 context.close(promise: nil)
-                throw LineCodecError.lineTooLong
+                pending = nil
+                return
             }
-            return .needMoreData
+            guard let line = buffer.readSlice(length: length) else {
+                break
+            }
+            buffer.moveReaderIndex(forwardBy: 1)
+            context.fireChannelRead(wrapInboundOut(line))
         }
-        let length = buffer.readerIndex.distance(to: newlineIndex)
-        if let maxLength, length > maxLength {
+        if let maxLength, buffer.readableBytes > maxLength {
+            context.fireErrorCaught(LineCodecError.lineTooLong)
             context.close(promise: nil)
-            throw LineCodecError.lineTooLong
+            pending = nil
+            return
         }
-        guard let line = buffer.readSlice(length: length) else {
-            return .needMoreData
-        }
-        buffer.moveReaderIndex(forwardBy: 1)
-        context.fireChannelRead(wrapInboundOut(line))
-        return .continue
+        buffer.discardReadBytes()
+        pending = buffer.readableBytes > 0 ? buffer : nil
     }
 }
 

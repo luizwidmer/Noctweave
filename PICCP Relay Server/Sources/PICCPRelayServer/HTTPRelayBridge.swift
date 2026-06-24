@@ -1,10 +1,10 @@
 import Foundation
 @preconcurrency import NIOCore
 import NIOPosix
-import NIOHTTP1
-import NIOWebSocket
-import NIOFoundationCompat
-import NIOConcurrencyHelpers
+@preconcurrency import NIOHTTP1
+@preconcurrency import NIOWebSocket
+@preconcurrency import NIOFoundationCompat
+@preconcurrency import NIOConcurrencyHelpers
 
 func makeHTTPRelayBridgeBootstrap(
     group: EventLoopGroup,
@@ -74,7 +74,7 @@ final class LocalRelayForwarder {
         let bootstrap = ClientBootstrap(group: eventLoop)
             .connectTimeout(.seconds(Int64(requestTimeoutSeconds)))
             .channelInitializer { channel in
-                channel.pipeline.addHandler(ByteToMessageHandler(LineDecoder(maxLength: self.maxLineBytes))).flatMap {
+                channel.pipeline.addHandler(LineFrameHandler(maxLength: self.maxLineBytes)).flatMap {
                     channel.pipeline.addHandler(
                         RelayBridgeForwardingHandler(
                             requestData: payload,
@@ -95,7 +95,7 @@ private struct RelayBridgeTimeoutError: LocalizedError {
     var errorDescription: String? { "Relay bridge request timed out." }
 }
 
-private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHandler {
+private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
 
@@ -149,13 +149,14 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
         }
 
         let payload = requestBody.readData(length: requestBody.readableBytes) ?? Data()
+        let responseContext = NIOContextBox(context)
         forwarder.forward(payload, on: context.eventLoop).whenComplete { result in
             switch result {
             case .success(let responseData):
-                self.sendHTTPResponse(status: .ok, body: responseData, context: context)
+                self.sendHTTPResponse(status: .ok, body: responseData, context: responseContext.context)
             case .failure(let error):
                 let body = Data(#"{"type":"error","error":"Bridge forward failed"}"#.utf8)
-                self.sendHTTPResponse(status: .badGateway, body: body, context: context)
+                self.sendHTTPResponse(status: .badGateway, body: body, context: responseContext.context)
                 print("[relay] http bridge forward failure: \(error.localizedDescription)")
             }
         }
@@ -171,8 +172,9 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
         var buffer = context.channel.allocator.buffer(capacity: body.count)
         buffer.writeBytes(body)
         context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+        let responseContext = NIOContextBox(context)
         context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
-            context.close(promise: nil)
+            responseContext.context.close(promise: nil)
         }
     }
 
@@ -181,7 +183,7 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
     }
 }
 
-private final class WebSocketRelayHandler: ChannelInboundHandler {
+private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = WebSocketFrame
     typealias OutboundOut = WebSocketFrame
 
@@ -216,13 +218,14 @@ private final class WebSocketRelayHandler: ChannelInboundHandler {
                 send(frameType: .text, payload: Data(#"{"type":"error","error":"Payload too large"}"#.utf8), context: context)
                 return
             }
+            let responseContext = NIOContextBox(context)
             forwarder.forward(payload, on: context.eventLoop).whenComplete { result in
                 switch result {
                 case .success(let responseData):
-                    self.send(frameType: frame.opcode, payload: responseData, context: context)
+                    self.send(frameType: frame.opcode, payload: responseData, context: responseContext.context)
                 case .failure(let error):
                     let response = Data(#"{"type":"error","error":"Bridge forward failed"}"#.utf8)
-                    self.send(frameType: .text, payload: response, context: context)
+                    self.send(frameType: .text, payload: response, context: responseContext.context)
                     print("[relay] websocket bridge forward failure: \(error.localizedDescription)")
                 }
             }

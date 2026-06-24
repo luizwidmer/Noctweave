@@ -1,9 +1,9 @@
 import Foundation
 import Crypto
 @preconcurrency import NIOCore
-import NIOFoundationCompat
-import NIOPosix
-import NIOConcurrencyHelpers
+@preconcurrency import NIOFoundationCompat
+@preconcurrency import NIOPosix
+@preconcurrency import NIOConcurrencyHelpers
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -74,12 +74,13 @@ final class RelayHandler: ChannelInboundHandler {
         }
         do {
             let request = try RelayCodec.decoder().decode(RelayRequest.self, from: payload)
+            let responseContext = NIOContextBox(context)
             handle(request, context: context).whenComplete { result in
                 switch result {
                 case .success(let response):
-                    self.respond(response, context: context)
+                    self.respond(response, context: responseContext.context)
                 case .failure(let error):
-                    self.respond(.error("Handler error: \(error.localizedDescription)"), context: context)
+                    self.respond(.error("Handler error: \(error.localizedDescription)"), context: responseContext.context)
                 }
             }
         } catch {
@@ -110,9 +111,10 @@ final class RelayHandler: ChannelInboundHandler {
             }
             if let destination = deliver.destinationRelay,
                destination != localEndpoint {
-                return federationGate(forwardingTo: destination, on: context.eventLoop).flatMap { response in
+                let eventLoop = context.eventLoop
+                return federationGate(forwardingTo: destination, on: eventLoop).flatMap { response in
                     if let response {
-                        return context.eventLoop.makeSucceededFuture(response)
+                        return eventLoop.makeSucceededFuture(response)
                     }
                     let forward = DeliverRequest(
                         inboxId: deliver.inboxId,
@@ -123,7 +125,7 @@ final class RelayHandler: ChannelInboundHandler {
                     return self.forwardDeliver(
                         forward,
                         to: destination,
-                        on: context.eventLoop
+                        on: eventLoop
                     )
                 }
             }
@@ -695,15 +697,16 @@ final class RelayHandler: ChannelInboundHandler {
             guard allowed else {
                 return context.eventLoop.makeSucceededFuture(.error("Coordinator registration throttled. Retry later."))
             }
-            return validateFederationRegistrationReachability(registration, on: context.eventLoop).flatMap { failure in
+            let eventLoop = context.eventLoop
+            return validateFederationRegistrationReachability(registration, on: eventLoop).flatMap { failure in
                 if let failure {
-                    return context.eventLoop.makeSucceededFuture(failure)
+                    return eventLoop.makeSucceededFuture(failure)
                 }
                 do {
                     let node = try self.store.registerFederationNode(registration)
-                    return context.eventLoop.makeSucceededFuture(.federationNodes([node]))
+                    return eventLoop.makeSucceededFuture(.federationNodes([node]))
                 } catch {
-                    return context.eventLoop.makeSucceededFuture(.error("Coordinator registration failed: \(error.localizedDescription)"))
+                    return eventLoop.makeSucceededFuture(.error("Coordinator registration failed: \(error.localizedDescription)"))
                 }
             }
         case .listFederationNodes:
@@ -1313,7 +1316,7 @@ final class RelayHandler: ChannelInboundHandler {
             let bootstrap = ClientBootstrap(group: eventLoop)
                 .connectTimeout(.seconds(Int64(forwardingRequestTimeoutSeconds)))
                 .channelInitializer { channel in
-                    channel.pipeline.addHandler(ByteToMessageHandler(LineDecoder(maxLength: self.maxLineBytes))).flatMap {
+                    channel.pipeline.addHandler(LineFrameHandler(maxLength: self.maxLineBytes)).flatMap {
                         channel.pipeline.addHandler(ForwardingHandler(requestData: data, promise: promise, completion: completion))
                     }
                 }
