@@ -42,8 +42,8 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 
 ### Storage compromise or corruption
 - Attacker obtains relay disk files, local client storage, backups, or intentionally corrupts persistence files.
-- Mitigations present: client-side encrypted payloads and attachments, encrypted client storage options, relay attachment TTL, bounded relay queues, SQLite-backed relay state file instead of plain JSON, relay RAM-only mode for operators who do not want persistence, and a previous-good-snapshot fallback when the primary SQLite snapshot blob is corrupted.
-- Residual risk: relay persistence currently stores encoded state snapshots inside SQLite rather than normalized transactional tables. The backup snapshot improves recovery from primary snapshot corruption, but row-scoped recovery and migrations still require a normalized schema.
+- Mitigations present: client-side encrypted payloads and attachments, encrypted client storage options, relay attachment TTL, bounded relay queues, SQLite-backed relay state file instead of plain JSON, relay RAM-only mode for operators who do not want persistence, normalized transactional relay-domain tables, legacy snapshot migration, and row-scoped skipping of corrupt persisted records.
+- Residual risk: future SQLite schema changes need explicit versioned migration tests before release branches rely on upgraded persistent stores.
 
 ### Transport downgrade or proxy misconfiguration
 - Attacker or operator misconfiguration routes open-federation traffic over cleartext, advertises a LAN/private endpoint, strips TLS at the wrong boundary, or exposes the relay directly when it was intended to sit behind a reverse proxy.
@@ -183,6 +183,18 @@ Linux also contains native relay-protocol DHT publish/list routes and a native o
 - `scripts/verify-release.sh`
   - Adds a local release gate for SBOM freshness, package pin drift, Linux relay tests, Dockerfile syntax checks, and optional Trivy scanning when installed.
 
+- `PICCPCore/Sources/PICCPCore/RelayStore.swift`
+  - Replaces new relay persistence writes with normalized SQLite tables for mailbox envelopes, inbox registrations, attachment chunks, prekey bundles, federation nodes, pinned coordinator keys, groups, and group join requests.
+  - Keeps legacy snapshot/backup loading as a migration path, then rewrites loaded state into the normalized schema.
+  - Skips corrupt individual persisted rows during normalized load so one damaged message or record does not prevent healthy rows from loading.
+
+- `PICCP Relay Server/Sources/PICCPRelayServer/RelayStore.swift`
+  - Adds Linux relay parity for the same normalized transactional SQLite schema, legacy migration path, and row-scoped corruption tolerance.
+
+- Regression tests:
+  - `PICCPCoreTests.testRelayStoreDiskPersistenceSkipsCorruptNormalizedMessageRow`
+  - `RelayStoreParityTests.testDiskPersistenceSkipsCorruptNormalizedMessageRow`
+
 ## Remaining Findings
 
 ### High
@@ -199,19 +211,18 @@ No high-severity implementation findings remain from this pass. This does not re
    - Required for stronger claims: PIR, mixnet, onion routing, or cover traffic.
    - Release blocker: no, provided the product does not claim network anonymity beyond metadata reduction.
 
-3. **Relay persistence still has operational hardening work**
-   - Current: SQLite-backed snapshot-style persistence now keeps a previous-good backup snapshot and restores from it if the primary snapshot blob cannot be decoded. Core and Linux relay tests cover primary snapshot corruption fallback.
-   - Required: transactional normalized tables and migration policy.
-   - Release blocker: yes for a hardening-complete relay release; acceptable for development builds and explicit test deployments.
-
 ### Low
 1. **Release engineering remains incomplete**
    - Current: dependency SBOM and release signing policy are documented, with a deterministic machine-readable SBOM snapshot and local release verification script.
    - Required: CI enforcement, required container vulnerability scanning, signed provenance attestations, and external audit.
 
 2. **Swift 6 package mode remains pending**
-   - Current: NIO sendability compatibility warnings are suppressed at the Swift 5 compatibility boundary with `@preconcurrency import NIOCore`; `swift test` passes.
+   - Current: `swift test` passes, but the Linux relay still emits NIO sendability warnings around `ByteToMessageHandler` and `ChannelHandlerContext` captures.
    - Required before Swift 6 migration: migrate the Linux package after upstream NIO concurrency annotations and local strict-concurrency settings are verified together.
+
+3. **Persistent-store migration policy needs formal version tests**
+   - Current: legacy snapshot stores are migrated into normalized tables on load, and normalized row corruption is tested.
+   - Required: explicit schema-version upgrade tests before any future persistent-store schema change.
 
 ## Verification Plan
 
@@ -230,7 +241,7 @@ No high-severity implementation findings remain from this pass. This does not re
   - query-limit enforcement at transport boundary (mock transport covered)
   - poisoned and host-flooded results after HTTP gateway decode (gateway transport covered)
   - bounded peer-hint traversal and poisoned/host-flooded results after native overlay decode (Linux native overlay covered)
-  - primary relay snapshot corruption fallback to previous-good snapshot (core and Linux relay store covered)
+  - normalized relay mailbox row corruption skips only the damaged row while retaining healthy rows (core and Linux relay store covered)
 
 ## References
 

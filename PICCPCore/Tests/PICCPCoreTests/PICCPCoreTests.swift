@@ -1359,7 +1359,7 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(fetched.first?.signature, envelope.signature)
     }
 
-    func testRelayStoreDiskPersistenceFallsBackToBackupSnapshot() async throws {
+    func testRelayStoreDiskPersistenceSkipsCorruptNormalizedMessageRow() async throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
         defer {
@@ -1387,7 +1387,7 @@ final class PICCPCoreTests: XCTestCase {
         let writer = RelayStore(storeURL: requestedURL)
         _ = try await writer.deliver(first, to: "sqlite-inbox")
         _ = try await writer.deliver(second, to: "sqlite-inbox")
-        try overwriteRelaySnapshot(at: sqliteURL, with: Data([0xDE, 0xAD, 0xBE, 0xEF]))
+        try overwriteMailboxEnvelope(at: sqliteURL, envelopeId: second.id, with: Data([0xDE, 0xAD, 0xBE, 0xEF]))
 
         let reloaded = RelayStore(storeURL: requestedURL)
         try await reloaded.loadFromDisk()
@@ -1419,29 +1419,33 @@ final class PICCPCoreTests: XCTestCase {
         }
     }
 
-    private func overwriteRelaySnapshot(at sqliteURL: URL, with data: Data) throws {
+    private func overwriteMailboxEnvelope(at sqliteURL: URL, envelopeId: UUID, with data: Data) throws {
         var db: OpaquePointer?
         guard sqlite3_open(sqliteURL.path, &db) == SQLITE_OK, let db else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 1)
+            throw NSError(domain: "PICCPCoreTests.SQLite", code: 5)
         }
         defer { sqlite3_close(db) }
 
-        let sql = "UPDATE relay_state SET value = ?1 WHERE key = 'relay_snapshot_v1';"
+        let sql = "UPDATE relay_mailbox_envelopes SET value = ?1 WHERE envelope_id = ?2;"
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 2)
+            throw NSError(domain: "PICCPCoreTests.SQLite", code: 6)
         }
         defer { sqlite3_finalize(statement) }
 
-        let bindResult = data.withUnsafeBytes { buffer in
+        let bindBlobResult = data.withUnsafeBytes { buffer in
             sqlite3_bind_blob(statement, 1, buffer.baseAddress, Int32(buffer.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self))
         }
-        guard bindResult == SQLITE_OK else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 3)
+        guard bindBlobResult == SQLITE_OK else {
+            throw NSError(domain: "PICCPCoreTests.SQLite", code: 7)
+        }
+        guard sqlite3_bind_text(statement, 2, envelopeId.uuidString, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self)) == SQLITE_OK else {
+            throw NSError(domain: "PICCPCoreTests.SQLite", code: 8)
         }
         guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 4)
+            throw NSError(domain: "PICCPCoreTests.SQLite", code: 9)
         }
+        XCTAssertEqual(sqlite3_changes(db), 1)
     }
 
     func testClientStateStoreSaveLoad() async throws {

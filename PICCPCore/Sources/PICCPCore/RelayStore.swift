@@ -68,18 +68,23 @@ public actor RelayStore {
             return
         }
         let sqliteURL = sqliteStoreURL(for: storeURL)
-        if let snapshotData = try SQLiteRelayStateStore.loadSnapshot(at: sqliteURL) {
+        if let snapshot = try SQLiteRelayStateStore.loadState(at: sqliteURL) {
+            applySnapshot(snapshot)
+        } else if let snapshotData = try SQLiteRelayStateStore.loadSnapshot(at: sqliteURL) {
             do {
                 try applySnapshotData(snapshotData)
+                try SQLiteRelayStateStore.saveState(currentSnapshot(), at: sqliteURL)
             } catch {
                 guard let backupData = try SQLiteRelayStateStore.loadBackupSnapshot(at: sqliteURL) else {
                     throw error
                 }
                 try applySnapshotData(backupData)
+                try SQLiteRelayStateStore.saveState(currentSnapshot(), at: sqliteURL)
                 try SQLiteRelayStateStore.restorePrimarySnapshot(backupData, at: sqliteURL)
             }
         } else if let backupData = try SQLiteRelayStateStore.loadBackupSnapshot(at: sqliteURL) {
             try applySnapshotData(backupData)
+            try SQLiteRelayStateStore.saveState(currentSnapshot(), at: sqliteURL)
         }
     }
 
@@ -90,18 +95,7 @@ public actor RelayStore {
         pruneAttachments(now: Date())
         prunePrekeys(now: Date())
         pruneFederationNodes(now: Date())
-        let snapshot = RelayStoreSnapshot(
-            mailboxes: mailboxes,
-            inboxRegistrations: inboxRegistrations,
-            attachments: attachments,
-            prekeyBundles: prekeyBundles,
-            federationNodes: federationNodes,
-            coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys,
-            groups: groups,
-            groupJoinRequests: groupJoinRequests
-        )
-        let data = try PICCPCoder.encode(snapshot)
-        try SQLiteRelayStateStore.saveSnapshot(data, at: sqliteStoreURL(for: storeURL))
+        try SQLiteRelayStateStore.saveState(currentSnapshot(), at: sqliteStoreURL(for: storeURL))
     }
 
     public func consumeActorProofNonce(
@@ -942,6 +936,10 @@ public actor RelayStore {
 
     private func applySnapshotData(_ data: Data) throws {
         let snapshot = try PICCPCoder.decode(RelayStoreSnapshot.self, from: data)
+        applySnapshot(snapshot)
+    }
+
+    private func applySnapshot(_ snapshot: RelayStoreSnapshot) {
         mailboxes = snapshot.mailboxes
         inboxRegistrations = snapshot.inboxRegistrations
         attachments = snapshot.attachments
@@ -953,6 +951,19 @@ public actor RelayStore {
         pruneAttachments(now: Date())
         prunePrekeys(now: Date())
         pruneFederationNodes(now: Date())
+    }
+
+    private func currentSnapshot() -> RelayStoreSnapshot {
+        RelayStoreSnapshot(
+            mailboxes: mailboxes,
+            inboxRegistrations: inboxRegistrations,
+            attachments: attachments,
+            prekeyBundles: prekeyBundles,
+            federationNodes: federationNodes,
+            coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys,
+            groups: groups,
+            groupJoinRequests: groupJoinRequests
+        )
     }
 
     private func sqliteStoreURL(for url: URL) -> URL {
@@ -1058,7 +1069,79 @@ private enum SQLiteRelayStateStore {
     private static let tableName = "relay_state"
     private static let snapshotKey = "relay_snapshot_v1"
     private static let backupSnapshotKey = "relay_snapshot_backup_v1"
+    private static let metaTableName = "relay_state_meta"
+    private static let normalizedSchemaKey = "normalized_schema_v1"
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+    static func loadState(at url: URL) throws -> RelayStoreSnapshot? {
+        var db: OpaquePointer?
+        try openDatabase(at: url, handle: &db)
+        defer { sqlite3_close(db) }
+        guard let db else { return nil }
+
+        try ensureSchema(in: db)
+        guard try hasNormalizedState(in: db) else {
+            return nil
+        }
+        return RelayStoreSnapshot(
+            mailboxes: try loadMailboxes(in: db),
+            inboxRegistrations: try loadInboxRegistrations(in: db),
+            attachments: try loadAttachments(in: db),
+            prekeyBundles: try loadPrekeyBundles(in: db),
+            federationNodes: try loadFederationNodes(in: db),
+            coordinatorPinnedPublicKeys: try loadCoordinatorPinnedPublicKeys(in: db),
+            groups: try loadGroups(in: db),
+            groupJoinRequests: try loadGroupJoinRequests(in: db)
+        )
+    }
+
+    static func saveState(_ snapshot: RelayStoreSnapshot, at url: URL) throws {
+        var db: OpaquePointer?
+        try openDatabase(at: url, handle: &db)
+        defer { sqlite3_close(db) }
+        guard let db else { return }
+
+        try ensureSchema(in: db)
+        try execute("BEGIN IMMEDIATE TRANSACTION;", in: db)
+        do {
+            try clearNormalizedTables(in: db)
+            for (inboxId, records) in snapshot.mailboxes {
+                for (position, record) in records.enumerated() {
+                    try insertMailboxRecord(inboxId: inboxId, position: position, record: record, in: db)
+                }
+            }
+            for (inboxId, record) in snapshot.inboxRegistrations {
+                try insertInboxRegistration(inboxId: inboxId, record: record, in: db)
+            }
+            for (attachmentId, records) in snapshot.attachments {
+                for record in records {
+                    try insertAttachmentRecord(attachmentId: attachmentId, record: record, in: db)
+                }
+            }
+            for (fingerprint, record) in snapshot.prekeyBundles {
+                try insertPrekeyBundle(fingerprint: fingerprint, record: record, in: db)
+            }
+            for (nodeKey, record) in snapshot.federationNodes {
+                try insertFederationNode(nodeKey: nodeKey, record: record, in: db)
+            }
+            for (coordinatorKey, publicKey) in snapshot.coordinatorPinnedPublicKeys {
+                try insertCoordinatorPinnedPublicKey(coordinatorKey: coordinatorKey, publicKey: publicKey, in: db)
+            }
+            for (groupId, group) in snapshot.groups {
+                try insertGroup(groupId: groupId, group: group, in: db)
+            }
+            for (groupId, requests) in snapshot.groupJoinRequests {
+                for (position, request) in requests.enumerated() {
+                    try insertGroupJoinRequest(groupId: groupId, position: position, request: request, in: db)
+                }
+            }
+            try insertMeta(key: normalizedSchemaKey, value: Data("1".utf8), in: db)
+            try execute("COMMIT;", in: db)
+        } catch {
+            _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            throw error
+        }
+    }
 
     static func loadSnapshot(at url: URL) throws -> Data? {
         var db: OpaquePointer?
@@ -1108,6 +1191,224 @@ private enum SQLiteRelayStateStore {
 
         try ensureSchema(in: db)
         try saveValue(snapshot, forKey: snapshotKey, in: db)
+    }
+
+    private static func loadMailboxes(in db: OpaquePointer) throws -> [String: [StoredEnvelope]] {
+        var mailboxes: [String: [StoredEnvelope]] = [:]
+        try queryRows("SELECT inbox_id, value FROM relay_mailbox_envelopes ORDER BY inbox_id, position;", in: db) { statement in
+            let inboxId = try readText(statement, column: 0, in: db)
+            if let record = try? decode(StoredEnvelope.self, from: readBlob(statement, column: 1)) {
+                mailboxes[inboxId, default: []].append(record)
+            }
+        }
+        return mailboxes
+    }
+
+    private static func loadInboxRegistrations(in db: OpaquePointer) throws -> [String: InboxRegistrationRecord] {
+        var registrations: [String: InboxRegistrationRecord] = [:]
+        try queryRows("SELECT inbox_id, value FROM relay_inbox_registrations;", in: db) { statement in
+            let inboxId = try readText(statement, column: 0, in: db)
+            registrations[inboxId] = try? decode(InboxRegistrationRecord.self, from: readBlob(statement, column: 1))
+        }
+        return registrations
+    }
+
+    private static func loadAttachments(in db: OpaquePointer) throws -> [String: [AttachmentRecord]] {
+        var attachments: [String: [AttachmentRecord]] = [:]
+        try queryRows("SELECT attachment_id, value FROM relay_attachment_chunks ORDER BY attachment_id, chunk_index;", in: db) { statement in
+            let attachmentId = try readText(statement, column: 0, in: db)
+            if let record = try? decode(AttachmentRecord.self, from: readBlob(statement, column: 1)) {
+                attachments[attachmentId, default: []].append(record)
+            }
+        }
+        return attachments
+    }
+
+    private static func loadPrekeyBundles(in db: OpaquePointer) throws -> [String: PrekeyBundleRecord] {
+        var bundles: [String: PrekeyBundleRecord] = [:]
+        try queryRows("SELECT fingerprint, value FROM relay_prekey_bundles;", in: db) { statement in
+            let fingerprint = try readText(statement, column: 0, in: db)
+            bundles[fingerprint] = try? decode(PrekeyBundleRecord.self, from: readBlob(statement, column: 1))
+        }
+        return bundles
+    }
+
+    private static func loadFederationNodes(in db: OpaquePointer) throws -> [String: FederationNodeRecord] {
+        var nodes: [String: FederationNodeRecord] = [:]
+        try queryRows("SELECT node_key, value FROM relay_federation_nodes;", in: db) { statement in
+            let nodeKey = try readText(statement, column: 0, in: db)
+            nodes[nodeKey] = try? decode(FederationNodeRecord.self, from: readBlob(statement, column: 1))
+        }
+        return nodes
+    }
+
+    private static func loadCoordinatorPinnedPublicKeys(in db: OpaquePointer) throws -> [String: Data] {
+        var keys: [String: Data] = [:]
+        try queryRows("SELECT coordinator_key, public_key FROM relay_coordinator_pinned_keys;", in: db) { statement in
+            let coordinatorKey = try readText(statement, column: 0, in: db)
+            keys[coordinatorKey] = readBlob(statement, column: 1)
+        }
+        return keys
+    }
+
+    private static func loadGroups(in db: OpaquePointer) throws -> [UUID: RelayGroupDescriptor] {
+        var groups: [UUID: RelayGroupDescriptor] = [:]
+        try queryRows("SELECT group_id, value FROM relay_groups;", in: db) { statement in
+            guard let groupId = try UUID(uuidString: readText(statement, column: 0, in: db)),
+                  let group = try? decode(RelayGroupDescriptor.self, from: readBlob(statement, column: 1)) else {
+                return
+            }
+            groups[groupId] = group
+        }
+        return groups
+    }
+
+    private static func loadGroupJoinRequests(in db: OpaquePointer) throws -> [UUID: [RelayGroupJoinRequest]] {
+        var requests: [UUID: [RelayGroupJoinRequest]] = [:]
+        try queryRows("SELECT group_id, value FROM relay_group_join_requests ORDER BY group_id, position;", in: db) { statement in
+            guard let groupId = try UUID(uuidString: readText(statement, column: 0, in: db)),
+                  let request = try? decode(RelayGroupJoinRequest.self, from: readBlob(statement, column: 1)) else {
+                return
+            }
+            requests[groupId, default: []].append(request)
+        }
+        return requests
+    }
+
+    private static func insertMailboxRecord(inboxId: String, position: Int, record: StoredEnvelope, in db: OpaquePointer) throws {
+        try executePrepared(
+            "INSERT INTO relay_mailbox_envelopes (inbox_id, position, envelope_id, stored_at, value) VALUES (?1, ?2, ?3, ?4, ?5);",
+            in: db
+        ) { statement in
+            try bindText(inboxId, to: 1, in: statement, db: db)
+            try bindInt(position, to: 2, in: statement, db: db)
+            try bindText(record.envelope.id.uuidString, to: 3, in: statement, db: db)
+            try bindDouble(record.storedAt.timeIntervalSince1970, to: 4, in: statement, db: db)
+            try bindBlob(encode(record), to: 5, in: statement, db: db)
+        }
+    }
+
+    private static func insertInboxRegistration(inboxId: String, record: InboxRegistrationRecord, in db: OpaquePointer) throws {
+        try executePrepared(
+            "INSERT INTO relay_inbox_registrations (inbox_id, registered_at, access_public_key, value) VALUES (?1, ?2, ?3, ?4);",
+            in: db
+        ) { statement in
+            try bindText(inboxId, to: 1, in: statement, db: db)
+            try bindDouble(record.registeredAt.timeIntervalSince1970, to: 2, in: statement, db: db)
+            try bindBlob(record.accessPublicKey, to: 3, in: statement, db: db)
+            try bindBlob(encode(record), to: 4, in: statement, db: db)
+        }
+    }
+
+    private static func insertAttachmentRecord(attachmentId: String, record: AttachmentRecord, in db: OpaquePointer) throws {
+        try executePrepared(
+            "INSERT INTO relay_attachment_chunks (attachment_id, chunk_index, stored_at, expires_at, value) VALUES (?1, ?2, ?3, ?4, ?5);",
+            in: db
+        ) { statement in
+            try bindText(attachmentId, to: 1, in: statement, db: db)
+            try bindInt(record.chunkIndex, to: 2, in: statement, db: db)
+            try bindDouble(record.storedAt.timeIntervalSince1970, to: 3, in: statement, db: db)
+            try bindDouble(record.expiresAt.timeIntervalSince1970, to: 4, in: statement, db: db)
+            try bindBlob(encode(record), to: 5, in: statement, db: db)
+        }
+    }
+
+    private static func insertPrekeyBundle(fingerprint: String, record: PrekeyBundleRecord, in db: OpaquePointer) throws {
+        try executePrepared(
+            "INSERT INTO relay_prekey_bundles (fingerprint, expires_at, value) VALUES (?1, ?2, ?3);",
+            in: db
+        ) { statement in
+            try bindText(fingerprint, to: 1, in: statement, db: db)
+            try bindDouble(record.expiresAt.timeIntervalSince1970, to: 2, in: statement, db: db)
+            try bindBlob(encode(record), to: 3, in: statement, db: db)
+        }
+    }
+
+    private static func insertFederationNode(nodeKey: String, record: FederationNodeRecord, in db: OpaquePointer) throws {
+        try executePrepared(
+            "INSERT INTO relay_federation_nodes (node_key, expires_at, value) VALUES (?1, ?2, ?3);",
+            in: db
+        ) { statement in
+            try bindText(nodeKey, to: 1, in: statement, db: db)
+            try bindDouble(record.expiresAt.timeIntervalSince1970, to: 2, in: statement, db: db)
+            try bindBlob(encode(record), to: 3, in: statement, db: db)
+        }
+    }
+
+    private static func insertCoordinatorPinnedPublicKey(coordinatorKey: String, publicKey: Data, in db: OpaquePointer) throws {
+        try executePrepared(
+            "INSERT INTO relay_coordinator_pinned_keys (coordinator_key, public_key) VALUES (?1, ?2);",
+            in: db
+        ) { statement in
+            try bindText(coordinatorKey, to: 1, in: statement, db: db)
+            try bindBlob(publicKey, to: 2, in: statement, db: db)
+        }
+    }
+
+    private static func insertGroup(groupId: UUID, group: RelayGroupDescriptor, in db: OpaquePointer) throws {
+        try executePrepared(
+            "INSERT INTO relay_groups (group_id, value) VALUES (?1, ?2);",
+            in: db
+        ) { statement in
+            try bindText(groupId.uuidString, to: 1, in: statement, db: db)
+            try bindBlob(encode(group), to: 2, in: statement, db: db)
+        }
+    }
+
+    private static func insertGroupJoinRequest(groupId: UUID, position: Int, request: RelayGroupJoinRequest, in db: OpaquePointer) throws {
+        try executePrepared(
+            "INSERT INTO relay_group_join_requests (group_id, position, request_id, value) VALUES (?1, ?2, ?3, ?4);",
+            in: db
+        ) { statement in
+            try bindText(groupId.uuidString, to: 1, in: statement, db: db)
+            try bindInt(position, to: 2, in: statement, db: db)
+            try bindText(request.id.uuidString, to: 3, in: statement, db: db)
+            try bindBlob(encode(request), to: 4, in: statement, db: db)
+        }
+    }
+
+    private static func insertMeta(key: String, value: Data, in db: OpaquePointer) throws {
+        try executePrepared(
+            "INSERT INTO \(metaTableName) (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
+            in: db
+        ) { statement in
+            try bindText(key, to: 1, in: statement, db: db)
+            try bindBlob(value, to: 2, in: statement, db: db)
+        }
+    }
+
+    private static func hasNormalizedState(in db: OpaquePointer) throws -> Bool {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT 1 FROM \(metaTableName) WHERE key = ?1 LIMIT 1;", -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.prepare(lastError(in: db))
+        }
+        defer { sqlite3_finalize(statement) }
+        guard let statement else { return false }
+
+        try bindText(normalizedSchemaKey, to: 1, in: statement, db: db)
+        let step = sqlite3_step(statement)
+        if step == SQLITE_ROW {
+            return true
+        }
+        if step == SQLITE_DONE {
+            return false
+        }
+        throw SQLiteRelayStateStoreError.step(lastError(in: db))
+    }
+
+    private static func clearNormalizedTables(in db: OpaquePointer) throws {
+        for table in [
+            "relay_mailbox_envelopes",
+            "relay_inbox_registrations",
+            "relay_attachment_chunks",
+            "relay_prekey_bundles",
+            "relay_federation_nodes",
+            "relay_coordinator_pinned_keys",
+            "relay_groups",
+            "relay_group_join_requests"
+        ] {
+            try execute("DELETE FROM \(table);", in: db)
+        }
     }
 
     private static func loadValue(forKey key: String, in db: OpaquePointer) throws -> Data? {
@@ -1183,10 +1484,156 @@ private enum SQLiteRelayStateStore {
             key TEXT PRIMARY KEY,
             value BLOB NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS \(metaTableName) (
+            key TEXT PRIMARY KEY,
+            value BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS relay_mailbox_envelopes (
+            inbox_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            envelope_id TEXT NOT NULL,
+            stored_at REAL NOT NULL,
+            value BLOB NOT NULL,
+            PRIMARY KEY (inbox_id, position)
+        );
+        CREATE INDEX IF NOT EXISTS relay_mailbox_envelopes_inbox_idx ON relay_mailbox_envelopes(inbox_id);
+        CREATE TABLE IF NOT EXISTS relay_inbox_registrations (
+            inbox_id TEXT PRIMARY KEY,
+            registered_at REAL NOT NULL,
+            access_public_key BLOB NOT NULL,
+            value BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS relay_attachment_chunks (
+            attachment_id TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            stored_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            value BLOB NOT NULL,
+            PRIMARY KEY (attachment_id, chunk_index)
+        );
+        CREATE INDEX IF NOT EXISTS relay_attachment_chunks_expiry_idx ON relay_attachment_chunks(expires_at);
+        CREATE TABLE IF NOT EXISTS relay_prekey_bundles (
+            fingerprint TEXT PRIMARY KEY,
+            expires_at REAL NOT NULL,
+            value BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS relay_federation_nodes (
+            node_key TEXT PRIMARY KEY,
+            expires_at REAL NOT NULL,
+            value BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS relay_coordinator_pinned_keys (
+            coordinator_key TEXT PRIMARY KEY,
+            public_key BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS relay_groups (
+            group_id TEXT PRIMARY KEY,
+            value BLOB NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS relay_group_join_requests (
+            group_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            request_id TEXT NOT NULL,
+            value BLOB NOT NULL,
+            PRIMARY KEY (group_id, position)
+        );
+        CREATE INDEX IF NOT EXISTS relay_group_join_requests_group_idx ON relay_group_join_requests(group_id);
         """
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw SQLiteRelayStateStoreError.execute(lastError(in: db))
         }
+    }
+
+    private static func queryRows(
+        _ sql: String,
+        in db: OpaquePointer,
+        row: (OpaquePointer) throws -> Void
+    ) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.prepare(lastError(in: db))
+        }
+        defer { sqlite3_finalize(statement) }
+        guard let statement else { return }
+
+        while true {
+            let step = sqlite3_step(statement)
+            if step == SQLITE_ROW {
+                try row(statement)
+            } else if step == SQLITE_DONE {
+                return
+            } else {
+                throw SQLiteRelayStateStoreError.step(lastError(in: db))
+            }
+        }
+    }
+
+    private static func executePrepared(
+        _ sql: String,
+        in db: OpaquePointer,
+        bindAndStep: (OpaquePointer) throws -> Void
+    ) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.prepare(lastError(in: db))
+        }
+        defer { sqlite3_finalize(statement) }
+        guard let statement else { return }
+
+        try bindAndStep(statement)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SQLiteRelayStateStoreError.step(lastError(in: db))
+        }
+    }
+
+    private static func bindText(_ value: String, to index: Int32, in statement: OpaquePointer, db: OpaquePointer) throws {
+        guard sqlite3_bind_text(statement, index, value, -1, transient) == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.bind(lastError(in: db))
+        }
+    }
+
+    private static func bindInt(_ value: Int, to index: Int32, in statement: OpaquePointer, db: OpaquePointer) throws {
+        guard sqlite3_bind_int64(statement, index, sqlite3_int64(value)) == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.bind(lastError(in: db))
+        }
+    }
+
+    private static func bindDouble(_ value: Double, to index: Int32, in statement: OpaquePointer, db: OpaquePointer) throws {
+        guard sqlite3_bind_double(statement, index, value) == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.bind(lastError(in: db))
+        }
+    }
+
+    private static func bindBlob(_ value: Data, to index: Int32, in statement: OpaquePointer, db: OpaquePointer) throws {
+        let bindResult = value.withUnsafeBytes { buffer in
+            sqlite3_bind_blob(statement, index, buffer.baseAddress, Int32(buffer.count), transient)
+        }
+        guard bindResult == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.bind(lastError(in: db))
+        }
+    }
+
+    private static func readText(_ statement: OpaquePointer, column: Int32, in db: OpaquePointer) throws -> String {
+        guard let cString = sqlite3_column_text(statement, column) else {
+            throw SQLiteRelayStateStoreError.step(lastError(in: db))
+        }
+        return String(cString: cString)
+    }
+
+    private static func readBlob(_ statement: OpaquePointer, column: Int32) -> Data {
+        let byteCount = Int(sqlite3_column_bytes(statement, column))
+        guard byteCount > 0, let bytes = sqlite3_column_blob(statement, column) else {
+            return Data()
+        }
+        return Data(bytes: bytes, count: byteCount)
+    }
+
+    private static func encode<T: Encodable>(_ value: T) throws -> Data {
+        try PICCPCoder.encode(value)
+    }
+
+    private static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        try PICCPCoder.decode(type, from: data)
     }
 
     private static func execute(_ sql: String, in db: OpaquePointer) throws {
