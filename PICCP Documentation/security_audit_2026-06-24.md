@@ -9,7 +9,7 @@ The current implementation has materially strong application-layer controls for 
 
 This pass found one concrete SSRF-style hardening gap in public open-federation endpoint validation. The relay rejected private IPv4, loopback, link-local, and IPv4-mapped IPv6 addresses, but did not explicitly handle IPv6 transition addresses that can encode private IPv4 destinations. This has been patched in both `PICCPCore` and the Linux relay package. Coordinator directory signatures were also migrated from Ed25519 to ML-DSA-65 so federation directory authenticity uses the same post-quantum signature family as identity continuity.
 
-The DHT/torrent research supports a cautious path: use DHT-style discovery only for open-federation relay bootstrap hints, never as authority. Public torrent infrastructure can help find candidate relays, but every result must be signed, short-lived, TLS-reachable, bounded, and independently probed before it enters a routing set. The signed-record primitive for this path now exists in core as `OpenFederationDHTRecord`, the feature-gated candidate acceptance layer exists as `OpenFederationDHTCandidateCache`, and `OpenFederationDHTTransport`/`OpenFederationDHTDiscoveryEngine` define the publish/query boundary. `OpenFederationDHTHTTPGatewayTransport` provides a gateway/sidecar adapter for relay operators, while the Linux relay now also has native relay-protocol DHT publish/list routes and a bounded PEX-style overlay transport. Native BEP5/libp2p public-DHT participation remains deliberately unimplemented.
+The DHT/torrent research supports a cautious path: use DHT-style discovery only for open-federation relay bootstrap hints, never as authority. Public torrent infrastructure can help find candidate relays, but every result must be signed, short-lived, TLS-reachable, bounded, and independently probed before it enters a routing set. The signed-record primitive for this path now exists in core as `OpenFederationDHTRecord`, the feature-gated candidate acceptance layer exists as `OpenFederationDHTCandidateCache`, and `OpenFederationDHTTransport`/`OpenFederationDHTDiscoveryEngine` define the publish/query boundary. `OpenFederationDHTHTTPGatewayTransport` provides a gateway/sidecar adapter for relay operators, while the Linux relay now also has native relay-protocol DHT publish/list routes and a bounded PEX-style overlay transport. Native BEP5/libp2p public-DHT participation is deferred for release scope; operator sidecars are the supported experiment boundary.
 
 ## Threat Scenarios Reviewed
 
@@ -28,7 +28,7 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 - Attacker floods a coordinator or DHT namespace with bogus relays.
 - Mitigations present: coordinator registration throttling, live relay-info reachability checks, TLS/public-routability requirements, federation mode/name matching, peer hint caps.
 - Patched in this pass: public endpoint policy now handles Teredo, 6to4, and NAT64 IPv4-embedded private destinations.
-- Residual risk: the relay-protocol native overlay is not the same as autonomous public-DHT discovery; BEP5/libp2p participation still needs live-adapter poisoning/churn simulations.
+- Residual risk: the relay-protocol native overlay is not the same as autonomous public-DHT discovery. This is acceptable for release because autonomous BEP5/libp2p is out of scope; if it is reintroduced later, it needs live-adapter poisoning/churn simulations.
 
 ### Cross-network federation confusion
 - Open nodes and curated nodes must not form one mixed trust domain.
@@ -62,7 +62,7 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 ### Recommended path
 1. Keep coordinator snapshots as the default discovery authority.
 2. Keep relay peer exchange capped and fed only by recently healthy open-federation relays.
-3. Add an optional open-only DHT prototype later, relay-operator controlled, with ML-DSA-signed short-lived records.
+3. Keep public-DHT experimentation outside the release relay binary through relay-operator HTTP sidecars.
 4. Clients should consume signed coordinator or trusted-relay directories first; direct public-DHT lookup should remain off by default.
 5. Curated federation may use DHT only as a non-authoritative hint to find candidate coordinator endpoints, never to accept relay membership.
 
@@ -163,9 +163,9 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 No high-severity implementation findings remain from this pass. This does not replace an independent external audit.
 
 ### Medium
-1. **No autonomous BEP5/libp2p public-DHT participant exists**
+1. **Autonomous BEP5/libp2p public-DHT participation is deferred**
    - Current: coordinator-assisted discovery plus peer hints; signed DHT records, a feature-gated candidate cache, a mocked publish/query transport seam, an HTTP gateway/sidecar transport, and a Linux relay-protocol native overlay exist. Poisoning and host-flood rejection are tested through the concrete HTTP gateway adapter and the native overlay adapter.
-   - Required before release exposure: relay-only BEP5/libp2p native adapter if public-DHT participation is still desired, live reachability probe integration, native public-network churn/poisoning simulation, and operator UI warnings.
+   - Release stance: this is not a release blocker because autonomous public-DHT routing is not in release scope. If a later release reopens it, the required work is a relay-only BEP5/libp2p adapter, live reachability probe integration, native public-network churn/poisoning simulation, and operator UI warnings.
 
 2. **Network anonymity remains out of scope**
    - Current: metadata reduction only.

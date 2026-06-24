@@ -7,11 +7,11 @@ The current security/DHT goal is complete when all of the following are true:
 
 - [ ] Security audit is current, with threat scenarios documented for client, relay, federation, DHT discovery, storage, and transport.
 - [ ] All high- and medium-severity audit findings discovered in this cycle are patched, covered by tests, or explicitly deferred with a rationale and release blocker status.
-- [ ] Open-federation relay discovery has a documented final stance: coordinator-only, HTTP sidecar gateway, custom overlay, BEP5, libp2p, or a deliberate combination.
-- [ ] If autonomous public-DHT bootstrap remains in scope, the BEP5/libp2p adapter is feature-gated, bounded, tested against poisoning/churn/flood cases, and disabled by default in release builds.
-- [ ] If autonomous public-DHT bootstrap is rejected or deferred, that decision is documented with threat, operations, and maintenance rationale.
+- [x] Open-federation relay discovery has a documented final stance: coordinator snapshots + bounded relay-protocol peer exchange + HTTP sidecar gateway; autonomous BEP5/libp2p is deferred.
+- [x] Autonomous public-DHT bootstrap is out of release scope; if it is reintroduced later, the BEP5/libp2p adapter must be feature-gated, bounded, tested against poisoning/churn/flood cases, and disabled by default in release builds.
+- [x] If autonomous public-DHT bootstrap is rejected or deferred, that decision is documented with threat, operations, and maintenance rationale.
 - [ ] Linux relay and mac relay feature parity is verified for the selected federation/discovery mode.
-- [ ] Release verification covers relay tests, SBOM checks, package pin checks, and optional container scanning hooks.
+- [x] Release verification covers relay tests, SBOM checks, package pin checks, and optional container scanning hooks.
 - [ ] The final TODO and audit documents identify no open security/DHT items except external validation work that requires third parties or CI infrastructure.
 
 ## Core protocol + client
@@ -65,8 +65,8 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Add HTTP gateway/sidecar adapter for relay-operator DHT publish/query integration
 - [x] Extend DHT poisoning/flood simulation through the HTTP gateway adapter
 - [x] Add Linux relay native custom-overlay DHT routes and bounded PEX-style traversal tests
-- [ ] Implement autonomous public-DHT participation (BEP5/libp2p) behind the existing feature flag if release plans still need public-network bootstrap
-- [ ] Extend DHT poisoning/churn simulations to any autonomous public-network adapter before exposing DHT discovery in release builds
+- [x] Defer autonomous public-DHT participation (BEP5/libp2p) out of release scope; use the HTTP sidecar gateway for operator experiments
+- [x] Require DHT poisoning/churn simulations before any future autonomous public-network adapter can be exposed in release builds
 
 ## External validation
 - [ ] Independent external security audit (firm-selected report)

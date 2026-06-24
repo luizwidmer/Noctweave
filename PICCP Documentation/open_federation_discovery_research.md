@@ -61,6 +61,21 @@ Not recommended:
 
 ## Recommended Noctyra Open-Federation Design
 
+## Final Discovery Stance
+
+Noctyra should ship open-federation discovery as a layered relay-operator system, not as client-side public-DHT participation.
+
+The selected release stance is:
+
+1. **Default authority:** signed coordinator snapshots with freshness windows.
+2. **Acceleration path:** bounded relay-protocol peer exchange through `knownOpenPeers`.
+3. **Experimental operator bridge:** HTTP gateway/sidecar integration for operators who want to connect BEP5, libp2p, or another discovery process.
+4. **Not release scope:** built-in autonomous BEP5/libp2p participation inside the relay binary.
+
+Autonomous public-DHT participation is deferred because the operational cost and metadata exposure are high relative to the benefit. A public BEP5/libp2p adapter would expose relay membership timing to crawlers, require UDP/NAT traversal and routing-table maintenance, introduce additional Sybil/churn surfaces, and need a dedicated live-network simulation suite. The current gateway boundary gives operators a way to experiment with torrent/libp2p infrastructure without letting raw public-network results bypass Noctyra's signed-record validator, endpoint policy, host caps, total caps, and TTL checks.
+
+This means open federation can still benefit from torrent-style ideas: Kademlia informs lookup design, BEP 11 informs bounded peer exchange, and libp2p informs layered discovery. Those ideas are applied through coordinator snapshots, relay peer exchange, and the sidecar seam rather than embedding a public-DHT router in the release relay.
+
 ### Phase 1 (near-term): coordinator-first, signed directory snapshots
 1. Keep coordinator nodes as primary discovery roots.
 2. Coordinator publishes signed relay snapshots with:
@@ -136,8 +151,8 @@ The record is deliberately small and short-lived. Relays republish periodically;
 4. Open-mode UI re-enable behind a feature flag.
 5. Use the HTTP gateway adapter for operator-run discovery sidecars.
 6. Use the native relay-protocol overlay for controlled open-relay PEX experiments.
-7. Implement optional autonomous BEP5/libp2p DHT participation behind the existing relay-operator feature flag only after gateway/native-overlay deployments provide operational data.
-8. Extend load/poisoning simulation from the core candidate cache, HTTP gateway transport, and native relay-protocol overlay to any public-network adapter before exposing it in release builds.
+7. Keep autonomous BEP5/libp2p participation out of the release relay unless a later release reopens the decision with a concrete operator demand, maintenance owner, and live-network abuse test plan.
+8. If a later public-network adapter is approved, extend load/poisoning simulation from the core candidate cache, HTTP gateway transport, and native relay-protocol overlay before exposing it in release builds.
 
 ## Why this fits current codebase
 The relay already has coordinator registration and node listing APIs. This plan extends existing coordinator logic first, then adds peer-exchange acceleration, and defers full DHT complexity until operational telemetry justifies it.
