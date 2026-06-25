@@ -280,6 +280,70 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(backedOff.nextPollDelaySeconds, 120)
     }
 
+    func testDecentralizedWakePlannerIncludesProfilesWithoutAdvertisedPolicy() {
+        let slowAdvertised = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 120,
+            maxPollIntervalSeconds: 240,
+            jitterPermille: 0
+        )
+        let now = Date(timeIntervalSince1970: 10_000)
+        let delay = DecentralizedWakePlanner.nextPollDelaySeconds(
+            for: [
+                DecentralizedWakeProfile(
+                    support: slowAdvertised,
+                    identitySeed: Data("slow-profile".utf8),
+                    relayIdentifier: "slow-relay"
+                ),
+                DecentralizedWakeProfile(
+                    support: nil,
+                    identitySeed: Data("local-default-profile".utf8),
+                    relayIdentifier: "relay-without-policy"
+                )
+            ],
+            defaultDelaySeconds: 8,
+            maxDelaySeconds: 300,
+            now: now
+        )
+
+        XCTAssertEqual(delay, 8)
+    }
+
+    func testDecentralizedWakePlannerSelectsFastestAdvertisedProfile() {
+        let slow = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 120,
+            maxPollIntervalSeconds: 240,
+            jitterPermille: 0
+        )
+        let fast = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 15,
+            maxPollIntervalSeconds: 60,
+            jitterPermille: 0
+        )
+        let now = Date(timeIntervalSince1970: 10_000)
+        let delay = DecentralizedWakePlanner.nextPollDelaySeconds(
+            for: [
+                DecentralizedWakeProfile(
+                    support: slow,
+                    identitySeed: Data("slow-profile".utf8),
+                    relayIdentifier: "slow-relay"
+                ),
+                DecentralizedWakeProfile(
+                    support: fast,
+                    identitySeed: Data("fast-profile".utf8),
+                    relayIdentifier: "fast-relay"
+                )
+            ],
+            defaultDelaySeconds: 8,
+            maxDelaySeconds: 300,
+            now: now
+        )
+
+        XCTAssertEqual(delay, 15)
+    }
+
     func testRelayInfoAdvertisesDecentralizedWakeSupport() throws {
         let info = RelayConfiguration(
             wakeSupport: DecentralizedWakeSupport(

@@ -16,6 +16,8 @@ Clients derive a local wake plan using `DecentralizedWakePlanner`. The planner u
 
 The client relay detail UI renders advertised wake policy metadata. Active sync loops consume the policy when the app is unlocked and the OS permits background or foreground network work. If a relay does not advertise wake metadata, clients fall back to bounded pull-only local defaults.
 
+For clients with multiple active identities, every active identity contributes to the next fetch cadence. Relays with advertised wake policy use their relay-provided plan; relays without advertised policy use the local default cadence so they are not delayed by slower policies from other active identities.
+
 Linux and mac relays can advertise wake policy settings, and the HTTP/WebSocket relay path supports bounded long-poll fetches when operators enable long-poll mode.
 
 ## Security Properties
@@ -38,4 +40,5 @@ Linux and mac relays can advertise wake policy settings, and the HTTP/WebSocket 
 - Planner output is deterministic for the same identity, relay, time bucket, and failure count.
 - Multi-identity simulation coverage verifies jitter spread across a relay window.
 - Missing relay policy falls back to bounded pull-only polling defaults.
+- Mixed-profile scheduling coverage verifies identities without advertised relay policy still use the local fallback cadence.
 - Relay info round-trips preserve advertised `wakeSupport` metadata.

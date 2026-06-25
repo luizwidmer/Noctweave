@@ -46,6 +46,25 @@ public struct DecentralizedWakePlan: Codable, Equatable {
     }
 }
 
+public struct DecentralizedWakeProfile: Equatable {
+    public let support: DecentralizedWakeSupport?
+    public let identitySeed: Data
+    public let relayIdentifier: String
+    public let failureCount: Int
+
+    public init(
+        support: DecentralizedWakeSupport?,
+        identitySeed: Data,
+        relayIdentifier: String,
+        failureCount: Int = 0
+    ) {
+        self.support = support
+        self.identitySeed = identitySeed
+        self.relayIdentifier = relayIdentifier
+        self.failureCount = failureCount
+    }
+}
+
 public enum DecentralizedWakePlanner {
     public static func makePlan(
         support: DecentralizedWakeSupport?,
@@ -76,6 +95,34 @@ public enum DecentralizedWakePlanner {
             longPollTimeoutSeconds: policy.longPollTimeoutSeconds,
             failureBackoffStep: boundedFailures
         )
+    }
+
+    public static func nextPollDelaySeconds(
+        for profiles: [DecentralizedWakeProfile],
+        defaultDelaySeconds: Int,
+        maxDelaySeconds: Int,
+        now: Date = Date()
+    ) -> Int {
+        let defaultDelay = max(5, defaultDelaySeconds)
+        let upperBound = max(defaultDelay, maxDelaySeconds)
+        guard !profiles.isEmpty else {
+            return min(defaultDelay, upperBound)
+        }
+
+        let delays = profiles.map { profile in
+            guard let support = profile.support else {
+                return defaultDelay
+            }
+            return makePlan(
+                support: support,
+                identitySeed: profile.identitySeed,
+                relayIdentifier: profile.relayIdentifier,
+                failureCount: profile.failureCount,
+                now: now
+            ).nextPollDelaySeconds
+        }
+        let delay = delays.min() ?? defaultDelay
+        return min(max(delay, 5), upperBound)
     }
 
     private static func deterministicJitter(
