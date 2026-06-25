@@ -104,5 +104,6 @@ The current security/DHT goal is complete when all of the following are true:
 
 ## External validation
 - [ ] Independent external security audit (firm-selected report)
-- [ ] Enforce release verification, container scanning, and signed provenance in CI
+- [x] Enforce release verification and SBOM provenance in CI
+- [ ] Enforce container scanning and signed Docker/Apple artifact provenance in CI
 - [x] Resolve Swift 6/NIO sendability warnings before moving the Linux package to Swift 6 mode

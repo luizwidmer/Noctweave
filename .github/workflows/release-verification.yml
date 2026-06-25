@@ -11,9 +11,27 @@ jobs:
   verify-release:
     name: Verify release hygiene
     runs-on: macos-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Run release verification script
         run: scripts/verify-release.sh
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: noctyra-sbom
+          path: "PICCP Documentation/noctyra_sbom.json"
+          if-no-files-found: error
+
+      - name: Attest SBOM provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest@v4
+        with:
+          subject-path: "PICCP Documentation/noctyra_sbom.json"

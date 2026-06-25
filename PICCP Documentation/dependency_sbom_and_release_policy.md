@@ -59,6 +59,12 @@ scripts/verify-release.sh
 
 It refreshes the SBOM, verifies the checked-in snapshot is current, checks package resolution, runs the Linux relay test suite, and runs optional Docker/Trivy checks when those tools are installed.
 
+The GitHub release-verification workflow runs the same verifier on pull requests,
+`main` pushes, and manual dispatches. Trusted `main` and manual runs also upload
+`noctyra_sbom.json` as a workflow artifact and attach a GitHub artifact
+attestation to the SBOM snapshot, giving reviewers a signed provenance record for
+the dependency snapshot used by that run.
+
 Manual equivalent:
 
 1. Refresh and verify the machine-readable SBOM:
@@ -135,7 +141,6 @@ Do not release if:
 
 ## Open Work
 
-- Wire `scripts/verify-release.sh` into CI.
 - Add CycloneDX or SPDX export if an external auditor requires that format.
 - Require container vulnerability scanning in CI.
-- Add signed provenance attestations for Docker and Apple artifacts.
+- Add signed provenance attestations for Docker and Apple release artifacts.
