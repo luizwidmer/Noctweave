@@ -53,6 +53,21 @@ final class PICCPCoreTests: XCTestCase {
         )
     }
 
+    func testHiddenRetrievalPlannerRejectsIncompleteCoverResponse() throws {
+        let plan = try HiddenRetrievalPlanner.makeCoverQuery(
+            bucketId: "bucket-a",
+            availableRecordIds: ["a", "b", "c", "d"],
+            targetRecordId: "c",
+            coverSetSize: 4,
+            secret: Data("secret".utf8)
+        )
+        let response = [
+            "c": Data("target".utf8)
+        ]
+
+        XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: plan))
+    }
+
     func testHiddenRetrievalPlannerRejectsInvalidQueries() throws {
         XCTAssertThrowsError(
             try HiddenRetrievalPlanner.makeCoverQuery(
@@ -88,6 +103,18 @@ final class PICCPCoreTests: XCTestCase {
             )
         ) { error in
             XCTAssertEqual(error as? HiddenRetrievalError, .targetMissing)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: "a",
+                coverSetSize: 3,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .insufficientBucketRecords)
         }
     }
 

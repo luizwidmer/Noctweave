@@ -44,7 +44,7 @@ Last reviewed: June 25, 2026.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation. Discovery refreshes retain previously validated signed nodes across transient gateway or peer-query failures.
-- Optional relay-advertised hidden-retrieval cover-query support for compatible clients.
+- Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning rejects undersized buckets and incomplete cover responses so compatible clients do not silently accept target-only retrievals.
 - Release verification workflow wired to run the local SBOM, dependency, relay test, and optional scanner checks in CI.
 
 ### Client UX and Local Safety
@@ -66,7 +66,7 @@ Last reviewed: June 25, 2026.
 
 ## Alignment Summary
 - **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, and coordinator-assisted federation.
-- **Partially aligned**: metadata minimization, PIR-adjacent hidden retrieval, group cryptography, and decentralized wake. Temporal buckets, capability-style inboxes, federation policy, optional cover-query relay support, explicit group-security metadata, signed registry commits, MLS epoch state, group-context AEAD binding, the group ratchet primitive, and relay-advertised jittered wake policy reduce ambiguity, but do not provide strong anonymity, full cryptographic PIR, complete MLS-class group proofs, or guaranteed closed-app delivery.
+- **Partially aligned**: metadata minimization, PIR-adjacent hidden retrieval, group cryptography, and decentralized wake. Temporal buckets, capability-style inboxes, federation policy, optional fixed-size cover-query relay support, explicit group-security metadata, signed registry commits, MLS epoch state, group-context AEAD binding, the group ratchet primitive, and relay-advertised jittered wake policy reduce ambiguity, but do not provide strong anonymity, full cryptographic PIR, complete MLS-class group proofs, or guaranteed closed-app delivery.
 - **Deferred**: mixnet/onion transport, autonomous public DHT release mode, external audit, signed release-provenance packaging, and formal MLS-class proof work.
 
 ## Next Alignment Targets

@@ -5,6 +5,7 @@ public enum HiddenRetrievalError: Error, Equatable {
     case invalidCoverSetSize
     case emptyBucket
     case targetMissing
+    case insufficientBucketRecords
 }
 
 public struct HiddenRetrievalQueryPlan: Codable, Equatable {
@@ -42,6 +43,9 @@ public enum HiddenRetrievalPlanner {
         guard canonicalIds.contains(targetRecordId) else {
             throw HiddenRetrievalError.targetMissing
         }
+        guard canonicalIds.count >= coverSetSize else {
+            throw HiddenRetrievalError.insufficientBucketRecords
+        }
 
         let decoys = canonicalIds.filter { $0 != targetRecordId }
             .map { id in
@@ -68,7 +72,10 @@ public enum HiddenRetrievalPlanner {
         from records: [String: T],
         using plan: HiddenRetrievalQueryPlan
     ) -> T? {
-        records[plan.targetRecordId]
+        guard plan.requestedRecordIds.allSatisfy({ records[$0] != nil }) else {
+            return nil
+        }
+        return records[plan.targetRecordId]
     }
 
     private static func rank(
