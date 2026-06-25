@@ -250,9 +250,13 @@ final class RelayHandler: ChannelInboundHandler {
                 return context.eventLoop.makeSucceededFuture(.error("Invalid group message signature"))
             }
             do {
-                let count = try store.deliver(
+                let recipientFingerprints = group.members
+                    .map(\.fingerprint)
+                    .filter { $0 != deliver.envelope.senderFingerprint }
+                let count = try store.deliverGroupEnvelope(
                     carrierEnvelope(for: deliver.envelope),
-                    to: deliver.groupInboxId
+                    to: deliver.groupInboxId,
+                    recipientFingerprints: recipientFingerprints
                 )
                 return context.eventLoop.makeSucceededFuture(.delivered(count: count))
             } catch RelayStoreError.inboxFull {
@@ -310,9 +314,10 @@ final class RelayHandler: ChannelInboundHandler {
             ) {
                 return context.eventLoop.makeSucceededFuture(proofFailure)
             }
-            _ = store.acknowledge(
+            _ = store.acknowledgeGroupEnvelopes(
                 inboxId: acknowledgement.groupInboxId,
-                messageIds: acknowledgement.messageIds
+                messageIds: acknowledgement.messageIds,
+                recipientFingerprint: acknowledgement.actorFingerprint
             )
             return context.eventLoop.makeSucceededFuture(.ok())
         case .health:
@@ -1642,7 +1647,11 @@ final class RelayHandler: ChannelInboundHandler {
         _ fetch: FetchGroupMessagesRequest,
         on eventLoop: EventLoop
     ) -> EventLoopFuture<[GroupRatchetEnvelope]> {
-        let messages = store.fetch(inboxId: fetch.groupInboxId, maxCount: fetch.maxCount)
+        let messages = store.fetchGroupEnvelopes(
+            inboxId: fetch.groupInboxId,
+            recipientFingerprint: fetch.actorFingerprint,
+            maxCount: fetch.maxCount
+        )
             .compactMap { groupRatchetEnvelope(from: $0, groupId: fetch.groupId) }
         guard messages.isEmpty,
               let timeout = boundedLongPollTimeoutSeconds(requested: fetch.longPollTimeoutSeconds) else {
@@ -1660,13 +1669,21 @@ final class RelayHandler: ChannelInboundHandler {
         let remaining = deadline.timeIntervalSinceNow
         guard remaining > 0 else {
             return eventLoop.makeSucceededFuture(
-                store.fetch(inboxId: fetch.groupInboxId, maxCount: fetch.maxCount)
+                store.fetchGroupEnvelopes(
+                    inboxId: fetch.groupInboxId,
+                    recipientFingerprint: fetch.actorFingerprint,
+                    maxCount: fetch.maxCount
+                )
                     .compactMap { groupRatchetEnvelope(from: $0, groupId: fetch.groupId) }
             )
         }
         let delayMilliseconds = Int64(max(1, min(250, remaining * 1_000)))
         return eventLoop.scheduleTask(in: .milliseconds(delayMilliseconds)) {
-            let messages = self.store.fetch(inboxId: fetch.groupInboxId, maxCount: fetch.maxCount)
+            let messages = self.store.fetchGroupEnvelopes(
+                inboxId: fetch.groupInboxId,
+                recipientFingerprint: fetch.actorFingerprint,
+                maxCount: fetch.maxCount
+            )
                 .compactMap { self.groupRatchetEnvelope(from: $0, groupId: fetch.groupId) }
             if !messages.isEmpty || Date() >= deadline {
                 return eventLoop.makeSucceededFuture(messages)

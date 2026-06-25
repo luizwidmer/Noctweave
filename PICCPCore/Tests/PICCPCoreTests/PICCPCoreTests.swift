@@ -3297,6 +3297,429 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertTrue(emptyFetch.groupMessages?.isEmpty ?? false)
     }
 
+    func testRelayServerGroupAcknowledgementsAreMemberScoped() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39510)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "member-scoped group ack relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let memberA = Identity(displayName: "Member A")
+        let memberB = Identity(displayName: "Member B")
+        let client = RelayClient(endpoint: endpoint)
+        let createResponse = try await client.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        title: "Scoped Ack",
+                        creatorFingerprint: creator.fingerprint,
+                        memberFingerprints: [memberA.fingerprint, memberB.fingerprint],
+                        creatorProfile: relayGroupMemberProfile(identity: creator, relay: endpoint),
+                        memberProfiles: [
+                            relayGroupMemberProfile(identity: memberA, relay: endpoint),
+                            relayGroupMemberProfile(identity: memberB, relay: endpoint)
+                        ]
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        XCTAssertEqual(createResponse.type, .group)
+        let group = try XCTUnwrap(createResponse.group)
+        let groupSecret = Data(SHA256.hash(data: Data("member scoped group ack secret".utf8)))
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        var memberARatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: memberA.fingerprint
+        )
+        var memberBRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: memberB.fingerprint
+        )
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("deliver to both recipients"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let deliver = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: group.id,
+                    groupInboxId: group.inboxId,
+                    envelope: envelope
+                )
+            )
+        )
+        XCTAssertEqual(deliver.type, .delivered)
+
+        let memberAFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: memberA.fingerprint
+                    ),
+                    signer: memberA
+                )
+            )
+        )
+        let memberAEnvelope = try XCTUnwrap(memberAFetch.groupMessages?.first)
+        XCTAssertEqual(
+            try GroupRatchet.decrypt(
+                envelope: memberAEnvelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &memberARatchet
+            ),
+            .text("deliver to both recipients")
+        )
+        let memberAAck = try await client.send(
+            .acknowledgeGroupMessages(
+                try signedAcknowledgeGroupMessagesRequest(
+                    AcknowledgeGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        messageIds: [memberAEnvelope.id],
+                        actorFingerprint: memberA.fingerprint
+                    ),
+                    signer: memberA
+                )
+            )
+        )
+        XCTAssertEqual(memberAAck.type, .ok)
+
+        let memberAAfterAck = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: memberA.fingerprint
+                    ),
+                    signer: memberA
+                )
+            )
+        )
+        XCTAssertTrue(memberAAfterAck.groupMessages?.isEmpty ?? false)
+
+        let memberBFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: memberB.fingerprint
+                    ),
+                    signer: memberB
+                )
+            )
+        )
+        let memberBEnvelope = try XCTUnwrap(memberBFetch.groupMessages?.first)
+        XCTAssertEqual(memberBEnvelope.id, envelope.id)
+        XCTAssertEqual(
+            try GroupRatchet.decrypt(
+                envelope: memberBEnvelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &memberBRatchet
+            ),
+            .text("deliver to both recipients")
+        )
+    }
+
+    func testOfflineGroupMemberRefreshesEpochAndRetrievesAttachmentAfterPeerAck() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39511)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "offline group attachment relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let memberA = Identity(displayName: "Member A")
+        let memberB = Identity(displayName: "Offline Member B")
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+        let memberAProfile = relayGroupMemberProfile(identity: memberA, relay: endpoint)
+        let memberBProfile = relayGroupMemberProfile(identity: memberB, relay: endpoint)
+        let client = RelayClient(endpoint: endpoint)
+        let groupId = UUID()
+        let epoch0Secret = Data(SHA256.hash(data: Data("group epoch 0 secret".utf8)))
+        let initialDistribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: [creatorProfile, memberAProfile, memberBProfile]
+        )
+        let createResponse = try await client.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        groupId: groupId,
+                        title: "Offline Attachments",
+                        creatorFingerprint: creator.fingerprint,
+                        memberFingerprints: [memberA.fingerprint, memberB.fingerprint],
+                        creatorProfile: creatorProfile,
+                        memberProfiles: [memberAProfile, memberBProfile],
+                        initialRatchetSecretDistribution: initialDistribution
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        XCTAssertEqual(createResponse.type, .group)
+        let created = try XCTUnwrap(createResponse.group)
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        var memberARatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: memberA.fingerprint
+        )
+        var memberBRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: memberB.fingerprint
+        )
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("group epoch 1 secret after title commit".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: created.id,
+            epoch: created.epoch + 1,
+            operation: .update,
+            recipients: [creatorProfile, memberAProfile, memberBProfile]
+        )
+        let updateCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                title: "Offline Attachments v2",
+                ratchetSecretDistribution: epoch1Distribution
+            ),
+            signer: creator
+        )
+        let updateResponse = try await client.send(
+            .updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    title: "Offline Attachments v2",
+                    groupCommit: updateCommit
+                )
+            )
+        )
+        XCTAssertEqual(updateResponse.type, .group)
+        let updated = try XCTUnwrap(updateResponse.group)
+        XCTAssertEqual(updated.epoch, created.epoch + 1)
+        try creatorRatchet.advanceEpoch(
+            to: updated.epoch,
+            transcriptHash: updated.mlsEpochState.confirmedTranscriptHash,
+            commitSecret: epoch1Secret
+        )
+        try memberARatchet.advanceEpoch(
+            to: updated.epoch,
+            transcriptHash: updated.mlsEpochState.confirmedTranscriptHash,
+            commitSecret: epoch1Secret
+        )
+
+        let plaintext = Data("offline member image bytes".utf8)
+        let attachmentId = UUID()
+        let prepared = try GroupRatchet.prepareMessageKey(
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let descriptor = AttachmentDescriptor(
+            id: attachmentId,
+            fileName: "offline.jpg",
+            mimeType: "image/jpeg",
+            byteCount: plaintext.count,
+            sha256: AttachmentCrypto.sha256(plaintext),
+            chunkCount: 1,
+            chunkSize: 64 * 1024
+        )
+        let chunkAAD = AttachmentCrypto.authenticatedData(
+            conversationId: "group:\(created.id.uuidString)",
+            sessionId: "epoch:\(updated.epoch):\(updated.mlsEpochState.confirmedTranscriptHash.base64EncodedString())",
+            messageCounter: prepared.counter,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            byteCount: plaintext.count
+        )
+        let encryptedChunk = try AttachmentCrypto.encryptChunk(
+            plaintext: plaintext,
+            messageKey: prepared.key,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            authenticatedData: chunkAAD
+        )
+        let uploadChunk = try await client.send(
+            .uploadAttachment(
+                UploadAttachmentRequest(
+                    attachmentId: attachmentId,
+                    chunkIndex: 0,
+                    payload: encryptedChunk,
+                    ttlSeconds: 600
+                )
+            )
+        )
+        XCTAssertEqual(uploadChunk.type, .attachment)
+        let attachmentEnvelope = try GroupRatchet.encrypt(
+            body: .attachment(descriptor),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            messageCounter: prepared.counter,
+            messageKey: prepared.key,
+            state: creatorRatchet
+        )
+        let deliver = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: updated.id,
+                    groupInboxId: updated.inboxId,
+                    envelope: attachmentEnvelope
+                )
+            )
+        )
+        XCTAssertEqual(deliver.type, .delivered)
+
+        let memberAFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: updated.id,
+                        groupInboxId: updated.inboxId,
+                        actorFingerprint: memberA.fingerprint
+                    ),
+                    signer: memberA
+                )
+            )
+        )
+        let memberAEnvelope = try XCTUnwrap(memberAFetch.groupMessages?.first)
+        let memberADecrypted = try GroupRatchet.decryptWithKey(
+            envelope: memberAEnvelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &memberARatchet
+        )
+        XCTAssertEqual(memberADecrypted.body, .attachment(descriptor))
+        let memberAAck = try await client.send(
+            .acknowledgeGroupMessages(
+                try signedAcknowledgeGroupMessagesRequest(
+                    AcknowledgeGroupMessagesRequest(
+                        groupId: updated.id,
+                        groupInboxId: updated.inboxId,
+                        messageIds: [memberAEnvelope.id],
+                        actorFingerprint: memberA.fingerprint
+                    ),
+                    signer: memberA
+                )
+            )
+        )
+        XCTAssertEqual(memberAAck.type, .ok)
+
+        let staleMemberBFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: updated.id,
+                        groupInboxId: updated.inboxId,
+                        actorFingerprint: memberB.fingerprint
+                    ),
+                    signer: memberB
+                )
+            )
+        )
+        let memberBEnvelope = try XCTUnwrap(staleMemberBFetch.groupMessages?.first)
+        XCTAssertThrowsError(
+            try GroupRatchet.decryptWithKey(
+                envelope: memberBEnvelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &memberBRatchet
+            )
+        )
+
+        let refreshedGroupResponse = try await client.send(
+            .getGroup(
+                try signedGetGroupRequest(
+                    GetGroupRequest(groupId: updated.id, memberFingerprint: memberB.fingerprint),
+                    signer: memberB
+                )
+            )
+        )
+        let refreshedGroup = try XCTUnwrap(refreshedGroupResponse.group)
+        let refreshedSecret = try XCTUnwrap(
+            refreshedGroup.mlsEpochState.lastCommit.ratchetSecretDistribution?
+                .openSecret(recipientFingerprint: memberB.fingerprint, agreementKey: memberB.agreementKey)
+        )
+        XCTAssertEqual(refreshedSecret, epoch1Secret)
+        try memberBRatchet.advanceEpoch(
+            to: refreshedGroup.epoch,
+            transcriptHash: refreshedGroup.mlsEpochState.confirmedTranscriptHash,
+            commitSecret: refreshedSecret
+        )
+        let memberBDecrypted = try GroupRatchet.decryptWithKey(
+            envelope: memberBEnvelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &memberBRatchet
+        )
+        XCTAssertEqual(memberBDecrypted.body, .attachment(descriptor))
+
+        let fetchedChunkResponse = try await client.send(
+            .fetchAttachment(FetchAttachmentRequest(attachmentId: attachmentId, chunkIndex: 0))
+        )
+        let fetchedChunk = try XCTUnwrap(fetchedChunkResponse.attachment)
+        let recovered = try AttachmentCrypto.decryptChunk(
+            payload: fetchedChunk.payload,
+            messageKey: memberBDecrypted.messageKey,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            authenticatedData: chunkAAD
+        )
+        XCTAssertEqual(recovered, plaintext)
+    }
+
     func testRelayServerDeleteGroupRoute() async throws {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39443)
         let server = RelayServer(

@@ -42,6 +42,8 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Replace relay-backed pairwise fan-out text delivery with the MLS-derived group ratchet after route-level interoperability tests pass
 - [x] Extend the group-ratchet relay path to encrypted attachments and voice-message bodies
 - [x] Remove the remaining local/fallback pairwise group delivery path
+- [x] Make group-inbox acknowledgements member-scoped so one member cannot remove messages before offline peers fetch them
+- [x] Add route-level coverage for offline group epoch refresh and encrypted attachment retrieval after another member acknowledges
 
 ## Decentralized wake
 - [x] Define relay-advertised wake policy without APNs or a centralized notification authority

@@ -459,9 +459,13 @@ public final class RelayServer {
                 return .error("Invalid group message signature")
             }
             do {
-                let count = try await store.deliver(
+                let recipientFingerprints = group.members
+                    .map(\.fingerprint)
+                    .filter { $0 != deliver.envelope.senderFingerprint }
+                let count = try await store.deliverGroupEnvelope(
                     carrierEnvelope(for: deliver.envelope),
-                    to: deliver.groupInboxId
+                    to: deliver.groupInboxId,
+                    recipientFingerprints: recipientFingerprints
                 )
                 onEvent?(.delivered(inboxId: deliver.groupInboxId, storedCount: count))
                 return .delivered(count: count)
@@ -519,9 +523,10 @@ public final class RelayServer {
             ) {
                 return proofFailure
             }
-            _ = try await store.acknowledge(
+            _ = try await store.acknowledgeGroupEnvelopes(
                 inboxId: acknowledgement.groupInboxId,
-                messageIds: acknowledgement.messageIds
+                messageIds: acknowledgement.messageIds,
+                recipientFingerprint: acknowledgement.actorFingerprint
             )
             return .ok()
         case .health:
@@ -1131,7 +1136,11 @@ public final class RelayServer {
     }
 
     private func fetchGroupMessagesWithOptionalLongPoll(_ fetch: FetchGroupMessagesRequest) async throws -> [GroupRatchetEnvelope] {
-        var messages = try await store.fetch(inboxId: fetch.groupInboxId, maxCount: fetch.maxCount)
+        var messages = try await store.fetchGroupEnvelopes(
+            inboxId: fetch.groupInboxId,
+            recipientFingerprint: fetch.actorFingerprint,
+            maxCount: fetch.maxCount
+        )
             .compactMap(groupRatchetEnvelope)
         guard messages.isEmpty,
               let timeout = boundedLongPollTimeoutSeconds(
@@ -1147,7 +1156,11 @@ public final class RelayServer {
             if sleepSeconds > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(sleepSeconds * 1_000_000_000))
             }
-            messages = try await store.fetch(inboxId: fetch.groupInboxId, maxCount: fetch.maxCount)
+            messages = try await store.fetchGroupEnvelopes(
+                inboxId: fetch.groupInboxId,
+                recipientFingerprint: fetch.actorFingerprint,
+                maxCount: fetch.maxCount
+            )
                 .compactMap(groupRatchetEnvelope)
             if !messages.isEmpty {
                 return messages

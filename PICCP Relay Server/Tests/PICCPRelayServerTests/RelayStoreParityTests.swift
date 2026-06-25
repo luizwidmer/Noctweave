@@ -35,6 +35,45 @@ final class RelayStoreParityTests: XCTestCase {
         }
     }
 
+    func testGroupEnvelopeAcknowledgementIsRecipientScoped() throws {
+        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        let inboxId = InboxAddress.generate()
+        let envelope = makeEnvelope()
+
+        _ = try store.deliverGroupEnvelope(
+            envelope,
+            to: inboxId,
+            recipientFingerprints: ["member-a", "member-b"]
+        )
+        XCTAssertEqual(
+            store.fetchGroupEnvelopes(inboxId: inboxId, recipientFingerprint: "member-a", maxCount: nil)
+                .map(\.id),
+            [envelope.id]
+        )
+
+        _ = store.acknowledgeGroupEnvelopes(
+            inboxId: inboxId,
+            messageIds: [envelope.id],
+            recipientFingerprint: "member-a"
+        )
+        XCTAssertTrue(
+            store.fetchGroupEnvelopes(inboxId: inboxId, recipientFingerprint: "member-a", maxCount: nil)
+                .isEmpty
+        )
+        XCTAssertEqual(
+            store.fetchGroupEnvelopes(inboxId: inboxId, recipientFingerprint: "member-b", maxCount: nil)
+                .map(\.id),
+            [envelope.id]
+        )
+
+        _ = store.acknowledgeGroupEnvelopes(
+            inboxId: inboxId,
+            messageIds: [envelope.id],
+            recipientFingerprint: "member-b"
+        )
+        XCTAssertTrue(store.fetch(inboxId: inboxId, maxCount: nil).isEmpty)
+    }
+
     func testStoreRejectsOversizedPrekeyBundle() throws {
         let store = RelayStore(fileURL: nil, maxInboxMessages: 1, temporalBucketSeconds: 300)
         let fingerprint = "prekey-owner"

@@ -128,8 +128,60 @@ public actor RelayStore {
         return inbox.count
     }
 
+    @discardableResult
+    public func deliverGroupEnvelope(
+        _ envelope: Envelope,
+        to inboxId: String,
+        recipientFingerprints: [String]
+    ) throws -> Int {
+        let recipients = Set(recipientFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty })
+        guard !recipients.isEmpty else {
+            return mailboxes[inboxId, default: []].count
+        }
+        if mailboxes[inboxId] == nil, mailboxes.count >= maxMailboxes {
+            throw RelayStoreError.relayCapacityExceeded
+        }
+        let totalMessages = mailboxes.values.reduce(into: 0) { $0 += $1.count }
+        guard totalMessages < maxStoredMessages else {
+            throw RelayStoreError.relayCapacityExceeded
+        }
+        var inbox = mailboxes[inboxId, default: []]
+        guard inbox.count < maxInboxMessages else {
+            throw RelayStoreError.inboxFull
+        }
+        let discriminator = "\(inboxId):\(envelope.id.uuidString)"
+        inbox.append(
+            StoredEnvelope(
+                envelope: envelope,
+                storedAt: bucketed(Date(), discriminator: discriminator),
+                pendingGroupRecipientFingerprints: recipients
+            )
+        )
+        mailboxes[inboxId] = inbox
+        try saveToDisk()
+        return inbox.count
+    }
+
     public func fetch(inboxId: String, maxCount: Int? = nil) throws -> [Envelope] {
         let inbox = mailboxes[inboxId, default: []]
+        let count = max(0, maxCount ?? inbox.count)
+        return Array(inbox.prefix(count)).map { $0.envelope }
+    }
+
+    public func fetchGroupEnvelopes(
+        inboxId: String,
+        recipientFingerprint: String,
+        maxCount: Int? = nil
+    ) throws -> [Envelope] {
+        let recipient = recipientFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !recipient.isEmpty else {
+            return []
+        }
+        let inbox = mailboxes[inboxId, default: []].filter { record in
+            record.pendingGroupRecipientFingerprints?.contains(recipient) ?? false
+        }
         let count = max(0, maxCount ?? inbox.count)
         return Array(inbox.prefix(count)).map { $0.envelope }
     }
@@ -176,6 +228,48 @@ public actor RelayStore {
             try saveToDisk()
         }
         return removed
+    }
+
+    @discardableResult
+    public func acknowledgeGroupEnvelopes(
+        inboxId: String,
+        messageIds: [UUID],
+        recipientFingerprint: String
+    ) throws -> Int {
+        let ids = Set(messageIds.prefix(1_000))
+        let recipient = recipientFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !ids.isEmpty, !recipient.isEmpty else {
+            return 0
+        }
+        var removedForRecipient = 0
+        var updated = false
+        var remaining: [StoredEnvelope] = []
+        for var record in mailboxes[inboxId, default: []] {
+            guard ids.contains(record.envelope.id),
+                  var pending = record.pendingGroupRecipientFingerprints else {
+                remaining.append(record)
+                continue
+            }
+            if pending.remove(recipient) != nil {
+                removedForRecipient += 1
+                updated = true
+            }
+            if !pending.isEmpty {
+                record.pendingGroupRecipientFingerprints = pending
+                remaining.append(record)
+            } else {
+                updated = true
+            }
+        }
+        if updated {
+            if remaining.isEmpty {
+                mailboxes.removeValue(forKey: inboxId)
+            } else {
+                mailboxes[inboxId] = remaining
+            }
+            try saveToDisk()
+        }
+        return removedForRecipient
     }
 
     public func storeAttachment(
@@ -1168,6 +1262,27 @@ private struct InboxRegistrationRecord: Codable {
 private struct StoredEnvelope: Codable {
     let envelope: Envelope
     let storedAt: Date
+    var pendingGroupRecipientFingerprints: Set<String>?
+
+    init(
+        envelope: Envelope,
+        storedAt: Date,
+        pendingGroupRecipientFingerprints: Set<String>? = nil
+    ) {
+        self.envelope = envelope
+        self.storedAt = storedAt
+        self.pendingGroupRecipientFingerprints = pendingGroupRecipientFingerprints
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        envelope = try container.decode(Envelope.self, forKey: .envelope)
+        storedAt = try container.decode(Date.self, forKey: .storedAt)
+        pendingGroupRecipientFingerprints = try container.decodeIfPresent(
+            Set<String>.self,
+            forKey: .pendingGroupRecipientFingerprints
+        )
+    }
 }
 
 private struct AttachmentRecord: Codable {

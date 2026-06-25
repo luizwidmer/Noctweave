@@ -36,7 +36,8 @@ Last reviewed: June 25, 2026.
 - Relay metadata advertises the group security model: current `relayBackedPairwise` pairwise-fan-out mode or `mlsDerivedTree`.
 - Relay group descriptors carry required MLS epoch state with tree hash, transcript hash, ciphersuite label, and last commit summary.
 - Group conversations can persist encrypted group ratchet state locally, and signed group create/commit/join-approval operations can distribute group epoch secrets through ML-KEM-sealed member shares.
-- Relay-backed group delivery uses signed group-ratchet envelopes stored in the group inbox for text, image attachments, and voice messages; clients fetch, decrypt, and acknowledge those envelopes with member actor proofs.
+- Relay-backed group delivery uses signed group-ratchet envelopes stored in the group inbox for text, image attachments, and voice messages; clients fetch, decrypt, and acknowledge those envelopes with member actor proofs. Group acknowledgements are member-scoped, so one online member cannot remove a pending ciphertext before another member fetches it.
+- Route coverage verifies offline epoch refresh and encrypted attachment retrieval after another group member has already acknowledged the group envelope.
 - Clients fail closed when relay-backed group-ratchet state is missing instead of silently downgrading group sends to pairwise direct-message fan-out.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
@@ -68,7 +69,7 @@ Last reviewed: June 25, 2026.
 
 ## Next Alignment Targets
 - Prepare the external security-audit package.
-- Expand group-ratchet interoperability coverage across multiple devices, offline windows, and attachment retrieval.
+- Expand group-ratchet interoperability coverage across offline rejoin windows and multi-relay group paths.
 - Add multi-identity wake simulation tests and keep tuning OS-permitted background fetch behavior.
 - Continue open-federation experiments behind feature gates and simulation tests.
 - Replace cover-query hidden retrieval with stronger PIR if the bandwidth and relay-cost profile becomes acceptable.
