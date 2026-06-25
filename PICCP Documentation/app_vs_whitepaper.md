@@ -44,7 +44,7 @@ Last reviewed: June 25, 2026.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation. Discovery refreshes retain previously validated signed nodes across transient gateway or peer-query failures.
-- Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning rejects undersized buckets and incomplete cover responses so compatible clients do not silently accept target-only retrievals.
+- Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning rejects undersized buckets, incomplete cover responses, and malformed public query plans so compatible clients do not silently accept target-only retrievals.
 - Release verification workflow wired to run the local SBOM, dependency, relay test, and optional scanner checks in CI.
 
 ### Client UX and Local Safety

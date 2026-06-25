@@ -68,6 +68,27 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: plan))
     }
 
+    func testHiddenRetrievalPlannerRejectsMalformedPublicQueryPlans() {
+        let response = [
+            "a": Data("decoy-a".utf8),
+            "b": Data("decoy-b".utf8),
+            "c": Data("target".utf8)
+        ]
+        let missingTarget = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["a", "b"],
+            targetRecordId: "c"
+        )
+        let duplicateTarget = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["a", "c", "c"],
+            targetRecordId: "c"
+        )
+
+        XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: missingTarget))
+        XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: duplicateTarget))
+    }
+
     func testHiddenRetrievalPlannerRejectsInvalidQueries() throws {
         XCTAssertThrowsError(
             try HiddenRetrievalPlanner.makeCoverQuery(

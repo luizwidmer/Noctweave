@@ -72,6 +72,10 @@ public enum HiddenRetrievalPlanner {
         from records: [String: T],
         using plan: HiddenRetrievalQueryPlan
     ) -> T? {
+        guard Set(plan.requestedRecordIds).count == plan.requestedRecordIds.count,
+              plan.requestedRecordIds.filter({ $0 == plan.targetRecordId }).count == 1 else {
+            return nil
+        }
         guard plan.requestedRecordIds.allSatisfy({ records[$0] != nil }) else {
             return nil
         }
