@@ -4058,6 +4058,188 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(recovered, .text("message after two missed epochs"))
     }
 
+    func testMultipleOfflineGroupMembersReplayRetainedEpochsIndependently() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39513)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "multi offline group relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let memberA = Identity(displayName: "Offline A")
+        let memberB = Identity(displayName: "Offline B")
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+        let memberAProfile = relayGroupMemberProfile(identity: memberA, relay: endpoint)
+        let memberBProfile = relayGroupMemberProfile(identity: memberB, relay: endpoint)
+        let recipients = [creatorProfile, memberAProfile, memberBProfile]
+        let client = RelayClient(endpoint: endpoint)
+        let groupId = UUID(uuidString: "CCCCCCCC-DDDD-EEEE-FFFF-AAAAAAAAAAAA")!
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("multi offline epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let createResponse = try await client.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        groupId: groupId,
+                        title: "Multi Offline",
+                        creatorFingerprint: creator.fingerprint,
+                        memberFingerprints: [memberA.fingerprint, memberB.fingerprint],
+                        creatorProfile: creatorProfile,
+                        memberProfiles: [memberAProfile, memberBProfile],
+                        initialRatchetSecretDistribution: epoch0Distribution
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        let created = try XCTUnwrap(createResponse.group)
+
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        let memberARatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: memberA.fingerprint
+        )
+        let memberBRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: memberB.fingerprint
+        )
+
+        var latestGroup = created
+        for epoch in UInt64(1)...2 {
+            let secret = Data(SHA256.hash(data: Data("multi offline epoch \(epoch)".utf8)))
+            let distribution = try GroupRatchetEpochSecretDistribution.seal(
+                secret: secret,
+                groupId: created.id,
+                epoch: latestGroup.epoch + 1,
+                operation: .update,
+                recipients: recipients
+            )
+            let commit = try signedGroupCommit(
+                SignedGroupCommit(
+                    operation: .update,
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    baseEpoch: latestGroup.epoch,
+                    previousTranscriptHash: latestGroup.mlsEpochState.confirmedTranscriptHash,
+                    title: "Multi Offline \(epoch)",
+                    ratchetSecretDistribution: distribution
+                ),
+                signer: creator
+            )
+            let response = try await client.send(
+                .updateGroup(
+                    UpdateGroupRequest(
+                        groupId: created.id,
+                        actorFingerprint: creator.fingerprint,
+                        title: "Multi Offline \(epoch)",
+                        groupCommit: commit
+                    )
+                )
+            )
+            latestGroup = try XCTUnwrap(response.group)
+            try creatorRatchet.advanceEpoch(
+                to: latestGroup.epoch,
+                transcriptHash: latestGroup.mlsEpochState.confirmedTranscriptHash,
+                commitSecret: secret
+            )
+        }
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("message after shared outage"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let delivered = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: latestGroup.id,
+                    groupInboxId: latestGroup.inboxId,
+                    envelope: envelope
+                )
+            )
+        )
+        XCTAssertEqual(delivered.type, .delivered)
+
+        for (member, staleRatchet) in [(memberA, memberARatchet), (memberB, memberBRatchet)] {
+            let fetch = try await client.send(
+                .fetchGroupMessages(
+                    try signedFetchGroupMessagesRequest(
+                        FetchGroupMessagesRequest(
+                            groupId: latestGroup.id,
+                            groupInboxId: latestGroup.inboxId,
+                            actorFingerprint: member.fingerprint
+                        ),
+                        signer: member
+                    )
+                )
+            )
+            let fetchedEnvelope = try XCTUnwrap(fetch.groupMessages?.first)
+            var unrecovered = staleRatchet
+            XCTAssertThrowsError(
+                try GroupRatchet.decrypt(
+                    envelope: fetchedEnvelope,
+                    senderPublicSigningKey: creator.signingKey.publicKeyData,
+                    state: &unrecovered
+                )
+            )
+
+            let refreshedResponse = try await client.send(
+                .getGroup(
+                    try signedGetGroupRequest(
+                        GetGroupRequest(groupId: latestGroup.id, memberFingerprint: member.fingerprint),
+                        signer: member
+                    )
+                )
+            )
+            let refreshed = try XCTUnwrap(refreshedResponse.group)
+            XCTAssertEqual(refreshed.mlsEpochHistory.map(\.epoch), [0, 1, 2])
+
+            var recoveredRatchet = try XCTUnwrap(
+                GroupRatchetRecovery.state(
+                    from: refreshed,
+                    identity: member,
+                    existing: staleRatchet
+                )
+            )
+            XCTAssertEqual(recoveredRatchet.epoch, latestGroup.epoch)
+            let recovered = try GroupRatchet.decrypt(
+                envelope: fetchedEnvelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &recoveredRatchet
+            )
+            XCTAssertEqual(recovered, .text("message after shared outage"))
+        }
+    }
+
     func testRelayServerDeleteGroupRoute() async throws {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39443)
         let server = RelayServer(
