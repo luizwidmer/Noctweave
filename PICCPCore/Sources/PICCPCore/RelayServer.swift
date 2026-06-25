@@ -447,6 +447,19 @@ public final class RelayServer {
                   deliver.envelope.groupId == deliver.groupId else {
                 return .error("Invalid group message delivery")
             }
+            if let destination = deliver.destinationRelay,
+               destination != localEndpoint {
+                if let response = try await federationGate(forwardingTo: destination) {
+                    return response
+                }
+                let forward = DeliverGroupMessageRequest(
+                    groupId: deliver.groupId,
+                    groupInboxId: deliver.groupInboxId,
+                    envelope: deliver.envelope
+                )
+                let client = RelayClient(endpoint: destination, authToken: configuration.federationForwardingAuthToken)
+                return try await client.send(.deliverGroupMessage(forward))
+            }
             guard let group = await store.fetchGroup(groupId: deliver.groupId),
                   group.inboxId == deliver.groupInboxId else {
                 return .error("Group not found")

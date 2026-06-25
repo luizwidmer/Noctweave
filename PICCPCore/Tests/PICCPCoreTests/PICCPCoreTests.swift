@@ -3297,6 +3297,126 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertTrue(emptyFetch.groupMessages?.isEmpty ?? false)
     }
 
+    func testFederatedRelaysSupportGroupRatchetMessageDelivery() async throws {
+        let federation = FederationDescriptor(mode: .open, name: "group-mesh")
+        let relayAEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39530)
+        let relayBEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39531)
+        let relayA = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                groupCreationMode: .allowed,
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let relayB = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                groupCreationMode: .allowed,
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let startedA = expectation(description: "group relay A started")
+        relayA.onEvent = { (event: RelayServer.Event) in
+            if case .started = event {
+                startedA.fulfill()
+            }
+        }
+        let startedB = expectation(description: "group relay B started")
+        relayB.onEvent = { (event: RelayServer.Event) in
+            if case .started = event {
+                startedB.fulfill()
+            }
+        }
+        try relayA.start(host: "0.0.0.0", port: relayAEndpoint.port)
+        try relayB.start(host: "0.0.0.0", port: relayBEndpoint.port)
+        defer {
+            relayA.stop()
+            relayB.stop()
+        }
+        await fulfillment(of: [startedA, startedB], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator Relay A")
+        let member = Identity(displayName: "Member Relay B")
+        let relayAClient = RelayClient(endpoint: relayAEndpoint)
+        let relayBClient = RelayClient(endpoint: relayBEndpoint)
+
+        let createResponse = try await relayBClient.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        title: "Federated Group",
+                        creatorFingerprint: creator.fingerprint,
+                        memberFingerprints: [member.fingerprint],
+                        creatorProfile: relayGroupMemberProfile(identity: creator, relay: relayAEndpoint),
+                        memberProfiles: [relayGroupMemberProfile(identity: member, relay: relayBEndpoint)]
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        XCTAssertEqual(createResponse.type, .group)
+        let group = try XCTUnwrap(createResponse.group)
+
+        let groupSecret = Data(SHA256.hash(data: Data("federated group shared secret".utf8)))
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        var memberRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: member.fingerprint
+        )
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("hello across group federation"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let deliverResponse = try await relayAClient.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: group.id,
+                    groupInboxId: group.inboxId,
+                    envelope: envelope,
+                    destinationRelay: relayBEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .delivered)
+        XCTAssertEqual(deliverResponse.delivered?.storedCount, 1)
+
+        let fetchedAtRelayB = try await relayBClient.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: member.fingerprint
+                    ),
+                    signer: member
+                )
+            )
+        )
+        XCTAssertEqual(fetchedAtRelayB.type, .groupMessages)
+        let fetchedEnvelope = try XCTUnwrap(fetchedAtRelayB.groupMessages?.first)
+        let body = try GroupRatchet.decrypt(
+            envelope: fetchedEnvelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &memberRatchet
+        )
+        XCTAssertEqual(body, .text("hello across group federation"))
+    }
+
     func testRelayServerGroupAcknowledgementsAreMemberScoped() async throws {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39510)
         let server = RelayServer(

@@ -841,6 +841,7 @@ struct DeliverGroupMessageRequest: Codable, Equatable {
     let groupId: UUID
     let groupInboxId: String
     let envelope: GroupRatchetEnvelope
+    let destinationRelay: RelayEndpoint?
 }
 
 struct FetchGroupMessagesRequest: Codable, Equatable {

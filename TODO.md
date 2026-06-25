@@ -44,6 +44,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Remove the remaining local/fallback pairwise group delivery path
 - [x] Make group-inbox acknowledgements member-scoped so one member cannot remove messages before offline peers fetch them
 - [x] Add route-level coverage for offline group epoch refresh and encrypted attachment retrieval after another member acknowledges
+- [x] Add federated multi-relay group-ratchet delivery coverage for a sender on one relay delivering to the group-owning relay
 
 ## Decentralized wake
 - [x] Define relay-advertised wake policy without APNs or a centralized notification authority

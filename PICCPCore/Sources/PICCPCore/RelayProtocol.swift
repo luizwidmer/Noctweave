@@ -497,15 +497,18 @@ public struct DeliverGroupMessageRequest: Codable, Equatable {
     public let groupId: UUID
     public let groupInboxId: String
     public let envelope: GroupRatchetEnvelope
+    public let destinationRelay: RelayEndpoint?
 
     public init(
         groupId: UUID,
         groupInboxId: String,
-        envelope: GroupRatchetEnvelope
+        envelope: GroupRatchetEnvelope,
+        destinationRelay: RelayEndpoint? = nil
     ) {
         self.groupId = groupId
         self.groupInboxId = groupInboxId
         self.envelope = envelope
+        self.destinationRelay = destinationRelay
     }
 }
 

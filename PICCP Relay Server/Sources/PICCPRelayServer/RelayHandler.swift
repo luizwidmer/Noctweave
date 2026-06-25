@@ -238,6 +238,26 @@ final class RelayHandler: ChannelInboundHandler {
                   deliver.envelope.groupId == deliver.groupId else {
                 return context.eventLoop.makeSucceededFuture(.error("Invalid group message delivery"))
             }
+            if let destination = deliver.destinationRelay,
+               destination != localEndpoint {
+                let eventLoop = context.eventLoop
+                return federationGate(forwardingTo: destination, on: eventLoop).flatMap { response in
+                    if let response {
+                        return eventLoop.makeSucceededFuture(response)
+                    }
+                    let forward = DeliverGroupMessageRequest(
+                        groupId: deliver.groupId,
+                        groupInboxId: deliver.groupInboxId,
+                        envelope: deliver.envelope,
+                        destinationRelay: nil
+                    )
+                    return self.forwardGroupDeliver(
+                        forward,
+                        to: destination,
+                        on: eventLoop
+                    )
+                }
+            }
             guard let group = store.fetchGroup(groupId: deliver.groupId),
                   group.inboxId == deliver.groupInboxId else {
                 return context.eventLoop.makeSucceededFuture(.error("Group not found"))
@@ -933,6 +953,18 @@ final class RelayHandler: ChannelInboundHandler {
     ) -> EventLoopFuture<RelayResponse> {
         sendRequest(
             .deliver(deliver).withAuthToken(relayConfiguration.federationForwardingAuthToken),
+            to: endpoint,
+            on: eventLoop
+        )
+    }
+
+    private func forwardGroupDeliver(
+        _ deliver: DeliverGroupMessageRequest,
+        to endpoint: RelayEndpoint,
+        on eventLoop: EventLoop
+    ) -> EventLoopFuture<RelayResponse> {
+        sendRequest(
+            .deliverGroupMessage(deliver).withAuthToken(relayConfiguration.federationForwardingAuthToken),
             to: endpoint,
             on: eventLoop
         )
