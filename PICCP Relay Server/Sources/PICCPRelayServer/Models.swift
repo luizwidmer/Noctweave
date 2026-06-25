@@ -614,6 +614,59 @@ struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
     let shares: [GroupRatchetSecretShare]
 }
 
+struct GroupRatchetEnvelope: Codable, Equatable {
+    let id: UUID
+    let groupId: UUID
+    let epoch: UInt64
+    let transcriptHash: Data
+    let senderFingerprint: String
+    let sentAt: Date
+    let messageCounter: UInt64
+    let payload: EncryptedPayload
+    let signature: Data
+
+    init(
+        id: UUID = UUID(),
+        groupId: UUID,
+        epoch: UInt64,
+        transcriptHash: Data,
+        senderFingerprint: String,
+        sentAt: Date,
+        messageCounter: UInt64,
+        payload: EncryptedPayload,
+        signature: Data
+    ) {
+        self.id = id
+        self.groupId = groupId
+        self.epoch = epoch
+        self.transcriptHash = transcriptHash
+        self.senderFingerprint = senderFingerprint
+        self.sentAt = sentAt
+        self.messageCounter = messageCounter
+        self.payload = payload
+        self.signature = signature
+    }
+
+    func verifySignature(publicSigningKey: Data) -> Bool {
+        guard senderFingerprint == Data(SHA256.hash(data: publicSigningKey)).base64EncodedString(),
+              let data = try? GroupProofCodec.encode(
+                GroupRatchetSignaturePayload(
+                    version: 1,
+                    groupId: groupId,
+                    epoch: epoch,
+                    transcriptHash: transcriptHash,
+                    senderFingerprint: senderFingerprint,
+                    sentAt: sentAt,
+                    messageCounter: messageCounter,
+                    payload: payload
+                )
+              ) else {
+            return false
+        }
+        return OQSSignatureVerifier.shared.verify(signature: signature, data: data, publicKey: publicSigningKey)
+    }
+}
+
 struct Envelope: Codable, Equatable {
     let id: UUID
     let conversationId: String
@@ -784,11 +837,94 @@ struct AcknowledgeMessagesRequest: Codable, Equatable {
     }
 }
 
+struct DeliverGroupMessageRequest: Codable, Equatable {
+    let groupId: UUID
+    let groupInboxId: String
+    let envelope: GroupRatchetEnvelope
+}
+
+struct FetchGroupMessagesRequest: Codable, Equatable {
+    let groupId: UUID
+    let groupInboxId: String
+    let maxCount: Int?
+    let longPollTimeoutSeconds: Int?
+    let actorFingerprint: String
+    let actorProof: RelayActorProof?
+
+    init(
+        groupId: UUID,
+        groupInboxId: String,
+        maxCount: Int? = nil,
+        longPollTimeoutSeconds: Int? = nil,
+        actorFingerprint: String,
+        actorProof: RelayActorProof? = nil
+    ) {
+        self.groupId = groupId
+        self.groupInboxId = groupInboxId
+        self.maxCount = maxCount
+        self.longPollTimeoutSeconds = longPollTimeoutSeconds
+        self.actorFingerprint = actorFingerprint
+        self.actorProof = actorProof
+    }
+
+    func signableData(for proof: RelayActorProof) throws -> Data {
+        try GroupProofCodec.encode(
+            GroupMessageFetchProofPayload(
+                groupId: groupId,
+                groupInboxId: groupInboxId,
+                maxCount: maxCount,
+                longPollTimeoutSeconds: longPollTimeoutSeconds,
+                actorFingerprint: actorFingerprint,
+                signedAt: proof.signedAt,
+                nonce: proof.nonce
+            )
+        )
+    }
+}
+
+struct AcknowledgeGroupMessagesRequest: Codable, Equatable {
+    let groupId: UUID
+    let groupInboxId: String
+    let messageIds: [UUID]
+    let actorFingerprint: String
+    let actorProof: RelayActorProof?
+
+    init(
+        groupId: UUID,
+        groupInboxId: String,
+        messageIds: [UUID],
+        actorFingerprint: String,
+        actorProof: RelayActorProof? = nil
+    ) {
+        self.groupId = groupId
+        self.groupInboxId = groupInboxId
+        self.messageIds = messageIds
+        self.actorFingerprint = actorFingerprint
+        self.actorProof = actorProof
+    }
+
+    func signableData(for proof: RelayActorProof) throws -> Data {
+        try GroupProofCodec.encode(
+            GroupMessageAcknowledgementProofPayload(
+                groupId: groupId,
+                groupInboxId: groupInboxId,
+                messageIds: messageIds,
+                actorFingerprint: actorFingerprint,
+                signedAt: proof.signedAt,
+                nonce: proof.nonce
+            )
+        )
+    }
+}
+
 enum RelayRequestType: String, Codable {
     case deliver
     case registerInbox
     case fetch
     case acknowledgeMessages
+    case deliverGroupMessage
+    case fetchGroupMessages
+    case acknowledgeGroupMessages
     case health
     case info
     case announce
@@ -906,6 +1042,9 @@ struct RelayRequest: Codable, Equatable {
     let registerInbox: RegisterInboxRequest?
     let fetch: FetchRequest?
     let acknowledgeMessages: AcknowledgeMessagesRequest?
+    let deliverGroupMessage: DeliverGroupMessageRequest?
+    let fetchGroupMessages: FetchGroupMessagesRequest?
+    let acknowledgeGroupMessages: AcknowledgeGroupMessagesRequest?
     let announce: AnnounceRequest?
     let listAnnouncements: ListAnnouncementsRequest?
     let sendPairRequest: SendPairRequest?
@@ -935,6 +1074,9 @@ struct RelayRequest: Codable, Equatable {
         registerInbox: RegisterInboxRequest? = nil,
         fetch: FetchRequest? = nil,
         acknowledgeMessages: AcknowledgeMessagesRequest? = nil,
+        deliverGroupMessage: DeliverGroupMessageRequest? = nil,
+        fetchGroupMessages: FetchGroupMessagesRequest? = nil,
+        acknowledgeGroupMessages: AcknowledgeGroupMessagesRequest? = nil,
         announce: AnnounceRequest? = nil,
         listAnnouncements: ListAnnouncementsRequest? = nil,
         sendPairRequest: SendPairRequest? = nil,
@@ -963,6 +1105,9 @@ struct RelayRequest: Codable, Equatable {
         self.registerInbox = registerInbox
         self.fetch = fetch
         self.acknowledgeMessages = acknowledgeMessages
+        self.deliverGroupMessage = deliverGroupMessage
+        self.fetchGroupMessages = fetchGroupMessages
+        self.acknowledgeGroupMessages = acknowledgeGroupMessages
         self.announce = announce
         self.listAnnouncements = listAnnouncements
         self.sendPairRequest = sendPairRequest
@@ -1032,6 +1177,18 @@ struct RelayRequest: Codable, Equatable {
 
     static func acknowledgeMessages(_ request: AcknowledgeMessagesRequest) -> RelayRequest {
         RelayRequest(type: .acknowledgeMessages, acknowledgeMessages: request)
+    }
+
+    static func deliverGroupMessage(_ request: DeliverGroupMessageRequest) -> RelayRequest {
+        RelayRequest(type: .deliverGroupMessage, deliverGroupMessage: request)
+    }
+
+    static func fetchGroupMessages(_ request: FetchGroupMessagesRequest) -> RelayRequest {
+        RelayRequest(type: .fetchGroupMessages, fetchGroupMessages: request)
+    }
+
+    static func acknowledgeGroupMessages(_ request: AcknowledgeGroupMessagesRequest) -> RelayRequest {
+        RelayRequest(type: .acknowledgeGroupMessages, acknowledgeGroupMessages: request)
     }
 
     static func health() -> RelayRequest {
@@ -1350,6 +1507,9 @@ struct RelayRequest: Codable, Equatable {
             registerInbox: registerInbox,
             fetch: fetch,
             acknowledgeMessages: acknowledgeMessages,
+            deliverGroupMessage: deliverGroupMessage,
+            fetchGroupMessages: fetchGroupMessages,
+            acknowledgeGroupMessages: acknowledgeGroupMessages,
             announce: announce,
             listAnnouncements: listAnnouncements,
             sendPairRequest: sendPairRequest,
@@ -1399,10 +1559,41 @@ private struct InboxAcknowledgementProofPayload: Codable {
     let nonce: UUID
 }
 
+private struct GroupMessageFetchProofPayload: Codable {
+    let groupId: UUID
+    let groupInboxId: String
+    let maxCount: Int?
+    let longPollTimeoutSeconds: Int?
+    let actorFingerprint: String
+    let signedAt: Date
+    let nonce: UUID
+}
+
+private struct GroupMessageAcknowledgementProofPayload: Codable {
+    let groupId: UUID
+    let groupInboxId: String
+    let messageIds: [UUID]
+    let actorFingerprint: String
+    let signedAt: Date
+    let nonce: UUID
+}
+
+private struct GroupRatchetSignaturePayload: Codable {
+    let version: Int
+    let groupId: UUID
+    let epoch: UInt64
+    let transcriptHash: Data
+    let senderFingerprint: String
+    let sentAt: Date
+    let messageCounter: UInt64
+    let payload: EncryptedPayload
+}
+
 enum RelayResponseType: String, Codable {
     case ok
     case delivered
     case messages
+    case groupMessages
     case announcements
     case pairRequests
     case attachment
@@ -1424,6 +1615,7 @@ struct RelayResponse: Codable, Equatable {
     let type: RelayResponseType
     let delivered: DeliverResponse?
     let messages: [Envelope]?
+    let groupMessages: [GroupRatchetEnvelope]?
     let announcements: [PairingAnnouncement]?
     let pairRequests: [PairingRequest]?
     let attachment: AttachmentChunk?
@@ -1441,6 +1633,7 @@ struct RelayResponse: Codable, Equatable {
         type: RelayResponseType,
         delivered: DeliverResponse? = nil,
         messages: [Envelope]? = nil,
+        groupMessages: [GroupRatchetEnvelope]? = nil,
         announcements: [PairingAnnouncement]? = nil,
         pairRequests: [PairingRequest]? = nil,
         attachment: AttachmentChunk? = nil,
@@ -1457,6 +1650,7 @@ struct RelayResponse: Codable, Equatable {
         self.type = type
         self.delivered = delivered
         self.messages = messages
+        self.groupMessages = groupMessages
         self.announcements = announcements
         self.pairRequests = pairRequests
         self.attachment = attachment
@@ -1517,6 +1711,10 @@ struct RelayResponse: Codable, Equatable {
             groups: nil,
             error: nil
         )
+    }
+
+    static func groupMessages(_ envelopes: [GroupRatchetEnvelope]) -> RelayResponse {
+        RelayResponse(type: .groupMessages, groupMessages: envelopes)
     }
 
     static func announcements(_ list: [PairingAnnouncement]) -> RelayResponse {

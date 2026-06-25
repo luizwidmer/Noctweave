@@ -3085,6 +3085,143 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertTrue(approveResponse.group?.members.contains(where: { $0.fingerprint == joiner.fingerprint }) ?? false)
     }
 
+    func testRelayServerGroupRatchetMessageRoutes() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39444)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "group ratchet route relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let nonMember = Identity(displayName: "Outsider")
+        let client = RelayClient(endpoint: endpoint)
+        let createRequest = try signedCreateGroupRequest(
+            CreateGroupRequest(
+                title: "Ratchet",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: relayGroupMemberProfile(identity: creator, relay: endpoint),
+                memberProfiles: [relayGroupMemberProfile(identity: member, relay: endpoint)]
+            ),
+            signer: creator
+        )
+        let createResponse = try await client.send(.createGroup(createRequest))
+        XCTAssertEqual(createResponse.type, .group)
+        guard let group = createResponse.group else {
+            XCTFail("Expected group in create response.")
+            return
+        }
+
+        let groupSecret = Data(repeating: 0x33, count: 32)
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        var memberRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: member.fingerprint
+        )
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("one group ciphertext"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+
+        let deliverResponse = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: group.id,
+                    groupInboxId: group.inboxId,
+                    envelope: envelope
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .delivered)
+
+        let rejectedFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: nonMember.fingerprint
+                    ),
+                    signer: nonMember
+                )
+            )
+        )
+        XCTAssertEqual(rejectedFetch.type, .error)
+
+        let fetchResponse = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: member.fingerprint
+                    ),
+                    signer: member
+                )
+            )
+        )
+        XCTAssertEqual(fetchResponse.type, .groupMessages)
+        XCTAssertEqual(fetchResponse.groupMessages?.count, 1)
+        let fetchedEnvelope = try XCTUnwrap(fetchResponse.groupMessages?.first)
+        let body = try GroupRatchet.decrypt(
+            envelope: fetchedEnvelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &memberRatchet
+        )
+        XCTAssertEqual(body, .text("one group ciphertext"))
+
+        let acknowledgementResponse = try await client.send(
+            .acknowledgeGroupMessages(
+                try signedAcknowledgeGroupMessagesRequest(
+                    AcknowledgeGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        messageIds: [fetchedEnvelope.id],
+                        actorFingerprint: member.fingerprint
+                    ),
+                    signer: member
+                )
+            )
+        )
+        XCTAssertEqual(acknowledgementResponse.type, .ok)
+
+        let emptyFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: member.fingerprint
+                    ),
+                    signer: member
+                )
+            )
+        )
+        XCTAssertEqual(emptyFetch.type, .groupMessages)
+        XCTAssertTrue(emptyFetch.groupMessages?.isEmpty ?? false)
+    }
+
     func testRelayServerDeleteGroupRoute() async throws {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39443)
         let server = RelayServer(
@@ -3337,6 +3474,39 @@ final class PICCPCoreTests: XCTestCase {
             actorFingerprint: request.actorFingerprint,
             joinRequestId: request.joinRequestId,
             groupCommit: request.groupCommit,
+            actorProof: proof
+        )
+    }
+
+    private func signedFetchGroupMessagesRequest(
+        _ request: FetchGroupMessagesRequest,
+        signer: Identity
+    ) throws -> FetchGroupMessagesRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return FetchGroupMessagesRequest(
+            groupId: request.groupId,
+            groupInboxId: request.groupInboxId,
+            maxCount: request.maxCount,
+            longPollTimeoutSeconds: request.longPollTimeoutSeconds,
+            actorFingerprint: request.actorFingerprint,
+            actorProof: proof
+        )
+    }
+
+    private func signedAcknowledgeGroupMessagesRequest(
+        _ request: AcknowledgeGroupMessagesRequest,
+        signer: Identity
+    ) throws -> AcknowledgeGroupMessagesRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return AcknowledgeGroupMessagesRequest(
+            groupId: request.groupId,
+            groupInboxId: request.groupInboxId,
+            messageIds: request.messageIds,
+            actorFingerprint: request.actorFingerprint,
             actorProof: proof
         )
     }

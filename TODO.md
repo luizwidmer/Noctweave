@@ -38,8 +38,9 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Add MLS-derived group message ratchet primitive with epoch/transcript-bound sender chains
 - [x] Add encrypted client state storage slot for per-group ratchet state
 - [x] Distribute group ratchet epoch secrets through signed group commits and join approvals
-- [ ] Teach clients to fetch/decrypt relay group-inbox ciphertexts with the group ratchet
-- [ ] Replace pairwise fan-out group delivery with the MLS-derived group ratchet after interoperability tests pass
+- [x] Teach clients to fetch/decrypt relay group-inbox ciphertexts with the group ratchet
+- [x] Replace relay-backed pairwise fan-out text delivery with the MLS-derived group ratchet after route-level interoperability tests pass
+- [ ] Extend the group-ratchet relay path to encrypted attachments and remove the remaining local/fallback pairwise group delivery path
 
 ## Decentralized wake
 - [x] Define relay-advertised wake policy without APNs or a centralized notification authority

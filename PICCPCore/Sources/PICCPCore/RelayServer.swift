@@ -439,6 +439,91 @@ public final class RelayServer {
                 messageIds: acknowledgement.messageIds
             )
             return .ok()
+        case .deliverGroupMessage:
+            guard let deliver = request.deliverGroupMessage else {
+                return .error("Missing group message delivery payload")
+            }
+            guard InboxAddress.isValid(deliver.groupInboxId),
+                  deliver.envelope.groupId == deliver.groupId else {
+                return .error("Invalid group message delivery")
+            }
+            guard let group = await store.fetchGroup(groupId: deliver.groupId),
+                  group.inboxId == deliver.groupInboxId else {
+                return .error("Group not found")
+            }
+            guard let senderKey = registeredSigningKey(
+                for: deliver.envelope.senderFingerprint,
+                in: group
+            ),
+                  deliver.envelope.verifySignature(publicSigningKey: senderKey) else {
+                return .error("Invalid group message signature")
+            }
+            do {
+                let count = try await store.deliver(
+                    carrierEnvelope(for: deliver.envelope),
+                    to: deliver.groupInboxId
+                )
+                onEvent?(.delivered(inboxId: deliver.groupInboxId, storedCount: count))
+                return .delivered(count: count)
+            } catch RelayStoreError.inboxFull {
+                return .error("Inbox full")
+            } catch RelayStoreError.relayCapacityExceeded {
+                return .error("Relay storage capacity reached")
+            }
+        case .fetchGroupMessages:
+            guard let fetch = request.fetchGroupMessages else {
+                return .error("Missing group message fetch payload")
+            }
+            guard InboxAddress.isValid(fetch.groupInboxId) else {
+                return .error("Invalid group inbox")
+            }
+            guard let group = await store.fetchGroup(groupId: fetch.groupId),
+                  group.inboxId == fetch.groupInboxId else {
+                return .error("Group not found")
+            }
+            guard let signingKey = registeredSigningKey(for: fetch.actorFingerprint, in: group) else {
+                return .error("Actor is not a group member")
+            }
+            if let proofFailure = await validateActorProof(
+                fetch.actorProof,
+                expectedFingerprint: fetch.actorFingerprint,
+                expectedSigningKey: signingKey,
+                signableDataBuilder: { proof in try fetch.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            let messages = try await fetchGroupMessagesWithOptionalLongPoll(fetch)
+            onEvent?(.fetched(inboxId: fetch.groupInboxId, count: messages.count))
+            return .groupMessages(messages)
+        case .acknowledgeGroupMessages:
+            guard let acknowledgement = request.acknowledgeGroupMessages else {
+                return .error("Missing group acknowledgement payload")
+            }
+            guard InboxAddress.isValid(acknowledgement.groupInboxId),
+                  !acknowledgement.messageIds.isEmpty,
+                  acknowledgement.messageIds.count <= 1_000 else {
+                return .error("Invalid group acknowledgement")
+            }
+            guard let group = await store.fetchGroup(groupId: acknowledgement.groupId),
+                  group.inboxId == acknowledgement.groupInboxId else {
+                return .error("Group not found")
+            }
+            guard let signingKey = registeredSigningKey(for: acknowledgement.actorFingerprint, in: group) else {
+                return .error("Actor is not a group member")
+            }
+            if let proofFailure = await validateActorProof(
+                acknowledgement.actorProof,
+                expectedFingerprint: acknowledgement.actorFingerprint,
+                expectedSigningKey: signingKey,
+                signableDataBuilder: { proof in try acknowledgement.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            _ = try await store.acknowledge(
+                inboxId: acknowledgement.groupInboxId,
+                messageIds: acknowledgement.messageIds
+            )
+            return .ok()
         case .health:
             return .ok()
         case .info:
@@ -1045,8 +1130,38 @@ public final class RelayServer {
         return messages
     }
 
+    private func fetchGroupMessagesWithOptionalLongPoll(_ fetch: FetchGroupMessagesRequest) async throws -> [GroupRatchetEnvelope] {
+        var messages = try await store.fetch(inboxId: fetch.groupInboxId, maxCount: fetch.maxCount)
+            .compactMap(groupRatchetEnvelope)
+        guard messages.isEmpty,
+              let timeout = boundedLongPollTimeoutSeconds(
+                requested: fetch.longPollTimeoutSeconds
+              ) else {
+            return messages
+        }
+
+        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        while Date() < deadline {
+            let remaining = max(0, deadline.timeIntervalSinceNow)
+            let sleepSeconds = min(0.25, remaining)
+            if sleepSeconds > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(sleepSeconds * 1_000_000_000))
+            }
+            messages = try await store.fetch(inboxId: fetch.groupInboxId, maxCount: fetch.maxCount)
+                .compactMap(groupRatchetEnvelope)
+            if !messages.isEmpty {
+                return messages
+            }
+        }
+        return messages
+    }
+
     private func boundedLongPollTimeoutSeconds(for fetch: FetchRequest) -> Int? {
-        guard let requested = fetch.longPollTimeoutSeconds,
+        boundedLongPollTimeoutSeconds(requested: fetch.longPollTimeoutSeconds)
+    }
+
+    private func boundedLongPollTimeoutSeconds(requested: Int?) -> Int? {
+        guard let requested,
               requested > 0,
               configuration.wakeSupport?.mode == .longPoll else {
             return nil
@@ -1058,6 +1173,45 @@ public final class RelayServer {
             return nil
         }
         return min(max(1, requested), advertised)
+    }
+
+    private func carrierEnvelope(for envelope: GroupRatchetEnvelope) -> Envelope {
+        Envelope(
+            id: envelope.id,
+            conversationId: "group:\(envelope.groupId.uuidString)",
+            sessionId: nil,
+            senderFingerprint: envelope.senderFingerprint,
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter,
+            kemCiphertext: nil,
+            prekey: nil,
+            rootRatchet: nil,
+            authenticatedContext: .group(
+                groupId: envelope.groupId,
+                epoch: envelope.epoch,
+                senderFingerprint: envelope.senderFingerprint,
+                transcriptHash: envelope.transcriptHash
+            ),
+            payload: envelope.payload,
+            signature: envelope.signature
+        )
+    }
+
+    private func groupRatchetEnvelope(from carrier: Envelope) -> GroupRatchetEnvelope? {
+        guard let context = carrier.authenticatedContext?.group else {
+            return nil
+        }
+        return GroupRatchetEnvelope(
+            id: carrier.id,
+            groupId: context.groupId,
+            epoch: context.epoch,
+            transcriptHash: context.transcriptHash,
+            senderFingerprint: carrier.senderFingerprint,
+            sentAt: carrier.sentAt,
+            messageCounter: carrier.messageCounter,
+            payload: carrier.payload,
+            signature: carrier.signature
+        )
     }
 
     private func requiresAuthentication(for type: RelayRequestType) -> Bool {
