@@ -2896,6 +2896,42 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(updated.mlsEpochHistory.map(\.epoch), [0, 1])
     }
 
+    func testRelayStoreBoundsGroupEpochHistoryToRecentContiguousCommits() async throws {
+        let store = RelayStore()
+        let creator = "creator-fingerprint"
+        let member = "member-a"
+
+        var current = try await store.createGroup(
+            title: "History 0",
+            creatorFingerprint: creator,
+            memberFingerprints: [member]
+        )
+
+        for index in 1...70 {
+            let title = "History \(index)"
+            current = try await store.updateGroup(
+                UpdateGroupRequest(
+                    groupId: current.id,
+                    actorFingerprint: creator,
+                    title: title,
+                    groupCommit: SignedGroupCommit(
+                        operation: .update,
+                        groupId: current.id,
+                        actorFingerprint: creator,
+                        baseEpoch: current.epoch,
+                        previousTranscriptHash: current.mlsEpochState.confirmedTranscriptHash,
+                        title: title
+                    )
+                )
+            )
+        }
+
+        XCTAssertEqual(current.epoch, 70)
+        XCTAssertEqual(current.mlsEpochHistory.count, 64)
+        XCTAssertEqual(current.mlsEpochHistory.map(\.epoch), Array(UInt64(7)...UInt64(70)))
+        XCTAssertEqual(current.mlsEpochHistory.last?.transcriptHash, current.mlsEpochState.confirmedTranscriptHash)
+    }
+
     func testRelayStoreRejectsStaleEpochAndMissedTranscriptGroupCommits() async throws {
         let store = RelayStore()
         let creator = Identity(displayName: "Creator")
