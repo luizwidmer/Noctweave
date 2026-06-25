@@ -538,11 +538,14 @@ final class RelayHandler: ChannelInboundHandler {
             guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
                 return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
             }
+            guard let groupCommit = update.groupCommit else {
+                return context.eventLoop.makeSucceededFuture(.error("Missing signed group commit"))
+            }
             if let proofFailure = validateActorProof(
-                update.actorProof,
+                groupCommit.actorProof,
                 expectedFingerprint: actorFingerprint,
                 expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try update.signableData(for: proof) }
+                signableDataBuilder: { proof in try groupCommit.signableData(for: proof) }
             ) {
                 return context.eventLoop.makeSucceededFuture(proofFailure)
             }
@@ -791,6 +794,8 @@ final class RelayHandler: ChannelInboundHandler {
             return .error("Invalid group title")
         case RelayStoreError.invalidFingerprint:
             return .error("Invalid fingerprint")
+        case RelayStoreError.invalidGroupCommit:
+            return .error("Invalid group commit")
         case RelayStoreError.notEnoughGroupMembers:
             return .error("A group requires at least 2 members")
         case RelayStoreError.groupNotFound:

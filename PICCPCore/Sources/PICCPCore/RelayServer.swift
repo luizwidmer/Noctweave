@@ -694,11 +694,14 @@ public final class RelayServer {
             ) else {
                 return .error("Group member signing key is missing. Re-pair and re-join the group.")
             }
+            guard let groupCommit = update.groupCommit else {
+                return .error("Missing signed group commit")
+            }
             if let proofFailure = await validateActorProof(
-                update.actorProof,
+                groupCommit.actorProof,
                 expectedFingerprint: actorFingerprint,
                 expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try update.signableData(for: proof) }
+                signableDataBuilder: { proof in try groupCommit.signableData(for: proof) }
             ) {
                 return proofFailure
             }
@@ -939,6 +942,8 @@ public final class RelayServer {
             return .error("Invalid group title")
         case .invalidFingerprint:
             return .error("Invalid fingerprint")
+        case .invalidGroupCommit:
+            return .error("Invalid group commit")
         case .notEnoughGroupMembers:
             return .error("A group requires at least 2 members")
         case .groupNotFound:

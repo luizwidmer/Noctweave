@@ -7,12 +7,13 @@ Noctyra groups are moving toward an MLS-derived tree model as the product group 
 - Relay group descriptors carry a required `mlsEpochState`.
 - The epoch state records the protocol version, ciphersuite label, epoch, tree hash, confirmed transcript hash, and last commit summary.
 - Group creation initializes epoch `0`.
-- Membership/title changes advance the epoch state and chain the previous transcript hash.
+- Membership/title changes and self-leave operations require a `SignedGroupCommit` bound to the current group epoch and previous transcript hash.
+- Approved joins advance the epoch with a `joinApprove` commit summary.
 - Relays still coordinate group registry state and join requests, but do not receive plaintext group messages.
 
 ## Required Next Work
 
-1. Require signed group commits for add, remove, update, join approval, and self-leave.
+1. Move join approval onto an explicit signed group commit payload.
 2. Bind group messages to group ID, epoch, sender identity, and transcript hash as authenticated data.
 3. Add stale-epoch, missed-commit, and rejoin recovery tests.
 4. Replace pairwise fan-out group delivery with the MLS-derived group ratchet after interoperability tests pass.

@@ -1750,6 +1750,7 @@ struct UpdateGroupRequest: Codable, Equatable {
     let addMemberProfiles: [RelayGroupMemberProfile]?
     let removeMemberFingerprints: [String]
     let actorProof: RelayActorProof?
+    let groupCommit: SignedGroupCommit?
 
     init(
         groupId: UUID,
@@ -1758,10 +1759,90 @@ struct UpdateGroupRequest: Codable, Equatable {
         addMemberFingerprints: [String] = [],
         addMemberProfiles: [RelayGroupMemberProfile]? = nil,
         removeMemberFingerprints: [String] = [],
-        actorProof: RelayActorProof? = nil
+        actorProof: RelayActorProof? = nil,
+        groupCommit: SignedGroupCommit? = nil
     ) {
         self.groupId = groupId
         self.actorFingerprint = actorFingerprint
+        self.title = title
+        self.addMemberFingerprints = addMemberFingerprints
+        self.addMemberProfiles = addMemberProfiles
+        self.removeMemberFingerprints = removeMemberFingerprints
+        self.actorProof = actorProof
+        self.groupCommit = groupCommit
+    }
+
+    func signableData(for proof: RelayActorProof) throws -> Data {
+        try GroupProofCodec.encode(
+            UpdateGroupProofPayload(
+                groupId: groupId,
+                actorFingerprint: actorFingerprint,
+                title: title,
+                addMemberFingerprints: addMemberFingerprints,
+                addMemberProfiles: addMemberProfiles,
+                removeMemberFingerprints: removeMemberFingerprints,
+                signedAt: proof.signedAt,
+                nonce: proof.nonce
+            )
+        )
+    }
+
+    var normalizedTitle: String? {
+        guard let title = title?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !title.isEmpty else {
+            return nil
+        }
+        return title
+    }
+
+    var normalizedAddMemberFingerprints: [String] {
+        Array(Set(addMemberFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty })).sorted()
+    }
+
+    var normalizedAddMemberProfiles: [RelayGroupMemberProfile] {
+        (addMemberProfiles ?? [])
+            .filter { !$0.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.fingerprint < $1.fingerprint }
+    }
+
+    var normalizedRemoveMemberFingerprints: [String] {
+        Array(Set(removeMemberFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty })).sorted()
+    }
+}
+
+struct SignedGroupCommit: Codable, Equatable {
+    let operation: MLSGroupCommitOperation
+    let groupId: UUID
+    let actorFingerprint: String
+    let baseEpoch: UInt64
+    let previousTranscriptHash: Data
+    let title: String?
+    let addMemberFingerprints: [String]
+    let addMemberProfiles: [RelayGroupMemberProfile]?
+    let removeMemberFingerprints: [String]
+    let actorProof: RelayActorProof?
+
+    init(
+        operation: MLSGroupCommitOperation,
+        groupId: UUID,
+        actorFingerprint: String,
+        baseEpoch: UInt64,
+        previousTranscriptHash: Data,
+        title: String? = nil,
+        addMemberFingerprints: [String] = [],
+        addMemberProfiles: [RelayGroupMemberProfile]? = nil,
+        removeMemberFingerprints: [String] = [],
+        actorProof: RelayActorProof? = nil
+    ) {
+        self.operation = operation
+        self.groupId = groupId
+        self.actorFingerprint = actorFingerprint
+        self.baseEpoch = baseEpoch
+        self.previousTranscriptHash = previousTranscriptHash
         self.title = title
         self.addMemberFingerprints = addMemberFingerprints
         self.addMemberProfiles = addMemberProfiles
@@ -1771,9 +1852,12 @@ struct UpdateGroupRequest: Codable, Equatable {
 
     func signableData(for proof: RelayActorProof) throws -> Data {
         try GroupProofCodec.encode(
-            UpdateGroupProofPayload(
+            SignedGroupCommitProofPayload(
+                operation: operation,
                 groupId: groupId,
                 actorFingerprint: actorFingerprint,
+                baseEpoch: baseEpoch,
+                previousTranscriptHash: previousTranscriptHash,
                 title: title,
                 addMemberFingerprints: addMemberFingerprints,
                 addMemberProfiles: addMemberProfiles,
@@ -1989,6 +2073,20 @@ private struct RejectGroupJoinProofPayload: Codable {
 private struct UpdateGroupProofPayload: Codable {
     let groupId: UUID
     let actorFingerprint: String
+    let title: String?
+    let addMemberFingerprints: [String]
+    let addMemberProfiles: [RelayGroupMemberProfile]?
+    let removeMemberFingerprints: [String]
+    let signedAt: Date
+    let nonce: UUID
+}
+
+private struct SignedGroupCommitProofPayload: Codable {
+    let operation: MLSGroupCommitOperation
+    let groupId: UUID
+    let actorFingerprint: String
+    let baseEpoch: UInt64
+    let previousTranscriptHash: Data
     let title: String?
     let addMemberFingerprints: [String]
     let addMemberProfiles: [RelayGroupMemberProfile]?

@@ -288,7 +288,7 @@ The Linux relay path is part of the supported deployment model rather than a tra
 
 ## 8.1 Groups
 
-PICCP supports groups through relay-backed coordination while the group cryptography path is MLS-derived. Current group state is controlled through signed mutation operations and actor proofs. Group descriptors carry a required MLS epoch state containing a tree hash, confirmed transcript hash, ciphersuite label, and last commit summary. The relay coordinates membership and registry state but does not receive plaintext group messages. Supported flows include:
+PICCP supports groups through relay-backed coordination while the group cryptography path is MLS-derived. Current group state is controlled through actor proofs and signed group commits for title edits, member additions, member removals, and self-leave operations. Each signed commit is bound to the group ID, actor fingerprint, base epoch, and previous transcript hash so stale or replayed membership edits are rejected. Group descriptors carry a required MLS epoch state containing a tree hash, confirmed transcript hash, ciphersuite label, and last commit summary. Approved joins also advance the epoch with a `joinApprove` commit summary. The relay coordinates membership and registry state but does not receive plaintext group messages. Supported flows include:
 
 - create
 - list
@@ -299,7 +299,7 @@ PICCP supports groups through relay-backed coordination while the group cryptogr
 - leave
 - creator-side delete or extinguish
 
-This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as a complete MLS deployment or a formally proven group ratchet yet. Relays advertise their group security model so clients can distinguish pairwise-fan-out groups from `mlsDerivedTree` groups. The implementation direction is to keep relay registry coordination while moving signed commits, membership changes, and message keys into an MLS-derived tree and transcript model.
+This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as a complete MLS deployment or a formally proven group ratchet yet. Relays advertise their group security model so clients can distinguish pairwise-fan-out groups from `mlsDerivedTree` groups. The implementation direction is to keep relay registry coordination while moving join approvals, message authentication data, and message keys into an MLS-derived tree and transcript model.
 
 ## 8.2 Attachments
 
@@ -368,7 +368,7 @@ The following areas remain future work:
 - full cryptographic PIR-assisted hidden retrieval
 - mixnet or onion-style transport integration
 - DHT-style autonomous open-federation discovery
-- signed MLS-derived group commits and full group ratchet implementation
+- explicit signed join-approval commits and full MLS-derived group ratchet implementation
 - external independent audit and signed release-provenance packaging
 - stronger closed-app background delivery that does not require centralized push infrastructure
 

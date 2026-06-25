@@ -560,6 +560,17 @@ public actor RelayStore {
         guard isCreator || isMember else {
             throw RelayStoreError.unauthorizedGroupMutation
         }
+        let operation = expectedGroupCommitOperation(
+            request: request,
+            actorFingerprint: actor,
+            isCreator: isCreator
+        )
+        try validateGroupCommit(
+            request: request,
+            group: group,
+            actorFingerprint: actor,
+            operation: operation
+        )
 
         if !isCreator {
             let hasTitleChange = !(request.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
@@ -632,11 +643,6 @@ public actor RelayStore {
 
         if changed {
             let now = Date()
-            let operation = groupCommitOperation(
-                request: request,
-                actorFingerprint: actor,
-                isCreator: isCreator
-            )
             group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
             group.epoch += 1
             group.updatedAt = now
@@ -662,6 +668,47 @@ public actor RelayStore {
             try saveToDisk()
         }
         return group
+    }
+
+    private func expectedGroupCommitOperation(
+        request: UpdateGroupRequest,
+        actorFingerprint: String,
+        isCreator: Bool
+    ) -> MLSGroupCommitOperation {
+        if request.groupCommit?.operation == .joinApprove,
+           isCreator,
+           request.normalizedTitle == nil,
+           !request.normalizedAddMemberFingerprints.isEmpty,
+           request.normalizedRemoveMemberFingerprints.isEmpty {
+            return .joinApprove
+        }
+        return groupCommitOperation(
+            request: request,
+            actorFingerprint: actorFingerprint,
+            isCreator: isCreator
+        )
+    }
+
+    private func validateGroupCommit(
+        request: UpdateGroupRequest,
+        group: RelayGroupDescriptor,
+        actorFingerprint: String,
+        operation: MLSGroupCommitOperation
+    ) throws {
+        guard let commit = request.groupCommit else {
+            throw RelayStoreError.invalidGroupCommit
+        }
+        guard commit.operation == operation,
+              commit.groupId == request.groupId,
+              commit.actorFingerprint == actorFingerprint,
+              commit.baseEpoch == group.epoch,
+              commit.previousTranscriptHash == group.mlsEpochState.confirmedTranscriptHash,
+              commit.title == request.normalizedTitle,
+              Set(commit.addMemberFingerprints) == Set(request.normalizedAddMemberFingerprints),
+              (commit.addMemberProfiles ?? []).sorted(by: { $0.fingerprint < $1.fingerprint }) == request.normalizedAddMemberProfiles,
+              Set(commit.removeMemberFingerprints) == Set(request.normalizedRemoveMemberFingerprints) else {
+            throw RelayStoreError.invalidGroupCommit
+        }
     }
 
     private func groupCommitOperation(
@@ -800,7 +847,16 @@ public actor RelayStore {
                 groupId: group.id,
                 actorFingerprint: actor,
                 addMemberFingerprints: [joinRequest.requester.fingerprint],
-                addMemberProfiles: [joinRequest.requester]
+                addMemberProfiles: [joinRequest.requester],
+                groupCommit: SignedGroupCommit(
+                    operation: .joinApprove,
+                    groupId: group.id,
+                    actorFingerprint: actor,
+                    baseEpoch: group.epoch,
+                    previousTranscriptHash: group.mlsEpochState.confirmedTranscriptHash,
+                    addMemberFingerprints: [joinRequest.requester.fingerprint],
+                    addMemberProfiles: [joinRequest.requester]
+                )
             )
         )
         try saveToDisk()
@@ -1701,6 +1757,7 @@ enum RelayStoreError: Error {
     case groupCapacityExceeded
     case invalidGroupTitle
     case invalidFingerprint
+    case invalidGroupCommit
     case notEnoughGroupMembers
     case groupNotFound
     case unauthorizedGroupMutation

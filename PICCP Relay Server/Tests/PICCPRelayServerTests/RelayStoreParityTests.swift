@@ -104,7 +104,15 @@ final class RelayStoreParityTests: XCTestCase {
             UpdateGroupRequest(
                 groupId: group.id,
                 actorFingerprint: creator,
-                addMemberFingerprints: [extra]
+                addMemberFingerprints: [extra],
+                groupCommit: SignedGroupCommit(
+                    operation: .addMembers,
+                    groupId: group.id,
+                    actorFingerprint: creator,
+                    baseEpoch: group.epoch,
+                    previousTranscriptHash: group.mlsEpochState.confirmedTranscriptHash,
+                    addMemberFingerprints: [extra]
+                )
             )
         )
 

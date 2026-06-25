@@ -2144,7 +2144,16 @@ final class PICCPCoreTests: XCTestCase {
                 groupId: created.id,
                 actorFingerprint: creator,
                 title: "Ops Team",
-                addMemberFingerprints: [memberB]
+                addMemberFingerprints: [memberB],
+                groupCommit: SignedGroupCommit(
+                    operation: .update,
+                    groupId: created.id,
+                    actorFingerprint: creator,
+                    baseEpoch: created.epoch,
+                    previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                    title: "Ops Team",
+                    addMemberFingerprints: [memberB]
+                )
             )
         )
         XCTAssertEqual(updated.title, "Ops Team")
@@ -2185,7 +2194,15 @@ final class PICCPCoreTests: XCTestCase {
             UpdateGroupRequest(
                 groupId: created.id,
                 actorFingerprint: memberA,
-                removeMemberFingerprints: [memberA]
+                removeMemberFingerprints: [memberA],
+                groupCommit: SignedGroupCommit(
+                    operation: .selfLeave,
+                    groupId: created.id,
+                    actorFingerprint: memberA,
+                    baseEpoch: created.epoch,
+                    previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                    removeMemberFingerprints: [memberA]
+                )
             )
         )
         XCTAssertFalse(left.members.contains(where: { $0.fingerprint == memberA }))
