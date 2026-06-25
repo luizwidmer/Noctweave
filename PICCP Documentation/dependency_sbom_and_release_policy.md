@@ -63,7 +63,9 @@ The GitHub release-verification workflow runs the same verifier on pull requests
 `main` pushes, and manual dispatches. Trusted `main` and manual runs also upload
 `noctyra_sbom.json` as a workflow artifact and attach a GitHub artifact
 attestation to the SBOM snapshot, giving reviewers a signed provenance record for
-the dependency snapshot used by that run.
+the dependency snapshot used by that run. A separate Linux CI job builds the
+relay container image with the pinned `LIBOQS_VERSION` value and scans the image
+with a commit-pinned Trivy action, failing the run on high or critical findings.
 
 Manual equivalent:
 
@@ -142,5 +144,4 @@ Do not release if:
 ## Open Work
 
 - Add CycloneDX or SPDX export if an external auditor requires that format.
-- Require container vulnerability scanning in CI.
 - Add signed provenance attestations for Docker and Apple release artifacts.
