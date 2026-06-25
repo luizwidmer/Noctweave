@@ -1,7 +1,7 @@
 # PICCP Development Roadmap
 
 **Version**: 1.1  
-**Last Updated**: March 2026  
+**Last Updated**: June 2026  
 **Estimated Timeline to v1.0**: 12-15 months
 
 ---
@@ -18,13 +18,14 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 - ML-KEM/ML-DSA integration (liboqs), PQ prekey bundle flow, and periodic ML-KEM root ratchet.
 - Symmetric AEAD message protection with ratchet auto-heal paths for session mismatch recovery.
 - Identity rotation, burn/reset, continuity audit logging, and contact continuity controls.
-- Relay capabilities including encrypted envelope relay, attachment relay/chunk controls, and temporal bucketing.
-- Federation-mode policy enforcement (curated/open isolation), with open federation currently hidden in server UI pending redesign.
-- Relay-backed group messaging flows (group create/join/update membership).
+- Relay capabilities including encrypted envelope relay, attachment relay/chunk controls, optional temporal bucketing, and normalized SQLite persistence.
+- Federation-mode policy enforcement with curated/open isolation, coordinator-assisted directories, signed snapshots, and bounded open-federation peer exchange experiments.
+- MLS-derived relay group messaging flows for create/join/update membership, signed commits, group-ratchet envelopes, member-scoped acknowledgements, and bounded epoch-history recovery.
+- Decentralized wake policy advertisement and client-side jittered polling where Apple platform limits permit background work.
 
 **Still pending for full whitepaper parity:**
-- PIR/mixnet transport path.
-- MLS-class group cryptographic architecture decision/migration.
+- Full cryptographic PIR or mixnet transport path.
+- Formal MLS-class group security proof work.
 - Public transparency/auditable continuity log model.
 
 **Tracking file:** See `TODO.md` in repo root for active checklist items.  
@@ -162,7 +163,7 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 - [ ] Capability-based mailbox creation
 - [ ] Message ingestion endpoint
 - [ ] Epoch bucketing logic
-- [ ] Storage backend (initial: filesystem, later: PostgreSQL)
+- [x] Normalized SQLite storage backend with row-scoped corrupt-record skip behavior
 - [ ] Basic rate limiting
 
 #### Milestone 2.2: Message Retrieval (2 weeks)
@@ -530,14 +531,14 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 
 ### v1.2 (6-8 months post-launch)
 - Proxy routing for enhanced metadata protection
-- Relay federation (experimental)
-- File attachments
+- Open-federation public-network adapters, if externally validated
+- Expanded attachment controls
 - Message reactions and threading
 
 ### v2.0 (12-18 months post-launch)
 - PIR-based message retrieval
-- Small group messaging (2-50 members)
-- Decentralized relay network
+- Stronger formal group-protocol analysis
+- Wider decentralized relay discovery
 - Formal security proofs published
 
 ### v3.0 (18-24 months post-launch)
