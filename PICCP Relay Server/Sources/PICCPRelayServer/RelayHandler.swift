@@ -202,8 +202,8 @@ final class RelayHandler: ChannelInboundHandler {
                     return context.eventLoop.makeSucceededFuture(proofFailure)
                 }
             }
-            let envelopes = store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
-            return context.eventLoop.makeSucceededFuture(.messages(envelopes))
+            return fetchWithOptionalLongPoll(fetch, routingToken: routingToken, on: context.eventLoop)
+                .map { RelayResponse.messages($0) }
         case .acknowledgeMessages:
             guard let acknowledgement = request.acknowledgeMessages else {
                 return context.eventLoop.makeSucceededFuture(.error("Missing acknowledgement payload"))
@@ -1491,6 +1491,67 @@ final class RelayHandler: ChannelInboundHandler {
             data: signableData,
             publicKey: publicSigningKey
         )
+    }
+
+    private func fetchWithOptionalLongPoll(
+        _ fetch: FetchRequest,
+        routingToken: String,
+        on eventLoop: EventLoop
+    ) -> EventLoopFuture<[Envelope]> {
+        let messages = store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
+        guard messages.isEmpty,
+              let timeout = boundedLongPollTimeoutSeconds(for: fetch) else {
+            return eventLoop.makeSucceededFuture(messages)
+        }
+        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        return fetchWithLongPollRetry(
+            fetch,
+            routingToken: routingToken,
+            deadline: deadline,
+            on: eventLoop
+        )
+    }
+
+    private func fetchWithLongPollRetry(
+        _ fetch: FetchRequest,
+        routingToken: String,
+        deadline: Date,
+        on eventLoop: EventLoop
+    ) -> EventLoopFuture<[Envelope]> {
+        let remaining = deadline.timeIntervalSinceNow
+        guard remaining > 0 else {
+            return eventLoop.makeSucceededFuture(
+                store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
+            )
+        }
+        let delayMilliseconds = Int64(max(1, min(250, remaining * 1_000)))
+        return eventLoop.scheduleTask(in: .milliseconds(delayMilliseconds)) {
+            let messages = self.store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
+            if !messages.isEmpty || Date() >= deadline {
+                return eventLoop.makeSucceededFuture(messages)
+            }
+            return self.fetchWithLongPollRetry(
+                fetch,
+                routingToken: routingToken,
+                deadline: deadline,
+                on: eventLoop
+            )
+        }.futureResult.flatMap { $0 }
+    }
+
+    private func boundedLongPollTimeoutSeconds(for fetch: FetchRequest) -> Int? {
+        guard let requested = fetch.longPollTimeoutSeconds,
+              requested > 0,
+              relayConfiguration.wakeSupport?.mode == .longPoll else {
+            return nil
+        }
+        let advertised = relayConfiguration.wakeSupport?.longPollTimeoutSeconds
+            ?? relayConfiguration.wakeSupport?.minPollIntervalSeconds
+            ?? 0
+        guard advertised > 0 else {
+            return nil
+        }
+        return min(max(1, requested), advertised)
     }
 
     private func requiresAuthentication(for type: RelayRequestType) -> Bool {

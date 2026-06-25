@@ -65,6 +65,6 @@ Last reviewed: June 25, 2026.
 ## Next Alignment Targets
 - Prepare the external security-audit package.
 - Implement the MLS-derived group design in `group_mls_design.md`.
-- Extend the decentralized wake prototype into client sync loops and relay long-poll fetch behavior.
+- Add multi-identity wake simulation tests and keep tuning OS-permitted background fetch behavior.
 - Continue open-federation experiments behind feature gates and simulation tests.
 - Replace cover-query hidden retrieval with stronger PIR if the bandwidth and relay-cost profile becomes acceptable.

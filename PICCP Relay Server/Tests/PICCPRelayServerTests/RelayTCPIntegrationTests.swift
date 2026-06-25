@@ -57,6 +57,61 @@ final class RelayTCPIntegrationTests: XCTestCase {
         XCTAssertEqual(fetchResponse.messages?.first?.id, envelope.id)
     }
 
+    func testLongPollFetchReturnsMessageDeliveredDuringWaitOverTCP() throws {
+        let harness = try RelayTCPHarness(
+            wakeSupport: DecentralizedWakeSupport(
+                mode: .longPoll,
+                minPollIntervalSeconds: 5,
+                maxPollIntervalSeconds: 5,
+                jitterPermille: 0,
+                longPollTimeoutSeconds: 5
+            )
+        )
+        defer { try? harness.shutdown() }
+
+        let inbox = InboxAddress.generate()
+        let envelope = makeEnvelope()
+        let expectation = expectation(description: "long-poll fetch returned delivered message")
+        var fetchResponse: RelayResponse?
+        var fetchError: Error?
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                fetchResponse = try harness.send(
+                    .fetch(
+                        FetchRequest(
+                            inboxId: inbox,
+                            routingToken: inbox,
+                            maxCount: 10,
+                            longPollTimeoutSeconds: 5
+                        )
+                    )
+                )
+            } catch {
+                fetchError = error
+            }
+            expectation.fulfill()
+        }
+
+        Thread.sleep(forTimeInterval: 0.25)
+        let deliverResponse = try harness.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: inbox,
+                    routingToken: inbox,
+                    envelope: envelope,
+                    destinationRelay: nil
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .delivered)
+
+        wait(for: [expectation], timeout: 7.0)
+        XCTAssertNil(fetchError)
+        XCTAssertEqual(fetchResponse?.type, .messages)
+        XCTAssertEqual(fetchResponse?.messages?.map(\.id), [envelope.id])
+    }
+
     func testPasswordProtectedRelayRejectsUnauthorizedRequestsOverTCP() throws {
         let harness = try RelayTCPHarness(accessPassword: "secret-pass")
         defer { try? harness.shutdown() }
@@ -393,7 +448,8 @@ private final class RelayTCPHarness {
         federationForwardingAuthToken: String? = nil,
         forwardingRequestTimeoutSeconds: Int = 8,
         maxLineBytes: Int? = 64 * 1024,
-        requireInboxAccessControl: Bool = false
+        requireInboxAccessControl: Bool = false,
+        wakeSupport: DecentralizedWakeSupport? = nil
     ) throws {
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.host = "127.0.0.1"
@@ -405,6 +461,7 @@ private final class RelayTCPHarness {
             federation: federation,
             tlsEnabled: false,
             temporalBucketSeconds: 300,
+            wakeSupport: wakeSupport,
             relayName: "Integration Relay",
             operatorNote: nil,
             softwareVersion: "test",

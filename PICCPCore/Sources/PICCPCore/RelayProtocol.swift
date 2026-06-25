@@ -398,17 +398,20 @@ public struct FetchRequest: Codable, Equatable {
     public let inboxId: String
     public let routingToken: String?
     public let maxCount: Int?
+    public let longPollTimeoutSeconds: Int?
     public let accessProof: RelayActorProof?
 
     public init(
         inboxId: String,
         routingToken: String? = nil,
         maxCount: Int? = nil,
+        longPollTimeoutSeconds: Int? = nil,
         accessProof: RelayActorProof? = nil
     ) {
         self.inboxId = inboxId
         self.routingToken = routingToken
         self.maxCount = maxCount
+        self.longPollTimeoutSeconds = longPollTimeoutSeconds
         self.accessProof = accessProof
     }
 
@@ -418,6 +421,7 @@ public struct FetchRequest: Codable, Equatable {
                 inboxId: inboxId,
                 routingToken: routingToken,
                 maxCount: maxCount,
+                longPollTimeoutSeconds: longPollTimeoutSeconds,
                 signedAt: proof.signedAt,
                 nonce: proof.nonce
             ),
@@ -498,6 +502,7 @@ private struct InboxFetchProofPayload: Codable {
     let inboxId: String
     let routingToken: String?
     let maxCount: Int?
+    let longPollTimeoutSeconds: Int?
     let signedAt: Date
     let nonce: UUID
 }

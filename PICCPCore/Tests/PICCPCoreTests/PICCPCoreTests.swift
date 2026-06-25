@@ -1525,6 +1525,102 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(fetched.prekeyBundle?.identityFingerprint, identity.fingerprint)
     }
 
+    func testRelayLongPollFetchReturnsMessageDeliveredDuringWait() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39491)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(
+                wakeSupport: DecentralizedWakeSupport(
+                    mode: .longPoll,
+                    minPollIntervalSeconds: 5,
+                    maxPollIntervalSeconds: 5,
+                    jitterPermille: 0,
+                    longPollTimeoutSeconds: 5
+                )
+            )
+        )
+        let started = expectation(description: "long-poll relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let client = RelayClient(endpoint: endpoint)
+        let accessKey = SigningKeyPair()
+        let inboxId = InboxAddress.derived(from: accessKey.publicKeyData)
+        let identity = Identity(displayName: "Long Poll Owner")
+        let offer = try MessageEngine.makeContactOffer(
+            identity: identity,
+            inboxId: inboxId,
+            relay: endpoint,
+            inboxAccessPublicKey: accessKey.publicKeyData
+        )
+        var registration = RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            contactOffer: offer
+        )
+        let registrationProof = try makeInboxProof(signingKey: accessKey) { proof in
+            try registration.signableData(for: proof)
+        }
+        registration = RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            contactOffer: offer,
+            accessProof: registrationProof
+        )
+        let registrationResponse = try await client.send(.registerInbox(registration))
+        XCTAssertEqual(registrationResponse.type, .ok)
+
+        var fetch = FetchRequest(
+            inboxId: inboxId,
+            routingToken: inboxId,
+            maxCount: 10,
+            longPollTimeoutSeconds: 5
+        )
+        let fetchProof = try makeInboxProof(signingKey: accessKey) { proof in
+            try fetch.signableData(for: proof)
+        }
+        fetch = FetchRequest(
+            inboxId: inboxId,
+            routingToken: inboxId,
+            maxCount: 10,
+            longPollTimeoutSeconds: 5,
+            accessProof: fetchProof
+        )
+        let signedFetch = fetch
+
+        async let fetchResponse = client.send(.fetch(signedFetch), timeout: 7)
+        try await Task.sleep(nanoseconds: 250_000_000)
+        let envelope = Envelope(
+            conversationId: "long-poll",
+            senderFingerprint: "sender",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([1]), tag: Data()),
+            signature: Data([2])
+        )
+        let deliveryResponse = try await client.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: inboxId,
+                    routingToken: inboxId,
+                    envelope: envelope,
+                    destinationRelay: nil
+                )
+            )
+        )
+        XCTAssertEqual(deliveryResponse.type, .delivered)
+
+        let response = try await fetchResponse
+        XCTAssertEqual(response.type, .messages)
+        XCTAssertEqual(response.messages?.map(\.id), [envelope.id])
+    }
+
     func testRelayStoreAttachmentRoundTrip() async throws {
         let store = RelayStore()
         let attachmentId = UUID()

@@ -33,4 +33,4 @@ Clients can derive a local wake plan using `DecentralizedWakePlanner`. The plann
 1. Render relay wake policy in the client relay detail UI.
 2. Teach client sync loops to consume `wakeSupport` when the app is active or background execution is available.
 3. Add simulation tests for many identities polling one relay with jitter and backoff.
-4. Add relay-side long-poll fetch behavior for HTTP/WebSocket transports.
+4. Relay-side bounded long-poll fetch behavior is implemented for core and Linux relay transports.

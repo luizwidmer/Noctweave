@@ -410,7 +410,7 @@ public final class RelayServer {
             ) {
                 return proofFailure
             }
-            let messages = try await store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
+            let messages = try await fetchWithOptionalLongPoll(fetch, routingToken: routingToken)
             onEvent?(.fetched(inboxId: routingToken, count: messages.count))
             return .messages(messages)
         case .acknowledgeMessages:
@@ -1011,6 +1011,43 @@ public final class RelayServer {
             return .error("Actor proof replay detected.")
         }
         return nil
+    }
+
+    private func fetchWithOptionalLongPoll(_ fetch: FetchRequest, routingToken: String) async throws -> [Envelope] {
+        var messages = try await store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
+        guard messages.isEmpty,
+              let timeout = boundedLongPollTimeoutSeconds(for: fetch) else {
+            return messages
+        }
+
+        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        while Date() < deadline {
+            let remaining = max(0, deadline.timeIntervalSinceNow)
+            let sleepSeconds = min(0.25, remaining)
+            if sleepSeconds > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(sleepSeconds * 1_000_000_000))
+            }
+            messages = try await store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
+            if !messages.isEmpty {
+                return messages
+            }
+        }
+        return messages
+    }
+
+    private func boundedLongPollTimeoutSeconds(for fetch: FetchRequest) -> Int? {
+        guard let requested = fetch.longPollTimeoutSeconds,
+              requested > 0,
+              configuration.wakeSupport?.mode == .longPoll else {
+            return nil
+        }
+        let advertised = configuration.wakeSupport?.longPollTimeoutSeconds
+            ?? configuration.wakeSupport?.minPollIntervalSeconds
+            ?? 0
+        guard advertised > 0 else {
+            return nil
+        }
+        return min(max(1, requested), advertised)
     }
 
     private func requiresAuthentication(for type: RelayRequestType) -> Bool {
