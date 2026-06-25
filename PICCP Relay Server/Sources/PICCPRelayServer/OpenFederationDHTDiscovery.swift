@@ -191,6 +191,11 @@ struct OpenFederationDHTCandidateCache: Equatable {
                     rejected.append(OpenFederationDHTRecordRejection(record: record, reason: .staleDuplicate))
                     continue
                 }
+                if Self.normalizedHost(existing.endpoint.host) != Self.normalizedHost(record.endpoint.host),
+                   countRecords(forHost: record.endpoint.host) >= configuration.maxRecordsPerHost {
+                    rejected.append(OpenFederationDHTRecordRejection(record: record, reason: .hostLimitExceeded))
+                    continue
+                }
                 recordsByRelayIdentity[record.relayIdentityDigest] = record
                 accepted.append(record)
                 continue

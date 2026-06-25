@@ -420,6 +420,56 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(protocolHarness.requestCount, 1)
     }
 
+    func testOpenFederationDHTDiscoveryAppliesHostCapToRelayIdentityHostMoves() throws {
+        guard OQSSignatureVerifier.shared.isAvailable,
+              let movingKeyPair = OQSSignatureVerifier.shared.generateKeyPair(),
+              let crowdedKeyPair = OQSSignatureVerifier.shared.generateKeyPair() else {
+            throw XCTSkip("liboqs runtime is unavailable")
+        }
+
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "open-net"
+        let original = try makeSignedDHTRecord(
+            host: "original.example.org",
+            federationName: federationName,
+            keyPair: movingKeyPair,
+            issuedAt: now
+        )
+        let crowded = try makeSignedDHTRecord(
+            host: "crowded.example.org",
+            federationName: federationName,
+            keyPair: crowdedKeyPair,
+            issuedAt: now.addingTimeInterval(1)
+        )
+        let movedIntoCrowdedHost = try makeSignedDHTRecord(
+            host: "crowded.example.org",
+            federationName: federationName,
+            keyPair: movingKeyPair,
+            issuedAt: now.addingTimeInterval(2)
+        )
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 10,
+                maxRecordsPerHost: 1
+            )
+        )
+
+        let initial = cache.ingest([original, crowded], now: now)
+        XCTAssertEqual(initial.accepted.count, 2)
+
+        let move = cache.ingest([movedIntoCrowdedHost], now: now.addingTimeInterval(2))
+
+        XCTAssertTrue(move.accepted.isEmpty)
+        XCTAssertEqual(move.rejected.map(\.reason), [.hostLimitExceeded])
+        XCTAssertEqual(
+            Set(cache.records(now: now).map(\.endpoint.host)),
+            ["original.example.org", "crowded.example.org"]
+        )
+    }
+
     func testOpenFederationDHTNativeOverlayTransportWalksPeerHintsWithBounds() async throws {
         let namespace = OpenFederationDHTRecord.namespace(federationName: "native-net")
         let seed = RelayEndpoint(host: "seed.example.org", port: 443, useTLS: true, transport: .http)
