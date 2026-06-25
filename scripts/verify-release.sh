@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELAY_DIR="$ROOT_DIR/PICCP Relay Server"
 SBOM_PATH="$ROOT_DIR/PICCP Documentation/noctyra_sbom.json"
+CYCLONEDX_SBOM_PATH="$ROOT_DIR/PICCP Documentation/noctyra_cyclonedx_sbom.json"
 
 source "$ROOT_DIR/scripts/liboqs-runtime.sh"
 
@@ -12,9 +13,28 @@ cd "$ROOT_DIR"
 echo "Refreshing machine-readable SBOM..."
 scripts/generate-sbom.py >/dev/null
 git diff --exit-code -- "$SBOM_PATH"
+git diff --exit-code -- "$CYCLONEDX_SBOM_PATH"
 
 echo "Validating SBOM JSON..."
 python3 -m json.tool "$SBOM_PATH" >/dev/null
+python3 -m json.tool "$CYCLONEDX_SBOM_PATH" >/dev/null
+python3 - <<'PY' "$CYCLONEDX_SBOM_PATH"
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+if payload.get("bomFormat") != "CycloneDX" or payload.get("specVersion") != "1.6":
+    raise SystemExit("CycloneDX SBOM must declare bomFormat=CycloneDX and specVersion=1.6")
+
+refs = [component.get("bom-ref") for component in payload.get("components", [])]
+if not refs or any(not ref for ref in refs):
+    raise SystemExit("CycloneDX SBOM components must include bom-ref values")
+if len(refs) != len(set(refs)):
+    raise SystemExit("CycloneDX SBOM component bom-ref values must be unique")
+PY
 
 echo "Resolving Swift package pins..."
 (cd "$RELAY_DIR" && swift package resolve)

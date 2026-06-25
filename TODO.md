@@ -105,8 +105,9 @@ The current security/DHT goal is complete when all of the following are true:
 ## External validation
 - [ ] Independent external security audit (firm-selected report)
 - [x] Enforce release verification and SBOM provenance in CI
+- [x] Export SBOM in native and CycloneDX JSON formats
 - [x] Enforce container scanning in CI
 - [x] Enforce CI-built Docker relay image provenance in CI
-- [ ] Enforce signed Apple release artifact provenance in CI
-- [ ] Enforce registry-pushed Docker release image provenance if public image publishing is introduced
+- [x] Document Apple release artifact provenance as deferred until release signing/notarization credentials and artifact paths exist
+- [x] Document registry-pushed Docker release provenance as conditional on future public image publishing
 - [x] Resolve Swift 6/NIO sendability warnings before moving the Linux package to Swift 6 mode

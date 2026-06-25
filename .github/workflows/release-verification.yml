@@ -26,15 +26,19 @@ jobs:
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
-          name: noctyra-sbom
-          path: "PICCP Documentation/noctyra_sbom.json"
+          name: noctyra-sboms
+          path: |
+            PICCP Documentation/noctyra_sbom.json
+            PICCP Documentation/noctyra_cyclonedx_sbom.json
           if-no-files-found: error
 
       - name: Attest SBOM provenance
         if: github.event_name != 'pull_request'
         uses: actions/attest@v4
         with:
-          subject-path: "PICCP Documentation/noctyra_sbom.json"
+          subject-path: |
+            PICCP Documentation/noctyra_sbom.json
+            PICCP Documentation/noctyra_cyclonedx_sbom.json
 
   container-scan:
     name: Build and scan relay container

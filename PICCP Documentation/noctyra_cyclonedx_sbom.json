@@ -1,0 +1,284 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "local-source:PICCPCore:unknown",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:PICCPCore"
+        }
+      ],
+      "name": "PICCPCore",
+      "type": "library",
+      "version": "unknown"
+    },
+    {
+      "bom-ref": "local-source:PICCP-Relay-Server:unknown",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:PICCP Relay Server"
+        }
+      ],
+      "name": "PICCP Relay Server",
+      "type": "library",
+      "version": "unknown"
+    },
+    {
+      "bom-ref": "local-source:PICCP-Messaging-Client:unknown",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:PICCP Messaging Client"
+        }
+      ],
+      "name": "PICCP Messaging Client",
+      "type": "library",
+      "version": "unknown"
+    },
+    {
+      "bom-ref": "local-source:PICCP-Server:unknown",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:PICCP Server"
+        }
+      ],
+      "name": "PICCP Server",
+      "type": "library",
+      "version": "unknown"
+    },
+    {
+      "bom-ref": "swift-package:swift-asn1:1.5.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-asn1.git"
+        },
+        {
+          "type": "documentation",
+          "url": "file:PICCP Relay Server/Package.resolved"
+        }
+      ],
+      "name": "swift-asn1",
+      "properties": [
+        {
+          "name": "noctyra:revision",
+          "value": "810496cf121e525d660cd0ea89a758740476b85f"
+        }
+      ],
+      "purl": "pkg:swift/swift-asn1@1.5.1",
+      "type": "library",
+      "version": "1.5.1"
+    },
+    {
+      "bom-ref": "swift-package:swift-atomics:1.3.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-atomics.git"
+        },
+        {
+          "type": "documentation",
+          "url": "file:PICCP Relay Server/Package.resolved"
+        }
+      ],
+      "name": "swift-atomics",
+      "properties": [
+        {
+          "name": "noctyra:revision",
+          "value": "b601256eab081c0f92f059e12818ac1d4f178ff7"
+        }
+      ],
+      "purl": "pkg:swift/swift-atomics@1.3.0",
+      "type": "library",
+      "version": "1.3.0"
+    },
+    {
+      "bom-ref": "swift-package:swift-collections:1.3.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-collections.git"
+        },
+        {
+          "type": "documentation",
+          "url": "file:PICCP Relay Server/Package.resolved"
+        }
+      ],
+      "name": "swift-collections",
+      "properties": [
+        {
+          "name": "noctyra:revision",
+          "value": "7b847a3b7008b2dc2f47ca3110d8c782fb2e5c7e"
+        }
+      ],
+      "purl": "pkg:swift/swift-collections@1.3.0",
+      "type": "library",
+      "version": "1.3.0"
+    },
+    {
+      "bom-ref": "swift-package:swift-crypto:3.15.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-crypto.git"
+        },
+        {
+          "type": "documentation",
+          "url": "file:PICCP Relay Server/Package.resolved"
+        }
+      ],
+      "name": "swift-crypto",
+      "properties": [
+        {
+          "name": "noctyra:revision",
+          "value": "95ba0316a9b733e92bb6b071255ff46263bbe7dc"
+        }
+      ],
+      "purl": "pkg:swift/swift-crypto@3.15.1",
+      "type": "library",
+      "version": "3.15.1"
+    },
+    {
+      "bom-ref": "swift-package:swift-nio:2.92.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-nio.git"
+        },
+        {
+          "type": "documentation",
+          "url": "file:PICCP Relay Server/Package.resolved"
+        }
+      ],
+      "name": "swift-nio",
+      "properties": [
+        {
+          "name": "noctyra:revision",
+          "value": "a1605a3303a28e14d822dec8aaa53da8a9490461"
+        }
+      ],
+      "purl": "pkg:swift/swift-nio@2.92.0",
+      "type": "library",
+      "version": "2.92.0"
+    },
+    {
+      "bom-ref": "swift-package:swift-system:1.6.3",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/apple/swift-system.git"
+        },
+        {
+          "type": "documentation",
+          "url": "file:PICCP Relay Server/Package.resolved"
+        }
+      ],
+      "name": "swift-system",
+      "properties": [
+        {
+          "name": "noctyra:revision",
+          "value": "395a77f0aa927f0ff73941d7ac35f2b46d47c9db"
+        }
+      ],
+      "purl": "pkg:swift/swift-system@1.6.3",
+      "type": "library",
+      "version": "1.6.3"
+    },
+    {
+      "bom-ref": "container-base-image:swift:5.9-jammy:unknown:builder",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:Dockerfile FROM"
+        },
+        {
+          "type": "documentation",
+          "url": "file:PICCP Relay Server/Dockerfile"
+        }
+      ],
+      "name": "swift:5.9-jammy",
+      "purl": "pkg:docker/swift@5.9-jammy",
+      "type": "container",
+      "version": "unknown"
+    },
+    {
+      "bom-ref": "container-base-image:swift:5.9-jammy:unknown:stage-2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:Dockerfile FROM"
+        },
+        {
+          "type": "documentation",
+          "url": "file:PICCP Relay Server/Dockerfile"
+        }
+      ],
+      "name": "swift:5.9-jammy",
+      "purl": "pkg:docker/swift@5.9-jammy",
+      "type": "container",
+      "version": "unknown"
+    },
+    {
+      "bom-ref": "source-build:liboqs:0.15.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/open-quantum-safe/liboqs.git"
+        },
+        {
+          "type": "documentation",
+          "url": "file:PICCP Relay Server/Dockerfile"
+        }
+      ],
+      "name": "liboqs",
+      "properties": [
+        {
+          "name": "noctyra:revision",
+          "value": "0.15.0"
+        }
+      ],
+      "purl": "pkg:github/open-quantum-safe/liboqs@0.15.0",
+      "type": "library",
+      "version": "0.15.0"
+    },
+    {
+      "bom-ref": "vendored-binary:liboqs.xcframework:043adb04c4a9401c9461a7eedb09da74340b5575436ac6be568998d9cd6fc52d",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:PICCPCore/Vendor/liboqs.xcframework"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "043adb04c4a9401c9461a7eedb09da74340b5575436ac6be568998d9cd6fc52d"
+        }
+      ],
+      "name": "liboqs.xcframework",
+      "type": "library",
+      "version": "043adb04c4a9401c9461a7eedb09da74340b5575436ac6be568998d9cd6fc52d"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "application:Noctyra",
+      "name": "Noctyra",
+      "type": "application"
+    },
+    "tools": {
+      "components": [
+        {
+          "name": "scripts/generate-sbom.py",
+          "type": "application"
+        }
+      ]
+    }
+  },
+  "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000001",
+  "specVersion": "1.6",
+  "version": 1
+}

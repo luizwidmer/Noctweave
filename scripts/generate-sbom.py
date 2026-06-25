@@ -149,6 +149,80 @@ def make_sbom():
     }
 
 
+def cyclonedx_component(component):
+    component_type = component.get("type")
+    name = component.get("name")
+    version = component.get("version") or component.get("revision") or "unknown"
+    purl = None
+    external_references = []
+
+    if component_type == "swift-package":
+        purl = f"pkg:swift/{name}@{version}"
+    elif component_type == "container-base-image":
+        image_name, _, image_version = (name or "").partition(":")
+        purl = f"pkg:docker/{image_name}@{image_version}" if image_version else f"pkg:docker/{image_name}"
+    elif name == "liboqs":
+        purl = f"pkg:github/open-quantum-safe/liboqs@{version}"
+
+    source = component.get("source")
+    pin_file = component.get("pinFile")
+    if source:
+        external_references.append(
+            {
+                "type": "distribution",
+                "url": source if re.match(r"^https?://", source) else f"file:{source}",
+            }
+        )
+    if pin_file and pin_file != source:
+        external_references.append({"type": "documentation", "url": f"file:{pin_file}"})
+
+    bom_ref_name = re.sub(r"[^A-Za-z0-9_.:-]+", "-", name or "unknown")
+    bom_ref_parts = [component_type or "component", bom_ref_name, version]
+    if component.get("stage"):
+        bom_ref_parts.append(component["stage"])
+    payload = {
+        "type": "library" if component_type != "container-base-image" else "container",
+        "name": name,
+        "version": version,
+        "bom-ref": ":".join(bom_ref_parts),
+    }
+    if purl:
+        payload["purl"] = purl
+    revision = component.get("revision")
+    if revision and re.fullmatch(r"[0-9a-fA-F]{64}", revision):
+        payload["hashes"] = [{"alg": "SHA-256", "content": component["revision"]}]
+    elif revision:
+        payload["properties"] = [{"name": "noctyra:revision", "value": revision}]
+    if external_references:
+        payload["externalReferences"] = external_references
+    return payload
+
+
+def make_cyclonedx_sbom(noctyra_sbom):
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000001",
+        "version": 1,
+        "metadata": {
+            "tools": {
+                "components": [
+                    {
+                        "type": "application",
+                        "name": "scripts/generate-sbom.py",
+                    }
+                ]
+            },
+            "component": {
+                "type": "application",
+                "name": noctyra_sbom["name"],
+                "bom-ref": "application:Noctyra",
+            },
+        },
+        "components": [cyclonedx_component(component) for component in noctyra_sbom["components"]],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate the Noctyra machine-readable SBOM snapshot.")
     parser.add_argument(
@@ -156,13 +230,25 @@ def main():
         default="PICCP Documentation/noctyra_sbom.json",
         help="Output path relative to the repository root.",
     )
+    parser.add_argument(
+        "--cyclonedx-output",
+        default="PICCP Documentation/noctyra_cyclonedx_sbom.json",
+        help="CycloneDX JSON output path relative to the repository root.",
+    )
     args = parser.parse_args()
 
     output = ROOT / args.output
+    cyclonedx_output = ROOT / args.cyclonedx_output
     output.parent.mkdir(parents=True, exist_ok=True)
+    cyclonedx_output.parent.mkdir(parents=True, exist_ok=True)
     payload = make_sbom()
     output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    cyclonedx_output.write_text(
+        json.dumps(make_cyclonedx_sbom(payload), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     print(output.relative_to(ROOT))
+    print(cyclonedx_output.relative_to(ROOT))
 
 
 if __name__ == "__main__":
