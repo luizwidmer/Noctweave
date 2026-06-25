@@ -1,5 +1,58 @@
 import Foundation
 
+public enum MessageAuthenticatedContextPurpose: String, Codable, Equatable {
+    case group
+}
+
+public struct GroupMessageAuthenticatedContext: Codable, Equatable {
+    public let groupId: UUID
+    public let epoch: UInt64
+    public let senderFingerprint: String
+    public let transcriptHash: Data
+
+    public init(
+        groupId: UUID,
+        epoch: UInt64,
+        senderFingerprint: String,
+        transcriptHash: Data
+    ) {
+        self.groupId = groupId
+        self.epoch = epoch
+        self.senderFingerprint = senderFingerprint
+        self.transcriptHash = transcriptHash
+    }
+}
+
+public struct MessageAuthenticatedContext: Codable, Equatable {
+    public let purpose: MessageAuthenticatedContextPurpose
+    public let group: GroupMessageAuthenticatedContext?
+
+    public init(
+        purpose: MessageAuthenticatedContextPurpose,
+        group: GroupMessageAuthenticatedContext?
+    ) {
+        self.purpose = purpose
+        self.group = group
+    }
+
+    public static func group(
+        groupId: UUID,
+        epoch: UInt64,
+        senderFingerprint: String,
+        transcriptHash: Data
+    ) -> MessageAuthenticatedContext {
+        MessageAuthenticatedContext(
+            purpose: .group,
+            group: GroupMessageAuthenticatedContext(
+                groupId: groupId,
+                epoch: epoch,
+                senderFingerprint: senderFingerprint,
+                transcriptHash: transcriptHash
+            )
+        )
+    }
+}
+
 public struct Envelope: Codable, Identifiable, Equatable {
     public let id: UUID
     public let conversationId: String
@@ -10,6 +63,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
     public let kemCiphertext: Data?
     public let prekey: PrekeyReference?
     public let rootRatchet: RootRatchet?
+    public let authenticatedContext: MessageAuthenticatedContext?
     public let payload: EncryptedPayload
     public let signature: Data
 
@@ -23,6 +77,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
         kemCiphertext: Data? = nil,
         prekey: PrekeyReference? = nil,
         rootRatchet: RootRatchet? = nil,
+        authenticatedContext: MessageAuthenticatedContext? = nil,
         payload: EncryptedPayload,
         signature: Data
     ) {
@@ -35,6 +90,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
         self.kemCiphertext = kemCiphertext
         self.prekey = prekey
         self.rootRatchet = rootRatchet
+        self.authenticatedContext = authenticatedContext
         self.payload = payload
         self.signature = signature
     }
@@ -55,6 +111,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
         kemCiphertext: Data?,
         prekey: PrekeyReference?,
         rootRatchet: RootRatchet?,
+        authenticatedContext: MessageAuthenticatedContext?,
         payload: EncryptedPayload
     ) throws -> Data {
         let payload = SignaturePayload(
@@ -66,6 +123,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
             kemCiphertext: kemCiphertext,
             prekey: prekey,
             rootRatchet: rootRatchet,
+            authenticatedContext: authenticatedContext,
             payload: payload
         )
         return try PICCPCoder.encode(payload, sortedKeys: true)
@@ -81,6 +139,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
             kemCiphertext: kemCiphertext,
             prekey: prekey,
             rootRatchet: rootRatchet,
+            authenticatedContext: authenticatedContext,
             payload: payload
         )
     }
@@ -95,5 +154,6 @@ private struct SignaturePayload: Codable {
     let kemCiphertext: Data?
     let prekey: PrekeyReference?
     let rootRatchet: RootRatchet?
+    let authenticatedContext: MessageAuthenticatedContext?
     let payload: EncryptedPayload
 }

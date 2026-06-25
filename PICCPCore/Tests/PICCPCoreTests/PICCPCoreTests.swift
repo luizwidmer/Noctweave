@@ -1144,6 +1144,130 @@ final class PICCPCoreTests: XCTestCase {
         }
     }
 
+    func testGroupMessageAuthenticatedContextIsBoundToCiphertextAndSignature() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        let groupId = UUID()
+        let context = MessageAuthenticatedContext.group(
+            groupId: groupId,
+            epoch: 7,
+            senderFingerprint: alice.fingerprint,
+            transcriptHash: Data(SHA256.hash(data: Data("group-transcript-7".utf8)))
+        )
+
+        let envelope = try MessageEngine.encrypt(
+            body: .text("group hello"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation,
+            kemCiphertext: session.kemCiphertext,
+            authenticatedContext: context
+        )
+
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+        let decrypted = try MessageEngine.decrypt(
+            envelope: envelope,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+        XCTAssertEqual(decrypted, .text("group hello"))
+
+        let tamperedContext = MessageAuthenticatedContext.group(
+            groupId: groupId,
+            epoch: 8,
+            senderFingerprint: alice.fingerprint,
+            transcriptHash: Data(SHA256.hash(data: Data("group-transcript-8".utf8)))
+        )
+        let unsignedContextTamper = Envelope(
+            id: envelope.id,
+            conversationId: envelope.conversationId,
+            sessionId: envelope.sessionId,
+            senderFingerprint: envelope.senderFingerprint,
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter,
+            kemCiphertext: envelope.kemCiphertext,
+            prekey: envelope.prekey,
+            rootRatchet: envelope.rootRatchet,
+            authenticatedContext: tamperedContext,
+            payload: envelope.payload,
+            signature: envelope.signature
+        )
+        var unsignedTamperConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+        XCTAssertThrowsError(
+            try MessageEngine.decrypt(
+                envelope: unsignedContextTamper,
+                contact: aliceContact,
+                conversation: &unsignedTamperConversation
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidSignature)
+        }
+
+        let resignableData = try Envelope.signableData(
+            conversationId: envelope.conversationId,
+            sessionId: envelope.sessionId,
+            senderFingerprint: envelope.senderFingerprint,
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter,
+            kemCiphertext: envelope.kemCiphertext,
+            prekey: envelope.prekey,
+            rootRatchet: envelope.rootRatchet,
+            authenticatedContext: tamperedContext,
+            payload: envelope.payload
+        )
+        let resignedTamper = Envelope(
+            id: envelope.id,
+            conversationId: envelope.conversationId,
+            sessionId: envelope.sessionId,
+            senderFingerprint: envelope.senderFingerprint,
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter,
+            kemCiphertext: envelope.kemCiphertext,
+            prekey: envelope.prekey,
+            rootRatchet: envelope.rootRatchet,
+            authenticatedContext: tamperedContext,
+            payload: envelope.payload,
+            signature: try alice.signingKey.sign(resignableData)
+        )
+        XCTAssertTrue(resignedTamper.verifySignature(publicSigningKey: alice.signingKey.publicKeyData))
+        var resignedTamperConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+        XCTAssertThrowsError(
+            try MessageEngine.decrypt(
+                envelope: resignedTamper,
+                contact: aliceContact,
+                conversation: &resignedTamperConversation
+            )
+        )
+    }
+
     func testCounterWindowExceeded() throws {
         let alice = Identity(displayName: "Alice")
         let bob = Identity(displayName: "Bob")

@@ -6,6 +6,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
     public var memberContactIds: [UUID]
     public var relayInboxId: String?
     public var relayEpoch: UInt64?
+    public var relayTranscriptHash: Data?
     public var createdByFingerprint: String?
     public var messages: [Message]
     public var unreadCount: Int
@@ -17,6 +18,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         memberContactIds: [UUID],
         relayInboxId: String? = nil,
         relayEpoch: UInt64? = nil,
+        relayTranscriptHash: Data? = nil,
         createdByFingerprint: String? = nil,
         messages: [Message] = [],
         unreadCount: Int = 0,
@@ -27,6 +29,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         self.memberContactIds = Array(Set(memberContactIds))
         self.relayInboxId = relayInboxId
         self.relayEpoch = relayEpoch
+        self.relayTranscriptHash = relayTranscriptHash
         self.createdByFingerprint = createdByFingerprint
         self.messages = messages
         self.unreadCount = unreadCount
@@ -39,6 +42,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         case memberContactIds
         case relayInboxId
         case relayEpoch
+        case relayTranscriptHash
         case createdByFingerprint
         case messages
         case unreadCount
@@ -52,6 +56,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         memberContactIds = try container.decodeIfPresent([UUID].self, forKey: .memberContactIds) ?? []
         relayInboxId = try container.decodeIfPresent(String.self, forKey: .relayInboxId)
         relayEpoch = try container.decodeIfPresent(UInt64.self, forKey: .relayEpoch)
+        relayTranscriptHash = try container.decodeIfPresent(Data.self, forKey: .relayTranscriptHash)
         createdByFingerprint = try container.decodeIfPresent(String.self, forKey: .createdByFingerprint)
         messages = try container.decodeIfPresent([Message].self, forKey: .messages) ?? []
         unreadCount = try container.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0

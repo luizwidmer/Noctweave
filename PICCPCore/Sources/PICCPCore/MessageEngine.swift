@@ -115,7 +115,8 @@ public enum MessageEngine {
         conversation: inout Conversation,
         kemCiphertext: Data? = nil,
         prekey: PrekeyReference? = nil,
-        rootRatchet: RootRatchet? = nil
+        rootRatchet: RootRatchet? = nil,
+        authenticatedContext: MessageAuthenticatedContext? = nil
     ) throws -> Envelope {
         let payloadData = try PICCPCoder.encode(body)
         let prepared = try prepareMessageKey(conversation: &conversation)
@@ -123,6 +124,7 @@ public enum MessageEngine {
             payloadData,
             conversationId: conversation.id,
             sessionId: conversation.sessionId,
+            authenticatedContext: authenticatedContext,
             messageCounter: prepared.counter,
             messageKey: prepared.key
         )
@@ -136,6 +138,7 @@ public enum MessageEngine {
             kemCiphertext: kemCiphertext,
             prekey: prekey,
             rootRatchet: rootRatchet,
+            authenticatedContext: authenticatedContext,
             payload: encrypted
         )
         let signature = try senderSigningKey.sign(signable)
@@ -148,6 +151,7 @@ public enum MessageEngine {
             kemCiphertext: kemCiphertext,
             prekey: prekey,
             rootRatchet: rootRatchet,
+            authenticatedContext: authenticatedContext,
             payload: encrypted,
             signature: signature
         )
@@ -168,13 +172,15 @@ public enum MessageEngine {
         messageKey: SymmetricKey,
         kemCiphertext: Data? = nil,
         prekey: PrekeyReference? = nil,
-        rootRatchet: RootRatchet? = nil
+        rootRatchet: RootRatchet? = nil,
+        authenticatedContext: MessageAuthenticatedContext? = nil
     ) throws -> Envelope {
         let payloadData = try PICCPCoder.encode(body)
         let encrypted = try encryptPayload(
             payloadData,
             conversationId: conversation.id,
             sessionId: conversation.sessionId,
+            authenticatedContext: authenticatedContext,
             messageCounter: messageCounter,
             messageKey: messageKey
         )
@@ -188,6 +194,7 @@ public enum MessageEngine {
             kemCiphertext: kemCiphertext,
             prekey: prekey,
             rootRatchet: rootRatchet,
+            authenticatedContext: authenticatedContext,
             payload: encrypted
         )
         let signature = try senderSigningKey.sign(signable)
@@ -200,6 +207,7 @@ public enum MessageEngine {
             kemCiphertext: kemCiphertext,
             prekey: prekey,
             rootRatchet: rootRatchet,
+            authenticatedContext: authenticatedContext,
             payload: encrypted,
             signature: signature
         )
@@ -237,7 +245,11 @@ public enum MessageEngine {
             for: envelope.messageCounter,
             maxSkip: ChainKeyState.defaultMaxSkip
         )
-        let authenticatedData = authenticatedData(conversationId: conversation.id, sessionId: sessionId)
+        let authenticatedData = try authenticatedData(
+            conversationId: conversation.id,
+            sessionId: sessionId,
+            context: envelope.authenticatedContext
+        )
         let plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: authenticatedData)
         if conversation.sessionId.isEmpty, let sessionId = envelope.sessionId {
             conversation.sessionId = sessionId
@@ -310,18 +322,33 @@ public enum MessageEngine {
         return Data(hash).base64EncodedString()
     }
 
-    private static func authenticatedData(conversationId: String, sessionId: String) -> Data {
-        Data("\(conversationId):\(sessionId)".utf8)
+    private static func authenticatedData(
+        conversationId: String,
+        sessionId: String,
+        context: MessageAuthenticatedContext?
+    ) throws -> Data {
+        let payload = MessageAuthenticatedDataPayload(
+            version: 1,
+            conversationId: conversationId,
+            sessionId: sessionId,
+            context: context
+        )
+        return try PICCPCoder.encode(payload, sortedKeys: true)
     }
 
     private static func encryptPayload(
         _ payload: Data,
         conversationId: String,
         sessionId: String,
+        authenticatedContext: MessageAuthenticatedContext?,
         messageCounter: UInt64,
         messageKey: SymmetricKey
     ) throws -> EncryptedPayload {
-        let authenticatedData = authenticatedData(conversationId: conversationId, sessionId: sessionId)
+        let authenticatedData = try authenticatedData(
+            conversationId: conversationId,
+            sessionId: sessionId,
+            context: authenticatedContext
+        )
         return try CryptoBox.encrypt(payload, key: messageKey, authenticatedData: authenticatedData)
     }
 
@@ -331,4 +358,11 @@ public enum MessageEngine {
         }
         return ("B", "A")
     }
+}
+
+private struct MessageAuthenticatedDataPayload: Codable {
+    let version: Int
+    let conversationId: String
+    let sessionId: String
+    let context: MessageAuthenticatedContext?
 }
