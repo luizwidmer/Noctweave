@@ -40,7 +40,8 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Distribute group ratchet epoch secrets through signed group commits and join approvals
 - [x] Teach clients to fetch/decrypt relay group-inbox ciphertexts with the group ratchet
 - [x] Replace relay-backed pairwise fan-out text delivery with the MLS-derived group ratchet after route-level interoperability tests pass
-- [ ] Extend the group-ratchet relay path to encrypted attachments and remove the remaining local/fallback pairwise group delivery path
+- [x] Extend the group-ratchet relay path to encrypted attachments and voice-message bodies
+- [ ] Remove the remaining local/fallback pairwise group delivery path after broader device interoperability testing
 
 ## Decentralized wake
 - [x] Define relay-advertised wake policy without APNs or a centralized notification authority

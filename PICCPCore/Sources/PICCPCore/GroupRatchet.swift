@@ -368,6 +368,16 @@ public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
     }
 }
 
+public struct GroupRatchetPreparedMessageKey {
+    public let counter: UInt64
+    public let key: SymmetricKey
+
+    public init(counter: UInt64, key: SymmetricKey) {
+        self.counter = counter
+        self.key = key
+    }
+}
+
 public enum GroupRatchet {
     public static func encrypt(
         body: MessageBody,
@@ -375,24 +385,50 @@ public enum GroupRatchet {
         senderFingerprint: String,
         state: inout GroupRatchetState
     ) throws -> GroupRatchetEnvelope {
-        let plaintext = try PICCPCoder.encode(body)
         let prepared = try state.nextSendKey(senderFingerprint: senderFingerprint)
+        return try encrypt(
+            body: body,
+            senderSigningKey: senderSigningKey,
+            senderFingerprint: senderFingerprint,
+            messageCounter: prepared.counter,
+            messageKey: prepared.key,
+            state: state
+        )
+    }
+
+    public static func prepareMessageKey(
+        senderFingerprint: String,
+        state: inout GroupRatchetState
+    ) throws -> GroupRatchetPreparedMessageKey {
+        let prepared = try state.nextSendKey(senderFingerprint: senderFingerprint)
+        return GroupRatchetPreparedMessageKey(counter: prepared.counter, key: prepared.key)
+    }
+
+    public static func encrypt(
+        body: MessageBody,
+        senderSigningKey: SigningKeyPair,
+        senderFingerprint: String,
+        messageCounter: UInt64,
+        messageKey: SymmetricKey,
+        state: GroupRatchetState
+    ) throws -> GroupRatchetEnvelope {
+        let plaintext = try PICCPCoder.encode(body)
         let sentAt = Date()
         let aad = try authenticatedData(
             groupId: state.groupId,
             epoch: state.epoch,
             transcriptHash: state.transcriptHash,
             senderFingerprint: senderFingerprint,
-            messageCounter: prepared.counter
+            messageCounter: messageCounter
         )
-        let payload = try CryptoBox.encrypt(plaintext, key: prepared.key, authenticatedData: aad)
+        let payload = try CryptoBox.encrypt(plaintext, key: messageKey, authenticatedData: aad)
         let signable = try signableData(
             groupId: state.groupId,
             epoch: state.epoch,
             transcriptHash: state.transcriptHash,
             senderFingerprint: senderFingerprint,
             sentAt: sentAt,
-            messageCounter: prepared.counter,
+            messageCounter: messageCounter,
             payload: payload
         )
         return try GroupRatchetEnvelope(
@@ -401,7 +437,7 @@ public enum GroupRatchet {
             transcriptHash: state.transcriptHash,
             senderFingerprint: senderFingerprint,
             sentAt: sentAt,
-            messageCounter: prepared.counter,
+            messageCounter: messageCounter,
             payload: payload,
             signature: senderSigningKey.sign(signable)
         )
@@ -412,6 +448,18 @@ public enum GroupRatchet {
         senderPublicSigningKey: Data,
         state: inout GroupRatchetState
     ) throws -> MessageBody {
+        try decryptWithKey(
+            envelope: envelope,
+            senderPublicSigningKey: senderPublicSigningKey,
+            state: &state
+        ).body
+    }
+
+    public static func decryptWithKey(
+        envelope: GroupRatchetEnvelope,
+        senderPublicSigningKey: Data,
+        state: inout GroupRatchetState
+    ) throws -> (body: MessageBody, messageKey: SymmetricKey) {
         guard envelope.groupId == state.groupId,
               envelope.epoch == state.epoch,
               envelope.transcriptHash == state.transcriptHash,
@@ -430,7 +478,7 @@ public enum GroupRatchet {
             messageCounter: envelope.messageCounter
         )
         let plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: aad)
-        return try PICCPCoder.decode(MessageBody.self, from: plaintext)
+        return (try PICCPCoder.decode(MessageBody.self, from: plaintext), key)
     }
 
     static func signableData(

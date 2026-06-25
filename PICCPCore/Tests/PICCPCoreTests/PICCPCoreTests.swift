@@ -1308,6 +1308,81 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertNotNil(bobState.receiveChains[alice.fingerprint])
     }
 
+    func testGroupRatchetAttachmentDescriptorAndChunkUseSameMessageKey() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-attachment".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group attachment secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 1,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var bobState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 1,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: bob.fingerprint
+        )
+        let plaintext = Data("group image bytes".utf8)
+        let attachmentId = UUID()
+        let prepared = try GroupRatchet.prepareMessageKey(
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+        let descriptor = AttachmentDescriptor(
+            id: attachmentId,
+            fileName: "image.jpg",
+            mimeType: "image/jpeg",
+            byteCount: plaintext.count,
+            sha256: AttachmentCrypto.sha256(plaintext),
+            chunkCount: 1,
+            chunkSize: 64 * 1024
+        )
+        let chunkAAD = AttachmentCrypto.authenticatedData(
+            conversationId: "group:\(groupId.uuidString)",
+            sessionId: "epoch:1:\(transcriptHash.base64EncodedString())",
+            messageCounter: prepared.counter,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            byteCount: plaintext.count
+        )
+        let encryptedChunk = try AttachmentCrypto.encryptChunk(
+            plaintext: plaintext,
+            messageKey: prepared.key,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            authenticatedData: chunkAAD
+        )
+        let envelope = try GroupRatchet.encrypt(
+            body: .attachment(descriptor),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            messageCounter: prepared.counter,
+            messageKey: prepared.key,
+            state: aliceState
+        )
+
+        let decrypted = try GroupRatchet.decryptWithKey(
+            envelope: envelope,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &bobState
+        )
+        XCTAssertEqual(decrypted.body, .attachment(descriptor))
+        let recoveredChunk = try AttachmentCrypto.decryptChunk(
+            payload: encryptedChunk,
+            messageKey: decrypted.messageKey,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            authenticatedData: chunkAAD
+        )
+        XCTAssertEqual(recoveredChunk, plaintext)
+    }
+
     func testGroupRatchetEpochSecretDistributionSealsToMembers() throws {
         let alice = Identity(displayName: "Alice")
         let bob = Identity(displayName: "Bob")
