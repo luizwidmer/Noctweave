@@ -194,6 +194,22 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(capped.nextPollDelaySeconds, 120)
     }
 
+    func testDecentralizedWakePlannerUsesBoundedPullDefaultsWithoutRelayPolicy() {
+        let now = Date(timeIntervalSince1970: 9_876)
+        let plan = DecentralizedWakePlanner.makePlan(
+            support: nil,
+            identitySeed: Data("fallback-identity".utf8),
+            relayIdentifier: "relay-without-policy",
+            failureCount: 99,
+            now: now
+        )
+
+        XCTAssertNil(plan.longPollTimeoutSeconds)
+        XCTAssertEqual(plan.failureBackoffStep, 6)
+        XCTAssertGreaterThanOrEqual(plan.nextPollDelaySeconds, 60)
+        XCTAssertLessThanOrEqual(plan.nextPollDelaySeconds, 300)
+    }
+
     func testDecentralizedWakePlannerSpreadsManyIdentitiesAcrossRelayWindow() {
         let support = DecentralizedWakeSupport(
             mode: .longPoll,
