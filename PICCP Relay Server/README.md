@@ -133,6 +133,7 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 - `--relay-name <name>`: advertise a relay display name
 - `--operator-note <text>`: optional operator note for clients
 - `--software-version <text>`: optional software version string
+- `--group-security-model <relayBackedPairwise|mlsDerivedTree>`: advertised group cryptography model. `relayBackedPairwise` is the current compatibility mode; `mlsDerivedTree` is reserved for compatible MLS-derived group clients.
 
 Security note:
 - Linux relay verifies actor-proof signatures when `liboqs` is available at runtime (included in the Docker image).

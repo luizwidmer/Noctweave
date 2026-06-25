@@ -109,6 +109,22 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(decoded.hiddenRetrieval, info.hiddenRetrieval)
     }
 
+    func testRelayInfoAdvertisesGroupSecurityModel() throws {
+        let defaultInfo = RelayConfiguration().makeInfo(now: Date(timeIntervalSince1970: 1_000))
+        XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)
+
+        let mlsInfo = RelayConfiguration(
+            groupSecurityModel: .mlsDerivedTree
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(mlsInfo.groupSecurityModel, .mlsDerivedTree)
+
+        let encoded = try PICCPCoder.encode(mlsInfo)
+        let decoded = try PICCPCoder.decode(RelayInfo.self, from: encoded)
+
+        XCTAssertEqual(decoded.groupSecurityModel, .mlsDerivedTree)
+    }
+
     func testRatchetRecoveryPolicyClassifiesRecoverableFailures() throws {
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.invalidPayload), .recover)
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterOutOfOrder), .recover)

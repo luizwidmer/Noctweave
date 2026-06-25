@@ -28,6 +28,7 @@ struct ServerConfig {
     var operatorNote: String?
     var softwareVersion: String?
     var groupCreationMode: GroupCreationMode
+    var groupSecurityModel: GroupSecurityModel
     var accessPassword: String?
     var coordinatorRegistrationToken: String?
     var federationForwardingAuthToken: String?
@@ -72,6 +73,7 @@ struct ServerConfig {
         var operatorNote: String?
         var softwareVersion: String?
         var groupCreationMode: GroupCreationMode = .allowed
+        var groupSecurityModel: GroupSecurityModel = .relayBackedPairwise
         var accessPassword: String? = environment["NOCTYRA_RELAY_PASSWORD"]
         var coordinatorRegistrationToken: String? = environment["NOCTYRA_COORDINATOR_REGISTRATION_TOKEN"]
         var federationForwardingAuthToken: String? = environment["NOCTYRA_FEDERATION_FORWARDING_TOKEN"]
@@ -212,6 +214,11 @@ struct ServerConfig {
                    let parsed = GroupCreationMode(rawValue: value) {
                     groupCreationMode = parsed
                 }
+            case "--group-security-model":
+                if let value = iterator.next(),
+                   let parsed = GroupSecurityModel(rawValue: value) {
+                    groupSecurityModel = parsed
+                }
             case "--access-password":
                 accessPassword = iterator.next()
             case "--coordinator-registration-token":
@@ -321,6 +328,7 @@ struct ServerConfig {
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
             groupCreationMode: groupCreationMode,
+            groupSecurityModel: groupSecurityModel,
             accessPassword: accessPassword,
             coordinatorRegistrationToken: coordinatorRegistrationToken,
             federationForwardingAuthToken: federationForwardingAuthToken,
@@ -425,6 +433,7 @@ var relayConfiguration = RelayConfiguration(
     operatorNote: config.operatorNote,
     softwareVersion: config.softwareVersion,
     groupCreationMode: config.groupCreationMode,
+    groupSecurityModel: config.groupSecurityModel,
     accessPassword: config.accessPassword,
     coordinatorRegistrationToken: config.coordinatorRegistrationToken,
     federationForwardingAuthToken: config.federationForwardingAuthToken,

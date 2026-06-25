@@ -121,6 +121,7 @@ public struct RelayInfo: Codable, Equatable {
     public var operatorNote: String?
     public var softwareVersion: String?
     public var groupCreationMode: GroupCreationMode?
+    public var groupSecurityModel: GroupSecurityModel?
     public var requiresPassword: Bool?
     public var tlsEnabled: Bool?
     public var transport: RelayEndpointTransport?
@@ -147,6 +148,7 @@ public struct RelayInfo: Codable, Equatable {
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         groupCreationMode: GroupCreationMode? = nil,
+        groupSecurityModel: GroupSecurityModel? = nil,
         requiresPassword: Bool? = nil,
         tlsEnabled: Bool? = nil,
         transport: RelayEndpointTransport? = nil,
@@ -177,6 +179,7 @@ public struct RelayInfo: Codable, Equatable {
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
         self.groupCreationMode = groupCreationMode
+        self.groupSecurityModel = groupSecurityModel
         self.requiresPassword = requiresPassword
         self.tlsEnabled = tlsEnabled
         self.transport = transport
@@ -205,6 +208,7 @@ public struct RelayConfiguration: Codable, Equatable {
     public var operatorNote: String?
     public var softwareVersion: String?
     public var groupCreationMode: GroupCreationMode
+    public var groupSecurityModel: GroupSecurityModel
     public var accessPassword: String?
     public var coordinatorRegistrationToken: String?
     public var federationForwardingAuthToken: String?
@@ -238,6 +242,7 @@ public struct RelayConfiguration: Codable, Equatable {
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         groupCreationMode: GroupCreationMode = .allowed,
+        groupSecurityModel: GroupSecurityModel = .relayBackedPairwise,
         accessPassword: String? = nil,
         coordinatorRegistrationToken: String? = nil,
         federationForwardingAuthToken: String? = nil,
@@ -276,6 +281,7 @@ public struct RelayConfiguration: Codable, Equatable {
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
         self.groupCreationMode = groupCreationMode
+        self.groupSecurityModel = groupSecurityModel
         let normalizedAccessPassword = accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.accessPassword = normalizedAccessPassword?.isEmpty == false ? normalizedAccessPassword : nil
         let normalizedRegistrationToken = coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -318,6 +324,7 @@ public struct RelayConfiguration: Codable, Equatable {
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
             groupCreationMode: groupCreationMode,
+            groupSecurityModel: groupSecurityModel,
             requiresPassword: requiresPassword,
             tlsEnabled: advertisedTLSEnabled ?? tlsEnabled,
             transport: transport,

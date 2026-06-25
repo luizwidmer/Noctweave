@@ -288,7 +288,7 @@ The Linux relay path is part of the supported deployment model rather than a tra
 
 ## 8.1 Groups
 
-PICCP supports groups, but not via MLS. Group state is relay-backed and controlled through signed mutation operations and actor proofs. The relay coordinates membership and registry state but does not receive plaintext group messages. Supported flows include:
+PICCP supports groups today through a relay-backed compatibility model, while the target group cryptography path is MLS-derived. Current group state is relay-backed and controlled through signed mutation operations and actor proofs. The relay coordinates membership and registry state but does not receive plaintext group messages. Supported flows include:
 
 - create
 - list
@@ -299,7 +299,7 @@ PICCP supports groups, but not via MLS. Group state is relay-backed and controll
 - leave
 - creator-side delete or extinguish
 
-This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as an MLS deployment or a formally proven group ratchet.
+This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as an MLS deployment or a formally proven group ratchet. Relays advertise their group security model so clients can distinguish current `relayBackedPairwise` groups from future `mlsDerivedTree` groups. The migration target is to keep relay registry coordination while moving group epochs, membership changes, and message keys into an MLS-derived tree and transcript model.
 
 ## 8.2 Attachments
 
@@ -358,6 +358,7 @@ The reference implementation delivers:
 - macOS relay, Linux relay parity path, and Docker deployment support
 - relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and software version
 - optional relay-advertised hidden-retrieval cover queries
+- explicit group-security-model advertisement with MLS-derived groups as the migration target
 
 ## 10.2 Deferred work
 
@@ -366,7 +367,7 @@ The following areas remain future work:
 - full cryptographic PIR-assisted hidden retrieval
 - mixnet or onion-style transport integration
 - DHT-style autonomous open-federation discovery
-- MLS-class group cryptography
+- full MLS-derived group ratchet implementation
 - external independent audit and signed release-provenance packaging
 - stronger closed-app background delivery that does not require centralized push infrastructure
 

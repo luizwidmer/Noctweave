@@ -21,6 +21,11 @@ enum GroupCreationMode: String, Codable, CaseIterable {
     case allowed
 }
 
+enum GroupSecurityModel: String, Codable, CaseIterable {
+    case relayBackedPairwise
+    case mlsDerivedTree
+}
+
 struct FederationDescriptor: Codable, Equatable {
     let mode: FederationMode
     let name: String?
@@ -69,6 +74,7 @@ struct RelayInfo: Codable, Equatable {
     let operatorNote: String?
     let softwareVersion: String?
     let groupCreationMode: GroupCreationMode
+    let groupSecurityModel: GroupSecurityModel
     let requiresPassword: Bool?
     let federationCoordinatorEndpoints: [RelayEndpoint]?
     let coordinatorReportedRelayCount: Int?
@@ -95,6 +101,7 @@ struct RelayInfo: Codable, Equatable {
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         groupCreationMode: GroupCreationMode = .allowed,
+        groupSecurityModel: GroupSecurityModel = .relayBackedPairwise,
         requiresPassword: Bool? = nil,
         federationCoordinatorEndpoints: [RelayEndpoint]? = nil,
         coordinatorReportedRelayCount: Int? = nil,
@@ -125,6 +132,7 @@ struct RelayInfo: Codable, Equatable {
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
         self.groupCreationMode = groupCreationMode
+        self.groupSecurityModel = groupSecurityModel
         self.requiresPassword = requiresPassword
         self.federationCoordinatorEndpoints = federationCoordinatorEndpoints
         self.coordinatorReportedRelayCount = coordinatorReportedRelayCount
@@ -153,6 +161,7 @@ struct RelayConfiguration: Codable, Equatable {
     var operatorNote: String?
     var softwareVersion: String?
     var groupCreationMode: GroupCreationMode
+    var groupSecurityModel: GroupSecurityModel
     var accessPassword: String?
     var coordinatorRegistrationToken: String?
     var federationForwardingAuthToken: String?
@@ -184,6 +193,7 @@ struct RelayConfiguration: Codable, Equatable {
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         groupCreationMode: GroupCreationMode = .allowed,
+        groupSecurityModel: GroupSecurityModel = .relayBackedPairwise,
         accessPassword: String? = nil,
         coordinatorRegistrationToken: String? = nil,
         federationForwardingAuthToken: String? = nil,
@@ -220,6 +230,7 @@ struct RelayConfiguration: Codable, Equatable {
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
         self.groupCreationMode = groupCreationMode
+        self.groupSecurityModel = groupSecurityModel
         let normalizedAccessPassword = accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.accessPassword = normalizedAccessPassword?.isEmpty == false ? normalizedAccessPassword : nil
         let normalizedRegistrationToken = coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -260,6 +271,7 @@ struct RelayConfiguration: Codable, Equatable {
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
             groupCreationMode: groupCreationMode,
+            groupSecurityModel: groupSecurityModel,
             requiresPassword: requiresPassword,
             federationCoordinatorEndpoints: federationCoordinatorEndpoints,
             coordinatorRegistrationAuthRequired: kind == .coordinator ? requiresCoordinatorRegistrationAuth : nil,

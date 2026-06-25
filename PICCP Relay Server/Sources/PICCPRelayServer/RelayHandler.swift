@@ -250,6 +250,7 @@ final class RelayHandler: ChannelInboundHandler {
                     operatorNote: info.operatorNote,
                     softwareVersion: info.softwareVersion,
                     groupCreationMode: info.groupCreationMode,
+                    groupSecurityModel: info.groupSecurityModel,
                     requiresPassword: info.requiresPassword,
                     federationCoordinatorEndpoints: info.federationCoordinatorEndpoints,
                     coordinatorReportedRelayCount: store.listFederationNodes(
@@ -281,6 +282,7 @@ final class RelayHandler: ChannelInboundHandler {
                         operatorNote: info.operatorNote,
                         softwareVersion: info.softwareVersion,
                         groupCreationMode: info.groupCreationMode,
+                        groupSecurityModel: info.groupSecurityModel,
                         requiresPassword: info.requiresPassword,
                         federationCoordinatorEndpoints: info.federationCoordinatorEndpoints,
                         coordinatorReportedRelayCount: info.coordinatorReportedRelayCount,

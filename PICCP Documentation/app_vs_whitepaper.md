@@ -3,7 +3,7 @@
 ## Overview
 This document summarizes the current Noctyra client + relay implementation against the PICCP whitepaper v0.8.
 
-Last reviewed: June 24, 2026.
+Last reviewed: June 25, 2026.
 
 ## Implemented Protocol Surface
 
@@ -32,6 +32,7 @@ Last reviewed: June 24, 2026.
 - TCP, HTTP, HTTPS, WebSocket, and WSS deployment profiles.
 - Reverse-proxy TLS and relay-managed TLS deployment patterns.
 - Relay metadata advertisement for name, kind, federation, transport, TLS, temporal buckets, attachment TTL, group policy, operator note, and software version.
+- Relay metadata advertises the group security model: current `relayBackedPairwise` compatibility mode or future `mlsDerivedTree`.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation.
 - Optional relay-advertised hidden-retrieval cover-query support for compatible clients.
@@ -49,19 +50,19 @@ Last reviewed: June 24, 2026.
 ## Whitepaper Limits That Remain True
 - No full cryptographic PIR-assisted hidden retrieval.
 - No mixnet or onion transport layer.
-- No MLS-class formal group cryptographic protocol.
+- No MLS-class formal group cryptographic protocol in the default shipped group engine.
 - No claim of protection against a compromised OS or malicious device vendor.
 - No autonomous public DHT release mode; public-network adapters remain deferred until poisoning, churn, flooding, and operator-risk controls are externally validated.
 - No centralized push-notification server by design, so closed-app instant delivery remains out of scope without a future decentralized wake strategy.
 
 ## Alignment Summary
 - **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, and coordinator-assisted federation.
-- **Partially aligned**: metadata minimization and PIR-adjacent hidden retrieval. Temporal buckets, capability-style inboxes, federation policy, and optional cover-query relay support reduce metadata, but do not provide strong anonymity or full cryptographic PIR.
-- **Deferred**: mixnet/onion transport, MLS groups, autonomous public DHT release mode, external audit, and signed release-provenance packaging.
+- **Partially aligned**: metadata minimization, PIR-adjacent hidden retrieval, and group cryptography migration. Temporal buckets, capability-style inboxes, federation policy, optional cover-query relay support, and explicit group-security metadata reduce ambiguity, but do not provide strong anonymity, full cryptographic PIR, or MLS-class group proofs.
+- **Deferred**: mixnet/onion transport, autonomous public DHT release mode, external audit, signed release-provenance packaging, and full MLS-derived group ratchet implementation.
 
 ## Next Alignment Targets
 - Prepare the external security-audit package.
-- Decide whether group cryptography should remain relay-backed application protocol or migrate to an MLS-derived model.
+- Implement the MLS-derived group migration plan in `group_mls_migration_plan.md`.
 - Prototype a decentralized wake or notification approach that does not introduce a central credential-holding push server.
 - Continue open-federation experiments behind feature gates and simulation tests.
 - Replace cover-query hidden retrieval with stronger PIR if the bandwidth and relay-cost profile becomes acceptable.

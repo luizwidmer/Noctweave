@@ -5,6 +5,11 @@ public enum GroupCreationMode: String, Codable, CaseIterable {
     case allowed
 }
 
+public enum GroupSecurityModel: String, Codable, CaseIterable {
+    case relayBackedPairwise
+    case mlsDerivedTree
+}
+
 public struct RelayGroupMemberProfile: Codable, Equatable {
     public let fingerprint: String
     public let displayName: String?

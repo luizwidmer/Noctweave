@@ -487,6 +487,14 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(info.hiddenRetrieval?.maxCoverSetSize, 16)
     }
 
+    func testRelayInfoCarriesGroupSecurityModel() {
+        let defaultInfo = RelayConfiguration().makeInfo()
+        XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)
+
+        let mlsInfo = RelayConfiguration(groupSecurityModel: .mlsDerivedTree).makeInfo()
+        XCTAssertEqual(mlsInfo.groupSecurityModel, .mlsDerivedTree)
+    }
+
     func testRelayConfigurationNormalizesAttachmentTTLPolicy() {
         let configuration = RelayConfiguration(
             attachmentDefaultTTLSeconds: 30,

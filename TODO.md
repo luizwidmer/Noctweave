@@ -25,6 +25,16 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Identity-signed PQ inbox-access keys with authenticated fetch and explicit delivery acknowledgements
 - [x] Identity-proof protection for pending pairing requests and group descriptor lookups
 
+## Group MLS migration
+- [x] Decide target group model: migrate toward MLS-derived tree groups instead of treating relay-backed pairwise groups as final
+- [x] Document the MLS migration plan and compatibility boundary
+- [x] Add relay metadata for advertised group security model
+- [ ] Add MLS transcript/epoch object beside relay group descriptors
+- [ ] Require signed group commits for add, remove, update, and leave operations
+- [ ] Bind group messages to group ID, epoch, sender identity, and transcript hash as authenticated data
+- [ ] Add stale-epoch, missed-commit, and rejoin recovery tests
+- [ ] Switch default group model to `mlsDerivedTree` only after interoperability tests pass
+
 ## Relay security + federation policy
 - [x] Relay password auth and constant-time token compare
 - [x] Curated strict forwarding policy (allow-list + coordinator quorum + signed directory)
