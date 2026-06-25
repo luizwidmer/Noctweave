@@ -344,6 +344,37 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(delay, 15)
     }
 
+    func testDecentralizedWakePlannerDoesNotLetBackedOffProfileDelayHealthyProfile() {
+        let support = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 30,
+            maxPollIntervalSeconds: 300,
+            jitterPermille: 0
+        )
+        let now = Date(timeIntervalSince1970: 10_000)
+        let delay = DecentralizedWakePlanner.nextPollDelaySeconds(
+            for: [
+                DecentralizedWakeProfile(
+                    support: support,
+                    identitySeed: Data("failing-profile".utf8),
+                    relayIdentifier: "relay-a",
+                    failureCount: 4
+                ),
+                DecentralizedWakeProfile(
+                    support: support,
+                    identitySeed: Data("healthy-profile".utf8),
+                    relayIdentifier: "relay-b",
+                    failureCount: 0
+                )
+            ],
+            defaultDelaySeconds: 8,
+            maxDelaySeconds: 300,
+            now: now
+        )
+
+        XCTAssertEqual(delay, 30)
+    }
+
     func testRelayInfoAdvertisesDecentralizedWakeSupport() throws {
         let info = RelayConfiguration(
             wakeSupport: DecentralizedWakeSupport(

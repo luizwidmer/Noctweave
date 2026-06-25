@@ -41,4 +41,5 @@ Linux and mac relays can advertise wake policy settings, and the HTTP/WebSocket 
 - Multi-identity simulation coverage verifies jitter spread across a relay window.
 - Missing relay policy falls back to bounded pull-only polling defaults.
 - Mixed-profile scheduling coverage verifies identities without advertised relay policy still use the local fallback cadence.
+- Mixed-health scheduling coverage verifies a backed-off identity does not delay fetch cadence for another active identity that is still healthy.
 - Relay info round-trips preserve advertised `wakeSupport` metadata.
