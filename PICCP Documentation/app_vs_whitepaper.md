@@ -1,62 +1,64 @@
 # Noctyra Implementation vs Whitepaper
 
 ## Overview
-This document summarizes the current Noctyra client + relay implementation against the PICCP whitepaper (v0.6, Dec 2025).  
-Last reviewed: June 20, 2026.
+This document summarizes the current Noctyra client + relay implementation against the PICCP whitepaper v0.8.
 
-## What Is Implemented Today
+Last reviewed: June 24, 2026.
 
-### Cryptography & Sessions
-- Post-quantum primitives: ML-KEM-768 and ML-DSA-65 (liboqs).
-- AEAD payload encryption with per-message chain ratchet.
-- Periodic ML-KEM root ratchet for post-compromise recovery.
-- PQ prekey bundle flow (signed prekey + individually identity-signed one-time
-  prekeys) with relay upload/fetch.
-- Identity rotation and identity burn/reset, including continuity event tracking.
-- Session mismatch auto-heal with silent reset/resend behavior.
+## Implemented Protocol Surface
 
-### Relay, Routing & Federation
-- Zero-trust relay storage for encrypted envelopes and encrypted attachment chunks.
-- Identity-signed ML-DSA inbox-access keys, authenticated pull requests, and explicit acknowledgements prevent mailbox claiming, public inbox draining, and crash-time message loss.
-- Attachment chunk TTL/integrity enforcement and relay-side quotas/policies.
-- Capability-style inbox/routing usage and temporal bucketing support in relay storage.
-- Federation policy enforcement for curated vs open network separation at protocol/config level.
-- Open federation mode is available in server UX with coordinator throttling + registration reachability checks; signed DHT records, cache policy, and an HTTP gateway/sidecar transport exist, while native public-DHT participation remains deferred.
+### Cryptography and Sessions
+- Post-quantum primitives: ML-KEM-768 and ML-DSA-65 through `liboqs`.
+- AEAD payload encryption with AES-256-GCM.
+- HKDF-SHA256 and HMAC-SHA256 derivation paths.
+- PQ prekey bundle flow with signed prekeys and one-time prekeys.
+- Symmetric message ratchet plus periodic ML-KEM root-ratchet refresh.
+- Session IDs bound into authenticated data for mismatch containment.
+- Silent session recovery and resend paths for ordinary ratchet desynchronization.
 
-### Client UX & Safety
-- Contact Book with per-contact post-burn continuity controls.
-- Identity Management with continuity audit trail UI and purge action.
-- Relay-backed group messaging (create/update/join/approve/reject/leave flows).
-- App lock, secure typing, storage protection modes, secure camera path, and screenshot redaction containers.
-- Pairing via relay workflows (metadata-leaky warning language and streamlined handshake UX).
+### Identity and Trust
+- Explicit identity creation during onboarding.
+- Multiple identity profiles with per-identity home relay selection.
+- Identity rotation with continuity event tracking.
+- Identity burn as severance, with per-contact post-burn carry-forward controls.
+- Continuity audit UI with purge support.
+- Contact-share pairing over animated QR, password-protected file/AirDrop payloads, and relay-mediated pairing requests.
 
-## Key Differences From the Whitepaper
+### Relay, Routing, and Federation
+- Authenticated inbox fetch and explicit message acknowledgement.
+- Actor-proof controls for relay state mutations.
+- Relay password auth and isolated relay-to-relay forwarding tokens.
+- Normalized SQLite relay storage with backup/fallback recovery.
+- TCP, HTTP, HTTPS, WebSocket, and WSS deployment profiles.
+- Reverse-proxy TLS and relay-managed TLS deployment patterns.
+- Relay metadata advertisement for name, kind, federation, transport, TLS, temporal buckets, attachment TTL, group policy, operator note, and software version.
+- Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
+- Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation.
 
-### Still Not Implemented
-- PIR/mixnet transport path is not implemented.
-- MLS-style group protocol is not implemented (current groups are relay-backed app protocol).
-- Public transparency log / third-party verifiable continuity ledger is not implemented.
+### Client UX and Local Safety
+- Contact Book, Identity Management, Relays, Settings, My Code, and group chat flows.
+- Storage protection modes for Keychain-backed or device-only protection.
+- App lock with biometrics-only, PIN-only, and biometrics-plus-PIN modes.
+- Action PIN plans that can combine destructive, sanitizing, and decoy-state operations.
+- Screenshot/screen-capture redaction containers on supported Apple surfaces.
+- Secure typing choice between Apple's secure text path and Noctyra's app-owned keyboard.
+- Secure camera capture, image compression, encrypted attachments, and encrypted voice messages.
 
-### Intentional/Current Variations
-- The whitepaper references BLAKE3-centric derivation; current implementation uses HKDF-SHA256-based derivation paths.
-- Session IDs are derived from session material for protocol binding.
+## Whitepaper Limits That Remain True
+- No PIR-assisted hidden retrieval.
+- No mixnet or onion transport layer.
+- No MLS-class formal group cryptographic protocol.
+- No claim of protection against a compromised OS or malicious device vendor.
+- No autonomous public DHT release mode; public-network adapters remain deferred until poisoning, churn, flooding, and operator-risk controls are externally validated.
+- No centralized push-notification server by design, so closed-app instant delivery remains out of scope without a future decentralized wake strategy.
 
-## Security Properties Achieved
-- Post-quantum identity and KEM-based session establishment.
-- Forward secrecy and post-compromise recovery via ratcheting.
-- Signed control messages for rotation/reset continuity.
-- Signed mailbox, target-bound pairing-request, prekey, and group-registry
-  operations, plus a two-party safety code for out-of-band identity comparison.
-- Encrypted local state and encrypted attachment transport/storage.
-
-## Summary of Alignment
-- **Aligned**: PQ primitives, prekey handshake, symmetric + root ratchets, rotation/burn continuity UI, relay-backed messaging, and federation-mode policy controls.
-- **Partially aligned**: long-term anonymity roadmap (PIR/mixnet) and formal public verifiability layers.
-- **Not aligned yet**: mixnet/PIR transport and MLS-class group cryptographic architecture.
+## Alignment Summary
+- **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, and coordinator-assisted federation.
+- **Partially aligned**: metadata minimization. Temporal buckets, capability-style inboxes, and federation policy reduce metadata, but do not provide strong anonymity.
+- **Deferred**: PIR, mixnet/onion transport, MLS groups, autonomous public DHT release mode, external audit, and release-governance automation in CI.
 
 ## Next Alignment Targets
-- Continue hardening open federation (native DHT adapter simulations, reachability probes, and operator warnings).
-- Design and prototype PIR/mixnet transport upgrade path.
-- Specify whether to keep relay-backed groups or migrate to an MLS-based group cryptographic model.
-- Prepare external security audit package and publish implementation threat-model delta.
-- Normalize relay SQLite storage into transactional tables with migration and corruption-recovery tests.
+- Prepare the external security-audit package.
+- Decide whether group cryptography should remain relay-backed application protocol or migrate to an MLS-derived model.
+- Prototype a decentralized wake or notification approach that does not introduce a central credential-holding push server.
+- Continue open-federation experiments behind feature gates and simulation tests.

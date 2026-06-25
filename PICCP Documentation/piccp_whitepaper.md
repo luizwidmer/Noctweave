@@ -1,7 +1,7 @@
 ---
-title: "PICCP: A Post-Quantum Secure Messaging System with Pairwise Identity Continuity"
-author: "Luiz Widmer — Independent Researcher"
-date: "Version 0.7 — April 2026"
+title: "Noctyra / PICCP: A Post-Quantum Secure Messaging System with Pairwise Identity Continuity"
+author: "Luiz Widmer - Independent Researcher"
+date: "Version 0.8 - June 2026"
 papersize: a4
 geometry: margin=1in
 fontsize: 11pt
@@ -9,7 +9,7 @@ fontsize: 11pt
 
 # Abstract
 
-PICCP (Pairwise Identity Continuity Communication Protocol) is a post-quantum secure messaging system centered on selective identity continuity rather than permanent global identity. The system is instantiated by the Noctyra client and Noctyra Relay and uses pure post-quantum identity and session establishment with ML-DSA-65 and ML-KEM-768, symmetric ratcheting for forward secrecy, selective identity rotation and identity burn, encrypted attachment transfer, relay-backed group coordination, coordinator-assisted federation, and pull-only message delivery without centralized push infrastructure.
+PICCP (Pairwise Identity Continuity Communication Protocol) is a post-quantum secure messaging protocol centered on selective identity continuity rather than permanent global identity. Noctyra is the reference client and Noctyra Relay is the reference relay implementation. Together they use pure post-quantum identity and session establishment with ML-DSA-65 and ML-KEM-768, symmetric ratcheting for forward secrecy, selective identity rotation and identity burn, encrypted attachment transfer, relay-backed group coordination, coordinator-assisted federation, and pull-only message delivery without centralized push infrastructure.
 
 PICCP is intentionally pragmatic. It provides end-to-end confidentiality and pairwise continuity while remaining explicit about unresolved network-anonymity problems. The protocol minimizes metadata rather than claiming to eliminate it, and it is structured so stronger anonymity layers, such as mixnet or PIR-assisted retrieval, can be added without discarding the identity, relay, and continuity model.
 
@@ -66,7 +66,7 @@ PICCP is designed against the following practical adversaries:
 
 - passive network observers
 - active relay operators
-- relays that attempt metadata collection or replay
+- relays that attempt metadata collection, replay, mailbox draining, or message loss
 - future quantum-capable adversaries recording traffic today for later decryption
 - temporary endpoint compromise
 - local OS services that may expose screenshots, screen recording, clipboard, notifications, camera, or microphone handling paths
@@ -81,6 +81,7 @@ PICCP targets:
 - pairwise authenticity and signed continuity operations
 - metadata reduction at the relay layer through capability-style inbox routing and temporal bucketing
 - explicit user control over identity rotation, identity burn, relay choice, and local-device protections
+- authenticated relay access, explicit delivery acknowledgement, and actor-proof mutation controls for operations that change shared relay state
 
 ## 3.3 Non-goals and limits
 
@@ -92,6 +93,7 @@ PICCP does not claim:
 - PIR-grade hidden retrieval
 - mixnet-grade timing resistance
 - MLS-equivalent formal group security proofs
+- guaranteed closed-app delivery without a client polling window
 
 PICCP is therefore best understood as a post-quantum, continuity-aware encrypted messenger with metadata minimization, not as a finished anonymous network.
 
@@ -143,19 +145,29 @@ In operational terms, this means:
 
 The client includes silent mismatch recovery paths rather than surfacing every ratchet disturbance directly to the user.
 
-# 5. Identity Lifecycle
+# 5. Pairing, Trust, and Identity Lifecycle
 
-## 5.1 Identity creation
+## 5.1 Pairing and trust bootstrap
+
+Pairing is explicit. A contact relationship is created from a contact-share payload containing the cryptographic material needed to form a trust relationship, not merely from a short inbox address. The supported pairing paths are:
+
+- QR transfer, including animated QR frames for large payloads
+- password-protected contact-share files suitable for AirDrop or file transfer
+- relay-mediated pairing requests with explicit metadata-leakage warnings
+
+The relay-mediated path is intentionally described as metadata-leaky rather than plaintext-insecure. It can simplify onboarding, but it exposes more timing and discovery metadata to the relay than an offline QR or file exchange.
+
+## 5.2 Identity creation
 
 Onboarding creates an identity explicitly. The user chooses relay configuration, privacy acceptance, storage protection mode, and app-lock posture during first-run setup.
 
-## 5.2 Identity rotation
+## 5.3 Identity rotation
 
 Identity rotation preserves inbox continuity while replacing signing and agreement keys. A signed rotation statement links the new keyset to the prior one. Chosen contacts can verify the continuity event and continue messaging without creating an unrelated new trust relationship.
 
 Rotation is therefore appropriate when the user wants to remain the same person to selected contacts while refreshing cryptographic state.
 
-## 5.3 Identity burn
+## 5.4 Identity burn
 
 Identity burn is materially different. Burn is a severance operation. The client can selectively notify only contacts marked in advance as eligible to receive the successor identity. Everyone else loses continuity and cannot continue interaction under the burned identity's recipient material.
 
@@ -164,7 +176,7 @@ This distinction is central to the system:
 - rotation means "same relationship, new keys"
 - burn means "new entity unless I explicitly carry you forward"
 
-## 5.4 Identity book and audit
+## 5.5 Identity book and audit
 
 The system includes multiple active or archived identities per client, each with its own home relay. Continuity-relevant actions are recorded in a continuity audit trail that can be reviewed or purged.
 
@@ -180,11 +192,13 @@ Relays are not trusted for plaintext. They store:
 - relay-backed group registry state
 - federation directory and coordinator state where applicable
 
-The relay sees routing metadata, timing, and policy-relevant fields, but not plaintext message or attachment contents.
+The relay sees routing metadata, timing, protocol operation types, and policy-relevant fields, but not plaintext message or attachment contents.
+
+Relay fetch and state-mutation operations are not unauthenticated mailbox reads. Inbox-access keys and actor proofs bind sensitive operations to identity-held signing material, and explicit acknowledgement allows clients to remove delivered messages from relay storage without relying on crash-prone implicit deletion.
 
 ## 6.2 Storage
 
-Relay state persists through an SQLite-backed snapshot store. This provides durability, structured persistence, and avoids the fragility of large flat-file state.
+Relay state persists through a normalized SQLite-backed store with backup/fallback recovery. This provides durability, structured persistence, and avoids the fragility of large flat-file state.
 
 Attachment storage is bounded by:
 
@@ -218,6 +232,7 @@ Relay policy controls include:
 - temporal bucketing schedule
 - attachment retention policy
 - federation mode and coordinator configuration
+- text-only mode for operators who do not want to host attachment chunks
 
 Temporal bucketing can be single-bucket or multi-bucket. The multi-bucket path intentionally adds timing ambiguity to reduce the ease of correlating users by strict fetch cadence.
 
@@ -252,9 +267,9 @@ This creates a managed universe where forwarding can be restricted to approved r
 
 ## 7.3 Open federation
 
-Open federation operates in a coordinator-assisted form. Nodes register, advertise health, and exchange directory information through coordinator infrastructure. Reachability checks, throttling, and freshness filtering are part of the design. A production-grade decentralized peer-discovery overlay such as a DHT namespace or equivalent autonomous discovery mesh remains future work.
+Open federation operates in a coordinator-assisted form with optional signed-record discovery experiments. Nodes register, advertise health, and exchange directory information through coordinator infrastructure. Reachability checks, throttling, public-endpoint restrictions, signed directory validation, and freshness filtering are part of the design. A production-grade autonomous public-network adapter such as BEP5 or libp2p remains out of release scope.
 
-In other words, open federation is implemented, but still coordinator-shaped.
+In other words, open federation is implemented for coordinator snapshots, bounded peer exchange, and HTTP sidecar or native overlay experiments, but it is not an unbounded autonomous public DHT network in the release profile.
 
 ## 7.4 Relay-to-relay forwarding hardening
 
@@ -271,7 +286,7 @@ The Linux relay path is part of the supported deployment model rather than a tra
 
 ## 8.1 Groups
 
-PICCP supports groups, but not via MLS. Group state is relay-backed and controlled through signed mutation operations and actor proofs. Supported flows include:
+PICCP supports groups, but not via MLS. Group state is relay-backed and controlled through signed mutation operations and actor proofs. The relay coordinates membership and registry state but does not receive plaintext group messages. Supported flows include:
 
 - create
 - list
@@ -282,7 +297,7 @@ PICCP supports groups, but not via MLS. Group state is relay-backed and controll
 - leave
 - creator-side delete or extinguish
 
-This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as an MLS deployment.
+This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as an MLS deployment or a formally proven group ratchet.
 
 ## 8.2 Attachments
 
@@ -292,6 +307,7 @@ Attachments are end-to-end encrypted, chunked, and relay-stored under TTL policy
 - attachment quotas to limit abuse and storage blow-up
 - secure camera capture option for users who prefer an in-app capture path
 - voice-message capture and encrypted transfer
+- text-only relay mode when operators choose not to store attachment chunks
 
 The attachment path is deliberately constrained to preserve relay boundedness and endpoint control.
 
@@ -299,7 +315,7 @@ The attachment path is deliberately constrained to preserve relay boundedness an
 
 ## 9.1 Storage protection
 
-The client offers storage-protection modes that distinguish between Keychain-backed protection and device-only protection. Local state and attachments remain encrypted at rest, and decrypted attachment handling is scoped to use contexts rather than left permanently exposed in ordinary application state.
+The client offers storage-protection modes that distinguish between Keychain-backed protection and device-only protection. Local state and attachments remain encrypted at rest. Attachment bytes are moved through scoped encrypted-to-decrypted use windows, and sensitive temporary handling is designed to minimize long-lived plaintext in application state.
 
 ## 9.2 App lock and coercion-oriented controls
 
@@ -310,11 +326,15 @@ The client includes:
 - reauthentication for sensitive settings changes
 - action pins capable of triggering destructive or sanitizing flows
 
-Those action flows are explicitly defensive and are part of the operational-security posture of the app rather than mere cosmetic security settings.
+Action PIN plans can combine operations such as app reset, identity burn, identity deletion, group deletion, chat/contact deletion, photo/document wiping, storage corruption, and decoy-state creation. After use, an action PIN is consumed and promoted to the unlock PIN so it does not remain as a separate reusable trigger. These flows are explicitly defensive and are part of the operational-security posture of the app rather than mere cosmetic security settings.
 
 ## 9.3 Screen and capture protections
 
 The Apple clients include UI-level protections against screenshots, screen recording, and external display exposure on supported surfaces. Sensitive panes can be redacted behind secure containers and reveal gates. These mechanisms reduce casual capture and improve user awareness, but they are not equivalent to defeating a hostile OS.
+
+## 9.4 Secure typing and local input
+
+Secure typing is user-selectable. Users can choose Apple's native secure text entry path, which preserves system behavior but may show system password affordances, or Noctyra's app-owned secure keyboard, which avoids the Apple password shortcut path. The app-owned keyboard includes letter, number, symbol, emoji, press-preview, delete-repeat, and long-press alternate-character layouts while keeping message composition inside the app's input view.
 
 # 10. Implementation Profile
 
@@ -328,11 +348,13 @@ The reference implementation delivers:
 - identity rotation and identity burn
 - continuity event tracking and audit
 - encrypted attachment and voice-message transfer
+- secure camera and app-owned secure keyboard options
 - relay-backed groups with actor-proof mutation controls
 - solo, curated, and coordinator-assisted open federation
-- TCP, HTTP, and WebSocket relay transports
+- TCP, HTTP, HTTPS, WebSocket, and WSS relay transports
 - relay-managed TLS and reverse-proxy TLS deployment patterns
 - macOS relay, Linux relay parity path, and Docker deployment support
+- relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and software version
 
 ## 10.2 Deferred work
 
@@ -343,6 +365,7 @@ The following areas remain future work:
 - DHT-style autonomous open-federation discovery
 - MLS-class group cryptography
 - external independent audit and release-governance packaging
+- stronger closed-app background delivery that does not require centralized push infrastructure
 
 These are genuine open areas and remain on the roadmap because they are materially harder than the deployed protocol profile.
 
