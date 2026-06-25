@@ -60,6 +60,7 @@ final class RelayStore {
     private let maxGroupsPerCreator = 100
     private let maxGroupMembers = 256
     private let maxGroupTitleCharacters = 128
+    private let maxGroupEpochHistory = 64
     private let maxMailboxes = 10_000
     private let maxStoredMessages = 100_000
     private let maxInboxRegistrations = 10_000
@@ -874,6 +875,9 @@ final class RelayStore {
                     committedAt: now,
                     ratchetSecretDistribution: request.groupCommit?.ratchetSecretDistribution
                 )
+                group.mlsEpochHistory = boundedGroupEpochHistory(
+                    group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
+                )
                 groups[group.id] = group
                 if var pending = groupJoinRequests[group.id] {
                     pending.removeAll { pendingRequest in
@@ -960,6 +964,10 @@ final class RelayStore {
               distribution.shares.count == members.count else {
             throw RelayStoreError.invalidGroupCommit
         }
+    }
+
+    private func boundedGroupEpochHistory(_ history: [MLSGroupCommitSummary]) -> [MLSGroupCommitSummary] {
+        Array(history.sorted { $0.epoch < $1.epoch }.suffix(maxGroupEpochHistory))
     }
 
     private func projectedMemberFingerprints(

@@ -274,6 +274,7 @@ public struct RelayGroupDescriptor: Codable, Equatable, Identifiable {
     public var epoch: UInt64
     public var members: [RelayGroupMember]
     public var mlsEpochState: MLSGroupEpochState
+    public var mlsEpochHistory: [MLSGroupCommitSummary]
     public let createdAt: Date
     public var updatedAt: Date
 
@@ -285,6 +286,7 @@ public struct RelayGroupDescriptor: Codable, Equatable, Identifiable {
         epoch: UInt64 = 0,
         members: [RelayGroupMember],
         mlsEpochState: MLSGroupEpochState? = nil,
+        mlsEpochHistory: [MLSGroupCommitSummary]? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -294,7 +296,7 @@ public struct RelayGroupDescriptor: Codable, Equatable, Identifiable {
         self.createdByFingerprint = createdByFingerprint
         self.epoch = epoch
         self.members = members
-        self.mlsEpochState = mlsEpochState ?? MLSGroupEpochState.initial(
+        let resolvedEpochState = mlsEpochState ?? MLSGroupEpochState.initial(
             groupId: id,
             title: title,
             inboxId: inboxId,
@@ -302,8 +304,38 @@ public struct RelayGroupDescriptor: Codable, Equatable, Identifiable {
             members: members,
             createdAt: createdAt
         )
+        self.mlsEpochState = resolvedEpochState
+        self.mlsEpochHistory = mlsEpochHistory ?? [resolvedEpochState.lastCommit]
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case inboxId
+        case createdByFingerprint
+        case epoch
+        case members
+        case mlsEpochState
+        case mlsEpochHistory
+        case createdAt
+        case updatedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        inboxId = try container.decode(String.self, forKey: .inboxId)
+        createdByFingerprint = try container.decode(String.self, forKey: .createdByFingerprint)
+        epoch = try container.decode(UInt64.self, forKey: .epoch)
+        members = try container.decode([RelayGroupMember].self, forKey: .members)
+        mlsEpochState = try container.decode(MLSGroupEpochState.self, forKey: .mlsEpochState)
+        mlsEpochHistory = try container.decodeIfPresent([MLSGroupCommitSummary].self, forKey: .mlsEpochHistory)
+            ?? [mlsEpochState.lastCommit]
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
 }
 

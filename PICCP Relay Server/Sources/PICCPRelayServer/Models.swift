@@ -507,8 +507,61 @@ struct RelayGroupDescriptor: Codable, Equatable {
     var epoch: UInt64
     var members: [RelayGroupMember]
     var mlsEpochState: MLSGroupEpochState
+    var mlsEpochHistory: [MLSGroupCommitSummary]
     let createdAt: Date
     var updatedAt: Date
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case inboxId
+        case createdByFingerprint
+        case epoch
+        case members
+        case mlsEpochState
+        case mlsEpochHistory
+        case createdAt
+        case updatedAt
+    }
+
+    init(
+        id: UUID,
+        title: String,
+        inboxId: String,
+        createdByFingerprint: String,
+        epoch: UInt64,
+        members: [RelayGroupMember],
+        mlsEpochState: MLSGroupEpochState,
+        mlsEpochHistory: [MLSGroupCommitSummary]? = nil,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.title = title
+        self.inboxId = inboxId
+        self.createdByFingerprint = createdByFingerprint
+        self.epoch = epoch
+        self.members = members
+        self.mlsEpochState = mlsEpochState
+        self.mlsEpochHistory = mlsEpochHistory ?? [mlsEpochState.lastCommit]
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        inboxId = try container.decode(String.self, forKey: .inboxId)
+        createdByFingerprint = try container.decode(String.self, forKey: .createdByFingerprint)
+        epoch = try container.decode(UInt64.self, forKey: .epoch)
+        members = try container.decode([RelayGroupMember].self, forKey: .members)
+        mlsEpochState = try container.decode(MLSGroupEpochState.self, forKey: .mlsEpochState)
+        mlsEpochHistory = try container.decodeIfPresent([MLSGroupCommitSummary].self, forKey: .mlsEpochHistory)
+            ?? [mlsEpochState.lastCommit]
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+    }
 }
 
 struct RelayGroupJoinRequest: Codable, Equatable {

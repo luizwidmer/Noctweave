@@ -288,7 +288,7 @@ The Linux relay path is part of the supported deployment model rather than a tra
 
 ## 8.1 Groups
 
-PICCP supports groups through relay-backed coordination while the group cryptography path is MLS-derived. Current group state is controlled through actor proofs and signed group commits for title edits, member additions, member removals, self-leave operations, and join approvals. Each signed commit is bound to the group ID, actor fingerprint, base epoch, and previous transcript hash so stale or replayed membership edits are rejected. Group descriptors carry a required MLS epoch state containing a tree hash, confirmed transcript hash, ciphersuite label, and last commit summary. Approved joins carry an explicit signed `joinApprove` commit payload and advance the epoch with a `joinApprove` commit summary. Group ratchet epoch secrets are distributed through signed group create, commit, and join-approval payloads by sealing the secret to each post-commit member with ML-KEM and AEAD-bound metadata. Relay-backed text, image, and voice group messages are delivered as signed group-ratchet envelopes to the group inbox. A sender can submit a group envelope through another relay in the same federation; that relay applies federation policy and forwards the ciphertext to the group-owning relay, which performs group membership and signature validation before storage. Group inbox acknowledgements are member-scoped: the relay keeps an envelope until all pending non-sender members have acknowledged it, so an online member cannot remove a ciphertext before an offline peer has fetched it. The envelope context is used as AEAD data to bind ciphertexts to the group ID, epoch, sender fingerprint, message counter, and confirmed transcript hash. Attachment chunks are encrypted under the same group message key as the descriptor envelope and bind chunk metadata into AEAD. The relay coordinates membership and registry state, validates member signatures for group-inbox ciphertexts, and does not receive plaintext group messages or group epoch secrets. Supported flows include:
+PICCP supports groups through relay-backed coordination while the group cryptography path is MLS-derived. Current group state is controlled through actor proofs and signed group commits for title edits, member additions, member removals, self-leave operations, and join approvals. Each signed commit is bound to the group ID, actor fingerprint, base epoch, and previous transcript hash so stale or replayed membership edits are rejected. Group descriptors carry a required MLS epoch state containing a tree hash, confirmed transcript hash, ciphersuite label, last commit summary, and bounded `mlsEpochHistory` of recent signed commit summaries. Approved joins carry an explicit signed `joinApprove` commit payload and advance the epoch with a `joinApprove` commit summary. Group ratchet epoch secrets are distributed through signed group create, commit, and join-approval payloads by sealing the secret to each post-commit member with ML-KEM and AEAD-bound metadata. Clients that were offline across multiple group commits can replay retained epoch-secret distributions in order when those commits remain inside the relay's bounded descriptor history. Relay-backed text, image, and voice group messages are delivered as signed group-ratchet envelopes to the group inbox. A sender can submit a group envelope through another relay in the same federation; that relay applies federation policy and forwards the ciphertext to the group-owning relay, which performs group membership and signature validation before storage. Group inbox acknowledgements are member-scoped: the relay keeps an envelope until all pending non-sender members have acknowledged it, so an online member cannot remove a ciphertext before an offline peer has fetched it. The envelope context is used as AEAD data to bind ciphertexts to the group ID, epoch, sender fingerprint, message counter, and confirmed transcript hash. Attachment chunks are encrypted under the same group message key as the descriptor envelope and bind chunk metadata into AEAD. The relay coordinates membership and registry state, validates member signatures for group-inbox ciphertexts, and does not receive plaintext group messages or group epoch secrets. Supported flows include:
 
 - create
 - list
@@ -299,7 +299,7 @@ PICCP supports groups through relay-backed coordination while the group cryptogr
 - leave
 - creator-side delete or extinguish
 
-This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as a complete MLS deployment or a formally proven group ratchet yet. Relays advertise their group security model so clients can distinguish pairwise-fan-out groups from `mlsDerivedTree` groups. The shipped client path fails closed when relay-backed group-ratchet state is unavailable instead of silently downgrading to pairwise direct-message fan-out. Route-level coverage exercises offline epoch refresh, encrypted attachment retrieval after another member has acknowledged the same group envelope, and federated group-ratchet delivery across two relays.
+This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as a complete MLS deployment or a formally proven group ratchet yet. Relays advertise their group security model so clients can distinguish pairwise-fan-out groups from `mlsDerivedTree` groups. The shipped client path fails closed when relay-backed group-ratchet state is unavailable instead of silently downgrading to pairwise direct-message fan-out. Route-level coverage exercises offline epoch refresh, multiple missed epoch-distribution replay, encrypted attachment retrieval after another member has acknowledged the same group envelope, and federated group-ratchet delivery across two relays.
 
 ## 8.2 Attachments
 
@@ -358,7 +358,7 @@ The reference implementation delivers:
 - macOS relay, Linux relay parity path, and Docker deployment support
 - relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and software version
 - optional relay-advertised hidden-retrieval cover queries
-- explicit group-security-model advertisement and required MLS epoch metadata
+- explicit group-security-model advertisement, required MLS epoch metadata, and bounded group epoch history
 - relay-advertised decentralized wake policy for jittered pull or bounded long-poll clients
 
 ## 10.2 Deferred work
@@ -368,7 +368,7 @@ The following areas remain future work:
 - full cryptographic PIR-assisted hidden retrieval
 - mixnet or onion-style transport integration
 - DHT-style autonomous open-federation discovery
-- expanded long-offline group-ratchet rejoin coverage
+- expanded app-level recovery coverage around retained group epoch histories
 - external independent audit and signed release-provenance packaging
 - stronger closed-app background delivery that does not require centralized push infrastructure
 

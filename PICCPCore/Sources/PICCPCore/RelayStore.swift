@@ -36,6 +36,7 @@ public actor RelayStore {
     private let maxGroupsPerCreator = 100
     private let maxGroupMembers = 256
     private let maxGroupTitleCharacters = 128
+    private let maxGroupEpochHistory = 64
     private let coordinatorDefaultNodeTTL: TimeInterval = 180
     private let federationRateWindowSeconds: TimeInterval = 60
     private let federationRegistrationMaxPerWindow = 24
@@ -759,6 +760,9 @@ public actor RelayStore {
                 committedAt: now,
                 ratchetSecretDistribution: request.groupCommit?.ratchetSecretDistribution
             )
+            group.mlsEpochHistory = boundedGroupEpochHistory(
+                group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
+            )
             groups[group.id] = group
             if var pending = groupJoinRequests[group.id] {
                 pending.removeAll { pendingRequest in
@@ -844,6 +848,10 @@ public actor RelayStore {
               distribution.shares.count == members.count else {
             throw RelayStoreError.invalidGroupCommit
         }
+    }
+
+    private func boundedGroupEpochHistory(_ history: [MLSGroupCommitSummary]) -> [MLSGroupCommitSummary] {
+        Array(history.sorted { $0.epoch < $1.epoch }.suffix(maxGroupEpochHistory))
     }
 
     private func projectedMemberFingerprints(

@@ -2711,6 +2711,7 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(created.mlsEpochState.epoch, 0)
         XCTAssertEqual(created.mlsEpochState.lastCommit.operation, .create)
         XCTAssertEqual(created.mlsEpochState.lastCommit.memberFingerprints, [creator, memberA].sorted())
+        XCTAssertEqual(created.mlsEpochHistory.map(\.epoch), [0])
         XCTAssertFalse(created.mlsEpochState.confirmedTranscriptHash.isEmpty)
 
         let listedForCreator = await store.listGroups(memberFingerprint: creator)
@@ -2741,6 +2742,7 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(updated.mlsEpochState.lastCommit.operation, .update)
         XCTAssertEqual(updated.mlsEpochState.lastCommit.previousTranscriptHash, created.mlsEpochState.confirmedTranscriptHash)
         XCTAssertEqual(updated.mlsEpochState.lastCommit.memberFingerprints, [creator, memberA, memberB].sorted())
+        XCTAssertEqual(updated.mlsEpochHistory.map(\.epoch), [0, 1])
     }
 
     func testRelayStoreRejectsStaleEpochAndMissedTranscriptGroupCommits() async throws {
@@ -3838,6 +3840,211 @@ final class PICCPCoreTests: XCTestCase {
             authenticatedData: chunkAAD
         )
         XCTAssertEqual(recovered, plaintext)
+    }
+
+    func testOfflineGroupMemberReplaysMultipleEpochDistributionsBeforeDecrypting() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39512)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "long offline group relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Long Offline")
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+        let memberProfile = relayGroupMemberProfile(identity: member, relay: endpoint)
+        let client = RelayClient(endpoint: endpoint)
+        let epoch0Secret = Data(SHA256.hash(data: Data("long offline epoch 0 secret".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
+            epoch: 0,
+            operation: .create,
+            recipients: [creatorProfile, memberProfile]
+        )
+        let groupId = epoch0Distribution.groupId
+        let create = try signedCreateGroupRequest(
+            CreateGroupRequest(
+                groupId: groupId,
+                title: "Long Offline",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: creatorProfile,
+                memberProfiles: [memberProfile],
+                initialRatchetSecretDistribution: epoch0Distribution
+            ),
+            signer: creator
+        )
+        let createResponse = try await client.send(.createGroup(create))
+        XCTAssertEqual(createResponse.type, .group)
+        let created = try XCTUnwrap(createResponse.group)
+        XCTAssertEqual(created.mlsEpochHistory.map(\.epoch), [0])
+
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        var offlineMemberRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("long offline epoch 1 secret".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: created.id,
+            epoch: created.epoch + 1,
+            operation: .update,
+            recipients: [creatorProfile, memberProfile]
+        )
+        let epoch1Commit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                title: "Long Offline 1",
+                ratchetSecretDistribution: epoch1Distribution
+            ),
+            signer: creator
+        )
+        let epoch1Response = try await client.send(
+            .updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    title: "Long Offline 1",
+                    groupCommit: epoch1Commit
+                )
+            )
+        )
+        let epoch1Group = try XCTUnwrap(epoch1Response.group)
+        try creatorRatchet.advanceEpoch(
+            to: epoch1Group.epoch,
+            transcriptHash: epoch1Group.mlsEpochState.confirmedTranscriptHash,
+            commitSecret: epoch1Secret
+        )
+
+        let epoch2Secret = Data(SHA256.hash(data: Data("long offline epoch 2 secret".utf8)))
+        let epoch2Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch2Secret,
+            groupId: created.id,
+            epoch: epoch1Group.epoch + 1,
+            operation: .update,
+            recipients: [creatorProfile, memberProfile]
+        )
+        let epoch2Commit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: epoch1Group.epoch,
+                previousTranscriptHash: epoch1Group.mlsEpochState.confirmedTranscriptHash,
+                title: "Long Offline 2",
+                ratchetSecretDistribution: epoch2Distribution
+            ),
+            signer: creator
+        )
+        let epoch2Response = try await client.send(
+            .updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    title: "Long Offline 2",
+                    groupCommit: epoch2Commit
+                )
+            )
+        )
+        let epoch2Group = try XCTUnwrap(epoch2Response.group)
+        try creatorRatchet.advanceEpoch(
+            to: epoch2Group.epoch,
+            transcriptHash: epoch2Group.mlsEpochState.confirmedTranscriptHash,
+            commitSecret: epoch2Secret
+        )
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("message after two missed epochs"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let deliver = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: epoch2Group.id,
+                    groupInboxId: epoch2Group.inboxId,
+                    envelope: envelope
+                )
+            )
+        )
+        XCTAssertEqual(deliver.type, .delivered)
+
+        let staleFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: epoch2Group.id,
+                        groupInboxId: epoch2Group.inboxId,
+                        actorFingerprint: member.fingerprint
+                    ),
+                    signer: member
+                )
+            )
+        )
+        let staleEnvelope = try XCTUnwrap(staleFetch.groupMessages?.first)
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: staleEnvelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &offlineMemberRatchet
+            )
+        )
+
+        let refreshedResponse = try await client.send(
+            .getGroup(
+                try signedGetGroupRequest(
+                    GetGroupRequest(groupId: epoch2Group.id, memberFingerprint: member.fingerprint),
+                    signer: member
+                )
+            )
+        )
+        let refreshed = try XCTUnwrap(refreshedResponse.group)
+        XCTAssertEqual(refreshed.mlsEpochHistory.map(\.epoch), [0, 1, 2])
+        for commit in refreshed.mlsEpochHistory.sorted(by: { $0.epoch < $1.epoch }) where commit.epoch > offlineMemberRatchet.epoch {
+            let distribution = try XCTUnwrap(commit.ratchetSecretDistribution)
+            let secret = try distribution.openSecret(
+                recipientFingerprint: member.fingerprint,
+                agreementKey: member.agreementKey
+            )
+            try offlineMemberRatchet.advanceEpoch(
+                to: commit.epoch,
+                transcriptHash: commit.transcriptHash,
+                commitSecret: secret
+            )
+        }
+        XCTAssertEqual(offlineMemberRatchet.epoch, epoch2Group.epoch)
+        let recovered = try GroupRatchet.decrypt(
+            envelope: staleEnvelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &offlineMemberRatchet
+        )
+        XCTAssertEqual(recovered, .text("message after two missed epochs"))
     }
 
     func testRelayServerDeleteGroupRoute() async throws {

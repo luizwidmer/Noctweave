@@ -13,18 +13,19 @@ Noctyra groups are moving toward an MLS-derived tree model as the product group 
 - `GroupRatchetState` and `GroupRatchetEnvelope` provide the MLS-derived message-key foundation: one shared epoch root derives per-sender chains, group ciphertexts are signed, and AEAD data binds group ID, epoch, transcript hash, sender fingerprint, and message counter.
 - `GroupConversation` can persist per-group ratchet state inside the encrypted client state store.
 - Group creation, signed membership commits, and join approvals can carry `GroupRatchetEpochSecretDistribution` payloads. Each distribution is covered by the signed group operation and seals the epoch secret to every post-commit member with ML-KEM plus AEAD-bound metadata.
+- Group descriptors retain a bounded `mlsEpochHistory` of recent commit summaries, including sealed ratchet epoch distributions. Clients that stayed offline across multiple commits can replay available epoch secrets in order instead of depending only on the current commit.
 - Relay-backed text, image, and voice group messages are delivered as signed `GroupRatchetEnvelope` objects to the relay group inbox. Group members fetch with actor proofs, decrypt with the local group ratchet state, acknowledge delivered envelopes, and ignore self-sent or stale-epoch envelopes.
 - A group message submitted to one federated relay can be forwarded to the relay that owns the group inbox. The origin relay applies federation policy, strips the forwarding destination before retransmission, and the destination relay performs the group membership and signature validation before storing the ciphertext.
 - Group-inbox acknowledgements are member-scoped. A relay keeps a group envelope until every pending non-sender member has acknowledged it, so one online member cannot remove a ciphertext before another offline member has fetched it.
 - Group attachment chunks are encrypted with the same group message key as the descriptor envelope and bind chunk AEAD to group ID, epoch, transcript hash, message counter, attachment ID, chunk index, and byte count.
-- Route-level tests cover an offline member refreshing from a later signed epoch distribution, decrypting a retained group attachment descriptor, retrieving/decrypting the relay attachment chunk after another member has already acknowledged the group envelope, and federated group-ratchet delivery from a sender's relay to the group-owning relay.
+- Route-level tests cover an offline member refreshing from a later signed epoch distribution, replaying multiple missed epoch distributions, decrypting a retained group attachment descriptor, retrieving/decrypting the relay attachment chunk after another member has already acknowledged the group envelope, and federated group-ratchet delivery from a sender's relay to the group-owning relay.
 - Relays validate group membership and group-envelope signatures before accepting group-inbox ciphertexts, but they do not receive group plaintext or epoch secrets.
 - Relays still coordinate group registry state and join requests, but do not receive plaintext group messages.
 
 ## Required Next Work
 
 1. Continue hardening against missed commits, stale epochs, replay, and long offline windows without claiming a complete MLS proof.
-2. Expand multi-device interoperability coverage for long offline rejoin windows.
+2. Expand multi-device app-level recovery coverage around retained epoch histories.
 
 ## Non-Goals
 

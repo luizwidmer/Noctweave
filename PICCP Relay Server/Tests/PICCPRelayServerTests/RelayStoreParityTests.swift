@@ -137,6 +137,7 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(group.mlsEpochState.epoch, 0)
         XCTAssertEqual(group.mlsEpochState.lastCommit.operation, .create)
         XCTAssertEqual(group.mlsEpochState.lastCommit.memberFingerprints, [creator, peer].sorted())
+        XCTAssertEqual(group.mlsEpochHistory.map(\.epoch), [0])
         XCTAssertFalse(group.mlsEpochState.confirmedTranscriptHash.isEmpty)
 
         let updated = try store.updateGroup(
@@ -160,6 +161,7 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(updated.mlsEpochState.lastCommit.operation, .addMembers)
         XCTAssertEqual(updated.mlsEpochState.lastCommit.previousTranscriptHash, group.mlsEpochState.confirmedTranscriptHash)
         XCTAssertEqual(updated.mlsEpochState.lastCommit.memberFingerprints, [creator, peer, extra].sorted())
+        XCTAssertEqual(updated.mlsEpochHistory.map(\.epoch), [0, 1])
     }
 
     func testCoordinatorDirectoryCacheRoundTrip() {
