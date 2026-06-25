@@ -230,7 +230,10 @@ public enum GroupRatchetRecovery {
         transcriptHash: Data,
         secret: Data
     ) -> Bool {
-        (try? state.advanceEpoch(
+        guard epoch == state.epoch + 1 else {
+            return false
+        }
+        return (try? state.advanceEpoch(
             to: epoch,
             transcriptHash: transcriptHash,
             commitSecret: secret

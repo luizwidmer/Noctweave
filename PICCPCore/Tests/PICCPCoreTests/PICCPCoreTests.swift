@@ -6097,6 +6097,142 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(recovered.transcriptHash, epoch2State.confirmedTranscriptHash)
     }
 
+    func testClientStateGroupRatchetRecoveryDoesNotSkipMissingEpochHistory() throws {
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Offline Member")
+        let groupId = UUID(uuidString: "CCCCCCCC-DDDD-EEEE-FFFF-000000000000")!
+        let inboxId = "group-missing-history-inbox"
+        let createdAt = Date(timeIntervalSince1970: 2_000)
+        let members = [
+            RelayGroupMember(fingerprint: creator.fingerprint),
+            RelayGroupMember(fingerprint: member.fingerprint)
+        ]
+        let recipients = [
+            relayGroupMemberProfile(identity: creator, relay: relay),
+            relayGroupMemberProfile(identity: member, relay: relay)
+        ]
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("missing history epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let epoch0State = MLSGroupEpochState.initial(
+            groupId: groupId,
+            title: "Missing History",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            members: members,
+            createdAt: createdAt,
+            ratchetSecretDistribution: epoch0Distribution
+        )
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        let staleMemberRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("missing history epoch 1".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: groupId,
+            epoch: 1,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch1State = epoch0State.advancing(
+            title: "Missing History 1",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 2_010),
+            ratchetSecretDistribution: epoch1Distribution
+        )
+        try creatorRatchet.advanceEpoch(
+            to: epoch1State.epoch,
+            transcriptHash: epoch1State.confirmedTranscriptHash,
+            commitSecret: epoch1Secret
+        )
+
+        let epoch2Secret = Data(SHA256.hash(data: Data("missing history epoch 2".utf8)))
+        let epoch2Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch2Secret,
+            groupId: groupId,
+            epoch: 2,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch2State = epoch1State.advancing(
+            title: "Missing History 2",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 2_020),
+            ratchetSecretDistribution: epoch2Distribution
+        )
+        try creatorRatchet.advanceEpoch(
+            to: epoch2State.epoch,
+            transcriptHash: epoch2State.confirmedTranscriptHash,
+            commitSecret: epoch2Secret
+        )
+
+        let descriptorMissingEpoch1 = RelayGroupDescriptor(
+            id: groupId,
+            title: "Missing History 2",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            epoch: epoch2State.epoch,
+            members: members,
+            mlsEpochState: epoch2State,
+            mlsEpochHistory: [
+                epoch0State.lastCommit,
+                epoch2State.lastCommit
+            ],
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 2_020)
+        )
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("message after missing epoch"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let recovered = try XCTUnwrap(
+            GroupRatchetRecovery.state(
+                from: descriptorMissingEpoch1,
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+
+        XCTAssertEqual(recovered.epoch, 0)
+        XCTAssertEqual(recovered.transcriptHash, epoch0State.confirmedTranscriptHash)
+        var unrecovered = recovered
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: envelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &unrecovered
+            )
+        )
+    }
+
     private func registerAndFetch(
         client: RelayClient,
         inboxId: String,
