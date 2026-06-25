@@ -66,6 +66,8 @@ attestation to the SBOM snapshot, giving reviewers a signed provenance record fo
 the dependency snapshot used by that run. A separate Linux CI job builds the
 relay container image with the pinned `LIBOQS_VERSION` value and scans the image
 with a commit-pinned Trivy action, failing the run on high or critical findings.
+Trusted `main` and manual container runs capture the built image digest and attach
+a GitHub build-provenance attestation to that digest.
 
 Manual equivalent:
 
@@ -144,4 +146,5 @@ Do not release if:
 ## Open Work
 
 - Add CycloneDX or SPDX export if an external auditor requires that format.
-- Add signed provenance attestations for Docker and Apple release artifacts.
+- Add signed provenance attestations for Apple release artifacts.
+- Add registry-pushed Docker release image provenance if public image publishing is introduced.

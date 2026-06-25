@@ -42,6 +42,9 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -60,3 +63,15 @@ jobs:
           scanners: vuln,secret
           severity: HIGH,CRITICAL
           exit-code: "1"
+
+      - name: Capture relay image digest
+        id: relay-image
+        if: github.event_name != 'pull_request'
+        run: echo "digest=$(docker image inspect noctyra-relay:ci --format='{{.Id}}')" >> "$GITHUB_OUTPUT"
+
+      - name: Attest relay image provenance
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a
+        with:
+          subject-name: noctyra-relay
+          subject-digest: ${{ steps.relay-image.outputs.digest }}
