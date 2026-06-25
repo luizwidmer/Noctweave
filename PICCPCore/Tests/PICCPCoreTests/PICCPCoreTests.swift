@@ -4026,18 +4026,13 @@ final class PICCPCoreTests: XCTestCase {
         )
         let refreshed = try XCTUnwrap(refreshedResponse.group)
         XCTAssertEqual(refreshed.mlsEpochHistory.map(\.epoch), [0, 1, 2])
-        for commit in refreshed.mlsEpochHistory.sorted(by: { $0.epoch < $1.epoch }) where commit.epoch > offlineMemberRatchet.epoch {
-            let distribution = try XCTUnwrap(commit.ratchetSecretDistribution)
-            let secret = try distribution.openSecret(
-                recipientFingerprint: member.fingerprint,
-                agreementKey: member.agreementKey
+        offlineMemberRatchet = try XCTUnwrap(
+            GroupRatchetRecovery.state(
+                from: refreshed,
+                identity: member,
+                existing: offlineMemberRatchet
             )
-            try offlineMemberRatchet.advanceEpoch(
-                to: commit.epoch,
-                transcriptHash: commit.transcriptHash,
-                commitSecret: secret
-            )
-        }
+        )
         XCTAssertEqual(offlineMemberRatchet.epoch, epoch2Group.epoch)
         let recovered = try GroupRatchet.decrypt(
             envelope: staleEnvelope,
@@ -5604,6 +5599,169 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(decoded.groups.count, 1)
         XCTAssertEqual(decoded.groups[0].title, "Team")
         XCTAssertEqual(decoded.groups[0].messages.first?.senderDisplayName, "Bob")
+    }
+
+    func testClientStateGroupRatchetRecoveryReplaysRetainedEpochHistory() throws {
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Offline Member")
+        let groupId = UUID(uuidString: "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF")!
+        let inboxId = "group-recovery-inbox"
+        let createdAt = Date(timeIntervalSince1970: 1_000)
+        let members = [
+            RelayGroupMember(fingerprint: creator.fingerprint),
+            RelayGroupMember(fingerprint: member.fingerprint)
+        ]
+        let recipients = [
+            relayGroupMemberProfile(identity: creator, relay: relay),
+            relayGroupMemberProfile(identity: member, relay: relay)
+        ]
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("client persisted epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let epoch0State = MLSGroupEpochState.initial(
+            groupId: groupId,
+            title: "Recovery",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            members: members,
+            createdAt: createdAt,
+            ratchetSecretDistribution: epoch0Distribution
+        )
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        let staleMemberRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("client persisted epoch 1".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: groupId,
+            epoch: 1,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch1State = epoch0State.advancing(
+            title: "Recovery 1",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 1_010),
+            ratchetSecretDistribution: epoch1Distribution
+        )
+        try creatorRatchet.advanceEpoch(
+            to: epoch1State.epoch,
+            transcriptHash: epoch1State.confirmedTranscriptHash,
+            commitSecret: epoch1Secret
+        )
+
+        let epoch2Secret = Data(SHA256.hash(data: Data("client persisted epoch 2".utf8)))
+        let epoch2Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch2Secret,
+            groupId: groupId,
+            epoch: 2,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch2State = epoch1State.advancing(
+            title: "Recovery 2",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 1_020),
+            ratchetSecretDistribution: epoch2Distribution
+        )
+        try creatorRatchet.advanceEpoch(
+            to: epoch2State.epoch,
+            transcriptHash: epoch2State.confirmedTranscriptHash,
+            commitSecret: epoch2Secret
+        )
+
+        let descriptor = RelayGroupDescriptor(
+            id: groupId,
+            title: "Recovery 2",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            epoch: epoch2State.epoch,
+            members: members,
+            mlsEpochState: epoch2State,
+            mlsEpochHistory: [
+                epoch0State.lastCommit,
+                epoch1State.lastCommit,
+                epoch2State.lastCommit
+            ],
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 1_020)
+        )
+
+        let group = GroupConversation(
+            title: "Recovery",
+            memberContactIds: [],
+            relayInboxId: inboxId,
+            relayEpoch: 0,
+            relayTranscriptHash: epoch0State.confirmedTranscriptHash,
+            groupRatchetState: staleMemberRatchet,
+            createdByFingerprint: creator.fingerprint,
+            createdAt: createdAt
+        )
+        var appState = ClientState(identity: member, relay: relay, inboxId: "member-inbox")
+        appState.groups = [group]
+        let encoded = try PICCPCoder.encode(appState)
+        var decoded = try PICCPCoder.decode(ClientState.self, from: encoded)
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("after retained history"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        var staleState = try XCTUnwrap(decoded.groups[0].groupRatchetState)
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: envelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &staleState
+            )
+        )
+
+        let recoveredState = try XCTUnwrap(
+            GroupRatchetRecovery.state(
+                from: descriptor,
+                identity: decoded.identity,
+                existing: decoded.groups[0].groupRatchetState
+            )
+        )
+        decoded.groups[0].groupRatchetState = recoveredState
+        decoded.groups[0].relayEpoch = descriptor.epoch
+        decoded.groups[0].relayTranscriptHash = descriptor.mlsEpochState.confirmedTranscriptHash
+
+        var recovered = try XCTUnwrap(decoded.groups[0].groupRatchetState)
+        let body = try GroupRatchet.decrypt(
+            envelope: envelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &recovered
+        )
+        XCTAssertEqual(body, .text("after retained history"))
+        XCTAssertEqual(recovered.epoch, 2)
+        XCTAssertEqual(recovered.transcriptHash, epoch2State.confirmedTranscriptHash)
     }
 
     private func registerAndFetch(

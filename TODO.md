@@ -46,6 +46,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Add route-level coverage for offline group epoch refresh and encrypted attachment retrieval after another member acknowledges
 - [x] Add federated multi-relay group-ratchet delivery coverage for a sender on one relay delivering to the group-owning relay
 - [x] Retain bounded group epoch history so long-offline members can replay missed ratchet epoch distributions
+- [x] Add app-state recovery coverage for stale persisted group ratchets replaying retained epoch history
 
 ## Decentralized wake
 - [x] Define relay-advertised wake policy without APNs or a centralized notification authority

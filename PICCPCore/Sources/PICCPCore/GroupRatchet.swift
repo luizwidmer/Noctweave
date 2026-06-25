@@ -155,6 +155,89 @@ public struct GroupRatchetState: Codable, Equatable {
     }
 }
 
+public enum GroupRatchetRecovery {
+    public static func state(
+        from descriptor: RelayGroupDescriptor,
+        identity: Identity,
+        existing: GroupRatchetState? = nil
+    ) -> GroupRatchetState? {
+        let history = descriptor.mlsEpochHistory
+            .sorted { $0.epoch < $1.epoch }
+            .filter { $0.ratchetSecretDistribution != nil }
+
+        if var state = existing,
+           state.groupId == descriptor.id {
+            for commit in history where commit.epoch > state.epoch {
+                guard let secret = ratchetSecret(from: commit, identity: identity),
+                      advance(&state, to: commit.epoch, transcriptHash: commit.transcriptHash, secret: secret) else {
+                    return state.epoch == descriptor.epoch ? state : existing
+                }
+            }
+            return state.epoch == descriptor.epoch ? state : existing
+        }
+
+        if let first = history.first,
+           first.epoch == 0,
+           let secret = ratchetSecret(from: first, identity: identity) {
+            var state = GroupRatchetState.initialize(
+                groupId: descriptor.id,
+                epoch: first.epoch,
+                transcriptHash: first.transcriptHash,
+                groupSecret: secret,
+                localSenderFingerprint: identity.fingerprint
+            )
+            for commit in history.dropFirst() {
+                guard let secret = ratchetSecret(from: commit, identity: identity),
+                      advance(&state, to: commit.epoch, transcriptHash: commit.transcriptHash, secret: secret) else {
+                    return nil
+                }
+            }
+            if state.epoch == descriptor.epoch {
+                return state
+            }
+        }
+
+        guard let distribution = descriptor.mlsEpochState.lastCommit.ratchetSecretDistribution,
+              distribution.epoch == descriptor.epoch,
+              let secret = try? distribution.openSecret(
+                recipientFingerprint: identity.fingerprint,
+                agreementKey: identity.agreementKey
+              ) else {
+            return existing
+        }
+        return GroupRatchetState.initialize(
+            groupId: descriptor.id,
+            epoch: descriptor.epoch,
+            transcriptHash: descriptor.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: secret,
+            localSenderFingerprint: identity.fingerprint
+        )
+    }
+
+    private static func ratchetSecret(from commit: MLSGroupCommitSummary, identity: Identity) -> Data? {
+        guard let distribution = commit.ratchetSecretDistribution else {
+            return nil
+        }
+        return try? distribution.openSecret(
+            recipientFingerprint: identity.fingerprint,
+            agreementKey: identity.agreementKey
+        )
+    }
+
+    private static func advance(
+        _ state: inout GroupRatchetState,
+        to epoch: UInt64,
+        transcriptHash: Data,
+        secret: Data
+    ) -> Bool {
+        (try? state.advanceEpoch(
+            to: epoch,
+            transcriptHash: transcriptHash,
+            commitSecret: secret
+        )) != nil
+    }
+}
+
 public struct GroupRatchetEnvelope: Codable, Identifiable, Equatable {
     public let id: UUID
     public let groupId: UUID
