@@ -686,6 +686,49 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(cache.records(now: now).count, 2)
     }
 
+    func testOpenFederationDHTDiscoveryAppliesHostCapToRelayIdentityHostMoves() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let movingKey = SigningKeyPair()
+        let original = try makeDHTRecord(
+            host: "original.example.org",
+            federationName: "open-net",
+            signingKey: movingKey,
+            issuedAt: now
+        )
+        let crowded = try makeDHTRecord(
+            host: "crowded.example.org",
+            federationName: "open-net",
+            issuedAt: now.addingTimeInterval(1)
+        )
+        let movedIntoCrowdedHost = try makeDHTRecord(
+            host: "crowded.example.org",
+            federationName: "open-net",
+            signingKey: movingKey,
+            issuedAt: now.addingTimeInterval(2)
+        )
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false,
+                maxRecords: 10,
+                maxRecordsPerHost: 1
+            )
+        )
+
+        let initial = cache.ingest([original, crowded], now: now)
+        XCTAssertEqual(initial.accepted.count, 2)
+
+        let move = cache.ingest([movedIntoCrowdedHost], now: now.addingTimeInterval(2))
+
+        XCTAssertTrue(move.accepted.isEmpty)
+        XCTAssertEqual(move.rejected.map(\.reason), [.hostLimitExceeded])
+        XCTAssertEqual(
+            Set(cache.records(now: now).map(\.endpoint.host)),
+            ["original.example.org", "crowded.example.org"]
+        )
+    }
+
     func testOpenFederationDHTDiscoveryCapsTotalRecords() throws {
         let now = Date(timeIntervalSince1970: 1_000)
         let records = try (0..<5).map { index in
