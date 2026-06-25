@@ -509,6 +509,7 @@ public struct AppearanceSettings: Codable, Equatable {
 
 public struct PrivacySettings: Codable, Equatable {
     public var secureTypingEnabled: Bool
+    public var secureTypingKeyboard: SecureTypingKeyboard
     public var useSecureCameraCapture: Bool
     // macOS-only behaviors (safe to store cross-platform; ignored on iOS).
     public var hideSensitiveWhenUnfocused: Bool
@@ -516,11 +517,13 @@ public struct PrivacySettings: Codable, Equatable {
 
     public init(
         secureTypingEnabled: Bool = true,
+        secureTypingKeyboard: SecureTypingKeyboard = .noctyra,
         useSecureCameraCapture: Bool = false,
         hideSensitiveWhenUnfocused: Bool = true,
         macBlockWindowCapture: Bool = true
     ) {
         self.secureTypingEnabled = secureTypingEnabled
+        self.secureTypingKeyboard = secureTypingKeyboard
         self.useSecureCameraCapture = useSecureCameraCapture
         self.hideSensitiveWhenUnfocused = hideSensitiveWhenUnfocused
         self.macBlockWindowCapture = macBlockWindowCapture
@@ -528,6 +531,7 @@ public struct PrivacySettings: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case secureTypingEnabled
+        case secureTypingKeyboard
         case useSecureCameraCapture
         case hideSensitiveWhenUnfocused
         case macBlockWindowCapture
@@ -536,6 +540,7 @@ public struct PrivacySettings: Codable, Equatable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         secureTypingEnabled = try container.decodeIfPresent(Bool.self, forKey: .secureTypingEnabled) ?? true
+        secureTypingKeyboard = try container.decodeIfPresent(SecureTypingKeyboard.self, forKey: .secureTypingKeyboard) ?? .noctyra
         useSecureCameraCapture = try container.decodeIfPresent(Bool.self, forKey: .useSecureCameraCapture) ?? false
         hideSensitiveWhenUnfocused = try container.decodeIfPresent(Bool.self, forKey: .hideSensitiveWhenUnfocused) ?? true
         macBlockWindowCapture = try container.decodeIfPresent(Bool.self, forKey: .macBlockWindowCapture) ?? true
@@ -544,9 +549,35 @@ public struct PrivacySettings: Codable, Equatable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(secureTypingEnabled, forKey: .secureTypingEnabled)
+        try container.encode(secureTypingKeyboard, forKey: .secureTypingKeyboard)
         try container.encode(useSecureCameraCapture, forKey: .useSecureCameraCapture)
         try container.encode(hideSensitiveWhenUnfocused, forKey: .hideSensitiveWhenUnfocused)
         try container.encode(macBlockWindowCapture, forKey: .macBlockWindowCapture)
+    }
+}
+
+public enum SecureTypingKeyboard: String, Codable, CaseIterable, Identifiable, Equatable {
+    case noctyra
+    case apple
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .noctyra:
+            "Noctyra keyboard"
+        case .apple:
+            "Apple keyboard"
+        }
+    }
+
+    public var shortName: String {
+        switch self {
+        case .noctyra:
+            "Noctyra"
+        case .apple:
+            "Apple"
+        }
     }
 }
 
