@@ -42,7 +42,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Add deterministic jitter/backoff wake planner in core
 - [x] Add Linux and mac relay controls for wake policy advertisement
 - [x] Render relay wake policy in client relay details
-- [ ] Teach active/background client sync loops to consume wake policy where the OS permits
+- [x] Teach active/background client sync loops to consume wake policy where the OS permits
 - [ ] Add relay-side bounded long-poll fetch behavior for HTTP/WebSocket transports
 - [ ] Add multi-identity polling simulation tests for wake jitter and backoff behavior
 
