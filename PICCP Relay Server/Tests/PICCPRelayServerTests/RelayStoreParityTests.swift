@@ -530,6 +530,68 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(queryNamespaces, [namespace])
     }
 
+    func testOpenFederationDHTNativeOverlayRefreshFallsBackToCachedNodesWhenQueryFails() async throws {
+        guard OQSSignatureVerifier.shared.isAvailable,
+              let keyPair = OQSSignatureVerifier.shared.generateKeyPair() else {
+            throw XCTSkip("liboqs runtime is unavailable")
+        }
+
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "resilient-native-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let seed = RelayEndpoint(host: "seed.example.org", port: 443, useTLS: true, transport: .http)
+        let cached = try makeSignedDHTRecord(
+            host: "cached-native.example.org",
+            federationName: federationName,
+            keyPair: keyPair,
+            issuedAt: now
+        )
+        let client = MockOpenFederationDHTRelayQueryClient(
+            infoByEndpoint: [seed: relayInfo(name: federationName)],
+            recordsByEndpoint: [seed: [cached]]
+        )
+        let transport = OpenFederationDHTNativeOverlayTransport(
+            seedEndpoints: [seed],
+            client: client,
+            maxVisitedEndpoints: 2,
+            maxPeerHintsPerEndpoint: 2
+        )
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 8,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 12
+            )
+        )
+
+        let warmResult = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            privateKey: nil,
+            publicKey: nil,
+            now: now
+        )
+        XCTAssertEqual(warmResult.nodes.map(\.endpoint.host), ["cached-native.example.org"])
+
+        await client.setListFailureEnabled(true)
+        let fallbackResult = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            privateKey: nil,
+            publicKey: nil,
+            now: now.addingTimeInterval(30)
+        )
+
+        XCTAssertTrue(fallbackResult.ingestResult.accepted.isEmpty)
+        XCTAssertTrue(fallbackResult.ingestResult.rejected.isEmpty)
+        XCTAssertEqual(fallbackResult.nodes.map(\.endpoint.host), ["cached-native.example.org"])
+        let queryNamespaces = await client.queryNamespaces()
+        XCTAssertEqual(queryNamespaces, [namespace, namespace])
+    }
+
     func testOpenFederationDHTHTTPGatewayTransportRejectsOversizedResponse() async throws {
         let protocolHarness = DHTGatewayURLProtocolHarness()
         protocolHarness.handler = { _ in
@@ -913,6 +975,7 @@ private actor MockOpenFederationDHTRelayQueryClient: OpenFederationDHTRelayQuery
     private var visited: [String] = []
     private var published: [OpenFederationDHTRecord] = []
     private var namespaces: [String] = []
+    private var listFailureEnabled = false
 
     init(
         infoByEndpoint: [RelayEndpoint: RelayInfo],
@@ -939,6 +1002,9 @@ private actor MockOpenFederationDHTRelayQueryClient: OpenFederationDHTRelayQuery
             if let namespace = request.listOpenFederationDHTRecords?.namespace {
                 namespaces.append(namespace)
             }
+            if listFailureEnabled {
+                return .error("List failure")
+            }
             return .openFederationDHTRecords(recordsByEndpoint[endpoint] ?? [])
         default:
             return .error("Unsupported request")
@@ -955,5 +1021,9 @@ private actor MockOpenFederationDHTRelayQueryClient: OpenFederationDHTRelayQuery
 
     func queryNamespaces() -> [String] {
         namespaces
+    }
+
+    func setListFailureEnabled(_ enabled: Bool) {
+        listFailureEnabled = enabled
     }
 }

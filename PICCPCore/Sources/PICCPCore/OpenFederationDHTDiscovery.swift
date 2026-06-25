@@ -105,6 +105,8 @@ public struct OpenFederationDHTDiscoveryEngine {
 
         let namespace = OpenFederationDHTRecord.namespace(federationName: configuration.federationName)
         var publishedRecord: OpenFederationDHTRecord?
+        var accepted: [OpenFederationDHTRecord] = []
+        var rejected: [OpenFederationDHTRecordRejection] = []
         if let localEndpoint, let signingKey {
             let record = try OpenFederationDHTRecord.signed(
                 endpoint: localEndpoint,
@@ -125,13 +127,27 @@ public struct OpenFederationDHTDiscoveryEngine {
             }
             try await transport.publish(record, namespace: namespace)
             publishedRecord = record
+            let localIngest = cache.ingest([record], now: now)
+            accepted.append(contentsOf: localIngest.accepted)
+            rejected.append(contentsOf: localIngest.rejected)
         }
 
-        let queriedRecords = try await transport.query(
-            namespace: namespace,
-            limit: configuration.maxQueryRecords
+        do {
+            let queriedRecords = try await transport.query(
+                namespace: namespace,
+                limit: configuration.maxQueryRecords
+            )
+            let queryIngest = cache.ingest(queriedRecords, now: now)
+            accepted.append(contentsOf: queryIngest.accepted)
+            rejected.append(contentsOf: queryIngest.rejected)
+        } catch {
+            cache.evictExpired(now: now)
+        }
+
+        let ingestResult = OpenFederationDHTDiscoveryIngestResult(
+            accepted: accepted,
+            rejected: rejected
         )
-        let ingestResult = cache.ingest(queriedRecords, now: now)
         return OpenFederationDHTDiscoveryCycleResult(
             publishedRecord: publishedRecord,
             ingestResult: ingestResult,

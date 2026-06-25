@@ -43,7 +43,7 @@ Last reviewed: June 25, 2026.
 - Clients fail closed when relay-backed group-ratchet state is missing instead of silently downgrading group sends to pairwise direct-message fan-out.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
-- Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation.
+- Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation. Discovery refreshes retain previously validated signed nodes across transient gateway or peer-query failures.
 - Optional relay-advertised hidden-retrieval cover-query support for compatible clients.
 - Release verification workflow wired to run the local SBOM, dependency, relay test, and optional scanner checks in CI.
 
@@ -73,5 +73,5 @@ Last reviewed: June 25, 2026.
 - Prepare the external security-audit package.
 - Expand real-device fault-injection coverage around retained group epoch histories; route-level multi-client retained-history coverage now includes multiple offline members recovering after a shared outage.
 - Keep tuning OS-permitted background fetch behavior against relay-advertised wake policy.
-- Continue open-federation experiments behind feature gates and simulation tests.
+- Continue open-federation experiments behind feature gates and simulation tests; cached-node fallback is covered for core and Linux relay discovery refreshes.
 - Replace cover-query hidden retrieval with stronger PIR if the bandwidth and relay-cost profile becomes acceptable.

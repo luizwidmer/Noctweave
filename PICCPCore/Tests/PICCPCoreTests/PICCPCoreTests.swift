@@ -727,6 +727,50 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(Set(result.nodes.map(\.endpoint.host)), ["relay-0.example.org", "relay-1.example.org"])
     }
 
+    func testOpenFederationDHTDiscoveryEngineFallsBackToCachedNodesWhenQueryFails() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "resilient-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let cachedRecord = try makeDHTRecord(
+            host: "cached-relay.example.org",
+            federationName: federationName,
+            issuedAt: now
+        )
+        let transport = MockOpenFederationDHTTransport(recordsByNamespace: [namespace: [cachedRecord]])
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 8,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 16
+            )
+        )
+
+        let warmResult = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: now
+        )
+        XCTAssertEqual(warmResult.nodes.map(\.endpoint.host), ["cached-relay.example.org"])
+
+        await transport.setQueryFailureEnabled(true)
+        let fallbackResult = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: now.addingTimeInterval(30)
+        )
+
+        XCTAssertTrue(fallbackResult.ingestResult.accepted.isEmpty)
+        XCTAssertTrue(fallbackResult.ingestResult.rejected.isEmpty)
+        XCTAssertEqual(fallbackResult.nodes.map(\.endpoint.host), ["cached-relay.example.org"])
+        let queryCount = await transport.queryCount()
+        XCTAssertEqual(queryCount, 2)
+    }
+
     func testOpenFederationDHTHTTPGatewayTransportPublishesWithAuthHeader() async throws {
         let namespace = OpenFederationDHTRecord.namespace(federationName: "gateway-net")
         let record = try makeDHTRecord(
@@ -6124,6 +6168,7 @@ private actor MockOpenFederationDHTTransport: OpenFederationDHTTransport {
     private var published: [OpenFederationDHTRecord] = []
     private var queries = 0
     private var mostRecentLimit: Int?
+    private var queryFailureEnabled = false
 
     init(recordsByNamespace: [String: [OpenFederationDHTRecord]] = [:]) {
         self.recordsByNamespace = recordsByNamespace
@@ -6137,6 +6182,9 @@ private actor MockOpenFederationDHTTransport: OpenFederationDHTTransport {
     func query(namespace: String, limit: Int) async throws -> [OpenFederationDHTRecord] {
         queries += 1
         mostRecentLimit = limit
+        if queryFailureEnabled {
+            throw MockOpenFederationDHTTransportError.queryFailed
+        }
         return Array((recordsByNamespace[namespace] ?? []).prefix(limit))
     }
 
@@ -6151,6 +6199,14 @@ private actor MockOpenFederationDHTTransport: OpenFederationDHTTransport {
     func lastQueryLimit() -> Int? {
         mostRecentLimit
     }
+
+    func setQueryFailureEnabled(_ enabled: Bool) {
+        queryFailureEnabled = enabled
+    }
+}
+
+private enum MockOpenFederationDHTTransportError: Error {
+    case queryFailed
 }
 
 private struct DHTGatewayPublishRequestProbe: Codable {
