@@ -24,6 +24,7 @@ struct ServerConfig {
     var attachmentMaxTTLSeconds: Int
     var attachmentsEnabled: Bool
     var hiddenRetrieval: HiddenRetrievalSupport?
+    var wakeSupport: DecentralizedWakeSupport?
     var relayName: String?
     var operatorNote: String?
     var softwareVersion: String?
@@ -69,6 +70,11 @@ struct ServerConfig {
         var hiddenRetrievalEnabled = false
         var hiddenRetrievalDefaultCoverSetSize = 8
         var hiddenRetrievalMaxCoverSetSize = 32
+        var wakeMode: DecentralizedWakeMode?
+        var wakeMinPollSeconds = 60
+        var wakeMaxPollSeconds = 300
+        var wakeJitterPermille = 250
+        var wakeLongPollTimeoutSeconds: Int?
         var relayName: String?
         var operatorNote: String?
         var softwareVersion: String?
@@ -199,6 +205,27 @@ struct ServerConfig {
                 if let value = iterator.next(), let parsed = Int(value) {
                     hiddenRetrievalMaxCoverSetSize = max(1, parsed)
                 }
+            case "--wake-mode":
+                if let value = iterator.next(),
+                   let parsed = DecentralizedWakeMode(rawValue: value) {
+                    wakeMode = parsed
+                }
+            case "--wake-min-poll-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    wakeMinPollSeconds = max(5, parsed)
+                }
+            case "--wake-max-poll-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    wakeMaxPollSeconds = max(5, parsed)
+                }
+            case "--wake-jitter-permille":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    wakeJitterPermille = min(max(0, parsed), 1_000)
+                }
+            case "--wake-long-poll-timeout-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    wakeLongPollTimeoutSeconds = max(5, parsed)
+                }
             case "--attachment-max-ttl-minutes":
                 if let value = iterator.next(), let parsed = Int(value) {
                     attachmentMaxTTLSeconds = max(1, parsed) * 60
@@ -301,6 +328,15 @@ struct ServerConfig {
                 maxCoverSetSize: hiddenRetrievalMaxCoverSetSize
             )
             : nil
+        let wakeSupport = wakeMode.map { mode in
+            DecentralizedWakeSupport(
+                mode: mode,
+                minPollIntervalSeconds: wakeMinPollSeconds,
+                maxPollIntervalSeconds: wakeMaxPollSeconds,
+                jitterPermille: wakeJitterPermille,
+                longPollTimeoutSeconds: wakeLongPollTimeoutSeconds
+            )
+        }
 
         return ServerConfig(
             host: host,
@@ -324,6 +360,7 @@ struct ServerConfig {
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled,
             hiddenRetrieval: hiddenRetrieval,
+            wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
@@ -429,6 +466,7 @@ var relayConfiguration = RelayConfiguration(
     attachmentMaxTTLSeconds: config.attachmentMaxTTLSeconds,
     attachmentsEnabled: config.attachmentsEnabled,
     hiddenRetrieval: config.hiddenRetrieval,
+    wakeSupport: config.wakeSupport,
     relayName: config.relayName,
     operatorNote: config.operatorNote,
     softwareVersion: config.softwareVersion,

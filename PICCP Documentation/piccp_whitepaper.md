@@ -238,11 +238,11 @@ Temporal bucketing can be single-bucket or multi-bucket. The multi-bucket path i
 
 Relays may also advertise optional hidden-retrieval cover-query support. In that mode, compatible clients can request fixed-size cover sets from temporal buckets and extract the target record locally. This is a deployable metadata-reduction feature and an implementation stepping stone toward stronger PIR, but it is not full cryptographic PIR.
 
-## 6.5 Pull-only delivery
+## 6.5 Decentralized wake and pull delivery
 
 The architecture is fully decentralized in the delivery path. The system does not rely on APNs or any equivalent centralized push-notification provider. Closed-app instant wake is excluded because it would introduce a credential-holding notification authority inconsistent with the decentralization model.
 
-The system therefore uses relay polling and foreground/background client fetch behavior rather than centralized push.
+The system therefore uses relay polling and foreground/background client fetch behavior rather than centralized push. Relays may advertise a decentralized wake policy for compatible clients: pull-only polling bounds, deterministic jitter, failure backoff, and bounded long-poll timeout support. This improves active or background fetch behavior without creating a central notification service. It does not claim guaranteed closed-app delivery on operating systems that suspend the app.
 
 # 7. Federation
 
@@ -359,6 +359,7 @@ The reference implementation delivers:
 - relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and software version
 - optional relay-advertised hidden-retrieval cover queries
 - explicit group-security-model advertisement with MLS-derived groups as the migration target
+- relay-advertised decentralized wake policy for jittered pull or bounded long-poll clients
 
 ## 10.2 Deferred work
 

@@ -117,6 +117,7 @@ public struct RelayInfo: Codable, Equatable {
     public var attachmentMaxTTLSeconds: Int?
     public var attachmentsEnabled: Bool?
     public var hiddenRetrieval: HiddenRetrievalSupport?
+    public var wakeSupport: DecentralizedWakeSupport?
     public var relayName: String?
     public var operatorNote: String?
     public var softwareVersion: String?
@@ -144,6 +145,7 @@ public struct RelayInfo: Codable, Equatable {
         attachmentMaxTTLSeconds: Int? = nil,
         attachmentsEnabled: Bool? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
+        wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -175,6 +177,7 @@ public struct RelayInfo: Codable, Equatable {
         self.attachmentMaxTTLSeconds = attachmentMaxTTLSeconds
         self.attachmentsEnabled = attachmentsEnabled
         self.hiddenRetrieval = hiddenRetrieval
+        self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -204,6 +207,7 @@ public struct RelayConfiguration: Codable, Equatable {
     public var attachmentMaxTTLSeconds: Int
     public var attachmentsEnabled: Bool?
     public var hiddenRetrieval: HiddenRetrievalSupport?
+    public var wakeSupport: DecentralizedWakeSupport?
     public var relayName: String?
     public var operatorNote: String?
     public var softwareVersion: String?
@@ -238,6 +242,7 @@ public struct RelayConfiguration: Codable, Equatable {
         attachmentMaxTTLSeconds: Int = 21600,
         attachmentsEnabled: Bool = true,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
+        wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -277,6 +282,7 @@ public struct RelayConfiguration: Codable, Equatable {
         self.attachmentMaxTTLSeconds = max(normalizedAttachmentDefaultTTL, attachmentMaxTTLSeconds)
         self.attachmentsEnabled = attachmentsEnabled
         self.hiddenRetrieval = hiddenRetrieval
+        self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -320,6 +326,7 @@ public struct RelayConfiguration: Codable, Equatable {
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled != false,
             hiddenRetrieval: hiddenRetrieval,
+            wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,

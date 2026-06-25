@@ -125,6 +125,98 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(decoded.groupSecurityModel, .mlsDerivedTree)
     }
 
+    func testDecentralizedWakeSupportNormalizesPolicy() {
+        let pullOnly = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 1,
+            maxPollIntervalSeconds: 2,
+            jitterPermille: 2_000,
+            longPollTimeoutSeconds: 60
+        )
+
+        XCTAssertEqual(pullOnly.minPollIntervalSeconds, 5)
+        XCTAssertEqual(pullOnly.maxPollIntervalSeconds, 5)
+        XCTAssertEqual(pullOnly.jitterPermille, 1_000)
+        XCTAssertNil(pullOnly.longPollTimeoutSeconds)
+
+        let longPoll = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 10,
+            maxPollIntervalSeconds: 30,
+            jitterPermille: -1,
+            longPollTimeoutSeconds: 120
+        )
+
+        XCTAssertEqual(longPoll.jitterPermille, 0)
+        XCTAssertEqual(longPoll.longPollTimeoutSeconds, 30)
+    }
+
+    func testDecentralizedWakePlannerIsDeterministicAndBounded() {
+        let support = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 20,
+            maxPollIntervalSeconds: 120,
+            jitterPermille: 500,
+            longPollTimeoutSeconds: 40
+        )
+        let now = Date(timeIntervalSince1970: 1_234)
+        let seed = Data("identity-seed".utf8)
+
+        let first = DecentralizedWakePlanner.makePlan(
+            support: support,
+            identitySeed: seed,
+            relayIdentifier: "relay.example.org",
+            failureCount: 2,
+            now: now
+        )
+        let second = DecentralizedWakePlanner.makePlan(
+            support: support,
+            identitySeed: seed,
+            relayIdentifier: "relay.example.org",
+            failureCount: 2,
+            now: now
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertGreaterThanOrEqual(first.nextPollDelaySeconds, 80)
+        XCTAssertLessThanOrEqual(first.nextPollDelaySeconds, 120)
+        XCTAssertEqual(first.longPollTimeoutSeconds, 40)
+        XCTAssertEqual(first.failureBackoffStep, 2)
+
+        let capped = DecentralizedWakePlanner.makePlan(
+            support: support,
+            identitySeed: seed,
+            relayIdentifier: "relay.example.org",
+            failureCount: 99,
+            now: now
+        )
+        XCTAssertEqual(capped.failureBackoffStep, 6)
+        XCTAssertLessThanOrEqual(capped.nextPollDelaySeconds, 120)
+    }
+
+    func testRelayInfoAdvertisesDecentralizedWakeSupport() throws {
+        let info = RelayConfiguration(
+            wakeSupport: DecentralizedWakeSupport(
+                mode: .longPoll,
+                minPollIntervalSeconds: 30,
+                maxPollIntervalSeconds: 180,
+                jitterPermille: 125,
+                longPollTimeoutSeconds: 45
+            )
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(info.wakeSupport?.mode, .longPoll)
+        XCTAssertEqual(info.wakeSupport?.minPollIntervalSeconds, 30)
+        XCTAssertEqual(info.wakeSupport?.maxPollIntervalSeconds, 180)
+        XCTAssertEqual(info.wakeSupport?.jitterPermille, 125)
+        XCTAssertEqual(info.wakeSupport?.longPollTimeoutSeconds, 45)
+
+        let encoded = try PICCPCoder.encode(info)
+        let decoded = try PICCPCoder.decode(RelayInfo.self, from: encoded)
+
+        XCTAssertEqual(decoded.wakeSupport, info.wakeSupport)
+    }
+
     func testRatchetRecoveryPolicyClassifiesRecoverableFailures() throws {
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.invalidPayload), .recover)
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterOutOfOrder), .recover)

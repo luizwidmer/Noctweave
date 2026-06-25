@@ -59,6 +59,8 @@ Use `--hidden-retrieval true` to advertise optional cover-query hidden
 retrieval support. This is a metadata-reduction capability for compatible
 clients, not full PIR and not a mandatory fetch path.
 
+Use `--wake-mode pullOnly` or `--wake-mode longPoll` to advertise a decentralized wake policy for compatible clients. This does not enable centralized push and does not guarantee closed-app delivery; it only publishes relay-supported polling or long-poll bounds.
+
 ```bash
 docker build -t piccp-relay ./"PICCP Relay Server"
 docker run --rm -p 9339:9339 -v piccp-data:/data piccp-relay
@@ -130,6 +132,11 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 - `--hidden-retrieval <true|false>`: advertise optional hidden-retrieval cover-query support (default: `false`)
 - `--hidden-retrieval-cover-size <count>`: default cover set size advertised to clients (default: `8`)
 - `--hidden-retrieval-max-cover-size <count>`: max cover set size advertised to clients (default: `32`)
+- `--wake-mode <pullOnly|longPoll>`: advertise decentralized wake support for compatible clients
+- `--wake-min-poll-seconds <seconds>`: lower polling interval bound advertised to clients (default: `60`)
+- `--wake-max-poll-seconds <seconds>`: upper polling/backoff bound advertised to clients (default: `300`)
+- `--wake-jitter-permille <0-1000>`: deterministic jitter range as permille of the active interval (default: `250`)
+- `--wake-long-poll-timeout-seconds <seconds>`: bounded long-poll timeout when `--wake-mode longPoll` is used
 - `--relay-name <name>`: advertise a relay display name
 - `--operator-note <text>`: optional operator note for clients
 - `--software-version <text>`: optional software version string

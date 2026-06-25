@@ -59,6 +59,39 @@ struct HiddenRetrievalSupport: Codable, Equatable {
     }
 }
 
+enum DecentralizedWakeMode: String, Codable, CaseIterable {
+    case pullOnly
+    case longPoll
+}
+
+struct DecentralizedWakeSupport: Codable, Equatable {
+    let mode: DecentralizedWakeMode
+    let minPollIntervalSeconds: Int
+    let maxPollIntervalSeconds: Int
+    let jitterPermille: Int
+    let longPollTimeoutSeconds: Int?
+
+    init(
+        mode: DecentralizedWakeMode = .pullOnly,
+        minPollIntervalSeconds: Int = 60,
+        maxPollIntervalSeconds: Int = 300,
+        jitterPermille: Int = 250,
+        longPollTimeoutSeconds: Int? = nil
+    ) {
+        let normalizedMin = max(5, minPollIntervalSeconds)
+        let normalizedMax = max(normalizedMin, maxPollIntervalSeconds)
+        self.mode = mode
+        self.minPollIntervalSeconds = normalizedMin
+        self.maxPollIntervalSeconds = normalizedMax
+        self.jitterPermille = min(max(0, jitterPermille), 1_000)
+        if mode == .longPoll {
+            self.longPollTimeoutSeconds = longPollTimeoutSeconds.map { min(max(5, $0), normalizedMax) } ?? normalizedMin
+        } else {
+            self.longPollTimeoutSeconds = nil
+        }
+    }
+}
+
 struct RelayInfo: Codable, Equatable {
     let kind: RelayKind
     let federation: FederationDescriptor
@@ -70,6 +103,7 @@ struct RelayInfo: Codable, Equatable {
     let attachmentMaxTTLSeconds: Int?
     let attachmentsEnabled: Bool?
     let hiddenRetrieval: HiddenRetrievalSupport?
+    let wakeSupport: DecentralizedWakeSupport?
     let relayName: String?
     let operatorNote: String?
     let softwareVersion: String?
@@ -97,6 +131,7 @@ struct RelayInfo: Codable, Equatable {
         attachmentMaxTTLSeconds: Int? = nil,
         attachmentsEnabled: Bool? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
+        wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -128,6 +163,7 @@ struct RelayInfo: Codable, Equatable {
         self.attachmentMaxTTLSeconds = attachmentMaxTTLSeconds
         self.attachmentsEnabled = attachmentsEnabled
         self.hiddenRetrieval = hiddenRetrieval
+        self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -157,6 +193,7 @@ struct RelayConfiguration: Codable, Equatable {
     var attachmentMaxTTLSeconds: Int
     var attachmentsEnabled: Bool?
     var hiddenRetrieval: HiddenRetrievalSupport?
+    var wakeSupport: DecentralizedWakeSupport?
     var relayName: String?
     var operatorNote: String?
     var softwareVersion: String?
@@ -189,6 +226,7 @@ struct RelayConfiguration: Codable, Equatable {
         attachmentMaxTTLSeconds: Int = 21600,
         attachmentsEnabled: Bool = true,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
+        wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -226,6 +264,7 @@ struct RelayConfiguration: Codable, Equatable {
         self.attachmentMaxTTLSeconds = max(normalizedAttachmentDefaultTTL, attachmentMaxTTLSeconds)
         self.attachmentsEnabled = attachmentsEnabled
         self.hiddenRetrieval = hiddenRetrieval
+        self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -267,6 +306,7 @@ struct RelayConfiguration: Codable, Equatable {
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled != false,
             hiddenRetrieval: hiddenRetrieval,
+            wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,

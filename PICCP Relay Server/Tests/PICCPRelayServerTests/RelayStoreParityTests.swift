@@ -495,6 +495,25 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(mlsInfo.groupSecurityModel, .mlsDerivedTree)
     }
 
+    func testRelayInfoCarriesDecentralizedWakeSupport() {
+        let configuration = RelayConfiguration(
+            wakeSupport: DecentralizedWakeSupport(
+                mode: .longPoll,
+                minPollIntervalSeconds: 30,
+                maxPollIntervalSeconds: 180,
+                jitterPermille: 125,
+                longPollTimeoutSeconds: 45
+            )
+        )
+        let info = configuration.makeInfo()
+
+        XCTAssertEqual(info.wakeSupport?.mode, .longPoll)
+        XCTAssertEqual(info.wakeSupport?.minPollIntervalSeconds, 30)
+        XCTAssertEqual(info.wakeSupport?.maxPollIntervalSeconds, 180)
+        XCTAssertEqual(info.wakeSupport?.jitterPermille, 125)
+        XCTAssertEqual(info.wakeSupport?.longPollTimeoutSeconds, 45)
+    }
+
     func testRelayConfigurationNormalizesAttachmentTTLPolicy() {
         let configuration = RelayConfiguration(
             attachmentDefaultTTLSeconds: 30,

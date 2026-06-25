@@ -90,6 +90,7 @@ public struct MasterServerEntry: Codable, Equatable {
     public let attachmentDefaultTTLSeconds: Int?
     public let attachmentMaxTTLSeconds: Int?
     public let hiddenRetrieval: HiddenRetrievalSupport?
+    public let wakeSupport: DecentralizedWakeSupport?
     public let operatorNote: String?
     public let softwareVersion: String?
     public let groupCreationMode: GroupCreationMode?
@@ -121,6 +122,7 @@ public struct MasterServerEntry: Codable, Equatable {
         attachmentDefaultTTLSeconds: Int? = nil,
         attachmentMaxTTLSeconds: Int? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
+        wakeSupport: DecentralizedWakeSupport? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         groupCreationMode: GroupCreationMode? = nil,
@@ -151,6 +153,7 @@ public struct MasterServerEntry: Codable, Equatable {
         self.attachmentDefaultTTLSeconds = attachmentDefaultTTLSeconds
         self.attachmentMaxTTLSeconds = attachmentMaxTTLSeconds
         self.hiddenRetrieval = hiddenRetrieval
+        self.wakeSupport = wakeSupport
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
         self.groupCreationMode = groupCreationMode
@@ -226,6 +229,7 @@ private extension RelayServerRecord {
             || entry.attachmentDefaultTTLSeconds != nil
             || entry.attachmentMaxTTLSeconds != nil
             || entry.hiddenRetrieval != nil
+            || entry.wakeSupport != nil
             || entry.operatorNote != nil
             || entry.softwareVersion != nil
             || entry.groupCreationMode != nil
@@ -253,6 +257,7 @@ private extension RelayServerRecord {
             attachmentDefaultTTLSeconds: entry.attachmentDefaultTTLSeconds,
             attachmentMaxTTLSeconds: entry.attachmentMaxTTLSeconds,
             hiddenRetrieval: entry.hiddenRetrieval,
+            wakeSupport: entry.wakeSupport,
             operatorNote: entry.operatorNote,
             softwareVersion: entry.softwareVersion,
             groupCreationMode: entry.groupCreationMode,
