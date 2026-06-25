@@ -2308,6 +2308,95 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(updated.mlsEpochState.lastCommit.memberFingerprints, [creator, memberA, memberB].sorted())
     }
 
+    func testRelayStoreRejectsStaleEpochAndMissedTranscriptGroupCommits() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+
+        let created = try await store.createGroup(
+            title: "Ops",
+            creatorFingerprint: creator.fingerprint,
+            memberFingerprints: [member.fingerprint]
+        )
+
+        let currentUpdateCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                title: "Ops Current"
+            ),
+            signer: creator
+        )
+        let updated = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                title: "Ops Current",
+                groupCommit: currentUpdateCommit
+            )
+        )
+        XCTAssertEqual(updated.epoch, 1)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.previousTranscriptHash, created.mlsEpochState.confirmedTranscriptHash)
+
+        let staleEpochCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                title: "Ops Stale"
+            ),
+            signer: creator
+        )
+        do {
+            _ = try await store.updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    title: "Ops Stale",
+                    groupCommit: staleEpochCommit
+                )
+            )
+            XCTFail("Expected stale epoch commit to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? RelayStoreError, .invalidGroupCommit)
+        }
+
+        let missedTranscriptCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: updated.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                title: "Ops Missed"
+            ),
+            signer: creator
+        )
+        do {
+            _ = try await store.updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    title: "Ops Missed",
+                    groupCommit: missedTranscriptCommit
+                )
+            )
+            XCTFail("Expected missed transcript commit to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? RelayStoreError, .invalidGroupCommit)
+        }
+
+        let final = await store.fetchGroup(groupId: created.id)
+        XCTAssertEqual(final?.title, "Ops Current")
+        XCTAssertEqual(final?.epoch, updated.epoch)
+        XCTAssertEqual(final?.mlsEpochState.confirmedTranscriptHash, updated.mlsEpochState.confirmedTranscriptHash)
+    }
+
     func testRelayStoreGroupMemberCanLeaveButCannotMutateOthers() async throws {
         let store = RelayStore()
         let creator = "creator-fingerprint"
@@ -2442,6 +2531,77 @@ final class PICCPCoreTests: XCTestCase {
             ListGroupJoinRequestsRequest(groupId: created.id, actorFingerprint: creator.fingerprint)
         )
         XCTAssertTrue(postApprove.isEmpty)
+    }
+
+    func testRelayStoreGroupRejoinAdvancesFromCurrentTranscript() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let memberA = Identity(displayName: "Member A")
+        let memberB = Identity(displayName: "Member B")
+        let relay = RelayEndpoint(host: "127.0.0.1", port: 9339)
+
+        let created = try await store.createGroup(
+            title: "Ops",
+            creatorFingerprint: creator.fingerprint,
+            memberFingerprints: [memberA.fingerprint, memberB.fingerprint]
+        )
+
+        let leaveCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .selfLeave,
+                groupId: created.id,
+                actorFingerprint: memberA.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                removeMemberFingerprints: [memberA.fingerprint]
+            ),
+            signer: memberA
+        )
+        let left = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: created.id,
+                actorFingerprint: memberA.fingerprint,
+                removeMemberFingerprints: [memberA.fingerprint],
+                groupCommit: leaveCommit
+            )
+        )
+        XCTAssertEqual(left.epoch, 1)
+        XCTAssertFalse(left.members.contains(where: { $0.fingerprint == memberA.fingerprint }))
+        XCTAssertEqual(left.mlsEpochState.lastCommit.operation, .selfLeave)
+
+        let joinProfile = relayGroupMemberProfile(identity: memberA, relay: relay)
+        let requested = try await store.requestGroupJoin(
+            RequestGroupJoinRequest(groupId: left.id, requesterProfile: joinProfile)
+        )
+        XCTAssertEqual(requested.requester.fingerprint, memberA.fingerprint)
+
+        let rejoinCommit = try signedJoinApprovalCommit(
+            group: left,
+            joinRequest: requested,
+            signer: creator
+        )
+        let rejoined = try await store.approveGroupJoin(
+            ApproveGroupJoinRequest(
+                groupId: left.id,
+                actorFingerprint: creator.fingerprint,
+                joinRequestId: requested.id,
+                groupCommit: rejoinCommit
+            )
+        )
+
+        XCTAssertEqual(rejoined.epoch, 2)
+        XCTAssertTrue(rejoined.members.contains(where: { $0.fingerprint == memberA.fingerprint }))
+        XCTAssertTrue(rejoined.members.contains(where: { $0.fingerprint == memberB.fingerprint }))
+        XCTAssertEqual(rejoined.mlsEpochState.lastCommit.operation, .joinApprove)
+        XCTAssertEqual(rejoined.mlsEpochState.lastCommit.previousTranscriptHash, left.mlsEpochState.confirmedTranscriptHash)
+        XCTAssertNotEqual(rejoined.mlsEpochState.confirmedTranscriptHash, left.mlsEpochState.confirmedTranscriptHash)
+
+        let pending = try await store.listGroupJoinRequests(
+            ListGroupJoinRequestsRequest(groupId: left.id, actorFingerprint: creator.fingerprint)
+        )
+        XCTAssertTrue(pending.isEmpty)
+        let groupsForMemberA = await store.listGroups(memberFingerprint: memberA.fingerprint)
+        XCTAssertEqual(groupsForMemberA.map(\.id), [created.id])
     }
 
     func testRelayServerGroupJoinRoutes() async throws {
@@ -2846,6 +3006,24 @@ final class PICCPCoreTests: XCTestCase {
             actorProof: proof
         )
         return commit
+    }
+
+    private func signedGroupCommit(_ commit: SignedGroupCommit, signer: Identity) throws -> SignedGroupCommit {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try commit.signableData(for: actorProof)
+        }
+        return SignedGroupCommit(
+            operation: commit.operation,
+            groupId: commit.groupId,
+            actorFingerprint: commit.actorFingerprint,
+            baseEpoch: commit.baseEpoch,
+            previousTranscriptHash: commit.previousTranscriptHash,
+            title: commit.title,
+            addMemberFingerprints: commit.addMemberFingerprints,
+            addMemberProfiles: commit.addMemberProfiles,
+            removeMemberFingerprints: commit.removeMemberFingerprints,
+            actorProof: proof
+        )
     }
 
     private func signedDeleteGroupRequest(_ request: DeleteGroupRequest, signer: Identity) throws -> DeleteGroupRequest {

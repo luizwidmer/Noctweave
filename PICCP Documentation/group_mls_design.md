@@ -14,8 +14,7 @@ Noctyra groups are moving toward an MLS-derived tree model as the product group 
 
 ## Required Next Work
 
-1. Add stale-epoch, missed-commit, and rejoin recovery tests.
-2. Replace pairwise fan-out group delivery with the MLS-derived group ratchet after interoperability tests pass.
+1. Replace pairwise fan-out group delivery with the MLS-derived group ratchet after interoperability tests pass.
 
 ## Non-Goals
 

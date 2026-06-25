@@ -52,7 +52,7 @@ Last reviewed: June 25, 2026.
 ## Whitepaper Limits That Remain True
 - No full cryptographic PIR-assisted hidden retrieval.
 - No mixnet or onion transport layer.
-- No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, and join approval, and group message envelopes are bound to group context as AEAD data, but group message keys are not yet on a full MLS ratchet.
+- No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and rejoin recovery, and group message envelopes are bound to group context as AEAD data, but group message keys are not yet on a full MLS ratchet.
 - No claim of protection against a compromised OS or malicious device vendor.
 - No autonomous public DHT release mode; public-network adapters remain deferred until poisoning, churn, flooding, and operator-risk controls are externally validated.
 - No centralized push-notification server by design, so closed-app instant delivery remains out of scope. A decentralized wake policy prototype exists for compatible pull or long-poll clients.
@@ -64,7 +64,7 @@ Last reviewed: June 25, 2026.
 
 ## Next Alignment Targets
 - Prepare the external security-audit package.
-- Implement the MLS-derived group design in `group_mls_design.md`.
+- Replace pairwise fan-out group delivery with the MLS-derived group ratchet described in `group_mls_design.md`.
 - Add multi-identity wake simulation tests and keep tuning OS-permitted background fetch behavior.
 - Continue open-federation experiments behind feature gates and simulation tests.
 - Replace cover-query hidden retrieval with stronger PIR if the bandwidth and relay-cost profile becomes acceptable.

@@ -34,7 +34,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Advance MLS epoch state for approved joins with `joinApprove` commit summaries
 - [x] Move join approval onto an explicit signed group commit payload
 - [x] Bind group messages to group ID, epoch, sender identity, and transcript hash as authenticated data
-- [ ] Add stale-epoch, missed-commit, and rejoin recovery tests
+- [x] Add stale-epoch, missed-commit, and rejoin recovery tests
 - [ ] Replace pairwise fan-out group delivery with the MLS-derived group ratchet after interoperability tests pass
 
 ## Decentralized wake
