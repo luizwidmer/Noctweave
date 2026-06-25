@@ -7,15 +7,20 @@ if (return 0 2>/dev/null); then
 fi
 
 _piccp_liboqs_candidates=()
+_piccp_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_piccp_root_dir="$(cd "$_piccp_script_dir/.." && pwd)"
+
 case "$(uname -s)" in
   Darwin)
     _piccp_liboqs_candidates=(
+      "$_piccp_root_dir/.runtime/liboqs/lib/liboqs.dylib"
       "/opt/homebrew/lib/liboqs.dylib"
       "/usr/local/lib/liboqs.dylib"
     )
     ;;
   Linux)
     _piccp_liboqs_candidates=(
+      "$_piccp_root_dir/.runtime/liboqs/lib/liboqs.so"
       "/usr/local/lib/liboqs.so"
       "/usr/lib/liboqs.so"
       "/usr/lib64/liboqs.so"

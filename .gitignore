@@ -19,6 +19,7 @@ Package.resolved
 
 # Local logs and scratch output
 .relay-data/
+.runtime/
 *.log
 *.tmp
 *.swp
