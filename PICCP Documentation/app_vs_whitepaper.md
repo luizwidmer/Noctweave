@@ -15,6 +15,7 @@ Last reviewed: June 25, 2026.
 - Symmetric message ratchet plus periodic ML-KEM root-ratchet refresh.
 - Session IDs bound into authenticated data for mismatch containment.
 - Silent session recovery and resend paths for ordinary ratchet desynchronization.
+- MLS-derived group ratchet primitive for epoch/transcript-bound group message keys and per-sender chains.
 
 ### Identity and Trust
 - Explicit identity creation during onboarding.
@@ -34,6 +35,7 @@ Last reviewed: June 25, 2026.
 - Relay metadata advertisement for name, kind, federation, transport, TLS, temporal buckets, attachment TTL, group policy, operator note, and software version.
 - Relay metadata advertises the group security model: current `relayBackedPairwise` pairwise-fan-out mode or `mlsDerivedTree`.
 - Relay group descriptors carry required MLS epoch state with tree hash, transcript hash, ciphersuite label, and last commit summary.
+- Group conversations can persist encrypted group ratchet state locally, but default client delivery still needs the group-inbox ratchet transport switch.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation.
@@ -52,14 +54,14 @@ Last reviewed: June 25, 2026.
 ## Whitepaper Limits That Remain True
 - No full cryptographic PIR-assisted hidden retrieval.
 - No mixnet or onion transport layer.
-- No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and rejoin recovery, and group message envelopes are bound to group context as AEAD data, but group message keys are not yet on a full MLS ratchet.
+- No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and rejoin recovery, and a group ratchet primitive now exists for epoch-bound message keys, but clients still need group-secret distribution and relay group-inbox transport before default group delivery stops using pairwise fan-out.
 - No claim of protection against a compromised OS or malicious device vendor.
 - No autonomous public DHT release mode; public-network adapters remain deferred until poisoning, churn, flooding, and operator-risk controls are externally validated.
 - No centralized push-notification server by design, so closed-app instant delivery remains out of scope. A decentralized wake policy prototype exists for compatible pull or long-poll clients.
 
 ## Alignment Summary
 - **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, and coordinator-assisted federation.
-- **Partially aligned**: metadata minimization, PIR-adjacent hidden retrieval, group cryptography, and decentralized wake. Temporal buckets, capability-style inboxes, federation policy, optional cover-query relay support, explicit group-security metadata, signed registry commits, MLS epoch state, group-context AEAD binding, and relay-advertised jittered wake policy reduce ambiguity, but do not provide strong anonymity, full cryptographic PIR, complete MLS-class group proofs, or guaranteed closed-app delivery.
+- **Partially aligned**: metadata minimization, PIR-adjacent hidden retrieval, group cryptography, and decentralized wake. Temporal buckets, capability-style inboxes, federation policy, optional cover-query relay support, explicit group-security metadata, signed registry commits, MLS epoch state, group-context AEAD binding, the group ratchet primitive, and relay-advertised jittered wake policy reduce ambiguity, but do not provide strong anonymity, full cryptographic PIR, complete MLS-class group proofs, or guaranteed closed-app delivery.
 - **Deferred**: mixnet/onion transport, autonomous public DHT release mode, external audit, signed release-provenance packaging, and full MLS-derived group ratchet implementation.
 
 ## Next Alignment Targets

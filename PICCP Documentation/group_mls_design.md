@@ -10,11 +10,15 @@ Noctyra groups are moving toward an MLS-derived tree model as the product group 
 - Membership/title changes, self-leave operations, and approved joins require a `SignedGroupCommit` bound to the current group epoch and previous transcript hash.
 - Approved joins carry an explicit signed `joinApprove` group commit payload and advance the epoch with a `joinApprove` commit summary.
 - Group message envelopes carry a signed authenticated context and use it as AEAD data. The group context binds the ciphertext to group ID, epoch, sender fingerprint, and confirmed transcript hash.
+- `GroupRatchetState` and `GroupRatchetEnvelope` provide the MLS-derived message-key foundation: one shared epoch root derives per-sender chains, group ciphertexts are signed, and AEAD data binds group ID, epoch, transcript hash, sender fingerprint, and message counter.
+- `GroupConversation` can persist per-group ratchet state inside the encrypted client state store.
 - Relays still coordinate group registry state and join requests, but do not receive plaintext group messages.
 
 ## Required Next Work
 
-1. Replace pairwise fan-out group delivery with the MLS-derived group ratchet after interoperability tests pass.
+1. Distribute group ratchet epoch secrets through signed group commits and join approvals.
+2. Teach clients to fetch/decrypt relay group-inbox ciphertexts with the group ratchet.
+3. Replace pairwise fan-out group delivery with the MLS-derived group ratchet after interoperability tests pass.
 
 ## Non-Goals
 

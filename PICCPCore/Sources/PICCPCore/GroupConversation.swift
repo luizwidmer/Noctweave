@@ -7,6 +7,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
     public var relayInboxId: String?
     public var relayEpoch: UInt64?
     public var relayTranscriptHash: Data?
+    public var groupRatchetState: GroupRatchetState?
     public var createdByFingerprint: String?
     public var messages: [Message]
     public var unreadCount: Int
@@ -19,6 +20,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         relayInboxId: String? = nil,
         relayEpoch: UInt64? = nil,
         relayTranscriptHash: Data? = nil,
+        groupRatchetState: GroupRatchetState? = nil,
         createdByFingerprint: String? = nil,
         messages: [Message] = [],
         unreadCount: Int = 0,
@@ -30,6 +32,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         self.relayInboxId = relayInboxId
         self.relayEpoch = relayEpoch
         self.relayTranscriptHash = relayTranscriptHash
+        self.groupRatchetState = groupRatchetState
         self.createdByFingerprint = createdByFingerprint
         self.messages = messages
         self.unreadCount = unreadCount
@@ -43,6 +46,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         case relayInboxId
         case relayEpoch
         case relayTranscriptHash
+        case groupRatchetState
         case createdByFingerprint
         case messages
         case unreadCount
@@ -57,6 +61,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         relayInboxId = try container.decodeIfPresent(String.self, forKey: .relayInboxId)
         relayEpoch = try container.decodeIfPresent(UInt64.self, forKey: .relayEpoch)
         relayTranscriptHash = try container.decodeIfPresent(Data.self, forKey: .relayTranscriptHash)
+        groupRatchetState = try container.decodeIfPresent(GroupRatchetState.self, forKey: .groupRatchetState)
         createdByFingerprint = try container.decodeIfPresent(String.self, forKey: .createdByFingerprint)
         messages = try container.decodeIfPresent([Message].self, forKey: .messages) ?? []
         unreadCount = try container.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0

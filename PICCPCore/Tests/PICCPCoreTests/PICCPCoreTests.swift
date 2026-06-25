@@ -1268,6 +1268,215 @@ final class PICCPCoreTests: XCTestCase {
         )
     }
 
+    func testGroupRatchetEncryptsOnceForSharedGroupState() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var bobState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: bob.fingerprint
+        )
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("hello group"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+        XCTAssertEqual(envelope.groupId, groupId)
+        XCTAssertEqual(envelope.epoch, 0)
+        XCTAssertEqual(envelope.transcriptHash, transcriptHash)
+
+        let body = try GroupRatchet.decrypt(
+            envelope: envelope,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &bobState
+        )
+        XCTAssertEqual(body, .text("hello group"))
+        XCTAssertNotNil(bobState.receiveChains[alice.fingerprint])
+    }
+
+    func testGroupRatchetRejectsReplayAndAllowsBoundedOutOfOrderDelivery() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var receiverState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret
+        )
+
+        let first = try GroupRatchet.encrypt(
+            body: .text("first"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+        let second = try GroupRatchet.encrypt(
+            body: .text("second"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+
+        let secondBody = try GroupRatchet.decrypt(
+            envelope: second,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &receiverState
+        )
+        XCTAssertEqual(secondBody, .text("second"))
+
+        let firstBody = try GroupRatchet.decrypt(
+            envelope: first,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &receiverState
+        )
+        XCTAssertEqual(firstBody, .text("first"))
+
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: second,
+                senderPublicSigningKey: alice.signingKey.publicKeyData,
+                state: &receiverState
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .counterReplay)
+        }
+    }
+
+    func testGroupRatchetBindsTranscriptAndSignature() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let wrongTranscriptHash = Data(SHA256.hash(data: Data("wrong epoch".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        let mallory = Identity(displayName: "Mallory")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var receiverState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: wrongTranscriptHash,
+            groupSecret: groupSecret
+        )
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("bound"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: envelope,
+                senderPublicSigningKey: alice.signingKey.publicKeyData,
+                state: &receiverState
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+
+        var validReceiverState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret
+        )
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: envelope,
+                senderPublicSigningKey: mallory.signingKey.publicKeyData,
+                state: &validReceiverState
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+    }
+
+    func testGroupRatchetAdvancesEpochAndRejectsOldEpochMessages() throws {
+        let groupId = UUID()
+        let transcript0 = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let transcript1 = Data(SHA256.hash(data: Data("epoch-1".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let commitSecret = Data(SHA256.hash(data: Data("commit secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcript0,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var receiverState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcript0,
+            groupSecret: groupSecret
+        )
+
+        let oldEnvelope = try GroupRatchet.encrypt(
+            body: .text("old"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+
+        try aliceState.advanceEpoch(to: 1, transcriptHash: transcript1, commitSecret: commitSecret)
+        try receiverState.advanceEpoch(to: 1, transcriptHash: transcript1, commitSecret: commitSecret)
+
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: oldEnvelope,
+                senderPublicSigningKey: alice.signingKey.publicKeyData,
+                state: &receiverState
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+
+        let newEnvelope = try GroupRatchet.encrypt(
+            body: .text("new"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+        let body = try GroupRatchet.decrypt(
+            envelope: newEnvelope,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &receiverState
+        )
+        XCTAssertEqual(body, .text("new"))
+        XCTAssertEqual(newEnvelope.epoch, 1)
+        XCTAssertEqual(newEnvelope.transcriptHash, transcript1)
+    }
+
     func testCounterWindowExceeded() throws {
         let alice = Identity(displayName: "Alice")
         let bob = Identity(displayName: "Bob")
