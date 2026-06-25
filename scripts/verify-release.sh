@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELAY_DIR="$ROOT_DIR/PICCP Relay Server"
 SBOM_PATH="$ROOT_DIR/PICCP Documentation/noctyra_sbom.json"
 
+source "$ROOT_DIR/scripts/liboqs-runtime.sh"
+
 cd "$ROOT_DIR"
 
 echo "Refreshing machine-readable SBOM..."
