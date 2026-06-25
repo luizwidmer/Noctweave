@@ -1951,17 +1951,20 @@ struct ApproveGroupJoinRequest: Codable, Equatable {
     let groupId: UUID
     let actorFingerprint: String
     let joinRequestId: UUID
+    let groupCommit: SignedGroupCommit
     let actorProof: RelayActorProof?
 
     init(
         groupId: UUID,
         actorFingerprint: String,
         joinRequestId: UUID,
+        groupCommit: SignedGroupCommit,
         actorProof: RelayActorProof? = nil
     ) {
         self.groupId = groupId
         self.actorFingerprint = actorFingerprint
         self.joinRequestId = joinRequestId
+        self.groupCommit = groupCommit
         self.actorProof = actorProof
     }
 
@@ -1971,6 +1974,7 @@ struct ApproveGroupJoinRequest: Codable, Equatable {
                 groupId: groupId,
                 actorFingerprint: actorFingerprint,
                 joinRequestId: joinRequestId,
+                groupCommit: groupCommit,
                 signedAt: proof.signedAt,
                 nonce: proof.nonce
             )
@@ -2051,6 +2055,7 @@ private struct ApproveGroupJoinProofPayload: Codable {
     let groupId: UUID
     let actorFingerprint: String
     let joinRequestId: UUID
+    let groupCommit: SignedGroupCommit
     let signedAt: Date
     let nonce: UUID
 }

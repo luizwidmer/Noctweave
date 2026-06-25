@@ -942,20 +942,9 @@ final class RelayStore {
                 throw RelayStoreError.unauthorizedGroupMutation
             }
 
-            var pending = groupJoinRequests[group.id, default: []]
-            guard let index = pending.firstIndex(where: { $0.id == request.joinRequestId }) else {
+            let pending = groupJoinRequests[group.id, default: []]
+            guard let joinRequest = pending.first(where: { $0.id == request.joinRequestId }) else {
                 throw RelayStoreError.groupJoinRequestNotFound
-            }
-            let joinRequest = pending.remove(at: index)
-            if pending.isEmpty {
-                groupJoinRequests.removeValue(forKey: group.id)
-            } else {
-                groupJoinRequests[group.id] = pending
-            }
-
-            if group.members.contains(where: { $0.fingerprint == joinRequest.requester.fingerprint }) {
-                saveLocked()
-                return group
             }
 
             let updated = try updateGroup(
@@ -967,17 +956,16 @@ final class RelayStore {
                     addMemberProfiles: [joinRequest.requester],
                     removeMemberFingerprints: [],
                     actorProof: nil,
-                    groupCommit: SignedGroupCommit(
-                        operation: .joinApprove,
-                        groupId: group.id,
-                        actorFingerprint: actor,
-                        baseEpoch: group.epoch,
-                        previousTranscriptHash: group.mlsEpochState.confirmedTranscriptHash,
-                        addMemberFingerprints: [joinRequest.requester.fingerprint],
-                        addMemberProfiles: [joinRequest.requester]
-                    )
+                    groupCommit: request.groupCommit
                 )
             )
+            var refreshedPending = groupJoinRequests[group.id, default: []]
+            refreshedPending.removeAll { $0.id == request.joinRequestId }
+            if refreshedPending.isEmpty {
+                groupJoinRequests.removeValue(forKey: group.id)
+            } else {
+                groupJoinRequests[group.id] = refreshedPending
+            }
             saveLocked()
             return updated
         }

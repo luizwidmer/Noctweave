@@ -659,6 +659,14 @@ final class RelayHandler: ChannelInboundHandler {
             ) {
                 return context.eventLoop.makeSucceededFuture(proofFailure)
             }
+            if let proofFailure = validateActorProof(
+                approve.groupCommit.actorProof,
+                expectedFingerprint: actorFingerprint,
+                expectedSigningKey: actorSigningKey,
+                signableDataBuilder: { proof in try approve.groupCommit.signableData(for: proof) }
+            ) {
+                return context.eventLoop.makeSucceededFuture(proofFailure)
+            }
             do {
                 let group = try store.approveGroupJoin(approve)
                 return context.eventLoop.makeSucceededFuture(.group(group))

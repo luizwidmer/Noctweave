@@ -2299,11 +2299,17 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(listed.count, 1)
         XCTAssertEqual(listed[0].id, requested.id)
 
+        let joinCommit = try signedJoinApprovalCommit(
+            group: created,
+            joinRequest: requested,
+            signer: creator
+        )
         let approved = try await store.approveGroupJoin(
             ApproveGroupJoinRequest(
                 groupId: created.id,
                 actorFingerprint: creator.fingerprint,
-                joinRequestId: requested.id
+                joinRequestId: requested.id,
+                groupCommit: joinCommit
             )
         )
         XCTAssertTrue(approved.members.contains(where: { $0.fingerprint == joiner.fingerprint }))
@@ -2391,11 +2397,40 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(listResponse.type, .groupJoinRequests)
         XCTAssertEqual(listResponse.groupJoinRequests?.count, 1)
 
+        let unsignedCommit = SignedGroupCommit(
+            operation: .joinApprove,
+            groupId: group.id,
+            actorFingerprint: creator.fingerprint,
+            baseEpoch: group.epoch,
+            previousTranscriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            addMemberFingerprints: [joinRequest.requester.fingerprint],
+            addMemberProfiles: [joinRequest.requester]
+        )
+        let badApproveJoin = try signedApproveGroupJoinRequest(
+            ApproveGroupJoinRequest(
+                groupId: group.id,
+                actorFingerprint: creator.fingerprint,
+                joinRequestId: joinRequest.id,
+                groupCommit: unsignedCommit
+            ),
+            signer: creator
+        )
+        let badApproveResponse = try await client.send(
+            .approveGroupJoin(badApproveJoin)
+        )
+        XCTAssertEqual(badApproveResponse.type, .error)
+
+        let joinCommit = try signedJoinApprovalCommit(
+            group: group,
+            joinRequest: joinRequest,
+            signer: creator
+        )
         let approveJoin = try signedApproveGroupJoinRequest(
             ApproveGroupJoinRequest(
                 groupId: group.id,
                 actorFingerprint: creator.fingerprint,
-                joinRequestId: joinRequest.id
+                joinRequestId: joinRequest.id,
+                groupCommit: joinCommit
             ),
             signer: creator
         )
@@ -2652,8 +2687,41 @@ final class PICCPCoreTests: XCTestCase {
             groupId: request.groupId,
             actorFingerprint: request.actorFingerprint,
             joinRequestId: request.joinRequestId,
+            groupCommit: request.groupCommit,
             actorProof: proof
         )
+    }
+
+    private func signedJoinApprovalCommit(
+        group: RelayGroupDescriptor,
+        joinRequest: RelayGroupJoinRequest,
+        signer: Identity
+    ) throws -> SignedGroupCommit {
+        var commit = SignedGroupCommit(
+            operation: .joinApprove,
+            groupId: group.id,
+            actorFingerprint: signer.fingerprint,
+            baseEpoch: group.epoch,
+            previousTranscriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            addMemberFingerprints: [joinRequest.requester.fingerprint],
+            addMemberProfiles: [joinRequest.requester]
+        )
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try commit.signableData(for: actorProof)
+        }
+        commit = SignedGroupCommit(
+            operation: commit.operation,
+            groupId: commit.groupId,
+            actorFingerprint: commit.actorFingerprint,
+            baseEpoch: commit.baseEpoch,
+            previousTranscriptHash: commit.previousTranscriptHash,
+            title: commit.title,
+            addMemberFingerprints: commit.addMemberFingerprints,
+            addMemberProfiles: commit.addMemberProfiles,
+            removeMemberFingerprints: commit.removeMemberFingerprints,
+            actorProof: proof
+        )
+        return commit
     }
 
     private func signedDeleteGroupRequest(_ request: DeleteGroupRequest, signer: Identity) throws -> DeleteGroupRequest {

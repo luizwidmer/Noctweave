@@ -811,20 +811,12 @@ public actor RelayStore {
             throw RelayStoreError.unauthorizedGroupMutation
         }
 
-        var pending = groupJoinRequests[group.id, default: []]
-        guard let index = pending.firstIndex(where: { $0.id == request.joinRequestId }) else {
+        let pending = groupJoinRequests[group.id, default: []]
+        guard pending.contains(where: { $0.id == request.joinRequestId }) else {
             throw RelayStoreError.groupJoinRequestNotFound
         }
-        let joinRequest = pending.remove(at: index)
-        if pending.isEmpty {
-            groupJoinRequests.removeValue(forKey: group.id)
-        } else {
-            groupJoinRequests[group.id] = pending
-        }
-
-        if group.members.contains(where: { $0.fingerprint == joinRequest.requester.fingerprint }) {
-            try saveToDisk()
-            return group
+        guard let joinRequest = pending.first(where: { $0.id == request.joinRequestId }) else {
+            throw RelayStoreError.groupJoinRequestNotFound
         }
 
         let updated = try updateGroup(
@@ -833,19 +825,23 @@ public actor RelayStore {
                 actorFingerprint: actor,
                 addMemberFingerprints: [joinRequest.requester.fingerprint],
                 addMemberProfiles: [joinRequest.requester],
-                groupCommit: SignedGroupCommit(
-                    operation: .joinApprove,
-                    groupId: group.id,
-                    actorFingerprint: actor,
-                    baseEpoch: group.epoch,
-                    previousTranscriptHash: group.mlsEpochState.confirmedTranscriptHash,
-                    addMemberFingerprints: [joinRequest.requester.fingerprint],
-                    addMemberProfiles: [joinRequest.requester]
-                )
+                groupCommit: request.groupCommit
             )
         )
-        try saveToDisk()
-        return updated
+
+        var refreshedPending = groupJoinRequests[group.id, default: []]
+        refreshedPending.removeAll { $0.id == request.joinRequestId }
+        if refreshedPending.isEmpty {
+            groupJoinRequests.removeValue(forKey: group.id)
+        } else {
+            groupJoinRequests[group.id] = refreshedPending
+        }
+        if updated.members.contains(where: { $0.fingerprint == joinRequest.requester.fingerprint }) {
+            try saveToDisk()
+            return updated
+        }
+
+        throw RelayStoreError.invalidGroupCommit
     }
 
     public func rejectGroupJoin(_ request: RejectGroupJoinRequest) throws {

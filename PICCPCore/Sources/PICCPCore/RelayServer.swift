@@ -832,6 +832,14 @@ public final class RelayServer {
             ) {
                 return proofFailure
             }
+            if let proofFailure = await validateActorProof(
+                approve.groupCommit.actorProof,
+                expectedFingerprint: actorFingerprint,
+                expectedSigningKey: actorSigningKey,
+                signableDataBuilder: { proof in try approve.groupCommit.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
             do {
                 let group = try await store.approveGroupJoin(approve)
                 return .group(group)
