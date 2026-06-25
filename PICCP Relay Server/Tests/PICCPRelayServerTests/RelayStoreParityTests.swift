@@ -319,14 +319,18 @@ final class RelayStoreParityTests: XCTestCase {
             relaySigningPublicKey: valid.relaySigningPublicKey,
             signature: valid.signature
         )
-        let flooded = try (0..<3).map { index in
-            try makeSignedDHTRecord(
+        let flooded = try (0..<3).compactMap { index -> OpenFederationDHTRecord? in
+            guard let floodKeyPair = OQSSignatureVerifier.shared.generateKeyPair() else {
+                return nil
+            }
+            return try makeSignedDHTRecord(
                 host: "crowded.gateway.example.org",
                 federationName: federationName,
-                keyPair: keyPair,
+                keyPair: floodKeyPair,
                 issuedAt: now.addingTimeInterval(Double(index + 1))
             )
         }
+        XCTAssertEqual(flooded.count, 3)
         let response = try RelayCodec.encoder(sortedKeys: true).encode(
             DHTGatewayQueryResponseProbe(records: [valid, wrongFederation, tampered] + flooded)
         )
@@ -428,14 +432,18 @@ final class RelayStoreParityTests: XCTestCase {
             relaySigningPublicKey: valid.relaySigningPublicKey,
             signature: valid.signature
         )
-        let flooded = try (0..<3).map { index in
-            try makeSignedDHTRecord(
+        let flooded = try (0..<3).compactMap { index -> OpenFederationDHTRecord? in
+            guard let floodKeyPair = OQSSignatureVerifier.shared.generateKeyPair() else {
+                return nil
+            }
+            return try makeSignedDHTRecord(
                 host: "crowded.native.example.org",
                 federationName: federationName,
-                keyPair: keyPair,
+                keyPair: floodKeyPair,
                 issuedAt: now.addingTimeInterval(Double(index + 1))
             )
         }
+        XCTAssertEqual(flooded.count, 3)
         let client = MockOpenFederationDHTRelayQueryClient(
             infoByEndpoint: [seed: relayInfo(name: federationName)],
             recordsByEndpoint: [seed: [valid, wrongFederation, tampered] + flooded]
