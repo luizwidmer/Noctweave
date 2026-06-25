@@ -33,6 +33,27 @@ struct FederationDescriptor: Codable, Equatable {
     }
 }
 
+enum HiddenRetrievalMode: String, Codable, CaseIterable {
+    case coverQuery
+}
+
+struct HiddenRetrievalSupport: Codable, Equatable {
+    let mode: HiddenRetrievalMode
+    let defaultCoverSetSize: Int
+    let maxCoverSetSize: Int
+
+    init(
+        mode: HiddenRetrievalMode = .coverQuery,
+        defaultCoverSetSize: Int = 8,
+        maxCoverSetSize: Int = 32
+    ) {
+        let normalizedMax = max(1, maxCoverSetSize)
+        self.mode = mode
+        self.maxCoverSetSize = normalizedMax
+        self.defaultCoverSetSize = min(max(1, defaultCoverSetSize), normalizedMax)
+    }
+}
+
 struct RelayInfo: Codable, Equatable {
     let kind: RelayKind
     let federation: FederationDescriptor
@@ -43,6 +64,7 @@ struct RelayInfo: Codable, Equatable {
     let attachmentDefaultTTLSeconds: Int?
     let attachmentMaxTTLSeconds: Int?
     let attachmentsEnabled: Bool?
+    let hiddenRetrieval: HiddenRetrievalSupport?
     let relayName: String?
     let operatorNote: String?
     let softwareVersion: String?
@@ -68,6 +90,7 @@ struct RelayInfo: Codable, Equatable {
         attachmentDefaultTTLSeconds: Int? = nil,
         attachmentMaxTTLSeconds: Int? = nil,
         attachmentsEnabled: Bool? = nil,
+        hiddenRetrieval: HiddenRetrievalSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -97,6 +120,7 @@ struct RelayInfo: Codable, Equatable {
         self.attachmentDefaultTTLSeconds = attachmentDefaultTTLSeconds
         self.attachmentMaxTTLSeconds = attachmentMaxTTLSeconds
         self.attachmentsEnabled = attachmentsEnabled
+        self.hiddenRetrieval = hiddenRetrieval
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -124,6 +148,7 @@ struct RelayConfiguration: Codable, Equatable {
     var attachmentDefaultTTLSeconds: Int
     var attachmentMaxTTLSeconds: Int
     var attachmentsEnabled: Bool?
+    var hiddenRetrieval: HiddenRetrievalSupport?
     var relayName: String?
     var operatorNote: String?
     var softwareVersion: String?
@@ -154,6 +179,7 @@ struct RelayConfiguration: Codable, Equatable {
         attachmentDefaultTTLSeconds: Int = 3600,
         attachmentMaxTTLSeconds: Int = 21600,
         attachmentsEnabled: Bool = true,
+        hiddenRetrieval: HiddenRetrievalSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -189,6 +215,7 @@ struct RelayConfiguration: Codable, Equatable {
         self.attachmentDefaultTTLSeconds = normalizedAttachmentDefaultTTL
         self.attachmentMaxTTLSeconds = max(normalizedAttachmentDefaultTTL, attachmentMaxTTLSeconds)
         self.attachmentsEnabled = attachmentsEnabled
+        self.hiddenRetrieval = hiddenRetrieval
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -228,6 +255,7 @@ struct RelayConfiguration: Codable, Equatable {
             attachmentDefaultTTLSeconds: attachmentDefaultTTLSeconds,
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled != false,
+            hiddenRetrieval: hiddenRetrieval,
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,

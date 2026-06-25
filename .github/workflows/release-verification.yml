@@ -1,0 +1,19 @@
+name: Release Verification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  verify-release:
+    name: Verify release hygiene
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run release verification script
+        run: scripts/verify-release.sh

@@ -34,6 +34,8 @@ Last reviewed: June 24, 2026.
 - Relay metadata advertisement for name, kind, federation, transport, TLS, temporal buckets, attachment TTL, group policy, operator note, and software version.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation.
+- Optional relay-advertised hidden-retrieval cover-query support for compatible clients.
+- Release verification workflow wired to run the local SBOM, dependency, relay test, and optional scanner checks in CI.
 
 ### Client UX and Local Safety
 - Contact Book, Identity Management, Relays, Settings, My Code, and group chat flows.
@@ -45,7 +47,7 @@ Last reviewed: June 24, 2026.
 - Secure camera capture, image compression, encrypted attachments, and encrypted voice messages.
 
 ## Whitepaper Limits That Remain True
-- No PIR-assisted hidden retrieval.
+- No full cryptographic PIR-assisted hidden retrieval.
 - No mixnet or onion transport layer.
 - No MLS-class formal group cryptographic protocol.
 - No claim of protection against a compromised OS or malicious device vendor.
@@ -54,11 +56,12 @@ Last reviewed: June 24, 2026.
 
 ## Alignment Summary
 - **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, and coordinator-assisted federation.
-- **Partially aligned**: metadata minimization. Temporal buckets, capability-style inboxes, and federation policy reduce metadata, but do not provide strong anonymity.
-- **Deferred**: PIR, mixnet/onion transport, MLS groups, autonomous public DHT release mode, external audit, and release-governance automation in CI.
+- **Partially aligned**: metadata minimization and PIR-adjacent hidden retrieval. Temporal buckets, capability-style inboxes, federation policy, and optional cover-query relay support reduce metadata, but do not provide strong anonymity or full cryptographic PIR.
+- **Deferred**: mixnet/onion transport, MLS groups, autonomous public DHT release mode, external audit, and signed release-provenance packaging.
 
 ## Next Alignment Targets
 - Prepare the external security-audit package.
 - Decide whether group cryptography should remain relay-backed application protocol or migrate to an MLS-derived model.
 - Prototype a decentralized wake or notification approach that does not introduce a central credential-holding push server.
 - Continue open-federation experiments behind feature gates and simulation tests.
+- Replace cover-query hidden retrieval with stronger PIR if the bandwidth and relay-cost profile becomes acceptable.

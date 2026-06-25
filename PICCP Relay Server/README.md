@@ -55,6 +55,10 @@ Use `--attachments-enabled false` for a text-only relay. Attachment upload and
 download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
 bucket schedule to disable temporal bucketing.
 
+Use `--hidden-retrieval true` to advertise optional cover-query hidden
+retrieval support. This is a metadata-reduction capability for compatible
+clients, not full PIR and not a mandatory fetch path.
+
 ```bash
 docker build -t piccp-relay ./"PICCP Relay Server"
 docker run --rm -p 9339:9339 -v piccp-data:/data piccp-relay
@@ -123,6 +127,9 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 - `--attachment-default-ttl-minutes <minutes>`: default attachment retention TTL in minutes
 - `--attachment-max-ttl-seconds <seconds>`: max accepted attachment TTL (default: `21600`)
 - `--attachment-max-ttl-minutes <minutes>`: max accepted attachment TTL in minutes
+- `--hidden-retrieval <true|false>`: advertise optional hidden-retrieval cover-query support (default: `false`)
+- `--hidden-retrieval-cover-size <count>`: default cover set size advertised to clients (default: `8`)
+- `--hidden-retrieval-max-cover-size <count>`: max cover set size advertised to clients (default: `32`)
 - `--relay-name <name>`: advertise a relay display name
 - `--operator-note <text>`: optional operator note for clients
 - `--software-version <text>`: optional software version string

@@ -236,6 +236,8 @@ Relay policy controls include:
 
 Temporal bucketing can be single-bucket or multi-bucket. The multi-bucket path intentionally adds timing ambiguity to reduce the ease of correlating users by strict fetch cadence.
 
+Relays may also advertise optional hidden-retrieval cover-query support. In that mode, compatible clients can request fixed-size cover sets from temporal buckets and extract the target record locally. This is a deployable metadata-reduction feature and an implementation stepping stone toward stronger PIR, but it is not full cryptographic PIR.
+
 ## 6.5 Pull-only delivery
 
 The architecture is fully decentralized in the delivery path. The system does not rely on APNs or any equivalent centralized push-notification provider. Closed-app instant wake is excluded because it would introduce a credential-holding notification authority inconsistent with the decentralization model.
@@ -355,16 +357,17 @@ The reference implementation delivers:
 - relay-managed TLS and reverse-proxy TLS deployment patterns
 - macOS relay, Linux relay parity path, and Docker deployment support
 - relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and software version
+- optional relay-advertised hidden-retrieval cover queries
 
 ## 10.2 Deferred work
 
 The following areas remain future work:
 
-- PIR-assisted hidden retrieval
+- full cryptographic PIR-assisted hidden retrieval
 - mixnet or onion-style transport integration
 - DHT-style autonomous open-federation discovery
 - MLS-class group cryptography
-- external independent audit and release-governance packaging
+- external independent audit and signed release-provenance packaging
 - stronger closed-app background delivery that does not require centralized push infrastructure
 
 These are genuine open areas and remain on the roadmap because they are materially harder than the deployed protocol profile.

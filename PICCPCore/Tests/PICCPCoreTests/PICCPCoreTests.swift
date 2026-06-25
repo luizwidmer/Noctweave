@@ -5,6 +5,110 @@ import XCTest
 @testable import PICCPCore
 
 final class PICCPCoreTests: XCTestCase {
+    func testHiddenRetrievalPlannerBuildsDeterministicCoverQuery() throws {
+        let records = ["msg-4", "msg-1", "msg-3", "msg-2", "msg-5"]
+        let secret = Data("client-local-cover-secret".utf8)
+
+        let first = try HiddenRetrievalPlanner.makeCoverQuery(
+            bucketId: "bucket-2026-06-25T10:00",
+            availableRecordIds: records,
+            targetRecordId: "msg-3",
+            coverSetSize: 3,
+            secret: secret
+        )
+        let second = try HiddenRetrievalPlanner.makeCoverQuery(
+            bucketId: "bucket-2026-06-25T10:00",
+            availableRecordIds: records.reversed(),
+            targetRecordId: "msg-3",
+            coverSetSize: 3,
+            secret: secret
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.bucketId, "bucket-2026-06-25T10:00")
+        XCTAssertEqual(first.requestedRecordIds.count, 3)
+        XCTAssertTrue(first.requestedRecordIds.contains("msg-3"))
+        XCTAssertNotNil(first.targetOffset)
+        XCTAssertEqual(first.requestedRecordIds, first.requestedRecordIds.sorted())
+    }
+
+    func testHiddenRetrievalPlannerExtractsTargetFromCoverResponse() throws {
+        let plan = try HiddenRetrievalPlanner.makeCoverQuery(
+            bucketId: "bucket-a",
+            availableRecordIds: ["a", "b", "c", "d"],
+            targetRecordId: "c",
+            coverSetSize: 4,
+            secret: Data("secret".utf8)
+        )
+        let response = [
+            "a": Data("decoy-a".utf8),
+            "b": Data("decoy-b".utf8),
+            "c": Data("target".utf8),
+            "d": Data("decoy-d".utf8)
+        ]
+
+        XCTAssertEqual(
+            HiddenRetrievalPlanner.extractTarget(from: response, using: plan),
+            Data("target".utf8)
+        )
+    }
+
+    func testHiddenRetrievalPlannerRejectsInvalidQueries() throws {
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a"],
+                targetRecordId: "a",
+                coverSetSize: 0,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidCoverSetSize)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: [],
+                targetRecordId: "a",
+                coverSetSize: 2,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .emptyBucket)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: "c",
+                coverSetSize: 2,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .targetMissing)
+        }
+    }
+
+    func testRelayInfoAdvertisesOptionalHiddenRetrievalSupport() throws {
+        let info = RelayConfiguration(
+            hiddenRetrieval: HiddenRetrievalSupport(
+                defaultCoverSetSize: 64,
+                maxCoverSetSize: 16
+            )
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(info.hiddenRetrieval?.mode, .coverQuery)
+        XCTAssertEqual(info.hiddenRetrieval?.defaultCoverSetSize, 16)
+        XCTAssertEqual(info.hiddenRetrieval?.maxCoverSetSize, 16)
+
+        let encoded = try PICCPCoder.encode(info)
+        let decoded = try PICCPCoder.decode(RelayInfo.self, from: encoded)
+
+        XCTAssertEqual(decoded.hiddenRetrieval, info.hiddenRetrieval)
+    }
+
     func testRatchetRecoveryPolicyClassifiesRecoverableFailures() throws {
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.invalidPayload), .recover)
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterOutOfOrder), .recover)

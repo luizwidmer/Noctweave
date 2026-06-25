@@ -89,6 +89,7 @@ public struct MasterServerEntry: Codable, Equatable {
     public let temporalBucketScheduleSeconds: [Int]?
     public let attachmentDefaultTTLSeconds: Int?
     public let attachmentMaxTTLSeconds: Int?
+    public let hiddenRetrieval: HiddenRetrievalSupport?
     public let operatorNote: String?
     public let softwareVersion: String?
     public let groupCreationMode: GroupCreationMode?
@@ -118,6 +119,7 @@ public struct MasterServerEntry: Codable, Equatable {
         temporalBucketScheduleSeconds: [Int]? = nil,
         attachmentDefaultTTLSeconds: Int? = nil,
         attachmentMaxTTLSeconds: Int? = nil,
+        hiddenRetrieval: HiddenRetrievalSupport? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         groupCreationMode: GroupCreationMode? = nil,
@@ -146,6 +148,7 @@ public struct MasterServerEntry: Codable, Equatable {
         self.temporalBucketScheduleSeconds = temporalBucketScheduleSeconds
         self.attachmentDefaultTTLSeconds = attachmentDefaultTTLSeconds
         self.attachmentMaxTTLSeconds = attachmentMaxTTLSeconds
+        self.hiddenRetrieval = hiddenRetrieval
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
         self.groupCreationMode = groupCreationMode
@@ -219,6 +222,7 @@ private extension RelayServerRecord {
             || entry.temporalBucketScheduleSeconds != nil
             || entry.attachmentDefaultTTLSeconds != nil
             || entry.attachmentMaxTTLSeconds != nil
+            || entry.hiddenRetrieval != nil
             || entry.operatorNote != nil
             || entry.softwareVersion != nil
             || entry.groupCreationMode != nil
@@ -244,6 +248,7 @@ private extension RelayServerRecord {
             temporalBucketScheduleSeconds: entry.temporalBucketScheduleSeconds,
             attachmentDefaultTTLSeconds: entry.attachmentDefaultTTLSeconds,
             attachmentMaxTTLSeconds: entry.attachmentMaxTTLSeconds,
+            hiddenRetrieval: entry.hiddenRetrieval,
             operatorNote: entry.operatorNote,
             softwareVersion: entry.softwareVersion,
             groupCreationMode: entry.groupCreationMode,

@@ -473,6 +473,20 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(info.attachmentMaxTTLSeconds, 7200)
     }
 
+    func testRelayInfoCarriesOptionalHiddenRetrievalSupport() {
+        let configuration = RelayConfiguration(
+            hiddenRetrieval: HiddenRetrievalSupport(
+                defaultCoverSetSize: 64,
+                maxCoverSetSize: 16
+            )
+        )
+        let info = configuration.makeInfo()
+
+        XCTAssertEqual(info.hiddenRetrieval?.mode, .coverQuery)
+        XCTAssertEqual(info.hiddenRetrieval?.defaultCoverSetSize, 16)
+        XCTAssertEqual(info.hiddenRetrieval?.maxCoverSetSize, 16)
+    }
+
     func testRelayConfigurationNormalizesAttachmentTTLPolicy() {
         let configuration = RelayConfiguration(
             attachmentDefaultTTLSeconds: 30,

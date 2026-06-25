@@ -23,6 +23,7 @@ struct ServerConfig {
     var attachmentDefaultTTLSeconds: Int
     var attachmentMaxTTLSeconds: Int
     var attachmentsEnabled: Bool
+    var hiddenRetrieval: HiddenRetrievalSupport?
     var relayName: String?
     var operatorNote: String?
     var softwareVersion: String?
@@ -64,6 +65,9 @@ struct ServerConfig {
         var attachmentDefaultTTLSeconds: Int = 3600
         var attachmentMaxTTLSeconds: Int = 21600
         var attachmentsEnabled = true
+        var hiddenRetrievalEnabled = false
+        var hiddenRetrievalDefaultCoverSetSize = 8
+        var hiddenRetrievalMaxCoverSetSize = 32
         var relayName: String?
         var operatorNote: String?
         var softwareVersion: String?
@@ -179,6 +183,20 @@ struct ServerConfig {
                 if let value = iterator.next() {
                     attachmentsEnabled = parseBoolFlag(value, defaultValue: true)
                 }
+            case "--hidden-retrieval":
+                if let value = iterator.next() {
+                    hiddenRetrievalEnabled = parseBoolFlag(value, defaultValue: true)
+                } else {
+                    hiddenRetrievalEnabled = true
+                }
+            case "--hidden-retrieval-cover-size":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    hiddenRetrievalDefaultCoverSetSize = max(1, parsed)
+                }
+            case "--hidden-retrieval-max-cover-size":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    hiddenRetrievalMaxCoverSetSize = max(1, parsed)
+                }
             case "--attachment-max-ttl-minutes":
                 if let value = iterator.next(), let parsed = Int(value) {
                     attachmentMaxTTLSeconds = max(1, parsed) * 60
@@ -270,6 +288,13 @@ struct ServerConfig {
             dataDir = nil
         }
 
+        let hiddenRetrieval = hiddenRetrievalEnabled
+            ? HiddenRetrievalSupport(
+                defaultCoverSetSize: hiddenRetrievalDefaultCoverSetSize,
+                maxCoverSetSize: hiddenRetrievalMaxCoverSetSize
+            )
+            : nil
+
         return ServerConfig(
             host: host,
             port: port,
@@ -291,6 +316,7 @@ struct ServerConfig {
             attachmentDefaultTTLSeconds: attachmentDefaultTTLSeconds,
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled,
+            hiddenRetrieval: hiddenRetrieval,
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
@@ -394,6 +420,7 @@ var relayConfiguration = RelayConfiguration(
     attachmentDefaultTTLSeconds: config.attachmentDefaultTTLSeconds,
     attachmentMaxTTLSeconds: config.attachmentMaxTTLSeconds,
     attachmentsEnabled: config.attachmentsEnabled,
+    hiddenRetrieval: config.hiddenRetrieval,
     relayName: config.relayName,
     operatorNote: config.operatorNote,
     softwareVersion: config.softwareVersion,

@@ -87,6 +87,27 @@ public struct FederationDescriptor: Codable, Equatable {
     }
 }
 
+public enum HiddenRetrievalMode: String, Codable, CaseIterable {
+    case coverQuery
+}
+
+public struct HiddenRetrievalSupport: Codable, Equatable {
+    public var mode: HiddenRetrievalMode
+    public var defaultCoverSetSize: Int
+    public var maxCoverSetSize: Int
+
+    public init(
+        mode: HiddenRetrievalMode = .coverQuery,
+        defaultCoverSetSize: Int = 8,
+        maxCoverSetSize: Int = 32
+    ) {
+        let normalizedMax = max(1, maxCoverSetSize)
+        self.mode = mode
+        self.maxCoverSetSize = normalizedMax
+        self.defaultCoverSetSize = min(max(1, defaultCoverSetSize), normalizedMax)
+    }
+}
+
 public struct RelayInfo: Codable, Equatable {
     public var kind: RelayKind
     public var federation: FederationDescriptor
@@ -95,6 +116,7 @@ public struct RelayInfo: Codable, Equatable {
     public var attachmentDefaultTTLSeconds: Int?
     public var attachmentMaxTTLSeconds: Int?
     public var attachmentsEnabled: Bool?
+    public var hiddenRetrieval: HiddenRetrievalSupport?
     public var relayName: String?
     public var operatorNote: String?
     public var softwareVersion: String?
@@ -120,6 +142,7 @@ public struct RelayInfo: Codable, Equatable {
         attachmentDefaultTTLSeconds: Int? = nil,
         attachmentMaxTTLSeconds: Int? = nil,
         attachmentsEnabled: Bool? = nil,
+        hiddenRetrieval: HiddenRetrievalSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -149,6 +172,7 @@ public struct RelayInfo: Codable, Equatable {
         self.attachmentDefaultTTLSeconds = attachmentDefaultTTLSeconds
         self.attachmentMaxTTLSeconds = attachmentMaxTTLSeconds
         self.attachmentsEnabled = attachmentsEnabled
+        self.hiddenRetrieval = hiddenRetrieval
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -176,6 +200,7 @@ public struct RelayConfiguration: Codable, Equatable {
     public var attachmentDefaultTTLSeconds: Int
     public var attachmentMaxTTLSeconds: Int
     public var attachmentsEnabled: Bool?
+    public var hiddenRetrieval: HiddenRetrievalSupport?
     public var relayName: String?
     public var operatorNote: String?
     public var softwareVersion: String?
@@ -208,6 +233,7 @@ public struct RelayConfiguration: Codable, Equatable {
         attachmentDefaultTTLSeconds: Int = 3600,
         attachmentMaxTTLSeconds: Int = 21600,
         attachmentsEnabled: Bool = true,
+        hiddenRetrieval: HiddenRetrievalSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -245,6 +271,7 @@ public struct RelayConfiguration: Codable, Equatable {
         self.attachmentDefaultTTLSeconds = normalizedAttachmentDefaultTTL
         self.attachmentMaxTTLSeconds = max(normalizedAttachmentDefaultTTL, attachmentMaxTTLSeconds)
         self.attachmentsEnabled = attachmentsEnabled
+        self.hiddenRetrieval = hiddenRetrieval
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -286,6 +313,7 @@ public struct RelayConfiguration: Codable, Equatable {
             attachmentDefaultTTLSeconds: attachmentDefaultTTLSeconds,
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled != false,
+            hiddenRetrieval: hiddenRetrieval,
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
