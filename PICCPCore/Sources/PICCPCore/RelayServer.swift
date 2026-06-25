@@ -625,11 +625,13 @@ public final class RelayServer {
             }
             do {
                 let group = try await store.createGroup(
+                    groupId: create.groupId,
                     title: create.title,
                     creatorFingerprint: create.creatorFingerprint,
                     memberFingerprints: create.memberFingerprints,
                     creatorProfile: create.creatorProfile,
-                    memberProfiles: create.memberProfiles
+                    memberProfiles: create.memberProfiles,
+                    initialRatchetSecretDistribution: create.initialRatchetSecretDistribution
                 )
                 return .group(group)
             } catch let error as RelayStoreError {

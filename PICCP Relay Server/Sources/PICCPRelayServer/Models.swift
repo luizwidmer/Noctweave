@@ -43,6 +43,7 @@ struct MLSGroupCommitSummary: Codable, Equatable {
     let memberFingerprints: [String]
     let previousTranscriptHash: Data?
     let transcriptHash: Data
+    let ratchetSecretDistribution: GroupRatchetEpochSecretDistribution?
 }
 
 struct MLSGroupEpochState: Codable, Equatable {
@@ -63,7 +64,8 @@ struct MLSGroupEpochState: Codable, Equatable {
         inboxId: String,
         createdByFingerprint: String,
         members: [RelayGroupMember],
-        createdAt: Date
+        createdAt: Date,
+        ratchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil
     ) -> MLSGroupEpochState {
         make(
             groupId: groupId,
@@ -74,7 +76,8 @@ struct MLSGroupEpochState: Codable, Equatable {
             epoch: 0,
             previousTranscriptHash: nil,
             operation: .create,
-            committedAt: createdAt
+            committedAt: createdAt,
+            ratchetSecretDistribution: ratchetSecretDistribution
         )
     }
 
@@ -84,7 +87,8 @@ struct MLSGroupEpochState: Codable, Equatable {
         actorFingerprint: String,
         members: [RelayGroupMember],
         operation: MLSGroupCommitOperation,
-        committedAt: Date
+        committedAt: Date,
+        ratchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil
     ) -> MLSGroupEpochState {
         MLSGroupEpochState.make(
             groupId: groupId,
@@ -95,7 +99,8 @@ struct MLSGroupEpochState: Codable, Equatable {
             epoch: epoch + 1,
             previousTranscriptHash: confirmedTranscriptHash,
             operation: operation,
-            committedAt: committedAt
+            committedAt: committedAt,
+            ratchetSecretDistribution: ratchetSecretDistribution
         )
     }
 
@@ -108,7 +113,8 @@ struct MLSGroupEpochState: Codable, Equatable {
         epoch: UInt64,
         previousTranscriptHash: Data?,
         operation: MLSGroupCommitOperation,
-        committedAt: Date
+        committedAt: Date,
+        ratchetSecretDistribution: GroupRatchetEpochSecretDistribution?
     ) -> MLSGroupEpochState {
         let memberFingerprints = members.map(\.fingerprint).sorted()
         let treeHash = digest(
@@ -142,7 +148,8 @@ struct MLSGroupEpochState: Codable, Equatable {
             committedAt: committedAt,
             memberFingerprints: memberFingerprints,
             previousTranscriptHash: previousTranscriptHash,
-            transcriptHash: transcriptHash
+            transcriptHash: transcriptHash,
+            ratchetSecretDistribution: ratchetSecretDistribution
         )
         return MLSGroupEpochState(
             protocolVersion: currentProtocolVersion,
@@ -590,6 +597,21 @@ struct EncryptedPayload: Codable, Equatable {
     let nonce: Data
     let ciphertext: Data
     let tag: Data
+}
+
+struct GroupRatchetSecretShare: Codable, Equatable {
+    let recipientFingerprint: String
+    let kemCiphertext: Data
+    let encryptedSecret: EncryptedPayload
+}
+
+struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
+    let version: Int
+    let groupId: UUID
+    let epoch: UInt64
+    let operation: MLSGroupCommitOperation
+    let memberFingerprints: [String]
+    let shares: [GroupRatchetSecretShare]
 }
 
 struct Envelope: Codable, Equatable {
@@ -1643,37 +1665,45 @@ struct RelayResponse: Codable, Equatable {
 }
 
 struct CreateGroupRequest: Codable, Equatable {
+    let groupId: UUID?
     let title: String
     let creatorFingerprint: String
     let memberFingerprints: [String]
     let creatorProfile: RelayGroupMemberProfile?
     let memberProfiles: [RelayGroupMemberProfile]?
+    let initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution?
     let creatorProof: RelayActorProof?
 
     init(
+        groupId: UUID? = nil,
         title: String,
         creatorFingerprint: String,
         memberFingerprints: [String],
         creatorProfile: RelayGroupMemberProfile? = nil,
         memberProfiles: [RelayGroupMemberProfile]? = nil,
+        initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil,
         creatorProof: RelayActorProof? = nil
     ) {
+        self.groupId = groupId
         self.title = title
         self.creatorFingerprint = creatorFingerprint
         self.memberFingerprints = memberFingerprints
         self.creatorProfile = creatorProfile
         self.memberProfiles = memberProfiles
+        self.initialRatchetSecretDistribution = initialRatchetSecretDistribution
         self.creatorProof = creatorProof
     }
 
     func signableData(for proof: RelayActorProof) throws -> Data {
         try GroupProofCodec.encode(
             CreateGroupProofPayload(
+                groupId: groupId,
                 title: title,
                 creatorFingerprint: creatorFingerprint,
                 memberFingerprints: memberFingerprints,
                 creatorProfile: creatorProfile,
                 memberProfiles: memberProfiles,
+                initialRatchetSecretDistribution: initialRatchetSecretDistribution,
                 signedAt: proof.signedAt,
                 nonce: proof.nonce
             )
@@ -1817,6 +1847,7 @@ struct SignedGroupCommit: Codable, Equatable {
     let addMemberFingerprints: [String]
     let addMemberProfiles: [RelayGroupMemberProfile]?
     let removeMemberFingerprints: [String]
+    let ratchetSecretDistribution: GroupRatchetEpochSecretDistribution?
     let actorProof: RelayActorProof?
 
     init(
@@ -1829,6 +1860,7 @@ struct SignedGroupCommit: Codable, Equatable {
         addMemberFingerprints: [String] = [],
         addMemberProfiles: [RelayGroupMemberProfile]? = nil,
         removeMemberFingerprints: [String] = [],
+        ratchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil,
         actorProof: RelayActorProof? = nil
     ) {
         self.operation = operation
@@ -1840,6 +1872,7 @@ struct SignedGroupCommit: Codable, Equatable {
         self.addMemberFingerprints = addMemberFingerprints
         self.addMemberProfiles = addMemberProfiles
         self.removeMemberFingerprints = removeMemberFingerprints
+        self.ratchetSecretDistribution = ratchetSecretDistribution
         self.actorProof = actorProof
     }
 
@@ -1855,6 +1888,7 @@ struct SignedGroupCommit: Codable, Equatable {
                 addMemberFingerprints: addMemberFingerprints,
                 addMemberProfiles: addMemberProfiles,
                 removeMemberFingerprints: removeMemberFingerprints,
+                ratchetSecretDistribution: ratchetSecretDistribution,
                 signedAt: proof.signedAt,
                 nonce: proof.nonce
             )
@@ -2020,11 +2054,13 @@ private enum GroupProofCodec {
 }
 
 private struct CreateGroupProofPayload: Codable {
+    let groupId: UUID?
     let title: String
     let creatorFingerprint: String
     let memberFingerprints: [String]
     let creatorProfile: RelayGroupMemberProfile?
     let memberProfiles: [RelayGroupMemberProfile]?
+    let initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution?
     let signedAt: Date
     let nonce: UUID
 }
@@ -2089,6 +2125,7 @@ private struct SignedGroupCommitProofPayload: Codable {
     let addMemberFingerprints: [String]
     let addMemberProfiles: [RelayGroupMemberProfile]?
     let removeMemberFingerprints: [String]
+    let ratchetSecretDistribution: GroupRatchetEpochSecretDistribution?
     let signedAt: Date
     let nonce: UUID
 }

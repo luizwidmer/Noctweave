@@ -205,6 +205,169 @@ public struct GroupRatchetEnvelope: Codable, Identifiable, Equatable {
     }
 }
 
+public struct GroupRatchetSecretShare: Codable, Equatable {
+    public let recipientFingerprint: String
+    public let kemCiphertext: Data
+    public let encryptedSecret: EncryptedPayload
+
+    public init(
+        recipientFingerprint: String,
+        kemCiphertext: Data,
+        encryptedSecret: EncryptedPayload
+    ) {
+        self.recipientFingerprint = recipientFingerprint
+        self.kemCiphertext = kemCiphertext
+        self.encryptedSecret = encryptedSecret
+    }
+}
+
+public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
+    public let version: Int
+    public let groupId: UUID
+    public let epoch: UInt64
+    public let operation: MLSGroupCommitOperation
+    public let memberFingerprints: [String]
+    public let shares: [GroupRatchetSecretShare]
+
+    public init(
+        version: Int = 1,
+        groupId: UUID,
+        epoch: UInt64,
+        operation: MLSGroupCommitOperation,
+        memberFingerprints: [String],
+        shares: [GroupRatchetSecretShare]
+    ) {
+        self.version = version
+        self.groupId = groupId
+        self.epoch = epoch
+        self.operation = operation
+        self.memberFingerprints = memberFingerprints.sorted()
+        self.shares = shares.sorted { $0.recipientFingerprint < $1.recipientFingerprint }
+    }
+
+    public static func seal(
+        secret: Data,
+        groupId: UUID,
+        epoch: UInt64,
+        operation: MLSGroupCommitOperation,
+        recipients: [RelayGroupMemberProfile]
+    ) throws -> GroupRatchetEpochSecretDistribution {
+        guard !secret.isEmpty else {
+            throw CryptoError.invalidPayload
+        }
+        let normalizedRecipients = recipients
+            .filter { !$0.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.fingerprint < $1.fingerprint }
+        let memberFingerprints = normalizedRecipients.map(\.fingerprint)
+        let shares = try normalizedRecipients.map { recipient -> GroupRatchetSecretShare in
+            guard let publicKey = recipient.agreementPublicKey,
+                  AgreementKeyPair.isValidPublicKey(publicKey) else {
+                throw CryptoError.invalidPublicKey
+            }
+            let kem = try AgreementKeyPair.encapsulate(to: publicKey)
+            let key = SymmetricKey(data: CryptoBox.deriveChainKey(
+                sharedSecret: kem.sharedSecret,
+                salt: Data(groupId.uuidString.utf8),
+                info: shareInfo(
+                    epoch: epoch,
+                    operation: operation,
+                    recipientFingerprint: recipient.fingerprint
+                )
+            ))
+            let payload = try CryptoBox.encrypt(
+                secret,
+                key: key,
+                authenticatedData: try shareAuthenticatedData(
+                    version: 1,
+                    groupId: groupId,
+                    epoch: epoch,
+                    operation: operation,
+                    memberFingerprints: memberFingerprints,
+                    recipientFingerprint: recipient.fingerprint
+                )
+            )
+            return GroupRatchetSecretShare(
+                recipientFingerprint: recipient.fingerprint,
+                kemCiphertext: kem.ciphertext,
+                encryptedSecret: payload
+            )
+        }
+        return GroupRatchetEpochSecretDistribution(
+            groupId: groupId,
+            epoch: epoch,
+            operation: operation,
+            memberFingerprints: memberFingerprints,
+            shares: shares
+        )
+    }
+
+    public func openSecret(
+        recipientFingerprint: String,
+        agreementKey: AgreementKeyPair
+    ) throws -> Data {
+        guard let share = shares.first(where: { $0.recipientFingerprint == recipientFingerprint }),
+              memberFingerprints.contains(recipientFingerprint) else {
+            throw CryptoError.invalidPayload
+        }
+        let sharedSecret = try agreementKey.decapsulate(ciphertext: share.kemCiphertext)
+        let key = SymmetricKey(data: CryptoBox.deriveChainKey(
+            sharedSecret: sharedSecret,
+            salt: Data(groupId.uuidString.utf8),
+            info: Self.shareInfo(
+                epoch: epoch,
+                operation: operation,
+                recipientFingerprint: recipientFingerprint
+            )
+        ))
+        return try CryptoBox.decrypt(
+            share.encryptedSecret,
+            key: key,
+            authenticatedData: try Self.shareAuthenticatedData(
+                version: version,
+                groupId: groupId,
+                epoch: epoch,
+                operation: operation,
+                memberFingerprints: memberFingerprints,
+                recipientFingerprint: recipientFingerprint
+            )
+        )
+    }
+
+    private static func shareInfo(
+        epoch: UInt64,
+        operation: MLSGroupCommitOperation,
+        recipientFingerprint: String
+    ) -> Data {
+        var epochBytes = epoch.bigEndian
+        var info = Data("NOCTYRA-GROUP-RATCHET-SECRET-SHARE-V1".utf8)
+        info.append(Data(bytes: &epochBytes, count: MemoryLayout<UInt64>.size))
+        info.append(Data(operation.rawValue.utf8))
+        info.append(Data(recipientFingerprint.utf8))
+        return info
+    }
+
+    private static func shareAuthenticatedData(
+        version: Int,
+        groupId: UUID,
+        epoch: UInt64,
+        operation: MLSGroupCommitOperation,
+        memberFingerprints: [String],
+        recipientFingerprint: String
+    ) throws -> Data {
+        try PICCPCoder.encode(
+            GroupRatchetSecretShareAuthenticatedData(
+                version: version,
+                groupId: groupId,
+                epoch: epoch,
+                operation: operation,
+                memberFingerprints: memberFingerprints.sorted(),
+                recipientFingerprint: recipientFingerprint
+            ),
+            sortedKeys: true
+        )
+    }
+}
+
 public enum GroupRatchet {
     public static func encrypt(
         body: MessageBody,
@@ -333,4 +496,13 @@ private struct GroupRatchetSignaturePayload: Codable {
     let sentAt: Date
     let messageCounter: UInt64
     let payload: EncryptedPayload
+}
+
+private struct GroupRatchetSecretShareAuthenticatedData: Codable {
+    let version: Int
+    let groupId: UUID
+    let epoch: UInt64
+    let operation: MLSGroupCommitOperation
+    let memberFingerprints: [String]
+    let recipientFingerprint: String
 }

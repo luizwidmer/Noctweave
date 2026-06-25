@@ -37,7 +37,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Add stale-epoch, missed-commit, and rejoin recovery tests
 - [x] Add MLS-derived group message ratchet primitive with epoch/transcript-bound sender chains
 - [x] Add encrypted client state storage slot for per-group ratchet state
-- [ ] Distribute group ratchet epoch secrets through signed group commits and join approvals
+- [x] Distribute group ratchet epoch secrets through signed group commits and join approvals
 - [ ] Teach clients to fetch/decrypt relay group-inbox ciphertexts with the group ratchet
 - [ ] Replace pairwise fan-out group delivery with the MLS-derived group ratchet after interoperability tests pass
 

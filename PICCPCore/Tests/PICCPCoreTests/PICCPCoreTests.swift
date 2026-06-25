@@ -1308,6 +1308,157 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertNotNil(bobState.receiveChains[alice.fingerprint])
     }
 
+    func testGroupRatchetEpochSecretDistributionSealsToMembers() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let outsider = Identity(displayName: "Mallory")
+        let groupId = UUID()
+        let secret = Data(SHA256.hash(data: Data("epoch secret".utf8)))
+        let distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: secret,
+            groupId: groupId,
+            epoch: 3,
+            operation: .joinApprove,
+            recipients: [
+                relayGroupMemberProfile(identity: alice),
+                relayGroupMemberProfile(identity: bob)
+            ]
+        )
+
+        XCTAssertEqual(distribution.groupId, groupId)
+        XCTAssertEqual(distribution.epoch, 3)
+        XCTAssertEqual(Set(distribution.memberFingerprints), [alice.fingerprint, bob.fingerprint])
+        XCTAssertEqual(distribution.shares.count, 2)
+        XCTAssertEqual(
+            try distribution.openSecret(recipientFingerprint: alice.fingerprint, agreementKey: alice.agreementKey),
+            secret
+        )
+        XCTAssertEqual(
+            try distribution.openSecret(recipientFingerprint: bob.fingerprint, agreementKey: bob.agreementKey),
+            secret
+        )
+        XCTAssertThrowsError(
+            try distribution.openSecret(recipientFingerprint: outsider.fingerprint, agreementKey: outsider.agreementKey)
+        )
+    }
+
+    func testRelayStoreCarriesRatchetEpochSecretDistribution() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let joiner = Identity(displayName: "Joiner")
+        let groupId = UUID()
+        let initialSecret = Data(SHA256.hash(data: Data("initial group secret".utf8)))
+        let initialDistribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: initialSecret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: [
+                relayGroupMemberProfile(identity: creator),
+                relayGroupMemberProfile(identity: member)
+            ]
+        )
+
+        let created = try await store.createGroup(
+            groupId: groupId,
+            title: "Ops",
+            creatorFingerprint: creator.fingerprint,
+            memberFingerprints: [member.fingerprint],
+            creatorProfile: relayGroupMemberProfile(identity: creator),
+            memberProfiles: [relayGroupMemberProfile(identity: member)],
+            initialRatchetSecretDistribution: initialDistribution
+        )
+        XCTAssertEqual(created.id, groupId)
+        XCTAssertEqual(created.mlsEpochState.lastCommit.ratchetSecretDistribution, initialDistribution)
+        XCTAssertEqual(
+            try created.mlsEpochState.lastCommit.ratchetSecretDistribution?.openSecret(
+                recipientFingerprint: member.fingerprint,
+                agreementKey: member.agreementKey
+            ),
+            initialSecret
+        )
+
+        let requested = try await store.requestGroupJoin(
+            RequestGroupJoinRequest(
+                groupId: groupId,
+                requesterProfile: relayGroupMemberProfile(identity: joiner)
+            )
+        )
+        let joinSecret = Data(SHA256.hash(data: Data("join epoch secret".utf8)))
+        let joinDistribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: joinSecret,
+            groupId: groupId,
+            epoch: created.epoch + 1,
+            operation: .joinApprove,
+            recipients: [
+                relayGroupMemberProfile(identity: creator),
+                relayGroupMemberProfile(identity: member),
+                relayGroupMemberProfile(identity: joiner)
+            ]
+        )
+        let joinCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .joinApprove,
+                groupId: groupId,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                addMemberFingerprints: [joiner.fingerprint],
+                addMemberProfiles: [requested.requester],
+                ratchetSecretDistribution: joinDistribution
+            ),
+            signer: creator
+        )
+        let approved = try await store.approveGroupJoin(
+            ApproveGroupJoinRequest(
+                groupId: groupId,
+                actorFingerprint: creator.fingerprint,
+                joinRequestId: requested.id,
+                groupCommit: joinCommit
+            )
+        )
+
+        XCTAssertEqual(approved.epoch, 1)
+        XCTAssertEqual(approved.mlsEpochState.lastCommit.ratchetSecretDistribution, joinDistribution)
+        XCTAssertEqual(
+            try approved.mlsEpochState.lastCommit.ratchetSecretDistribution?.openSecret(
+                recipientFingerprint: joiner.fingerprint,
+                agreementKey: joiner.agreementKey
+            ),
+            joinSecret
+        )
+    }
+
+    func testRelayStoreRejectsRatchetSecretDistributionWithMissingMemberShare() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let groupId = UUID()
+        let distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: Data(SHA256.hash(data: Data("bad secret".utf8))),
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: [relayGroupMemberProfile(identity: creator)]
+        )
+
+        do {
+            _ = try await store.createGroup(
+                groupId: groupId,
+                title: "Ops",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: relayGroupMemberProfile(identity: creator),
+                memberProfiles: [relayGroupMemberProfile(identity: member)],
+                initialRatchetSecretDistribution: distribution
+            )
+            XCTFail("Expected missing group member share to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? RelayStoreError, .invalidGroupCommit)
+        }
+    }
+
     func testGroupRatchetRejectsReplayAndAllowsBoundedOutOfOrderDelivery() throws {
         let groupId = UUID()
         let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
@@ -3115,7 +3266,10 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertNotNil(enabledResponse.group?.inboxId)
     }
 
-    private func relayGroupMemberProfile(identity: Identity, relay: RelayEndpoint) -> RelayGroupMemberProfile {
+    private func relayGroupMemberProfile(
+        identity: Identity,
+        relay: RelayEndpoint = RelayEndpoint(host: "127.0.0.1", port: 9339)
+    ) -> RelayGroupMemberProfile {
         RelayGroupMemberProfile(
             fingerprint: identity.fingerprint,
             displayName: identity.displayName,
@@ -3131,11 +3285,13 @@ final class PICCPCoreTests: XCTestCase {
             try request.signableData(for: actorProof)
         }
         return CreateGroupRequest(
+            groupId: request.groupId,
             title: request.title,
             creatorFingerprint: request.creatorFingerprint,
             memberFingerprints: request.memberFingerprints,
             creatorProfile: request.creatorProfile,
             memberProfiles: request.memberProfiles,
+            initialRatchetSecretDistribution: request.initialRatchetSecretDistribution,
             creatorProof: proof
         )
     }
@@ -3212,6 +3368,7 @@ final class PICCPCoreTests: XCTestCase {
             addMemberFingerprints: commit.addMemberFingerprints,
             addMemberProfiles: commit.addMemberProfiles,
             removeMemberFingerprints: commit.removeMemberFingerprints,
+            ratchetSecretDistribution: commit.ratchetSecretDistribution,
             actorProof: proof
         )
         return commit
@@ -3231,6 +3388,7 @@ final class PICCPCoreTests: XCTestCase {
             addMemberFingerprints: commit.addMemberFingerprints,
             addMemberProfiles: commit.addMemberProfiles,
             removeMemberFingerprints: commit.removeMemberFingerprints,
+            ratchetSecretDistribution: commit.ratchetSecretDistribution,
             actorProof: proof
         )
     }

@@ -35,7 +35,8 @@ Last reviewed: June 25, 2026.
 - Relay metadata advertisement for name, kind, federation, transport, TLS, temporal buckets, attachment TTL, group policy, operator note, and software version.
 - Relay metadata advertises the group security model: current `relayBackedPairwise` pairwise-fan-out mode or `mlsDerivedTree`.
 - Relay group descriptors carry required MLS epoch state with tree hash, transcript hash, ciphersuite label, and last commit summary.
-- Group conversations can persist encrypted group ratchet state locally, but default client delivery still needs the group-inbox ratchet transport switch.
+- Group conversations can persist encrypted group ratchet state locally, and signed group create/commit/join-approval operations can distribute group epoch secrets through ML-KEM-sealed member shares.
+- Default client delivery still needs the group-inbox ratchet transport switch before groups stop using pairwise fan-out for live message delivery.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation.
@@ -54,7 +55,7 @@ Last reviewed: June 25, 2026.
 ## Whitepaper Limits That Remain True
 - No full cryptographic PIR-assisted hidden retrieval.
 - No mixnet or onion transport layer.
-- No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and rejoin recovery, and a group ratchet primitive now exists for epoch-bound message keys, but clients still need group-secret distribution and relay group-inbox transport before default group delivery stops using pairwise fan-out.
+- No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and rejoin recovery, and group ratchet epoch secrets can be distributed through ML-KEM-sealed member shares, but clients still need relay group-inbox transport before default group delivery stops using pairwise fan-out.
 - No claim of protection against a compromised OS or malicious device vendor.
 - No autonomous public DHT release mode; public-network adapters remain deferred until poisoning, churn, flooding, and operator-risk controls are externally validated.
 - No centralized push-notification server by design, so closed-app instant delivery remains out of scope. A decentralized wake policy prototype exists for compatible pull or long-poll clients.

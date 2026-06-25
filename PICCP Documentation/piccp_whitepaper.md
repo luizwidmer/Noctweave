@@ -288,7 +288,7 @@ The Linux relay path is part of the supported deployment model rather than a tra
 
 ## 8.1 Groups
 
-PICCP supports groups through relay-backed coordination while the group cryptography path is MLS-derived. Current group state is controlled through actor proofs and signed group commits for title edits, member additions, member removals, self-leave operations, and join approvals. Each signed commit is bound to the group ID, actor fingerprint, base epoch, and previous transcript hash so stale or replayed membership edits are rejected. Group descriptors carry a required MLS epoch state containing a tree hash, confirmed transcript hash, ciphersuite label, and last commit summary. Approved joins carry an explicit signed `joinApprove` commit payload and advance the epoch with a `joinApprove` commit summary. Group message envelopes carry signed authenticated context, and that context is used as AEAD data to bind ciphertexts to the group ID, epoch, sender fingerprint, and confirmed transcript hash. The relay coordinates membership and registry state but does not receive plaintext group messages. Supported flows include:
+PICCP supports groups through relay-backed coordination while the group cryptography path is MLS-derived. Current group state is controlled through actor proofs and signed group commits for title edits, member additions, member removals, self-leave operations, and join approvals. Each signed commit is bound to the group ID, actor fingerprint, base epoch, and previous transcript hash so stale or replayed membership edits are rejected. Group descriptors carry a required MLS epoch state containing a tree hash, confirmed transcript hash, ciphersuite label, and last commit summary. Approved joins carry an explicit signed `joinApprove` commit payload and advance the epoch with a `joinApprove` commit summary. Group ratchet epoch secrets are distributed through signed group create, commit, and join-approval payloads by sealing the secret to each post-commit member with ML-KEM and AEAD-bound metadata. Group message envelopes carry signed authenticated context, and that context is used as AEAD data to bind ciphertexts to the group ID, epoch, sender fingerprint, and confirmed transcript hash. The relay coordinates membership and registry state but does not receive plaintext group messages. Supported flows include:
 
 - create
 - list
@@ -368,7 +368,7 @@ The following areas remain future work:
 - full cryptographic PIR-assisted hidden retrieval
 - mixnet or onion-style transport integration
 - DHT-style autonomous open-federation discovery
-- explicit signed join-approval commits and full MLS-derived group ratchet implementation
+- relay group-inbox delivery backed by the MLS-derived group ratchet
 - external independent audit and signed release-provenance packaging
 - stronger closed-app background delivery that does not require centralized push infrastructure
 

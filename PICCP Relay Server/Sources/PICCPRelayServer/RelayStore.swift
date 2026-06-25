@@ -559,11 +559,13 @@ final class RelayStore {
     }
 
     func createGroup(
+        groupId: UUID? = nil,
         title: String,
         creatorFingerprint: String,
         memberFingerprints: [String],
         creatorProfile: RelayGroupMemberProfile? = nil,
-        memberProfiles: [RelayGroupMemberProfile]? = nil
+        memberProfiles: [RelayGroupMemberProfile]? = nil,
+        initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil
     ) throws -> RelayGroupDescriptor {
         try performSync {
             let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -599,7 +601,10 @@ final class RelayStore {
                 throw RelayStoreError.groupCapacityExceeded
             }
             let now = Date()
-            let descriptorId = UUID()
+            let descriptorId = groupId ?? UUID()
+            guard groups[descriptorId] == nil else {
+                throw RelayStoreError.groupCapacityExceeded
+            }
             let descriptorInboxId = InboxAddress.generate()
             let descriptorMembers = members.sorted().map {
                 makeGroupMember(
@@ -609,6 +614,13 @@ final class RelayStore {
                     joinedAt: now
                 )
             }
+            try validateRatchetSecretDistribution(
+                initialRatchetSecretDistribution,
+                groupId: descriptorId,
+                epoch: 0,
+                operation: .create,
+                memberFingerprints: descriptorMembers.map(\.fingerprint)
+            )
             let descriptor = RelayGroupDescriptor(
                 id: descriptorId,
                 title: trimmedTitle,
@@ -622,7 +634,8 @@ final class RelayStore {
                     inboxId: descriptorInboxId,
                     createdByFingerprint: creator,
                     members: descriptorMembers,
-                    createdAt: now
+                    createdAt: now,
+                    ratchetSecretDistribution: initialRatchetSecretDistribution
                 ),
                 createdAt: now,
                 updatedAt: now
@@ -759,7 +772,8 @@ final class RelayStore {
                     actorFingerprint: actor,
                     members: group.members,
                     operation: operation,
-                    committedAt: now
+                    committedAt: now,
+                    ratchetSecretDistribution: request.groupCommit?.ratchetSecretDistribution
                 )
                 groups[group.id] = group
                 if var pending = groupJoinRequests[group.id] {
@@ -817,6 +831,48 @@ final class RelayStore {
               Set(commit.removeMemberFingerprints) == Set(request.normalizedRemoveMemberFingerprints) else {
             throw RelayStoreError.invalidGroupCommit
         }
+        try validateRatchetSecretDistribution(
+            commit.ratchetSecretDistribution,
+            groupId: group.id,
+            epoch: group.epoch + 1,
+            operation: operation,
+            memberFingerprints: projectedMemberFingerprints(for: request, group: group)
+        )
+    }
+
+    private func validateRatchetSecretDistribution(
+        _ distribution: GroupRatchetEpochSecretDistribution?,
+        groupId: UUID,
+        epoch: UInt64,
+        operation: MLSGroupCommitOperation,
+        memberFingerprints: [String]
+    ) throws {
+        guard let distribution else {
+            return
+        }
+        let members = Set(memberFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty })
+        guard distribution.groupId == groupId,
+              distribution.epoch == epoch,
+              distribution.operation == operation,
+              Set(distribution.memberFingerprints) == members,
+              Set(distribution.shares.map(\.recipientFingerprint)) == members,
+              distribution.shares.count == members.count else {
+            throw RelayStoreError.invalidGroupCommit
+        }
+    }
+
+    private func projectedMemberFingerprints(
+        for request: UpdateGroupRequest,
+        group: RelayGroupDescriptor
+    ) -> [String] {
+        var members = Set(group.members.map(\.fingerprint))
+        members.formUnion(request.normalizedAddMemberFingerprints)
+        members.formUnion(request.normalizedAddMemberProfiles.map(\.fingerprint))
+        members.subtract(request.normalizedRemoveMemberFingerprints)
+        members.insert(group.createdByFingerprint)
+        return members.sorted()
     }
 
     private func groupCommitOperation(
