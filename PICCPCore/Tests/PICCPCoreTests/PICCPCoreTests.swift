@@ -2130,6 +2130,10 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(created.title, "Ops")
         XCTAssertTrue(created.members.contains(where: { $0.fingerprint == creator }))
         XCTAssertTrue(created.members.contains(where: { $0.fingerprint == memberA }))
+        XCTAssertEqual(created.mlsEpochState.epoch, 0)
+        XCTAssertEqual(created.mlsEpochState.lastCommit.operation, .create)
+        XCTAssertEqual(created.mlsEpochState.lastCommit.memberFingerprints, [creator, memberA].sorted())
+        XCTAssertFalse(created.mlsEpochState.confirmedTranscriptHash.isEmpty)
 
         let listedForCreator = await store.listGroups(memberFingerprint: creator)
         XCTAssertEqual(listedForCreator.count, 1)
@@ -2146,6 +2150,10 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(updated.title, "Ops Team")
         XCTAssertTrue(updated.members.contains(where: { $0.fingerprint == memberB }))
         XCTAssertEqual(updated.epoch, 1)
+        XCTAssertEqual(updated.mlsEpochState.epoch, 1)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.operation, .update)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.previousTranscriptHash, created.mlsEpochState.confirmedTranscriptHash)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.memberFingerprints, [creator, memberA, memberB].sorted())
     }
 
     func testRelayStoreGroupMemberCanLeaveButCannotMutateOthers() async throws {
@@ -2183,6 +2191,9 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertFalse(left.members.contains(where: { $0.fingerprint == memberA }))
         XCTAssertTrue(left.members.contains(where: { $0.fingerprint == creator }))
         XCTAssertTrue(left.members.contains(where: { $0.fingerprint == memberB }))
+        XCTAssertEqual(left.mlsEpochState.epoch, 1)
+        XCTAssertEqual(left.mlsEpochState.lastCommit.operation, .selfLeave)
+        XCTAssertEqual(left.mlsEpochState.lastCommit.previousTranscriptHash, created.mlsEpochState.confirmedTranscriptHash)
     }
 
     func testRelayStoreGroupCreatorCanDelete() async throws {

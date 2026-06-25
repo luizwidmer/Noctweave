@@ -82,6 +82,39 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertNil(store.fetchGroup(groupId: group.id))
     }
 
+    func testGroupDescriptorCarriesMLSEpochState() throws {
+        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        let creator = "creator-fingerprint"
+        let peer = "peer-fingerprint"
+        let extra = "extra-fingerprint"
+        let group = try store.createGroup(
+            title: "Parity Group",
+            creatorFingerprint: creator,
+            memberFingerprints: [peer],
+            creatorProfile: nil,
+            memberProfiles: nil
+        )
+
+        XCTAssertEqual(group.mlsEpochState.epoch, 0)
+        XCTAssertEqual(group.mlsEpochState.lastCommit.operation, .create)
+        XCTAssertEqual(group.mlsEpochState.lastCommit.memberFingerprints, [creator, peer].sorted())
+        XCTAssertFalse(group.mlsEpochState.confirmedTranscriptHash.isEmpty)
+
+        let updated = try store.updateGroup(
+            UpdateGroupRequest(
+                groupId: group.id,
+                actorFingerprint: creator,
+                addMemberFingerprints: [extra]
+            )
+        )
+
+        XCTAssertEqual(updated.epoch, 1)
+        XCTAssertEqual(updated.mlsEpochState.epoch, 1)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.operation, .addMembers)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.previousTranscriptHash, group.mlsEpochState.confirmedTranscriptHash)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.memberFingerprints, [creator, peer, extra].sorted())
+    }
+
     func testCoordinatorDirectoryCacheRoundTrip() {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
         let node = FederationNodeRecord(

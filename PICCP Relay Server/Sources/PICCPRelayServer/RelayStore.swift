@@ -613,20 +613,31 @@ final class RelayStore {
                 throw RelayStoreError.groupCapacityExceeded
             }
             let now = Date()
+            let descriptorId = UUID()
+            let descriptorInboxId = InboxAddress.generate()
+            let descriptorMembers = members.sorted().map {
+                makeGroupMember(
+                    fingerprint: $0,
+                    existing: nil,
+                    profile: profileByFingerprint[$0],
+                    joinedAt: now
+                )
+            }
             let descriptor = RelayGroupDescriptor(
-                id: UUID(),
+                id: descriptorId,
                 title: trimmedTitle,
-                inboxId: InboxAddress.generate(),
+                inboxId: descriptorInboxId,
                 createdByFingerprint: creator,
                 epoch: 0,
-                members: members.sorted().map {
-                    makeGroupMember(
-                        fingerprint: $0,
-                        existing: nil,
-                        profile: profileByFingerprint[$0],
-                        joinedAt: now
-                    )
-                },
+                members: descriptorMembers,
+                mlsEpochState: MLSGroupEpochState.initial(
+                    groupId: descriptorId,
+                    title: trimmedTitle,
+                    inboxId: descriptorInboxId,
+                    createdByFingerprint: creator,
+                    members: descriptorMembers,
+                    createdAt: now
+                ),
                 createdAt: now,
                 updatedAt: now
             )
@@ -741,9 +752,23 @@ final class RelayStore {
             }
 
             if changed {
+                let now = Date()
+                let operation = groupCommitOperation(
+                    request: request,
+                    actorFingerprint: actor,
+                    isCreator: isCreator
+                )
                 group.members = members.values.sorted { $0.fingerprint < $1.fingerprint }
                 group.epoch += 1
-                group.updatedAt = Date()
+                group.updatedAt = now
+                group.mlsEpochState = group.mlsEpochState.advancing(
+                    title: group.title,
+                    inboxId: group.inboxId,
+                    actorFingerprint: actor,
+                    members: group.members,
+                    operation: operation,
+                    committedAt: now
+                )
                 groups[group.id] = group
                 if var pending = groupJoinRequests[group.id] {
                     pending.removeAll { pendingRequest in
@@ -759,6 +784,32 @@ final class RelayStore {
             }
             return group
         }
+    }
+
+    private func groupCommitOperation(
+        request: UpdateGroupRequest,
+        actorFingerprint: String,
+        isCreator: Bool
+    ) -> MLSGroupCommitOperation {
+        let hasTitleChange = !(request.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let addFingerprints = request.addMemberFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+        let hasProfileAdds = request.addMemberProfiles?.contains { normalizedMemberProfile($0) != nil } ?? false
+        let removeFingerprints = request.removeMemberFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+
+        if !isCreator && !removeFingerprints.isEmpty && Set(removeFingerprints).isSubset(of: [actorFingerprint]) {
+            return .selfLeave
+        }
+        if !addFingerprints.isEmpty || hasProfileAdds {
+            return removeFingerprints.isEmpty && !hasTitleChange ? .addMembers : .update
+        }
+        if !removeFingerprints.isEmpty {
+            return hasTitleChange ? .update : .removeMembers
+        }
+        return .update
     }
 
     func deleteGroup(_ request: DeleteGroupRequest) throws {

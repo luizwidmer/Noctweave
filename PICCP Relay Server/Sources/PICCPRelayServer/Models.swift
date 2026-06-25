@@ -26,6 +26,165 @@ enum GroupSecurityModel: String, Codable, CaseIterable {
     case mlsDerivedTree
 }
 
+enum MLSGroupCommitOperation: String, Codable, CaseIterable {
+    case create
+    case update
+    case addMembers
+    case removeMembers
+    case selfLeave
+    case joinApprove
+}
+
+struct MLSGroupCommitSummary: Codable, Equatable {
+    let operation: MLSGroupCommitOperation
+    let actorFingerprint: String
+    let epoch: UInt64
+    let committedAt: Date
+    let memberFingerprints: [String]
+    let previousTranscriptHash: Data?
+    let transcriptHash: Data
+}
+
+struct MLSGroupEpochState: Codable, Equatable {
+    static let currentProtocolVersion = "noctyra-mls-v1"
+    static let currentCipherSuite = "Noctyra-MLS-ML-KEM-768-ML-DSA-65-AES-256-GCM-SHA384-v1"
+
+    let protocolVersion: String
+    let cipherSuite: String
+    let groupId: UUID
+    let epoch: UInt64
+    let treeHash: Data
+    let confirmedTranscriptHash: Data
+    let lastCommit: MLSGroupCommitSummary
+
+    static func initial(
+        groupId: UUID,
+        title: String,
+        inboxId: String,
+        createdByFingerprint: String,
+        members: [RelayGroupMember],
+        createdAt: Date
+    ) -> MLSGroupEpochState {
+        make(
+            groupId: groupId,
+            title: title,
+            inboxId: inboxId,
+            actorFingerprint: createdByFingerprint,
+            members: members,
+            epoch: 0,
+            previousTranscriptHash: nil,
+            operation: .create,
+            committedAt: createdAt
+        )
+    }
+
+    func advancing(
+        title: String,
+        inboxId: String,
+        actorFingerprint: String,
+        members: [RelayGroupMember],
+        operation: MLSGroupCommitOperation,
+        committedAt: Date
+    ) -> MLSGroupEpochState {
+        MLSGroupEpochState.make(
+            groupId: groupId,
+            title: title,
+            inboxId: inboxId,
+            actorFingerprint: actorFingerprint,
+            members: members,
+            epoch: epoch + 1,
+            previousTranscriptHash: confirmedTranscriptHash,
+            operation: operation,
+            committedAt: committedAt
+        )
+    }
+
+    private static func make(
+        groupId: UUID,
+        title: String,
+        inboxId: String,
+        actorFingerprint: String,
+        members: [RelayGroupMember],
+        epoch: UInt64,
+        previousTranscriptHash: Data?,
+        operation: MLSGroupCommitOperation,
+        committedAt: Date
+    ) -> MLSGroupEpochState {
+        let memberFingerprints = members.map(\.fingerprint).sorted()
+        let treeHash = digest(
+            MLSGroupTreeHashPayload(
+                groupId: groupId,
+                inboxId: inboxId,
+                epoch: epoch,
+                memberFingerprints: memberFingerprints
+            )
+        )
+        let transcriptHash = digest(
+            MLSGroupTranscriptHashPayload(
+                protocolVersion: currentProtocolVersion,
+                cipherSuite: currentCipherSuite,
+                groupId: groupId,
+                inboxId: inboxId,
+                title: title,
+                epoch: epoch,
+                operation: operation,
+                actorFingerprint: actorFingerprint,
+                memberFingerprints: memberFingerprints,
+                previousTranscriptHash: previousTranscriptHash,
+                treeHash: treeHash,
+                committedAt: committedAt
+            )
+        )
+        let commit = MLSGroupCommitSummary(
+            operation: operation,
+            actorFingerprint: actorFingerprint,
+            epoch: epoch,
+            committedAt: committedAt,
+            memberFingerprints: memberFingerprints,
+            previousTranscriptHash: previousTranscriptHash,
+            transcriptHash: transcriptHash
+        )
+        return MLSGroupEpochState(
+            protocolVersion: currentProtocolVersion,
+            cipherSuite: currentCipherSuite,
+            groupId: groupId,
+            epoch: epoch,
+            treeHash: treeHash,
+            confirmedTranscriptHash: transcriptHash,
+            lastCommit: commit
+        )
+    }
+
+    private static func digest<T: Encodable>(_ value: T) -> Data {
+        guard let data = try? RelayCodec.encoder(sortedKeys: true).encode(value) else {
+            return Data(SHA256.hash(data: Data()))
+        }
+        return Data(SHA256.hash(data: data))
+    }
+}
+
+private struct MLSGroupTreeHashPayload: Codable {
+    let groupId: UUID
+    let inboxId: String
+    let epoch: UInt64
+    let memberFingerprints: [String]
+}
+
+private struct MLSGroupTranscriptHashPayload: Codable {
+    let protocolVersion: String
+    let cipherSuite: String
+    let groupId: UUID
+    let inboxId: String
+    let title: String
+    let epoch: UInt64
+    let operation: MLSGroupCommitOperation
+    let actorFingerprint: String
+    let memberFingerprints: [String]
+    let previousTranscriptHash: Data?
+    let treeHash: Data
+    let committedAt: Date
+}
+
 struct FederationDescriptor: Codable, Equatable {
     let mode: FederationMode
     let name: String?
@@ -340,6 +499,7 @@ struct RelayGroupDescriptor: Codable, Equatable {
     let createdByFingerprint: String
     var epoch: UInt64
     var members: [RelayGroupMember]
+    var mlsEpochState: MLSGroupEpochState
     let createdAt: Date
     var updatedAt: Date
 }

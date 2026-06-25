@@ -631,9 +631,23 @@ public actor RelayStore {
         }
 
         if changed {
+            let now = Date()
+            let operation = groupCommitOperation(
+                request: request,
+                actorFingerprint: actor,
+                isCreator: isCreator
+            )
             group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
             group.epoch += 1
-            group.updatedAt = Date()
+            group.updatedAt = now
+            group.mlsEpochState = group.mlsEpochState.advancing(
+                title: group.title,
+                inboxId: group.inboxId,
+                actorFingerprint: actor,
+                members: group.members,
+                operation: operation,
+                committedAt: now
+            )
             groups[group.id] = group
             if var pending = groupJoinRequests[group.id] {
                 pending.removeAll { pendingRequest in
@@ -648,6 +662,32 @@ public actor RelayStore {
             try saveToDisk()
         }
         return group
+    }
+
+    private func groupCommitOperation(
+        request: UpdateGroupRequest,
+        actorFingerprint: String,
+        isCreator: Bool
+    ) -> MLSGroupCommitOperation {
+        let hasTitleChange = !(request.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let addFingerprints = request.addMemberFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+        let hasProfileAdds = request.addMemberProfiles?.contains { normalizedMemberProfile($0) != nil } ?? false
+        let removeFingerprints = request.removeMemberFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty }
+
+        if !isCreator && !removeFingerprints.isEmpty && Set(removeFingerprints).isSubset(of: [actorFingerprint]) {
+            return .selfLeave
+        }
+        if !addFingerprints.isEmpty || hasProfileAdds {
+            return removeFingerprints.isEmpty && !hasTitleChange ? .addMembers : .update
+        }
+        if !removeFingerprints.isEmpty {
+            return hasTitleChange ? .update : .removeMembers
+        }
+        return .update
     }
 
     public func deleteGroup(_ request: DeleteGroupRequest) throws {
