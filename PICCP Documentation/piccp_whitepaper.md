@@ -299,7 +299,7 @@ PICCP supports groups through relay-backed coordination while the group cryptogr
 - leave
 - creator-side delete or extinguish
 
-This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as a complete MLS deployment or a formally proven group ratchet yet. Relays advertise their group security model so clients can distinguish pairwise-fan-out groups from `mlsDerivedTree` groups. The implementation direction is to keep relay registry coordination while removing the remaining pairwise fallback paths from the pre-release group stack.
+This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as a complete MLS deployment or a formally proven group ratchet yet. Relays advertise their group security model so clients can distinguish pairwise-fan-out groups from `mlsDerivedTree` groups. The shipped client path fails closed when relay-backed group-ratchet state is unavailable instead of silently downgrading to pairwise direct-message fan-out.
 
 ## 8.2 Attachments
 
@@ -368,7 +368,7 @@ The following areas remain future work:
 - full cryptographic PIR-assisted hidden retrieval
 - mixnet or onion-style transport integration
 - DHT-style autonomous open-federation discovery
-- removal of remaining pairwise group fallback paths
+- expanded multi-device group-ratchet interoperability coverage
 - external independent audit and signed release-provenance packaging
 - stronger closed-app background delivery that does not require centralized push infrastructure
 

@@ -37,7 +37,7 @@ Last reviewed: June 25, 2026.
 - Relay group descriptors carry required MLS epoch state with tree hash, transcript hash, ciphersuite label, and last commit summary.
 - Group conversations can persist encrypted group ratchet state locally, and signed group create/commit/join-approval operations can distribute group epoch secrets through ML-KEM-sealed member shares.
 - Relay-backed group delivery uses signed group-ratchet envelopes stored in the group inbox for text, image attachments, and voice messages; clients fetch, decrypt, and acknowledge those envelopes with member actor proofs.
-- Fallback/local-only group delivery still needs removal before the pairwise group path disappears completely.
+- Clients fail closed when relay-backed group-ratchet state is missing instead of silently downgrading group sends to pairwise direct-message fan-out.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation.
@@ -56,7 +56,7 @@ Last reviewed: June 25, 2026.
 ## Whitepaper Limits That Remain True
 - No full cryptographic PIR-assisted hidden retrieval.
 - No mixnet or onion transport layer.
-- No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and rejoin recovery, and group ratchet epoch secrets can be distributed through ML-KEM-sealed member shares. Relay-backed text, image, and voice bodies now use the group-inbox ratchet path, but remaining fallback/local delivery paths still need removal.
+- No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and rejoin recovery, and group ratchet epoch secrets can be distributed through ML-KEM-sealed member shares. Relay-backed text, image, and voice bodies now use the group-inbox ratchet path, and clients no longer preserve the old pairwise group fallback.
 - No claim of protection against a compromised OS or malicious device vendor.
 - No autonomous public DHT release mode; public-network adapters remain deferred until poisoning, churn, flooding, and operator-risk controls are externally validated.
 - No centralized push-notification server by design, so closed-app instant delivery remains out of scope. A decentralized wake policy prototype exists for compatible pull or long-poll clients.
@@ -64,11 +64,11 @@ Last reviewed: June 25, 2026.
 ## Alignment Summary
 - **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, and coordinator-assisted federation.
 - **Partially aligned**: metadata minimization, PIR-adjacent hidden retrieval, group cryptography, and decentralized wake. Temporal buckets, capability-style inboxes, federation policy, optional cover-query relay support, explicit group-security metadata, signed registry commits, MLS epoch state, group-context AEAD binding, the group ratchet primitive, and relay-advertised jittered wake policy reduce ambiguity, but do not provide strong anonymity, full cryptographic PIR, complete MLS-class group proofs, or guaranteed closed-app delivery.
-- **Deferred**: mixnet/onion transport, autonomous public DHT release mode, external audit, signed release-provenance packaging, pairwise group fallback removal, and formal MLS-class proof work.
+- **Deferred**: mixnet/onion transport, autonomous public DHT release mode, external audit, signed release-provenance packaging, and formal MLS-class proof work.
 
 ## Next Alignment Targets
 - Prepare the external security-audit package.
-- Remove the remaining pairwise group fallback described in `group_mls_design.md`.
+- Expand group-ratchet interoperability coverage across multiple devices, offline windows, and attachment retrieval.
 - Add multi-identity wake simulation tests and keep tuning OS-permitted background fetch behavior.
 - Continue open-federation experiments behind feature gates and simulation tests.
 - Replace cover-query hidden retrieval with stronger PIR if the bandwidth and relay-cost profile becomes acceptable.

@@ -20,11 +20,12 @@ Noctyra groups are moving toward an MLS-derived tree model as the product group 
 
 ## Required Next Work
 
-1. Remove the remaining local/fallback pairwise group-delivery path after broader device-to-device interoperability testing.
-2. Continue hardening against missed commits, stale epochs, replay, and long offline windows without claiming a complete MLS proof.
+1. Continue hardening against missed commits, stale epochs, replay, and long offline windows without claiming a complete MLS proof.
+2. Expand multi-device interoperability coverage for group epoch refresh, attachment retrieval, and offline rejoin windows.
 
 ## Non-Goals
 
 - Do not expose plaintext group keys to relays.
 - Do not let relays silently rewrite group membership.
 - Do not keep old group-wire formats for pre-release data.
+- Do not silently downgrade group delivery to pairwise direct-message fan-out.
