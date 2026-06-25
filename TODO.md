@@ -44,7 +44,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Render relay wake policy in client relay details
 - [x] Teach active/background client sync loops to consume wake policy where the OS permits
 - [x] Add relay-side bounded long-poll fetch behavior for HTTP/WebSocket transports
-- [ ] Add multi-identity polling simulation tests for wake jitter and backoff behavior
+- [x] Add multi-identity polling simulation tests for wake jitter and backoff behavior
 
 ## Relay security + federation policy
 - [x] Relay password auth and constant-time token compare

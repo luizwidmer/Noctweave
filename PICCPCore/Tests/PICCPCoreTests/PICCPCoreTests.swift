@@ -194,6 +194,49 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(capped.nextPollDelaySeconds, 120)
     }
 
+    func testDecentralizedWakePlannerSpreadsManyIdentitiesAcrossRelayWindow() {
+        let support = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 30,
+            maxPollIntervalSeconds: 120,
+            jitterPermille: 1_000,
+            longPollTimeoutSeconds: 30
+        )
+        let relayIdentifier = "relay.example.org"
+        let now = Date(timeIntervalSince1970: 123_456)
+        let plans = (0..<128).map { index in
+            DecentralizedWakePlanner.makePlan(
+                support: support,
+                identitySeed: Data("identity-\(index)".utf8),
+                relayIdentifier: relayIdentifier,
+                failureCount: 0,
+                now: now
+            )
+        }
+        let delayHistogram = Dictionary(
+            grouping: plans,
+            by: \.nextPollDelaySeconds
+        ).mapValues(\.count)
+
+        XCTAssertEqual(plans.map(\.longPollTimeoutSeconds).allSatisfy { $0 == 30 }, true)
+        XCTAssertEqual(plans.map(\.failureBackoffStep).allSatisfy { $0 == 0 }, true)
+        XCTAssertGreaterThanOrEqual(delayHistogram.count, 24)
+        XCTAssertLessThanOrEqual(delayHistogram.values.max() ?? 0, 12)
+        XCTAssertTrue(plans.allSatisfy { plan in
+            plan.nextPollDelaySeconds >= 30 && plan.nextPollDelaySeconds <= 60
+        })
+
+        let backedOff = DecentralizedWakePlanner.makePlan(
+            support: support,
+            identitySeed: Data("identity-0".utf8),
+            relayIdentifier: relayIdentifier,
+            failureCount: 99,
+            now: now
+        )
+        XCTAssertEqual(backedOff.failureBackoffStep, 6)
+        XCTAssertLessThanOrEqual(backedOff.nextPollDelaySeconds, 120)
+    }
+
     func testRelayInfoAdvertisesDecentralizedWakeSupport() throws {
         let info = RelayConfiguration(
             wakeSupport: DecentralizedWakeSupport(
