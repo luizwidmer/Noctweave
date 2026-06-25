@@ -3164,6 +3164,38 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(left.mlsEpochState.lastCommit.previousTranscriptHash, created.mlsEpochState.confirmedTranscriptHash)
     }
 
+    func testRelayStoreAllowsMemberSelfLeaveFromTwoMemberGroup() async throws {
+        let store = RelayStore()
+        let creator = "creator-fingerprint"
+        let member = "member-a"
+        let created = try await store.createGroup(
+            title: "Ops",
+            creatorFingerprint: creator,
+            memberFingerprints: [member]
+        )
+
+        let left = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: created.id,
+                actorFingerprint: member,
+                removeMemberFingerprints: [member],
+                groupCommit: SignedGroupCommit(
+                    operation: .selfLeave,
+                    groupId: created.id,
+                    actorFingerprint: member,
+                    baseEpoch: created.epoch,
+                    previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                    removeMemberFingerprints: [member]
+                )
+            )
+        )
+
+        XCTAssertFalse(left.members.contains(where: { $0.fingerprint == member }))
+        XCTAssertTrue(left.members.contains(where: { $0.fingerprint == creator }))
+        XCTAssertEqual(left.members.count, 1)
+        XCTAssertEqual(left.mlsEpochState.lastCommit.operation, .selfLeave)
+    }
+
     func testRelayStoreGroupCreatorCanDelete() async throws {
         let store = RelayStore()
         let creator = "creator-fingerprint"

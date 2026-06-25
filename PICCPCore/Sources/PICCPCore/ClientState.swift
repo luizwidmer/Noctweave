@@ -443,7 +443,7 @@ private extension Conversation {
     }
 }
 
-public enum ThemePalette: String, Codable, CaseIterable, Identifiable {
+public enum ThemePaletteFamily: Codable, Equatable {
     case glacier
     case sunset
     case forest
@@ -459,41 +459,156 @@ public enum ThemePalette: String, Codable, CaseIterable, Identifiable {
     case weave
     case abyss
     case pearl
+}
+
+public enum ThemePalette: String, Codable, CaseIterable, Identifiable {
+    case glacier
+    case glacierDark
+    case sunset
+    case sunsetDark
+    case forest
+    case forestDark
+    case citrus
+    case citrusDark
+    case slate
+    case slateDark
+    case aurora
+    case auroraDark
+    case ember
+    case emberDark
+    case cobalt
+    case cobaltDark
+    case orchid
+    case orchidDark
+    case dune
+    case duneDark
+    case noir
+    case noirBright
+    case prism
+    case prismDark
+    case weave
+    case weaveDark
+    case abyss
+    case abyssDark
+    case pearl
+    case pearlDark
 
     public var id: String { rawValue }
+
+    public var family: ThemePaletteFamily {
+        switch self {
+        case .glacier, .glacierDark: return .glacier
+        case .sunset, .sunsetDark: return .sunset
+        case .forest, .forestDark: return .forest
+        case .citrus, .citrusDark: return .citrus
+        case .slate, .slateDark: return .slate
+        case .aurora, .auroraDark: return .aurora
+        case .ember, .emberDark: return .ember
+        case .cobalt, .cobaltDark: return .cobalt
+        case .orchid, .orchidDark: return .orchid
+        case .dune, .duneDark: return .dune
+        case .noir, .noirBright: return .noir
+        case .prism, .prismDark: return .prism
+        case .weave, .weaveDark: return .weave
+        case .abyss, .abyssDark: return .abyss
+        case .pearl, .pearlDark: return .pearl
+        }
+    }
+
+    public var basePalette: ThemePalette {
+        switch self {
+        case .glacier, .glacierDark: return .glacier
+        case .sunset, .sunsetDark: return .sunset
+        case .forest, .forestDark: return .forest
+        case .citrus, .citrusDark: return .citrus
+        case .slate, .slateDark: return .slate
+        case .aurora, .auroraDark: return .aurora
+        case .ember, .emberDark: return .ember
+        case .cobalt, .cobaltDark: return .cobalt
+        case .orchid, .orchidDark: return .orchid
+        case .dune, .duneDark: return .dune
+        case .noir, .noirBright: return .noir
+        case .prism, .prismDark: return .prism
+        case .weave, .weaveDark: return .weave
+        case .abyss, .abyssDark: return .abyss
+        case .pearl, .pearlDark: return .pearl
+        }
+    }
+
+    public var isDarkVariant: Bool {
+        switch self {
+        case .glacierDark, .sunsetDark, .forestDark, .citrusDark, .slateDark,
+             .auroraDark, .emberDark, .cobaltDark, .orchidDark, .duneDark,
+             .noir, .prismDark, .weaveDark, .abyssDark, .pearlDark:
+            return true
+        case .glacier, .sunset, .forest, .citrus, .slate, .aurora, .ember,
+             .cobalt, .orchid, .dune, .noirBright, .prism, .weave, .abyss, .pearl:
+            return false
+        }
+    }
 
     public var displayName: String {
         switch self {
         case .glacier:
-            return "Glacier"
+            return "Glacier Bright"
+        case .glacierDark:
+            return "Glacier Dark"
         case .sunset:
-            return "Sunset"
+            return "Sunset Bright"
+        case .sunsetDark:
+            return "Sunset Dark"
         case .forest:
-            return "Forest"
+            return "Forest Bright"
+        case .forestDark:
+            return "Forest Dark"
         case .citrus:
-            return "Citrus"
+            return "Citrus Bright"
+        case .citrusDark:
+            return "Citrus Dark"
         case .slate:
-            return "Slate"
+            return "Slate Bright"
+        case .slateDark:
+            return "Slate Dark"
         case .aurora:
-            return "Aurora"
+            return "Aurora Bright"
+        case .auroraDark:
+            return "Aurora Dark"
         case .ember:
-            return "Ember"
+            return "Ember Bright"
+        case .emberDark:
+            return "Ember Dark"
         case .cobalt:
-            return "Cobalt"
+            return "Cobalt Bright"
+        case .cobaltDark:
+            return "Cobalt Dark"
         case .orchid:
-            return "Orchid"
+            return "Orchid Bright"
+        case .orchidDark:
+            return "Orchid Dark"
         case .dune:
-            return "Dune"
+            return "Dune Bright"
+        case .duneDark:
+            return "Dune Dark"
         case .noir:
             return "Noir"
+        case .noirBright:
+            return "Noir Bright"
         case .prism:
-            return "Prism"
+            return "Prism Bright"
+        case .prismDark:
+            return "Prism Dark"
         case .weave:
-            return "Weave"
+            return "Weave Bright"
+        case .weaveDark:
+            return "Weave Dark"
         case .abyss:
-            return "Abyss"
+            return "Abyss Bright"
+        case .abyssDark:
+            return "Abyss Dark"
         case .pearl:
-            return "Pearl"
+            return "Pearl Bright"
+        case .pearlDark:
+            return "Pearl Dark"
         }
     }
 }

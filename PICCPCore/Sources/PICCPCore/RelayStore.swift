@@ -742,7 +742,7 @@ public actor RelayStore {
             throw RelayStoreError.groupCapacityExceeded
         }
 
-        guard memberMap.count >= 2 else {
+        guard memberMap.count >= 2 || operation == .selfLeave else {
             throw RelayStoreError.notEnoughGroupMembers
         }
 
