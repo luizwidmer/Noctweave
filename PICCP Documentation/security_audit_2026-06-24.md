@@ -7,7 +7,7 @@
 
 The current implementation has materially strong application-layer controls for message confidentiality, authenticated inbox access, relay forwarding gates, signed group operations, bounded storage, and relay password isolation. The highest-value remaining risk area is not message encryption; it is network metadata, relay discovery trust, and coordinator/DHT poisoning.
 
-This pass found one concrete SSRF-style hardening gap in public open-federation endpoint validation. The relay rejected private IPv4, loopback, link-local, and IPv4-mapped IPv6 addresses, but did not explicitly handle IPv6 transition addresses that can encode private IPv4 destinations. This has been patched in both `PICCPCore` and the Linux relay package. Coordinator directory signatures were also migrated from Ed25519 to ML-DSA-65 so federation directory authenticity uses the same post-quantum signature family as identity continuity.
+This pass found one concrete SSRF-style hardening gap in public open-federation endpoint validation. The relay rejected private IPv4, loopback, link-local, and IPv4-mapped IPv6 addresses, but did not explicitly handle IPv6 transition addresses that can encode private IPv4 destinations. This has been patched in both `PICCPCore` and the Linux relay package. Coordinator directory signatures now use ML-DSA-65 so federation directory authenticity uses the same post-quantum signature family as identity continuity.
 
 The DHT/torrent research supports a cautious path: use DHT-style discovery only for open-federation relay bootstrap hints, never as authority. Public torrent infrastructure can help find candidate relays, but every result must be signed, short-lived, TLS-reachable, bounded, and independently probed before it enters a routing set. The signed-record primitive for this path now exists in core as `OpenFederationDHTRecord`, the feature-gated candidate acceptance layer exists as `OpenFederationDHTCandidateCache`, and `OpenFederationDHTTransport`/`OpenFederationDHTDiscoveryEngine` define the publish/query boundary. `OpenFederationDHTHTTPGatewayTransport` provides a gateway/sidecar adapter for relay operators, while the Linux relay now also has native relay-protocol DHT publish/list routes and a bounded PEX-style overlay transport. Native BEP5/libp2p public-DHT participation is deferred for release scope; operator sidecars are the supported experiment boundary.
 
@@ -42,8 +42,8 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 
 ### Storage compromise or corruption
 - Attacker obtains relay disk files, local client storage, backups, or intentionally corrupts persistence files.
-- Mitigations present: client-side encrypted payloads and attachments, encrypted client storage options, relay attachment TTL, bounded relay queues, SQLite-backed relay state file instead of plain JSON, relay RAM-only mode for operators who do not want persistence, normalized transactional relay-domain tables, legacy snapshot migration, and row-scoped skipping of corrupt persisted records.
-- Residual risk: future SQLite schema changes need explicit versioned migration tests before release branches rely on upgraded persistent stores.
+- Mitigations present: client-side encrypted payloads and attachments, encrypted client storage options, relay attachment TTL, bounded relay queues, SQLite-backed relay state file instead of plain JSON, relay RAM-only mode for operators who do not want persistence, normalized transactional relay-domain tables, and row-scoped skipping of corrupt persisted records.
+- Residual risk: future SQLite schema changes should be treated as pre-release schema resets unless a release branch explicitly commits to upgrade support.
 
 ### Transport downgrade or proxy misconfiguration
 - Attacker or operator misconfiguration routes open-federation traffic over cleartext, advertises a LAN/private endpoint, strips TLS at the wrong boundary, or exposes the relay directly when it was intended to sit behind a reverse proxy.
@@ -185,11 +185,11 @@ Linux also contains native relay-protocol DHT publish/list routes and a native o
 
 - `PICCPCore/Sources/PICCPCore/RelayStore.swift`
   - Replaces new relay persistence writes with normalized SQLite tables for mailbox envelopes, inbox registrations, attachment chunks, prekey bundles, federation nodes, pinned coordinator keys, groups, and group join requests.
-  - Keeps legacy snapshot/backup loading as a migration path, then rewrites loaded state into the normalized schema.
+  - Uses normalized SQLite relay-domain tables directly and no longer accepts obsolete snapshot-blob relay state.
   - Skips corrupt individual persisted rows during normalized load so one damaged message or record does not prevent healthy rows from loading.
 
 - `PICCP Relay Server/Sources/PICCPRelayServer/RelayStore.swift`
-  - Adds Linux relay parity for the same normalized transactional SQLite schema, legacy migration path, and row-scoped corruption tolerance.
+  - Adds Linux relay parity for the same normalized transactional SQLite schema and row-scoped corruption tolerance.
 
 - Regression tests:
   - `PICCPCoreTests.testRelayStoreDiskPersistenceSkipsCorruptNormalizedMessageRow`
@@ -242,7 +242,7 @@ No high-severity implementation findings remain from this pass. This does not re
   - poisoned and host-flooded results after HTTP gateway decode (gateway transport covered)
   - bounded peer-hint traversal and poisoned/host-flooded results after native overlay decode (Linux native overlay covered)
   - normalized relay mailbox row corruption skips only the damaged row while retaining healthy rows (core and Linux relay store covered)
-  - legacy relay snapshot migration into normalized tables (core and Linux relay store covered)
+  - normalized relay persistence and corrupt-row tolerance (core and Linux relay store covered)
 
 ## References
 

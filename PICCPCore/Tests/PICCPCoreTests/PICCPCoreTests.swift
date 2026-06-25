@@ -926,21 +926,19 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertFalse(substituted.verify(using: identity.signingKey.publicKeyData))
     }
 
-    func testLegacyUnsignedOneTimePrekeyLoadsButFailsClosed() throws {
-        struct LegacyOneTimePrekey: Codable {
+    func testUnsignedOneTimePrekeyDecodeFailsClosed() throws {
+        struct UnsignedOneTimePrekey: Codable {
             let id: UUID
             let publicKey: Data
         }
 
-        let legacy = LegacyOneTimePrekey(
+        let unsigned = UnsignedOneTimePrekey(
             id: UUID(),
             publicKey: AgreementKeyPair().publicKeyData
         )
-        let data = try PICCPCoder.encode(legacy)
-        let decoded = try PICCPCoder.decode(OneTimePrekey.self, from: data)
+        let data = try PICCPCoder.encode(unsigned)
 
-        XCTAssertTrue(decoded.signature.isEmpty)
-        XCTAssertFalse(decoded.verify(using: SigningKeyPair().publicKeyData))
+        XCTAssertThrowsError(try PICCPCoder.decode(OneTimePrekey.self, from: data))
     }
 
     func testConversationBootstrapKeysMatch() throws {
@@ -1624,44 +1622,6 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(fetched.map(\.id), [first.id])
     }
 
-    func testRelayStoreMigratesLegacySnapshotIntoNormalizedTables() async throws {
-        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
-        defer {
-            try? FileManager.default.removeItem(at: tempDirectory)
-        }
-        let requestedURL = tempDirectory.appendingPathComponent("relay_store.json")
-        let sqliteURL = tempDirectory.appendingPathComponent("relay_store.sqlite")
-        let envelope = Envelope(
-            conversationId: "legacy-conv",
-            senderFingerprint: "legacy-fingerprint",
-            sentAt: Date(),
-            messageCounter: 7,
-            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([0x70]), tag: Data()),
-            signature: Data([0x71])
-        )
-        let legacySnapshot = LegacyRelayStoreSnapshot(
-            mailboxes: [
-                "legacy-inbox": [
-                    LegacyStoredEnvelope(envelope: envelope, storedAt: Date())
-                ]
-            ]
-        )
-        try insertRelayStateValue(
-            at: sqliteURL,
-            key: "relay_snapshot_v1",
-            value: PICCPCoder.encode(legacySnapshot)
-        )
-
-        let store = RelayStore(storeURL: requestedURL)
-        try await store.loadFromDisk()
-        let fetched = try await store.fetch(inboxId: "legacy-inbox")
-
-        XCTAssertEqual(fetched.map(\.id), [envelope.id])
-        XCTAssertTrue(try relayStateMetaExists(at: sqliteURL, key: "normalized_schema_v1"))
-        XCTAssertEqual(try sqliteRowCount(at: sqliteURL, table: "relay_mailbox_envelopes"), 1)
-    }
-
     func testRelayStoreRejectsInvalidAttachmentPayload() async throws {
         let store = RelayStore()
         let attachmentId = UUID()
@@ -1684,15 +1644,6 @@ final class PICCPCoreTests: XCTestCase {
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
-    }
-
-    private struct LegacyRelayStoreSnapshot: Codable {
-        let mailboxes: [String: [LegacyStoredEnvelope]]
-    }
-
-    private struct LegacyStoredEnvelope: Codable {
-        let envelope: Envelope
-        let storedAt: Date
     }
 
     private func overwriteMailboxEnvelope(at sqliteURL: URL, envelopeId: UUID, with data: Data) throws {
@@ -1722,77 +1673,6 @@ final class PICCPCoreTests: XCTestCase {
             throw NSError(domain: "PICCPCoreTests.SQLite", code: 9)
         }
         XCTAssertEqual(sqlite3_changes(db), 1)
-    }
-
-    private func insertRelayStateValue(at sqliteURL: URL, key: String, value: Data) throws {
-        var db: OpaquePointer?
-        guard sqlite3_open(sqliteURL.path, &db) == SQLITE_OK, let db else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 10)
-        }
-        defer { sqlite3_close(db) }
-        guard sqlite3_exec(
-            db,
-            "CREATE TABLE IF NOT EXISTS relay_state (key TEXT PRIMARY KEY, value BLOB NOT NULL);",
-            nil,
-            nil,
-            nil
-        ) == SQLITE_OK else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 11)
-        }
-        let sql = "INSERT INTO relay_state (key, value) VALUES (?1, ?2);"
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 12)
-        }
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_bind_text(statement, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self)) == SQLITE_OK else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 13)
-        }
-        let bindBlobResult = value.withUnsafeBytes { buffer in
-            sqlite3_bind_blob(statement, 2, buffer.baseAddress, Int32(buffer.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self))
-        }
-        guard bindBlobResult == SQLITE_OK else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 14)
-        }
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 15)
-        }
-    }
-
-    private func relayStateMetaExists(at sqliteURL: URL, key: String) throws -> Bool {
-        var db: OpaquePointer?
-        guard sqlite3_open(sqliteURL.path, &db) == SQLITE_OK, let db else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 16)
-        }
-        defer { sqlite3_close(db) }
-        let sql = "SELECT 1 FROM relay_state_meta WHERE key = ?1 LIMIT 1;"
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 17)
-        }
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_bind_text(statement, 1, key, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self)) == SQLITE_OK else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 18)
-        }
-        return sqlite3_step(statement) == SQLITE_ROW
-    }
-
-    private func sqliteRowCount(at sqliteURL: URL, table: String) throws -> Int {
-        var db: OpaquePointer?
-        guard sqlite3_open(sqliteURL.path, &db) == SQLITE_OK, let db else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 19)
-        }
-        defer { sqlite3_close(db) }
-        let sql = "SELECT COUNT(*) FROM \(table);"
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 20)
-        }
-        defer { sqlite3_finalize(statement) }
-        guard sqlite3_step(statement) == SQLITE_ROW else {
-            throw NSError(domain: "PICCPCoreTests.SQLite", code: 21)
-        }
-        return Int(sqlite3_column_int64(statement, 0))
     }
 
     func testClientStateStoreSaveLoad() async throws {
@@ -3706,7 +3586,7 @@ final class PICCPCoreTests: XCTestCase {
         }
     }
 
-    func testMessageDecodingBackwardsCompatibleWithoutSenderDisplayName() throws {
+    func testMessageDecodingAllowsMissingOptionalSenderDisplayName() throws {
         let json = """
         {
           "id": "E5C22757-5D8E-4F67-A2C1-73092E5B5E8E",

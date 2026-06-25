@@ -28,7 +28,7 @@ Last reviewed: June 25, 2026.
 - Authenticated inbox fetch and explicit message acknowledgement.
 - Actor-proof controls for relay state mutations.
 - Relay password auth and isolated relay-to-relay forwarding tokens.
-- Normalized SQLite relay storage with backup/fallback recovery.
+- Normalized SQLite relay storage with row-scoped corrupt-record skipping.
 - TCP, HTTP, HTTPS, WebSocket, and WSS deployment profiles.
 - Reverse-proxy TLS and relay-managed TLS deployment patterns.
 - Relay metadata advertisement for name, kind, federation, transport, TLS, temporal buckets, attachment TTL, group policy, operator note, and software version.

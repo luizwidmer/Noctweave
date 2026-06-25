@@ -11,19 +11,6 @@ public struct OneTimePrekey: Codable, Equatable {
         self.signature = signature
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case id
-        case publicKey
-        case signature
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
-        publicKey = try container.decode(Data.self, forKey: .publicKey)
-        signature = try container.decodeIfPresent(Data.self, forKey: .signature) ?? Data()
-    }
-
     public static func create(
         id: UUID = UUID(),
         agreementPublicKey: Data,

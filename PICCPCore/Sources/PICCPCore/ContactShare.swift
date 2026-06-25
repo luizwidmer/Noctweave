@@ -60,9 +60,6 @@ public enum ContactShare {
         let key: SymmetricKey
         let aad: Data
         switch package.version {
-        case 1:
-            key = deriveLegacyKey(password: password, salt: package.salt, rounds: boundedRounds(package.kdfRounds))
-            aad = authenticatedData(for: 1)
         case 2:
             key = derivePBKDF2Key(password: password, salt: package.salt, rounds: boundedRounds(package.kdfRounds))
             aad = authenticatedData(for: 2)
@@ -109,21 +106,6 @@ public enum ContactShare {
             blockIndex &+= 1
         }
         return SymmetricKey(data: derived.prefix(keyLength))
-    }
-
-    private static func deriveLegacyKey(password: String, salt: Data, rounds: Int) -> SymmetricKey {
-        let bounded = boundedRounds(rounds)
-        var data = Data(password.utf8)
-        data.append(salt)
-        var digest = SHA256.hash(data: data)
-        if bounded > 0 {
-            for _ in 0..<bounded {
-                var round = Data(digest)
-                round.append(salt)
-                digest = SHA256.hash(data: round)
-            }
-        }
-        return SymmetricKey(data: Data(digest))
     }
 
     private static func hmacSHA256(keyData: Data, message: Data) -> Data {

@@ -118,7 +118,7 @@ Every release should have:
 - Apple app builds signed with the project Developer ID / App Store signing identity.
 - macOS builds notarized when distributed outside the App Store.
 - Docker images pushed by digest and tagged immutably.
-- Release notes that identify dependency changes, cryptographic dependency changes, and migration requirements.
+- Release notes that identify dependency changes, cryptographic dependency changes, and any deliberate storage/schema reset requirements.
 
 Cryptographic dependency updates require a dedicated release note section and should not be bundled silently with unrelated UI changes.
 

@@ -198,7 +198,7 @@ Relay fetch and state-mutation operations are not unauthenticated mailbox reads.
 
 ## 6.2 Storage
 
-Relay state persists through a normalized SQLite-backed store with backup/fallback recovery. This provides durability, structured persistence, and avoids the fragility of large flat-file state.
+Relay state persists through a normalized SQLite-backed store. The relay writes structured domain tables for inbox registrations, envelopes, attachments, prekey bundles, federation nodes, coordinator pins, groups, and join requests. Corrupt persisted rows are skipped at row scope where possible instead of reviving obsolete snapshot formats. This provides durability, structured persistence, and avoids the fragility of large flat-file state.
 
 Attachment storage is bounded by:
 

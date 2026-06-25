@@ -1,6 +1,6 @@
 # Delivery TODO
 
-This checklist tracks current implementation status (not the legacy roadmap draft).
+This checklist tracks current implementation status, not earlier planning drafts.
 
 ## Active Goal Completion Gate
 The current security/DHT goal is complete when all of the following are true:
@@ -56,9 +56,9 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Bounded relay mailboxes, groups, prekeys, attachments, announcements, and replay caches
 - [x] Open-federation SSRF controls with public routing and TLS requirements
 - [x] Stable coordinator directory-signing keys across relay restarts
-- [x] Migrated coordinator directory signatures from Ed25519 to ML-DSA-65
+- [x] Coordinator directory signatures use ML-DSA-65
 - [x] Operator-selectable text-only mode and optional temporal-bucketing disablement
-- [x] Relay SQLite snapshot backup and corruption fallback recovery tests
+- [x] Relay normalized SQLite persistence and corrupt-row skip tests
 - [x] Replace snapshot-in-SQLite writes with normalized transactional relay-domain tables
 
 ## Linux relay parity with mac relay
