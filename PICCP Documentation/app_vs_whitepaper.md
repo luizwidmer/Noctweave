@@ -3,7 +3,7 @@
 ## Overview
 This document summarizes the current Noctyra client + relay implementation against the PICCP whitepaper v0.8.
 
-Last reviewed: June 25, 2026.
+Last reviewed: June 28, 2026.
 
 ## Implemented Protocol Surface
 
@@ -44,8 +44,10 @@ Last reviewed: June 25, 2026.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation. Discovery refreshes retain previously validated signed nodes across transient gateway or peer-query failures.
-- Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning rejects undersized buckets, incomplete cover responses, and malformed public query plans so compatible clients do not silently accept target-only retrievals.
+- Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning requires at least one decoy, rejects undersized buckets, incomplete cover responses, and malformed public query plans so compatible clients do not silently accept target-only retrievals.
 - Release verification workflow wired to run the local SBOM, dependency, relay test, and optional scanner checks in CI.
+- Local release provenance manifests can be generated from the checked-out commit, SBOM snapshots, package pins, Docker inputs, and release verifier inputs with `scripts/generate-release-provenance.py`; `scripts/verify-release.sh` validates the manifest schema and tracked-input hashes.
+- `scripts/verify-whitepaper-alignment.sh` runs focused checks for metadata timestamp bucketing, hidden-retrieval cover-query safeguards, decentralized wake planning, open-federation fallback/gateway simulation, Linux relay open-federation parity, and release provenance generation.
 
 ### Client UX and Local Safety
 - Contact Book, Identity Management, Relays, Settings, My Code, and group chat flows.
@@ -55,6 +57,7 @@ Last reviewed: June 25, 2026.
 - Screenshot/screen-capture redaction containers on supported Apple surfaces.
 - Secure typing choice between Apple's secure text path and Noctyra's app-owned keyboard.
 - Secure camera capture, image compression, encrypted attachments, and encrypted voice messages.
+- Client send paths can quantize visible direct-message and group-message envelope timestamps to the coarsest advertised relay temporal bucket, reducing precision in metadata visible to relays without changing ciphertext ratchets.
 
 ## Whitepaper Limits That Remain True
 - No full cryptographic PIR-assisted hidden retrieval.
@@ -66,12 +69,13 @@ Last reviewed: June 25, 2026.
 
 ## Alignment Summary
 - **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, and coordinator-assisted federation.
-- **Partially aligned**: metadata minimization, PIR-adjacent hidden retrieval, group cryptography, and decentralized wake. Temporal buckets, capability-style inboxes, federation policy, optional fixed-size cover-query relay support, explicit group-security metadata, signed registry commits, MLS epoch state, group-context AEAD binding, the group ratchet primitive, and relay-advertised jittered wake policy reduce ambiguity, but do not provide strong anonymity, full cryptographic PIR, complete MLS-class group proofs, or guaranteed closed-app delivery.
-- **Deferred**: mixnet/onion transport, autonomous public DHT release mode, external audit, signed release-provenance packaging, and formal MLS-class proof work.
+- **Partially aligned**: metadata minimization, PIR-adjacent hidden retrieval, group cryptography, and decentralized wake. Temporal buckets, visible envelope timestamp quantization, capability-style inboxes, federation policy, optional fixed-size cover-query relay support, explicit group-security metadata, signed registry commits, MLS epoch state, group-context AEAD binding, the group ratchet primitive, and relay-advertised jittered wake policy reduce ambiguity, but do not provide strong anonymity, full cryptographic PIR, complete MLS-class group proofs, or guaranteed closed-app delivery.
+- **Deferred**: mixnet/onion transport, autonomous public DHT release mode, external audit, Apple notarized artifact provenance, registry-pushed Docker image provenance, and formal MLS-class proof work.
 
 ## Next Alignment Targets
-- Prepare the external security-audit package.
+- Run `scripts/verify-whitepaper-alignment.sh` alongside focused protocol changes that touch metadata minimization, hidden retrieval, decentralized wake, or open federation.
 - Expand real-device fault-injection coverage around retained group epoch histories; route-level multi-client retained-history coverage now includes multiple offline members recovering after a shared outage.
 - Keep tuning OS-permitted background fetch behavior against relay-advertised wake policy.
 - Continue open-federation experiments behind feature gates and simulation tests; cached-node fallback is covered for core and Linux relay discovery refreshes.
 - Replace cover-query hidden retrieval with stronger PIR if the bandwidth and relay-cost profile becomes acceptable.
+- Bind final Apple and public Docker artifact provenance once release signing, notarization, and registry-publishing paths exist.

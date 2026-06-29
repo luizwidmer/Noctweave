@@ -469,7 +469,9 @@ public enum GroupRatchet {
         body: MessageBody,
         senderSigningKey: SigningKeyPair,
         senderFingerprint: String,
-        state: inout GroupRatchetState
+        state: inout GroupRatchetState,
+        sentAt: Date = Date(),
+        metadataBucketSeconds: Int? = nil
     ) throws -> GroupRatchetEnvelope {
         let prepared = try state.nextSendKey(senderFingerprint: senderFingerprint)
         return try encrypt(
@@ -478,7 +480,9 @@ public enum GroupRatchet {
             senderFingerprint: senderFingerprint,
             messageCounter: prepared.counter,
             messageKey: prepared.key,
-            state: state
+            state: state,
+            sentAt: sentAt,
+            metadataBucketSeconds: metadataBucketSeconds
         )
     }
 
@@ -496,10 +500,12 @@ public enum GroupRatchet {
         senderFingerprint: String,
         messageCounter: UInt64,
         messageKey: SymmetricKey,
-        state: GroupRatchetState
+        state: GroupRatchetState,
+        sentAt: Date = Date(),
+        metadataBucketSeconds: Int? = nil
     ) throws -> GroupRatchetEnvelope {
         let plaintext = try PICCPCoder.encode(body)
-        let sentAt = Date()
+        let sentAt = MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
         let aad = try authenticatedData(
             groupId: state.groupId,
             epoch: state.epoch,

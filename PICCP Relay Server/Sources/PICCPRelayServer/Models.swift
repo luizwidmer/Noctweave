@@ -218,10 +218,10 @@ struct HiddenRetrievalSupport: Codable, Equatable {
         defaultCoverSetSize: Int = 8,
         maxCoverSetSize: Int = 32
     ) {
-        let normalizedMax = max(1, maxCoverSetSize)
+        let normalizedMax = max(2, maxCoverSetSize)
         self.mode = mode
         self.maxCoverSetSize = normalizedMax
-        self.defaultCoverSetSize = min(max(1, defaultCoverSetSize), normalizedMax)
+        self.defaultCoverSetSize = min(max(2, defaultCoverSetSize), normalizedMax)
     }
 }
 

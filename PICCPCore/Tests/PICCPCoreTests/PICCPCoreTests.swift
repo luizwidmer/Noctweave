@@ -5,6 +5,17 @@ import XCTest
 @testable import PICCPCore
 
 final class PICCPCoreTests: XCTestCase {
+    func testMetadataMinimizerBucketsVisibleTimestamps() {
+        let precise = Date(timeIntervalSince1970: 1_765_400_123)
+
+        XCTAssertEqual(
+            MetadataMinimizer.bucketedTimestamp(precise, bucketSeconds: 300),
+            Date(timeIntervalSince1970: 1_765_400_100)
+        )
+        XCTAssertEqual(MetadataMinimizer.bucketedTimestamp(precise, bucketSeconds: 1), precise)
+        XCTAssertEqual(MetadataMinimizer.bucketedTimestamp(precise, bucketSeconds: nil), precise)
+    }
+
     func testHiddenRetrievalPlannerBuildsDeterministicCoverQuery() throws {
         let records = ["msg-4", "msg-1", "msg-3", "msg-2", "msg-5"]
         let secret = Data("client-local-cover-secret".utf8)
@@ -105,6 +116,18 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertThrowsError(
             try HiddenRetrievalPlanner.makeCoverQuery(
                 bucketId: "bucket",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: "a",
+                coverSetSize: 1,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidCoverSetSize)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
                 availableRecordIds: [],
                 targetRecordId: "a",
                 coverSetSize: 2,
@@ -155,6 +178,13 @@ final class PICCPCoreTests: XCTestCase {
         let decoded = try PICCPCoder.decode(RelayInfo.self, from: encoded)
 
         XCTAssertEqual(decoded.hiddenRetrieval, info.hiddenRetrieval)
+    }
+
+    func testHiddenRetrievalSupportDoesNotAdvertiseTargetOnlyPlans() {
+        let support = HiddenRetrievalSupport(defaultCoverSetSize: 1, maxCoverSetSize: 1)
+
+        XCTAssertEqual(support.defaultCoverSetSize, 2)
+        XCTAssertEqual(support.maxCoverSetSize, 2)
     }
 
     func testRelayInfoAdvertisesGroupSecurityModel() throws {
@@ -1341,6 +1371,53 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(Set(received), Set((0..<count).map { "msg-\($0)" }))
     }
 
+    func testMessageEngineBucketsVisibleEnvelopeTimestamp() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        let preciseSentAt = Date(timeIntervalSince1970: 1_765_400_123)
+
+        let envelope = try MessageEngine.encrypt(
+            body: .text("bucketed hello"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation,
+            kemCiphertext: session.kemCiphertext,
+            sentAt: preciseSentAt,
+            metadataBucketSeconds: 300
+        )
+
+        XCTAssertEqual(envelope.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
+        XCTAssertTrue(envelope.verifySignature(publicSigningKey: alice.signingKey.publicKeyData))
+
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+        let body = try MessageEngine.decrypt(
+            envelope: envelope,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+        XCTAssertEqual(body, .text("bucketed hello"))
+    }
+
     func testReplayIsRejected() throws {
         let alice = Identity(displayName: "Alice")
         let bob = Identity(displayName: "Bob")
@@ -1552,6 +1629,46 @@ final class PICCPCoreTests: XCTestCase {
         )
         XCTAssertEqual(body, .text("hello group"))
         XCTAssertNotNil(bobState.receiveChains[alice.fingerprint])
+    }
+
+    func testGroupRatchetBucketsVisibleEnvelopeTimestamp() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var bobState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: bob.fingerprint
+        )
+        let preciseSentAt = Date(timeIntervalSince1970: 1_765_400_123)
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("bucketed group"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState,
+            sentAt: preciseSentAt,
+            metadataBucketSeconds: 300
+        )
+
+        XCTAssertEqual(envelope.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
+        let body = try GroupRatchet.decrypt(
+            envelope: envelope,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &bobState
+        )
+        XCTAssertEqual(body, .text("bucketed group"))
     }
 
     func testGroupRatchetAttachmentDescriptorAndChunkUseSameMessageKey() throws {

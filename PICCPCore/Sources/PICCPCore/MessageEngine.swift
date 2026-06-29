@@ -116,7 +116,9 @@ public enum MessageEngine {
         kemCiphertext: Data? = nil,
         prekey: PrekeyReference? = nil,
         rootRatchet: RootRatchet? = nil,
-        authenticatedContext: MessageAuthenticatedContext? = nil
+        authenticatedContext: MessageAuthenticatedContext? = nil,
+        sentAt: Date = Date(),
+        metadataBucketSeconds: Int? = nil
     ) throws -> Envelope {
         let payloadData = try PICCPCoder.encode(body)
         let prepared = try prepareMessageKey(conversation: &conversation)
@@ -128,7 +130,7 @@ public enum MessageEngine {
             messageCounter: prepared.counter,
             messageKey: prepared.key
         )
-        let sentAt = Date()
+        let sentAt = MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
         let signable = try Envelope.signableData(
             conversationId: conversation.id,
             sessionId: conversation.sessionId,
@@ -173,7 +175,9 @@ public enum MessageEngine {
         kemCiphertext: Data? = nil,
         prekey: PrekeyReference? = nil,
         rootRatchet: RootRatchet? = nil,
-        authenticatedContext: MessageAuthenticatedContext? = nil
+        authenticatedContext: MessageAuthenticatedContext? = nil,
+        sentAt: Date = Date(),
+        metadataBucketSeconds: Int? = nil
     ) throws -> Envelope {
         let payloadData = try PICCPCoder.encode(body)
         let encrypted = try encryptPayload(
@@ -184,7 +188,7 @@ public enum MessageEngine {
             messageCounter: messageCounter,
             messageKey: messageKey
         )
-        let sentAt = Date()
+        let sentAt = MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
         let signable = try Envelope.signableData(
             conversationId: conversation.id,
             sessionId: conversation.sessionId,

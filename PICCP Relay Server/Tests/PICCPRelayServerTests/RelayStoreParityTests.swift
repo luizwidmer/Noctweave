@@ -689,6 +689,13 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(info.hiddenRetrieval?.maxCoverSetSize, 16)
     }
 
+    func testHiddenRetrievalSupportDoesNotAdvertiseTargetOnlyPlans() {
+        let support = HiddenRetrievalSupport(defaultCoverSetSize: 1, maxCoverSetSize: 1)
+
+        XCTAssertEqual(support.defaultCoverSetSize, 2)
+        XCTAssertEqual(support.maxCoverSetSize, 2)
+    }
+
     func testRelayInfoCarriesGroupSecurityModel() {
         let defaultInfo = RelayConfiguration().makeInfo()
         XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)

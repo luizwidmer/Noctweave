@@ -32,7 +32,7 @@ public enum HiddenRetrievalPlanner {
         coverSetSize: Int,
         secret: Data
     ) throws -> HiddenRetrievalQueryPlan {
-        guard coverSetSize > 0 else {
+        guard coverSetSize >= 2 else {
             throw HiddenRetrievalError.invalidCoverSetSize
         }
 
