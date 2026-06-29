@@ -15,4 +15,12 @@ swift test \
   --package-path "$ROOT_DIR/PICCP Relay Server" \
   --filter 'RelayStoreParityTests/test(GroupDescriptorCarriesMLSEpochState|RelayStoreBucketsVisiblePair|RelayStoreRejectsOversizedEnvelopePayloads|StoreCanOffloadAttachmentChunksToExternalBlobStore|ExternalAttachmentBlobDigestMismatchIsRejected|RelayStoreRejectsStructurallyInvalidRatchetSecretDistribution|HiddenRetrievalSupport|RelayInfoSuppressesWeakReplicatedPIRAdvertisement|RelayInfoCarriesOptionalOnionTransportSupport|RelayInfoSuppressesUnusableOnionTransportSupport|RelayInfoCarriesOptionalMixnetTransportSupport|RelayInfoSuppressesMisleadingMixnetAdvertisement|MixnetRoutePolicyValidator|OpenFederationDHTHTTPGatewayRefresh|OpenFederationDHTNativeOverlay)'
 
+echo "Verifying Apple helper prefetch does not publish identity signing keys..."
+if grep -R "identitySigningKey" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchStore.swift" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchRunner.swift"; then
+  echo "Closed-app helper prefetch must not carry the long-term identity signing key." >&2
+  exit 1
+fi
+
 echo "Whitepaper alignment verification complete."
