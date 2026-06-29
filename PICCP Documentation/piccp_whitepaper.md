@@ -241,7 +241,7 @@ Relay policy controls include:
 
 Temporal bucketing can be single-bucket or multi-bucket. The multi-bucket path intentionally adds timing ambiguity to reduce the ease of correlating users by strict fetch cadence.
 
-Relays may also advertise optional hidden-retrieval cover-query support. In that mode, compatible clients can request fixed-size cover sets from temporal buckets and extract the target record locally. This is a deployable metadata-reduction feature and an implementation stepping stone toward stronger PIR, but it is not full cryptographic PIR.
+Relays may also advertise optional hidden-retrieval support. In cover-query mode, compatible clients request fixed-size cover sets from temporal buckets and extract the target record locally. In replicated XOR-PIR mode, a client splits a lookup across two or more non-colluding replicas with identical fixed-size buckets; each replica receives only a selection mask, and the client reconstructs the target by XORing the replica responses. Cover-query mode is metadata reduction. Replicated XOR-PIR is stronger PIR-assisted retrieval under a non-collusion assumption, but it is not single-server cryptographic PIR and should only be advertised by operators that can actually provide replicated bucket semantics.
 
 ## 6.5 Decentralized wake and pull delivery
 
@@ -363,6 +363,7 @@ The reference implementation delivers:
 - macOS relay, Linux relay parity path, and Docker deployment support
 - relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and software version
 - optional relay-advertised hidden-retrieval cover queries
+- optional relay-advertised replicated XOR-PIR for non-colluding replicated buckets
 - explicit group-security-model advertisement, required MLS epoch metadata, and bounded group epoch history
 - relay-advertised decentralized wake policy for jittered pull or bounded long-poll clients
 - ciphertext-only direct and group prefetch staging for app-intent or widget-triggered sync paths; these paths fetch encrypted envelopes without decrypting content or acknowledging relay delivery
@@ -371,7 +372,7 @@ The reference implementation delivers:
 
 The following areas remain future work:
 
-- full cryptographic PIR-assisted hidden retrieval
+- single-server cryptographic PIR hidden retrieval
 - mixnet or onion-style transport integration
 - DHT-style autonomous open-federation discovery
 - expanded real-device and multi-client fault-injection coverage around retained group epoch histories

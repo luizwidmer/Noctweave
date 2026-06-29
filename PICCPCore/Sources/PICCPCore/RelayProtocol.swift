@@ -89,6 +89,7 @@ public struct FederationDescriptor: Codable, Equatable {
 
 public enum HiddenRetrievalMode: String, Codable, CaseIterable {
     case coverQuery
+    case replicatedXorPIR
 }
 
 public struct HiddenRetrievalSupport: Codable, Equatable {

@@ -275,6 +275,107 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertFalse(plan.requestedRecordIds.contains(" a "))
     }
 
+    func testHiddenRetrievalPlannerBuildsReplicatedXORPIRQuery() throws {
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: " bucket-pir ",
+            orderedRecordIds: [" a ", "b", "c", "d"],
+            targetRecordId: " c ",
+            replicaCount: 3,
+            secret: Data("client-local-pir-secret".utf8)
+        )
+
+        XCTAssertEqual(plan.bucketId, "bucket-pir")
+        XCTAssertEqual(plan.orderedRecordIds, ["a", "b", "c", "d"])
+        XCTAssertEqual(plan.targetRecordId, "c")
+        XCTAssertEqual(plan.targetIndex, 2)
+        XCTAssertEqual(plan.shares.map(\.replicaIndex), [0, 1, 2])
+        XCTAssertTrue(plan.shares.allSatisfy { $0.recordCount == 4 })
+
+        let records = [
+            Data("record-a-16bytes".utf8),
+            Data("record-b-16bytes".utf8),
+            Data("record-c-16bytes".utf8),
+            Data("record-d-16bytes".utf8)
+        ]
+        let responses = try plan.shares.map {
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(records: records, share: $0)
+        }
+
+        XCTAssertEqual(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: responses, using: plan),
+            records[2]
+        )
+    }
+
+    func testHiddenRetrievalPlannerReplicatedXORPIRDoesNotSendTargetOnlyShares() throws {
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: "bucket-pir",
+            orderedRecordIds: ["a", "b", "c", "d", "e"],
+            targetRecordId: "d",
+            replicaCount: 2,
+            secret: Data("client-local-pir-secret".utf8)
+        )
+
+        let unitTarget = testBitset(recordCount: plan.orderedRecordIds.count, enabledIndex: plan.targetIndex)
+        XCTAssertTrue(plan.shares.allSatisfy { $0.selectionBits != unitTarget })
+
+        let combined = plan.shares
+            .map(\.selectionBits)
+            .reduce(Data(repeating: 0, count: unitTarget.count), xorTestData)
+        XCTAssertEqual(combined, unitTarget)
+    }
+
+    func testHiddenRetrievalPlannerRejectsMalformedReplicatedXORPIRInputs() throws {
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+                bucketId: "bucket-pir",
+                orderedRecordIds: ["a", "b"],
+                targetRecordId: "a",
+                replicaCount: 1,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidReplicaCount)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+                bucketId: "bucket-pir",
+                orderedRecordIds: ["a", "a"],
+                targetRecordId: "a",
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordCount)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(
+                records: [Data("short".utf8), Data("longer".utf8)],
+                share: HiddenRetrievalPIRQueryShare(
+                    replicaIndex: 0,
+                    recordCount: 2,
+                    selectionBits: Data([0b0000_0011])
+                )
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordSize)
+        }
+
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: "bucket-pir",
+            orderedRecordIds: ["a", "b"],
+            targetRecordId: "a",
+            secret: Data("secret".utf8)
+        )
+        let response = HiddenRetrievalPIRResponseShare(replicaIndex: 0, payload: Data("target".utf8))
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: [response], using: plan)
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .malformedPIRResponse)
+        }
+    }
+
     func testRelayInfoAdvertisesOptionalHiddenRetrievalSupport() throws {
         let info = RelayConfiguration(
             hiddenRetrieval: HiddenRetrievalSupport(
@@ -291,6 +392,23 @@ final class PICCPCoreTests: XCTestCase {
         let decoded = try PICCPCoder.decode(RelayInfo.self, from: encoded)
 
         XCTAssertEqual(decoded.hiddenRetrieval, info.hiddenRetrieval)
+    }
+
+    func testHiddenRetrievalSupportAdvertisesReplicatedXORPIRMode() throws {
+        let info = RelayConfiguration(
+            hiddenRetrieval: HiddenRetrievalSupport(
+                mode: .replicatedXorPIR,
+                defaultCoverSetSize: 8,
+                maxCoverSetSize: 32
+            )
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(info.hiddenRetrieval?.mode, .replicatedXorPIR)
+
+        let encoded = try PICCPCoder.encode(info)
+        let decoded = try PICCPCoder.decode(RelayInfo.self, from: encoded)
+
+        XCTAssertEqual(decoded.hiddenRetrieval?.mode, .replicatedXorPIR)
     }
 
     func testHiddenRetrievalSupportDoesNotAdvertiseTargetOnlyPlans() {
@@ -7145,6 +7263,16 @@ final class PICCPCoreTests: XCTestCase {
             lifetimeSeconds: lifetimeSeconds
         )
     }
+}
+
+private func testBitset(recordCount: Int, enabledIndex: Int) -> Data {
+    var bitset = Data(repeating: 0, count: (recordCount + 7) / 8)
+    bitset[enabledIndex / 8] = UInt8(1) << UInt8(enabledIndex % 8)
+    return bitset
+}
+
+private func xorTestData(_ lhs: Data, _ rhs: Data) -> Data {
+    Data(zip(lhs, rhs).map { $0 ^ $1 })
 }
 
 private struct SeededGenerator {

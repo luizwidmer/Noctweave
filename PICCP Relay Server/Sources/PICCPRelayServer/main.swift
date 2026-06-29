@@ -76,6 +76,9 @@ struct ServerConfig {
         var ipfsGatewayEndpoint = URL(string: environment["NOCTYRA_IPFS_GATEWAY_ENDPOINT"] ?? "")
         var ipfsTimeoutSeconds = Int(environment["NOCTYRA_IPFS_TIMEOUT_SECONDS"] ?? "") ?? 10
         var hiddenRetrievalEnabled = false
+        var hiddenRetrievalMode = HiddenRetrievalMode(
+            rawValue: environment["NOCTYRA_HIDDEN_RETRIEVAL_MODE"] ?? ""
+        ) ?? .coverQuery
         var hiddenRetrievalDefaultCoverSetSize = 8
         var hiddenRetrievalMaxCoverSetSize = 32
         var wakeMode: DecentralizedWakeMode?
@@ -222,6 +225,12 @@ struct ServerConfig {
                 } else {
                     hiddenRetrievalEnabled = true
                 }
+            case "--hidden-retrieval-mode":
+                if let value = iterator.next(),
+                   let parsed = HiddenRetrievalMode(rawValue: value) {
+                    hiddenRetrievalMode = parsed
+                    hiddenRetrievalEnabled = true
+                }
             case "--hidden-retrieval-cover-size":
                 if let value = iterator.next(), let parsed = Int(value) {
                     hiddenRetrievalDefaultCoverSetSize = max(1, parsed)
@@ -349,6 +358,7 @@ struct ServerConfig {
 
         let hiddenRetrieval = hiddenRetrievalEnabled
             ? HiddenRetrievalSupport(
+                mode: hiddenRetrievalMode,
                 defaultCoverSetSize: hiddenRetrievalDefaultCoverSetSize,
                 maxCoverSetSize: hiddenRetrievalMaxCoverSetSize
             )

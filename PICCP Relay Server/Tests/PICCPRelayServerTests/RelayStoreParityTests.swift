@@ -824,6 +824,21 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(info.hiddenRetrieval?.maxCoverSetSize, 16)
     }
 
+    func testHiddenRetrievalSupportCarriesReplicatedXORPIRMode() {
+        let configuration = RelayConfiguration(
+            hiddenRetrieval: HiddenRetrievalSupport(
+                mode: .replicatedXorPIR,
+                defaultCoverSetSize: 8,
+                maxCoverSetSize: 32
+            )
+        )
+        let info = configuration.makeInfo()
+
+        XCTAssertEqual(info.hiddenRetrieval?.mode, .replicatedXorPIR)
+        XCTAssertEqual(info.hiddenRetrieval?.defaultCoverSetSize, 8)
+        XCTAssertEqual(info.hiddenRetrieval?.maxCoverSetSize, 32)
+    }
+
     func testHiddenRetrievalSupportDoesNotAdvertiseTargetOnlyPlans() {
         let support = HiddenRetrievalSupport(defaultCoverSetSize: 1, maxCoverSetSize: 1)
 

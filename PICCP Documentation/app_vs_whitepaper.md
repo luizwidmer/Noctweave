@@ -76,6 +76,7 @@ Last reviewed: June 28, 2026.
 - Wake cycle planning carries selected long-poll timeout metadata and clamps it to the selected delay.
 - Wake cycle planning has explicit empty-profile default behavior.
 - Client-side ciphertext prefetch can stage both direct-message envelopes and group-ratchet envelopes for active identities without decrypting or acknowledging them; the normal unlocked sync path remains responsible for decrypting and clearing relay/staged records.
+- Hidden retrieval now includes an optional replicated XOR-PIR primitive. A client can split a target lookup across two or more non-colluding replicas with identical fixed-size buckets, and any single replica sees only a selection mask rather than a target-only fetch. The core tests cover target reconstruction, non-target-only shares, malformed-share rejection, malformed-response rejection, and Linux relay metadata parity for advertising the mode.
 - Group epoch-secret distributions expose structural validation for member/share consistency.
 - Group epoch-secret opening fails unless the distribution is structurally valid.
 - Group epoch-secret sealing rejects duplicate or empty recipient sets.
@@ -92,8 +93,14 @@ Last reviewed: June 28, 2026.
 - Core and Linux relay stores reject oversized direct/group envelope payloads before mailbox insertion.
 - `scripts/verify-whitepaper-alignment.sh` covers direct padding, group padding, and relay payload-size parity.
 
+## Current Hidden-Retrieval Alignment Pass
+- Cover-query retrieval remains available for simple metadata reduction.
+- Replicated XOR-PIR support adds a stronger optional path for operators that can provide non-colluding replicated buckets.
+- Relay metadata can advertise either `coverQuery` or `replicatedXorPIR`, and both the mac relay UI and Linux relay CLI can configure the advertised mode.
+- This is PIR-assisted hidden retrieval under a non-collusion assumption; it is not a single-server cryptographic PIR deployment.
+
 ## Whitepaper Limits That Remain True
-- No full cryptographic PIR-assisted hidden retrieval.
+- No single-server cryptographic PIR deployment.
 - No mixnet or onion transport layer.
 - No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and bounded rejoin recovery, and group ratchet epoch secrets can be distributed through ML-KEM-sealed member shares. Relay-backed text, image, and voice bodies now use the group-inbox ratchet path, and clients no longer preserve the old pairwise group fallback.
 - No claim of protection against a compromised OS or malicious device vendor.
@@ -101,8 +108,8 @@ Last reviewed: June 28, 2026.
 - No centralized push-notification server by design, so closed-app instant delivery remains out of scope. Compatible pull, intent, or long-poll clients can stage encrypted direct and group ciphertext for later unlocked processing.
 
 ## Alignment Summary
-- **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, coordinator-assisted federation, temporal-bucket timestamp minimization, fixed-size message-size buckets, fixed-size hidden-retrieval cover-query safeguards, decentralized wake cycle planning, ciphertext-only direct/group prefetch staging, group-ratchet epoch-secret distribution validation, fail-closed retained-epoch recovery, Linux relay parity for the same group and retrieval checks, and repository-owned whitepaper verification/provenance checks.
-- **Partially aligned**: anonymity-strength metadata protection, PIR-class hidden retrieval, MLS-class group cryptography, autonomous open federation, and closed-app delivery. Current controls now enforce deterministic bucketing, fixed ciphertext-size buckets for message bodies, exact cover-response validation, signed registry commits, MLS epoch state, group-context AEAD binding, structurally validated ML-KEM member shares, retained epoch replay, auditable wake scheduling, and ciphertext-only direct/group staging, but these do not claim strong anonymity, full cryptographic PIR, formal MLS proofs, public DHT release readiness, or guaranteed background delivery.
+- **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, coordinator-assisted federation, temporal-bucket timestamp minimization, fixed-size message-size buckets, fixed-size hidden-retrieval cover-query safeguards, replicated XOR-PIR primitive support, decentralized wake cycle planning, ciphertext-only direct/group prefetch staging, group-ratchet epoch-secret distribution validation, fail-closed retained-epoch recovery, Linux relay parity for the same group and retrieval checks, and repository-owned whitepaper verification/provenance checks.
+- **Partially aligned**: anonymity-strength metadata protection, PIR-class hidden retrieval, MLS-class group cryptography, autonomous open federation, and closed-app delivery. Current controls now enforce deterministic bucketing, fixed ciphertext-size buckets for message bodies, exact cover-response validation, signed registry commits, MLS epoch state, group-context AEAD binding, structurally validated ML-KEM member shares, retained epoch replay, auditable wake scheduling, ciphertext-only direct/group staging, and replicated XOR-PIR under a non-collusion assumption, but these do not claim strong anonymity, single-server cryptographic PIR, formal MLS proofs, public DHT release readiness, or guaranteed background delivery.
 - **Deferred**: mixnet/onion transport, autonomous public DHT release mode, external audit, Apple notarized artifact provenance, registry-pushed Docker image provenance, and formal MLS-class proof work.
 
 ## Next Alignment Targets
@@ -110,5 +117,5 @@ Last reviewed: June 28, 2026.
 - Expand real-device fault-injection coverage around retained group epoch histories; route-level multi-client retained-history coverage now includes multiple offline members recovering after a shared outage.
 - Keep tuning OS-permitted background fetch behavior against relay-advertised wake policy.
 - Continue open-federation experiments behind feature gates and simulation tests; cached-node fallback is covered for core and Linux relay discovery refreshes.
-- Replace cover-query hidden retrieval with stronger PIR if the bandwidth and relay-cost profile becomes acceptable.
+- Evaluate whether replicated XOR-PIR is operationally acceptable for real relay deployments, and only then consider heavier single-server cryptographic PIR.
 - Bind final Apple and public Docker artifact provenance once release signing, notarization, and registry-publishing paths exist.

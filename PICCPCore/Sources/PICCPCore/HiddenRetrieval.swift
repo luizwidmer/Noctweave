@@ -14,6 +14,11 @@ public enum HiddenRetrievalError: Error, Equatable {
     case malformedPublicPlan
     case incompleteCoverResponse
     case unexpectedResponseRecords
+    case invalidReplicaCount
+    case invalidRecordCount
+    case invalidRecordSize
+    case malformedPIRShare
+    case malformedPIRResponse
 }
 
 public struct HiddenRetrievalQueryPlan: Codable, Equatable {
@@ -29,6 +34,50 @@ public struct HiddenRetrievalQueryPlan: Codable, Equatable {
 
     public var targetOffset: Int? {
         requestedRecordIds.firstIndex(of: targetRecordId)
+    }
+}
+
+public struct HiddenRetrievalPIRQueryShare: Codable, Equatable {
+    public let replicaIndex: Int
+    public let recordCount: Int
+    public let selectionBits: Data
+
+    public init(replicaIndex: Int, recordCount: Int, selectionBits: Data) {
+        self.replicaIndex = replicaIndex
+        self.recordCount = recordCount
+        self.selectionBits = selectionBits
+    }
+}
+
+public struct HiddenRetrievalPIRQueryPlan: Codable, Equatable {
+    public let bucketId: String
+    public let orderedRecordIds: [String]
+    public let targetRecordId: String
+    public let targetIndex: Int
+    public let shares: [HiddenRetrievalPIRQueryShare]
+
+    public init(
+        bucketId: String,
+        orderedRecordIds: [String],
+        targetRecordId: String,
+        targetIndex: Int,
+        shares: [HiddenRetrievalPIRQueryShare]
+    ) {
+        self.bucketId = bucketId
+        self.orderedRecordIds = orderedRecordIds
+        self.targetRecordId = targetRecordId
+        self.targetIndex = targetIndex
+        self.shares = shares
+    }
+}
+
+public struct HiddenRetrievalPIRResponseShare: Codable, Equatable {
+    public let replicaIndex: Int
+    public let payload: Data
+
+    public init(replicaIndex: Int, payload: Data) {
+        self.replicaIndex = replicaIndex
+        self.payload = payload
     }
 }
 
@@ -132,6 +181,123 @@ public enum HiddenRetrievalPlanner {
         }
     }
 
+    public static func makeReplicatedXORPIRQuery(
+        bucketId: String,
+        orderedRecordIds: [String],
+        targetRecordId: String,
+        replicaCount: Int = 2,
+        secret: Data,
+        maximumRecordCount: Int = 4096
+    ) throws -> HiddenRetrievalPIRQueryPlan {
+        let canonicalBucketId = bucketId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let canonicalTargetId = targetRecordId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !canonicalBucketId.isEmpty else {
+            throw HiddenRetrievalError.invalidBucketId
+        }
+        guard !canonicalTargetId.isEmpty else {
+            throw HiddenRetrievalError.invalidTargetRecordId
+        }
+        guard !secret.isEmpty else {
+            throw HiddenRetrievalError.invalidSecret
+        }
+        guard replicaCount >= 2 else {
+            throw HiddenRetrievalError.invalidReplicaCount
+        }
+        let normalizedIds = orderedRecordIds.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !normalizedIds.contains(where: { $0.isEmpty }) else {
+            throw HiddenRetrievalError.invalidRecordId
+        }
+        guard !normalizedIds.isEmpty,
+              normalizedIds.count <= maximumRecordCount,
+              Set(normalizedIds).count == normalizedIds.count else {
+            throw HiddenRetrievalError.invalidRecordCount
+        }
+        guard let targetIndex = normalizedIds.firstIndex(of: canonicalTargetId) else {
+            throw HiddenRetrievalError.targetMissing
+        }
+
+        var shares: [Data] = []
+        var combined = Data(repeating: 0, count: bitsetByteCount(for: normalizedIds.count))
+        for replicaIndex in 0..<(replicaCount - 1) {
+            let share = deterministicMask(
+                bucketId: canonicalBucketId,
+                targetRecordId: canonicalTargetId,
+                recordCount: normalizedIds.count,
+                replicaIndex: replicaIndex,
+                secret: secret
+            )
+            combined = xorBitsets(combined, share)
+            shares.append(share)
+        }
+        setBit(at: targetIndex, in: &combined)
+        shares.append(combined)
+
+        return HiddenRetrievalPIRQueryPlan(
+            bucketId: canonicalBucketId,
+            orderedRecordIds: normalizedIds,
+            targetRecordId: canonicalTargetId,
+            targetIndex: targetIndex,
+            shares: shares.enumerated().map { index, selectionBits in
+                HiddenRetrievalPIRQueryShare(
+                    replicaIndex: index,
+                    recordCount: normalizedIds.count,
+                    selectionBits: selectionBits
+                )
+            }
+        )
+    }
+
+    public static func evaluateReplicatedXORPIRShare(
+        records: [Data],
+        share: HiddenRetrievalPIRQueryShare
+    ) throws -> HiddenRetrievalPIRResponseShare {
+        guard share.replicaIndex >= 0,
+              share.recordCount == records.count,
+              share.selectionBits.count == bitsetByteCount(for: records.count) else {
+            throw HiddenRetrievalError.malformedPIRShare
+        }
+        guard !records.isEmpty else {
+            throw HiddenRetrievalError.invalidRecordCount
+        }
+        let recordSize = records[0].count
+        guard recordSize > 0,
+              records.allSatisfy({ $0.count == recordSize }) else {
+            throw HiddenRetrievalError.invalidRecordSize
+        }
+        var accumulator = Data(repeating: 0, count: recordSize)
+        for index in records.indices where bit(at: index, in: share.selectionBits) {
+            accumulator = xorData(accumulator, records[index])
+        }
+        return HiddenRetrievalPIRResponseShare(
+            replicaIndex: share.replicaIndex,
+            payload: accumulator
+        )
+    }
+
+    public static func recoverReplicatedXORPIRTarget(
+        from responses: [HiddenRetrievalPIRResponseShare],
+        using plan: HiddenRetrievalPIRQueryPlan
+    ) throws -> Data {
+        guard plan.shares.count >= 2,
+              responses.count == plan.shares.count,
+              Set(responses.map(\.replicaIndex)) == Set(plan.shares.map(\.replicaIndex)),
+              !responses.isEmpty else {
+            throw HiddenRetrievalError.malformedPIRResponse
+        }
+        let payloadSize = responses[0].payload.count
+        guard payloadSize > 0,
+              responses.allSatisfy({ $0.payload.count == payloadSize }) else {
+            throw HiddenRetrievalError.invalidRecordSize
+        }
+        return responses
+            .sorted { $0.replicaIndex < $1.replicaIndex }
+            .reduce(Data(repeating: 0, count: payloadSize)) { partial, response in
+                xorData(partial, response.payload)
+            }
+    }
+
     private static func rank(
         bucketId: String,
         recordId: String,
@@ -147,5 +313,72 @@ public enum HiddenRetrievalPlanner {
         data.append(0)
         data.append(secret)
         return Array(SHA256.hash(data: data))
+    }
+
+    private static func deterministicMask(
+        bucketId: String,
+        targetRecordId: String,
+        recordCount: Int,
+        replicaIndex: Int,
+        secret: Data
+    ) -> Data {
+        let byteCount = bitsetByteCount(for: recordCount)
+        var output = Data()
+        var blockCounter: UInt64 = 0
+        while output.count < byteCount {
+            var data = Data("noctyra-hidden-retrieval-xor-pir-v1".utf8)
+            data.append(Data(bucketId.utf8))
+            data.append(0)
+            data.append(Data(targetRecordId.utf8))
+            data.append(0)
+            var recordCountBytes = UInt64(recordCount).bigEndian
+            data.append(Data(bytes: &recordCountBytes, count: MemoryLayout<UInt64>.size))
+            var replicaIndexBytes = UInt64(replicaIndex).bigEndian
+            data.append(Data(bytes: &replicaIndexBytes, count: MemoryLayout<UInt64>.size))
+            var blockCounterBytes = blockCounter.bigEndian
+            data.append(Data(bytes: &blockCounterBytes, count: MemoryLayout<UInt64>.size))
+            data.append(secret)
+            output.append(Data(SHA256.hash(data: data)))
+            blockCounter += 1
+        }
+        output = output.prefix(byteCount)
+        clearUnusedBits(recordCount: recordCount, in: &output)
+        return output
+    }
+
+    private static func bitsetByteCount(for bitCount: Int) -> Int {
+        max(0, (bitCount + 7) / 8)
+    }
+
+    private static func bit(at index: Int, in bitset: Data) -> Bool {
+        let byteIndex = index / 8
+        let bitIndex = index % 8
+        guard byteIndex < bitset.count else { return false }
+        return (bitset[byteIndex] & (1 << UInt8(bitIndex))) != 0
+    }
+
+    private static func setBit(at index: Int, in bitset: inout Data) {
+        let byteIndex = index / 8
+        let bitIndex = index % 8
+        guard byteIndex < bitset.count else { return }
+        bitset[byteIndex] ^= (1 << UInt8(bitIndex))
+    }
+
+    private static func clearUnusedBits(recordCount: Int, in bitset: inout Data) {
+        let usedBitsInLastByte = recordCount % 8
+        guard usedBitsInLastByte != 0,
+              let last = bitset.indices.last else {
+            return
+        }
+        let mask = UInt8((1 << UInt8(usedBitsInLastByte)) - 1)
+        bitset[last] &= mask
+    }
+
+    private static func xorBitsets(_ lhs: Data, _ rhs: Data) -> Data {
+        xorData(lhs, rhs)
+    }
+
+    private static func xorData(_ lhs: Data, _ rhs: Data) -> Data {
+        Data(zip(lhs, rhs).map { $0 ^ $1 })
     }
 }

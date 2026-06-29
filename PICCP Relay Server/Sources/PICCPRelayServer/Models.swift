@@ -206,6 +206,7 @@ struct FederationDescriptor: Codable, Equatable {
 
 enum HiddenRetrievalMode: String, Codable, CaseIterable {
     case coverQuery
+    case replicatedXorPIR
 }
 
 struct HiddenRetrievalSupport: Codable, Equatable {
