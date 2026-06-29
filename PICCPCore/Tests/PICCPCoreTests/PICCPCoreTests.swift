@@ -325,6 +325,41 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(combined, unitTarget)
     }
 
+    func testHiddenRetrievalPlannerBuildsPaddedReplicatedXORPIRQuery() throws {
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: "bucket-pir",
+            orderedRecordIds: ["a", "b", "c"],
+            targetRecordId: "b",
+            replicaCount: 3,
+            secret: Data("client-local-padded-pir-secret".utf8),
+            paddedRecordCount: 16
+        )
+
+        XCTAssertEqual(plan.orderedRecordIds.count, 3)
+        XCTAssertEqual(plan.shares.map(\.recordCount), [16, 16, 16])
+        XCTAssertTrue(plan.shares.allSatisfy { $0.selectionBits.count == 2 })
+
+        let records = [
+            Data("record-a-16bytes".utf8),
+            Data("record-b-16bytes".utf8),
+            Data("record-c-16bytes".utf8)
+        ]
+        let responses = try plan.shares.map {
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(records: records, share: $0)
+        }
+
+        XCTAssertEqual(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: responses, using: plan),
+            records[1]
+        )
+
+        let unitTarget = testBitset(recordCount: 16, enabledIndex: plan.targetIndex)
+        let combined = plan.shares
+            .map(\.selectionBits)
+            .reduce(Data(repeating: 0, count: unitTarget.count), xorTestData)
+        XCTAssertEqual(combined, unitTarget)
+    }
+
     func testHiddenRetrievalPlannerRejectsMalformedReplicatedXORPIRInputs() throws {
         XCTAssertThrowsError(
             try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
@@ -344,6 +379,18 @@ final class PICCPCoreTests: XCTestCase {
                 orderedRecordIds: ["a", "a"],
                 targetRecordId: "a",
                 secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordCount)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+                bucketId: "bucket-pir",
+                orderedRecordIds: ["a", "b", "c"],
+                targetRecordId: "a",
+                secret: Data("secret".utf8),
+                paddedRecordCount: 2
             )
         ) { error in
             XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordCount)

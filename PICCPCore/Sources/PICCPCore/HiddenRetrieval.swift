@@ -288,6 +288,7 @@ public enum HiddenRetrievalPlanner {
         targetRecordId: String,
         replicaCount: Int = 2,
         secret: Data,
+        paddedRecordCount: Int? = nil,
         maximumRecordCount: Int = 4096
     ) throws -> HiddenRetrievalPIRQueryPlan {
         let canonicalBucketId = bucketId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -318,14 +319,19 @@ public enum HiddenRetrievalPlanner {
         guard let targetIndex = normalizedIds.firstIndex(of: canonicalTargetId) else {
             throw HiddenRetrievalError.targetMissing
         }
+        let queryRecordCount = paddedRecordCount ?? normalizedIds.count
+        guard queryRecordCount >= normalizedIds.count,
+              queryRecordCount <= maximumRecordCount else {
+            throw HiddenRetrievalError.invalidRecordCount
+        }
 
         var shares: [Data] = []
-        var combined = Data(repeating: 0, count: bitsetByteCount(for: normalizedIds.count))
+        var combined = Data(repeating: 0, count: bitsetByteCount(for: queryRecordCount))
         for replicaIndex in 0..<(replicaCount - 1) {
             let share = deterministicMask(
                 bucketId: canonicalBucketId,
                 targetRecordId: canonicalTargetId,
-                recordCount: normalizedIds.count,
+                recordCount: queryRecordCount,
                 replicaIndex: replicaIndex,
                 secret: secret
             )
@@ -343,7 +349,7 @@ public enum HiddenRetrievalPlanner {
             shares: shares.enumerated().map { index, selectionBits in
                 HiddenRetrievalPIRQueryShare(
                     replicaIndex: index,
-                    recordCount: normalizedIds.count,
+                    recordCount: queryRecordCount,
                     selectionBits: selectionBits
                 )
             }
@@ -355,8 +361,8 @@ public enum HiddenRetrievalPlanner {
         share: HiddenRetrievalPIRQueryShare
     ) throws -> HiddenRetrievalPIRResponseShare {
         guard share.replicaIndex >= 0,
-              share.recordCount == records.count,
-              share.selectionBits.count == bitsetByteCount(for: records.count) else {
+              share.recordCount >= records.count,
+              share.selectionBits.count == bitsetByteCount(for: share.recordCount) else {
             throw HiddenRetrievalError.malformedPIRShare
         }
         guard !records.isEmpty else {
