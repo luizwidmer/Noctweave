@@ -487,6 +487,80 @@ final class PICCPCoreTests: XCTestCase {
         }
     }
 
+    func testHiddenRetrievalPlannerRejectsMalformedReplicatedXORPIRPlans() throws {
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: "bucket-pir",
+            orderedRecordIds: ["a", "b", "c"],
+            targetRecordId: "b",
+            replicaCount: 3,
+            secret: Data("client-local-pir-plan-secret".utf8),
+            paddedRecordCount: 8
+        )
+        let records = [
+            Data("record-a".utf8),
+            Data("record-b".utf8),
+            Data("record-c".utf8)
+        ]
+        let responses = try plan.shares.map {
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(records: records, share: $0)
+        }
+
+        let duplicateReplicaPlan = HiddenRetrievalPIRQueryPlan(
+            bucketId: plan.bucketId,
+            orderedRecordIds: plan.orderedRecordIds,
+            targetRecordId: plan.targetRecordId,
+            targetIndex: plan.targetIndex,
+            shares: [
+                plan.shares[0],
+                HiddenRetrievalPIRQueryShare(
+                    replicaIndex: 0,
+                    recordCount: plan.shares[1].recordCount,
+                    selectionBits: plan.shares[1].selectionBits
+                ),
+                plan.shares[2]
+            ]
+        )
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: responses, using: duplicateReplicaPlan)
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .malformedPIRShare)
+        }
+
+        let wrongTargetPlan = HiddenRetrievalPIRQueryPlan(
+            bucketId: plan.bucketId,
+            orderedRecordIds: plan.orderedRecordIds,
+            targetRecordId: "c",
+            targetIndex: plan.targetIndex,
+            shares: plan.shares
+        )
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: responses, using: wrongTargetPlan)
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .targetMissing)
+        }
+
+        let zeroedSharePlan = HiddenRetrievalPIRQueryPlan(
+            bucketId: plan.bucketId,
+            orderedRecordIds: plan.orderedRecordIds,
+            targetRecordId: plan.targetRecordId,
+            targetIndex: plan.targetIndex,
+            shares: [
+                HiddenRetrievalPIRQueryShare(
+                    replicaIndex: 0,
+                    recordCount: plan.shares[0].recordCount,
+                    selectionBits: Data(repeating: 0, count: plan.shares[0].selectionBits.count)
+                ),
+                plan.shares[1],
+                plan.shares[2]
+            ]
+        )
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: responses, using: zeroedSharePlan)
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .malformedPIRShare)
+        }
+    }
+
     func testRelayInfoAdvertisesOptionalHiddenRetrievalSupport() throws {
         let info = RelayConfiguration(
             hiddenRetrieval: HiddenRetrievalSupport(

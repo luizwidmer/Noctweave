@@ -396,6 +396,7 @@ public enum HiddenRetrievalPlanner {
         using plan: HiddenRetrievalPIRQueryPlan,
         fixedResponseSize: Int? = nil
     ) throws -> Data {
+        try validateReplicatedXORPIRPlan(plan)
         guard plan.shares.count >= 2,
               responses.count == plan.shares.count,
               Set(responses.map(\.replicaIndex)) == Set(plan.shares.map(\.replicaIndex)),
@@ -417,6 +418,57 @@ public enum HiddenRetrievalPlanner {
             .reduce(Data(repeating: 0, count: payloadSize)) { partial, response in
                 xorData(partial, response.payload)
             }
+    }
+
+    private static func validateReplicatedXORPIRPlan(_ plan: HiddenRetrievalPIRQueryPlan) throws {
+        guard !plan.bucketId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw HiddenRetrievalError.invalidBucketId
+        }
+        guard !plan.targetRecordId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw HiddenRetrievalError.invalidTargetRecordId
+        }
+        let normalizedIds = plan.orderedRecordIds.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !normalizedIds.contains(where: { $0.isEmpty }) else {
+            throw HiddenRetrievalError.invalidRecordId
+        }
+        guard !normalizedIds.isEmpty,
+              Set(normalizedIds).count == normalizedIds.count,
+              normalizedIds == plan.orderedRecordIds else {
+            throw HiddenRetrievalError.invalidRecordCount
+        }
+        guard plan.targetIndex >= 0,
+              plan.targetIndex < normalizedIds.count,
+              normalizedIds[plan.targetIndex] == plan.targetRecordId else {
+            throw HiddenRetrievalError.targetMissing
+        }
+        guard plan.shares.count >= 2,
+              Set(plan.shares.map(\.replicaIndex)).count == plan.shares.count,
+              Set(plan.shares.map(\.replicaIndex)) == Set(0..<plan.shares.count) else {
+            throw HiddenRetrievalError.malformedPIRShare
+        }
+        let recordCounts = Set(plan.shares.map(\.recordCount))
+        guard recordCounts.count == 1,
+              let recordCount = recordCounts.first,
+              recordCount >= normalizedIds.count,
+              recordCount > plan.targetIndex else {
+            throw HiddenRetrievalError.invalidRecordCount
+        }
+        let expectedBitsetSize = bitsetByteCount(for: recordCount)
+        guard expectedBitsetSize > 0,
+              plan.shares.allSatisfy({ $0.selectionBits.count == expectedBitsetSize }) else {
+            throw HiddenRetrievalError.malformedPIRShare
+        }
+
+        var expected = Data(repeating: 0, count: expectedBitsetSize)
+        setBit(at: plan.targetIndex, in: &expected)
+        let combined = plan.shares
+            .map(\.selectionBits)
+            .reduce(Data(repeating: 0, count: expectedBitsetSize), xorBitsets)
+        guard combined == expected else {
+            throw HiddenRetrievalError.malformedPIRShare
+        }
     }
 
     private static func rank(
