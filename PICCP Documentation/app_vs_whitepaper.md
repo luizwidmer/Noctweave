@@ -40,7 +40,7 @@ Last reviewed: June 29, 2026.
 - Clients can replay retained epoch-secret distributions in order when they were offline across multiple group commits, provided the missed epochs remain inside the relay's bounded descriptor history. The shared `GroupRatchetRecovery` path is covered against stale serialized group state and fails closed when a missing retained epoch would otherwise leave the client on stale group keys.
 - Relay-backed group delivery uses signed group-ratchet envelopes stored in the group inbox for text, image attachments, and voice messages; clients fetch, decrypt, and acknowledge those envelopes with member actor proofs. Group acknowledgements are member-scoped, so one online member cannot remove a pending ciphertext before another member fetches it.
 - Group-ratchet envelopes can be submitted through a federated peer relay and forwarded to the group-owning relay under the same federation policy used by direct-message forwarding.
-- Route and state coverage verifies offline epoch refresh, replay across multiple missed epoch distributions, recovery from stale persisted group state, encrypted attachment retrieval after another group member has already acknowledged the group envelope, and federated group-ratchet delivery from one relay to another.
+- Route and state coverage verifies offline epoch refresh, replay across multiple missed epoch distributions, multiple offline members recovering independently after a shared outage, fail-closed recovery when the relay's bounded epoch-history window has expired for a stale member, recovery from stale persisted group state, encrypted attachment retrieval after another group member has already acknowledged the group envelope, and federated group-ratchet delivery from one relay to another.
 - A repository-owned group protocol model checker exhaustively explores a bounded state space of signed update, join approval, member removal, self-leave, stale-epoch, forked-transcript, duplicate-member, creator-removal, and no-op commit cases against the real MLS epoch/transcript state type.
 - Clients fail closed when relay-backed group-ratchet state is missing instead of silently downgrading group sends to pairwise direct-message fan-out.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
@@ -142,7 +142,7 @@ Last reviewed: June 29, 2026.
 
 ## Next Alignment Targets
 - Run `scripts/verify-whitepaper-alignment.sh` alongside focused protocol changes that touch metadata minimization, hidden retrieval, decentralized wake, or open federation.
-- Expand real-device fault-injection coverage around retained group epoch histories; route-level multi-client retained-history coverage now includes multiple offline members recovering after a shared outage.
+- Expand real-device fault-injection coverage around retained group epoch histories; repository route-level retained-history coverage now includes multiple offline members recovering after a shared outage and fail-closed behavior after the retained epoch window expires.
 - Keep tuning OS-permitted background fetch behavior against relay-advertised wake policy.
 - Continue open-federation experiments behind feature gates and simulation tests; cached-node fallback is covered for core and Linux relay discovery refreshes.
 - Evaluate whether replicated XOR-PIR is operationally acceptable for real relay deployments, and only then consider heavier single-server cryptographic PIR.

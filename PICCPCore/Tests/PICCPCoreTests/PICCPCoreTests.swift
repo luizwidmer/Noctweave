@@ -5385,6 +5385,121 @@ final class PICCPCoreTests: XCTestCase {
         }
     }
 
+    func testOfflineGroupMemberFailsClosedWhenRetainedEpochWindowExpires() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39514)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "expired epoch history group relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Expired Offline")
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+        let memberProfile = relayGroupMemberProfile(identity: member, relay: endpoint)
+        let recipients = [creatorProfile, memberProfile]
+        let client = RelayClient(endpoint: endpoint)
+        let groupId = UUID(uuidString: "DDDDDDDD-EEEE-FFFF-AAAA-BBBBBBBBBBBB")!
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("expired window epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let createdResponse = try await client.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        groupId: groupId,
+                        title: "Expired Window",
+                        creatorFingerprint: creator.fingerprint,
+                        memberFingerprints: [member.fingerprint],
+                        creatorProfile: creatorProfile,
+                        memberProfiles: [memberProfile],
+                        initialRatchetSecretDistribution: epoch0Distribution
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        let created = try XCTUnwrap(createdResponse.group)
+        let staleMemberRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        var latestGroup = created
+        for epoch in UInt64(1)...65 {
+            let secret = Data(SHA256.hash(data: Data("expired window epoch \(epoch)".utf8)))
+            let distribution = try GroupRatchetEpochSecretDistribution.seal(
+                secret: secret,
+                groupId: created.id,
+                epoch: latestGroup.epoch + 1,
+                operation: .update,
+                recipients: recipients
+            )
+            let commit = try signedGroupCommit(
+                SignedGroupCommit(
+                    operation: .update,
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    baseEpoch: latestGroup.epoch,
+                    previousTranscriptHash: latestGroup.mlsEpochState.confirmedTranscriptHash,
+                    title: "Expired Window \(epoch)",
+                    ratchetSecretDistribution: distribution
+                ),
+                signer: creator
+            )
+            let response = try await client.send(
+                .updateGroup(
+                    UpdateGroupRequest(
+                        groupId: created.id,
+                        actorFingerprint: creator.fingerprint,
+                        title: "Expired Window \(epoch)",
+                        groupCommit: commit
+                    )
+                )
+            )
+            latestGroup = try XCTUnwrap(response.group)
+        }
+
+        XCTAssertEqual(latestGroup.epoch, 65)
+        XCTAssertEqual(latestGroup.mlsEpochHistory.count, 64)
+        XCTAssertEqual(latestGroup.mlsEpochHistory.first?.epoch, 2)
+
+        let refreshedResponse = try await client.send(
+            .getGroup(
+                try signedGetGroupRequest(
+                    GetGroupRequest(groupId: latestGroup.id, memberFingerprint: member.fingerprint),
+                    signer: member
+                )
+            )
+        )
+        let refreshed = try XCTUnwrap(refreshedResponse.group)
+        XCTAssertEqual(refreshed.mlsEpochHistory.first?.epoch, 2)
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: refreshed,
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+    }
+
     func testRelayServerDeleteGroupRoute() async throws {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39443)
         let server = RelayServer(

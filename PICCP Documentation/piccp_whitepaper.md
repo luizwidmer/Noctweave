@@ -308,7 +308,7 @@ PICCP supports groups through relay-backed coordination while the group cryptogr
 - leave
 - creator-side delete or extinguish
 
-This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as a complete MLS deployment or an externally proven group ratchet yet. Relays advertise their group security model so clients can distinguish pairwise-fan-out groups from `mlsDerivedTree` groups. The shipped client path fails closed when relay-backed group-ratchet state is unavailable instead of silently downgrading to pairwise direct-message fan-out. Route and state coverage exercises offline epoch refresh, multiple missed epoch-distribution replay, stale persisted group-state recovery, encrypted attachment retrieval after another member has acknowledged the same group envelope, federated group-ratchet delivery across two relays, and bounded model-checking of group commit state evolution.
+This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as a complete MLS deployment or an externally proven group ratchet yet. Relays advertise their group security model so clients can distinguish pairwise-fan-out groups from `mlsDerivedTree` groups. The shipped client path fails closed when relay-backed group-ratchet state is unavailable instead of silently downgrading to pairwise direct-message fan-out. Route and state coverage exercises offline epoch refresh, multiple missed epoch-distribution replay, multiple offline members independently recovering after a shared outage, fail-closed recovery after the retained epoch-history window expires, stale persisted group-state recovery, encrypted attachment retrieval after another member has acknowledged the same group envelope, federated group-ratchet delivery across two relays, and bounded model-checking of group commit state evolution.
 
 ## 8.2 Attachments
 
@@ -382,7 +382,7 @@ The following areas remain future work:
 - single-server cryptographic PIR hidden retrieval
 - full mixnet deployment with continuous cover traffic, shared route selection, and network-wide latency scheduling
 - DHT-style autonomous open-federation discovery
-- expanded real-device and multi-client fault-injection coverage around retained group epoch histories and model-checked group state transitions
+- expanded real-device fault-injection coverage around retained group epoch histories and model-checked group state transitions
 - external independent audit and signed release-provenance packaging
 - stronger closed-app background delivery that does not require centralized push infrastructure or rely on OS-opportunistic intent/widget execution
 
