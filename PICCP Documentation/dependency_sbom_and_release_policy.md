@@ -116,15 +116,13 @@ docker image inspect noctyra-relay:<version> --format '{{.Id}}'
    - Docker base image packages
    - Apple SDK release notes for CryptoKit/security fixes
 
-## Release Signing Policy
+## Release Packaging Policy
 
 Every release should have:
 
-- A signed Git tag.
-- SHA-256 checksums for archives, Docker image digests, and generated PDFs.
 - Apple app builds signed and distributed through the App Store path.
-- macOS builds notarized when distributed outside the App Store.
-- Docker images pushed by digest and tagged immutably.
+- SHA-256 checksums for generated documentation and non-App-Store archives.
+- Docker images pushed by digest and tagged immutably if public relay images are offered later.
 - Release notes that identify dependency changes, cryptographic dependency changes, and any deliberate storage/schema reset requirements.
 
 Cryptographic dependency updates require a dedicated release note section and should not be bundled silently with unrelated UI changes.
@@ -137,14 +135,17 @@ Do not release if:
 - `liboqs` changed without explicit review.
 - Docker base image changed without a vulnerability and compatibility review.
 - Tests skip unexpectedly beyond known local-runtime `liboqs` skips.
-- A release artifact cannot be reproduced from the tagged commit.
-- App Store signing or notarization fails for the selected distribution path.
+- App Store signing fails for the selected app distribution path.
 
 ## Distribution Notes
 
 - Client app distribution uses Apple signing and App Store review as the release
-  trust boundary. Do not add project-specific release-origin ceremony unless the distribution
+  trust boundary. Do not add project-specific app-provenance prompts, custom
+  release-origin checks, or user-facing verification loops unless the app distribution
   model changes.
+- Repository verification remains scoped to dependency inventory, package pins,
+  protocol tests, and optional scanner hooks. Those checks support development
+  hygiene; they are not an extra provenance system for App Store users.
 - Docker relay publishing is an operator packaging concern. If public images are
   introduced later, document tags, immutable digests, and vulnerability scanning
   in the relay operations guide rather than in the client protocol alignment list.

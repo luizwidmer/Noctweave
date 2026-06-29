@@ -222,7 +222,7 @@ No high-severity implementation findings remain from this pass. This does not re
 ### Low
 1. **External validation remains incomplete**
    - Current: dependency SBOM and release signing policy are documented, with deterministic machine-readable SBOM snapshots, a local release verification script, and optional container scanning hooks.
-   - Required: independent external security audit. App release-origin trust is handled by the App Store path rather than by a project-specific release layer.
+   - Required: independent external security audit. App release-origin trust is handled by the App Store path rather than by project-specific provenance prompts, custom release-origin checks, or user-facing verification loops.
 
 ## Verification Plan
 
