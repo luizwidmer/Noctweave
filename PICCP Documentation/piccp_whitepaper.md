@@ -28,7 +28,7 @@ PICCP was designed against that backdrop. Its central claim is that identity con
 
 ## 1.2 Design stance
 
-PICCP prioritizes deployable post-quantum confidentiality and selective continuity over idealized anonymity claims. The protocol therefore adopts relays, bounded metadata minimization, and coordinator-assisted federation while leaving PIR, mixnet transport, and MLS-class groups as future extensions rather than pretending they are already solved.
+PICCP prioritizes deployable post-quantum confidentiality and selective continuity over idealized anonymity claims. The protocol therefore adopts relays, bounded metadata minimization, and coordinator-assisted federation while treating PIR, mixnet transport, and MLS-class group work as explicit optional layers with clear limits rather than pretending they are fully solved.
 
 # 2. System Model
 
@@ -245,7 +245,7 @@ Relays may also advertise optional hidden-retrieval support. In cover-query mode
 
 Relays may also advertise optional onion-transport support. Onion packets are layered with ML-KEM-768 encapsulation per hop and AES-256-GCM payload protection. Each relay hop decapsulates only its layer, learns only its own routing instruction and optional delay bucket, and forwards the encrypted next layer. Relay metadata suppresses disabled or single-hop onion settings rather than presenting them as usable route-privacy support. This is a route-privacy primitive for compatible relay paths.
 
-Relays can additionally advertise a mixnet scheduling policy: batch interval, minimum batch size, cover packets per batch, and maximum release delay. Compatible clients can use this policy to shape onion packets into batches with deterministic cover traffic and bounded jitter before release. A mixnet claim is considered usable only when the advertised policy is backed by enabled onion transport, at least two hops, fixed-size packet requirements, nonzero cover traffic, a minimum batch size, nonzero release delay, and a nontrivial batch interval. Relay metadata suppresses unusable mixnet claims instead of asking clients to trust mode-only advertisements. This improves timing resistance for participating paths, but it is still not a full global mixnet by itself because it does not prove that all relays maintain continuous cover traffic, shared route-selection policy, or network-wide latency scheduling.
+Relays can additionally advertise a mixnet scheduling policy: batch interval, minimum batch size, cover packets per batch, and maximum release delay. Compatible clients can use this policy to shape onion packets into batches with deterministic cover traffic and bounded jitter before release. The core scheduler can also build a bounded continuous cover-cycle plan that fills every configured interval in a local horizon, emitting pure cover batches when there are no real packets. A mixnet claim is considered usable only when the advertised policy is backed by enabled onion transport, at least two hops, fixed-size packet requirements, nonzero cover traffic, a minimum batch size, nonzero release delay, and a nontrivial batch interval. Relay metadata suppresses unusable mixnet claims instead of asking clients to trust mode-only advertisements. This improves timing resistance for participating paths, but it is still not a full global mixnet by itself because it does not prove inter-relay cover coordination, shared route-selection policy, or network-wide latency scheduling.
 
 ## 6.5 Decentralized wake and pull delivery
 
@@ -380,7 +380,7 @@ The reference implementation delivers:
 The following areas remain future work:
 
 - single-server cryptographic PIR hidden retrieval
-- full mixnet deployment with continuous cover traffic, shared route selection, and network-wide latency scheduling
+- full mixnet deployment with inter-relay cover coordination, shared route selection, and network-wide latency scheduling
 - DHT-style autonomous open-federation discovery
 - expanded real-device fault-injection coverage around retained group epoch histories and model-checked group state transitions
 - external independent security audit

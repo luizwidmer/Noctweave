@@ -5,6 +5,7 @@ public enum MixnetSchedulerError: Error, Equatable {
     case emptySecret
     case blankPacketId
     case emptyBatch
+    case invalidHorizon
 }
 
 public enum MixnetRoutePolicyIssue: String, Codable, Equatable, CaseIterable {
@@ -89,6 +90,30 @@ public struct MixnetBatchPlan: Codable, Equatable {
     }
 }
 
+public struct MixnetCoverCyclePlan: Codable, Equatable {
+    public let cycleStart: Date
+    public let cycleEnd: Date
+    public let batchIntervalSeconds: Int
+    public let batches: [MixnetBatchPlan]
+
+    public var coversEveryInterval: Bool {
+        guard !batches.isEmpty else {
+            return false
+        }
+
+        let interval = TimeInterval(max(1, batchIntervalSeconds))
+        let expectedCount = max(1, Int(ceil(cycleEnd.timeIntervalSince(cycleStart) / interval)))
+        return batches.count == expectedCount && batches.allSatisfy { !$0.packets.isEmpty }
+    }
+
+    public init(cycleStart: Date, cycleEnd: Date, batchIntervalSeconds: Int, batches: [MixnetBatchPlan]) {
+        self.cycleStart = cycleStart
+        self.cycleEnd = cycleEnd
+        self.batchIntervalSeconds = max(1, batchIntervalSeconds)
+        self.batches = batches
+    }
+}
+
 public enum MixnetRoutePolicyValidator {
     public static func issues(
         for mixnetSupport: MixnetTransportSupport?,
@@ -155,6 +180,60 @@ public enum MixnetRoutePolicyValidator {
 }
 
 public enum MixnetScheduler {
+    public static func makeCoverCyclePlan(
+        pendingPacketIdsByBatch: [[String]],
+        now: Date,
+        policy: MixnetTransportSupport,
+        secret: Data,
+        horizonSeconds: Int
+    ) throws -> MixnetCoverCyclePlan {
+        guard horizonSeconds > 0 else {
+            throw MixnetSchedulerError.invalidHorizon
+        }
+
+        let interval = max(1, policy.batchIntervalSeconds)
+        let batchCount = max(1, Int(ceil(Double(horizonSeconds) / Double(interval))))
+        let cycleStart = batchBoundary(after: now, intervalSeconds: interval)
+        var batches: [MixnetBatchPlan] = []
+        batches.reserveCapacity(batchCount)
+
+        for index in 0..<batchCount {
+            let batchBase = cycleStart.addingTimeInterval(TimeInterval(index * interval))
+            let realPacketIds = index < pendingPacketIdsByBatch.count ? pendingPacketIdsByBatch[index] : []
+            let batch = try makeBatchPlan(
+                pendingPacketIds: realPacketIds,
+                now: batchBase,
+                policy: policy,
+                secret: secret
+            )
+            batches.append(batch)
+        }
+
+        let cycleEnd = cycleStart.addingTimeInterval(TimeInterval(batchCount * interval))
+        return MixnetCoverCyclePlan(
+            cycleStart: cycleStart,
+            cycleEnd: cycleEnd,
+            batchIntervalSeconds: interval,
+            batches: batches
+        )
+    }
+
+    public static func makeCoverCyclePlan(
+        pendingPacketIds: [String],
+        now: Date,
+        policy: MixnetTransportSupport,
+        secret: Data,
+        horizonSeconds: Int
+    ) throws -> MixnetCoverCyclePlan {
+        try makeCoverCyclePlan(
+            pendingPacketIdsByBatch: [pendingPacketIds],
+            now: now,
+            policy: policy,
+            secret: secret,
+            horizonSeconds: horizonSeconds
+        )
+    }
+
     public static func makeBatchPlan(
         pendingPacketIds: [String],
         now: Date,

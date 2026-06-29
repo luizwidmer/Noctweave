@@ -7764,6 +7764,49 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertTrue(plan.packets.allSatisfy { $0.packetId.hasPrefix("cover-") })
     }
 
+    func testMixnetSchedulerBuildsContinuousCoverCycle() throws {
+        let policy = MixnetTransportSupport(
+            batchIntervalSeconds: 30,
+            minBatchSize: 4,
+            coverPacketsPerBatch: 2,
+            maxDelaySeconds: 10
+        )
+        let now = Date(timeIntervalSince1970: 1_001)
+        let secret = Data("cycle-secret".utf8)
+
+        let first = try MixnetScheduler.makeCoverCyclePlan(
+            pendingPacketIdsByBatch: [
+                ["message-a", "message-b"],
+                [],
+                ["message-c"]
+            ],
+            now: now,
+            policy: policy,
+            secret: secret,
+            horizonSeconds: 95
+        )
+        let second = try MixnetScheduler.makeCoverCyclePlan(
+            pendingPacketIdsByBatch: [
+                ["message-b", "message-a"],
+                [],
+                ["message-c"]
+            ],
+            now: now,
+            policy: policy,
+            secret: secret,
+            horizonSeconds: 95
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertTrue(first.coversEveryInterval)
+        XCTAssertEqual(first.cycleStart, Date(timeIntervalSince1970: 1_020))
+        XCTAssertEqual(first.batchIntervalSeconds, 30)
+        XCTAssertEqual(first.batches.count, 4)
+        XCTAssertEqual(first.batches.map(\.realPacketCount), [2, 0, 1, 0])
+        XCTAssertTrue(first.batches.allSatisfy { $0.coverPacketCount >= 2 })
+        XCTAssertTrue(first.batches.allSatisfy { $0.packets.count >= policy.minBatchSize })
+    }
+
     func testMixnetSchedulerRejectsMalformedInputs() {
         let policy = MixnetTransportSupport(minBatchSize: 1, coverPacketsPerBatch: 0)
         XCTAssertThrowsError(
@@ -7785,6 +7828,17 @@ final class PICCPCoreTests: XCTestCase {
             )
         ) { error in
             XCTAssertEqual(error as? MixnetSchedulerError, .blankPacketId)
+        }
+        XCTAssertThrowsError(
+            try MixnetScheduler.makeCoverCyclePlan(
+                pendingPacketIds: [],
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetSchedulerError, .invalidHorizon)
         }
     }
 
