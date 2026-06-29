@@ -137,6 +137,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Add Linux relay native custom-overlay DHT routes and bounded PEX-style traversal tests
 - [x] Defer autonomous public-DHT participation (BEP5/libp2p) out of release scope; use the HTTP sidecar gateway for operator experiments
 - [x] Require DHT poisoning/churn simulations before any future autonomous public-network adapter can be exposed in release builds
+- [x] Add a release verifier guard that fails if BEP5/libp2p/Kademlia autonomous public-DHT adapter code appears in shipped source paths.
 
 ## External validation
 - [ ] Independent external security audit (firm-selected report)
