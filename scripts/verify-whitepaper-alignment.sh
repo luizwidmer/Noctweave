@@ -31,4 +31,11 @@ if grep -R "NoctyraPrefetchGroup\|FetchGroupMessagesRequest\|fetchGroupMessages"
   exit 1
 fi
 
+echo "Verifying Apple helper prefetch sanitizes stale helper config fields..."
+if ! grep -q "prefetchConfigPayloadNeedsSanitization" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchStore.swift"; then
+  echo "Closed-app helper config must scrub stale sensitive fields after successful decode." >&2
+  exit 1
+fi
+
 echo "Whitepaper alignment verification complete."
