@@ -29,6 +29,7 @@ struct ServerConfig {
     var ipfsTimeoutSeconds: Int
     var hiddenRetrieval: HiddenRetrievalSupport?
     var onionTransport: OnionTransportSupport?
+    var mixnetTransport: MixnetTransportSupport?
     var wakeSupport: DecentralizedWakeSupport?
     var relayName: String?
     var operatorNote: String?
@@ -91,6 +92,14 @@ struct ServerConfig {
             environment["NOCTYRA_ONION_FIXED_SIZE_PACKETS"] ?? "true",
             defaultValue: true
         )
+        var mixnetTransportEnabled = parseBoolFlag(
+            environment["NOCTYRA_MIXNET_TRANSPORT"] ?? "false",
+            defaultValue: false
+        )
+        var mixnetBatchIntervalSeconds = Int(environment["NOCTYRA_MIXNET_BATCH_INTERVAL_SECONDS"] ?? "") ?? 30
+        var mixnetMinBatchSize = Int(environment["NOCTYRA_MIXNET_MIN_BATCH_SIZE"] ?? "") ?? 8
+        var mixnetCoverPacketsPerBatch = Int(environment["NOCTYRA_MIXNET_COVER_PACKETS_PER_BATCH"] ?? "") ?? 2
+        var mixnetMaxDelaySeconds = Int(environment["NOCTYRA_MIXNET_MAX_DELAY_SECONDS"] ?? "") ?? 120
         var wakeMode: DecentralizedWakeMode?
         var wakeMinPollSeconds = 60
         var wakeMaxPollSeconds = 300
@@ -265,6 +274,32 @@ struct ServerConfig {
                     onionTransportRequiresFixedSizePackets = parseBoolFlag(value, defaultValue: true)
                     onionTransportEnabled = true
                 }
+            case "--mixnet-transport":
+                if let value = iterator.next() {
+                    mixnetTransportEnabled = parseBoolFlag(value, defaultValue: true)
+                } else {
+                    mixnetTransportEnabled = true
+                }
+            case "--mixnet-batch-interval-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    mixnetBatchIntervalSeconds = parsed
+                    mixnetTransportEnabled = true
+                }
+            case "--mixnet-min-batch-size":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    mixnetMinBatchSize = parsed
+                    mixnetTransportEnabled = true
+                }
+            case "--mixnet-cover-packets-per-batch":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    mixnetCoverPacketsPerBatch = parsed
+                    mixnetTransportEnabled = true
+                }
+            case "--mixnet-max-delay-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    mixnetMaxDelaySeconds = parsed
+                    mixnetTransportEnabled = true
+                }
             case "--wake-mode":
                 if let value = iterator.next(),
                    let parsed = DecentralizedWakeMode(rawValue: value) {
@@ -396,6 +431,15 @@ struct ServerConfig {
                 requiresFixedSizePackets: onionTransportRequiresFixedSizePackets
             )
             : nil
+        let mixnetTransport = mixnetTransportEnabled
+            ? MixnetTransportSupport(
+                enabled: true,
+                batchIntervalSeconds: mixnetBatchIntervalSeconds,
+                minBatchSize: mixnetMinBatchSize,
+                coverPacketsPerBatch: mixnetCoverPacketsPerBatch,
+                maxDelaySeconds: mixnetMaxDelaySeconds
+            )
+            : nil
         let wakeSupport = wakeMode.map { mode in
             DecentralizedWakeSupport(
                 mode: mode,
@@ -433,6 +477,7 @@ struct ServerConfig {
             ipfsTimeoutSeconds: ipfsTimeoutSeconds,
             hiddenRetrieval: hiddenRetrieval,
             onionTransport: onionTransport,
+            mixnetTransport: mixnetTransport,
             wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,
@@ -558,6 +603,7 @@ var relayConfiguration = RelayConfiguration(
     attachmentStorageBackend: config.attachmentStorageMode.rawValue,
     hiddenRetrieval: config.hiddenRetrieval,
     onionTransport: config.onionTransport,
+    mixnetTransport: config.mixnetTransport,
     wakeSupport: config.wakeSupport,
     relayName: config.relayName,
     operatorNote: config.operatorNote,

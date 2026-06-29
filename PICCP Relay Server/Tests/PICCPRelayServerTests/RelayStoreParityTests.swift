@@ -857,6 +857,20 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(info.onionTransport?.requiresFixedSizePackets, true)
     }
 
+    func testRelayInfoCarriesOptionalMixnetTransportSupport() {
+        let support = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: 45,
+            minBatchSize: 12,
+            coverPacketsPerBatch: 4,
+            maxDelaySeconds: 90
+        )
+        let configuration = RelayConfiguration(mixnetTransport: support)
+        let info = configuration.makeInfo()
+
+        XCTAssertEqual(info.mixnetTransport, support)
+    }
+
     func testRelayInfoCarriesGroupSecurityModel() {
         let defaultInfo = RelayConfiguration().makeInfo()
         XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)

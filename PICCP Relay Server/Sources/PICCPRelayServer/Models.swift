@@ -238,6 +238,28 @@ struct OnionTransportSupport: Codable, Equatable {
     }
 }
 
+struct MixnetTransportSupport: Codable, Equatable {
+    let enabled: Bool
+    let batchIntervalSeconds: Int
+    let minBatchSize: Int
+    let coverPacketsPerBatch: Int
+    let maxDelaySeconds: Int
+
+    init(
+        enabled: Bool = true,
+        batchIntervalSeconds: Int = 30,
+        minBatchSize: Int = 8,
+        coverPacketsPerBatch: Int = 2,
+        maxDelaySeconds: Int = 120
+    ) {
+        self.enabled = enabled
+        self.batchIntervalSeconds = min(max(5, batchIntervalSeconds), 3_600)
+        self.minBatchSize = min(max(1, minBatchSize), 256)
+        self.coverPacketsPerBatch = min(max(0, coverPacketsPerBatch), 256)
+        self.maxDelaySeconds = min(max(0, maxDelaySeconds), 3_600)
+    }
+}
+
 enum DecentralizedWakeMode: String, Codable, CaseIterable {
     case pullOnly
     case longPoll
@@ -284,6 +306,7 @@ struct RelayInfo: Codable, Equatable {
     let attachmentStorageBackend: String?
     let hiddenRetrieval: HiddenRetrievalSupport?
     let onionTransport: OnionTransportSupport?
+    let mixnetTransport: MixnetTransportSupport?
     let wakeSupport: DecentralizedWakeSupport?
     let relayName: String?
     let operatorNote: String?
@@ -314,6 +337,7 @@ struct RelayInfo: Codable, Equatable {
         attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         onionTransport: OnionTransportSupport? = nil,
+        mixnetTransport: MixnetTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
@@ -348,6 +372,7 @@ struct RelayInfo: Codable, Equatable {
         self.attachmentStorageBackend = attachmentStorageBackend
         self.hiddenRetrieval = hiddenRetrieval
         self.onionTransport = onionTransport
+        self.mixnetTransport = mixnetTransport
         self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
@@ -380,6 +405,7 @@ struct RelayConfiguration: Codable, Equatable {
     var attachmentStorageBackend: String?
     var hiddenRetrieval: HiddenRetrievalSupport?
     var onionTransport: OnionTransportSupport?
+    var mixnetTransport: MixnetTransportSupport?
     var wakeSupport: DecentralizedWakeSupport?
     var relayName: String?
     var operatorNote: String?
@@ -415,6 +441,7 @@ struct RelayConfiguration: Codable, Equatable {
         attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         onionTransport: OnionTransportSupport? = nil,
+        mixnetTransport: MixnetTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
@@ -456,6 +483,7 @@ struct RelayConfiguration: Codable, Equatable {
         self.attachmentStorageBackend = normalizedAttachmentStorageBackend?.isEmpty == false ? normalizedAttachmentStorageBackend : nil
         self.hiddenRetrieval = hiddenRetrieval
         self.onionTransport = onionTransport
+        self.mixnetTransport = mixnetTransport
         self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
@@ -500,6 +528,7 @@ struct RelayConfiguration: Codable, Equatable {
             attachmentStorageBackend: attachmentStorageBackend,
             hiddenRetrieval: hiddenRetrieval,
             onionTransport: onionTransport,
+            mixnetTransport: mixnetTransport,
             wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,

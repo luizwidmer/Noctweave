@@ -120,6 +120,7 @@ public struct RelayInfo: Codable, Equatable {
     public var attachmentStorageBackend: String?
     public var hiddenRetrieval: HiddenRetrievalSupport?
     public var onionTransport: OnionTransportSupport?
+    public var mixnetTransport: MixnetTransportSupport?
     public var wakeSupport: DecentralizedWakeSupport?
     public var relayName: String?
     public var operatorNote: String?
@@ -150,6 +151,7 @@ public struct RelayInfo: Codable, Equatable {
         attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         onionTransport: OnionTransportSupport? = nil,
+        mixnetTransport: MixnetTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
@@ -184,6 +186,7 @@ public struct RelayInfo: Codable, Equatable {
         self.attachmentStorageBackend = attachmentStorageBackend
         self.hiddenRetrieval = hiddenRetrieval
         self.onionTransport = onionTransport
+        self.mixnetTransport = mixnetTransport
         self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
@@ -216,6 +219,7 @@ public struct RelayConfiguration: Codable, Equatable {
     public var attachmentStorageBackend: String?
     public var hiddenRetrieval: HiddenRetrievalSupport?
     public var onionTransport: OnionTransportSupport?
+    public var mixnetTransport: MixnetTransportSupport?
     public var wakeSupport: DecentralizedWakeSupport?
     public var relayName: String?
     public var operatorNote: String?
@@ -253,6 +257,7 @@ public struct RelayConfiguration: Codable, Equatable {
         attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         onionTransport: OnionTransportSupport? = nil,
+        mixnetTransport: MixnetTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
@@ -296,6 +301,7 @@ public struct RelayConfiguration: Codable, Equatable {
         self.attachmentStorageBackend = normalizedAttachmentStorageBackend?.isEmpty == false ? normalizedAttachmentStorageBackend : nil
         self.hiddenRetrieval = hiddenRetrieval
         self.onionTransport = onionTransport
+        self.mixnetTransport = mixnetTransport
         self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
@@ -342,6 +348,7 @@ public struct RelayConfiguration: Codable, Equatable {
             attachmentStorageBackend: attachmentStorageBackend,
             hiddenRetrieval: hiddenRetrieval,
             onionTransport: onionTransport,
+            mixnetTransport: mixnetTransport,
             wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,

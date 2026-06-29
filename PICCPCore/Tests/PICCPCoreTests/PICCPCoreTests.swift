@@ -7369,6 +7369,96 @@ final class PICCPCoreTests: XCTestCase {
         let decoded = try PICCPCoder.decode(RelayInfo.self, from: PICCPCoder.encode(info))
         XCTAssertEqual(decoded.onionTransport, info.onionTransport)
     }
+
+    func testMixnetSchedulerBuildsDeterministicBatchWithCoverTraffic() throws {
+        let policy = MixnetTransportSupport(
+            batchIntervalSeconds: 30,
+            minBatchSize: 5,
+            coverPacketsPerBatch: 1,
+            maxDelaySeconds: 10
+        )
+        let now = Date(timeIntervalSince1970: 1_000)
+        let secret = Data("mixnet-test-secret".utf8)
+        let first = try MixnetScheduler.makeBatchPlan(
+            pendingPacketIds: ["msg-c", "msg-a", "msg-b"],
+            now: now,
+            policy: policy,
+            secret: secret
+        )
+        let second = try MixnetScheduler.makeBatchPlan(
+            pendingPacketIds: ["msg-b", "msg-c", "msg-a"],
+            now: now,
+            policy: policy,
+            secret: secret
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.realPacketCount, 3)
+        XCTAssertEqual(first.coverPacketCount, 2)
+        XCTAssertEqual(first.packets.count, 5)
+        XCTAssertTrue(first.packets.allSatisfy { $0.batchId == first.batchId })
+        XCTAssertTrue(first.packets.allSatisfy { $0.releaseAt == first.releaseAt })
+        XCTAssertLessThanOrEqual(first.packets.first?.delaySeconds ?? 0, 10)
+    }
+
+    func testMixnetSchedulerCanEmitPureCoverBatch() throws {
+        let policy = MixnetTransportSupport(
+            batchIntervalSeconds: 60,
+            minBatchSize: 3,
+            coverPacketsPerBatch: 3,
+            maxDelaySeconds: 0
+        )
+        let plan = try MixnetScheduler.makeBatchPlan(
+            pendingPacketIds: [],
+            now: Date(timeIntervalSince1970: 1_001),
+            policy: policy,
+            secret: Data("cover-secret".utf8)
+        )
+
+        XCTAssertEqual(plan.realPacketCount, 0)
+        XCTAssertEqual(plan.coverPacketCount, 3)
+        XCTAssertEqual(plan.releaseAt, Date(timeIntervalSince1970: 1_020))
+        XCTAssertTrue(plan.packets.allSatisfy { $0.packetId.hasPrefix("cover-") })
+    }
+
+    func testMixnetSchedulerRejectsMalformedInputs() {
+        let policy = MixnetTransportSupport(minBatchSize: 1, coverPacketsPerBatch: 0)
+        XCTAssertThrowsError(
+            try MixnetScheduler.makeBatchPlan(
+                pendingPacketIds: ["msg-a"],
+                now: Date(),
+                policy: policy,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetSchedulerError, .emptySecret)
+        }
+        XCTAssertThrowsError(
+            try MixnetScheduler.makeBatchPlan(
+                pendingPacketIds: ["msg-a", " "],
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetSchedulerError, .blankPacketId)
+        }
+    }
+
+    func testRelayInfoAdvertisesOptionalMixnetTransportSupport() throws {
+        let support = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: 45,
+            minBatchSize: 12,
+            coverPacketsPerBatch: 4,
+            maxDelaySeconds: 90
+        )
+        let info = RelayConfiguration(mixnetTransport: support).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(info.mixnetTransport, support)
+        let decoded = try PICCPCoder.decode(RelayInfo.self, from: PICCPCoder.encode(info))
+        XCTAssertEqual(decoded.mixnetTransport, support)
+    }
 }
 
 private func testBitset(recordCount: Int, enabledIndex: Int) -> Data {

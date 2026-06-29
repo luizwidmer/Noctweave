@@ -53,6 +53,11 @@ not appear in process listings:
 - `NOCTYRA_ONION_TRANSPORT`
 - `NOCTYRA_ONION_MAX_HOPS`
 - `NOCTYRA_ONION_FIXED_SIZE_PACKETS`
+- `NOCTYRA_MIXNET_TRANSPORT`
+- `NOCTYRA_MIXNET_BATCH_INTERVAL_SECONDS`
+- `NOCTYRA_MIXNET_MIN_BATCH_SIZE`
+- `NOCTYRA_MIXNET_COVER_PACKETS_PER_BATCH`
+- `NOCTYRA_MIXNET_MAX_DELAY_SECONDS`
 
 Use `--attachments-enabled false` for a text-only relay. Attachment upload and
 download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
@@ -65,6 +70,11 @@ clients, not full PIR and not a mandatory fetch path.
 Use `--onion-transport true` to advertise optional PQ onion packet support for
 compatible relay paths. This publishes hop-by-hop packet support only; it is not
 a full mixnet and does not add global cover traffic or batching.
+
+Use `--mixnet-transport true` to advertise deterministic batching, bounded
+release jitter, and cover-packet scheduling. This is a relay capability signal
+for compatible clients and federated paths; it is not a claim that the entire
+network has global cover traffic.
 
 Use `--wake-mode pullOnly` or `--wake-mode longPoll` to advertise a decentralized wake policy for compatible clients. This does not enable centralized push and does not guarantee closed-app delivery; it only publishes relay-supported polling or long-poll bounds.
 
@@ -143,6 +153,11 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 - `--onion-transport <true|false>`: advertise optional PQ onion packet support (default: `false`)
 - `--onion-max-hops <count>`: max advertised onion hops, clamped to 1-8 (default: `3`)
 - `--onion-fixed-size-packets <true|false>`: advertise fixed-size packet requirement (default: `true`)
+- `--mixnet-transport <true|false>`: advertise deterministic batching and cover-packet scheduling (default: `false`)
+- `--mixnet-batch-interval-seconds <seconds>`: batch interval, clamped to 5-3600 seconds (default: `30`)
+- `--mixnet-min-batch-size <count>`: minimum advertised batch size, clamped to 1-256 (default: `8`)
+- `--mixnet-cover-packets-per-batch <count>`: cover packets per batch, clamped to 0-256 (default: `2`)
+- `--mixnet-max-delay-seconds <seconds>`: max release delay, clamped to 0-3600 seconds (default: `120`)
 - `--wake-mode <pullOnly|longPoll>`: advertise decentralized wake support for compatible clients
 - `--wake-min-poll-seconds <seconds>`: lower polling interval bound advertised to clients (default: `60`)
 - `--wake-max-poll-seconds <seconds>`: upper polling/backoff bound advertised to clients (default: `300`)

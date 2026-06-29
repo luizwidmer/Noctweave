@@ -243,7 +243,9 @@ Temporal bucketing can be single-bucket or multi-bucket. The multi-bucket path i
 
 Relays may also advertise optional hidden-retrieval support. In cover-query mode, compatible clients request fixed-size cover sets from temporal buckets and extract the target record locally. In replicated XOR-PIR mode, a client splits a lookup across two or more non-colluding replicas with identical fixed-size buckets; each replica receives only a selection mask, and the client reconstructs the target by XORing the replica responses. Cover-query mode is metadata reduction. Replicated XOR-PIR is stronger PIR-assisted retrieval under a non-collusion assumption, but it is not single-server cryptographic PIR and should only be advertised by operators that can actually provide replicated bucket semantics.
 
-Relays may also advertise optional onion-transport support. Onion packets are layered with ML-KEM-768 encapsulation per hop and AES-256-GCM payload protection. Each relay hop decapsulates only its layer, learns only its own routing instruction and optional delay bucket, and forwards the encrypted next layer. This is a route-privacy primitive for compatible relay paths. It is not a full mixnet by itself because it does not yet mandate global cover traffic, batching, route selection policy, or latency scheduling across the network.
+Relays may also advertise optional onion-transport support. Onion packets are layered with ML-KEM-768 encapsulation per hop and AES-256-GCM payload protection. Each relay hop decapsulates only its layer, learns only its own routing instruction and optional delay bucket, and forwards the encrypted next layer. This is a route-privacy primitive for compatible relay paths.
+
+Relays can additionally advertise a mixnet scheduling policy: batch interval, minimum batch size, cover packets per batch, and maximum release delay. Compatible clients can use this policy to shape onion packets into batches with deterministic cover traffic and bounded jitter before release. This improves timing resistance for participating paths, but it is still not a full global mixnet by itself because it does not prove that all relays maintain continuous cover traffic, shared route-selection policy, or network-wide latency scheduling.
 
 ## 6.5 Decentralized wake and pull delivery
 
@@ -367,6 +369,7 @@ The reference implementation delivers:
 - optional relay-advertised hidden-retrieval cover queries
 - optional relay-advertised replicated XOR-PIR for non-colluding replicated buckets
 - optional relay-advertised onion packet support with ML-KEM per-hop wrapping and AES-GCM layer protection
+- optional relay-advertised mixnet scheduling policy for batching, bounded release delay, and cover-packet planning
 - explicit group-security-model advertisement, required MLS epoch metadata, and bounded group epoch history
 - relay-advertised decentralized wake policy for jittered pull or bounded long-poll clients
 - ciphertext-only direct and group prefetch staging for app-intent or widget-triggered sync paths; these paths fetch encrypted envelopes without decrypting content or acknowledging relay delivery
@@ -376,7 +379,7 @@ The reference implementation delivers:
 The following areas remain future work:
 
 - single-server cryptographic PIR hidden retrieval
-- full mixnet deployment with cover traffic, batching, route selection policy, and network-wide latency scheduling
+- full mixnet deployment with continuous cover traffic, shared route selection, and network-wide latency scheduling
 - DHT-style autonomous open-federation discovery
 - expanded real-device and multi-client fault-injection coverage around retained group epoch histories
 - external independent audit and signed release-provenance packaging
