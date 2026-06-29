@@ -23,4 +23,12 @@ if grep -R "identitySigningKey" \
   exit 1
 fi
 
+echo "Verifying Apple helper prefetch does not publish group routing metadata..."
+if grep -R "NoctyraPrefetchGroup\|FetchGroupMessagesRequest\|fetchGroupMessages" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchStore.swift" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchRunner.swift"; then
+  echo "Closed-app helper group fetch needs a delegated group credential before group routing metadata is published." >&2
+  exit 1
+fi
+
 echo "Whitepaper alignment verification complete."

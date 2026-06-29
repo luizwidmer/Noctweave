@@ -16,7 +16,7 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 ### Malicious relay
 - Can observe source IPs, timing, chosen relay, mailbox polling cadence, and ciphertext sizes.
 - Cannot decrypt message payloads or attachments without endpoint keys.
-- Mitigations present: ML-KEM/ML-DSA session setup, AEAD payloads, authenticated inbox fetch/ack, temporal buckets, attachment TTL, relay password support, TLS/WSS support, and ciphertext-only prefetch staging that defers acknowledgement until unlocked sync. Apple helper prefetch uses delegated inbox-access keys for direct ciphertext only and does not store the long-term identity signing key.
+- Mitigations present: ML-KEM/ML-DSA session setup, AEAD payloads, authenticated inbox fetch/ack, temporal buckets, attachment TTL, relay password support, TLS/WSS support, and ciphertext-only prefetch staging that defers acknowledgement until unlocked sync. Apple helper prefetch uses delegated inbox-access keys for direct ciphertext only and does not store the long-term identity signing key or group routing metadata.
 - Residual risk: no single-server PIR or live full-network mixnet deployment.
 
 ### Malicious coordinator
@@ -215,7 +215,7 @@ No high-severity implementation findings remain from this pass. This does not re
    - Release blocker: no.
 
 2. **Network anonymity remains out of scope**
-   - Current: metadata reduction, replicated XOR-PIR primitives under a non-collusion assumption with padded fixed-bucket query shares, fixed-size response shares, fail-closed PIR plan-integrity validation, onion packet primitives, fixed-size mixnet packet padding, mixnet batch/cover scheduling, bounded continuous cover-cycle planning, deterministic inter-relay cover coordination plans, deterministic diverse route selection, mixnet route-policy validation, and encrypted ciphertext-only direct prefetch persistence for OS-permitted helper fetch paths without exposing the long-term identity signing key.
+   - Current: metadata reduction, replicated XOR-PIR primitives under a non-collusion assumption with padded fixed-bucket query shares, fixed-size response shares, fail-closed PIR plan-integrity validation, onion packet primitives, fixed-size mixnet packet padding, mixnet batch/cover scheduling, bounded continuous cover-cycle planning, deterministic inter-relay cover coordination plans, deterministic diverse route selection, mixnet route-policy validation, and encrypted ciphertext-only direct prefetch persistence for OS-permitted helper fetch paths without exposing the long-term identity signing key or group routing metadata.
    - Required for stronger claims: single-server cryptographic PIR, full mixnet deployment with live network-wide cover execution, and network-wide latency scheduling.
    - Release blocker: no, provided the product does not claim network anonymity beyond metadata reduction.
 
