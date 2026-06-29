@@ -1173,6 +1173,113 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(fetchedAfterStaging.map(\.id), [envelope.id])
     }
 
+    func testDecentralizedPrefetchBatchStorePersistsEncryptedCiphertextOnlyBatch() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("prefetch.batch")
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let envelope = Envelope(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+            conversationId: "conversation-d",
+            sessionId: "session-d",
+            senderFingerprint: "sender-d",
+            sentAt: Date(timeIntervalSince1970: 6_000),
+            messageCounter: 13,
+            payload: EncryptedPayload(
+                nonce: Data([0x61]),
+                ciphertext: Data("sealed-direct-ciphertext".utf8),
+                tag: Data([0x62])
+            ),
+            signature: Data([0x63])
+        )
+        let batch = try DecentralizedPrefetchStager.stageDirectMessages(
+            [envelope],
+            inboxId: "inbox-d",
+            relayIdentifier: "relay-d",
+            stagedAt: Date(timeIntervalSince1970: 7_000)
+        )
+        let encodedBatch = try PICCPCoder.encode(batch)
+        let store = try DecentralizedPrefetchBatchStore(
+            fileURL: fileURL,
+            protectionKey: Data(repeating: 0xA5, count: 32)
+        )
+
+        try await store.save(batch)
+        let rawStored = try Data(contentsOf: fileURL)
+        XCTAssertNotEqual(rawStored, encodedBatch)
+        XCTAssertNil(rawStored.range(of: try XCTUnwrap(batch.records.first?.sealedEnvelope)))
+        XCTAssertNil(rawStored.range(of: Data("sealed-direct-ciphertext".utf8)))
+
+        let maybeReloaded = try await store.load()
+        let reloaded = try XCTUnwrap(maybeReloaded)
+        XCTAssertEqual(reloaded, batch)
+        XCTAssertTrue(reloaded.isCiphertextOnly)
+        XCTAssertEqual(reloaded.records.first?.acknowledgementDeferred, true)
+    }
+
+    func testDecentralizedPrefetchBatchStoreRejectsWrongKeyAndAcknowledgedRecords() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("prefetch.batch")
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let acknowledged = DecentralizedPrefetchBatch(
+            records: [
+                DecentralizedPrefetchRecord(
+                    id: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!,
+                    kind: .directMessage,
+                    relayIdentifier: "relay-e",
+                    inboxId: "inbox-e",
+                    groupId: nil,
+                    stagedAt: Date(timeIntervalSince1970: 8_000),
+                    sealedEnvelope: Data([0x70, 0x71]),
+                    acknowledgementDeferred: false
+                )
+            ],
+            stagedAt: Date(timeIntervalSince1970: 8_000)
+        )
+        let store = try DecentralizedPrefetchBatchStore(
+            fileURL: fileURL,
+            protectionKey: Data(repeating: 0xB6, count: 32)
+        )
+
+        do {
+            try await store.save(acknowledged)
+            XCTFail("Expected acknowledged prefetch records to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? DecentralizedPrefetchError, .invalidBatch)
+        }
+
+        let valid = DecentralizedPrefetchBatch(
+            records: [
+                DecentralizedPrefetchRecord(
+                    id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!,
+                    kind: .groupMessage,
+                    relayIdentifier: "relay-f",
+                    inboxId: "group-inbox-f",
+                    groupId: UUID(uuidString: "88888888-8888-8888-8888-888888888888")!,
+                    stagedAt: Date(timeIntervalSince1970: 9_000),
+                    sealedEnvelope: Data([0x80, 0x81, 0x82]),
+                    acknowledgementDeferred: true
+                )
+            ],
+            stagedAt: Date(timeIntervalSince1970: 9_000)
+        )
+        try await store.save(valid)
+
+        let wrongKeyStore = try DecentralizedPrefetchBatchStore(
+            fileURL: fileURL,
+            protectionKey: Data(repeating: 0xC7, count: 32)
+        )
+        do {
+            _ = try await wrongKeyStore.load()
+            XCTFail("Expected wrong prefetch protection key to fail closed.")
+        } catch {
+            XCTAssertEqual(error as? DecentralizedPrefetchError, .invalidStoredBatch)
+        }
+    }
+
     func testRatchetRecoveryPolicyClassifiesRecoverableFailures() throws {
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.invalidPayload), .recover)
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterOutOfOrder), .recover)

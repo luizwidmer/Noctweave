@@ -251,7 +251,7 @@ Relays can additionally advertise a mixnet scheduling policy: batch interval, mi
 
 The architecture is fully decentralized in the delivery path. The system does not rely on APNs or any equivalent centralized push-notification provider. Closed-app instant wake is excluded because it would introduce a credential-holding notification authority inconsistent with the decentralization model.
 
-The system therefore uses relay polling and foreground/background client fetch behavior rather than centralized push. Relays may advertise a decentralized wake policy for compatible clients: pull-only polling bounds, deterministic jitter, failure backoff, and bounded long-poll timeout support. Compatible closed-app helper surfaces can stage sealed direct and group envelopes into explicit ciphertext-only prefetch batches with acknowledgements deferred until normal unlocked sync. This improves active or background fetch behavior without creating a central notification service. It does not claim guaranteed closed-app delivery on operating systems that suspend the app.
+The system therefore uses relay polling and foreground/background client fetch behavior rather than centralized push. Relays may advertise a decentralized wake policy for compatible clients: pull-only polling bounds, deterministic jitter, failure backoff, and bounded long-poll timeout support. Compatible closed-app helper surfaces can stage sealed direct and group envelopes into explicit ciphertext-only prefetch batches with acknowledgements deferred until normal unlocked sync. Those batches can be persisted through a caller-keyed encrypted store so app-intent or widget-style helpers do not leave raw staged batch data or sealed envelope bytes in helper storage. This improves active or background fetch behavior without creating a central notification service. It does not claim guaranteed closed-app delivery on operating systems that suspend the app.
 
 # 7. Federation
 
@@ -372,7 +372,7 @@ The reference implementation delivers:
 - optional relay-advertised mixnet scheduling policy for fixed-size packet shaping, batching, bounded release delay, cover-packet planning, inter-relay cover coordination plans, diverse route selection, and route-policy validation
 - explicit group-security-model advertisement, required MLS epoch metadata, and bounded group epoch history
 - bounded group protocol model checking over commit state transitions
-- relay-advertised decentralized wake policy for jittered pull or bounded long-poll clients
+- relay-advertised decentralized wake policy for jittered pull or bounded long-poll clients, plus encrypted ciphertext-only prefetch persistence for OS-permitted helper fetch paths
 - ciphertext-only direct and group prefetch staging for app-intent or widget-triggered sync paths; these paths fetch sealed envelopes into explicit deferred-acknowledgement batches without decrypting content or acknowledging relay delivery
 
 ## 10.2 Deferred work

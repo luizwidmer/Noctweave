@@ -98,6 +98,10 @@ public enum DecentralizedPrefetchError: Error, Equatable {
     case invalidRelayIdentifier
     case invalidInboxId
     case invalidEnvelope
+    case emptyBatch
+    case invalidBatch
+    case invalidProtectionKey
+    case invalidStoredBatch
 }
 
 public struct DecentralizedPrefetchRecord: Codable, Equatable, Identifiable {
@@ -217,6 +221,89 @@ public enum DecentralizedPrefetchStager {
         }
         return trimmed
     }
+}
+
+public actor DecentralizedPrefetchBatchStore {
+    private let fileURL: URL
+    private let protectionKey: SymmetricKey
+
+    public init(fileURL: URL, protectionKey: Data) throws {
+        guard protectionKey.count == 32 else {
+            throw DecentralizedPrefetchError.invalidProtectionKey
+        }
+        self.fileURL = fileURL
+        self.protectionKey = SymmetricKey(data: protectionKey)
+    }
+
+    public func save(_ batch: DecentralizedPrefetchBatch) throws {
+        guard !batch.records.isEmpty else {
+            throw DecentralizedPrefetchError.emptyBatch
+        }
+        guard batch.isCiphertextOnly else {
+            throw DecentralizedPrefetchError.invalidBatch
+        }
+
+        let encodedBatch = try PICCPCoder.encode(batch)
+        let payload = try CryptoBox.encrypt(
+            encodedBatch,
+            key: protectionKey,
+            authenticatedData: DecentralizedPrefetchBatchStore.authenticatedData
+        )
+        let stored = DecentralizedPrefetchStoredBatch(version: 1, payload: payload)
+        let encodedStored = try PICCPCoder.encode(stored)
+
+        let directory = fileURL.deletingLastPathComponent()
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        #if os(iOS)
+        try encodedStored.write(to: fileURL, options: [.atomic, .completeFileProtection])
+        #else
+        try encodedStored.write(to: fileURL, options: [.atomic])
+        #endif
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    }
+
+    public func load() throws -> DecentralizedPrefetchBatch? {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return nil
+        }
+        let encodedStored = try Data(contentsOf: fileURL)
+        guard let stored = try? PICCPCoder.decode(DecentralizedPrefetchStoredBatch.self, from: encodedStored) else {
+            throw DecentralizedPrefetchError.invalidStoredBatch
+        }
+        guard stored.version == 1 else {
+            throw DecentralizedPrefetchError.invalidStoredBatch
+        }
+        guard let encodedBatch = try? CryptoBox.decrypt(
+            stored.payload,
+            key: protectionKey,
+            authenticatedData: DecentralizedPrefetchBatchStore.authenticatedData
+        ) else {
+            throw DecentralizedPrefetchError.invalidStoredBatch
+        }
+        guard let batch = try? PICCPCoder.decode(DecentralizedPrefetchBatch.self, from: encodedBatch) else {
+            throw DecentralizedPrefetchError.invalidStoredBatch
+        }
+        guard !batch.records.isEmpty, batch.isCiphertextOnly else {
+            throw DecentralizedPrefetchError.invalidStoredBatch
+        }
+        return batch
+    }
+
+    public func remove() throws {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return
+        }
+        try FileManager.default.removeItem(at: fileURL)
+    }
+
+    private static let authenticatedData = Data("NOCTYRA-DECENTRALIZED-PREFETCH-BATCH-V1".utf8)
+}
+
+private struct DecentralizedPrefetchStoredBatch: Codable, Equatable {
+    let version: Int
+    let payload: EncryptedPayload
 }
 
 public enum DecentralizedWakePlanner {
