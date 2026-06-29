@@ -396,7 +396,7 @@ The following areas remain future work:
 - single-server cryptographic PIR hidden retrieval
 - full mixnet deployment with live network-wide cover execution and network-wide latency scheduling
 - DHT-style autonomous open-federation discovery
-- expanded real-device fault-injection coverage around retained group epoch histories and model-checked group state transitions
+- device-lab fault-injection coverage around retained group epoch histories and model-checked group state transitions, only after real device automation infrastructure exists
 - external independent security audit
 - stronger closed-app background delivery that does not require centralized push infrastructure or rely on OS-opportunistic intent/widget execution
 

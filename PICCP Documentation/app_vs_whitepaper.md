@@ -130,7 +130,7 @@ Last reviewed: June 29, 2026.
 - This is PIR-assisted hidden retrieval under a non-collusion assumption; it is not a single-server cryptographic PIR deployment.
 
 ## Current Bounded Wake-Prefetch Alignment Pass
-- The previous open-ended "keep tuning OS-permitted background fetch behavior" target is replaced by a concrete invariant: wake-policy consumption must produce a capped prefetch execution plan before helper fetch work is attempted.
+- Wake behavior is treated as a bounded execution problem, not an open-ended tuning task: wake-policy consumption must produce a capped prefetch execution plan before helper fetch work is attempted.
 - Core `DecentralizedPrefetchExecutionPlanner` turns wake cycle plans into per-profile execution entries, sorts due profiles by next poll delay, caps profiles per cycle, allocates smaller pull-only and larger long-poll envelope budgets, and enforces a total staged-envelope cap.
 - This remains OS-permitted opportunistic fetch behavior, not guaranteed background delivery.
 
@@ -149,8 +149,8 @@ Last reviewed: June 29, 2026.
 - **Deferred**: full mixnet deployment, autonomous public DHT release mode, external audit, and formal MLS-class proof work.
 
 ## Next Alignment Targets
-- Run `scripts/verify-whitepaper-alignment.sh` alongside focused protocol changes that touch metadata minimization, hidden retrieval, decentralized wake, or open federation.
-- Expand real-device fault-injection coverage around retained group epoch histories; repository route-level retained-history coverage now includes multiple offline members recovering after a shared outage, fail-closed behavior after the retained epoch window expires, and state-level rejection of malformed history chains and mismatched retained distribution metadata.
-- Continue open-federation experiments behind feature gates and simulation tests; cached-node fallback is covered for core and Linux relay discovery refreshes.
-- If replicated XOR-PIR is promoted beyond optional support, require deployment evidence for non-colluding operators and replica availability; the repository-owned operational profile gate now covers static configuration sanity.
+- Run `scripts/verify-whitepaper-alignment.sh` only as the acceptance check for focused protocol changes that touch metadata minimization, hidden retrieval, decentralized wake, or open federation.
+- Retained group history coverage is complete for the current repository scope when tests cover: multiple offline members recovering after a shared outage, fail-closed behavior after the retained epoch window expires, malformed history-chain rejection, and mismatched retained-distribution metadata rejection. Actual device-lab fault injection is tracked separately only if device infrastructure is added.
+- Open-federation work remains gated until simulation tests cover: coordinator snapshot refresh, cached-node fallback after refresh failure, poisoned-node rejection, and feature-disabled fail-closed behavior. Public DHT adapters remain out of shipped source paths.
+- If replicated XOR-PIR is promoted beyond optional support, add a promotion gate that requires deployment evidence for non-colluding operators and replica availability, not only static replica-set configuration.
 - Keep App Store distribution and any future Docker publishing policy outside the protocol alignment checklist; App Store provenance is assumed for app users.
