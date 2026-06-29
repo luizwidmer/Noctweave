@@ -399,16 +399,31 @@ final class PICCPCoreTests: XCTestCase {
             hiddenRetrieval: HiddenRetrievalSupport(
                 mode: .replicatedXorPIR,
                 defaultCoverSetSize: 8,
-                maxCoverSetSize: 32
+                maxCoverSetSize: 32,
+                replicatedXorPIRReplicas: [
+                    HiddenRetrievalPIRReplica(
+                        replicaId: "replica-a",
+                        operatorId: "operator-a",
+                        endpoint: RelayEndpoint(host: "pir-a.example", port: 443, useTLS: true, transport: .http)
+                    ),
+                    HiddenRetrievalPIRReplica(
+                        replicaId: "replica-b",
+                        operatorId: "operator-b",
+                        endpoint: RelayEndpoint(host: "pir-b.example", port: 443, useTLS: true, transport: .http)
+                    )
+                ]
             )
         ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
 
         XCTAssertEqual(info.hiddenRetrieval?.mode, .replicatedXorPIR)
+        XCTAssertTrue(HiddenRetrievalPIRReplicaSetValidator.isUsable(info.hiddenRetrieval))
+        XCTAssertEqual(try HiddenRetrievalPIRReplicaSetValidator.validate(info.hiddenRetrieval).count, 2)
 
         let encoded = try PICCPCoder.encode(info)
         let decoded = try PICCPCoder.decode(RelayInfo.self, from: encoded)
 
         XCTAssertEqual(decoded.hiddenRetrieval?.mode, .replicatedXorPIR)
+        XCTAssertEqual(decoded.hiddenRetrieval?.replicatedXorPIRReplicas, info.hiddenRetrieval?.replicatedXorPIRReplicas)
     }
 
     func testHiddenRetrievalSupportDoesNotAdvertiseTargetOnlyPlans() {
@@ -416,6 +431,60 @@ final class PICCPCoreTests: XCTestCase {
 
         XCTAssertEqual(support.defaultCoverSetSize, 2)
         XCTAssertEqual(support.maxCoverSetSize, 2)
+    }
+
+    func testHiddenRetrievalReplicaSetValidatorRejectsMisleadingReplicatedPIRMetadata() {
+        XCTAssertEqual(
+            HiddenRetrievalPIRReplicaSetValidator.issues(for: nil),
+            [.hiddenRetrievalUnavailable]
+        )
+        XCTAssertEqual(
+            HiddenRetrievalPIRReplicaSetValidator.issues(for: HiddenRetrievalSupport()),
+            [.unsupportedMode]
+        )
+
+        let duplicatedSingleOperator = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "same",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir.example", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "same",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir.example", port: 443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let issues = HiddenRetrievalPIRReplicaSetValidator.issues(for: duplicatedSingleOperator)
+
+        XCTAssertTrue(issues.contains(.duplicateReplicaId))
+        XCTAssertTrue(issues.contains(.duplicateOperatorId))
+        XCTAssertTrue(issues.contains(.duplicateEndpoint))
+        XCTAssertThrowsError(try HiddenRetrievalPIRReplicaSetValidator.validate(duplicatedSingleOperator)) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidReplicaSet)
+        }
+
+        let noTLS = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-a.example", port: 80, useTLS: false, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "pir-b.example", port: 443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+
+        XCTAssertTrue(HiddenRetrievalPIRReplicaSetValidator.issues(for: noTLS).contains(.insecureEndpoint))
+        XCTAssertTrue(HiddenRetrievalPIRReplicaSetValidator.isUsable(noTLS, requireTLS: false))
     }
 
     func testRelayInfoAdvertisesGroupSecurityModel() throws {

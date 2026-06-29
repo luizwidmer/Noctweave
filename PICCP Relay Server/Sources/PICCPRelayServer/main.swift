@@ -83,6 +83,9 @@ struct ServerConfig {
         ) ?? .coverQuery
         var hiddenRetrievalDefaultCoverSetSize = 8
         var hiddenRetrievalMaxCoverSetSize = 32
+        var hiddenRetrievalReplicas = parseHiddenRetrievalReplicas(
+            environment["NOCTYRA_HIDDEN_RETRIEVAL_REPLICAS"] ?? ""
+        )
         var onionTransportEnabled = parseBoolFlag(
             environment["NOCTYRA_ONION_TRANSPORT"] ?? "false",
             defaultValue: false
@@ -258,6 +261,12 @@ struct ServerConfig {
                 if let value = iterator.next(), let parsed = Int(value) {
                     hiddenRetrievalMaxCoverSetSize = max(1, parsed)
                 }
+            case "--hidden-retrieval-replica":
+                if let value = iterator.next() {
+                    hiddenRetrievalReplicas.append(contentsOf: parseHiddenRetrievalReplicas(value))
+                    hiddenRetrievalMode = .replicatedXorPIR
+                    hiddenRetrievalEnabled = true
+                }
             case "--onion-transport":
                 if let value = iterator.next() {
                     onionTransportEnabled = parseBoolFlag(value, defaultValue: true)
@@ -421,7 +430,8 @@ struct ServerConfig {
             ? HiddenRetrievalSupport(
                 mode: hiddenRetrievalMode,
                 defaultCoverSetSize: hiddenRetrievalDefaultCoverSetSize,
-                maxCoverSetSize: hiddenRetrievalMaxCoverSetSize
+                maxCoverSetSize: hiddenRetrievalMaxCoverSetSize,
+                replicatedXorPIRReplicas: hiddenRetrievalReplicas.isEmpty ? nil : hiddenRetrievalReplicas
             )
             : nil
         let onionTransport = onionTransportEnabled
@@ -541,6 +551,27 @@ private func parseRelayEndpoint(_ value: String) -> RelayEndpoint? {
     let host = parts.dropLast().joined(separator: ":")
     guard let port = UInt16(parts.last ?? "") else { return nil }
     return RelayEndpoint(host: host, port: port)
+}
+
+private func parseHiddenRetrievalReplicas(_ value: String) -> [HiddenRetrievalPIRReplica] {
+    value
+        .split(separator: ";")
+        .compactMap { rawEntry in
+            let fields = rawEntry
+                .split(separator: ",", maxSplits: 2)
+                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard fields.count == 3,
+                  !fields[0].isEmpty,
+                  !fields[1].isEmpty,
+                  let endpoint = parseRelayEndpoint(fields[2]) else {
+                return nil
+            }
+            return HiddenRetrievalPIRReplica(
+                replicaId: fields[0],
+                operatorId: fields[1],
+                endpoint: endpoint
+            )
+        }
 }
 
 let config = ServerConfig.parse()

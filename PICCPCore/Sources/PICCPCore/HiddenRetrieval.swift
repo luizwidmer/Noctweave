@@ -19,6 +19,102 @@ public enum HiddenRetrievalError: Error, Equatable {
     case invalidRecordSize
     case malformedPIRShare
     case malformedPIRResponse
+    case invalidReplicaSet
+}
+
+public enum HiddenRetrievalPIRReplicaSetIssue: String, Codable, Equatable, Hashable {
+    case hiddenRetrievalUnavailable
+    case unsupportedMode
+    case insufficientReplicas
+    case blankReplicaId
+    case blankOperatorId
+    case duplicateReplicaId
+    case duplicateOperatorId
+    case duplicateEndpoint
+    case insecureEndpoint
+}
+
+public enum HiddenRetrievalPIRReplicaSetValidator {
+    public static func issues(
+        for support: HiddenRetrievalSupport?,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true
+    ) -> [HiddenRetrievalPIRReplicaSetIssue] {
+        guard let support else {
+            return [.hiddenRetrievalUnavailable]
+        }
+        guard support.mode == .replicatedXorPIR else {
+            return [.unsupportedMode]
+        }
+
+        let replicas = support.replicatedXorPIRReplicas ?? []
+        var issues: [HiddenRetrievalPIRReplicaSetIssue] = []
+        if replicas.count < max(2, minimumReplicaCount) {
+            issues.append(.insufficientReplicas)
+        }
+
+        let replicaIds = replicas.map { $0.replicaId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let operatorIds = replicas.map { $0.operatorId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let endpoints = replicas.map { normalizedEndpointKey($0.endpoint) }
+
+        if replicaIds.contains(where: \.isEmpty) {
+            issues.append(.blankReplicaId)
+        }
+        if operatorIds.contains(where: \.isEmpty) {
+            issues.append(.blankOperatorId)
+        }
+        if Set(replicaIds).count != replicaIds.count {
+            issues.append(.duplicateReplicaId)
+        }
+        if Set(operatorIds).count != operatorIds.count {
+            issues.append(.duplicateOperatorId)
+        }
+        if Set(endpoints).count != endpoints.count {
+            issues.append(.duplicateEndpoint)
+        }
+        if requireTLS, replicas.contains(where: { !$0.endpoint.useTLS }) {
+            issues.append(.insecureEndpoint)
+        }
+
+        return Array(Set(issues)).sorted { $0.rawValue < $1.rawValue }
+    }
+
+    public static func validate(
+        _ support: HiddenRetrievalSupport?,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true
+    ) throws -> [HiddenRetrievalPIRReplica] {
+        let problems = issues(
+            for: support,
+            minimumReplicaCount: minimumReplicaCount,
+            requireTLS: requireTLS
+        )
+        guard problems.isEmpty else {
+            throw HiddenRetrievalError.invalidReplicaSet
+        }
+        return support?.replicatedXorPIRReplicas ?? []
+    }
+
+    public static func isUsable(
+        _ support: HiddenRetrievalSupport?,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true
+    ) -> Bool {
+        issues(
+            for: support,
+            minimumReplicaCount: minimumReplicaCount,
+            requireTLS: requireTLS
+        ).isEmpty
+    }
+
+    private static func normalizedEndpointKey(_ endpoint: RelayEndpoint) -> String {
+        [
+            endpoint.transport.rawValue,
+            endpoint.useTLS ? "tls" : "plain",
+            endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            String(endpoint.port)
+        ].joined(separator: "://")
+    }
 }
 
 public struct HiddenRetrievalQueryPlan: Codable, Equatable {

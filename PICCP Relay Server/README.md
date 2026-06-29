@@ -58,6 +58,7 @@ not appear in process listings:
 - `NOCTYRA_MIXNET_MIN_BATCH_SIZE`
 - `NOCTYRA_MIXNET_COVER_PACKETS_PER_BATCH`
 - `NOCTYRA_MIXNET_MAX_DELAY_SECONDS`
+- `NOCTYRA_HIDDEN_RETRIEVAL_REPLICAS`
 
 Use `--attachments-enabled false` for a text-only relay. Attachment upload and
 download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
@@ -66,6 +67,21 @@ bucket schedule to disable temporal bucketing.
 Use `--hidden-retrieval true` to advertise optional cover-query hidden
 retrieval support. This is a metadata-reduction capability for compatible
 clients, not full PIR and not a mandatory fetch path.
+
+For replicated XOR-PIR advertisement, use
+`--hidden-retrieval-mode replicatedXorPIR` and at least two independent TLS
+replicas. Add replicas with repeated `--hidden-retrieval-replica` flags or with
+`NOCTYRA_HIDDEN_RETRIEVAL_REPLICAS`. Each entry is
+`replicaId,operatorId,endpoint`; separate environment entries with `;`.
+Example:
+
+```bash
+NOCTYRA_HIDDEN_RETRIEVAL_REPLICAS='a,operator-a,https://pir-a.example:443;b,operator-b,https://pir-b.example:443'
+```
+
+Clients can reject replicated-PIR metadata if replica IDs, operator IDs, or
+endpoints are duplicated, if fewer than two replicas are advertised, or if a
+replica endpoint is not TLS-protected.
 
 Use `--onion-transport true` to advertise optional PQ onion packet support for
 compatible relay paths. This publishes hop-by-hop packet support only; it is not
@@ -150,6 +166,7 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 - `--hidden-retrieval-mode <coverQuery|replicatedXorPIR>`: advertised hidden-retrieval mode
 - `--hidden-retrieval-cover-size <count>`: default cover set size advertised to clients (default: `8`)
 - `--hidden-retrieval-max-cover-size <count>`: max cover set size advertised to clients (default: `32`)
+- `--hidden-retrieval-replica <replicaId,operatorId,endpoint>`: add a replicated XOR-PIR replica endpoint; repeat or separate entries with `;`
 - `--onion-transport <true|false>`: advertise optional PQ onion packet support (default: `false`)
 - `--onion-max-hops <count>`: max advertised onion hops, clamped to 1-8 (default: `3`)
 - `--onion-fixed-size-packets <true|false>`: advertise fixed-size packet requirement (default: `true`)

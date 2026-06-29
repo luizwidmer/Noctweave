@@ -209,20 +209,41 @@ enum HiddenRetrievalMode: String, Codable, CaseIterable {
     case replicatedXorPIR
 }
 
+struct HiddenRetrievalPIRReplica: Codable, Equatable {
+    let replicaId: String
+    let operatorId: String
+    let endpoint: RelayEndpoint
+
+    init(replicaId: String, operatorId: String, endpoint: RelayEndpoint) {
+        self.replicaId = replicaId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.operatorId = operatorId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.endpoint = endpoint
+    }
+}
+
 struct HiddenRetrievalSupport: Codable, Equatable {
     let mode: HiddenRetrievalMode
     let defaultCoverSetSize: Int
     let maxCoverSetSize: Int
+    let replicatedXorPIRReplicas: [HiddenRetrievalPIRReplica]?
 
     init(
         mode: HiddenRetrievalMode = .coverQuery,
         defaultCoverSetSize: Int = 8,
-        maxCoverSetSize: Int = 32
+        maxCoverSetSize: Int = 32,
+        replicatedXorPIRReplicas: [HiddenRetrievalPIRReplica]? = nil
     ) {
         let normalizedMax = max(2, maxCoverSetSize)
         self.mode = mode
         self.maxCoverSetSize = normalizedMax
         self.defaultCoverSetSize = min(max(2, defaultCoverSetSize), normalizedMax)
+        self.replicatedXorPIRReplicas = replicatedXorPIRReplicas?.map {
+            HiddenRetrievalPIRReplica(
+                replicaId: $0.replicaId,
+                operatorId: $0.operatorId,
+                endpoint: $0.endpoint
+            )
+        }
     }
 }
 

@@ -241,7 +241,7 @@ Relay policy controls include:
 
 Temporal bucketing can be single-bucket or multi-bucket. The multi-bucket path intentionally adds timing ambiguity to reduce the ease of correlating users by strict fetch cadence.
 
-Relays may also advertise optional hidden-retrieval support. In cover-query mode, compatible clients request fixed-size cover sets from temporal buckets and extract the target record locally. In replicated XOR-PIR mode, a client splits a lookup across two or more non-colluding replicas with identical fixed-size buckets; each replica receives only a selection mask, and the client reconstructs the target by XORing the replica responses. Cover-query mode is metadata reduction. Replicated XOR-PIR is stronger PIR-assisted retrieval under a non-collusion assumption, but it is not single-server cryptographic PIR and should only be advertised by operators that can actually provide replicated bucket semantics.
+Relays may also advertise optional hidden-retrieval support. In cover-query mode, compatible clients request fixed-size cover sets from temporal buckets and extract the target record locally. In replicated XOR-PIR mode, a client splits a lookup across two or more non-colluding replicas with identical fixed-size buckets; each replica receives only a selection mask, and the client reconstructs the target by XORing the replica responses. Cover-query mode is metadata reduction. Replicated XOR-PIR is stronger PIR-assisted retrieval under a non-collusion assumption, but it is not single-server cryptographic PIR and should only be advertised by operators that can actually provide replicated bucket semantics. Replica metadata includes replica IDs, operator IDs, and TLS endpoints so clients can reject mode-only claims, duplicated operators, duplicated endpoints, or non-TLS replicas before treating the advertisement as usable replicated PIR.
 
 Relays may also advertise optional onion-transport support. Onion packets are layered with ML-KEM-768 encapsulation per hop and AES-256-GCM payload protection. Each relay hop decapsulates only its layer, learns only its own routing instruction and optional delay bucket, and forwards the encrypted next layer. This is a route-privacy primitive for compatible relay paths.
 
@@ -367,7 +367,7 @@ The reference implementation delivers:
 - macOS relay, Linux relay parity path, and Docker deployment support
 - relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and software version
 - optional relay-advertised hidden-retrieval cover queries
-- optional relay-advertised replicated XOR-PIR for non-colluding replicated buckets
+- optional relay-advertised replicated XOR-PIR for non-colluding replicated buckets, with replica-set metadata validation
 - optional relay-advertised onion packet support with ML-KEM per-hop wrapping and AES-GCM layer protection
 - optional relay-advertised mixnet scheduling policy for batching, bounded release delay, and cover-packet planning
 - explicit group-security-model advertisement, required MLS epoch metadata, and bounded group epoch history
