@@ -38,4 +38,16 @@ if ! grep -q "prefetchConfigPayloadNeedsSanitization" \
   exit 1
 fi
 
+echo "Verifying Apple helper prefetch has bounded local work queues..."
+if ! grep -q "maxPrefetchProfiles" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchStore.swift"; then
+  echo "Closed-app helper prefetch must cap profile count before helper execution." >&2
+  exit 1
+fi
+if ! grep -q "maxPrefetchedRecords" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchStore.swift"; then
+  echo "Closed-app helper prefetch must cap staged ciphertext records." >&2
+  exit 1
+fi
+
 echo "Whitepaper alignment verification complete."
