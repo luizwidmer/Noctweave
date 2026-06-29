@@ -63,7 +63,7 @@ public struct GroupRatchetState: Codable, Equatable {
         transcriptHash: Data,
         commitSecret: Data
     ) throws {
-        guard epoch > self.epoch,
+        guard epoch == self.epoch + 1,
               !transcriptHash.isEmpty,
               !commitSecret.isEmpty else {
             throw CryptoError.invalidPayload

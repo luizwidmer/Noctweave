@@ -111,6 +111,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Align mixnet inter-relay cover coordination one step further: core now has deterministic cover plans for every directed relay-to-relay link in each interval, with fail-closed validation for empty secrets, invalid horizons, zero cover packets, duplicate relay IDs, shared operators, shared hosts, and non-TLS endpoints. This remains coordination machinery, not live network-wide cover execution.
 - [x] Align group retained-history fault coverage one step beyond happy-path recovery: route-level tests now cover offline refresh, multiple missed epoch distributions, multiple offline members recovering independently, and fail-closed behavior when the relay's bounded retained epoch window no longer contains a contiguous path from a stale member state.
 - [x] Align group retained-history metadata validation one step further: group ratchet recovery now rejects retained epoch-secret distributions whose group ID, epoch, operation, or recipient set does not match the retained commit summary before deriving recovery state.
+- [x] Align group epoch-contiguity one step further: `GroupRatchetState.advanceEpoch` now rejects skipped epoch jumps at the primitive boundary, so direct callers cannot bypass missed-commit replay or retained-history recovery checks.
 
 ## Deferred / open decisions
 - [x] Revisit open federation mode design and re-enable open-federation UX paths with coordinator throttles + reachability checks

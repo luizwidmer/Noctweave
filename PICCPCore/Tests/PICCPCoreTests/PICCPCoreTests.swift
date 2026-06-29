@@ -2832,6 +2832,35 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(newEnvelope.transcriptHash, transcript1)
     }
 
+    func testGroupRatchetRejectsSkippedEpochAdvance() throws {
+        let groupId = UUID()
+        let transcript0 = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let transcript1 = Data(SHA256.hash(data: Data("epoch-1".utf8)))
+        let transcript2 = Data(SHA256.hash(data: Data("epoch-2".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let commitSecret1 = Data(SHA256.hash(data: Data("commit secret 1".utf8)))
+        let commitSecret2 = Data(SHA256.hash(data: Data("commit secret 2".utf8)))
+        var state = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcript0,
+            groupSecret: groupSecret,
+            localSenderFingerprint: "alice"
+        )
+
+        XCTAssertThrowsError(
+            try state.advanceEpoch(to: 2, transcriptHash: transcript2, commitSecret: commitSecret2)
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+        XCTAssertEqual(state.epoch, 0)
+        XCTAssertEqual(state.transcriptHash, transcript0)
+
+        try state.advanceEpoch(to: 1, transcriptHash: transcript1, commitSecret: commitSecret1)
+        XCTAssertEqual(state.epoch, 1)
+        XCTAssertEqual(state.transcriptHash, transcript1)
+    }
+
     func testCounterWindowExceeded() throws {
         let alice = Identity(displayName: "Alice")
         let bob = Identity(displayName: "Bob")
