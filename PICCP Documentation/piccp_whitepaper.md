@@ -365,6 +365,7 @@ The reference implementation delivers:
 - optional relay-advertised hidden-retrieval cover queries
 - explicit group-security-model advertisement, required MLS epoch metadata, and bounded group epoch history
 - relay-advertised decentralized wake policy for jittered pull or bounded long-poll clients
+- ciphertext-only direct and group prefetch staging for app-intent or widget-triggered sync paths; these paths fetch encrypted envelopes without decrypting content or acknowledging relay delivery
 
 ## 10.2 Deferred work
 
@@ -375,7 +376,7 @@ The following areas remain future work:
 - DHT-style autonomous open-federation discovery
 - expanded real-device and multi-client fault-injection coverage around retained group epoch histories
 - external independent audit and signed release-provenance packaging
-- stronger closed-app background delivery that does not require centralized push infrastructure
+- stronger closed-app background delivery that does not require centralized push infrastructure or rely on OS-opportunistic intent/widget execution
 
 These are genuine open areas and remain on the roadmap because they are materially harder than the deployed protocol profile.
 
