@@ -30,6 +30,7 @@ public enum HiddenRetrievalPIRReplicaSetIssue: String, Codable, Equatable, Hasha
     case blankOperatorId
     case duplicateReplicaId
     case duplicateOperatorId
+    case duplicateHost
     case duplicateEndpoint
     case insecureEndpoint
 }
@@ -55,6 +56,7 @@ public enum HiddenRetrievalPIRReplicaSetValidator {
 
         let replicaIds = replicas.map { $0.replicaId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
         let operatorIds = replicas.map { $0.operatorId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let hosts = replicas.map { $0.endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
         let endpoints = replicas.map { normalizedEndpointKey($0.endpoint) }
 
         if replicaIds.contains(where: \.isEmpty) {
@@ -68,6 +70,9 @@ public enum HiddenRetrievalPIRReplicaSetValidator {
         }
         if Set(operatorIds).count != operatorIds.count {
             issues.append(.duplicateOperatorId)
+        }
+        if Set(hosts).count != hosts.count {
+            issues.append(.duplicateHost)
         }
         if Set(endpoints).count != endpoints.count {
             issues.append(.duplicateEndpoint)

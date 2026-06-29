@@ -485,6 +485,50 @@ final class PICCPCoreTests: XCTestCase {
 
         XCTAssertTrue(HiddenRetrievalPIRReplicaSetValidator.issues(for: noTLS).contains(.insecureEndpoint))
         XCTAssertTrue(HiddenRetrievalPIRReplicaSetValidator.isUsable(noTLS, requireTLS: false))
+
+        let sameHostDifferentPorts = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-shared.example", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "PIR-SHARED.example", port: 8443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let sameHostIssues = HiddenRetrievalPIRReplicaSetValidator.issues(for: sameHostDifferentPorts)
+        XCTAssertTrue(sameHostIssues.contains(.duplicateHost))
+        XCTAssertFalse(sameHostIssues.contains(.duplicateEndpoint))
+    }
+
+    func testRelayInfoSuppressesWeakReplicatedPIRAdvertisement() {
+        let weakReplicas = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-shared.example", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "pir-shared.example", port: 8443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let weakInfo = RelayConfiguration(hiddenRetrieval: weakReplicas).makeInfo()
+        XCTAssertNil(weakInfo.hiddenRetrieval)
+
+        let coverQueryInfo = RelayConfiguration(
+            hiddenRetrieval: HiddenRetrievalSupport(mode: .coverQuery)
+        ).makeInfo()
+        XCTAssertEqual(coverQueryInfo.hiddenRetrieval?.mode, .coverQuery)
     }
 
     func testRelayInfoAdvertisesGroupSecurityModel() throws {

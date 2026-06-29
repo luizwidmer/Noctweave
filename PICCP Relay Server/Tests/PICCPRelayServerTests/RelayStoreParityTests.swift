@@ -853,6 +853,27 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(info.hiddenRetrieval?.replicatedXorPIRReplicas?.map(\.operatorId), ["operator-a", "operator-b"])
     }
 
+    func testRelayInfoSuppressesWeakReplicatedPIRAdvertisement() {
+        let weakReplicas = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-shared.example", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "PIR-SHARED.example", port: 8443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let issues = HiddenRetrievalPIRReplicaSetValidator.issues(for: weakReplicas)
+        XCTAssertTrue(issues.contains(.duplicateHost))
+        XCTAssertNil(RelayConfiguration(hiddenRetrieval: weakReplicas).makeInfo().hiddenRetrieval)
+    }
+
     func testHiddenRetrievalSupportDoesNotAdvertiseTargetOnlyPlans() {
         let support = HiddenRetrievalSupport(defaultCoverSetSize: 1, maxCoverSetSize: 1)
 

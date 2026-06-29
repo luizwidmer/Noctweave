@@ -247,6 +247,90 @@ struct HiddenRetrievalSupport: Codable, Equatable {
     }
 }
 
+enum HiddenRetrievalPIRReplicaSetIssue: String, Codable, Equatable, Hashable {
+    case hiddenRetrievalUnavailable
+    case unsupportedMode
+    case insufficientReplicas
+    case blankReplicaId
+    case blankOperatorId
+    case duplicateReplicaId
+    case duplicateOperatorId
+    case duplicateHost
+    case duplicateEndpoint
+    case insecureEndpoint
+}
+
+enum HiddenRetrievalPIRReplicaSetValidator {
+    static func issues(
+        for support: HiddenRetrievalSupport?,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true
+    ) -> [HiddenRetrievalPIRReplicaSetIssue] {
+        guard let support else {
+            return [.hiddenRetrievalUnavailable]
+        }
+        guard support.mode == .replicatedXorPIR else {
+            return [.unsupportedMode]
+        }
+
+        let replicas = support.replicatedXorPIRReplicas ?? []
+        var issues: [HiddenRetrievalPIRReplicaSetIssue] = []
+        if replicas.count < max(2, minimumReplicaCount) {
+            issues.append(.insufficientReplicas)
+        }
+
+        let replicaIds = replicas.map { $0.replicaId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let operatorIds = replicas.map { $0.operatorId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let hosts = replicas.map { $0.endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let endpoints = replicas.map { normalizedEndpointKey($0.endpoint) }
+
+        if replicaIds.contains(where: \.isEmpty) {
+            issues.append(.blankReplicaId)
+        }
+        if operatorIds.contains(where: \.isEmpty) {
+            issues.append(.blankOperatorId)
+        }
+        if Set(replicaIds).count != replicaIds.count {
+            issues.append(.duplicateReplicaId)
+        }
+        if Set(operatorIds).count != operatorIds.count {
+            issues.append(.duplicateOperatorId)
+        }
+        if Set(hosts).count != hosts.count {
+            issues.append(.duplicateHost)
+        }
+        if Set(endpoints).count != endpoints.count {
+            issues.append(.duplicateEndpoint)
+        }
+        if requireTLS, replicas.contains(where: { !$0.endpoint.useTLS }) {
+            issues.append(.insecureEndpoint)
+        }
+
+        return Array(Set(issues)).sorted { $0.rawValue < $1.rawValue }
+    }
+
+    static func isUsable(
+        _ support: HiddenRetrievalSupport?,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true
+    ) -> Bool {
+        issues(
+            for: support,
+            minimumReplicaCount: minimumReplicaCount,
+            requireTLS: requireTLS
+        ).isEmpty
+    }
+
+    private static func normalizedEndpointKey(_ endpoint: RelayEndpoint) -> String {
+        [
+            endpoint.transport.rawValue,
+            endpoint.useTLS ? "tls" : "plain",
+            endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            String(endpoint.port)
+        ].joined(separator: "://")
+    }
+}
+
 struct OnionTransportSupport: Codable, Equatable {
     let enabled: Bool
     let maxHops: Int
@@ -625,7 +709,7 @@ struct RelayConfiguration: Codable, Equatable {
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled != false,
             attachmentStorageBackend: attachmentStorageBackend,
-            hiddenRetrieval: hiddenRetrieval,
+            hiddenRetrieval: advertisedHiddenRetrieval,
             onionTransport: onionTransport,
             mixnetTransport: mixnetTransport,
             wakeSupport: wakeSupport,
@@ -642,6 +726,16 @@ struct RelayConfiguration: Codable, Equatable {
             curatedRequireSignedDirectory: curatedMode ? curatedRequireSignedDirectory : nil,
             advertisedAt: now
         )
+    }
+
+    private var advertisedHiddenRetrieval: HiddenRetrievalSupport? {
+        guard let hiddenRetrieval else {
+            return nil
+        }
+        guard hiddenRetrieval.mode == .replicatedXorPIR else {
+            return hiddenRetrieval
+        }
+        return HiddenRetrievalPIRReplicaSetValidator.isUsable(hiddenRetrieval) ? hiddenRetrieval : nil
     }
 }
 

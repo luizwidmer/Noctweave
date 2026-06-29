@@ -371,7 +371,7 @@ public struct RelayConfiguration: Codable, Equatable {
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled != false,
             attachmentStorageBackend: attachmentStorageBackend,
-            hiddenRetrieval: hiddenRetrieval,
+            hiddenRetrieval: advertisedHiddenRetrieval,
             onionTransport: onionTransport,
             mixnetTransport: mixnetTransport,
             wakeSupport: wakeSupport,
@@ -392,6 +392,16 @@ public struct RelayConfiguration: Codable, Equatable {
             knownOpenPeers: nil,
             advertisedAt: now
         )
+    }
+
+    private var advertisedHiddenRetrieval: HiddenRetrievalSupport? {
+        guard let hiddenRetrieval else {
+            return nil
+        }
+        guard hiddenRetrieval.mode == .replicatedXorPIR else {
+            return hiddenRetrieval
+        }
+        return HiddenRetrievalPIRReplicaSetValidator.isUsable(hiddenRetrieval) ? hiddenRetrieval : nil
     }
 }
 
