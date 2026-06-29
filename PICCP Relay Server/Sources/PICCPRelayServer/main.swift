@@ -28,6 +28,7 @@ struct ServerConfig {
     var ipfsGatewayEndpoint: URL?
     var ipfsTimeoutSeconds: Int
     var hiddenRetrieval: HiddenRetrievalSupport?
+    var onionTransport: OnionTransportSupport?
     var wakeSupport: DecentralizedWakeSupport?
     var relayName: String?
     var operatorNote: String?
@@ -81,6 +82,15 @@ struct ServerConfig {
         ) ?? .coverQuery
         var hiddenRetrievalDefaultCoverSetSize = 8
         var hiddenRetrievalMaxCoverSetSize = 32
+        var onionTransportEnabled = parseBoolFlag(
+            environment["NOCTYRA_ONION_TRANSPORT"] ?? "false",
+            defaultValue: false
+        )
+        var onionTransportMaxHops = Int(environment["NOCTYRA_ONION_MAX_HOPS"] ?? "") ?? 3
+        var onionTransportRequiresFixedSizePackets = parseBoolFlag(
+            environment["NOCTYRA_ONION_FIXED_SIZE_PACKETS"] ?? "true",
+            defaultValue: true
+        )
         var wakeMode: DecentralizedWakeMode?
         var wakeMinPollSeconds = 60
         var wakeMaxPollSeconds = 300
@@ -239,6 +249,22 @@ struct ServerConfig {
                 if let value = iterator.next(), let parsed = Int(value) {
                     hiddenRetrievalMaxCoverSetSize = max(1, parsed)
                 }
+            case "--onion-transport":
+                if let value = iterator.next() {
+                    onionTransportEnabled = parseBoolFlag(value, defaultValue: true)
+                } else {
+                    onionTransportEnabled = true
+                }
+            case "--onion-max-hops":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    onionTransportMaxHops = parsed
+                    onionTransportEnabled = true
+                }
+            case "--onion-fixed-size-packets":
+                if let value = iterator.next() {
+                    onionTransportRequiresFixedSizePackets = parseBoolFlag(value, defaultValue: true)
+                    onionTransportEnabled = true
+                }
             case "--wake-mode":
                 if let value = iterator.next(),
                    let parsed = DecentralizedWakeMode(rawValue: value) {
@@ -363,6 +389,13 @@ struct ServerConfig {
                 maxCoverSetSize: hiddenRetrievalMaxCoverSetSize
             )
             : nil
+        let onionTransport = onionTransportEnabled
+            ? OnionTransportSupport(
+                enabled: true,
+                maxHops: onionTransportMaxHops,
+                requiresFixedSizePackets: onionTransportRequiresFixedSizePackets
+            )
+            : nil
         let wakeSupport = wakeMode.map { mode in
             DecentralizedWakeSupport(
                 mode: mode,
@@ -399,6 +432,7 @@ struct ServerConfig {
             ipfsGatewayEndpoint: ipfsGatewayEndpoint,
             ipfsTimeoutSeconds: ipfsTimeoutSeconds,
             hiddenRetrieval: hiddenRetrieval,
+            onionTransport: onionTransport,
             wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,
@@ -523,6 +557,7 @@ var relayConfiguration = RelayConfiguration(
     attachmentsEnabled: config.attachmentsEnabled,
     attachmentStorageBackend: config.attachmentStorageMode.rawValue,
     hiddenRetrieval: config.hiddenRetrieval,
+    onionTransport: config.onionTransport,
     wakeSupport: config.wakeSupport,
     relayName: config.relayName,
     operatorNote: config.operatorNote,

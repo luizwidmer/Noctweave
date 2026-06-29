@@ -7263,6 +7263,112 @@ final class PICCPCoreTests: XCTestCase {
             lifetimeSeconds: lifetimeSeconds
         )
     }
+
+    func testOnionTransportPeelsThreeHopsInOrder() throws {
+        let hop1 = AgreementKeyPair()
+        let hop2 = AgreementKeyPair()
+        let hop3 = AgreementKeyPair()
+        let finalPayload = Data("fixed-size-message-frame".utf8)
+        let packet = try OnionTransport.seal(
+            finalPayload: finalPayload,
+            hops: [
+                OnionHopDescriptor(
+                    hopId: "relay-a",
+                    publicKeyData: hop1.publicKeyData,
+                    routingInstruction: "forward:relay-b",
+                    delayBucketSeconds: 60
+                ),
+                OnionHopDescriptor(
+                    hopId: "relay-b",
+                    publicKeyData: hop2.publicKeyData,
+                    routingInstruction: "forward:relay-c",
+                    delayBucketSeconds: 120
+                ),
+                OnionHopDescriptor(
+                    hopId: "relay-c",
+                    publicKeyData: hop3.publicKeyData,
+                    routingInstruction: "deliver:target-inbox",
+                    delayBucketSeconds: 300
+                )
+            ]
+        )
+
+        XCTAssertEqual(packet.entryHopId, "relay-a")
+        let first = try OnionTransport.peel(layer: packet.layer, using: hop1)
+        XCTAssertEqual(first.routingInstruction, "forward:relay-b")
+        XCTAssertEqual(first.nextHopId, "relay-b")
+        XCTAssertNil(first.finalPayload)
+
+        let secondLayer = try XCTUnwrap(first.nextLayer)
+        let second = try OnionTransport.peel(layer: secondLayer, using: hop2)
+        XCTAssertEqual(second.routingInstruction, "forward:relay-c")
+        XCTAssertEqual(second.nextHopId, "relay-c")
+        XCTAssertNil(second.finalPayload)
+
+        let thirdLayer = try XCTUnwrap(second.nextLayer)
+        let third = try OnionTransport.peel(layer: thirdLayer, using: hop3)
+        XCTAssertEqual(third.routingInstruction, "deliver:target-inbox")
+        XCTAssertNil(third.nextHopId)
+        XCTAssertNil(third.nextLayer)
+        XCTAssertEqual(third.finalPayload, finalPayload)
+    }
+
+    func testOnionTransportRejectsWrongHopKey() throws {
+        let intendedHop = AgreementKeyPair()
+        let wrongHop = AgreementKeyPair()
+        let packet = try OnionTransport.seal(
+            finalPayload: Data("payload".utf8),
+            hops: [
+                OnionHopDescriptor(
+                    hopId: "relay-a",
+                    publicKeyData: intendedHop.publicKeyData,
+                    routingInstruction: "deliver"
+                )
+            ]
+        )
+
+        XCTAssertThrowsError(try OnionTransport.peel(layer: packet.layer, using: wrongHop))
+    }
+
+    func testOnionTransportRejectsTamperedLayer() throws {
+        let hop = AgreementKeyPair()
+        let packet = try OnionTransport.seal(
+            finalPayload: Data("payload".utf8),
+            hops: [
+                OnionHopDescriptor(
+                    hopId: "relay-a",
+                    publicKeyData: hop.publicKeyData,
+                    routingInstruction: "deliver"
+                )
+            ]
+        )
+        var tamperedTag = packet.layer.payload.tag
+        tamperedTag.append(0x01)
+        let tamperedLayer = OnionLayer(
+            hopId: packet.layer.hopId,
+            kemCiphertext: packet.layer.kemCiphertext,
+            payload: EncryptedPayload(
+                nonce: packet.layer.payload.nonce,
+                ciphertext: packet.layer.payload.ciphertext,
+                tag: tamperedTag
+            )
+        )
+
+        XCTAssertThrowsError(try OnionTransport.peel(layer: tamperedLayer, using: hop))
+    }
+
+    func testRelayInfoAdvertisesOptionalOnionTransportSupport() throws {
+        let info = RelayConfiguration(
+            onionTransport: OnionTransportSupport(enabled: true, maxHops: 5, requiresFixedSizePackets: true)
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(info.onionTransport?.enabled, true)
+        XCTAssertEqual(info.onionTransport?.maxHops, 5)
+        XCTAssertEqual(info.onionTransport?.requiresFixedSizePackets, true)
+
+        let decoded = try PICCPCoder.decode(RelayInfo.self, from: PICCPCoder.encode(info))
+        XCTAssertEqual(decoded.onionTransport, info.onionTransport)
+    }
 }
 
 private func testBitset(recordCount: Int, enabledIndex: Int) -> Data {

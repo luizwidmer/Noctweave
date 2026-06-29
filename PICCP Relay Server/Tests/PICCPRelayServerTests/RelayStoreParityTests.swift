@@ -846,6 +846,17 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(support.maxCoverSetSize, 2)
     }
 
+    func testRelayInfoCarriesOptionalOnionTransportSupport() {
+        let configuration = RelayConfiguration(
+            onionTransport: OnionTransportSupport(enabled: true, maxHops: 5, requiresFixedSizePackets: true)
+        )
+        let info = configuration.makeInfo()
+
+        XCTAssertEqual(info.onionTransport?.enabled, true)
+        XCTAssertEqual(info.onionTransport?.maxHops, 5)
+        XCTAssertEqual(info.onionTransport?.requiresFixedSizePackets, true)
+    }
+
     func testRelayInfoCarriesGroupSecurityModel() {
         let defaultInfo = RelayConfiguration().makeInfo()
         XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)

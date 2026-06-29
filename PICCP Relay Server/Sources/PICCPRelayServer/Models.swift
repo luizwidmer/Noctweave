@@ -226,6 +226,18 @@ struct HiddenRetrievalSupport: Codable, Equatable {
     }
 }
 
+struct OnionTransportSupport: Codable, Equatable {
+    let enabled: Bool
+    let maxHops: Int
+    let requiresFixedSizePackets: Bool
+
+    init(enabled: Bool = true, maxHops: Int = 3, requiresFixedSizePackets: Bool = true) {
+        self.enabled = enabled
+        self.maxHops = min(max(1, maxHops), 8)
+        self.requiresFixedSizePackets = requiresFixedSizePackets
+    }
+}
+
 enum DecentralizedWakeMode: String, Codable, CaseIterable {
     case pullOnly
     case longPoll
@@ -271,6 +283,7 @@ struct RelayInfo: Codable, Equatable {
     let attachmentsEnabled: Bool?
     let attachmentStorageBackend: String?
     let hiddenRetrieval: HiddenRetrievalSupport?
+    let onionTransport: OnionTransportSupport?
     let wakeSupport: DecentralizedWakeSupport?
     let relayName: String?
     let operatorNote: String?
@@ -300,6 +313,7 @@ struct RelayInfo: Codable, Equatable {
         attachmentsEnabled: Bool? = nil,
         attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
+        onionTransport: OnionTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
@@ -333,6 +347,7 @@ struct RelayInfo: Codable, Equatable {
         self.attachmentsEnabled = attachmentsEnabled
         self.attachmentStorageBackend = attachmentStorageBackend
         self.hiddenRetrieval = hiddenRetrieval
+        self.onionTransport = onionTransport
         self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
@@ -364,6 +379,7 @@ struct RelayConfiguration: Codable, Equatable {
     var attachmentsEnabled: Bool?
     var attachmentStorageBackend: String?
     var hiddenRetrieval: HiddenRetrievalSupport?
+    var onionTransport: OnionTransportSupport?
     var wakeSupport: DecentralizedWakeSupport?
     var relayName: String?
     var operatorNote: String?
@@ -398,6 +414,7 @@ struct RelayConfiguration: Codable, Equatable {
         attachmentsEnabled: Bool = true,
         attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
+        onionTransport: OnionTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
@@ -438,6 +455,7 @@ struct RelayConfiguration: Codable, Equatable {
         let normalizedAttachmentStorageBackend = attachmentStorageBackend?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.attachmentStorageBackend = normalizedAttachmentStorageBackend?.isEmpty == false ? normalizedAttachmentStorageBackend : nil
         self.hiddenRetrieval = hiddenRetrieval
+        self.onionTransport = onionTransport
         self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
@@ -481,6 +499,7 @@ struct RelayConfiguration: Codable, Equatable {
             attachmentsEnabled: attachmentsEnabled != false,
             attachmentStorageBackend: attachmentStorageBackend,
             hiddenRetrieval: hiddenRetrieval,
+            onionTransport: onionTransport,
             wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,

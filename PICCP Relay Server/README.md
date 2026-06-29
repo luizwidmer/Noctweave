@@ -50,6 +50,9 @@ not appear in process listings:
 - `NOCTYRA_COORDINATOR_REGISTRATION_TOKEN`
 - `NOCTYRA_FEDERATION_FORWARDING_TOKEN`
 - `NOCTYRA_COORDINATOR_SIGNING_KEY` (base64)
+- `NOCTYRA_ONION_TRANSPORT`
+- `NOCTYRA_ONION_MAX_HOPS`
+- `NOCTYRA_ONION_FIXED_SIZE_PACKETS`
 
 Use `--attachments-enabled false` for a text-only relay. Attachment upload and
 download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
@@ -58,6 +61,10 @@ bucket schedule to disable temporal bucketing.
 Use `--hidden-retrieval true` to advertise optional cover-query hidden
 retrieval support. This is a metadata-reduction capability for compatible
 clients, not full PIR and not a mandatory fetch path.
+
+Use `--onion-transport true` to advertise optional PQ onion packet support for
+compatible relay paths. This publishes hop-by-hop packet support only; it is not
+a full mixnet and does not add global cover traffic or batching.
 
 Use `--wake-mode pullOnly` or `--wake-mode longPoll` to advertise a decentralized wake policy for compatible clients. This does not enable centralized push and does not guarantee closed-app delivery; it only publishes relay-supported polling or long-poll bounds.
 
@@ -130,8 +137,12 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 - `--attachment-max-ttl-seconds <seconds>`: max accepted attachment TTL (default: `21600`)
 - `--attachment-max-ttl-minutes <minutes>`: max accepted attachment TTL in minutes
 - `--hidden-retrieval <true|false>`: advertise optional hidden-retrieval cover-query support (default: `false`)
+- `--hidden-retrieval-mode <coverQuery|replicatedXorPIR>`: advertised hidden-retrieval mode
 - `--hidden-retrieval-cover-size <count>`: default cover set size advertised to clients (default: `8`)
 - `--hidden-retrieval-max-cover-size <count>`: max cover set size advertised to clients (default: `32`)
+- `--onion-transport <true|false>`: advertise optional PQ onion packet support (default: `false`)
+- `--onion-max-hops <count>`: max advertised onion hops, clamped to 1-8 (default: `3`)
+- `--onion-fixed-size-packets <true|false>`: advertise fixed-size packet requirement (default: `true`)
 - `--wake-mode <pullOnly|longPoll>`: advertise decentralized wake support for compatible clients
 - `--wake-min-poll-seconds <seconds>`: lower polling interval bound advertised to clients (default: `60`)
 - `--wake-max-poll-seconds <seconds>`: upper polling/backoff bound advertised to clients (default: `300`)

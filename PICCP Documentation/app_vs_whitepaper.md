@@ -46,6 +46,7 @@ Last reviewed: June 28, 2026.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation. Discovery refreshes retain previously validated signed nodes across transient gateway or peer-query failures.
 - Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning requires at least one decoy, a non-empty canonical bucket, a non-empty client secret, non-empty target/record identifiers, and a bounded cover set. Extraction rejects incomplete responses, extra response records, target-only public plans, duplicate/blank record IDs, blank targets, and malformed public query plans so compatible clients do not silently accept direct retrievals.
+- Optional relay-advertised onion transport support for compatible relay paths. Core onion packets wrap each hop with ML-KEM-768 and AES-256-GCM so a relay can peel only its own routing instruction, delay bucket, and encrypted next layer. This is a hop-by-hop route-privacy primitive, not a deployed mixnet scheduler.
 - Direct and group message plaintexts are padded into fixed-size buckets before AEAD. Relays therefore see padded ciphertext bucket sizes instead of exact text, attachment-descriptor, or voice-descriptor plaintext lengths. Core and Linux relay stores also reject oversized direct/group envelope payloads before storing them.
 - Release verification workflow wired to run the local SBOM, dependency, relay test, and optional scanner checks in CI.
 - Local release provenance manifests can be generated from the checked-out commit, SBOM snapshots, package pins, Docker inputs, and release verifier inputs with `scripts/generate-release-provenance.py`; `scripts/verify-release.sh` validates the manifest schema and tracked-input hashes.
@@ -85,6 +86,14 @@ Last reviewed: June 28, 2026.
 - Group ratchet recovery fails closed when retained epoch history skips an epoch.
 - The focused whitepaper verifier now covers these hidden-retrieval, wake, group-ratchet, and Linux relay parity invariants.
 
+## Current Onion-Transport Alignment Pass
+- Core onion packets now support multi-hop construction and ordered peeling.
+- Each hop layer uses ML-KEM-768 encapsulation for that relay's public key and AES-256-GCM for the encrypted routing payload.
+- Hop plaintext exposes only the local routing instruction, optional delay bucket, optional next-hop identifier, and either the next encrypted layer or the final payload.
+- Tests reject wrong-hop keys and tampered layers.
+- Relay metadata can advertise onion transport support, max hop count, and whether fixed-size packets are required. The mac relay UI and Linux relay CLI can configure this advertisement.
+- This is not a full mixnet. Global cover traffic, batching, route selection policy, and latency scheduling remain out of scope.
+
 ## Current Message-Size Alignment Pass
 - Direct-message bodies now use a versioned padded plaintext envelope before AES-GCM encryption.
 - MLS-derived group message bodies use the same padded plaintext envelope.
@@ -101,16 +110,16 @@ Last reviewed: June 28, 2026.
 
 ## Whitepaper Limits That Remain True
 - No single-server cryptographic PIR deployment.
-- No mixnet or onion transport layer.
+- No full mixnet deployment. The implementation now has an onion packet primitive and relay advertisement, but does not provide global cover traffic, batching, route selection policy, or network-wide latency scheduling.
 - No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and bounded rejoin recovery, and group ratchet epoch secrets can be distributed through ML-KEM-sealed member shares. Relay-backed text, image, and voice bodies now use the group-inbox ratchet path, and clients no longer preserve the old pairwise group fallback.
 - No claim of protection against a compromised OS or malicious device vendor.
 - No autonomous public DHT release mode; public-network adapters remain deferred until poisoning, churn, flooding, and operator-risk controls are externally validated.
 - No centralized push-notification server by design, so closed-app instant delivery remains out of scope. Compatible pull, intent, or long-poll clients can stage encrypted direct and group ciphertext for later unlocked processing.
 
 ## Alignment Summary
-- **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, coordinator-assisted federation, temporal-bucket timestamp minimization, fixed-size message-size buckets, fixed-size hidden-retrieval cover-query safeguards, replicated XOR-PIR primitive support, decentralized wake cycle planning, ciphertext-only direct/group prefetch staging, group-ratchet epoch-secret distribution validation, fail-closed retained-epoch recovery, Linux relay parity for the same group and retrieval checks, and repository-owned whitepaper verification/provenance checks.
-- **Partially aligned**: anonymity-strength metadata protection, PIR-class hidden retrieval, MLS-class group cryptography, autonomous open federation, and closed-app delivery. Current controls now enforce deterministic bucketing, fixed ciphertext-size buckets for message bodies, exact cover-response validation, signed registry commits, MLS epoch state, group-context AEAD binding, structurally validated ML-KEM member shares, retained epoch replay, auditable wake scheduling, ciphertext-only direct/group staging, and replicated XOR-PIR under a non-collusion assumption, but these do not claim strong anonymity, single-server cryptographic PIR, formal MLS proofs, public DHT release readiness, or guaranteed background delivery.
-- **Deferred**: mixnet/onion transport, autonomous public DHT release mode, external audit, Apple notarized artifact provenance, registry-pushed Docker image provenance, and formal MLS-class proof work.
+- **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, coordinator-assisted federation, temporal-bucket timestamp minimization, fixed-size message-size buckets, fixed-size hidden-retrieval cover-query safeguards, replicated XOR-PIR primitive support, onion packet primitive support, decentralized wake cycle planning, ciphertext-only direct/group prefetch staging, group-ratchet epoch-secret distribution validation, fail-closed retained-epoch recovery, Linux relay parity for the same group and retrieval checks, and repository-owned whitepaper verification/provenance checks.
+- **Partially aligned**: anonymity-strength metadata protection, PIR-class hidden retrieval, MLS-class group cryptography, autonomous open federation, and closed-app delivery. Current controls now enforce deterministic bucketing, fixed ciphertext-size buckets for message bodies, exact cover-response validation, signed registry commits, MLS epoch state, group-context AEAD binding, structurally validated ML-KEM member shares, retained epoch replay, auditable wake scheduling, ciphertext-only direct/group staging, replicated XOR-PIR under a non-collusion assumption, and per-hop onion packet wrapping, but these do not claim strong anonymity, single-server cryptographic PIR, formal MLS proofs, public DHT release readiness, full mixnet deployment, or guaranteed background delivery.
+- **Deferred**: full mixnet deployment, autonomous public DHT release mode, external audit, Apple notarized artifact provenance, registry-pushed Docker image provenance, and formal MLS-class proof work.
 
 ## Next Alignment Targets
 - Run `scripts/verify-whitepaper-alignment.sh` alongside focused protocol changes that touch metadata minimization, hidden retrieval, decentralized wake, or open federation.

@@ -119,6 +119,7 @@ public struct RelayInfo: Codable, Equatable {
     public var attachmentsEnabled: Bool?
     public var attachmentStorageBackend: String?
     public var hiddenRetrieval: HiddenRetrievalSupport?
+    public var onionTransport: OnionTransportSupport?
     public var wakeSupport: DecentralizedWakeSupport?
     public var relayName: String?
     public var operatorNote: String?
@@ -148,6 +149,7 @@ public struct RelayInfo: Codable, Equatable {
         attachmentsEnabled: Bool? = nil,
         attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
+        onionTransport: OnionTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
@@ -181,6 +183,7 @@ public struct RelayInfo: Codable, Equatable {
         self.attachmentsEnabled = attachmentsEnabled
         self.attachmentStorageBackend = attachmentStorageBackend
         self.hiddenRetrieval = hiddenRetrieval
+        self.onionTransport = onionTransport
         self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
@@ -212,6 +215,7 @@ public struct RelayConfiguration: Codable, Equatable {
     public var attachmentsEnabled: Bool?
     public var attachmentStorageBackend: String?
     public var hiddenRetrieval: HiddenRetrievalSupport?
+    public var onionTransport: OnionTransportSupport?
     public var wakeSupport: DecentralizedWakeSupport?
     public var relayName: String?
     public var operatorNote: String?
@@ -248,6 +252,7 @@ public struct RelayConfiguration: Codable, Equatable {
         attachmentsEnabled: Bool = true,
         attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
+        onionTransport: OnionTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
@@ -290,6 +295,7 @@ public struct RelayConfiguration: Codable, Equatable {
         let normalizedAttachmentStorageBackend = attachmentStorageBackend?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.attachmentStorageBackend = normalizedAttachmentStorageBackend?.isEmpty == false ? normalizedAttachmentStorageBackend : nil
         self.hiddenRetrieval = hiddenRetrieval
+        self.onionTransport = onionTransport
         self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
@@ -335,6 +341,7 @@ public struct RelayConfiguration: Codable, Equatable {
             attachmentsEnabled: attachmentsEnabled != false,
             attachmentStorageBackend: attachmentStorageBackend,
             hiddenRetrieval: hiddenRetrieval,
+            onionTransport: onionTransport,
             wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,
