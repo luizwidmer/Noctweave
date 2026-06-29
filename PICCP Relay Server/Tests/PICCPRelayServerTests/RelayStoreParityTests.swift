@@ -24,6 +24,26 @@ final class RelayStoreParityTests: XCTestCase {
         }
     }
 
+    func testRelayStoreBucketsVisiblePairingAnnouncementTimes() {
+        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        let now = Date(timeIntervalSince1970: 1_765_400_123)
+
+        let announcement = store.announce(makeContactOffer(), ttlSeconds: 300, now: now)
+
+        XCTAssertEqual(announcement.announcedAt, Date(timeIntervalSince1970: 1_765_400_100))
+        XCTAssertEqual(announcement.expiresAt, Date(timeIntervalSince1970: 1_765_400_400))
+    }
+
+    func testRelayStoreBucketsVisiblePairRequestTimes() {
+        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        let now = Date(timeIntervalSince1970: 1_765_400_123)
+
+        XCTAssertEqual(store.sendPairRequest(targetFingerprint: "target", offer: makeContactOffer(), now: now), 1)
+        let requests = store.fetchPairRequests(targetFingerprint: "target", maxCount: nil)
+
+        XCTAssertEqual(requests.first?.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
+    }
+
     func testInboxLimitIsEnforced() throws {
         let store = RelayStore(fileURL: nil, maxInboxMessages: 1, temporalBucketSeconds: 300)
         let inboxId = InboxAddress.generate()
@@ -802,6 +822,20 @@ final class RelayStoreParityTests: XCTestCase {
                 tag: Data(repeating: 0xB2, count: 16)
             ),
             signature: Data([0x99, 0x98, 0x97])
+        )
+    }
+
+    private func makeContactOffer(fingerprint: String = "alice-fingerprint") -> ContactOffer {
+        ContactOffer(
+            version: 1,
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: Data("alice-signing".utf8),
+            agreementPublicKey: Data("alice-agreement".utf8),
+            inboxAccessPublicKey: nil,
+            fingerprint: fingerprint,
+            signature: Data("alice-signature".utf8)
         )
     }
 

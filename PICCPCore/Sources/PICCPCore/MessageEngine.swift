@@ -131,6 +131,7 @@ public enum MessageEngine {
             messageKey: prepared.key
         )
         let sentAt = MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
+        let visibleRootRatchet = rootRatchet?.bucketed(metadataBucketSeconds: metadataBucketSeconds)
         let signable = try Envelope.signableData(
             conversationId: conversation.id,
             sessionId: conversation.sessionId,
@@ -139,7 +140,7 @@ public enum MessageEngine {
             messageCounter: prepared.counter,
             kemCiphertext: kemCiphertext,
             prekey: prekey,
-            rootRatchet: rootRatchet,
+            rootRatchet: visibleRootRatchet,
             authenticatedContext: authenticatedContext,
             payload: encrypted
         )
@@ -152,7 +153,7 @@ public enum MessageEngine {
             messageCounter: prepared.counter,
             kemCiphertext: kemCiphertext,
             prekey: prekey,
-            rootRatchet: rootRatchet,
+            rootRatchet: visibleRootRatchet,
             authenticatedContext: authenticatedContext,
             payload: encrypted,
             signature: signature
@@ -189,6 +190,7 @@ public enum MessageEngine {
             messageKey: messageKey
         )
         let sentAt = MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
+        let visibleRootRatchet = rootRatchet?.bucketed(metadataBucketSeconds: metadataBucketSeconds)
         let signable = try Envelope.signableData(
             conversationId: conversation.id,
             sessionId: conversation.sessionId,
@@ -197,7 +199,7 @@ public enum MessageEngine {
             messageCounter: messageCounter,
             kemCiphertext: kemCiphertext,
             prekey: prekey,
-            rootRatchet: rootRatchet,
+            rootRatchet: visibleRootRatchet,
             authenticatedContext: authenticatedContext,
             payload: encrypted
         )
@@ -210,7 +212,7 @@ public enum MessageEngine {
             messageCounter: messageCounter,
             kemCiphertext: kemCiphertext,
             prekey: prekey,
-            rootRatchet: rootRatchet,
+            rootRatchet: visibleRootRatchet,
             authenticatedContext: authenticatedContext,
             payload: encrypted,
             signature: signature

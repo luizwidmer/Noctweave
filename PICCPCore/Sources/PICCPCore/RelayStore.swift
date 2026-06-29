@@ -343,15 +343,15 @@ public actor RelayStore {
         return (mailboxes.count, messageCount)
     }
 
-    public func announce(_ offer: ContactOffer, ttlSeconds: Int? = nil) -> PairingAnnouncement {
-        pruneAnnouncements(now: Date())
+    public func announce(_ offer: ContactOffer, ttlSeconds: Int? = nil, now: Date = Date()) -> PairingAnnouncement {
+        pruneAnnouncements(now: now)
         let requestedTTL = TimeInterval(ttlSeconds ?? Int(announcementTTL))
         let ttl = min(maximumAnnouncementTTL, max(minimumAnnouncementTTL, requestedTTL))
-        let now = Date()
+        let visibleNow = bucketed(now, discriminator: "announce:\(offer.fingerprint)")
         let announcement = PairingAnnouncement(
             offer: offer,
-            announcedAt: now,
-            expiresAt: now.addingTimeInterval(ttl)
+            announcedAt: visibleNow,
+            expiresAt: visibleNow.addingTimeInterval(ttl)
         )
         announcements[offer.fingerprint] = announcement
         if announcements.count > maxAnnouncements,
@@ -368,7 +368,7 @@ public actor RelayStore {
         return Array(list.prefix(boundedLimit))
     }
 
-    public func sendPairRequest(targetFingerprint: String, offer: ContactOffer) -> Int {
+    public func sendPairRequest(targetFingerprint: String, offer: ContactOffer, now: Date = Date()) -> Int {
         if pairRequests[targetFingerprint] == nil,
            pairRequests.count >= maxPairRequestTargets,
            let oldestTarget = pairRequests.min(by: {
@@ -377,7 +377,10 @@ public actor RelayStore {
             pairRequests.removeValue(forKey: oldestTarget)
         }
         var requests = pairRequests[targetFingerprint, default: []]
-        requests.append(PairingRequest(from: offer, sentAt: Date()))
+        requests.append(PairingRequest(
+            from: offer,
+            sentAt: bucketed(now, discriminator: "pair:\(targetFingerprint):\(offer.fingerprint)")
+        ))
         if requests.count > maxPairRequests {
             requests = Array(requests.suffix(maxPairRequests))
         }

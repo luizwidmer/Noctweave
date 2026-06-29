@@ -90,9 +90,10 @@ public enum DecentralizedWakePlanner {
                 failureCount: boundedFailures
             )
         let delay = min(policy.maxPollIntervalSeconds, base + jitter)
+        let longPollTimeout = policy.longPollTimeoutSeconds.map { min($0, delay) }
         return DecentralizedWakePlan(
             nextPollDelaySeconds: delay,
-            longPollTimeoutSeconds: policy.longPollTimeoutSeconds,
+            longPollTimeoutSeconds: longPollTimeout,
             failureBackoffStep: boundedFailures
         )
     }

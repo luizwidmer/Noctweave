@@ -44,10 +44,10 @@ Last reviewed: June 28, 2026.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation. Discovery refreshes retain previously validated signed nodes across transient gateway or peer-query failures.
-- Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning requires at least one decoy, rejects undersized buckets, incomplete cover responses, and malformed public query plans so compatible clients do not silently accept target-only retrievals.
+- Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning requires at least one decoy and a non-empty bucket, rejects undersized buckets, incomplete cover responses, target-only public plans, and malformed public query plans so compatible clients do not silently accept direct retrievals.
 - Release verification workflow wired to run the local SBOM, dependency, relay test, and optional scanner checks in CI.
 - Local release provenance manifests can be generated from the checked-out commit, SBOM snapshots, package pins, Docker inputs, and release verifier inputs with `scripts/generate-release-provenance.py`; `scripts/verify-release.sh` validates the manifest schema and tracked-input hashes.
-- `scripts/verify-whitepaper-alignment.sh` runs focused checks for metadata timestamp bucketing, hidden-retrieval cover-query safeguards, decentralized wake planning, open-federation fallback/gateway simulation, Linux relay open-federation parity, and release provenance generation.
+- `scripts/verify-whitepaper-alignment.sh` runs focused checks for metadata timestamp bucketing, root-ratchet visible timestamp bucketing, relay pairing timestamp bucketing on core and Linux relay stores, hidden-retrieval cover-query safeguards, decentralized wake planning, open-federation fallback/gateway simulation, Linux relay open-federation parity, and release provenance generation.
 
 ### Client UX and Local Safety
 - Contact Book, Identity Management, Relays, Settings, My Code, and group chat flows.
@@ -57,7 +57,7 @@ Last reviewed: June 28, 2026.
 - Screenshot/screen-capture redaction containers on supported Apple surfaces.
 - Secure typing choice between Apple's secure text path and Noctyra's app-owned keyboard.
 - Secure camera capture, image compression, encrypted attachments, and encrypted voice messages.
-- Client send paths can quantize visible direct-message and group-message envelope timestamps to the coarsest advertised relay temporal bucket, reducing precision in metadata visible to relays without changing ciphertext ratchets.
+- Client send paths can quantize visible direct-message and group-message envelope timestamps to the coarsest advertised relay temporal bucket, reducing precision in metadata visible to relays without changing ciphertext ratchets. Visible root-ratchet timestamps and relay-mediated pairing announcement/request timestamps use the same bucketing discipline.
 
 ## Whitepaper Limits That Remain True
 - No full cryptographic PIR-assisted hidden retrieval.

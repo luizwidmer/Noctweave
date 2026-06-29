@@ -91,6 +91,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Add local release verification script for SBOM, package pins, relay tests, and optional scanner hooks
 - [x] Add focused whitepaper-alignment verifier for metadata minimization, hidden retrieval, wake planning, open-federation simulation, Linux relay parity, and release provenance generation
 - [x] Add deterministic local release provenance manifest generation and validation in the release verifier
+- [x] Align ten partial whitepaper items without using an external audit package: bucket root-ratchet timestamps, bucket core pairing announcements, bucket core pair requests, bucket Linux relay pairing announcements, bucket Linux relay pair requests, reject empty hidden-retrieval buckets, reject target-only public retrieval plans, cap wake long-poll timeouts to the next planned poll, extend focused verifier coverage, and refresh alignment documentation.
 
 ## Deferred / open decisions
 - [x] Revisit open federation mode design and re-enable open-federation UX paths with coordinator throttles + reachability checks

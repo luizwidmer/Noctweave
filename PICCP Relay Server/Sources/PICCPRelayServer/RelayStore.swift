@@ -397,17 +397,17 @@ final class RelayStore {
         }
     }
 
-    func announce(_ offer: ContactOffer, ttlSeconds: Int?) -> PairingAnnouncement {
+    func announce(_ offer: ContactOffer, ttlSeconds: Int?, now: Date = Date()) -> PairingAnnouncement {
         performSync {
-            pruneAnnouncements(now: Date())
+            pruneAnnouncements(now: now)
             let requestedTTL = TimeInterval(ttlSeconds ?? Int(announcementTTL))
             let ttl = min(maximumAnnouncementTTL, max(minimumAnnouncementTTL, requestedTTL))
-            let now = Date()
+            let visibleNow = bucketed(now, discriminator: "announce:\(offer.fingerprint)")
             let announcement = PairingAnnouncement(
                 id: UUID(),
                 offer: offer,
-                announcedAt: now,
-                expiresAt: now.addingTimeInterval(ttl)
+                announcedAt: visibleNow,
+                expiresAt: visibleNow.addingTimeInterval(ttl)
             )
             announcements[offer.fingerprint] = announcement
             if announcements.count > maxAnnouncements,
@@ -427,7 +427,7 @@ final class RelayStore {
         }
     }
 
-    func sendPairRequest(targetFingerprint: String, offer: ContactOffer) -> Int {
+    func sendPairRequest(targetFingerprint: String, offer: ContactOffer, now: Date = Date()) -> Int {
         performSync {
             if pairRequests[targetFingerprint] == nil,
                pairRequests.count >= maxPairRequestTargets,
@@ -437,7 +437,11 @@ final class RelayStore {
                 pairRequests.removeValue(forKey: oldestTarget)
             }
             var requests = pairRequests[targetFingerprint, default: []]
-            requests.append(PairingRequest(id: UUID(), from: offer, sentAt: Date()))
+            requests.append(PairingRequest(
+                id: UUID(),
+                from: offer,
+                sentAt: bucketed(now, discriminator: "pair:\(targetFingerprint):\(offer.fingerprint)")
+            ))
             if requests.count > maxPairRequests {
                 requests = Array(requests.suffix(maxPairRequests))
             }

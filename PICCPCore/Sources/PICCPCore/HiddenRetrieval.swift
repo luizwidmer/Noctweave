@@ -3,6 +3,7 @@ import Foundation
 
 public enum HiddenRetrievalError: Error, Equatable {
     case invalidCoverSetSize
+    case invalidBucketId
     case emptyBucket
     case targetMissing
     case insufficientBucketRecords
@@ -32,6 +33,9 @@ public enum HiddenRetrievalPlanner {
         coverSetSize: Int,
         secret: Data
     ) throws -> HiddenRetrievalQueryPlan {
+        guard !bucketId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw HiddenRetrievalError.invalidBucketId
+        }
         guard coverSetSize >= 2 else {
             throw HiddenRetrievalError.invalidCoverSetSize
         }
@@ -72,7 +76,9 @@ public enum HiddenRetrievalPlanner {
         from records: [String: T],
         using plan: HiddenRetrievalQueryPlan
     ) -> T? {
-        guard Set(plan.requestedRecordIds).count == plan.requestedRecordIds.count,
+        guard !plan.bucketId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              plan.requestedRecordIds.count >= 2,
+              Set(plan.requestedRecordIds).count == plan.requestedRecordIds.count,
               plan.requestedRecordIds.filter({ $0 == plan.targetRecordId }).count == 1 else {
             return nil
         }

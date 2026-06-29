@@ -95,12 +95,36 @@ final class PICCPCoreTests: XCTestCase {
             requestedRecordIds: ["a", "c", "c"],
             targetRecordId: "c"
         )
+        let targetOnly = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["c"],
+            targetRecordId: "c"
+        )
+        let emptyBucket = HiddenRetrievalQueryPlan(
+            bucketId: " ",
+            requestedRecordIds: ["a", "c"],
+            targetRecordId: "c"
+        )
 
         XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: missingTarget))
         XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: duplicateTarget))
+        XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: targetOnly))
+        XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: emptyBucket))
     }
 
     func testHiddenRetrievalPlannerRejectsInvalidQueries() throws {
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: " ",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: "a",
+                coverSetSize: 2,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidBucketId)
+        }
+
         XCTAssertThrowsError(
             try HiddenRetrievalPlanner.makeCoverQuery(
                 bucketId: "bucket",
@@ -270,6 +294,27 @@ final class PICCPCoreTests: XCTestCase {
         )
         XCTAssertEqual(capped.failureBackoffStep, 6)
         XCTAssertLessThanOrEqual(capped.nextPollDelaySeconds, 120)
+    }
+
+    func testDecentralizedWakePlannerCapsLongPollTimeoutToNextDelay() {
+        let support = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 20,
+            maxPollIntervalSeconds: 300,
+            jitterPermille: 0,
+            longPollTimeoutSeconds: 300
+        )
+
+        let plan = DecentralizedWakePlanner.makePlan(
+            support: support,
+            identitySeed: Data("wake-identity".utf8),
+            relayIdentifier: "relay.example.org",
+            failureCount: 0,
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertEqual(plan.nextPollDelaySeconds, 20)
+        XCTAssertEqual(plan.longPollTimeoutSeconds, 20)
     }
 
     func testDecentralizedWakePlannerUsesBoundedPullDefaultsWithoutRelayPolicy() {
@@ -2315,13 +2360,21 @@ final class PICCPCoreTests: XCTestCase {
         let originalSessionId = aliceConversation.sessionId
 
         let ratchetContext = try MessageEngine.createRootRatchet(contact: bobContact, conversation: aliceConversation)
+        let preciseRatchetSentAt = Date(timeIntervalSince1970: 1_765_400_123)
+        let visibleRatchet = RootRatchet(
+            counter: ratchetContext.ratchet.counter,
+            kemCiphertext: ratchetContext.ratchet.kemCiphertext,
+            sentAt: preciseRatchetSentAt
+        )
         let envelope = try MessageEngine.encrypt(
             body: .text("Root ratchet"),
             senderSigningKey: alice.signingKey,
             senderFingerprint: alice.fingerprint,
             conversation: &aliceConversation,
-            rootRatchet: ratchetContext.ratchet
+            rootRatchet: visibleRatchet,
+            metadataBucketSeconds: 300
         )
+        XCTAssertEqual(envelope.rootRatchet?.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
         MessageEngine.applyRootRatchet(
             sharedSecret: ratchetContext.sharedSecret,
             counter: ratchetContext.ratchet.counter,
@@ -2384,6 +2437,33 @@ final class PICCPCoreTests: XCTestCase {
 
         let empty = try await store.fetch(inboxId: "inbox")
         XCTAssertEqual(empty.count, 0)
+    }
+
+    func testRelayStoreBucketsVisiblePairingAnnouncementTimes() async throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "alice-inbox", relay: relay)
+        let store = RelayStore(temporalBucketSeconds: 300)
+        let now = Date(timeIntervalSince1970: 1_765_400_123)
+
+        let announcement = await store.announce(offer, ttlSeconds: 300, now: now)
+
+        XCTAssertEqual(announcement.announcedAt, Date(timeIntervalSince1970: 1_765_400_100))
+        XCTAssertEqual(announcement.expiresAt, Date(timeIntervalSince1970: 1_765_400_400))
+    }
+
+    func testRelayStoreBucketsVisiblePairRequestTimes() async throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "alice-inbox", relay: relay)
+        let store = RelayStore(temporalBucketSeconds: 300)
+        let now = Date(timeIntervalSince1970: 1_765_400_123)
+
+        let requestCount = await store.sendPairRequest(targetFingerprint: "target", offer: offer, now: now)
+        XCTAssertEqual(requestCount, 1)
+        let requests = await store.fetchPairRequests(targetFingerprint: "target")
+
+        XCTAssertEqual(requests.first?.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
     }
 
     func testRelayStoreInboxLimitIsEnforced() async throws {

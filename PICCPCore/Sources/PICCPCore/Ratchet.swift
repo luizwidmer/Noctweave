@@ -104,4 +104,12 @@ public struct RootRatchet: Codable, Equatable {
         self.kemCiphertext = kemCiphertext
         self.sentAt = sentAt
     }
+
+    public func bucketed(metadataBucketSeconds: Int?) -> RootRatchet {
+        RootRatchet(
+            counter: counter,
+            kemCiphertext: kemCiphertext,
+            sentAt: MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
+        )
+    }
 }
