@@ -8201,6 +8201,73 @@ final class PICCPCoreTests: XCTestCase {
         }
     }
 
+    func testMixnetPacketPadderProducesFixedSizePackets() throws {
+        let shortPayload = Data("short".utf8)
+        let longerPayload = Data("longer-payload".utf8)
+        let fixedPayloadSize = 64
+
+        let shortPacket = try MixnetPacketPadder.pad(
+            packetId: " packet-a ",
+            payload: shortPayload,
+            fixedPayloadSize: fixedPayloadSize
+        )
+        let longerPacket = try MixnetPacketPadder.pad(
+            packetId: "packet-b",
+            payload: longerPayload,
+            fixedPayloadSize: fixedPayloadSize
+        )
+
+        XCTAssertEqual(shortPacket.packetId, "packet-a")
+        XCTAssertEqual(shortPacket.paddedPayload.count, fixedPayloadSize)
+        XCTAssertEqual(longerPacket.paddedPayload.count, fixedPayloadSize)
+        XCTAssertEqual(shortPacket.fixedPayloadSize, longerPacket.fixedPayloadSize)
+        XCTAssertEqual(try MixnetPacketPadder.open(shortPacket), shortPayload)
+        XCTAssertEqual(try MixnetPacketPadder.open(longerPacket), longerPayload)
+    }
+
+    func testMixnetPacketPadderRejectsMalformedPackets() throws {
+        XCTAssertThrowsError(
+            try MixnetPacketPadder.pad(packetId: " ", payload: Data("payload".utf8), fixedPayloadSize: 32)
+        ) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .blankPacketId)
+        }
+        XCTAssertThrowsError(
+            try MixnetPacketPadder.pad(packetId: "packet", payload: Data(), fixedPayloadSize: 32)
+        ) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .invalidPayload)
+        }
+        XCTAssertThrowsError(
+            try MixnetPacketPadder.pad(packetId: "packet", payload: Data("payload".utf8), fixedPayloadSize: 0)
+        ) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .invalidFixedSize)
+        }
+        XCTAssertThrowsError(
+            try MixnetPacketPadder.pad(packetId: "packet", payload: Data("payload".utf8), fixedPayloadSize: 3)
+        ) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .payloadTooLarge)
+        }
+
+        let wrongSizePacket = MixnetFixedSizePacket(
+            packetId: "packet",
+            paddedPayload: Data(repeating: 1, count: 31),
+            originalPayloadSize: 8,
+            fixedPayloadSize: 32
+        )
+        XCTAssertThrowsError(try MixnetPacketPadder.open(wrongSizePacket)) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .malformedPacket)
+        }
+
+        let oversizedOriginalPacket = MixnetFixedSizePacket(
+            packetId: "packet",
+            paddedPayload: Data(repeating: 1, count: 32),
+            originalPayloadSize: 33,
+            fixedPayloadSize: 32
+        )
+        XCTAssertThrowsError(try MixnetPacketPadder.open(oversizedOriginalPacket)) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .malformedPacket)
+        }
+    }
+
     func testMixnetRouteSelectorBuildsDeterministicDiverseRoute() throws {
         let candidates = [
             mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-a.example"),

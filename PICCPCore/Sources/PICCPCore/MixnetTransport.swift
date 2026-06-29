@@ -8,6 +8,14 @@ public enum MixnetSchedulerError: Error, Equatable {
     case invalidHorizon
 }
 
+public enum MixnetPacketPaddingError: Error, Equatable {
+    case blankPacketId
+    case invalidPayload
+    case invalidFixedSize
+    case payloadTooLarge
+    case malformedPacket
+}
+
 public enum MixnetInterRelayCoverError: Error, Equatable {
     case emptySecret
     case invalidHorizon
@@ -46,6 +54,20 @@ public enum MixnetPacketKind: String, Codable, Equatable {
     case cover
 }
 
+public struct MixnetFixedSizePacket: Codable, Equatable {
+    public let packetId: String
+    public let paddedPayload: Data
+    public let originalPayloadSize: Int
+    public let fixedPayloadSize: Int
+
+    public init(packetId: String, paddedPayload: Data, originalPayloadSize: Int, fixedPayloadSize: Int) {
+        self.packetId = packetId
+        self.paddedPayload = paddedPayload
+        self.originalPayloadSize = originalPayloadSize
+        self.fixedPayloadSize = fixedPayloadSize
+    }
+}
+
 public struct MixnetTransportSupport: Codable, Equatable {
     public var enabled: Bool
     public var batchIntervalSeconds: Int
@@ -65,6 +87,58 @@ public struct MixnetTransportSupport: Codable, Equatable {
         self.minBatchSize = min(max(1, minBatchSize), 256)
         self.coverPacketsPerBatch = min(max(0, coverPacketsPerBatch), 256)
         self.maxDelaySeconds = min(max(0, maxDelaySeconds), 3_600)
+    }
+}
+
+public enum MixnetPacketPadder {
+    public static func pad(
+        packetId: String,
+        payload: Data,
+        fixedPayloadSize: Int
+    ) throws -> MixnetFixedSizePacket {
+        let trimmedPacketId = packetId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPacketId.isEmpty else {
+            throw MixnetPacketPaddingError.blankPacketId
+        }
+        guard !payload.isEmpty else {
+            throw MixnetPacketPaddingError.invalidPayload
+        }
+        guard fixedPayloadSize > 0 else {
+            throw MixnetPacketPaddingError.invalidFixedSize
+        }
+        guard payload.count <= fixedPayloadSize else {
+            throw MixnetPacketPaddingError.payloadTooLarge
+        }
+
+        var paddedPayload = payload
+        let paddingCount = fixedPayloadSize - payload.count
+        if paddingCount > 0 {
+            paddedPayload.append(contentsOf: (0..<paddingCount).map { _ in UInt8.random(in: UInt8.min...UInt8.max) })
+        }
+
+        return MixnetFixedSizePacket(
+            packetId: trimmedPacketId,
+            paddedPayload: paddedPayload,
+            originalPayloadSize: payload.count,
+            fixedPayloadSize: fixedPayloadSize
+        )
+    }
+
+    public static func open(_ packet: MixnetFixedSizePacket) throws -> Data {
+        let trimmedPacketId = packet.packetId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPacketId.isEmpty else {
+            throw MixnetPacketPaddingError.blankPacketId
+        }
+        guard packet.fixedPayloadSize > 0 else {
+            throw MixnetPacketPaddingError.invalidFixedSize
+        }
+        guard packet.originalPayloadSize > 0,
+              packet.originalPayloadSize <= packet.fixedPayloadSize,
+              packet.paddedPayload.count == packet.fixedPayloadSize else {
+            throw MixnetPacketPaddingError.malformedPacket
+        }
+
+        return Data(packet.paddedPayload.prefix(packet.originalPayloadSize))
     }
 }
 

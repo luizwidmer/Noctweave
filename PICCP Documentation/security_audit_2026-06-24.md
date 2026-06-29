@@ -215,7 +215,7 @@ No high-severity implementation findings remain from this pass. This does not re
    - Release blocker: no.
 
 2. **Network anonymity remains out of scope**
-   - Current: metadata reduction, replicated XOR-PIR primitives under a non-collusion assumption with padded fixed-bucket query shares, fixed-size response shares, fail-closed PIR plan-integrity validation, onion packet primitives, mixnet batch/cover scheduling, bounded continuous cover-cycle planning, deterministic inter-relay cover coordination plans, deterministic diverse route selection, and mixnet route-policy validation.
+   - Current: metadata reduction, replicated XOR-PIR primitives under a non-collusion assumption with padded fixed-bucket query shares, fixed-size response shares, fail-closed PIR plan-integrity validation, onion packet primitives, fixed-size mixnet packet padding, mixnet batch/cover scheduling, bounded continuous cover-cycle planning, deterministic inter-relay cover coordination plans, deterministic diverse route selection, and mixnet route-policy validation.
    - Required for stronger claims: single-server cryptographic PIR, full mixnet deployment with live network-wide cover execution, and network-wide latency scheduling.
    - Release blocker: no, provided the product does not claim network anonymity beyond metadata reduction.
 
