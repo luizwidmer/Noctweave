@@ -358,7 +358,9 @@ public enum HiddenRetrievalPlanner {
 
     public static func evaluateReplicatedXORPIRShare(
         records: [Data],
-        share: HiddenRetrievalPIRQueryShare
+        share: HiddenRetrievalPIRQueryShare,
+        fixedResponseSize: Int? = nil,
+        maximumResponseSize: Int = 1_048_576
     ) throws -> HiddenRetrievalPIRResponseShare {
         guard share.replicaIndex >= 0,
               share.recordCount >= records.count,
@@ -373,9 +375,15 @@ public enum HiddenRetrievalPlanner {
               records.allSatisfy({ $0.count == recordSize }) else {
             throw HiddenRetrievalError.invalidRecordSize
         }
-        var accumulator = Data(repeating: 0, count: recordSize)
+        let responseSize = fixedResponseSize ?? recordSize
+        guard responseSize >= recordSize,
+              responseSize > 0,
+              responseSize <= maximumResponseSize else {
+            throw HiddenRetrievalError.invalidRecordSize
+        }
+        var accumulator = Data(repeating: 0, count: responseSize)
         for index in records.indices where bit(at: index, in: share.selectionBits) {
-            accumulator = xorData(accumulator, records[index])
+            accumulator = xorData(accumulator, paddedRecord(records[index], count: responseSize))
         }
         return HiddenRetrievalPIRResponseShare(
             replicaIndex: share.replicaIndex,
@@ -385,7 +393,8 @@ public enum HiddenRetrievalPlanner {
 
     public static func recoverReplicatedXORPIRTarget(
         from responses: [HiddenRetrievalPIRResponseShare],
-        using plan: HiddenRetrievalPIRQueryPlan
+        using plan: HiddenRetrievalPIRQueryPlan,
+        fixedResponseSize: Int? = nil
     ) throws -> Data {
         guard plan.shares.count >= 2,
               responses.count == plan.shares.count,
@@ -397,6 +406,11 @@ public enum HiddenRetrievalPlanner {
         guard payloadSize > 0,
               responses.allSatisfy({ $0.payload.count == payloadSize }) else {
             throw HiddenRetrievalError.invalidRecordSize
+        }
+        if let fixedResponseSize {
+            guard payloadSize == fixedResponseSize else {
+                throw HiddenRetrievalError.invalidRecordSize
+            }
         }
         return responses
             .sorted { $0.replicaIndex < $1.replicaIndex }
@@ -487,5 +501,14 @@ public enum HiddenRetrievalPlanner {
 
     private static func xorData(_ lhs: Data, _ rhs: Data) -> Data {
         Data(zip(lhs, rhs).map { $0 ^ $1 })
+    }
+
+    private static func paddedRecord(_ record: Data, count: Int) -> Data {
+        guard record.count < count else {
+            return record
+        }
+        var padded = record
+        padded.append(Data(repeating: 0, count: count - record.count))
+        return padded
     }
 }

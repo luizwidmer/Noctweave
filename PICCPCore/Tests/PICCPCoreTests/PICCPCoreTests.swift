@@ -360,6 +360,43 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(combined, unitTarget)
     }
 
+    func testHiddenRetrievalPlannerBuildsFixedSizeReplicatedXORPIRResponses() throws {
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: "bucket-pir",
+            orderedRecordIds: ["a", "b", "c"],
+            targetRecordId: "c",
+            replicaCount: 3,
+            secret: Data("client-local-fixed-response-pir-secret".utf8),
+            paddedRecordCount: 16
+        )
+        let records = [
+            Data("record-a".utf8),
+            Data("record-b".utf8),
+            Data("record-c".utf8)
+        ]
+        let fixedResponseSize = 32
+
+        let responses = try plan.shares.map {
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(
+                records: records,
+                share: $0,
+                fixedResponseSize: fixedResponseSize
+            )
+        }
+
+        XCTAssertTrue(responses.allSatisfy { $0.payload.count == fixedResponseSize })
+        var expected = records[2]
+        expected.append(Data(repeating: 0, count: fixedResponseSize - expected.count))
+        XCTAssertEqual(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(
+                from: responses,
+                using: plan,
+                fixedResponseSize: fixedResponseSize
+            ),
+            expected
+        )
+    }
+
     func testHiddenRetrievalPlannerRejectsMalformedReplicatedXORPIRInputs() throws {
         XCTAssertThrowsError(
             try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
@@ -420,6 +457,33 @@ final class PICCPCoreTests: XCTestCase {
             try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: [response], using: plan)
         ) { error in
             XCTAssertEqual(error as? HiddenRetrievalError, .malformedPIRResponse)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(
+                records: [Data("record-a".utf8), Data("record-b".utf8)],
+                share: plan.shares[0],
+                fixedResponseSize: 4
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordSize)
+        }
+
+        let completeResponses = try plan.shares.map {
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(
+                records: [Data("record-a".utf8), Data("record-b".utf8)],
+                share: $0,
+                fixedResponseSize: 16
+            )
+        }
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(
+                from: completeResponses,
+                using: plan,
+                fixedResponseSize: 32
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordSize)
         }
     }
 
