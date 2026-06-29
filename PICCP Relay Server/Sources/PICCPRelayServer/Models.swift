@@ -711,7 +711,7 @@ struct RelayConfiguration: Codable, Equatable {
             attachmentStorageBackend: attachmentStorageBackend,
             hiddenRetrieval: advertisedHiddenRetrieval,
             onionTransport: onionTransport,
-            mixnetTransport: mixnetTransport,
+            mixnetTransport: advertisedMixnetTransport,
             wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,
@@ -736,6 +736,16 @@ struct RelayConfiguration: Codable, Equatable {
             return hiddenRetrieval
         }
         return HiddenRetrievalPIRReplicaSetValidator.isUsable(hiddenRetrieval) ? hiddenRetrieval : nil
+    }
+
+    private var advertisedMixnetTransport: MixnetTransportSupport? {
+        guard let mixnetTransport else {
+            return nil
+        }
+        return MixnetRoutePolicyValidator.isUsable(
+            mixnetSupport: mixnetTransport,
+            onionSupport: onionTransport
+        ) ? mixnetTransport : nil
     }
 }
 

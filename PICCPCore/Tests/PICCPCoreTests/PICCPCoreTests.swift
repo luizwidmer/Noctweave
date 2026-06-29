@@ -7779,11 +7779,36 @@ final class PICCPCoreTests: XCTestCase {
             coverPacketsPerBatch: 4,
             maxDelaySeconds: 90
         )
-        let info = RelayConfiguration(mixnetTransport: support).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+        let onion = OnionTransportSupport(enabled: true, maxHops: 3, requiresFixedSizePackets: true)
+        let info = RelayConfiguration(
+            onionTransport: onion,
+            mixnetTransport: support
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
 
+        XCTAssertEqual(info.onionTransport, onion)
         XCTAssertEqual(info.mixnetTransport, support)
         let decoded = try PICCPCoder.decode(RelayInfo.self, from: PICCPCoder.encode(info))
         XCTAssertEqual(decoded.mixnetTransport, support)
+    }
+
+    func testRelayInfoSuppressesMisleadingMixnetAdvertisement() {
+        let mixnet = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: 45,
+            minBatchSize: 12,
+            coverPacketsPerBatch: 4,
+            maxDelaySeconds: 90
+        )
+        let missingOnionInfo = RelayConfiguration(mixnetTransport: mixnet).makeInfo()
+        XCTAssertNil(missingOnionInfo.mixnetTransport)
+
+        let weakOnion = OnionTransportSupport(enabled: true, maxHops: 1, requiresFixedSizePackets: false)
+        let weakOnionInfo = RelayConfiguration(
+            onionTransport: weakOnion,
+            mixnetTransport: mixnet
+        ).makeInfo()
+        XCTAssertEqual(weakOnionInfo.onionTransport, weakOnion)
+        XCTAssertNil(weakOnionInfo.mixnetTransport)
     }
 
     func testMixnetRoutePolicyValidatorAcceptsOnionBackedCoverBatches() {
