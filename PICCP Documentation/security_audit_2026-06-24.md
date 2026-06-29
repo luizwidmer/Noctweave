@@ -17,7 +17,7 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 - Can observe source IPs, timing, chosen relay, mailbox polling cadence, and ciphertext sizes.
 - Cannot decrypt message payloads or attachments without endpoint keys.
 - Mitigations present: ML-KEM/ML-DSA session setup, AEAD payloads, authenticated inbox fetch/ack, temporal buckets, attachment TTL, relay password support, TLS/WSS support.
-- Residual risk: no PIR, mixnet, onion routing, or cover traffic.
+- Residual risk: no single-server PIR or live full-network mixnet deployment.
 
 ### Malicious coordinator
 - Can bias directory membership, omit relays, or advertise stale topology.
@@ -215,8 +215,8 @@ No high-severity implementation findings remain from this pass. This does not re
    - Release blocker: no.
 
 2. **Network anonymity remains out of scope**
-   - Current: metadata reduction, replicated XOR-PIR primitives under a non-collusion assumption with padded fixed-bucket query shares and fixed-size response shares, onion packet primitives, mixnet batch/cover scheduling, bounded continuous cover-cycle planning, deterministic diverse route selection, and mixnet route-policy validation.
-   - Required for stronger claims: single-server cryptographic PIR, full mixnet deployment, inter-relay cover coordination, and network-wide latency scheduling.
+   - Current: metadata reduction, replicated XOR-PIR primitives under a non-collusion assumption with padded fixed-bucket query shares and fixed-size response shares, onion packet primitives, mixnet batch/cover scheduling, bounded continuous cover-cycle planning, deterministic inter-relay cover coordination plans, deterministic diverse route selection, and mixnet route-policy validation.
+   - Required for stronger claims: single-server cryptographic PIR, full mixnet deployment with live network-wide cover execution, and network-wide latency scheduling.
    - Release blocker: no, provided the product does not claim network anonymity beyond metadata reduction.
 
 ### Low

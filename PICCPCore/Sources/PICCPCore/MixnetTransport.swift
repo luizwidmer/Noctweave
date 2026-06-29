@@ -8,6 +8,15 @@ public enum MixnetSchedulerError: Error, Equatable {
     case invalidHorizon
 }
 
+public enum MixnetInterRelayCoverError: Error, Equatable {
+    case emptySecret
+    case invalidHorizon
+    case invalidRelaySet
+    case invalidCoverPacketCount
+    case invalidEndpoint
+    case insufficientDiversity
+}
+
 public enum MixnetRouteSelectionError: Error, Equatable {
     case emptySecret
     case invalidRouteLength
@@ -155,6 +164,93 @@ public struct MixnetRoutePlan: Codable, Equatable {
     public init(routeId: String, selectedCandidates: [MixnetRouteCandidate]) {
         self.routeId = routeId
         self.selectedCandidates = selectedCandidates
+    }
+}
+
+public struct MixnetRelayPeer: Codable, Equatable {
+    public let relayId: String
+    public let operatorId: String
+    public let endpoint: RelayEndpoint
+
+    public init(relayId: String, operatorId: String, endpoint: RelayEndpoint) {
+        self.relayId = relayId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.operatorId = operatorId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.endpoint = endpoint
+    }
+}
+
+public struct MixnetInterRelayCoverPacket: Codable, Equatable {
+    public let packetId: String
+    public let sourceRelayId: String
+    public let destinationRelayId: String
+    public let batchId: String
+    public let releaseAt: Date
+    public let delaySeconds: Int
+
+    public init(
+        packetId: String,
+        sourceRelayId: String,
+        destinationRelayId: String,
+        batchId: String,
+        releaseAt: Date,
+        delaySeconds: Int
+    ) {
+        self.packetId = packetId
+        self.sourceRelayId = sourceRelayId
+        self.destinationRelayId = destinationRelayId
+        self.batchId = batchId
+        self.releaseAt = releaseAt
+        self.delaySeconds = delaySeconds
+    }
+}
+
+public struct MixnetInterRelayCoverBatchPlan: Codable, Equatable {
+    public let batchId: String
+    public let releaseAt: Date
+    public let packets: [MixnetInterRelayCoverPacket]
+
+    public init(batchId: String, releaseAt: Date, packets: [MixnetInterRelayCoverPacket]) {
+        self.batchId = batchId
+        self.releaseAt = releaseAt
+        self.packets = packets
+    }
+}
+
+public struct MixnetInterRelayCoverPlan: Codable, Equatable {
+    public let cycleStart: Date
+    public let cycleEnd: Date
+    public let batchIntervalSeconds: Int
+    public let relayIds: [String]
+    public let coverPacketsPerLink: Int
+    public let batches: [MixnetInterRelayCoverBatchPlan]
+
+    public var coversEveryRelayLinkEachInterval: Bool {
+        guard relayIds.count >= 2, coverPacketsPerLink > 0, !batches.isEmpty else {
+            return false
+        }
+        let interval = TimeInterval(max(1, batchIntervalSeconds))
+        let expectedBatchCount = max(1, Int(ceil(cycleEnd.timeIntervalSince(cycleStart) / interval)))
+        let expectedLinkCount = relayIds.count * (relayIds.count - 1)
+        return batches.count == expectedBatchCount && batches.allSatisfy { batch in
+            batch.packets.count == expectedLinkCount * coverPacketsPerLink &&
+            Set(batch.packets.map { "\($0.sourceRelayId)->\($0.destinationRelayId)" }).count == expectedLinkCount
+        }
+    }
+
+    public init(
+        cycleStart: Date,
+        cycleEnd: Date,
+        batchIntervalSeconds: Int,
+        relayIds: [String],
+        coverPacketsPerLink: Int,
+        batches: [MixnetInterRelayCoverBatchPlan]
+    ) {
+        self.cycleStart = cycleStart
+        self.cycleEnd = cycleEnd
+        self.batchIntervalSeconds = max(1, batchIntervalSeconds)
+        self.relayIds = relayIds
+        self.coverPacketsPerLink = max(0, coverPacketsPerLink)
+        self.batches = batches
     }
 }
 
@@ -334,6 +430,166 @@ public enum MixnetRouteSelector {
 
     private static func rank(candidate: MixnetRouteCandidate, secret: Data, routeContext: String) -> Data {
         Data(SHA256.hash(data: secret + Data("route-rank:\(routeContext):\(candidate.hopId):\(candidate.operatorId)".utf8)))
+    }
+}
+
+public enum MixnetInterRelayCoverCoordinator {
+    public static func makePlan(
+        relays: [MixnetRelayPeer],
+        now: Date,
+        policy: MixnetTransportSupport,
+        secret: Data,
+        horizonSeconds: Int,
+        coverPacketsPerLink: Int = 1,
+        requireTLS: Bool = true
+    ) throws -> MixnetInterRelayCoverPlan {
+        guard !secret.isEmpty else {
+            throw MixnetInterRelayCoverError.emptySecret
+        }
+        guard horizonSeconds > 0 else {
+            throw MixnetInterRelayCoverError.invalidHorizon
+        }
+        guard coverPacketsPerLink > 0, coverPacketsPerLink <= 32 else {
+            throw MixnetInterRelayCoverError.invalidCoverPacketCount
+        }
+
+        let peers = try normalizedRelays(relays, requireTLS: requireTLS)
+        let interval = max(1, policy.batchIntervalSeconds)
+        let batchCount = max(1, Int(ceil(Double(horizonSeconds) / Double(interval))))
+        let cycleStart = batchBoundary(after: now, intervalSeconds: interval)
+        var batches: [MixnetInterRelayCoverBatchPlan] = []
+        batches.reserveCapacity(batchCount)
+
+        for batchIndex in 0..<batchCount {
+            let batchBase = cycleStart.addingTimeInterval(TimeInterval(batchIndex * interval))
+            let batchId = makeBatchId(batchBase: batchBase, relays: peers, policy: policy, secret: secret)
+            let delay = boundedDelaySeconds(batchId: batchId, secret: secret, maxDelaySeconds: policy.maxDelaySeconds)
+            let releaseAt = batchBase.addingTimeInterval(TimeInterval(delay))
+            var packets: [MixnetInterRelayCoverPacket] = []
+            for source in peers {
+                for destination in peers where destination.relayId != source.relayId {
+                    for coverIndex in 0..<coverPacketsPerLink {
+                        packets.append(
+                            MixnetInterRelayCoverPacket(
+                                packetId: makeCoverPacketId(
+                                    batchId: batchId,
+                                    sourceRelayId: source.relayId,
+                                    destinationRelayId: destination.relayId,
+                                    coverIndex: coverIndex,
+                                    secret: secret
+                                ),
+                                sourceRelayId: source.relayId,
+                                destinationRelayId: destination.relayId,
+                                batchId: batchId,
+                                releaseAt: releaseAt,
+                                delaySeconds: delay
+                            )
+                        )
+                    }
+                }
+            }
+            packets.sort { lhs, rhs in
+                let lhsRank = rank(packet: lhs, secret: secret)
+                let rhsRank = rank(packet: rhs, secret: secret)
+                if lhsRank == rhsRank {
+                    return lhs.packetId < rhs.packetId
+                }
+                return lhsRank.lexicographicallyPrecedes(rhsRank)
+            }
+            batches.append(MixnetInterRelayCoverBatchPlan(batchId: batchId, releaseAt: releaseAt, packets: packets))
+        }
+
+        return MixnetInterRelayCoverPlan(
+            cycleStart: cycleStart,
+            cycleEnd: cycleStart.addingTimeInterval(TimeInterval(batchCount * interval)),
+            batchIntervalSeconds: interval,
+            relayIds: peers.map(\.relayId),
+            coverPacketsPerLink: coverPacketsPerLink,
+            batches: batches
+        )
+    }
+
+    private static func normalizedRelays(
+        _ relays: [MixnetRelayPeer],
+        requireTLS: Bool
+    ) throws -> [MixnetRelayPeer] {
+        var seenRelayIds = Set<String>()
+        var peers: [MixnetRelayPeer] = []
+        for relay in relays {
+            let relayId = relay.relayId.trimmingCharacters(in: .whitespacesAndNewlines)
+            let operatorId = relay.operatorId.trimmingCharacters(in: .whitespacesAndNewlines)
+            let host = relay.endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !relayId.isEmpty, !operatorId.isEmpty else {
+                throw MixnetInterRelayCoverError.invalidRelaySet
+            }
+            guard !host.isEmpty, !requireTLS || relay.endpoint.useTLS else {
+                throw MixnetInterRelayCoverError.invalidEndpoint
+            }
+            guard seenRelayIds.insert(relayId.lowercased()).inserted else {
+                throw MixnetInterRelayCoverError.invalidRelaySet
+            }
+            peers.append(MixnetRelayPeer(relayId: relayId, operatorId: operatorId, endpoint: relay.endpoint))
+        }
+        guard peers.count >= 2 else {
+            throw MixnetInterRelayCoverError.invalidRelaySet
+        }
+        let operators = Set(peers.map { $0.operatorId.lowercased() })
+        let hosts = Set(peers.map { $0.endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        guard operators.count == peers.count, hosts.count == peers.count else {
+            throw MixnetInterRelayCoverError.insufficientDiversity
+        }
+        return peers.sorted { $0.relayId < $1.relayId }
+    }
+
+    private static func batchBoundary(after date: Date, intervalSeconds: Int) -> Date {
+        let interval = max(1, intervalSeconds)
+        let timestamp = Int(date.timeIntervalSince1970)
+        let remainder = timestamp % interval
+        let boundary = remainder == 0 ? timestamp : timestamp + (interval - remainder)
+        return Date(timeIntervalSince1970: TimeInterval(boundary))
+    }
+
+    private static func makeBatchId(
+        batchBase: Date,
+        relays: [MixnetRelayPeer],
+        policy: MixnetTransportSupport,
+        secret: Data
+    ) -> String {
+        let relayMaterial = relays
+            .map { "\($0.relayId):\($0.operatorId):\($0.endpoint.host):\($0.endpoint.port)" }
+            .joined(separator: "|")
+        let material = Data("inter-relay-batch:\(Int(batchBase.timeIntervalSince1970)):\(policy.batchIntervalSeconds):\(relayMaterial)".utf8)
+        return hexDigest(secret + material, prefix: 12)
+    }
+
+    private static func makeCoverPacketId(
+        batchId: String,
+        sourceRelayId: String,
+        destinationRelayId: String,
+        coverIndex: Int,
+        secret: Data
+    ) -> String {
+        let material = Data("inter-relay-cover:\(batchId):\(sourceRelayId):\(destinationRelayId):\(coverIndex)".utf8)
+        return "relay-cover-\(hexDigest(secret + material, prefix: 12))"
+    }
+
+    private static func boundedDelaySeconds(batchId: String, secret: Data, maxDelaySeconds: Int) -> Int {
+        guard maxDelaySeconds > 0 else {
+            return 0
+        }
+        let digest = Data(SHA256.hash(data: secret + Data("inter-relay-delay:\(batchId)".utf8)))
+        let value = digest.prefix(8).reduce(UInt64(0)) { partial, byte in
+            (partial << 8) | UInt64(byte)
+        }
+        return Int(value % UInt64(maxDelaySeconds + 1))
+    }
+
+    private static func rank(packet: MixnetInterRelayCoverPacket, secret: Data) -> Data {
+        Data(SHA256.hash(data: secret + Data("inter-relay-rank:\(packet.batchId):\(packet.packetId)".utf8)))
+    }
+
+    private static func hexDigest(_ data: Data, prefix: Int) -> String {
+        Data(SHA256.hash(data: data)).prefix(prefix).map { String(format: "%02x", $0) }.joined()
     }
 }
 

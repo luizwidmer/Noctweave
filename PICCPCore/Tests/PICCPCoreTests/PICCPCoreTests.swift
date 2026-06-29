@@ -7918,6 +7918,151 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertTrue(first.batches.allSatisfy { $0.packets.count >= policy.minBatchSize })
     }
 
+    func testMixnetInterRelayCoverCoordinatorBuildsDeterministicLinkCoverPlan() throws {
+        let policy = MixnetTransportSupport(
+            batchIntervalSeconds: 30,
+            minBatchSize: 4,
+            coverPacketsPerBatch: 2,
+            maxDelaySeconds: 10
+        )
+        let relays = [
+            mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRelayPeer(id: "relay-b", operatorId: "operator-b", host: "relay-b.example"),
+            mixnetRelayPeer(id: "relay-c", operatorId: "operator-c", host: "relay-c.example")
+        ]
+        let secret = Data("inter-relay-cover-secret".utf8)
+
+        let first = try MixnetInterRelayCoverCoordinator.makePlan(
+            relays: relays,
+            now: Date(timeIntervalSince1970: 1_001),
+            policy: policy,
+            secret: secret,
+            horizonSeconds: 95,
+            coverPacketsPerLink: 2
+        )
+        let second = try MixnetInterRelayCoverCoordinator.makePlan(
+            relays: relays.reversed(),
+            now: Date(timeIntervalSince1970: 1_001),
+            policy: policy,
+            secret: secret,
+            horizonSeconds: 95,
+            coverPacketsPerLink: 2
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertTrue(first.coversEveryRelayLinkEachInterval)
+        XCTAssertEqual(first.cycleStart, Date(timeIntervalSince1970: 1_020))
+        XCTAssertEqual(first.batches.count, 4)
+        XCTAssertEqual(first.relayIds, ["relay-a", "relay-b", "relay-c"])
+        XCTAssertTrue(first.batches.allSatisfy { $0.packets.count == 12 })
+        XCTAssertTrue(first.batches.flatMap(\.packets).allSatisfy { $0.packetId.hasPrefix("relay-cover-") })
+        XCTAssertTrue(first.batches.flatMap(\.packets).allSatisfy { $0.sourceRelayId != $0.destinationRelayId })
+        XCTAssertLessThanOrEqual(first.batches.first?.packets.first?.delaySeconds ?? 0, 10)
+    }
+
+    func testMixnetInterRelayCoverCoordinatorRejectsWeakRelaySets() {
+        let policy = MixnetTransportSupport(batchIntervalSeconds: 30, minBatchSize: 4, coverPacketsPerBatch: 2)
+        let diverse = [
+            mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRelayPeer(id: "relay-b", operatorId: "operator-b", host: "relay-b.example")
+        ]
+
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: diverse,
+                now: Date(),
+                policy: policy,
+                secret: Data(),
+                horizonSeconds: 60
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .emptySecret)
+        }
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: diverse,
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .invalidHorizon)
+        }
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: diverse,
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 60,
+                coverPacketsPerLink: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .invalidCoverPacketCount)
+        }
+
+        let duplicateRelay = [
+            mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRelayPeer(id: " relay-a ", operatorId: "operator-b", host: "relay-b.example")
+        ]
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: duplicateRelay,
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 60
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .invalidRelaySet)
+        }
+
+        let sameOperator = [
+            mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRelayPeer(id: "relay-b", operatorId: "operator-a", host: "relay-b.example")
+        ]
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: sameOperator,
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 60
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .insufficientDiversity)
+        }
+
+        let sameHost = [
+            mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-shared.example"),
+            mixnetRelayPeer(id: "relay-b", operatorId: "operator-b", host: "relay-shared.example")
+        ]
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: sameHost,
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 60
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .insufficientDiversity)
+        }
+
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: [mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-a.example", useTLS: false)],
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 60
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .invalidEndpoint)
+        }
+    }
+
     func testMixnetSchedulerRejectsMalformedInputs() {
         let policy = MixnetTransportSupport(minBatchSize: 1, coverPacketsPerBatch: 0)
         XCTAssertThrowsError(
@@ -8163,6 +8308,19 @@ private func mixnetRouteCandidate(
             routingInstruction: "route-to-\(host)",
             delayBucketSeconds: 30
         )
+    )
+}
+
+private func mixnetRelayPeer(
+    id: String,
+    operatorId: String,
+    host: String,
+    useTLS: Bool = true
+) -> MixnetRelayPeer {
+    MixnetRelayPeer(
+        relayId: id,
+        operatorId: operatorId,
+        endpoint: RelayEndpoint(host: host, port: 443, useTLS: useTLS, transport: .http)
     )
 }
 
