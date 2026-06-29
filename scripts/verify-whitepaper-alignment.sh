@@ -22,6 +22,16 @@ if grep -R "identitySigningKey" \
   echo "Closed-app helper prefetch must not carry the long-term identity signing key." >&2
   exit 1
 fi
+if grep -R "identityFingerprint\|displayName" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchRunner.swift"; then
+  echo "Closed-app helper runner must not depend on identity names or fingerprints." >&2
+  exit 1
+fi
+if grep -R "var identityFingerprint\|var displayName" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchStore.swift"; then
+  echo "Closed-app helper profile config must not publish identity names or fingerprints." >&2
+  exit 1
+fi
 
 echo "Verifying Apple helper prefetch does not publish group routing metadata..."
 if grep -R "NoctyraPrefetchGroup\|FetchGroupMessagesRequest\|fetchGroupMessages" \
