@@ -21,6 +21,39 @@ public struct OnionTransportSupport: Codable, Equatable {
     }
 }
 
+public enum OnionTransportPolicyIssue: String, Codable, Equatable, CaseIterable {
+    case notAdvertised
+    case disabled
+    case insufficientHops
+}
+
+public enum OnionTransportPolicyValidator {
+    public static func issues(
+        for support: OnionTransportSupport?,
+        minimumHops: Int = 2
+    ) -> [OnionTransportPolicyIssue] {
+        guard let support else {
+            return [.notAdvertised]
+        }
+
+        var issues: [OnionTransportPolicyIssue] = []
+        if !support.enabled {
+            issues.append(.disabled)
+        }
+        if support.maxHops < max(2, minimumHops) {
+            issues.append(.insufficientHops)
+        }
+        return issues
+    }
+
+    public static func isUsable(
+        _ support: OnionTransportSupport?,
+        minimumHops: Int = 2
+    ) -> Bool {
+        issues(for: support, minimumHops: minimumHops).isEmpty
+    }
+}
+
 public struct OnionHopDescriptor: Codable, Equatable {
     public let hopId: String
     public let publicKeyData: Data

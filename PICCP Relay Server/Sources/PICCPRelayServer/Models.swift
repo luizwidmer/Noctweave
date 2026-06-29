@@ -343,6 +343,39 @@ struct OnionTransportSupport: Codable, Equatable {
     }
 }
 
+enum OnionTransportPolicyIssue: String, Codable, Equatable, CaseIterable {
+    case notAdvertised
+    case disabled
+    case insufficientHops
+}
+
+enum OnionTransportPolicyValidator {
+    static func issues(
+        for support: OnionTransportSupport?,
+        minimumHops: Int = 2
+    ) -> [OnionTransportPolicyIssue] {
+        guard let support else {
+            return [.notAdvertised]
+        }
+
+        var issues: [OnionTransportPolicyIssue] = []
+        if !support.enabled {
+            issues.append(.disabled)
+        }
+        if support.maxHops < max(2, minimumHops) {
+            issues.append(.insufficientHops)
+        }
+        return issues
+    }
+
+    static func isUsable(
+        _ support: OnionTransportSupport?,
+        minimumHops: Int = 2
+    ) -> Bool {
+        issues(for: support, minimumHops: minimumHops).isEmpty
+    }
+}
+
 struct MixnetTransportSupport: Codable, Equatable {
     let enabled: Bool
     let batchIntervalSeconds: Int
@@ -710,7 +743,7 @@ struct RelayConfiguration: Codable, Equatable {
             attachmentsEnabled: attachmentsEnabled != false,
             attachmentStorageBackend: attachmentStorageBackend,
             hiddenRetrieval: advertisedHiddenRetrieval,
-            onionTransport: onionTransport,
+            onionTransport: advertisedOnionTransport,
             mixnetTransport: advertisedMixnetTransport,
             wakeSupport: wakeSupport,
             relayName: relayName,
@@ -738,13 +771,20 @@ struct RelayConfiguration: Codable, Equatable {
         return HiddenRetrievalPIRReplicaSetValidator.isUsable(hiddenRetrieval) ? hiddenRetrieval : nil
     }
 
+    private var advertisedOnionTransport: OnionTransportSupport? {
+        guard let onionTransport else {
+            return nil
+        }
+        return OnionTransportPolicyValidator.isUsable(onionTransport) ? onionTransport : nil
+    }
+
     private var advertisedMixnetTransport: MixnetTransportSupport? {
         guard let mixnetTransport else {
             return nil
         }
         return MixnetRoutePolicyValidator.isUsable(
             mixnetSupport: mixnetTransport,
-            onionSupport: onionTransport
+            onionSupport: advertisedOnionTransport
         ) ? mixnetTransport : nil
     }
 }

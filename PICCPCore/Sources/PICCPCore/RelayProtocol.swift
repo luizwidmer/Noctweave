@@ -372,7 +372,7 @@ public struct RelayConfiguration: Codable, Equatable {
             attachmentsEnabled: attachmentsEnabled != false,
             attachmentStorageBackend: attachmentStorageBackend,
             hiddenRetrieval: advertisedHiddenRetrieval,
-            onionTransport: onionTransport,
+            onionTransport: advertisedOnionTransport,
             mixnetTransport: advertisedMixnetTransport,
             wakeSupport: wakeSupport,
             relayName: relayName,
@@ -404,13 +404,20 @@ public struct RelayConfiguration: Codable, Equatable {
         return HiddenRetrievalPIRReplicaSetValidator.isUsable(hiddenRetrieval) ? hiddenRetrieval : nil
     }
 
+    private var advertisedOnionTransport: OnionTransportSupport? {
+        guard let onionTransport else {
+            return nil
+        }
+        return OnionTransportPolicyValidator.isUsable(onionTransport) ? onionTransport : nil
+    }
+
     private var advertisedMixnetTransport: MixnetTransportSupport? {
         guard let mixnetTransport else {
             return nil
         }
         return MixnetRoutePolicyValidator.isUsable(
             mixnetSupport: mixnetTransport,
-            onionSupport: onionTransport
+            onionSupport: advertisedOnionTransport
         ) ? mixnetTransport : nil
     }
 }

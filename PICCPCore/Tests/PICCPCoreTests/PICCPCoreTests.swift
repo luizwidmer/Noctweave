@@ -7696,6 +7696,23 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(decoded.onionTransport, info.onionTransport)
     }
 
+    func testRelayInfoSuppressesUnusableOnionTransportSupport() {
+        let disabledInfo = RelayConfiguration(
+            onionTransport: OnionTransportSupport(enabled: false, maxHops: 5, requiresFixedSizePackets: true)
+        ).makeInfo()
+        XCTAssertNil(disabledInfo.onionTransport)
+
+        let oneHopInfo = RelayConfiguration(
+            onionTransport: OnionTransportSupport(enabled: true, maxHops: 1, requiresFixedSizePackets: true)
+        ).makeInfo()
+        XCTAssertNil(oneHopInfo.onionTransport)
+
+        XCTAssertEqual(
+            OnionTransportPolicyValidator.issues(for: OnionTransportSupport(enabled: true, maxHops: 1)),
+            [.insufficientHops]
+        )
+    }
+
     func testMixnetSchedulerBuildsDeterministicBatchWithCoverTraffic() throws {
         let policy = MixnetTransportSupport(
             batchIntervalSeconds: 30,
@@ -7807,7 +7824,7 @@ final class PICCPCoreTests: XCTestCase {
             onionTransport: weakOnion,
             mixnetTransport: mixnet
         ).makeInfo()
-        XCTAssertEqual(weakOnionInfo.onionTransport, weakOnion)
+        XCTAssertNil(weakOnionInfo.onionTransport)
         XCTAssertNil(weakOnionInfo.mixnetTransport)
     }
 
