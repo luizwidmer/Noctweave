@@ -46,6 +46,7 @@ Last reviewed: June 28, 2026.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation. Discovery refreshes retain previously validated signed nodes across transient gateway or peer-query failures.
 - Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning requires at least one decoy, a non-empty canonical bucket, a non-empty client secret, non-empty target/record identifiers, and a bounded cover set. Extraction rejects incomplete responses, extra response records, target-only public plans, duplicate/blank record IDs, blank targets, and malformed public query plans so compatible clients do not silently accept direct retrievals.
+- Direct and group message plaintexts are padded into fixed-size buckets before AEAD. Relays therefore see padded ciphertext bucket sizes instead of exact text, attachment-descriptor, or voice-descriptor plaintext lengths. Core and Linux relay stores also reject oversized direct/group envelope payloads before storing them.
 - Release verification workflow wired to run the local SBOM, dependency, relay test, and optional scanner checks in CI.
 - Local release provenance manifests can be generated from the checked-out commit, SBOM snapshots, package pins, Docker inputs, and release verifier inputs with `scripts/generate-release-provenance.py`; `scripts/verify-release.sh` validates the manifest schema and tracked-input hashes.
 - `scripts/verify-whitepaper-alignment.sh` runs focused checks for metadata timestamp bucketing, root-ratchet visible timestamp bucketing, relay pairing timestamp bucketing on core and Linux relay stores, hidden-retrieval cover-query safeguards, decentralized wake cycle planning, group-ratchet distribution validation and stale-state recovery, open-federation fallback/gateway simulation, Linux relay parity, and release provenance generation.
@@ -82,6 +83,14 @@ Last reviewed: June 28, 2026.
 - Group ratchet recovery fails closed when retained epoch history skips an epoch.
 - The focused whitepaper verifier now covers these hidden-retrieval, wake, group-ratchet, and Linux relay parity invariants.
 
+## Current Message-Size Alignment Pass
+- Direct-message bodies now use a versioned padded plaintext envelope before AES-GCM encryption.
+- MLS-derived group message bodies use the same padded plaintext envelope.
+- Small direct messages with different plaintext lengths produce the same ciphertext length bucket and still decrypt through the normal API.
+- Small group messages with different plaintext lengths produce the same ciphertext length bucket and still decrypt through the group ratchet.
+- Core and Linux relay stores reject oversized direct/group envelope payloads before mailbox insertion.
+- `scripts/verify-whitepaper-alignment.sh` covers direct padding, group padding, and relay payload-size parity.
+
 ## Whitepaper Limits That Remain True
 - No full cryptographic PIR-assisted hidden retrieval.
 - No mixnet or onion transport layer.
@@ -91,8 +100,8 @@ Last reviewed: June 28, 2026.
 - No centralized push-notification server by design, so closed-app instant delivery remains out of scope. A decentralized wake policy prototype exists for compatible pull or long-poll clients.
 
 ## Alignment Summary
-- **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, coordinator-assisted federation, temporal-bucket timestamp minimization, fixed-size hidden-retrieval cover-query safeguards, decentralized wake cycle planning, group-ratchet epoch-secret distribution validation, fail-closed retained-epoch recovery, Linux relay parity for the same group and retrieval checks, and repository-owned whitepaper verification/provenance checks.
-- **Partially aligned**: anonymity-strength metadata protection, PIR-class hidden retrieval, MLS-class group cryptography, autonomous open federation, and closed-app delivery. Current controls now enforce deterministic bucketing, exact cover-response validation, signed registry commits, MLS epoch state, group-context AEAD binding, structurally validated ML-KEM member shares, retained epoch replay, and auditable wake scheduling, but these do not claim strong anonymity, full cryptographic PIR, formal MLS proofs, public DHT release readiness, or guaranteed background delivery.
+- **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, coordinator-assisted federation, temporal-bucket timestamp minimization, fixed-size message-size buckets, fixed-size hidden-retrieval cover-query safeguards, decentralized wake cycle planning, group-ratchet epoch-secret distribution validation, fail-closed retained-epoch recovery, Linux relay parity for the same group and retrieval checks, and repository-owned whitepaper verification/provenance checks.
+- **Partially aligned**: anonymity-strength metadata protection, PIR-class hidden retrieval, MLS-class group cryptography, autonomous open federation, and closed-app delivery. Current controls now enforce deterministic bucketing, fixed ciphertext-size buckets for message bodies, exact cover-response validation, signed registry commits, MLS epoch state, group-context AEAD binding, structurally validated ML-KEM member shares, retained epoch replay, and auditable wake scheduling, but these do not claim strong anonymity, full cryptographic PIR, formal MLS proofs, public DHT release readiness, or guaranteed background delivery.
 - **Deferred**: mixnet/onion transport, autonomous public DHT release mode, external audit, Apple notarized artifact provenance, registry-pushed Docker image provenance, and formal MLS-class proof work.
 
 ## Next Alignment Targets

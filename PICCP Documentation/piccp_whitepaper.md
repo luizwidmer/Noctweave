@@ -194,6 +194,8 @@ Relays are not trusted for plaintext. They store:
 
 The relay sees routing metadata, timing, protocol operation types, and policy-relevant fields, but not plaintext message or attachment contents.
 
+Direct-message and group-message bodies are encoded into padded plaintext buckets before AEAD encryption. This means relays observe bucketed ciphertext sizes rather than exact text, attachment-descriptor, or voice-descriptor plaintext lengths. This is metadata reduction, not anonymity: large payload classes, timing, routing, and traffic volume can still be observed.
+
 Relay fetch and state-mutation operations are not unauthenticated mailbox reads. Inbox-access keys and actor proofs bind sensitive operations to identity-held signing material, and explicit acknowledgement allows clients to remove delivered messages from relay storage without relying on crash-prone implicit deletion.
 
 ## 6.2 Storage

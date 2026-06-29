@@ -1043,6 +1043,8 @@ public final class RelayServer {
             return .error("Inbox is already registered")
         case .relayCapacityExceeded:
             return .error("Relay storage capacity reached")
+        case .invalidEnvelopePayload:
+            return .error("Invalid envelope payload")
         case .invalidChunkIndex:
             return .error("Invalid chunk index")
         case .invalidAttachmentPayload:

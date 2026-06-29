@@ -537,7 +537,7 @@ public enum GroupRatchet {
         sentAt: Date = Date(),
         metadataBucketSeconds: Int? = nil
     ) throws -> GroupRatchetEnvelope {
-        let plaintext = try PICCPCoder.encode(body)
+        let plaintext = try PaddedMessagePlaintext.encode(body)
         let sentAt = MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
         let aad = try authenticatedData(
             groupId: state.groupId,
@@ -603,7 +603,7 @@ public enum GroupRatchet {
             messageCounter: envelope.messageCounter
         )
         let plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: aad)
-        return (try PICCPCoder.decode(MessageBody.self, from: plaintext), key)
+        return (try PaddedMessagePlaintext.decode(plaintext), key)
     }
 
     static func signableData(

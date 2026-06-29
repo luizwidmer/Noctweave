@@ -25,6 +25,7 @@ public actor RelayStore {
     private let attachmentTTL: TimeInterval = 3600
     private let maxAttachmentChunks = 512
     private let maxAttachmentChunkPayloadBytes = 128 * 1024
+    private let maxEnvelopePayloadBytes = 96 * 1024
     private let maxAttachmentIds = 4_096
     private let prekeyTTL: TimeInterval = 86400
     private let minimumPrekeyTTL: TimeInterval = 300
@@ -114,6 +115,9 @@ public actor RelayStore {
 
     @discardableResult
     public func deliver(_ envelope: Envelope, to inboxId: String) throws -> Int {
+        guard envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
+            throw RelayStoreError.invalidEnvelopePayload
+        }
         if mailboxes[inboxId] == nil, mailboxes.count >= maxMailboxes {
             throw RelayStoreError.relayCapacityExceeded
         }
@@ -138,6 +142,9 @@ public actor RelayStore {
         to inboxId: String,
         recipientFingerprints: [String]
     ) throws -> Int {
+        guard envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
+            throw RelayStoreError.invalidEnvelopePayload
+        }
         let recipients = Set(recipientFingerprints.map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }.filter { !$0.isEmpty })
@@ -274,6 +281,10 @@ public actor RelayStore {
             try saveToDisk()
         }
         return removedForRecipient
+    }
+
+    private func envelopePayloadBytes(_ envelope: Envelope) -> Int {
+        envelope.payload.nonce.count + envelope.payload.ciphertext.count + envelope.payload.tag.count
     }
 
     public func storeAttachment(
@@ -1867,6 +1878,7 @@ enum RelayStoreError: Error {
     case invalidInboxRegistration
     case inboxAlreadyRegistered
     case relayCapacityExceeded
+    case invalidEnvelopePayload
     case invalidChunkIndex
     case invalidAttachmentPayload
     case invalidPrekeyBundle

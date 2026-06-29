@@ -169,7 +169,7 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 #### Milestone 2.2: Message Retrieval (2 weeks)
 - [ ] Epoch listing endpoint
 - [ ] Epoch retrieval with capability auth
-- [ ] Padding to fixed message sizes
+- [x] Padding to fixed message sizes
 - [ ] Efficient batch operations
 
 #### Milestone 2.3: Operational Concerns (2 weeks)

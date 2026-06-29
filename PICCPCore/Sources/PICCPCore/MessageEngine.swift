@@ -120,7 +120,7 @@ public enum MessageEngine {
         sentAt: Date = Date(),
         metadataBucketSeconds: Int? = nil
     ) throws -> Envelope {
-        let payloadData = try PICCPCoder.encode(body)
+        let payloadData = try PaddedMessagePlaintext.encode(body)
         let prepared = try prepareMessageKey(conversation: &conversation)
         let encrypted = try encryptPayload(
             payloadData,
@@ -180,7 +180,7 @@ public enum MessageEngine {
         sentAt: Date = Date(),
         metadataBucketSeconds: Int? = nil
     ) throws -> Envelope {
-        let payloadData = try PICCPCoder.encode(body)
+        let payloadData = try PaddedMessagePlaintext.encode(body)
         let encrypted = try encryptPayload(
             payloadData,
             conversationId: conversation.id,
@@ -260,7 +260,7 @@ public enum MessageEngine {
         if conversation.sessionId.isEmpty, let sessionId = envelope.sessionId {
             conversation.sessionId = sessionId
         }
-        let body = try PICCPCoder.decode(MessageBody.self, from: plaintext)
+        let body = try PaddedMessagePlaintext.decode(plaintext)
         return (body, key)
     }
 

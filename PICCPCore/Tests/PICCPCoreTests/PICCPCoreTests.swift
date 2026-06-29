@@ -1621,6 +1621,57 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(body, .text("bucketed hello"))
     }
 
+    func testMessageEnginePadsSmallPlaintextsToFixedCiphertextSize() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+
+        let short = try MessageEngine.encrypt(
+            body: .text("ok"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation,
+            kemCiphertext: session.kemCiphertext
+        )
+        let longer = try MessageEngine.encrypt(
+            body: .text("this is longer but should stay in the same padding bucket"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation
+        )
+
+        XCTAssertEqual(short.payload.ciphertext.count, PaddedMessagePlaintext.minimumPaddedBytes)
+        XCTAssertEqual(longer.payload.ciphertext.count, PaddedMessagePlaintext.minimumPaddedBytes)
+        XCTAssertEqual(
+            try MessageEngine.decrypt(envelope: short, contact: aliceContact, conversation: &bobConversation),
+            .text("ok")
+        )
+        XCTAssertEqual(
+            try MessageEngine.decrypt(envelope: longer, contact: aliceContact, conversation: &bobConversation),
+            .text("this is longer but should stay in the same padding bucket")
+        )
+    }
+
     func testReplayIsRejected() throws {
         let alice = Identity(displayName: "Alice")
         let bob = Identity(displayName: "Bob")
@@ -1872,6 +1923,60 @@ final class PICCPCoreTests: XCTestCase {
             state: &bobState
         )
         XCTAssertEqual(body, .text("bucketed group"))
+    }
+
+    func testGroupRatchetPadsSmallPlaintextsToFixedCiphertextSize() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-padding".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group padding secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var bobState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: bob.fingerprint
+        )
+
+        let short = try GroupRatchet.encrypt(
+            body: .text("hi"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+        let longer = try GroupRatchet.encrypt(
+            body: .text("this group message is longer but remains in the same padding bucket"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+
+        XCTAssertEqual(short.payload.ciphertext.count, PaddedMessagePlaintext.minimumPaddedBytes)
+        XCTAssertEqual(longer.payload.ciphertext.count, PaddedMessagePlaintext.minimumPaddedBytes)
+        XCTAssertEqual(
+            try GroupRatchet.decrypt(
+                envelope: short,
+                senderPublicSigningKey: alice.signingKey.publicKeyData,
+                state: &bobState
+            ),
+            .text("hi")
+        )
+        XCTAssertEqual(
+            try GroupRatchet.decrypt(
+                envelope: longer,
+                senderPublicSigningKey: alice.signingKey.publicKeyData,
+                state: &bobState
+            ),
+            .text("this group message is longer but remains in the same padding bucket")
+        )
     }
 
     func testGroupRatchetAttachmentDescriptorAndChunkUseSameMessageKey() throws {
@@ -2756,6 +2861,41 @@ final class PICCPCoreTests: XCTestCase {
             _ = try await store.deliver(envelope, to: "inbox")
             XCTFail("Expected inbox capacity to be enforced.")
         } catch RelayStoreError.inboxFull {
+            // Expected.
+        }
+    }
+
+    func testRelayStoreRejectsOversizedEnvelopePayloads() async throws {
+        let store = RelayStore()
+        let oversizedPayload = EncryptedPayload(
+            nonce: Data(repeating: 0x01, count: 12),
+            ciphertext: Data(repeating: 0x02, count: 100 * 1024),
+            tag: Data(repeating: 0x03, count: 16)
+        )
+        let envelope = Envelope(
+            conversationId: "oversized",
+            senderFingerprint: "fingerprint",
+            sentAt: Date(),
+            messageCounter: 0,
+            payload: oversizedPayload,
+            signature: Data([4, 5, 6])
+        )
+
+        do {
+            _ = try await store.deliver(envelope, to: "inbox")
+            XCTFail("Expected oversized direct envelope payload to be rejected.")
+        } catch RelayStoreError.invalidEnvelopePayload {
+            // Expected.
+        }
+
+        do {
+            _ = try await store.deliverGroupEnvelope(
+                envelope,
+                to: "group-inbox",
+                recipientFingerprints: ["member-a"]
+            )
+            XCTFail("Expected oversized group envelope payload to be rejected.")
+        } catch RelayStoreError.invalidEnvelopePayload {
             // Expected.
         }
     }

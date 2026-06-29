@@ -908,6 +908,8 @@ final class RelayHandler: ChannelInboundHandler {
             return .error("Inbox full")
         case RelayStoreError.relayCapacityExceeded:
             return .error("Relay storage capacity reached")
+        case RelayStoreError.invalidEnvelopePayload:
+            return .error("Invalid envelope payload")
         case RelayStoreError.invalidChunkIndex:
             return .error("Invalid chunk index")
         case RelayStoreError.invalidAttachmentPayload:

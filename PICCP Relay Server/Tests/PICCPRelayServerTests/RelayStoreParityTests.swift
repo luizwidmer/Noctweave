@@ -109,6 +109,28 @@ final class RelayStoreParityTests: XCTestCase {
         }
     }
 
+    func testRelayStoreRejectsOversizedEnvelopePayloads() throws {
+        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        let oversizedEnvelope = makeEnvelope(payload: EncryptedPayload(
+            nonce: Data(repeating: 0x01, count: 12),
+            ciphertext: Data(repeating: 0x02, count: 100 * 1024),
+            tag: Data(repeating: 0x03, count: 16)
+        ))
+
+        XCTAssertThrowsError(try store.deliver(oversizedEnvelope, to: InboxAddress.generate())) { error in
+            XCTAssertEqual(error as? RelayStoreError, .invalidEnvelopePayload)
+        }
+        XCTAssertThrowsError(
+            try store.deliverGroupEnvelope(
+                oversizedEnvelope,
+                to: InboxAddress.generate(),
+                recipientFingerprints: ["member-a"]
+            )
+        ) { error in
+            XCTAssertEqual(error as? RelayStoreError, .invalidEnvelopePayload)
+        }
+    }
+
     func testGroupEnvelopeAcknowledgementIsRecipientScoped() throws {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
         let inboxId = InboxAddress.generate()
@@ -901,7 +923,13 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(fetched.map(\.id), [first.id])
     }
 
-    private func makeEnvelope() -> Envelope {
+    private func makeEnvelope(
+        payload: EncryptedPayload = EncryptedPayload(
+            nonce: Data(repeating: 0xA1, count: 12),
+            ciphertext: Data([0x01, 0x02, 0x03]),
+            tag: Data(repeating: 0xB2, count: 16)
+        )
+    ) -> Envelope {
         Envelope(
             conversationId: "parity-conversation",
             sessionId: UUID().uuidString,
@@ -909,11 +937,7 @@ final class RelayStoreParityTests: XCTestCase {
             sentAt: Date(),
             messageCounter: 1,
             kemCiphertext: Data([0x10, 0x20]),
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0xA1, count: 12),
-                ciphertext: Data([0x01, 0x02, 0x03]),
-                tag: Data(repeating: 0xB2, count: 16)
-            ),
+            payload: payload,
             signature: Data([0x99, 0x98, 0x97])
         )
     }
