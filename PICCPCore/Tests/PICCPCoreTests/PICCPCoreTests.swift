@@ -4235,6 +4235,75 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(current.mlsEpochHistory.count, 64)
         XCTAssertEqual(current.mlsEpochHistory.map(\.epoch), Array(UInt64(7)...UInt64(70)))
         XCTAssertEqual(current.mlsEpochHistory.last?.transcriptHash, current.mlsEpochState.confirmedTranscriptHash)
+        XCTAssertTrue(
+            MLSGroupEpochHistoryValidator.isValid(
+                currentState: current.mlsEpochState,
+                history: current.mlsEpochHistory
+            )
+        )
+    }
+
+    func testMLSGroupEpochHistoryValidatorRejectsMalformedHistory() async throws {
+        let store = RelayStore()
+        let creator = "creator-fingerprint"
+        let member = "member-a"
+
+        let created = try await store.createGroup(
+            title: "History 0",
+            creatorFingerprint: creator,
+            memberFingerprints: [member]
+        )
+        let epoch1 = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: created.id,
+                actorFingerprint: creator,
+                title: "History 1",
+                groupCommit: SignedGroupCommit(
+                    operation: .update,
+                    groupId: created.id,
+                    actorFingerprint: creator,
+                    baseEpoch: created.epoch,
+                    previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                    title: "History 1"
+                )
+            )
+        )
+        let epoch2 = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: epoch1.id,
+                actorFingerprint: creator,
+                title: "History 2",
+                groupCommit: SignedGroupCommit(
+                    operation: .update,
+                    groupId: epoch1.id,
+                    actorFingerprint: creator,
+                    baseEpoch: epoch1.epoch,
+                    previousTranscriptHash: epoch1.mlsEpochState.confirmedTranscriptHash,
+                    title: "History 2"
+                )
+            )
+        )
+
+        XCTAssertTrue(
+            MLSGroupEpochHistoryValidator.isValid(
+                currentState: epoch2.mlsEpochState,
+                history: epoch2.mlsEpochHistory
+            )
+        )
+
+        let skippedIssues = MLSGroupEpochHistoryValidator.issues(
+            currentState: epoch2.mlsEpochState,
+            history: [created.mlsEpochState.lastCommit, epoch2.mlsEpochState.lastCommit]
+        )
+        XCTAssertTrue(skippedIssues.contains(.nonContiguousEpoch))
+        XCTAssertTrue(skippedIssues.contains(.brokenTranscriptLink))
+
+        let missingCurrentIssues = MLSGroupEpochHistoryValidator.issues(
+            currentState: epoch2.mlsEpochState,
+            history: [created.mlsEpochState.lastCommit, epoch1.mlsEpochState.lastCommit]
+        )
+        XCTAssertTrue(missingCurrentIssues.contains(.currentCommitMissing))
+        XCTAssertTrue(missingCurrentIssues.contains(.currentStateMismatch))
     }
 
     func testRelayStoreRejectsStaleEpochAndMissedTranscriptGroupCommits() async throws {
@@ -7679,6 +7748,29 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertNil(
             GroupRatchetRecovery.state(
                 from: descriptorMissingEpoch1,
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+
+        let descriptorMissingCurrent = RelayGroupDescriptor(
+            id: groupId,
+            title: "Missing Current Commit",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            epoch: epoch2State.epoch,
+            members: members,
+            mlsEpochState: epoch2State,
+            mlsEpochHistory: [
+                epoch0State.lastCommit,
+                epoch1State.lastCommit
+            ],
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 2_020)
+        )
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptorMissingCurrent,
                 identity: member,
                 existing: staleMemberRatchet
             )

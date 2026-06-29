@@ -161,6 +161,13 @@ public enum GroupRatchetRecovery {
         identity: Identity,
         existing: GroupRatchetState? = nil
     ) -> GroupRatchetState? {
+        guard MLSGroupEpochHistoryValidator.isValid(
+            currentState: descriptor.mlsEpochState,
+            history: descriptor.mlsEpochHistory
+        ) else {
+            return nil
+        }
+
         let history = descriptor.mlsEpochHistory
             .sorted { $0.epoch < $1.epoch }
             .filter { $0.ratchetSecretDistribution != nil }

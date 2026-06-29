@@ -46,6 +46,86 @@ struct MLSGroupCommitSummary: Codable, Equatable {
     let ratchetSecretDistribution: GroupRatchetEpochSecretDistribution?
 }
 
+enum MLSGroupEpochHistoryIssue: String, Codable, Equatable, Hashable {
+    case emptyHistory
+    case duplicateEpoch
+    case invalidInitialEpoch
+    case nonContiguousEpoch
+    case brokenTranscriptLink
+    case currentStateMismatch
+    case currentCommitMissing
+}
+
+enum MLSGroupEpochHistoryValidator {
+    static func issues(
+        currentState: MLSGroupEpochState,
+        history: [MLSGroupCommitSummary],
+        allowTruncatedHistory: Bool = true
+    ) -> [MLSGroupEpochHistoryIssue] {
+        guard !history.isEmpty else {
+            return [.emptyHistory, .currentCommitMissing]
+        }
+
+        var issues = Set<MLSGroupEpochHistoryIssue>()
+        let sorted = history.sorted { $0.epoch < $1.epoch }
+        if Set(sorted.map(\.epoch)).count != sorted.count {
+            issues.insert(.duplicateEpoch)
+        }
+
+        if let first = sorted.first {
+            if first.epoch == 0 {
+                if first.operation != .create || first.previousTranscriptHash != nil {
+                    issues.insert(.invalidInitialEpoch)
+                }
+            } else if !allowTruncatedHistory {
+                issues.insert(.invalidInitialEpoch)
+            }
+        }
+
+        for (previous, current) in zip(sorted, sorted.dropFirst()) {
+            if current.epoch != previous.epoch + 1 {
+                issues.insert(.nonContiguousEpoch)
+            }
+            if current.previousTranscriptHash != previous.transcriptHash {
+                issues.insert(.brokenTranscriptLink)
+            }
+        }
+
+        guard let last = sorted.last else {
+            return Array(issues).sortedByRawValue()
+        }
+        if last != currentState.lastCommit {
+            issues.insert(.currentCommitMissing)
+        }
+        if currentState.epoch != currentState.lastCommit.epoch ||
+            currentState.confirmedTranscriptHash != currentState.lastCommit.transcriptHash ||
+            last.epoch != currentState.epoch ||
+            last.transcriptHash != currentState.confirmedTranscriptHash {
+            issues.insert(.currentStateMismatch)
+        }
+
+        return Array(issues).sortedByRawValue()
+    }
+
+    static func isValid(
+        currentState: MLSGroupEpochState,
+        history: [MLSGroupCommitSummary],
+        allowTruncatedHistory: Bool = true
+    ) -> Bool {
+        issues(
+            currentState: currentState,
+            history: history,
+            allowTruncatedHistory: allowTruncatedHistory
+        ).isEmpty
+    }
+}
+
+private extension Array where Element == MLSGroupEpochHistoryIssue {
+    func sortedByRawValue() -> [MLSGroupEpochHistoryIssue] {
+        sorted { $0.rawValue < $1.rawValue }
+    }
+}
+
 struct MLSGroupEpochState: Codable, Equatable {
     static let currentProtocolVersion = "noctyra-mls-v1"
     static let currentCipherSuite = "Noctyra-MLS-ML-KEM-768-ML-DSA-65-AES-256-GCM-SHA384-v1"

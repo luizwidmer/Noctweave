@@ -258,6 +258,19 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(updated.mlsEpochState.lastCommit.previousTranscriptHash, group.mlsEpochState.confirmedTranscriptHash)
         XCTAssertEqual(updated.mlsEpochState.lastCommit.memberFingerprints, [creator, peer, extra].sorted())
         XCTAssertEqual(updated.mlsEpochHistory.map(\.epoch), [0, 1])
+        XCTAssertTrue(
+            MLSGroupEpochHistoryValidator.isValid(
+                currentState: updated.mlsEpochState,
+                history: updated.mlsEpochHistory
+            )
+        )
+
+        let missingCurrentIssues = MLSGroupEpochHistoryValidator.issues(
+            currentState: updated.mlsEpochState,
+            history: [group.mlsEpochState.lastCommit]
+        )
+        XCTAssertTrue(missingCurrentIssues.contains(.currentCommitMissing))
+        XCTAssertTrue(missingCurrentIssues.contains(.currentStateMismatch))
     }
 
     func testRelayStoreRejectsStructurallyInvalidRatchetSecretDistribution() throws {

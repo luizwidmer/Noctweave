@@ -52,7 +52,7 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 
 ### Group authorization abuse
 - Unauthorized member tries to mutate group membership or stale actor proof is replayed.
-- Mitigations present: actor proofs, signing-key matching, nonce replay cache, timestamp limits, signed MLS-derived epoch summaries, bounded retained epoch history, metadata-checked epoch-secret recovery, and direct rejection of skipped group-ratchet epoch jumps.
+- Mitigations present: actor proofs, signing-key matching, nonce replay cache, timestamp limits, signed MLS-derived epoch summaries, bounded retained epoch history, retained-history chain validation, metadata-checked epoch-secret recovery, and direct rejection of skipped group-ratchet epoch jumps.
 - Residual risk: groups are relay-backed MLS-derived application protocol, not an externally proven full MLS deployment.
 
 ## DHT and Torrent Infrastructure Assessment

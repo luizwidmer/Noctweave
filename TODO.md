@@ -115,6 +115,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Align group retained-history fault coverage one step beyond happy-path recovery: route-level tests now cover offline refresh, multiple missed epoch distributions, multiple offline members recovering independently, and fail-closed behavior when the relay's bounded retained epoch window no longer contains a contiguous path from a stale member state.
 - [x] Align group retained-history metadata validation one step further: group ratchet recovery now rejects retained epoch-secret distributions whose group ID, epoch, operation, or recipient set does not match the retained commit summary before deriving recovery state.
 - [x] Align group epoch-contiguity one step further: `GroupRatchetState.advanceEpoch` now rejects skipped epoch jumps at the primitive boundary, so direct callers cannot bypass missed-commit replay or retained-history recovery checks.
+- [x] Align group retained-history chain validation: core and Linux relay models now expose `MLSGroupEpochHistoryValidator`; client recovery fails closed unless retained epoch history is non-empty, duplicate-free, transcript-linked, contiguous within the retained window, and ends at the advertised current commit.
 
 ## Deferred / open decisions
 - [x] Revisit open federation mode design and re-enable open-federation UX paths with coordinator throttles + reachability checks
