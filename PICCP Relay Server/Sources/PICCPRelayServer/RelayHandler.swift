@@ -355,6 +355,7 @@ final class RelayHandler: ChannelInboundHandler {
                     attachmentDefaultTTLSeconds: info.attachmentDefaultTTLSeconds,
                     attachmentMaxTTLSeconds: info.attachmentMaxTTLSeconds,
                     attachmentsEnabled: info.attachmentsEnabled,
+                    attachmentStorageBackend: info.attachmentStorageBackend,
                     hiddenRetrieval: info.hiddenRetrieval,
                     wakeSupport: info.wakeSupport,
                     relayName: info.relayName,
@@ -388,6 +389,7 @@ final class RelayHandler: ChannelInboundHandler {
                         attachmentDefaultTTLSeconds: info.attachmentDefaultTTLSeconds,
                         attachmentMaxTTLSeconds: info.attachmentMaxTTLSeconds,
                         attachmentsEnabled: info.attachmentsEnabled,
+                        attachmentStorageBackend: info.attachmentStorageBackend,
                         hiddenRetrieval: info.hiddenRetrieval,
                         wakeSupport: info.wakeSupport,
                         relayName: info.relayName,
@@ -485,6 +487,8 @@ final class RelayHandler: ChannelInboundHandler {
                 return context.eventLoop.makeSucceededFuture(.error("Invalid chunk index"))
             } catch RelayStoreError.invalidAttachmentPayload {
                 return context.eventLoop.makeSucceededFuture(.error("Invalid attachment payload"))
+            } catch RelayStoreError.attachmentBlobUnavailable {
+                return context.eventLoop.makeSucceededFuture(.error("Attachment blob backend unavailable"))
             } catch {
                 return context.eventLoop.makeSucceededFuture(.error("Attachment store error: \(error.localizedDescription)"))
             }
@@ -507,6 +511,8 @@ final class RelayHandler: ChannelInboundHandler {
                 return context.eventLoop.makeSucceededFuture(.error("Attachment not found"))
             } catch RelayStoreError.invalidChunkIndex {
                 return context.eventLoop.makeSucceededFuture(.error("Invalid chunk index"))
+            } catch RelayStoreError.attachmentBlobUnavailable {
+                return context.eventLoop.makeSucceededFuture(.error("Attachment blob backend unavailable"))
             } catch {
                 return context.eventLoop.makeSucceededFuture(.error("Attachment store error: \(error.localizedDescription)"))
             }
@@ -906,6 +912,8 @@ final class RelayHandler: ChannelInboundHandler {
             return .error("Invalid chunk index")
         case RelayStoreError.invalidAttachmentPayload:
             return .error("Invalid attachment payload")
+        case RelayStoreError.attachmentBlobUnavailable:
+            return .error("Attachment blob backend unavailable")
         case RelayStoreError.invalidPrekeyBundle:
             return .error("Invalid prekey bundle")
         case RelayStoreError.groupCapacityExceeded:

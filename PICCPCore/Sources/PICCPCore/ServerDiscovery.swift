@@ -89,6 +89,7 @@ public struct MasterServerEntry: Codable, Equatable {
     public let temporalBucketScheduleSeconds: [Int]?
     public let attachmentDefaultTTLSeconds: Int?
     public let attachmentMaxTTLSeconds: Int?
+    public let attachmentStorageBackend: String?
     public let hiddenRetrieval: HiddenRetrievalSupport?
     public let wakeSupport: DecentralizedWakeSupport?
     public let operatorNote: String?
@@ -121,6 +122,7 @@ public struct MasterServerEntry: Codable, Equatable {
         temporalBucketScheduleSeconds: [Int]? = nil,
         attachmentDefaultTTLSeconds: Int? = nil,
         attachmentMaxTTLSeconds: Int? = nil,
+        attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         operatorNote: String? = nil,
@@ -152,6 +154,7 @@ public struct MasterServerEntry: Codable, Equatable {
         self.temporalBucketScheduleSeconds = temporalBucketScheduleSeconds
         self.attachmentDefaultTTLSeconds = attachmentDefaultTTLSeconds
         self.attachmentMaxTTLSeconds = attachmentMaxTTLSeconds
+        self.attachmentStorageBackend = attachmentStorageBackend
         self.hiddenRetrieval = hiddenRetrieval
         self.wakeSupport = wakeSupport
         self.operatorNote = operatorNote
@@ -228,6 +231,7 @@ private extension RelayServerRecord {
             || entry.temporalBucketScheduleSeconds != nil
             || entry.attachmentDefaultTTLSeconds != nil
             || entry.attachmentMaxTTLSeconds != nil
+            || entry.attachmentStorageBackend != nil
             || entry.hiddenRetrieval != nil
             || entry.wakeSupport != nil
             || entry.operatorNote != nil
@@ -256,6 +260,7 @@ private extension RelayServerRecord {
             temporalBucketScheduleSeconds: entry.temporalBucketScheduleSeconds,
             attachmentDefaultTTLSeconds: entry.attachmentDefaultTTLSeconds,
             attachmentMaxTTLSeconds: entry.attachmentMaxTTLSeconds,
+            attachmentStorageBackend: entry.attachmentStorageBackend,
             hiddenRetrieval: entry.hiddenRetrieval,
             wakeSupport: entry.wakeSupport,
             operatorNote: entry.operatorNote,

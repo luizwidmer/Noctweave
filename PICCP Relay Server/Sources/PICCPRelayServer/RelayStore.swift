@@ -8,6 +8,7 @@ enum RelayStoreError: Error {
     case relayCapacityExceeded
     case invalidChunkIndex
     case invalidAttachmentPayload
+    case attachmentBlobUnavailable
     case invalidPrekeyBundle
     case groupCapacityExceeded
     case invalidGroupTitle
@@ -37,6 +38,7 @@ final class RelayStore {
     private let queue = DispatchQueue(label: "piccp.relay.store")
     private let fileURL: URL?
     private let maxInboxMessages: Int?
+    private let attachmentBlobStore: AttachmentBlobStore?
     private let temporalBuckets: [TimeInterval]
     private let queueKey = DispatchSpecificKey<Void>()
     private let announcementTTL: TimeInterval = 300
@@ -78,11 +80,13 @@ final class RelayStore {
     init(
         fileURL: URL?,
         maxInboxMessages: Int?,
+        attachmentBlobStore: AttachmentBlobStore? = nil,
         temporalBucketSeconds: Int = 300,
         temporalBucketScheduleSeconds: [Int]? = nil
     ) {
         self.fileURL = fileURL
         self.maxInboxMessages = maxInboxMessages
+        self.attachmentBlobStore = attachmentBlobStore
         self.temporalBuckets = RelayStore.normalizeBuckets(
             primarySeconds: temporalBucketSeconds,
             scheduleSeconds: temporalBucketScheduleSeconds
@@ -176,12 +180,35 @@ final class RelayStore {
                 }
             }
             var records = attachments[key, default: []]
-            let record = AttachmentRecord(
-                chunkIndex: chunkIndex,
-                payload: payload,
-                storedAt: storedAt,
-                expiresAt: expiresAt
-            )
+            let record: AttachmentRecord
+            if let attachmentBlobStore {
+                let encodedPayload = try RelayCodec.encoder().encode(payload)
+                let external = try attachmentBlobStore.put(
+                    encodedPayload,
+                    attachmentId: attachmentId,
+                    chunkIndex: chunkIndex,
+                    expiresAt: expiresAt
+                )
+                record = AttachmentRecord(
+                    chunkIndex: chunkIndex,
+                    payload: nil,
+                    external: external,
+                    storedAt: storedAt,
+                    expiresAt: expiresAt
+                )
+            } else {
+                record = AttachmentRecord(
+                    chunkIndex: chunkIndex,
+                    payload: payload,
+                    external: nil,
+                    storedAt: storedAt,
+                    expiresAt: expiresAt
+                )
+            }
+            if let existing = records.first(where: { $0.chunkIndex == chunkIndex }),
+               let external = existing.external {
+                attachmentBlobStore?.delete(external)
+            }
             if let index = records.firstIndex(where: { $0.chunkIndex == chunkIndex }) {
                 records[index] = record
             } else {
@@ -189,6 +216,11 @@ final class RelayStore {
             }
             if records.count > maxAttachmentChunks {
                 records.sort { $0.storedAt < $1.storedAt }
+                for removed in records.dropLast(maxAttachmentChunks) {
+                    if let external = removed.external {
+                        attachmentBlobStore?.delete(external)
+                    }
+                }
                 records = Array(records.suffix(maxAttachmentChunks))
             }
             attachments[key] = records
@@ -208,7 +240,8 @@ final class RelayStore {
                   let record = records.first(where: { $0.chunkIndex == chunkIndex }) else {
                 return nil
             }
-            return AttachmentChunk(attachmentId: attachmentId, chunkIndex: chunkIndex, payload: record.payload)
+            let payload = try payload(for: record)
+            return AttachmentChunk(attachmentId: attachmentId, chunkIndex: chunkIndex, payload: payload)
         }
     }
 
@@ -1277,9 +1310,29 @@ final class RelayStore {
 
     private func pruneAttachmentsLocked(now: Date) {
         attachments = attachments.compactMapValues { records in
-            let filtered = records.filter { $0.expiresAt > now }
+            var filtered: [AttachmentRecord] = []
+            for record in records {
+                if record.expiresAt > now {
+                    filtered.append(record)
+                } else if let external = record.external {
+                    attachmentBlobStore?.delete(external)
+                }
+            }
             return filtered.isEmpty ? nil : filtered
         }
+    }
+
+    private func payload(for record: AttachmentRecord) throws -> EncryptedPayload {
+        if let payload = record.payload {
+            return payload
+        }
+        guard let external = record.external,
+              let attachmentBlobStore,
+              external.backend == attachmentBlobStore.backendName else {
+            throw RelayStoreError.attachmentBlobUnavailable
+        }
+        let data = try attachmentBlobStore.get(external)
+        return try RelayCodec.decoder().decode(EncryptedPayload.self, from: data)
     }
 
     private func prunePrekeysLocked(now: Date) {
@@ -1454,7 +1507,8 @@ private struct StoredEnvelope: Codable {
 
 private struct AttachmentRecord: Codable {
     let chunkIndex: Int
-    let payload: EncryptedPayload
+    let payload: EncryptedPayload?
+    let external: AttachmentExternalRecord?
     let storedAt: Date
     let expiresAt: Date
 }

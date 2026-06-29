@@ -32,7 +32,8 @@ Last reviewed: June 28, 2026.
 - Normalized SQLite relay storage with row-scoped corrupt-record skipping.
 - TCP, HTTP, HTTPS, WebSocket, and WSS deployment profiles.
 - Reverse-proxy TLS and relay-managed TLS deployment patterns.
-- Relay metadata advertisement for name, kind, federation, transport, TLS, temporal buckets, attachment TTL, group policy, operator note, and software version.
+- Relay metadata advertisement for name, kind, federation, transport, TLS, temporal buckets, attachment TTL, attachment storage backend, group policy, operator note, and software version.
+- Linux relay attachment chunks can be stored inline in SQLite or offloaded to an IPFS-compatible backend as separate encrypted chunk objects, with SQLite retaining CIDs, byte counts, digests, and expiry metadata for verified reconstruction.
 - Relay metadata advertises the group security model: current `relayBackedPairwise` pairwise-fan-out mode or `mlsDerivedTree`.
 - Relay group descriptors carry required MLS epoch state with tree hash, transcript hash, ciphersuite label, last commit summary, and bounded `mlsEpochHistory` for recent signed epoch summaries.
 - Group conversations can persist encrypted group ratchet state locally, and signed group create/commit/join-approval operations can distribute group epoch secrets through ML-KEM-sealed member shares.

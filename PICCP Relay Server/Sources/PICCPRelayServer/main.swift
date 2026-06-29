@@ -23,6 +23,10 @@ struct ServerConfig {
     var attachmentDefaultTTLSeconds: Int
     var attachmentMaxTTLSeconds: Int
     var attachmentsEnabled: Bool
+    var attachmentStorageMode: AttachmentStorageMode
+    var ipfsAPIEndpoint: URL?
+    var ipfsGatewayEndpoint: URL?
+    var ipfsTimeoutSeconds: Int
     var hiddenRetrieval: HiddenRetrievalSupport?
     var wakeSupport: DecentralizedWakeSupport?
     var relayName: String?
@@ -67,6 +71,10 @@ struct ServerConfig {
         var attachmentDefaultTTLSeconds: Int = 3600
         var attachmentMaxTTLSeconds: Int = 21600
         var attachmentsEnabled = true
+        var attachmentStorageMode = AttachmentStorageMode(rawValue: environment["NOCTYRA_ATTACHMENT_STORAGE"] ?? "") ?? .inline
+        var ipfsAPIEndpoint = URL(string: environment["NOCTYRA_IPFS_API_ENDPOINT"] ?? "http://127.0.0.1:5001")
+        var ipfsGatewayEndpoint = URL(string: environment["NOCTYRA_IPFS_GATEWAY_ENDPOINT"] ?? "")
+        var ipfsTimeoutSeconds = Int(environment["NOCTYRA_IPFS_TIMEOUT_SECONDS"] ?? "") ?? 10
         var hiddenRetrievalEnabled = false
         var hiddenRetrievalDefaultCoverSetSize = 8
         var hiddenRetrievalMaxCoverSetSize = 32
@@ -190,6 +198,23 @@ struct ServerConfig {
             case "--attachments-enabled":
                 if let value = iterator.next() {
                     attachmentsEnabled = parseBoolFlag(value, defaultValue: true)
+                }
+            case "--attachment-storage":
+                if let value = iterator.next(),
+                   let parsed = AttachmentStorageMode(rawValue: value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) {
+                    attachmentStorageMode = parsed
+                }
+            case "--ipfs-api-endpoint":
+                if let value = iterator.next() {
+                    ipfsAPIEndpoint = URL(string: value)
+                }
+            case "--ipfs-gateway-endpoint":
+                if let value = iterator.next() {
+                    ipfsGatewayEndpoint = URL(string: value)
+                }
+            case "--ipfs-timeout-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    ipfsTimeoutSeconds = max(1, parsed)
                 }
             case "--hidden-retrieval":
                 if let value = iterator.next() {
@@ -359,6 +384,10 @@ struct ServerConfig {
             attachmentDefaultTTLSeconds: attachmentDefaultTTLSeconds,
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled,
+            attachmentStorageMode: attachmentStorageMode,
+            ipfsAPIEndpoint: ipfsAPIEndpoint,
+            ipfsGatewayEndpoint: ipfsGatewayEndpoint,
+            ipfsTimeoutSeconds: ipfsTimeoutSeconds,
             hiddenRetrieval: hiddenRetrieval,
             wakeSupport: wakeSupport,
             relayName: relayName,
@@ -437,9 +466,26 @@ if let dataDir = config.dataDir {
 } else {
     fileURL = nil
 }
+let attachmentBlobStore: AttachmentBlobStore?
+switch config.attachmentStorageMode {
+case .inline:
+    attachmentBlobStore = nil
+case .ipfs:
+    guard let apiEndpoint = config.ipfsAPIEndpoint else {
+        print("[relay] --attachment-storage ipfs requires --ipfs-api-endpoint")
+        exit(2)
+    }
+    attachmentBlobStore = IPFSAttachmentBlobStore(
+        apiEndpoint: apiEndpoint,
+        gatewayEndpoint: config.ipfsGatewayEndpoint,
+        timeoutSeconds: TimeInterval(config.ipfsTimeoutSeconds)
+    )
+    print("[relay] Attachment chunks will be offloaded to IPFS through \(apiEndpoint.absoluteString)")
+}
 let store = RelayStore(
     fileURL: fileURL,
     maxInboxMessages: config.maxInboxMessages,
+    attachmentBlobStore: attachmentBlobStore,
     temporalBucketSeconds: config.temporalBucketSeconds,
     temporalBucketScheduleSeconds: config.temporalBucketScheduleSeconds
 )
@@ -465,6 +511,7 @@ var relayConfiguration = RelayConfiguration(
     attachmentDefaultTTLSeconds: config.attachmentDefaultTTLSeconds,
     attachmentMaxTTLSeconds: config.attachmentMaxTTLSeconds,
     attachmentsEnabled: config.attachmentsEnabled,
+    attachmentStorageBackend: config.attachmentStorageMode.rawValue,
     hiddenRetrieval: config.hiddenRetrieval,
     wakeSupport: config.wakeSupport,
     relayName: config.relayName,

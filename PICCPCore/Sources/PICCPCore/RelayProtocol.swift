@@ -116,6 +116,7 @@ public struct RelayInfo: Codable, Equatable {
     public var attachmentDefaultTTLSeconds: Int?
     public var attachmentMaxTTLSeconds: Int?
     public var attachmentsEnabled: Bool?
+    public var attachmentStorageBackend: String?
     public var hiddenRetrieval: HiddenRetrievalSupport?
     public var wakeSupport: DecentralizedWakeSupport?
     public var relayName: String?
@@ -144,6 +145,7 @@ public struct RelayInfo: Codable, Equatable {
         attachmentDefaultTTLSeconds: Int? = nil,
         attachmentMaxTTLSeconds: Int? = nil,
         attachmentsEnabled: Bool? = nil,
+        attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
@@ -176,6 +178,7 @@ public struct RelayInfo: Codable, Equatable {
         self.attachmentDefaultTTLSeconds = attachmentDefaultTTLSeconds
         self.attachmentMaxTTLSeconds = attachmentMaxTTLSeconds
         self.attachmentsEnabled = attachmentsEnabled
+        self.attachmentStorageBackend = attachmentStorageBackend
         self.hiddenRetrieval = hiddenRetrieval
         self.wakeSupport = wakeSupport
         self.relayName = relayName
@@ -206,6 +209,7 @@ public struct RelayConfiguration: Codable, Equatable {
     public var attachmentDefaultTTLSeconds: Int
     public var attachmentMaxTTLSeconds: Int
     public var attachmentsEnabled: Bool?
+    public var attachmentStorageBackend: String?
     public var hiddenRetrieval: HiddenRetrievalSupport?
     public var wakeSupport: DecentralizedWakeSupport?
     public var relayName: String?
@@ -241,6 +245,7 @@ public struct RelayConfiguration: Codable, Equatable {
         attachmentDefaultTTLSeconds: Int = 3600,
         attachmentMaxTTLSeconds: Int = 21600,
         attachmentsEnabled: Bool = true,
+        attachmentStorageBackend: String? = nil,
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
@@ -281,6 +286,8 @@ public struct RelayConfiguration: Codable, Equatable {
         self.attachmentDefaultTTLSeconds = normalizedAttachmentDefaultTTL
         self.attachmentMaxTTLSeconds = max(normalizedAttachmentDefaultTTL, attachmentMaxTTLSeconds)
         self.attachmentsEnabled = attachmentsEnabled
+        let normalizedAttachmentStorageBackend = attachmentStorageBackend?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.attachmentStorageBackend = normalizedAttachmentStorageBackend?.isEmpty == false ? normalizedAttachmentStorageBackend : nil
         self.hiddenRetrieval = hiddenRetrieval
         self.wakeSupport = wakeSupport
         self.relayName = relayName
@@ -325,6 +332,7 @@ public struct RelayConfiguration: Codable, Equatable {
             attachmentDefaultTTLSeconds: attachmentDefaultTTLSeconds,
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled != false,
+            attachmentStorageBackend: attachmentStorageBackend,
             hiddenRetrieval: hiddenRetrieval,
             wakeSupport: wakeSupport,
             relayName: relayName,

@@ -24,6 +24,60 @@ final class RelayStoreParityTests: XCTestCase {
         }
     }
 
+    func testStoreCanOffloadAttachmentChunksToExternalBlobStore() throws {
+        let blobStore = TestAttachmentBlobStore()
+        let store = RelayStore(
+            fileURL: nil,
+            maxInboxMessages: nil,
+            attachmentBlobStore: blobStore,
+            temporalBucketSeconds: 300
+        )
+        let attachmentId = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0x01, count: 12),
+            ciphertext: Data([0xAA, 0xBB, 0xCC]),
+            tag: Data(repeating: 0x02, count: 16)
+        )
+
+        _ = try store.storeAttachment(
+            attachmentId: attachmentId,
+            chunkIndex: 2,
+            payload: payload,
+            ttlSeconds: 300
+        )
+        let fetched = try XCTUnwrap(store.fetchAttachment(attachmentId: attachmentId, chunkIndex: 2))
+
+        XCTAssertEqual(fetched.payload, payload)
+        XCTAssertEqual(blobStore.putCount, 1)
+        XCTAssertEqual(blobStore.records.values.first?.backend, "test-blob")
+    }
+
+    func testExternalAttachmentBlobDigestMismatchIsRejected() throws {
+        let blobStore = TestAttachmentBlobStore()
+        let store = RelayStore(
+            fileURL: nil,
+            maxInboxMessages: nil,
+            attachmentBlobStore: blobStore,
+            temporalBucketSeconds: 300
+        )
+        let attachmentId = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0x01, count: 12),
+            ciphertext: Data([0xAA, 0xBB, 0xCC]),
+            tag: Data(repeating: 0x02, count: 16)
+        )
+
+        _ = try store.storeAttachment(
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 300
+        )
+        blobStore.corruptAll()
+
+        XCTAssertThrowsError(try store.fetchAttachment(attachmentId: attachmentId, chunkIndex: 0))
+    }
+
     func testRelayStoreBucketsVisiblePairingAnnouncementTimes() {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
         let now = Date(timeIntervalSince1970: 1_765_400_123)
@@ -1155,5 +1209,51 @@ private actor MockOpenFederationDHTRelayQueryClient: OpenFederationDHTRelayQuery
 
     func setListFailureEnabled(_ enabled: Bool) {
         listFailureEnabled = enabled
+    }
+}
+
+private final class TestAttachmentBlobStore: AttachmentBlobStore {
+    let backendName = "test-blob"
+    private(set) var records: [String: AttachmentExternalRecord] = [:]
+    private var blobs: [String: Data] = [:]
+    private(set) var putCount = 0
+
+    func put(_ data: Data, attachmentId: UUID, chunkIndex: Int, expiresAt: Date) throws -> AttachmentExternalRecord {
+        putCount += 1
+        let locator = "\(attachmentId.uuidString)-\(chunkIndex)-\(putCount)"
+        blobs[locator] = data
+        let record = AttachmentExternalRecord(
+            backend: backendName,
+            locator: locator,
+            byteCount: data.count,
+            sha256Hex: AttachmentBlobDigest.sha256Hex(data),
+            expiresAt: expiresAt
+        )
+        records[locator] = record
+        return record
+    }
+
+    func get(_ record: AttachmentExternalRecord) throws -> Data {
+        guard let data = blobs[record.locator] else {
+            throw AttachmentBlobStoreError.fetchFailed("missing test blob")
+        }
+        guard data.count == record.byteCount,
+              AttachmentBlobDigest.sha256Hex(data) == record.sha256Hex else {
+            throw AttachmentBlobStoreError.digestMismatch
+        }
+        return data
+    }
+
+    func delete(_ record: AttachmentExternalRecord) {
+        blobs.removeValue(forKey: record.locator)
+        records.removeValue(forKey: record.locator)
+    }
+
+    func corruptAll() {
+        blobs = blobs.mapValues { data in
+            var corrupted = data
+            corrupted.append(0x00)
+            return corrupted
+        }
     }
 }

@@ -2960,6 +2960,55 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(fetched?.payload, payload)
     }
 
+    func testRelayStoreCanOffloadAttachmentChunksToExternalBlobStore() async throws {
+        let blobStore = TestAttachmentBlobStore()
+        let store = RelayStore(attachmentBlobStore: blobStore)
+        let attachmentId = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0xA5, count: 12),
+            ciphertext: Data([2, 3, 4]),
+            tag: Data(repeating: 0x5A, count: 16)
+        )
+
+        _ = try await store.storeAttachment(
+            attachmentId: attachmentId,
+            chunkIndex: 1,
+            payload: payload,
+            ttlSeconds: 60
+        )
+
+        let fetched = try await store.fetchAttachment(attachmentId: attachmentId, chunkIndex: 1)
+        XCTAssertEqual(fetched?.payload, payload)
+        XCTAssertEqual(blobStore.putCount, 1)
+        XCTAssertEqual(blobStore.records.values.first?.backend, "test-blob")
+    }
+
+    func testRelayStoreRejectsCorruptExternalAttachmentBlob() async throws {
+        let blobStore = TestAttachmentBlobStore()
+        let store = RelayStore(attachmentBlobStore: blobStore)
+        let attachmentId = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0xA5, count: 12),
+            ciphertext: Data([2, 3, 4]),
+            tag: Data(repeating: 0x5A, count: 16)
+        )
+
+        _ = try await store.storeAttachment(
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 60
+        )
+        blobStore.corruptAll()
+
+        do {
+            _ = try await store.fetchAttachment(attachmentId: attachmentId, chunkIndex: 0)
+            XCTFail("Expected corrupt external attachment blob to be rejected")
+        } catch {
+            XCTAssertTrue(error is AttachmentBlobStoreError || error is RelayStoreError)
+        }
+    }
+
     func testRelayStoreDiskPersistenceUsesSQLite() async throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
@@ -7125,6 +7174,52 @@ private final class DHTGatewayURLProtocolHarness {
                 _requests = newValue
                 lock.unlock()
             }
+        }
+    }
+}
+
+private final class TestAttachmentBlobStore: AttachmentBlobStore {
+    let backendName = "test-blob"
+    private(set) var records: [String: AttachmentExternalRecord] = [:]
+    private var blobs: [String: Data] = [:]
+    private(set) var putCount = 0
+
+    func put(_ data: Data, attachmentId: UUID, chunkIndex: Int, expiresAt: Date) throws -> AttachmentExternalRecord {
+        putCount += 1
+        let locator = "\(attachmentId.uuidString)-\(chunkIndex)-\(putCount)"
+        blobs[locator] = data
+        let record = AttachmentExternalRecord(
+            backend: backendName,
+            locator: locator,
+            byteCount: data.count,
+            sha256Hex: AttachmentBlobDigest.sha256Hex(data),
+            expiresAt: expiresAt
+        )
+        records[locator] = record
+        return record
+    }
+
+    func get(_ record: AttachmentExternalRecord) throws -> Data {
+        guard let data = blobs[record.locator] else {
+            throw AttachmentBlobStoreError.fetchFailed("missing test blob")
+        }
+        guard data.count == record.byteCount,
+              AttachmentBlobDigest.sha256Hex(data) == record.sha256Hex else {
+            throw AttachmentBlobStoreError.digestMismatch
+        }
+        return data
+    }
+
+    func delete(_ record: AttachmentExternalRecord) {
+        blobs.removeValue(forKey: record.locator)
+        records.removeValue(forKey: record.locator)
+    }
+
+    func corruptAll() {
+        blobs = blobs.mapValues { data in
+            var corrupted = data
+            corrupted.append(0x00)
+            return corrupted
         }
     }
 }

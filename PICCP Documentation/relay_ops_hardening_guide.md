@@ -83,6 +83,17 @@ Set attachment retention low enough for your budget and threat model:
 
 Use `--attachments-enabled false` for text-only relays.
 
+For storage offload, the Linux relay can store encrypted attachment chunks in an IPFS-compatible backend while keeping only chunk metadata, CIDs, byte counts, digests, and expiry data in SQLite:
+
+```bash
+--attachment-storage ipfs \
+--ipfs-api-endpoint http://127.0.0.1:5001 \
+--ipfs-gateway-endpoint http://127.0.0.1:8080 \
+--ipfs-timeout-seconds 10
+```
+
+This does not make attachment delivery anonymous. Clients still use the normal relay upload/fetch API, and the relay performs IPFS pin, fetch, digest verification, and best-effort unpin after TTL. Use a relay-controlled IPFS node or private IPFS cluster; public gateways and public DHT lookups can leak CID interest and should not be the privacy default.
+
 ## Federation Mode
 
 Solo mode is safest operationally because it does not forward across other relays.

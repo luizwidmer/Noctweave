@@ -198,7 +198,9 @@ Relay fetch and state-mutation operations are not unauthenticated mailbox reads.
 
 ## 6.2 Storage
 
-Relay state persists through a normalized SQLite-backed store. The relay writes structured domain tables for inbox registrations, envelopes, attachments, prekey bundles, federation nodes, coordinator pins, groups, and join requests. Corrupt persisted rows are skipped at row scope where possible instead of reviving obsolete snapshot formats. This provides durability, structured persistence, and avoids the fragility of large flat-file state.
+Relay state persists through a normalized SQLite-backed store. The relay writes structured domain tables for inbox registrations, envelopes, attachment chunk records, prekey bundles, federation nodes, coordinator pins, groups, and join requests. Corrupt persisted rows are skipped at row scope where possible instead of reviving obsolete snapshot formats. This provides durability, structured persistence, and avoids the fragility of large flat-file state.
+
+Attachment chunk records can either store the encrypted chunk inline or reference an external blob backend. The Linux relay supports an IPFS-compatible attachment backend for storage offload: encrypted chunks are pinned as separate objects, while SQLite stores the CID, size, digest, and expiry metadata needed to verify and reconstruct the relay response. This is a storage scalability feature, not an anonymity layer; clients still interact with the relay API by default.
 
 Attachment storage is bounded by:
 
@@ -231,6 +233,7 @@ Relay policy controls include:
 - group-creation allow or deny mode
 - temporal bucketing schedule
 - attachment retention policy
+- attachment storage backend advertisement
 - federation mode and coordinator configuration
 - text-only mode for operators who do not want to host attachment chunks
 
