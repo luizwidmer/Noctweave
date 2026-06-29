@@ -16,7 +16,7 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 ### Malicious relay
 - Can observe source IPs, timing, chosen relay, mailbox polling cadence, and ciphertext sizes.
 - Cannot decrypt message payloads or attachments without endpoint keys.
-- Mitigations present: ML-KEM/ML-DSA session setup, AEAD payloads, authenticated inbox fetch/ack, temporal buckets, attachment TTL, relay password support, TLS/WSS support, and ciphertext-only prefetch staging that defers acknowledgement until unlocked sync. Apple helper prefetch uses delegated inbox-access keys for direct ciphertext only, does not store the long-term identity signing key or group routing metadata, rewrites successfully decoded stale helper configs that still contain removed sensitive fields, and caps helper profiles, staged ciphertext records, and encrypted helper file size.
+- Mitigations present: ML-KEM/ML-DSA session setup, AEAD payloads, authenticated inbox fetch/ack, temporal buckets, attachment TTL, relay password support, TLS/WSS support, and ciphertext-only prefetch staging that defers acknowledgement until unlocked sync. Apple helper prefetch uses delegated inbox-access keys for direct ciphertext only, does not store the long-term identity signing key or group routing metadata, rewrites successfully decoded stale helper configs that still contain removed sensitive fields, and caps helper profiles, per-profile relay responses, staged ciphertext records, and encrypted helper file size.
 - Residual risk: no single-server PIR or live full-network mixnet deployment.
 
 ### Malicious coordinator

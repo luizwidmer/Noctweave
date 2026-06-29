@@ -49,5 +49,10 @@ if ! grep -q "maxPrefetchedRecords" \
   echo "Closed-app helper prefetch must cap staged ciphertext records." >&2
   exit 1
 fi
+if ! grep -q "maximumEnvelopeCountPerProfile" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchRunner.swift"; then
+  echo "Closed-app helper prefetch must clamp per-profile fetch response counts locally." >&2
+  exit 1
+fi
 
 echo "Whitepaper alignment verification complete."
