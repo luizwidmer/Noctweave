@@ -7,6 +7,19 @@ public enum MixnetSchedulerError: Error, Equatable {
     case emptyBatch
 }
 
+public enum MixnetRoutePolicyIssue: String, Codable, Equatable, CaseIterable {
+    case notAdvertised
+    case disabled
+    case missingOnionTransport
+    case onionTransportDisabled
+    case insufficientOnionHops
+    case fixedSizePacketsNotRequired
+    case insufficientBatchSize
+    case coverTrafficDisabled
+    case batchIntervalTooShort
+    case releaseDelayDisabled
+}
+
 public enum MixnetPacketKind: String, Codable, Equatable {
     case real
     case cover
@@ -73,6 +86,71 @@ public struct MixnetBatchPlan: Codable, Equatable {
         self.batchId = batchId
         self.releaseAt = releaseAt
         self.packets = packets
+    }
+}
+
+public enum MixnetRoutePolicyValidator {
+    public static func issues(
+        for mixnetSupport: MixnetTransportSupport?,
+        onionSupport: OnionTransportSupport?,
+        minimumBatchSize: Int = 4,
+        minimumCoverPackets: Int = 1,
+        minimumOnionHops: Int = 2,
+        minimumBatchIntervalSeconds: Int = 10
+    ) -> [MixnetRoutePolicyIssue] {
+        guard let mixnetSupport else {
+            return [.notAdvertised]
+        }
+
+        var issues: [MixnetRoutePolicyIssue] = []
+        if !mixnetSupport.enabled {
+            issues.append(.disabled)
+        }
+        if mixnetSupport.minBatchSize < max(2, minimumBatchSize) {
+            issues.append(.insufficientBatchSize)
+        }
+        if mixnetSupport.coverPacketsPerBatch < max(1, minimumCoverPackets) {
+            issues.append(.coverTrafficDisabled)
+        }
+        if mixnetSupport.batchIntervalSeconds < max(5, minimumBatchIntervalSeconds) {
+            issues.append(.batchIntervalTooShort)
+        }
+        if mixnetSupport.maxDelaySeconds <= 0 {
+            issues.append(.releaseDelayDisabled)
+        }
+
+        guard let onionSupport else {
+            issues.append(.missingOnionTransport)
+            return issues
+        }
+        if !onionSupport.enabled {
+            issues.append(.onionTransportDisabled)
+        }
+        if onionSupport.maxHops < max(2, minimumOnionHops) {
+            issues.append(.insufficientOnionHops)
+        }
+        if !onionSupport.requiresFixedSizePackets {
+            issues.append(.fixedSizePacketsNotRequired)
+        }
+        return issues
+    }
+
+    public static func isUsable(
+        mixnetSupport: MixnetTransportSupport?,
+        onionSupport: OnionTransportSupport?,
+        minimumBatchSize: Int = 4,
+        minimumCoverPackets: Int = 1,
+        minimumOnionHops: Int = 2,
+        minimumBatchIntervalSeconds: Int = 10
+    ) -> Bool {
+        issues(
+            for: mixnetSupport,
+            onionSupport: onionSupport,
+            minimumBatchSize: minimumBatchSize,
+            minimumCoverPackets: minimumCoverPackets,
+            minimumOnionHops: minimumOnionHops,
+            minimumBatchIntervalSeconds: minimumBatchIntervalSeconds
+        ).isEmpty
     }
 }
 

@@ -7528,6 +7528,60 @@ final class PICCPCoreTests: XCTestCase {
         let decoded = try PICCPCoder.decode(RelayInfo.self, from: PICCPCoder.encode(info))
         XCTAssertEqual(decoded.mixnetTransport, support)
     }
+
+    func testMixnetRoutePolicyValidatorAcceptsOnionBackedCoverBatches() {
+        let mixnet = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: 45,
+            minBatchSize: 12,
+            coverPacketsPerBatch: 4,
+            maxDelaySeconds: 90
+        )
+        let onion = OnionTransportSupport(enabled: true, maxHops: 3, requiresFixedSizePackets: true)
+
+        XCTAssertTrue(MixnetRoutePolicyValidator.isUsable(mixnetSupport: mixnet, onionSupport: onion))
+        XCTAssertEqual(
+            MixnetRoutePolicyValidator.issues(for: mixnet, onionSupport: onion),
+            []
+        )
+    }
+
+    func testMixnetRoutePolicyValidatorRejectsMisleadingMixnetAdvertisements() {
+        XCTAssertEqual(
+            MixnetRoutePolicyValidator.issues(for: nil, onionSupport: nil),
+            [.notAdvertised]
+        )
+
+        let weakMixnet = MixnetTransportSupport(
+            enabled: false,
+            batchIntervalSeconds: 5,
+            minBatchSize: 1,
+            coverPacketsPerBatch: 0,
+            maxDelaySeconds: 0
+        )
+        let weakOnion = OnionTransportSupport(enabled: false, maxHops: 1, requiresFixedSizePackets: false)
+        let issues = MixnetRoutePolicyValidator.issues(for: weakMixnet, onionSupport: weakOnion)
+
+        XCTAssertTrue(issues.contains(.disabled))
+        XCTAssertTrue(issues.contains(.insufficientBatchSize))
+        XCTAssertTrue(issues.contains(.coverTrafficDisabled))
+        XCTAssertTrue(issues.contains(.batchIntervalTooShort))
+        XCTAssertTrue(issues.contains(.releaseDelayDisabled))
+        XCTAssertTrue(issues.contains(.onionTransportDisabled))
+        XCTAssertTrue(issues.contains(.insufficientOnionHops))
+        XCTAssertTrue(issues.contains(.fixedSizePacketsNotRequired))
+
+        let missingOnion = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: 30,
+            minBatchSize: 8,
+            coverPacketsPerBatch: 2,
+            maxDelaySeconds: 120
+        )
+        XCTAssertTrue(
+            MixnetRoutePolicyValidator.issues(for: missingOnion, onionSupport: nil).contains(.missingOnionTransport)
+        )
+    }
 }
 
 private func testBitset(recordCount: Int, enabledIndex: Int) -> Data {

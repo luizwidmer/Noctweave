@@ -245,7 +245,7 @@ Relays may also advertise optional hidden-retrieval support. In cover-query mode
 
 Relays may also advertise optional onion-transport support. Onion packets are layered with ML-KEM-768 encapsulation per hop and AES-256-GCM payload protection. Each relay hop decapsulates only its layer, learns only its own routing instruction and optional delay bucket, and forwards the encrypted next layer. This is a route-privacy primitive for compatible relay paths.
 
-Relays can additionally advertise a mixnet scheduling policy: batch interval, minimum batch size, cover packets per batch, and maximum release delay. Compatible clients can use this policy to shape onion packets into batches with deterministic cover traffic and bounded jitter before release. This improves timing resistance for participating paths, but it is still not a full global mixnet by itself because it does not prove that all relays maintain continuous cover traffic, shared route-selection policy, or network-wide latency scheduling.
+Relays can additionally advertise a mixnet scheduling policy: batch interval, minimum batch size, cover packets per batch, and maximum release delay. Compatible clients can use this policy to shape onion packets into batches with deterministic cover traffic and bounded jitter before release. A mixnet claim is considered usable only when the advertised policy is backed by enabled onion transport, at least two hops, fixed-size packet requirements, nonzero cover traffic, a minimum batch size, nonzero release delay, and a nontrivial batch interval. This improves timing resistance for participating paths and rejects misleading mode-only claims, but it is still not a full global mixnet by itself because it does not prove that all relays maintain continuous cover traffic, shared route-selection policy, or network-wide latency scheduling.
 
 ## 6.5 Decentralized wake and pull delivery
 
@@ -369,7 +369,7 @@ The reference implementation delivers:
 - optional relay-advertised hidden-retrieval cover queries
 - optional relay-advertised replicated XOR-PIR for non-colluding replicated buckets, with replica-set metadata validation
 - optional relay-advertised onion packet support with ML-KEM per-hop wrapping and AES-GCM layer protection
-- optional relay-advertised mixnet scheduling policy for batching, bounded release delay, and cover-packet planning
+- optional relay-advertised mixnet scheduling policy for batching, bounded release delay, cover-packet planning, and route-policy validation
 - explicit group-security-model advertisement, required MLS epoch metadata, and bounded group epoch history
 - bounded group protocol model checking over commit state transitions
 - relay-advertised decentralized wake policy for jittered pull or bounded long-poll clients

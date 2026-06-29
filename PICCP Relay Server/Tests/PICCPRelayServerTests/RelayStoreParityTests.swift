@@ -885,6 +885,35 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(info.mixnetTransport, support)
     }
 
+    func testMixnetRoutePolicyValidatorMatchesCoreAdvertisedBoundary() {
+        let mixnet = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: 45,
+            minBatchSize: 12,
+            coverPacketsPerBatch: 4,
+            maxDelaySeconds: 90
+        )
+        let onion = OnionTransportSupport(enabled: true, maxHops: 3, requiresFixedSizePackets: true)
+
+        XCTAssertTrue(MixnetRoutePolicyValidator.isUsable(mixnetSupport: mixnet, onionSupport: onion))
+
+        let misleading = MixnetTransportSupport(
+            enabled: false,
+            batchIntervalSeconds: 5,
+            minBatchSize: 1,
+            coverPacketsPerBatch: 0,
+            maxDelaySeconds: 0
+        )
+        let issues = MixnetRoutePolicyValidator.issues(for: misleading, onionSupport: nil)
+
+        XCTAssertTrue(issues.contains(.disabled))
+        XCTAssertTrue(issues.contains(.insufficientBatchSize))
+        XCTAssertTrue(issues.contains(.coverTrafficDisabled))
+        XCTAssertTrue(issues.contains(.batchIntervalTooShort))
+        XCTAssertTrue(issues.contains(.releaseDelayDisabled))
+        XCTAssertTrue(issues.contains(.missingOnionTransport))
+    }
+
     func testRelayInfoCarriesGroupSecurityModel() {
         let defaultInfo = RelayConfiguration().makeInfo()
         XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)
