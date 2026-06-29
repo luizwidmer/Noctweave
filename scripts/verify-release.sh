@@ -36,30 +36,6 @@ if len(refs) != len(set(refs)):
     raise SystemExit("CycloneDX SBOM component bom-ref values must be unique")
 PY
 
-echo "Generating release provenance manifest..."
-PROVENANCE_PATH="$(mktemp)"
-trap 'rm -f "$PROVENANCE_PATH"' EXIT
-scripts/generate-release-provenance.py --output "$PROVENANCE_PATH" >/dev/null
-python3 -m json.tool "$PROVENANCE_PATH" >/dev/null
-python3 - <<'PY' "$PROVENANCE_PATH"
-import json
-import sys
-
-path = sys.argv[1]
-with open(path, encoding="utf-8") as handle:
-    payload = json.load(handle)
-
-if payload.get("schema") != "noctyra-release-provenance-v1":
-    raise SystemExit("Release provenance manifest has unexpected schema")
-if not payload.get("git", {}).get("commit"):
-    raise SystemExit("Release provenance manifest must include a git commit")
-tracked = payload.get("trackedInputs", [])
-if not tracked or any(len(item.get("sha256", "")) != 64 for item in tracked):
-    raise SystemExit("Release provenance tracked inputs must include SHA-256 hashes")
-if not payload.get("swiftPackagePins"):
-    raise SystemExit("Release provenance manifest must include Swift package pins")
-PY
-
 echo "Resolving Swift package pins..."
 (cd "$RELAY_DIR" && swift package resolve)
 git diff --exit-code -- "$RELAY_DIR/Package.resolved"

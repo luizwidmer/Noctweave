@@ -220,9 +220,9 @@ No high-severity implementation findings remain from this pass. This does not re
    - Release blocker: no, provided the product does not claim network anonymity beyond metadata reduction.
 
 ### Low
-1. **Release engineering remains incomplete**
-   - Current: dependency SBOM and release signing policy are documented, with deterministic machine-readable SBOM snapshots, a local release verification script, and local release provenance manifests.
-   - Required: final Apple notarization/signing artifact binding, public registry-pushed Docker digest binding if images are published, required container vulnerability scanning in release CI, and external audit.
+1. **External validation remains incomplete**
+   - Current: dependency SBOM and release signing policy are documented, with deterministic machine-readable SBOM snapshots, a local release verification script, and optional container scanning hooks.
+   - Required: independent external security audit. App release-origin trust is handled by the App Store path rather than by a project-specific release layer.
 
 ## Verification Plan
 

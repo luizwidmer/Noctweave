@@ -383,7 +383,7 @@ The following areas remain future work:
 - full mixnet deployment with continuous cover traffic, shared route selection, and network-wide latency scheduling
 - DHT-style autonomous open-federation discovery
 - expanded real-device fault-injection coverage around retained group epoch histories and model-checked group state transitions
-- external independent audit and signed release-provenance packaging
+- external independent security audit
 - stronger closed-app background delivery that does not require centralized push infrastructure or rely on OS-opportunistic intent/widget execution
 
 These are genuine open areas and remain on the roadmap because they are materially harder than the deployed protocol profile.

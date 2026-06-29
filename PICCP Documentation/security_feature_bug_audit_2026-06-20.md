@@ -164,8 +164,8 @@ independent third-party audit.
 7. **Linux Swift 6 readiness.** SwiftNIO `ByteToMessageHandler` sendability
    warnings remain under the current Swift 5.9 language mode and must be
    resolved before a Swift 6 migration.
-8. **Release engineering remains incomplete.** Generate an SBOM, establish
-   signed release provenance, scan dependencies continuously, and commission an
+8. **Release engineering remains incomplete.** Generate an SBOM,
+   scan dependencies continuously, and commission an
    independent cryptographic and application security review.
 
 ## Verification Evidence

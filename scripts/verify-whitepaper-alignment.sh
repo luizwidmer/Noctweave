@@ -15,7 +15,4 @@ swift test \
   --package-path "$ROOT_DIR/PICCP Relay Server" \
   --filter 'RelayStoreParityTests/test(RelayStoreBucketsVisiblePair|RelayStoreRejectsOversizedEnvelopePayloads|StoreCanOffloadAttachmentChunksToExternalBlobStore|ExternalAttachmentBlobDigestMismatchIsRejected|RelayStoreRejectsStructurallyInvalidRatchetSecretDistribution|HiddenRetrievalSupport|RelayInfoCarriesOptionalOnionTransportSupport|RelayInfoCarriesOptionalMixnetTransportSupport|MixnetRoutePolicyValidator|OpenFederationDHTHTTPGatewayRefresh|OpenFederationDHTNativeOverlay)'
 
-echo "Validating release provenance generation..."
-"$ROOT_DIR/scripts/generate-release-provenance.py" >/dev/null
-
 echo "Whitepaper alignment verification complete."

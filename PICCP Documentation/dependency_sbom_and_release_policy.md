@@ -57,25 +57,13 @@ Before a release, run the local verifier:
 scripts/verify-release.sh
 ```
 
-It refreshes the SBOM, verifies the checked-in snapshot is current, validates a local release provenance manifest, checks package resolution, runs the Linux relay test suite, and runs optional Docker/Trivy checks when those tools are installed.
-
-To inspect the local provenance manifest directly:
-
-```bash
-scripts/generate-release-provenance.py
-```
-
-The manifest records the current git commit, dirty-worktree paths, SHA-256 hashes for SBOM and release-check inputs, Swift package pins, and the verification command. It is generated at release time rather than checked in, so the manifest can bind to the exact commit and artifact set being reviewed.
+It refreshes the SBOM, verifies the checked-in snapshot is current, checks package resolution, runs the Linux relay test suite, and runs optional Docker/Trivy checks when those tools are installed.
 
 The GitHub release-verification workflow runs the same verifier on pull requests,
-`main` pushes, and manual dispatches. Trusted `main` and manual runs also upload
-the native and CycloneDX SBOM snapshots as workflow artifacts and attach GitHub
-artifact attestations to both files, giving reviewers signed provenance records
-for the dependency snapshots used by that run. A separate Linux CI job builds the
+`main` pushes, and manual dispatches. The workflow uploads the native and CycloneDX
+SBOM snapshots as artifacts for inspection. A separate Linux CI job builds the
 relay container image with the pinned `LIBOQS_VERSION` value and scans the image
 with a commit-pinned Trivy action, failing the run on high or critical findings.
-Trusted `main` and manual container runs capture the built image digest and attach
-a GitHub build-provenance attestation to that digest.
 
 Manual equivalent:
 
@@ -87,14 +75,7 @@ git diff --exit-code "PICCP Documentation/noctyra_sbom.json"
 git diff --exit-code "PICCP Documentation/noctyra_cyclonedx_sbom.json"
 ```
 
-2. Generate and inspect local release provenance:
-
-```bash
-scripts/generate-release-provenance.py > /tmp/noctyra-release-provenance.json
-python3 -m json.tool /tmp/noctyra-release-provenance.json >/dev/null
-```
-
-3. Run package resolution from a clean checkout:
+2. Run package resolution from a clean checkout:
 
 ```bash
 cd "PICCP Relay Server"
@@ -102,33 +83,33 @@ swift package resolve
 git diff --exit-code Package.resolved
 ```
 
-4. Confirm direct package versions still match `Package.swift` exact pins:
+3. Confirm direct package versions still match `Package.swift` exact pins:
 
 ```bash
 swift package show-dependencies
 ```
 
-5. Build and test the relay:
+4. Build and test the relay:
 
 ```bash
 swift test
 swift build -c release
 ```
 
-6. Build the Docker image with an explicit `liboqs` version:
+5. Build the Docker image with an explicit `liboqs` version:
 
 ```bash
 docker build --build-arg LIBOQS_VERSION=0.15.0 -t noctyra-relay:<version> "PICCP Relay Server"
 ```
 
-7. Record final artifact hashes:
+6. Record final artifact hashes:
 
 ```bash
 shasum -a 256 <artifact>
 docker image inspect noctyra-relay:<version> --format '{{.Id}}'
 ```
 
-8. Review upstream security advisories for:
+7. Review upstream security advisories for:
    - SwiftNIO
    - Swift Crypto
    - Open Quantum Safe `liboqs`
@@ -141,7 +122,7 @@ Every release should have:
 
 - A signed Git tag.
 - SHA-256 checksums for archives, Docker image digests, and generated PDFs.
-- Apple app builds signed with the project Developer ID / App Store signing identity.
+- Apple app builds signed and distributed through the App Store path.
 - macOS builds notarized when distributed outside the App Store.
 - Docker images pushed by digest and tagged immutably.
 - Release notes that identify dependency changes, cryptographic dependency changes, and any deliberate storage/schema reset requirements.
@@ -157,15 +138,13 @@ Do not release if:
 - Docker base image changed without a vulnerability and compatibility review.
 - Tests skip unexpectedly beyond known local-runtime `liboqs` skips.
 - A release artifact cannot be reproduced from the tagged commit.
-- Signing or notarization fails.
+- App Store signing or notarization fails for the selected distribution path.
 
-## Deferred Release Packaging Work
+## Distribution Notes
 
-- Apple release artifact provenance requires the final Apple signing/notarization
-  workflow, including Developer ID or App Store Connect credentials and release
-  artifact paths. Do not treat this as satisfied by simulator or unsigned local
-  builds.
-- Registry-pushed Docker release image provenance applies only if Noctyra starts
-  publishing relay images to a registry. The current CI attests the locally built
-  relay image digest used by verification runs; registry provenance must bind the
-  pushed immutable digest when public image publishing is introduced.
+- Client app distribution uses Apple signing and App Store review as the release
+  trust boundary. Do not add project-specific release-origin ceremony unless the distribution
+  model changes.
+- Docker relay publishing is an operator packaging concern. If public images are
+  introduced later, document tags, immutable digests, and vulnerability scanning
+  in the relay operations guide rather than in the client protocol alignment list.
