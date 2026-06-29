@@ -32,6 +32,17 @@ if grep -R "var identityFingerprint\|var displayName" \
   echo "Closed-app helper profile config must not publish identity names or fingerprints." >&2
   exit 1
 fi
+if grep -R "var lastFetchedEnvelopeCount\|var pendingEnvelopeCount" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchStore.swift" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchRunner.swift"; then
+  echo "Closed-app helper persisted status must not store message or pending-envelope counts." >&2
+  exit 1
+fi
+if grep -R "failures.count\|profile(s) failed\|Fetched .*encrypted envelope" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchRunner.swift"; then
+  echo "Closed-app helper persisted status must not store failed-profile or fetched-envelope counts." >&2
+  exit 1
+fi
 
 echo "Verifying Apple helper prefetch does not publish group routing metadata..."
 if grep -R "NoctyraPrefetchGroup\|FetchGroupMessagesRequest\|fetchGroupMessages" \
@@ -45,6 +56,11 @@ echo "Verifying Apple helper prefetch sanitizes stale helper config fields..."
 if ! grep -q "prefetchConfigPayloadNeedsSanitization" \
   "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchStore.swift"; then
   echo "Closed-app helper config must scrub stale sensitive fields after successful decode." >&2
+  exit 1
+fi
+if ! grep -q "prefetchStatusPayloadNeedsSanitization" \
+  "$ROOT_DIR/PICCP Messaging Client/PICCP Messaging Client/CiphertextPrefetchStore.swift"; then
+  echo "Closed-app helper status must scrub stale count-bearing fields after successful decode." >&2
   exit 1
 fi
 
