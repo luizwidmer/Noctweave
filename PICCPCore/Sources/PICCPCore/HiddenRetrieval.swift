@@ -35,6 +35,32 @@ public enum HiddenRetrievalPIRReplicaSetIssue: String, Codable, Equatable, Hasha
     case insecureEndpoint
 }
 
+public enum HiddenRetrievalPIROperationalIssue: String, Codable, Equatable, Hashable {
+    case hiddenRetrievalUnavailable
+    case unsupportedMode
+    case invalidReplicaSet
+    case missingPaddedRecordCount
+    case paddedRecordCountTooSmall
+    case missingFixedResponseSize
+    case fixedResponseSizeTooSmall
+}
+
+public struct HiddenRetrievalPIROperationalProfile: Codable, Equatable {
+    public var support: HiddenRetrievalSupport?
+    public var paddedRecordCount: Int?
+    public var fixedResponseSize: Int?
+
+    public init(
+        support: HiddenRetrievalSupport?,
+        paddedRecordCount: Int?,
+        fixedResponseSize: Int?
+    ) {
+        self.support = support
+        self.paddedRecordCount = paddedRecordCount
+        self.fixedResponseSize = fixedResponseSize
+    }
+}
+
 public enum HiddenRetrievalPIRReplicaSetValidator {
     public static func issues(
         for support: HiddenRetrievalSupport?,
@@ -119,6 +145,92 @@ public enum HiddenRetrievalPIRReplicaSetValidator {
             endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             String(endpoint.port)
         ].joined(separator: "://")
+    }
+}
+
+public enum HiddenRetrievalPIROperationalValidator {
+    public static func issues(
+        for profile: HiddenRetrievalPIROperationalProfile,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true,
+        minimumPaddedRecordCount: Int = 128,
+        minimumFixedResponseSize: Int = 1_024
+    ) -> [HiddenRetrievalPIROperationalIssue] {
+        guard let support = profile.support else {
+            return [.hiddenRetrievalUnavailable]
+        }
+        guard support.mode == .replicatedXorPIR else {
+            return [.unsupportedMode]
+        }
+
+        var issues: Set<HiddenRetrievalPIROperationalIssue> = []
+        let replicaIssues = HiddenRetrievalPIRReplicaSetValidator.issues(
+            for: support,
+            minimumReplicaCount: minimumReplicaCount,
+            requireTLS: requireTLS
+        )
+        if !replicaIssues.isEmpty {
+            issues.insert(.invalidReplicaSet)
+        }
+
+        if let paddedRecordCount = profile.paddedRecordCount {
+            if paddedRecordCount < max(2, minimumPaddedRecordCount) {
+                issues.insert(.paddedRecordCountTooSmall)
+            }
+        } else {
+            issues.insert(.missingPaddedRecordCount)
+        }
+
+        if let fixedResponseSize = profile.fixedResponseSize {
+            if fixedResponseSize < max(1, minimumFixedResponseSize) {
+                issues.insert(.fixedResponseSizeTooSmall)
+            }
+        } else {
+            issues.insert(.missingFixedResponseSize)
+        }
+
+        return sorted(issues)
+    }
+
+    public static func validate(
+        _ profile: HiddenRetrievalPIROperationalProfile,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true,
+        minimumPaddedRecordCount: Int = 128,
+        minimumFixedResponseSize: Int = 1_024
+    ) throws {
+        let problems = issues(
+            for: profile,
+            minimumReplicaCount: minimumReplicaCount,
+            requireTLS: requireTLS,
+            minimumPaddedRecordCount: minimumPaddedRecordCount,
+            minimumFixedResponseSize: minimumFixedResponseSize
+        )
+        guard problems.isEmpty else {
+            throw HiddenRetrievalError.invalidReplicaSet
+        }
+    }
+
+    public static func isOperationallyUsable(
+        _ profile: HiddenRetrievalPIROperationalProfile,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true,
+        minimumPaddedRecordCount: Int = 128,
+        minimumFixedResponseSize: Int = 1_024
+    ) -> Bool {
+        issues(
+            for: profile,
+            minimumReplicaCount: minimumReplicaCount,
+            requireTLS: requireTLS,
+            minimumPaddedRecordCount: minimumPaddedRecordCount,
+            minimumFixedResponseSize: minimumFixedResponseSize
+        ).isEmpty
+    }
+
+    private static func sorted(
+        _ issues: Set<HiddenRetrievalPIROperationalIssue>
+    ) -> [HiddenRetrievalPIROperationalIssue] {
+        issues.sorted { $0.rawValue < $1.rawValue }
     }
 }
 

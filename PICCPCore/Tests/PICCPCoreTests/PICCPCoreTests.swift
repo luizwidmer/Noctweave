@@ -716,6 +716,75 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(coverQueryInfo.hiddenRetrieval?.mode, .coverQuery)
     }
 
+    func testHiddenRetrievalPIROperationalValidatorRequiresPaddingAndFixedResponses() {
+        let support = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-a.example.org", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "pir-b.example.org", port: 443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+
+        let weak = HiddenRetrievalPIROperationalProfile(
+            support: support,
+            paddedRecordCount: 16,
+            fixedResponseSize: nil
+        )
+        XCTAssertEqual(
+            HiddenRetrievalPIROperationalValidator.issues(for: weak),
+            [.missingFixedResponseSize, .paddedRecordCountTooSmall]
+        )
+        XCTAssertFalse(HiddenRetrievalPIROperationalValidator.isOperationallyUsable(weak))
+
+        let operational = HiddenRetrievalPIROperationalProfile(
+            support: support,
+            paddedRecordCount: 256,
+            fixedResponseSize: 2_048
+        )
+        XCTAssertTrue(HiddenRetrievalPIROperationalValidator.issues(for: operational).isEmpty)
+        XCTAssertTrue(HiddenRetrievalPIROperationalValidator.isOperationallyUsable(operational))
+        XCTAssertNoThrow(try HiddenRetrievalPIROperationalValidator.validate(operational))
+    }
+
+    func testHiddenRetrievalPIROperationalValidatorRejectsWeakReplicaSets() {
+        let weakSupport = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir.example.org", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir.example.org", port: 8443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let profile = HiddenRetrievalPIROperationalProfile(
+            support: weakSupport,
+            paddedRecordCount: 256,
+            fixedResponseSize: 2_048
+        )
+
+        XCTAssertEqual(
+            HiddenRetrievalPIROperationalValidator.issues(for: profile),
+            [.invalidReplicaSet]
+        )
+        XCTAssertThrowsError(try HiddenRetrievalPIROperationalValidator.validate(profile)) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidReplicaSet)
+        }
+    }
+
     func testRelayInfoAdvertisesGroupSecurityModel() throws {
         let defaultInfo = RelayConfiguration().makeInfo(now: Date(timeIntervalSince1970: 1_000))
         XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)
@@ -1043,6 +1112,57 @@ final class PICCPCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(delay, 30)
+    }
+
+    func testDecentralizedPrefetchExecutionPlannerCapsProfilesAndEnvelopeBudgets() {
+        let longPoll = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 10,
+            maxPollIntervalSeconds: 60,
+            jitterPermille: 0,
+            longPollTimeoutSeconds: 30
+        )
+        let pullOnly = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 20,
+            maxPollIntervalSeconds: 120,
+            jitterPermille: 0
+        )
+        let plan = DecentralizedPrefetchExecutionPlanner.makePlan(
+            for: [
+                DecentralizedWakeProfile(
+                    support: pullOnly,
+                    identitySeed: Data("identity-c".utf8),
+                    relayIdentifier: "relay-c"
+                ),
+                DecentralizedWakeProfile(
+                    support: longPoll,
+                    identitySeed: Data("identity-a".utf8),
+                    relayIdentifier: "relay-a"
+                ),
+                DecentralizedWakeProfile(
+                    support: pullOnly,
+                    identitySeed: Data("identity-b".utf8),
+                    relayIdentifier: "relay-b"
+                )
+            ],
+            defaultDelaySeconds: 60,
+            maxDelaySeconds: 300,
+            policy: DecentralizedPrefetchExecutionPolicy(
+                maxProfilesPerCycle: 2,
+                maxRecordsPerPullProfile: 3,
+                maxRecordsPerLongPollProfile: 5,
+                maxTotalRecordsPerCycle: 7
+            ),
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertEqual(plan.profileExecutions.map(\.relayIdentifier), ["relay-a", "relay-b"])
+        XCTAssertEqual(plan.profileExecutions.map(\.maxEnvelopeCount), [5, 2])
+        XCTAssertEqual(plan.maxTotalEnvelopeCount, 7)
+        XCTAssertEqual(plan.nextCycleDelaySeconds, 10)
+        XCTAssertEqual(plan.longPollTimeoutSeconds, 10)
+        XCTAssertEqual(plan.profileExecutions.first?.longPollTimeoutSeconds, 10)
     }
 
     func testRelayInfoAdvertisesDecentralizedWakeSupport() throws {

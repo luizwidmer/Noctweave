@@ -153,6 +153,69 @@ public struct DecentralizedPrefetchBatch: Codable, Equatable {
     }
 }
 
+public struct DecentralizedPrefetchExecutionPolicy: Equatable {
+    public var maxProfilesPerCycle: Int
+    public var maxRecordsPerPullProfile: Int
+    public var maxRecordsPerLongPollProfile: Int
+    public var maxTotalRecordsPerCycle: Int
+
+    public init(
+        maxProfilesPerCycle: Int = 8,
+        maxRecordsPerPullProfile: Int = 8,
+        maxRecordsPerLongPollProfile: Int = 16,
+        maxTotalRecordsPerCycle: Int = 64
+    ) {
+        self.maxProfilesPerCycle = max(1, maxProfilesPerCycle)
+        self.maxRecordsPerPullProfile = max(1, maxRecordsPerPullProfile)
+        self.maxRecordsPerLongPollProfile = max(
+            self.maxRecordsPerPullProfile,
+            maxRecordsPerLongPollProfile
+        )
+        self.maxTotalRecordsPerCycle = max(1, maxTotalRecordsPerCycle)
+    }
+}
+
+public struct DecentralizedPrefetchProfileExecution: Equatable {
+    public let identitySeed: Data
+    public let relayIdentifier: String
+    public let nextPollDelaySeconds: Int
+    public let longPollTimeoutSeconds: Int?
+    public let maxEnvelopeCount: Int
+
+    public init(
+        identitySeed: Data,
+        relayIdentifier: String,
+        nextPollDelaySeconds: Int,
+        longPollTimeoutSeconds: Int?,
+        maxEnvelopeCount: Int
+    ) {
+        self.identitySeed = identitySeed
+        self.relayIdentifier = relayIdentifier
+        self.nextPollDelaySeconds = nextPollDelaySeconds
+        self.longPollTimeoutSeconds = longPollTimeoutSeconds
+        self.maxEnvelopeCount = max(1, maxEnvelopeCount)
+    }
+}
+
+public struct DecentralizedPrefetchExecutionPlan: Equatable {
+    public let profileExecutions: [DecentralizedPrefetchProfileExecution]
+    public let nextCycleDelaySeconds: Int
+    public let longPollTimeoutSeconds: Int?
+    public let maxTotalEnvelopeCount: Int
+
+    public init(
+        profileExecutions: [DecentralizedPrefetchProfileExecution],
+        nextCycleDelaySeconds: Int,
+        longPollTimeoutSeconds: Int?,
+        maxTotalEnvelopeCount: Int
+    ) {
+        self.profileExecutions = profileExecutions
+        self.nextCycleDelaySeconds = nextCycleDelaySeconds
+        self.longPollTimeoutSeconds = longPollTimeoutSeconds
+        self.maxTotalEnvelopeCount = max(0, maxTotalEnvelopeCount)
+    }
+}
+
 public enum DecentralizedPrefetchStager {
     public static func stageDirectMessages(
         _ envelopes: [Envelope],
@@ -304,6 +367,65 @@ public actor DecentralizedPrefetchBatchStore {
 private struct DecentralizedPrefetchStoredBatch: Codable, Equatable {
     let version: Int
     let payload: EncryptedPayload
+}
+
+public enum DecentralizedPrefetchExecutionPlanner {
+    public static func makePlan(
+        for profiles: [DecentralizedWakeProfile],
+        defaultDelaySeconds: Int,
+        maxDelaySeconds: Int,
+        policy: DecentralizedPrefetchExecutionPolicy = DecentralizedPrefetchExecutionPolicy(),
+        now: Date = Date()
+    ) -> DecentralizedPrefetchExecutionPlan {
+        let cycle = DecentralizedWakePlanner.makeCyclePlan(
+            for: profiles,
+            defaultDelaySeconds: defaultDelaySeconds,
+            maxDelaySeconds: maxDelaySeconds,
+            now: now
+        )
+        return makePlan(from: cycle, policy: policy)
+    }
+
+    public static func makePlan(
+        from cycle: DecentralizedWakeCyclePlan,
+        policy: DecentralizedPrefetchExecutionPolicy = DecentralizedPrefetchExecutionPolicy()
+    ) -> DecentralizedPrefetchExecutionPlan {
+        var remainingRecords = policy.maxTotalRecordsPerCycle
+        let selectedProfiles = cycle.profilePlans
+            .sorted { lhs, rhs in
+                if lhs.plan.nextPollDelaySeconds != rhs.plan.nextPollDelaySeconds {
+                    return lhs.plan.nextPollDelaySeconds < rhs.plan.nextPollDelaySeconds
+                }
+                if lhs.relayIdentifier != rhs.relayIdentifier {
+                    return lhs.relayIdentifier < rhs.relayIdentifier
+                }
+                return lhs.identitySeed.lexicographicallyPrecedes(rhs.identitySeed)
+            }
+            .prefix(policy.maxProfilesPerCycle)
+
+        let executions = selectedProfiles.compactMap { profile -> DecentralizedPrefetchProfileExecution? in
+            guard remainingRecords > 0 else { return nil }
+            let profileCap = profile.plan.longPollTimeoutSeconds == nil
+                ? policy.maxRecordsPerPullProfile
+                : policy.maxRecordsPerLongPollProfile
+            let envelopeCount = min(profileCap, remainingRecords)
+            remainingRecords -= envelopeCount
+            return DecentralizedPrefetchProfileExecution(
+                identitySeed: profile.identitySeed,
+                relayIdentifier: profile.relayIdentifier,
+                nextPollDelaySeconds: profile.plan.nextPollDelaySeconds,
+                longPollTimeoutSeconds: profile.plan.longPollTimeoutSeconds,
+                maxEnvelopeCount: envelopeCount
+            )
+        }
+
+        return DecentralizedPrefetchExecutionPlan(
+            profileExecutions: executions,
+            nextCycleDelaySeconds: cycle.nextPollDelaySeconds,
+            longPollTimeoutSeconds: cycle.longPollTimeoutSeconds,
+            maxTotalEnvelopeCount: policy.maxTotalRecordsPerCycle - remainingRecords
+        )
+    }
 }
 
 public enum DecentralizedWakePlanner {
