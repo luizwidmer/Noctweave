@@ -7322,6 +7322,104 @@ final class PICCPCoreTests: XCTestCase {
         )
     }
 
+    func testClientStateGroupRatchetRecoveryRejectsMismatchedRetainedDistribution() throws {
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Offline Member")
+        let groupId = UUID(uuidString: "DDDDDDDD-EEEE-FFFF-0000-111111111111")!
+        let inboxId = "group-mismatched-history-inbox"
+        let createdAt = Date(timeIntervalSince1970: 3_000)
+        let members = [
+            RelayGroupMember(fingerprint: creator.fingerprint),
+            RelayGroupMember(fingerprint: member.fingerprint)
+        ]
+        let recipients = [
+            relayGroupMemberProfile(identity: creator, relay: relay),
+            relayGroupMemberProfile(identity: member, relay: relay)
+        ]
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("mismatched history epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let epoch0State = MLSGroupEpochState.initial(
+            groupId: groupId,
+            title: "Mismatched History",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            members: members,
+            createdAt: createdAt,
+            ratchetSecretDistribution: epoch0Distribution
+        )
+        let staleMemberRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        let epoch1State = epoch0State.advancing(
+            title: "Mismatched History 1",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 3_010)
+        )
+        let wrongEpochDistribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: Data(SHA256.hash(data: Data("wrong epoch retained secret".utf8))),
+            groupId: groupId,
+            epoch: 2,
+            operation: .update,
+            recipients: recipients
+        )
+        let tamperedCommit = MLSGroupCommitSummary(
+            operation: .update,
+            actorFingerprint: creator.fingerprint,
+            epoch: epoch1State.epoch,
+            committedAt: Date(timeIntervalSince1970: 3_010),
+            memberFingerprints: members.map(\.fingerprint).sorted(),
+            previousTranscriptHash: epoch0State.confirmedTranscriptHash,
+            transcriptHash: epoch1State.confirmedTranscriptHash,
+            ratchetSecretDistribution: wrongEpochDistribution
+        )
+        let tamperedEpochState = MLSGroupEpochState(
+            groupId: groupId,
+            epoch: epoch1State.epoch,
+            treeHash: epoch1State.treeHash,
+            confirmedTranscriptHash: epoch1State.confirmedTranscriptHash,
+            lastCommit: tamperedCommit
+        )
+        let descriptor = RelayGroupDescriptor(
+            id: groupId,
+            title: "Mismatched History 1",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            epoch: epoch1State.epoch,
+            members: members,
+            mlsEpochState: tamperedEpochState,
+            mlsEpochHistory: [
+                epoch0State.lastCommit,
+                tamperedCommit
+            ],
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 3_010)
+        )
+
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptor,
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+    }
+
     private func registerAndFetch(
         client: RelayClient,
         inboxId: String,

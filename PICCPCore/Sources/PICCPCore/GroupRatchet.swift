@@ -168,7 +168,7 @@ public enum GroupRatchetRecovery {
         if var state = existing,
            state.groupId == descriptor.id {
             for commit in history where commit.epoch > state.epoch {
-                guard let secret = ratchetSecret(from: commit, identity: identity),
+                guard let secret = ratchetSecret(from: commit, groupId: descriptor.id, identity: identity),
                       advance(&state, to: commit.epoch, transcriptHash: commit.transcriptHash, secret: secret) else {
                     return nil
                 }
@@ -178,7 +178,7 @@ public enum GroupRatchetRecovery {
 
         if let first = history.first,
            first.epoch == 0,
-           let secret = ratchetSecret(from: first, identity: identity) {
+           let secret = ratchetSecret(from: first, groupId: descriptor.id, identity: identity) {
             var state = GroupRatchetState.initialize(
                 groupId: descriptor.id,
                 epoch: first.epoch,
@@ -187,7 +187,7 @@ public enum GroupRatchetRecovery {
                 localSenderFingerprint: identity.fingerprint
             )
             for commit in history.dropFirst() {
-                guard let secret = ratchetSecret(from: commit, identity: identity),
+                guard let secret = ratchetSecret(from: commit, groupId: descriptor.id, identity: identity),
                       advance(&state, to: commit.epoch, transcriptHash: commit.transcriptHash, secret: secret) else {
                     return nil
                 }
@@ -198,6 +198,7 @@ public enum GroupRatchetRecovery {
         }
 
         guard let distribution = descriptor.mlsEpochState.lastCommit.ratchetSecretDistribution,
+              distributionMatches(distribution, commit: descriptor.mlsEpochState.lastCommit, groupId: descriptor.id),
               distribution.epoch == descriptor.epoch,
               let secret = try? distribution.openSecret(
                 recipientFingerprint: identity.fingerprint,
@@ -219,14 +220,33 @@ public enum GroupRatchetRecovery {
         )
     }
 
-    private static func ratchetSecret(from commit: MLSGroupCommitSummary, identity: Identity) -> Data? {
+    private static func ratchetSecret(
+        from commit: MLSGroupCommitSummary,
+        groupId: UUID,
+        identity: Identity
+    ) -> Data? {
         guard let distribution = commit.ratchetSecretDistribution else {
+            return nil
+        }
+        guard distributionMatches(distribution, commit: commit, groupId: groupId) else {
             return nil
         }
         return try? distribution.openSecret(
             recipientFingerprint: identity.fingerprint,
             agreementKey: identity.agreementKey
         )
+    }
+
+    private static func distributionMatches(
+        _ distribution: GroupRatchetEpochSecretDistribution,
+        commit: MLSGroupCommitSummary,
+        groupId: UUID
+    ) -> Bool {
+        distribution.groupId == groupId
+            && distribution.epoch == commit.epoch
+            && distribution.operation == commit.operation
+            && Set(distribution.memberFingerprints) == Set(commit.memberFingerprints)
+            && Set(distribution.shares.map(\.recipientFingerprint)) == Set(commit.memberFingerprints)
     }
 
     private static func advance(

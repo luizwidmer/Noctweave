@@ -37,7 +37,7 @@ Last reviewed: June 29, 2026.
 - Relay metadata advertises the group security model: current `relayBackedPairwise` pairwise-fan-out mode or `mlsDerivedTree`.
 - Relay group descriptors carry required MLS epoch state with tree hash, transcript hash, ciphersuite label, last commit summary, and bounded `mlsEpochHistory` for recent signed epoch summaries.
 - Group conversations can persist encrypted group ratchet state locally, and signed group create/commit/join-approval operations can distribute group epoch secrets through ML-KEM-sealed member shares.
-- Clients can replay retained epoch-secret distributions in order when they were offline across multiple group commits, provided the missed epochs remain inside the relay's bounded descriptor history. The shared `GroupRatchetRecovery` path is covered against stale serialized group state and fails closed when a missing retained epoch would otherwise leave the client on stale group keys.
+- Clients can replay retained epoch-secret distributions in order when they were offline across multiple group commits, provided the missed epochs remain inside the relay's bounded descriptor history. The shared `GroupRatchetRecovery` path is covered against stale serialized group state and fails closed when a missing retained epoch would otherwise leave the client on stale group keys. Recovery also rejects retained epoch-secret distributions whose group ID, epoch, operation, or recipient set does not match the retained commit summary before deriving recovery state.
 - Relay-backed group delivery uses signed group-ratchet envelopes stored in the group inbox for text, image attachments, and voice messages; clients fetch, decrypt, and acknowledge those envelopes with member actor proofs. Group acknowledgements are member-scoped, so one online member cannot remove a pending ciphertext before another member fetches it.
 - Group-ratchet envelopes can be submitted through a federated peer relay and forwarded to the group-owning relay under the same federation policy used by direct-message forwarding.
 - Route and state coverage verifies offline epoch refresh, replay across multiple missed epoch distributions, multiple offline members recovering independently after a shared outage, fail-closed recovery when the relay's bounded epoch-history window has expired for a stale member, recovery from stale persisted group state, encrypted attachment retrieval after another group member has already acknowledged the group envelope, and federated group-ratchet delivery from one relay to another.
@@ -86,7 +86,7 @@ Last reviewed: June 29, 2026.
 - Group epoch-secret sealing rejects duplicate or empty recipient sets.
 - Core relay group mutations reject structurally invalid epoch-secret distributions.
 - Linux relay group mutations reject the same structurally invalid epoch-secret distributions.
-- Group ratchet recovery fails closed when retained epoch history skips an epoch.
+- Group ratchet recovery fails closed when retained epoch history skips an epoch or a retained distribution does not match its commit metadata.
 - The focused whitepaper verifier now covers these hidden-retrieval, wake, group-ratchet, and Linux relay parity invariants.
 
 ## Current Onion-Transport Alignment Pass
@@ -142,7 +142,7 @@ Last reviewed: June 29, 2026.
 
 ## Next Alignment Targets
 - Run `scripts/verify-whitepaper-alignment.sh` alongside focused protocol changes that touch metadata minimization, hidden retrieval, decentralized wake, or open federation.
-- Expand real-device fault-injection coverage around retained group epoch histories; repository route-level retained-history coverage now includes multiple offline members recovering after a shared outage and fail-closed behavior after the retained epoch window expires.
+- Expand real-device fault-injection coverage around retained group epoch histories; repository route-level retained-history coverage now includes multiple offline members recovering after a shared outage, fail-closed behavior after the retained epoch window expires, and state-level rejection of mismatched retained distribution metadata.
 - Keep tuning OS-permitted background fetch behavior against relay-advertised wake policy.
 - Continue open-federation experiments behind feature gates and simulation tests; cached-node fallback is covered for core and Linux relay discovery refreshes.
 - Evaluate whether replicated XOR-PIR is operationally acceptable for real relay deployments, and only then consider heavier single-server cryptographic PIR.
