@@ -7842,6 +7842,105 @@ final class PICCPCoreTests: XCTestCase {
         }
     }
 
+    func testMixnetRouteSelectorBuildsDeterministicDiverseRoute() throws {
+        let candidates = [
+            mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRouteCandidate(id: "hop-b", operatorId: "operator-b", host: "relay-b.example"),
+            mixnetRouteCandidate(id: "hop-c", operatorId: "operator-c", host: "relay-c.example"),
+            mixnetRouteCandidate(id: "hop-d", operatorId: "operator-d", host: "relay-d.example")
+        ]
+        let secret = Data("route-secret".utf8)
+
+        let first = try MixnetRouteSelector.makeRoutePlan(
+            candidates: candidates,
+            secret: secret,
+            routeContext: "batch-1",
+            hopCount: 3
+        )
+        let second = try MixnetRouteSelector.makeRoutePlan(
+            candidates: candidates.reversed(),
+            secret: secret,
+            routeContext: "batch-1",
+            hopCount: 3
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.selectedCandidates.count, 3)
+        XCTAssertEqual(Set(first.selectedCandidates.map(\.operatorId)).count, 3)
+        XCTAssertEqual(Set(first.selectedCandidates.map { $0.endpoint.host }).count, 3)
+        XCTAssertEqual(first.onionHops.map(\.hopId), first.selectedCandidates.map(\.hopId))
+        XCTAssertFalse(first.routeId.isEmpty)
+    }
+
+    func testMixnetRouteSelectorRejectsWeakRoutes() {
+        let diverse = [
+            mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRouteCandidate(id: "hop-b", operatorId: "operator-b", host: "relay-b.example")
+        ]
+
+        XCTAssertThrowsError(
+            try MixnetRouteSelector.makeRoutePlan(
+                candidates: diverse,
+                secret: Data(),
+                routeContext: "batch-1",
+                hopCount: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetRouteSelectionError, .emptySecret)
+        }
+        XCTAssertThrowsError(
+            try MixnetRouteSelector.makeRoutePlan(
+                candidates: diverse,
+                secret: Data("route-secret".utf8),
+                routeContext: "batch-1",
+                hopCount: 1
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetRouteSelectionError, .invalidRouteLength)
+        }
+
+        let sameOperator = [
+            mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRouteCandidate(id: "hop-b", operatorId: "operator-a", host: "relay-b.example")
+        ]
+        XCTAssertThrowsError(
+            try MixnetRouteSelector.makeRoutePlan(
+                candidates: sameOperator,
+                secret: Data("route-secret".utf8),
+                routeContext: "batch-1",
+                hopCount: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetRouteSelectionError, .insufficientDiversity)
+        }
+
+        let sameHost = [
+            mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-shared.example"),
+            mixnetRouteCandidate(id: "hop-b", operatorId: "operator-b", host: "relay-shared.example")
+        ]
+        XCTAssertThrowsError(
+            try MixnetRouteSelector.makeRoutePlan(
+                candidates: sameHost,
+                secret: Data("route-secret".utf8),
+                routeContext: "batch-1",
+                hopCount: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetRouteSelectionError, .insufficientDiversity)
+        }
+
+        XCTAssertThrowsError(
+            try MixnetRouteSelector.makeRoutePlan(
+                candidates: [mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-a.example", useTLS: false)],
+                secret: Data("route-secret".utf8),
+                routeContext: "batch-1",
+                hopCount: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetRouteSelectionError, .invalidEndpoint)
+        }
+    }
+
     func testRelayInfoAdvertisesOptionalMixnetTransportSupport() throws {
         let support = MixnetTransportSupport(
             enabled: true,
@@ -7935,6 +8034,25 @@ final class PICCPCoreTests: XCTestCase {
             MixnetRoutePolicyValidator.issues(for: missingOnion, onionSupport: nil).contains(.missingOnionTransport)
         )
     }
+}
+
+private func mixnetRouteCandidate(
+    id: String,
+    operatorId: String,
+    host: String,
+    useTLS: Bool = true
+) -> MixnetRouteCandidate {
+    MixnetRouteCandidate(
+        hopId: id,
+        operatorId: operatorId,
+        endpoint: RelayEndpoint(host: host, port: 443, useTLS: useTLS, transport: .http),
+        onionHop: OnionHopDescriptor(
+            hopId: id,
+            publicKeyData: Data("public-key-\(id)".utf8),
+            routingInstruction: "route-to-\(host)",
+            delayBucketSeconds: 30
+        )
+    )
 }
 
 private func testBitset(recordCount: Int, enabledIndex: Int) -> Data {

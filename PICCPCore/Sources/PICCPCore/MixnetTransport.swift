@@ -8,6 +8,17 @@ public enum MixnetSchedulerError: Error, Equatable {
     case invalidHorizon
 }
 
+public enum MixnetRouteSelectionError: Error, Equatable {
+    case emptySecret
+    case invalidRouteLength
+    case insufficientCandidates
+    case blankHopId
+    case blankOperatorId
+    case invalidEndpoint
+    case invalidOnionHop
+    case insufficientDiversity
+}
+
 public enum MixnetRoutePolicyIssue: String, Codable, Equatable, CaseIterable {
     case notAdvertised
     case disabled
@@ -114,6 +125,39 @@ public struct MixnetCoverCyclePlan: Codable, Equatable {
     }
 }
 
+public struct MixnetRouteCandidate: Codable, Equatable {
+    public let hopId: String
+    public let operatorId: String
+    public let endpoint: RelayEndpoint
+    public let onionHop: OnionHopDescriptor
+
+    public init(
+        hopId: String,
+        operatorId: String,
+        endpoint: RelayEndpoint,
+        onionHop: OnionHopDescriptor
+    ) {
+        self.hopId = hopId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.operatorId = operatorId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.endpoint = endpoint
+        self.onionHop = onionHop
+    }
+}
+
+public struct MixnetRoutePlan: Codable, Equatable {
+    public let routeId: String
+    public let selectedCandidates: [MixnetRouteCandidate]
+
+    public var onionHops: [OnionHopDescriptor] {
+        selectedCandidates.map(\.onionHop)
+    }
+
+    public init(routeId: String, selectedCandidates: [MixnetRouteCandidate]) {
+        self.routeId = routeId
+        self.selectedCandidates = selectedCandidates
+    }
+}
+
 public enum MixnetRoutePolicyValidator {
     public static func issues(
         for mixnetSupport: MixnetTransportSupport?,
@@ -176,6 +220,120 @@ public enum MixnetRoutePolicyValidator {
             minimumOnionHops: minimumOnionHops,
             minimumBatchIntervalSeconds: minimumBatchIntervalSeconds
         ).isEmpty
+    }
+}
+
+public enum MixnetRouteSelector {
+    public static func makeRoutePlan(
+        candidates: [MixnetRouteCandidate],
+        secret: Data,
+        routeContext: String,
+        hopCount: Int,
+        requireTLS: Bool = true
+    ) throws -> MixnetRoutePlan {
+        guard !secret.isEmpty else {
+            throw MixnetRouteSelectionError.emptySecret
+        }
+        guard hopCount >= 2 else {
+            throw MixnetRouteSelectionError.invalidRouteLength
+        }
+
+        let normalized = try normalizedCandidates(candidates, requireTLS: requireTLS)
+        guard normalized.count >= hopCount else {
+            throw MixnetRouteSelectionError.insufficientCandidates
+        }
+
+        var selected: [MixnetRouteCandidate] = []
+        var usedOperators = Set<String>()
+        var usedHosts = Set<String>()
+
+        for candidate in rankedCandidates(normalized, secret: secret, routeContext: routeContext) {
+            let operatorKey = candidate.operatorId.lowercased()
+            let hostKey = candidate.endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !usedOperators.contains(operatorKey), !usedHosts.contains(hostKey) else {
+                continue
+            }
+            selected.append(candidate)
+            usedOperators.insert(operatorKey)
+            usedHosts.insert(hostKey)
+            if selected.count == hopCount {
+                break
+            }
+        }
+
+        guard selected.count == hopCount else {
+            throw MixnetRouteSelectionError.insufficientDiversity
+        }
+
+        return MixnetRoutePlan(
+            routeId: makeRouteId(selected: selected, secret: secret, routeContext: routeContext),
+            selectedCandidates: selected
+        )
+    }
+
+    private static func normalizedCandidates(
+        _ candidates: [MixnetRouteCandidate],
+        requireTLS: Bool
+    ) throws -> [MixnetRouteCandidate] {
+        var seenHopIds = Set<String>()
+        var result: [MixnetRouteCandidate] = []
+        for candidate in candidates {
+            let hopId = candidate.hopId.trimmingCharacters(in: .whitespacesAndNewlines)
+            let onionHopId = candidate.onionHop.hopId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !hopId.isEmpty, !onionHopId.isEmpty else {
+                throw MixnetRouteSelectionError.blankHopId
+            }
+            guard hopId.caseInsensitiveCompare(onionHopId) == .orderedSame,
+                  !candidate.onionHop.publicKeyData.isEmpty,
+                  !candidate.onionHop.routingInstruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw MixnetRouteSelectionError.invalidOnionHop
+            }
+            guard !candidate.operatorId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw MixnetRouteSelectionError.blankOperatorId
+            }
+            guard !candidate.endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !requireTLS || candidate.endpoint.useTLS else {
+                throw MixnetRouteSelectionError.invalidEndpoint
+            }
+            guard seenHopIds.insert(hopId.lowercased()).inserted else {
+                continue
+            }
+            result.append(candidate)
+        }
+        return result
+    }
+
+    private static func rankedCandidates(
+        _ candidates: [MixnetRouteCandidate],
+        secret: Data,
+        routeContext: String
+    ) -> [MixnetRouteCandidate] {
+        candidates.sorted { lhs, rhs in
+            let lhsRank = rank(candidate: lhs, secret: secret, routeContext: routeContext)
+            let rhsRank = rank(candidate: rhs, secret: secret, routeContext: routeContext)
+            if lhsRank == rhsRank {
+                return lhs.hopId < rhs.hopId
+            }
+            return lhsRank.lexicographicallyPrecedes(rhsRank)
+        }
+    }
+
+    private static func makeRouteId(
+        selected: [MixnetRouteCandidate],
+        secret: Data,
+        routeContext: String
+    ) -> String {
+        let material = selected
+            .map { "\($0.hopId):\($0.operatorId):\($0.endpoint.host):\($0.endpoint.port)" }
+            .joined(separator: "|")
+        return Data(SHA256.hash(data: secret + Data("route:\(routeContext):\(material)".utf8)))
+            .prefix(12)
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private static func rank(candidate: MixnetRouteCandidate, secret: Data, routeContext: String) -> Data {
+        Data(SHA256.hash(data: secret + Data("route-rank:\(routeContext):\(candidate.hopId):\(candidate.operatorId)".utf8)))
     }
 }
 
