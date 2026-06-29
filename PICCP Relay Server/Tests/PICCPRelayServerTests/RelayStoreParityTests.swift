@@ -184,6 +184,45 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(updated.mlsEpochHistory.map(\.epoch), [0, 1])
     }
 
+    func testRelayStoreRejectsStructurallyInvalidRatchetSecretDistribution() throws {
+        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        let creator = "creator-fingerprint"
+        let peer = "peer-fingerprint"
+        let groupId = UUID()
+        let malformedShare = GroupRatchetSecretShare(
+            recipientFingerprint: creator,
+            kemCiphertext: Data([0x01]),
+            encryptedSecret: EncryptedPayload(
+                nonce: Data(repeating: 0x02, count: 12),
+                ciphertext: Data([0x03]),
+                tag: Data(repeating: 0x04, count: 16)
+            )
+        )
+        let distribution = GroupRatchetEpochSecretDistribution(
+            version: 1,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            memberFingerprints: [creator, peer, peer],
+            shares: [malformedShare, malformedShare]
+        )
+
+        XCTAssertFalse(distribution.isStructurallyValid)
+        XCTAssertThrowsError(
+            try store.createGroup(
+                groupId: groupId,
+                title: "Parity Group",
+                creatorFingerprint: creator,
+                memberFingerprints: [peer],
+                creatorProfile: nil,
+                memberProfiles: nil,
+                initialRatchetSecretDistribution: distribution
+            )
+        ) { error in
+            XCTAssertEqual(error as? RelayStoreError, .invalidGroupCommit)
+        }
+    }
+
     func testCoordinatorDirectoryCacheRoundTrip() {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
         let node = FederationNodeRecord(

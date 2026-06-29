@@ -36,7 +36,7 @@ Last reviewed: June 28, 2026.
 - Relay metadata advertises the group security model: current `relayBackedPairwise` pairwise-fan-out mode or `mlsDerivedTree`.
 - Relay group descriptors carry required MLS epoch state with tree hash, transcript hash, ciphersuite label, last commit summary, and bounded `mlsEpochHistory` for recent signed epoch summaries.
 - Group conversations can persist encrypted group ratchet state locally, and signed group create/commit/join-approval operations can distribute group epoch secrets through ML-KEM-sealed member shares.
-- Clients can replay retained epoch-secret distributions in order when they were offline across multiple group commits, provided the missed epochs remain inside the relay's bounded descriptor history. The shared `GroupRatchetRecovery` path is covered against stale serialized group state.
+- Clients can replay retained epoch-secret distributions in order when they were offline across multiple group commits, provided the missed epochs remain inside the relay's bounded descriptor history. The shared `GroupRatchetRecovery` path is covered against stale serialized group state and fails closed when a missing retained epoch would otherwise leave the client on stale group keys.
 - Relay-backed group delivery uses signed group-ratchet envelopes stored in the group inbox for text, image attachments, and voice messages; clients fetch, decrypt, and acknowledge those envelopes with member actor proofs. Group acknowledgements are member-scoped, so one online member cannot remove a pending ciphertext before another member fetches it.
 - Group-ratchet envelopes can be submitted through a federated peer relay and forwarded to the group-owning relay under the same federation policy used by direct-message forwarding.
 - Route and state coverage verifies offline epoch refresh, replay across multiple missed epoch distributions, recovery from stale persisted group state, encrypted attachment retrieval after another group member has already acknowledged the group envelope, and federated group-ratchet delivery from one relay to another.
@@ -44,10 +44,10 @@ Last reviewed: June 28, 2026.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
 - Open federation release profile based on coordinator snapshots, bounded peer exchange, and DHT gateway/native-overlay experiments, not autonomous public DHT participation. Discovery refreshes retain previously validated signed nodes across transient gateway or peer-query failures.
-- Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning requires at least one decoy and a non-empty bucket, rejects undersized buckets, incomplete cover responses, target-only public plans, and malformed public query plans so compatible clients do not silently accept direct retrievals.
+- Optional relay-advertised hidden-retrieval cover-query support for compatible clients. Cover-query planning requires at least one decoy, a non-empty canonical bucket, a non-empty client secret, non-empty target/record identifiers, and a bounded cover set. Extraction rejects incomplete responses, extra response records, target-only public plans, duplicate/blank record IDs, blank targets, and malformed public query plans so compatible clients do not silently accept direct retrievals.
 - Release verification workflow wired to run the local SBOM, dependency, relay test, and optional scanner checks in CI.
 - Local release provenance manifests can be generated from the checked-out commit, SBOM snapshots, package pins, Docker inputs, and release verifier inputs with `scripts/generate-release-provenance.py`; `scripts/verify-release.sh` validates the manifest schema and tracked-input hashes.
-- `scripts/verify-whitepaper-alignment.sh` runs focused checks for metadata timestamp bucketing, root-ratchet visible timestamp bucketing, relay pairing timestamp bucketing on core and Linux relay stores, hidden-retrieval cover-query safeguards, decentralized wake planning, open-federation fallback/gateway simulation, Linux relay open-federation parity, and release provenance generation.
+- `scripts/verify-whitepaper-alignment.sh` runs focused checks for metadata timestamp bucketing, root-ratchet visible timestamp bucketing, relay pairing timestamp bucketing on core and Linux relay stores, hidden-retrieval cover-query safeguards, decentralized wake cycle planning, group-ratchet distribution validation and stale-state recovery, open-federation fallback/gateway simulation, Linux relay parity, and release provenance generation.
 
 ### Client UX and Local Safety
 - Contact Book, Identity Management, Relays, Settings, My Code, and group chat flows.
@@ -58,6 +58,28 @@ Last reviewed: June 28, 2026.
 - Secure typing choice between Apple's secure text path and Noctyra's app-owned keyboard.
 - Secure camera capture, image compression, encrypted attachments, and encrypted voice messages.
 - Client send paths can quantize visible direct-message and group-message envelope timestamps to the coarsest advertised relay temporal bucket, reducing precision in metadata visible to relays without changing ciphertext ratchets. Visible root-ratchet timestamps and relay-mediated pairing announcement/request timestamps use the same bucketing discipline.
+
+## Current 20-Item Alignment Pass
+- Hidden retrieval now canonicalizes bucket IDs and trims record IDs before ranking.
+- Hidden retrieval rejects blank bucket IDs, target IDs, record IDs, and empty local cover secrets.
+- Hidden retrieval enforces a maximum cover-set size at query construction.
+- Hidden retrieval extraction is throwing and reports malformed public plans, incomplete cover responses, and unexpected extra records separately.
+- Hidden retrieval keeps `targetIfValid` as an explicit optional compatibility wrapper.
+- Public query plans reject target-only covers, duplicate requested records, blank requested records, blank targets, and empty buckets.
+- Cover responses must exactly match the requested cover set; extra records are not accepted.
+- Decentralized wake now exposes an auditable multi-profile cycle plan, not only a single delay.
+- Wake cycle planning includes per-profile plans for every active identity/relay pair.
+- Wake cycle planning deduplicates repeated identity/relay profiles and keeps the healthiest duplicate.
+- Wake cycle planning normalizes blank relay identifiers to a stable local fallback.
+- Wake cycle planning carries selected long-poll timeout metadata and clamps it to the selected delay.
+- Wake cycle planning has explicit empty-profile default behavior.
+- Group epoch-secret distributions expose structural validation for member/share consistency.
+- Group epoch-secret opening fails unless the distribution is structurally valid.
+- Group epoch-secret sealing rejects duplicate or empty recipient sets.
+- Core relay group mutations reject structurally invalid epoch-secret distributions.
+- Linux relay group mutations reject the same structurally invalid epoch-secret distributions.
+- Group ratchet recovery fails closed when retained epoch history skips an epoch.
+- The focused whitepaper verifier now covers these hidden-retrieval, wake, group-ratchet, and Linux relay parity invariants.
 
 ## Whitepaper Limits That Remain True
 - No full cryptographic PIR-assisted hidden retrieval.

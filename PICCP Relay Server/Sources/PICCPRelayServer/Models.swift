@@ -665,6 +665,28 @@ struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
     let operation: MLSGroupCommitOperation
     let memberFingerprints: [String]
     let shares: [GroupRatchetSecretShare]
+
+    var isStructurallyValid: Bool {
+        let normalizedMembers = memberFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let shareRecipients = shares.map {
+            $0.recipientFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return version == 1
+            && !normalizedMembers.isEmpty
+            && !normalizedMembers.contains(where: { $0.isEmpty })
+            && Set(normalizedMembers).count == normalizedMembers.count
+            && !shareRecipients.contains(where: { $0.isEmpty })
+            && Set(shareRecipients).count == shareRecipients.count
+            && Set(shareRecipients) == Set(normalizedMembers)
+            && shares.allSatisfy { share in
+                !share.kemCiphertext.isEmpty
+                    && !share.encryptedSecret.ciphertext.isEmpty
+                    && share.encryptedSecret.nonce.count == 12
+                    && share.encryptedSecret.tag.count == 16
+            }
+    }
 }
 
 struct GroupRatchetEnvelope: Codable, Equatable {

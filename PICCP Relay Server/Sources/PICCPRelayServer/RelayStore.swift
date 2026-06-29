@@ -963,6 +963,7 @@ final class RelayStore {
         guard distribution.groupId == groupId,
               distribution.epoch == epoch,
               distribution.operation == operation,
+              distribution.isStructurallyValid,
               Set(distribution.memberFingerprints) == members,
               Set(distribution.shares.map(\.recipientFingerprint)) == members,
               distribution.shares.count == members.count else {

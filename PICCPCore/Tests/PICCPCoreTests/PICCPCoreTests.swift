@@ -59,7 +59,7 @@ final class PICCPCoreTests: XCTestCase {
         ]
 
         XCTAssertEqual(
-            HiddenRetrievalPlanner.extractTarget(from: response, using: plan),
+            try HiddenRetrievalPlanner.extractTarget(from: response, using: plan),
             Data("target".utf8)
         )
     }
@@ -76,10 +76,12 @@ final class PICCPCoreTests: XCTestCase {
             "c": Data("target".utf8)
         ]
 
-        XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: plan))
+        XCTAssertThrowsError(try HiddenRetrievalPlanner.extractTarget(from: response, using: plan)) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .incompleteCoverResponse)
+        }
     }
 
-    func testHiddenRetrievalPlannerRejectsMalformedPublicQueryPlans() {
+    func testHiddenRetrievalPlannerRejectsMalformedPublicQueryPlans() throws {
         let response = [
             "a": Data("decoy-a".utf8),
             "b": Data("decoy-b".utf8),
@@ -105,11 +107,34 @@ final class PICCPCoreTests: XCTestCase {
             requestedRecordIds: ["a", "c"],
             targetRecordId: "c"
         )
+        let emptyTarget = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["a", "b"],
+            targetRecordId: " "
+        )
+        let emptyRequestedRecord = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["a", " "],
+            targetRecordId: "a"
+        )
+        let extraResponseRecords = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["a", "c"],
+            targetRecordId: "c"
+        )
 
-        XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: missingTarget))
-        XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: duplicateTarget))
-        XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: targetOnly))
-        XCTAssertNil(HiddenRetrievalPlanner.extractTarget(from: response, using: emptyBucket))
+        for plan in [missingTarget, duplicateTarget, targetOnly, emptyBucket, emptyTarget, emptyRequestedRecord] {
+            XCTAssertThrowsError(try HiddenRetrievalPlanner.extractTarget(from: response, using: plan)) { error in
+                XCTAssertEqual(error as? HiddenRetrievalError, .malformedPublicPlan)
+            }
+            XCTAssertNil(HiddenRetrievalPlanner.targetIfValid(from: response, using: plan))
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.extractTarget(from: response, using: extraResponseRecords)
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .unexpectedResponseRecords)
+        }
     }
 
     func testHiddenRetrievalPlannerRejectsInvalidQueries() throws {
@@ -128,10 +153,46 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertThrowsError(
             try HiddenRetrievalPlanner.makeCoverQuery(
                 bucketId: "bucket",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: " ",
+                coverSetSize: 2,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidTargetRecordId)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", " "],
+                targetRecordId: "a",
+                coverSetSize: 2,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordId)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: "a",
+                coverSetSize: 2,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidSecret)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
                 availableRecordIds: ["a"],
                 targetRecordId: "a",
                 coverSetSize: 0,
-                secret: Data()
+                secret: Data("secret".utf8)
             )
         ) { error in
             XCTAssertEqual(error as? HiddenRetrievalError, .invalidCoverSetSize)
@@ -140,10 +201,23 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertThrowsError(
             try HiddenRetrievalPlanner.makeCoverQuery(
                 bucketId: "bucket",
+                availableRecordIds: ["a", "b", "c"],
+                targetRecordId: "a",
+                coverSetSize: 3,
+                secret: Data("secret".utf8),
+                maximumCoverSetSize: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .coverSetTooLarge)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
                 availableRecordIds: ["a", "b"],
                 targetRecordId: "a",
                 coverSetSize: 1,
-                secret: Data()
+                secret: Data("secret".utf8)
             )
         ) { error in
             XCTAssertEqual(error as? HiddenRetrievalError, .invalidCoverSetSize)
@@ -155,7 +229,7 @@ final class PICCPCoreTests: XCTestCase {
                 availableRecordIds: [],
                 targetRecordId: "a",
                 coverSetSize: 2,
-                secret: Data()
+                secret: Data("secret".utf8)
             )
         ) { error in
             XCTAssertEqual(error as? HiddenRetrievalError, .emptyBucket)
@@ -167,7 +241,7 @@ final class PICCPCoreTests: XCTestCase {
                 availableRecordIds: ["a", "b"],
                 targetRecordId: "c",
                 coverSetSize: 2,
-                secret: Data()
+                secret: Data("secret".utf8)
             )
         ) { error in
             XCTAssertEqual(error as? HiddenRetrievalError, .targetMissing)
@@ -179,11 +253,26 @@ final class PICCPCoreTests: XCTestCase {
                 availableRecordIds: ["a", "b"],
                 targetRecordId: "a",
                 coverSetSize: 3,
-                secret: Data()
+                secret: Data("secret".utf8)
             )
         ) { error in
             XCTAssertEqual(error as? HiddenRetrievalError, .insufficientBucketRecords)
         }
+    }
+
+    func testHiddenRetrievalPlannerCanonicalizesBucketAndRecordIds() throws {
+        let plan = try HiddenRetrievalPlanner.makeCoverQuery(
+            bucketId: " bucket-a ",
+            availableRecordIds: [" a ", "b", "c"],
+            targetRecordId: " a ",
+            coverSetSize: 2,
+            secret: Data("secret".utf8)
+        )
+
+        XCTAssertEqual(plan.bucketId, "bucket-a")
+        XCTAssertEqual(plan.targetRecordId, "a")
+        XCTAssertTrue(plan.requestedRecordIds.contains("a"))
+        XCTAssertFalse(plan.requestedRecordIds.contains(" a "))
     }
 
     func testRelayInfoAdvertisesOptionalHiddenRetrievalSupport() throws {
@@ -403,6 +492,75 @@ final class PICCPCoreTests: XCTestCase {
         )
 
         XCTAssertEqual(delay, 8)
+    }
+
+    func testDecentralizedWakePlannerBuildsAuditableCyclePlan() {
+        let longPoll = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 30,
+            maxPollIntervalSeconds: 120,
+            jitterPermille: 0,
+            longPollTimeoutSeconds: 90
+        )
+        let slow = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 120,
+            maxPollIntervalSeconds: 240,
+            jitterPermille: 0
+        )
+
+        let cycle = DecentralizedWakePlanner.makeCyclePlan(
+            for: [
+                DecentralizedWakeProfile(
+                    support: slow,
+                    identitySeed: Data("identity-b".utf8),
+                    relayIdentifier: " relay-b ",
+                    failureCount: 0
+                ),
+                DecentralizedWakeProfile(
+                    support: longPoll,
+                    identitySeed: Data("identity-a".utf8),
+                    relayIdentifier: "relay-a",
+                    failureCount: 0
+                ),
+                DecentralizedWakeProfile(
+                    support: longPoll,
+                    identitySeed: Data("identity-a".utf8),
+                    relayIdentifier: "relay-a",
+                    failureCount: 2
+                ),
+                DecentralizedWakeProfile(
+                    support: nil,
+                    identitySeed: Data("identity-c".utf8),
+                    relayIdentifier: " ",
+                    failureCount: 99
+                )
+            ],
+            defaultDelaySeconds: 12,
+            maxDelaySeconds: 300,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        XCTAssertEqual(cycle.profilePlans.map(\.relayIdentifier), ["default-relay", "relay-a", "relay-b"])
+        XCTAssertEqual(cycle.profilePlans.count, 3)
+        XCTAssertEqual(cycle.nextPollDelaySeconds, 12)
+        XCTAssertNil(cycle.longPollTimeoutSeconds)
+        XCTAssertEqual(cycle.profilePlans[0].plan.failureBackoffStep, 6)
+        XCTAssertEqual(cycle.profilePlans[1].plan.nextPollDelaySeconds, 30)
+        XCTAssertEqual(cycle.profilePlans[1].plan.longPollTimeoutSeconds, 30)
+    }
+
+    func testDecentralizedWakePlannerReturnsDefaultCycleForNoProfiles() {
+        let cycle = DecentralizedWakePlanner.makeCyclePlan(
+            for: [],
+            defaultDelaySeconds: 3,
+            maxDelaySeconds: 4,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        XCTAssertTrue(cycle.profilePlans.isEmpty)
+        XCTAssertEqual(cycle.nextPollDelaySeconds, 5)
+        XCTAssertNil(cycle.longPollTimeoutSeconds)
     }
 
     func testDecentralizedWakePlannerSelectsFastestAdvertisedProfile() {
@@ -1825,6 +1983,83 @@ final class PICCPCoreTests: XCTestCase {
         )
     }
 
+    func testGroupRatchetEpochSecretDistributionRejectsMalformedStructure() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let groupId = UUID()
+        let distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: Data(SHA256.hash(data: Data("epoch secret".utf8))),
+            groupId: groupId,
+            epoch: 3,
+            operation: .update,
+            recipients: [
+                relayGroupMemberProfile(identity: alice),
+                relayGroupMemberProfile(identity: bob)
+            ]
+        )
+        let duplicateMember = GroupRatchetEpochSecretDistribution(
+            groupId: groupId,
+            epoch: 3,
+            operation: .update,
+            memberFingerprints: [alice.fingerprint, bob.fingerprint, bob.fingerprint],
+            shares: distribution.shares
+        )
+        let duplicateShare = GroupRatchetEpochSecretDistribution(
+            groupId: groupId,
+            epoch: 3,
+            operation: .update,
+            memberFingerprints: [alice.fingerprint, bob.fingerprint],
+            shares: [distribution.shares[0], distribution.shares[0]]
+        )
+        let emptyCiphertext = GroupRatchetSecretShare(
+            recipientFingerprint: alice.fingerprint,
+            kemCiphertext: Data(),
+            encryptedSecret: distribution.shares[0].encryptedSecret
+        )
+        let emptySharePayload = GroupRatchetEpochSecretDistribution(
+            groupId: groupId,
+            epoch: 3,
+            operation: .update,
+            memberFingerprints: [alice.fingerprint],
+            shares: [emptyCiphertext]
+        )
+
+        XCTAssertTrue(distribution.isStructurallyValid)
+        XCTAssertFalse(duplicateMember.isStructurallyValid)
+        XCTAssertFalse(duplicateShare.isStructurallyValid)
+        XCTAssertFalse(emptySharePayload.isStructurallyValid)
+        XCTAssertThrowsError(
+            try duplicateMember.openSecret(recipientFingerprint: alice.fingerprint, agreementKey: alice.agreementKey)
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+        XCTAssertThrowsError(
+            try duplicateShare.openSecret(recipientFingerprint: alice.fingerprint, agreementKey: alice.agreementKey)
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+    }
+
+    func testGroupRatchetEpochSecretDistributionRejectsDuplicateRecipientsAtSealTime() throws {
+        let alice = Identity(displayName: "Alice")
+        let groupId = UUID()
+
+        XCTAssertThrowsError(
+            try GroupRatchetEpochSecretDistribution.seal(
+                secret: Data(SHA256.hash(data: Data("epoch secret".utf8))),
+                groupId: groupId,
+                epoch: 3,
+                operation: .update,
+                recipients: [
+                    relayGroupMemberProfile(identity: alice),
+                    relayGroupMemberProfile(identity: alice)
+                ]
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+    }
+
     func testRelayStoreCarriesRatchetEpochSecretDistribution() async throws {
         let store = RelayStore()
         let creator = Identity(displayName: "Creator")
@@ -1937,6 +2172,45 @@ final class PICCPCoreTests: XCTestCase {
                 initialRatchetSecretDistribution: distribution
             )
             XCTFail("Expected missing group member share to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? RelayStoreError, .invalidGroupCommit)
+        }
+    }
+
+    func testRelayStoreRejectsStructurallyInvalidRatchetSecretDistribution() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let groupId = UUID()
+        let malformedShare = GroupRatchetSecretShare(
+            recipientFingerprint: creator.fingerprint,
+            kemCiphertext: Data([0x01]),
+            encryptedSecret: EncryptedPayload(
+                nonce: Data(repeating: 0x02, count: 12),
+                ciphertext: Data([0x03]),
+                tag: Data(repeating: 0x04, count: 16)
+            )
+        )
+        let distribution = GroupRatchetEpochSecretDistribution(
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            memberFingerprints: [creator.fingerprint, member.fingerprint, member.fingerprint],
+            shares: [malformedShare, malformedShare]
+        )
+
+        XCTAssertFalse(distribution.isStructurallyValid)
+        do {
+            _ = try await store.createGroup(
+                groupId: groupId,
+                title: "Ops",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: relayGroupMemberProfile(identity: creator),
+                memberProfiles: [relayGroupMemberProfile(identity: member)],
+                initialRatchetSecretDistribution: distribution
+            )
+            XCTFail("Expected malformed group ratchet distribution to be rejected.")
         } catch {
             XCTAssertEqual(error as? RelayStoreError, .invalidGroupCommit)
         }
@@ -6490,13 +6764,6 @@ final class PICCPCoreTests: XCTestCase {
             createdAt: createdAt,
             ratchetSecretDistribution: epoch0Distribution
         )
-        var creatorRatchet = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: epoch0State.confirmedTranscriptHash,
-            groupSecret: epoch0Secret,
-            localSenderFingerprint: creator.fingerprint
-        )
         let staleMemberRatchet = GroupRatchetState.initialize(
             groupId: groupId,
             epoch: 0,
@@ -6522,12 +6789,6 @@ final class PICCPCoreTests: XCTestCase {
             committedAt: Date(timeIntervalSince1970: 2_010),
             ratchetSecretDistribution: epoch1Distribution
         )
-        try creatorRatchet.advanceEpoch(
-            to: epoch1State.epoch,
-            transcriptHash: epoch1State.confirmedTranscriptHash,
-            commitSecret: epoch1Secret
-        )
-
         let epoch2Secret = Data(SHA256.hash(data: Data("missing history epoch 2".utf8)))
         let epoch2Distribution = try GroupRatchetEpochSecretDistribution.seal(
             secret: epoch2Secret,
@@ -6545,12 +6806,6 @@ final class PICCPCoreTests: XCTestCase {
             committedAt: Date(timeIntervalSince1970: 2_020),
             ratchetSecretDistribution: epoch2Distribution
         )
-        try creatorRatchet.advanceEpoch(
-            to: epoch2State.epoch,
-            transcriptHash: epoch2State.confirmedTranscriptHash,
-            commitSecret: epoch2Secret
-        )
-
         let descriptorMissingEpoch1 = RelayGroupDescriptor(
             id: groupId,
             title: "Missing History 2",
@@ -6567,28 +6822,11 @@ final class PICCPCoreTests: XCTestCase {
             updatedAt: Date(timeIntervalSince1970: 2_020)
         )
 
-        let envelope = try GroupRatchet.encrypt(
-            body: .text("message after missing epoch"),
-            senderSigningKey: creator.signingKey,
-            senderFingerprint: creator.fingerprint,
-            state: &creatorRatchet
-        )
-        let recovered = try XCTUnwrap(
+        XCTAssertNil(
             GroupRatchetRecovery.state(
                 from: descriptorMissingEpoch1,
                 identity: member,
                 existing: staleMemberRatchet
-            )
-        )
-
-        XCTAssertEqual(recovered.epoch, 0)
-        XCTAssertEqual(recovered.transcriptHash, epoch0State.confirmedTranscriptHash)
-        var unrecovered = recovered
-        XCTAssertThrowsError(
-            try GroupRatchet.decrypt(
-                envelope: envelope,
-                senderPublicSigningKey: creator.signingKey.publicKeyData,
-                state: &unrecovered
             )
         )
     }

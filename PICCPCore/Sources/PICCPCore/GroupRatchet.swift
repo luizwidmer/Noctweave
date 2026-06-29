@@ -170,10 +170,10 @@ public enum GroupRatchetRecovery {
             for commit in history where commit.epoch > state.epoch {
                 guard let secret = ratchetSecret(from: commit, identity: identity),
                       advance(&state, to: commit.epoch, transcriptHash: commit.transcriptHash, secret: secret) else {
-                    return state.epoch == descriptor.epoch ? state : existing
+                    return nil
                 }
             }
-            return state.epoch == descriptor.epoch ? state : existing
+            return state.epoch == descriptor.epoch ? state : nil
         }
 
         if let first = history.first,
@@ -203,7 +203,12 @@ public enum GroupRatchetRecovery {
                 recipientFingerprint: identity.fingerprint,
                 agreementKey: identity.agreementKey
               ) else {
-            return existing
+            if let existing,
+               existing.groupId == descriptor.id,
+               existing.epoch == descriptor.epoch {
+                return existing
+            }
+            return nil
         }
         return GroupRatchetState.initialize(
             groupId: descriptor.id,
@@ -331,6 +336,28 @@ public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
         self.shares = shares.sorted { $0.recipientFingerprint < $1.recipientFingerprint }
     }
 
+    public var isStructurallyValid: Bool {
+        let normalizedMembers = memberFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let shareRecipients = shares.map {
+            $0.recipientFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return version == 1
+            && !normalizedMembers.isEmpty
+            && !normalizedMembers.contains(where: { $0.isEmpty })
+            && Set(normalizedMembers).count == normalizedMembers.count
+            && !shareRecipients.contains(where: { $0.isEmpty })
+            && Set(shareRecipients).count == shareRecipients.count
+            && Set(shareRecipients) == Set(normalizedMembers)
+            && shares.allSatisfy { share in
+                !share.kemCiphertext.isEmpty
+                    && !share.encryptedSecret.ciphertext.isEmpty
+                    && share.encryptedSecret.nonce.count == 12
+                    && share.encryptedSecret.tag.count == 16
+            }
+    }
+
     public static func seal(
         secret: Data,
         groupId: UUID,
@@ -344,6 +371,11 @@ public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
         let normalizedRecipients = recipients
             .filter { !$0.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .sorted { $0.fingerprint < $1.fingerprint }
+        let recipientFingerprints = normalizedRecipients.map(\.fingerprint)
+        guard !recipientFingerprints.isEmpty,
+              Set(recipientFingerprints).count == recipientFingerprints.count else {
+            throw CryptoError.invalidPayload
+        }
         let memberFingerprints = normalizedRecipients.map(\.fingerprint)
         let shares = try normalizedRecipients.map { recipient -> GroupRatchetSecretShare in
             guard let publicKey = recipient.agreementPublicKey,
@@ -391,7 +423,8 @@ public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
         recipientFingerprint: String,
         agreementKey: AgreementKeyPair
     ) throws -> Data {
-        guard let share = shares.first(where: { $0.recipientFingerprint == recipientFingerprint }),
+        guard isStructurallyValid,
+              let share = shares.first(where: { $0.recipientFingerprint == recipientFingerprint }),
               memberFingerprints.contains(recipientFingerprint) else {
             throw CryptoError.invalidPayload
         }

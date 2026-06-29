@@ -46,6 +46,30 @@ public struct DecentralizedWakePlan: Codable, Equatable {
     }
 }
 
+public struct DecentralizedWakeProfilePlan: Equatable {
+    public let identitySeed: Data
+    public let relayIdentifier: String
+    public let plan: DecentralizedWakePlan
+
+    public init(identitySeed: Data, relayIdentifier: String, plan: DecentralizedWakePlan) {
+        self.identitySeed = identitySeed
+        self.relayIdentifier = relayIdentifier
+        self.plan = plan
+    }
+}
+
+public struct DecentralizedWakeCyclePlan: Equatable {
+    public let profilePlans: [DecentralizedWakeProfilePlan]
+    public let nextPollDelaySeconds: Int
+    public let longPollTimeoutSeconds: Int?
+
+    public init(profilePlans: [DecentralizedWakeProfilePlan], nextPollDelaySeconds: Int, longPollTimeoutSeconds: Int?) {
+        self.profilePlans = profilePlans
+        self.nextPollDelaySeconds = nextPollDelaySeconds
+        self.longPollTimeoutSeconds = longPollTimeoutSeconds
+    }
+}
+
 public struct DecentralizedWakeProfile: Equatable {
     public let support: DecentralizedWakeSupport?
     public let identitySeed: Data
@@ -104,26 +128,86 @@ public enum DecentralizedWakePlanner {
         maxDelaySeconds: Int,
         now: Date = Date()
     ) -> Int {
+        makeCyclePlan(
+            for: profiles,
+            defaultDelaySeconds: defaultDelaySeconds,
+            maxDelaySeconds: maxDelaySeconds,
+            now: now
+        ).nextPollDelaySeconds
+    }
+
+    public static func makeCyclePlan(
+        for profiles: [DecentralizedWakeProfile],
+        defaultDelaySeconds: Int,
+        maxDelaySeconds: Int,
+        now: Date = Date()
+    ) -> DecentralizedWakeCyclePlan {
         let defaultDelay = max(5, defaultDelaySeconds)
         let upperBound = max(defaultDelay, maxDelaySeconds)
         guard !profiles.isEmpty else {
-            return min(defaultDelay, upperBound)
+            return DecentralizedWakeCyclePlan(
+                profilePlans: [],
+                nextPollDelaySeconds: min(defaultDelay, upperBound),
+                longPollTimeoutSeconds: nil
+            )
         }
 
-        let delays = profiles.map { profile in
-            guard let support = profile.support else {
-                return defaultDelay
+        let profilePlans = Dictionary(grouping: profiles, by: profileKey)
+            .values
+            .compactMap { duplicates -> DecentralizedWakeProfilePlan? in
+                guard let selected = duplicates.min(by: { lhs, rhs in
+                    if lhs.failureCount == rhs.failureCount {
+                        return lhs.relayIdentifier < rhs.relayIdentifier
+                    }
+                    return lhs.failureCount < rhs.failureCount
+                }) else {
+                    return nil
+                }
+                let relayIdentifier = normalizedRelayIdentifier(selected.relayIdentifier)
+                let rawPlan: DecentralizedWakePlan
+                if let support = selected.support {
+                    rawPlan = makePlan(
+                        support: support,
+                        identitySeed: selected.identitySeed,
+                        relayIdentifier: relayIdentifier,
+                        failureCount: selected.failureCount,
+                        now: now
+                    )
+                } else {
+                    rawPlan = DecentralizedWakePlan(
+                        nextPollDelaySeconds: defaultDelay,
+                        longPollTimeoutSeconds: nil,
+                        failureBackoffStep: min(max(0, selected.failureCount), 6)
+                    )
+                }
+                let boundedDelay = min(max(rawPlan.nextPollDelaySeconds, 5), upperBound)
+                let boundedLongPoll = rawPlan.longPollTimeoutSeconds.map { min($0, boundedDelay) }
+                return DecentralizedWakeProfilePlan(
+                    identitySeed: selected.identitySeed,
+                    relayIdentifier: relayIdentifier,
+                    plan: DecentralizedWakePlan(
+                        nextPollDelaySeconds: boundedDelay,
+                        longPollTimeoutSeconds: boundedLongPoll,
+                        failureBackoffStep: rawPlan.failureBackoffStep
+                    )
+                )
             }
-            return makePlan(
-                support: support,
-                identitySeed: profile.identitySeed,
-                relayIdentifier: profile.relayIdentifier,
-                failureCount: profile.failureCount,
-                now: now
-            ).nextPollDelaySeconds
-        }
-        let delay = delays.min() ?? defaultDelay
-        return min(max(delay, 5), upperBound)
+            .sorted {
+                if $0.relayIdentifier == $1.relayIdentifier {
+                    return $0.identitySeed.lexicographicallyPrecedes($1.identitySeed)
+                }
+                return $0.relayIdentifier < $1.relayIdentifier
+            }
+        let selectedDelay = profilePlans.map(\.plan.nextPollDelaySeconds).min() ?? defaultDelay
+        let selectedLongPoll = profilePlans
+            .filter { $0.plan.nextPollDelaySeconds == selectedDelay }
+            .compactMap(\.plan.longPollTimeoutSeconds)
+            .min()
+        return DecentralizedWakeCyclePlan(
+            profilePlans: profilePlans,
+            nextPollDelaySeconds: selectedDelay,
+            longPollTimeoutSeconds: selectedLongPoll
+        )
     }
 
     private static func deterministicJitter(
@@ -145,5 +229,14 @@ public enum DecentralizedWakePlanner {
             (partial << 8) | UInt64(byte)
         }
         return Int(value % UInt64(upperBound + 1))
+    }
+
+    private static func profileKey(_ profile: DecentralizedWakeProfile) -> String {
+        "\(profile.identitySeed.base64EncodedString())|\(normalizedRelayIdentifier(profile.relayIdentifier))"
+    }
+
+    private static func normalizedRelayIdentifier(_ relayIdentifier: String) -> String {
+        let trimmed = relayIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "default-relay" : trimmed
     }
 }
