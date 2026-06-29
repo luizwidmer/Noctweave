@@ -16,7 +16,7 @@ The DHT/torrent research supports a cautious path: use DHT-style discovery only 
 ### Malicious relay
 - Can observe source IPs, timing, chosen relay, mailbox polling cadence, and ciphertext sizes.
 - Cannot decrypt message payloads or attachments without endpoint keys.
-- Mitigations present: ML-KEM/ML-DSA session setup, AEAD payloads, authenticated inbox fetch/ack, temporal buckets, attachment TTL, relay password support, TLS/WSS support.
+- Mitigations present: ML-KEM/ML-DSA session setup, AEAD payloads, authenticated inbox fetch/ack, temporal buckets, attachment TTL, relay password support, TLS/WSS support, and ciphertext-only prefetch staging that defers acknowledgement until unlocked sync.
 - Residual risk: no single-server PIR or live full-network mixnet deployment.
 
 ### Malicious coordinator

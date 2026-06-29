@@ -1068,6 +1068,111 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(decoded.wakeSupport, info.wakeSupport)
     }
 
+    func testDecentralizedPrefetchStagerStagesDirectCiphertextOnlyRecords() throws {
+        let envelope = Envelope(
+            id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+            conversationId: "conversation-a",
+            sessionId: "session-a",
+            senderFingerprint: "sender-a",
+            sentAt: Date(timeIntervalSince1970: 1_000),
+            messageCounter: 7,
+            payload: EncryptedPayload(
+                nonce: Data([0x01, 0x02]),
+                ciphertext: Data([0xAA, 0xBB, 0xCC]),
+                tag: Data([0x03, 0x04])
+            ),
+            signature: Data([0x05, 0x06])
+        )
+
+        let batch = try DecentralizedPrefetchStager.stageDirectMessages(
+            [envelope],
+            inboxId: " inbox-a ",
+            relayIdentifier: " relay-a ",
+            stagedAt: Date(timeIntervalSince1970: 2_000)
+        )
+
+        XCTAssertTrue(batch.isCiphertextOnly)
+        XCTAssertEqual(batch.messageIds, [envelope.id])
+        XCTAssertEqual(batch.records.first?.kind, .directMessage)
+        XCTAssertEqual(batch.records.first?.relayIdentifier, "relay-a")
+        XCTAssertEqual(batch.records.first?.inboxId, "inbox-a")
+        XCTAssertNil(batch.records.first?.groupId)
+        XCTAssertEqual(batch.records.first?.acknowledgementDeferred, true)
+        let decoded = try PICCPCoder.decode(
+            Envelope.self,
+            from: try XCTUnwrap(batch.records.first?.sealedEnvelope)
+        )
+        XCTAssertEqual(decoded, envelope)
+    }
+
+    func testDecentralizedPrefetchStagerStagesGroupCiphertextOnlyRecords() throws {
+        let groupId = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+        let envelope = GroupRatchetEnvelope(
+            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            groupId: groupId,
+            epoch: 4,
+            transcriptHash: Data([0x10, 0x11]),
+            senderFingerprint: "sender-b",
+            sentAt: Date(timeIntervalSince1970: 3_000),
+            messageCounter: 9,
+            payload: EncryptedPayload(
+                nonce: Data([0x12, 0x13]),
+                ciphertext: Data([0xBA, 0xAD, 0xF0, 0x0D]),
+                tag: Data([0x14, 0x15])
+            ),
+            signature: Data([0x16, 0x17])
+        )
+
+        let batch = try DecentralizedPrefetchStager.stageGroupMessages(
+            [envelope],
+            groupInboxId: " group-inbox ",
+            relayIdentifier: " relay-b ",
+            stagedAt: Date(timeIntervalSince1970: 4_000)
+        )
+
+        XCTAssertTrue(batch.isCiphertextOnly)
+        XCTAssertEqual(batch.messageIds, [envelope.id])
+        XCTAssertEqual(batch.records.first?.kind, .groupMessage)
+        XCTAssertEqual(batch.records.first?.groupId, groupId)
+        XCTAssertEqual(batch.records.first?.acknowledgementDeferred, true)
+        let decoded = try PICCPCoder.decode(
+            GroupRatchetEnvelope.self,
+            from: try XCTUnwrap(batch.records.first?.sealedEnvelope)
+        )
+        XCTAssertEqual(decoded, envelope)
+    }
+
+    func testDecentralizedPrefetchStagerDoesNotAcknowledgeRelayMessages() async throws {
+        let store = RelayStore()
+        let envelope = Envelope(
+            id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            conversationId: "conversation-c",
+            sessionId: "session-c",
+            senderFingerprint: "sender-c",
+            sentAt: Date(timeIntervalSince1970: 5_000),
+            messageCounter: 11,
+            payload: EncryptedPayload(
+                nonce: Data([0x21]),
+                ciphertext: Data([0x31, 0x32, 0x33]),
+                tag: Data([0x41])
+            ),
+            signature: Data([0x51])
+        )
+
+        try await store.deliver(envelope, to: "inbox-c")
+        let fetched = try await store.fetch(inboxId: "inbox-c")
+        let batch = try DecentralizedPrefetchStager.stageDirectMessages(
+            fetched,
+            inboxId: "inbox-c",
+            relayIdentifier: "relay-c"
+        )
+        let fetchedAfterStaging = try await store.fetch(inboxId: "inbox-c")
+
+        XCTAssertTrue(batch.isCiphertextOnly)
+        XCTAssertEqual(batch.messageIds, [envelope.id])
+        XCTAssertEqual(fetchedAfterStaging.map(\.id), [envelope.id])
+    }
+
     func testRatchetRecoveryPolicyClassifiesRecoverableFailures() throws {
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.invalidPayload), .recover)
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterOutOfOrder), .recover)

@@ -89,6 +89,136 @@ public struct DecentralizedWakeProfile: Equatable {
     }
 }
 
+public enum DecentralizedPrefetchKind: String, Codable, Equatable {
+    case directMessage
+    case groupMessage
+}
+
+public enum DecentralizedPrefetchError: Error, Equatable {
+    case invalidRelayIdentifier
+    case invalidInboxId
+    case invalidEnvelope
+}
+
+public struct DecentralizedPrefetchRecord: Codable, Equatable, Identifiable {
+    public let id: UUID
+    public let kind: DecentralizedPrefetchKind
+    public let relayIdentifier: String
+    public let inboxId: String
+    public let groupId: UUID?
+    public let stagedAt: Date
+    public let sealedEnvelope: Data
+    public let acknowledgementDeferred: Bool
+
+    public init(
+        id: UUID,
+        kind: DecentralizedPrefetchKind,
+        relayIdentifier: String,
+        inboxId: String,
+        groupId: UUID?,
+        stagedAt: Date,
+        sealedEnvelope: Data,
+        acknowledgementDeferred: Bool = true
+    ) {
+        self.id = id
+        self.kind = kind
+        self.relayIdentifier = relayIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.inboxId = inboxId.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.groupId = groupId
+        self.stagedAt = stagedAt
+        self.sealedEnvelope = sealedEnvelope
+        self.acknowledgementDeferred = acknowledgementDeferred
+    }
+}
+
+public struct DecentralizedPrefetchBatch: Codable, Equatable {
+    public let records: [DecentralizedPrefetchRecord]
+    public let stagedAt: Date
+
+    public var messageIds: [UUID] {
+        records.map(\.id)
+    }
+
+    public var isCiphertextOnly: Bool {
+        records.allSatisfy { !$0.sealedEnvelope.isEmpty && $0.acknowledgementDeferred }
+    }
+
+    public init(records: [DecentralizedPrefetchRecord], stagedAt: Date) {
+        self.records = records
+        self.stagedAt = stagedAt
+    }
+}
+
+public enum DecentralizedPrefetchStager {
+    public static func stageDirectMessages(
+        _ envelopes: [Envelope],
+        inboxId: String,
+        relayIdentifier: String,
+        stagedAt: Date = Date()
+    ) throws -> DecentralizedPrefetchBatch {
+        let relayIdentifier = try normalizedRelayIdentifier(relayIdentifier)
+        let inboxId = try normalizedInboxId(inboxId)
+        let records = try envelopes.map { envelope in
+            guard !envelope.payload.ciphertext.isEmpty else {
+                throw DecentralizedPrefetchError.invalidEnvelope
+            }
+            return DecentralizedPrefetchRecord(
+                id: envelope.id,
+                kind: .directMessage,
+                relayIdentifier: relayIdentifier,
+                inboxId: inboxId,
+                groupId: nil,
+                stagedAt: stagedAt,
+                sealedEnvelope: try PICCPCoder.encode(envelope),
+                acknowledgementDeferred: true
+            )
+        }
+        return DecentralizedPrefetchBatch(records: records, stagedAt: stagedAt)
+    }
+
+    public static func stageGroupMessages(
+        _ envelopes: [GroupRatchetEnvelope],
+        groupInboxId: String,
+        relayIdentifier: String,
+        stagedAt: Date = Date()
+    ) throws -> DecentralizedPrefetchBatch {
+        let relayIdentifier = try normalizedRelayIdentifier(relayIdentifier)
+        let inboxId = try normalizedInboxId(groupInboxId)
+        let records = try envelopes.map { envelope in
+            guard !envelope.payload.ciphertext.isEmpty else {
+                throw DecentralizedPrefetchError.invalidEnvelope
+            }
+            return DecentralizedPrefetchRecord(
+                id: envelope.id,
+                kind: .groupMessage,
+                relayIdentifier: relayIdentifier,
+                inboxId: inboxId,
+                groupId: envelope.groupId,
+                stagedAt: stagedAt,
+                sealedEnvelope: try PICCPCoder.encode(envelope),
+                acknowledgementDeferred: true
+            )
+        }
+        return DecentralizedPrefetchBatch(records: records, stagedAt: stagedAt)
+    }
+
+    private static func normalizedRelayIdentifier(_ relayIdentifier: String) throws -> String {
+        let trimmed = relayIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw DecentralizedPrefetchError.invalidRelayIdentifier
+        }
+        return trimmed
+    }
+
+    private static func normalizedInboxId(_ inboxId: String) throws -> String {
+        let trimmed = inboxId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw DecentralizedPrefetchError.invalidInboxId
+        }
+        return trimmed
+    }
+}
+
 public enum DecentralizedWakePlanner {
     public static func makePlan(
         support: DecentralizedWakeSupport?,
