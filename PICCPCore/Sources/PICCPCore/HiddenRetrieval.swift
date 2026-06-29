@@ -45,6 +45,19 @@ public enum HiddenRetrievalPIROperationalIssue: String, Codable, Equatable, Hash
     case fixedResponseSizeTooSmall
 }
 
+public enum HiddenRetrievalPIRDeploymentEvidenceIssue: String, Codable, Equatable, Hashable {
+    case invalidOperationalProfile
+    case missingDeploymentEvidence
+    case insufficientReplicaEvidence
+    case duplicateReplicaEvidence
+    case replicaEvidenceMismatch
+    case operatorEvidenceMismatch
+    case staleReplicaEvidence
+    case unavailableReplicaEvidence
+    case missingNonCollusionAttestation
+    case duplicateNonCollusionAttestation
+}
+
 public struct HiddenRetrievalPIROperationalProfile: Codable, Equatable {
     public var support: HiddenRetrievalSupport?
     public var paddedRecordCount: Int?
@@ -58,6 +71,44 @@ public struct HiddenRetrievalPIROperationalProfile: Codable, Equatable {
         self.support = support
         self.paddedRecordCount = paddedRecordCount
         self.fixedResponseSize = fixedResponseSize
+    }
+}
+
+public struct HiddenRetrievalPIRReplicaDeploymentEvidence: Codable, Equatable {
+    public var replicaId: String
+    public var operatorId: String
+    public var endpoint: RelayEndpoint
+    public var checkedAt: Date
+    public var isAvailable: Bool
+    public var nonCollusionAttestationDigest: String
+
+    public init(
+        replicaId: String,
+        operatorId: String,
+        endpoint: RelayEndpoint,
+        checkedAt: Date,
+        isAvailable: Bool,
+        nonCollusionAttestationDigest: String
+    ) {
+        self.replicaId = replicaId
+        self.operatorId = operatorId
+        self.endpoint = endpoint
+        self.checkedAt = checkedAt
+        self.isAvailable = isAvailable
+        self.nonCollusionAttestationDigest = nonCollusionAttestationDigest
+    }
+}
+
+public struct HiddenRetrievalPIRDeploymentEvidence: Codable, Equatable {
+    public var collectedAt: Date
+    public var replicaEvidence: [HiddenRetrievalPIRReplicaDeploymentEvidence]
+
+    public init(
+        collectedAt: Date,
+        replicaEvidence: [HiddenRetrievalPIRReplicaDeploymentEvidence]
+    ) {
+        self.collectedAt = collectedAt
+        self.replicaEvidence = replicaEvidence
     }
 }
 
@@ -231,6 +282,153 @@ public enum HiddenRetrievalPIROperationalValidator {
         _ issues: Set<HiddenRetrievalPIROperationalIssue>
     ) -> [HiddenRetrievalPIROperationalIssue] {
         issues.sorted { $0.rawValue < $1.rawValue }
+    }
+}
+
+public enum HiddenRetrievalPIRPromotionValidator {
+    public static func issues(
+        for profile: HiddenRetrievalPIROperationalProfile,
+        evidence: HiddenRetrievalPIRDeploymentEvidence?,
+        now: Date = Date(),
+        maximumEvidenceAge: TimeInterval = 24 * 60 * 60,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true,
+        minimumPaddedRecordCount: Int = 128,
+        minimumFixedResponseSize: Int = 1_024
+    ) -> [HiddenRetrievalPIRDeploymentEvidenceIssue] {
+        var issues: Set<HiddenRetrievalPIRDeploymentEvidenceIssue> = []
+        if !HiddenRetrievalPIROperationalValidator.isOperationallyUsable(
+            profile,
+            minimumReplicaCount: minimumReplicaCount,
+            requireTLS: requireTLS,
+            minimumPaddedRecordCount: minimumPaddedRecordCount,
+            minimumFixedResponseSize: minimumFixedResponseSize
+        ) {
+            issues.insert(.invalidOperationalProfile)
+        }
+
+        guard let evidence else {
+            issues.insert(.missingDeploymentEvidence)
+            return sorted(issues)
+        }
+
+        let replicas = profile.support?.replicatedXorPIRReplicas ?? []
+        var expectedByReplicaId: [String: HiddenRetrievalPIRReplica] = [:]
+        for replica in replicas {
+            let replicaId = replica.replicaId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if !replicaId.isEmpty, expectedByReplicaId[replicaId] == nil {
+                expectedByReplicaId[replicaId] = replica
+            }
+        }
+        let expectedReplicaIds = Set(expectedByReplicaId.keys)
+        let evidenceReplicaIds = evidence.replicaEvidence.map {
+            $0.replicaId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        if evidence.replicaEvidence.count < max(2, minimumReplicaCount) {
+            issues.insert(.insufficientReplicaEvidence)
+        }
+        if Set(evidenceReplicaIds).count != evidenceReplicaIds.count {
+            issues.insert(.duplicateReplicaEvidence)
+        }
+        if Set(evidenceReplicaIds) != expectedReplicaIds {
+            issues.insert(.replicaEvidenceMismatch)
+        }
+
+        var attestationDigests: [String] = []
+        for item in evidence.replicaEvidence {
+            let replicaId = item.replicaId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let operatorId = item.operatorId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let attestationDigest = item.nonCollusionAttestationDigest
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let age = now.timeIntervalSince(item.checkedAt)
+
+            guard let expected = expectedByReplicaId[replicaId] else {
+                continue
+            }
+            if operatorId != expected.operatorId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                || normalizedEndpointKey(item.endpoint) != normalizedEndpointKey(expected.endpoint) {
+                issues.insert(.operatorEvidenceMismatch)
+            }
+            if age < 0 || age > maximumEvidenceAge {
+                issues.insert(.staleReplicaEvidence)
+            }
+            if !item.isAvailable {
+                issues.insert(.unavailableReplicaEvidence)
+            }
+            if attestationDigest.isEmpty {
+                issues.insert(.missingNonCollusionAttestation)
+            } else {
+                attestationDigests.append(attestationDigest)
+            }
+        }
+        if Set(attestationDigests).count != attestationDigests.count {
+            issues.insert(.duplicateNonCollusionAttestation)
+        }
+
+        return sorted(issues)
+    }
+
+    public static func validate(
+        _ profile: HiddenRetrievalPIROperationalProfile,
+        evidence: HiddenRetrievalPIRDeploymentEvidence?,
+        now: Date = Date(),
+        maximumEvidenceAge: TimeInterval = 24 * 60 * 60,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true,
+        minimumPaddedRecordCount: Int = 128,
+        minimumFixedResponseSize: Int = 1_024
+    ) throws {
+        let problems = issues(
+            for: profile,
+            evidence: evidence,
+            now: now,
+            maximumEvidenceAge: maximumEvidenceAge,
+            minimumReplicaCount: minimumReplicaCount,
+            requireTLS: requireTLS,
+            minimumPaddedRecordCount: minimumPaddedRecordCount,
+            minimumFixedResponseSize: minimumFixedResponseSize
+        )
+        guard problems.isEmpty else {
+            throw HiddenRetrievalError.invalidReplicaSet
+        }
+    }
+
+    public static func isPromotable(
+        _ profile: HiddenRetrievalPIROperationalProfile,
+        evidence: HiddenRetrievalPIRDeploymentEvidence?,
+        now: Date = Date(),
+        maximumEvidenceAge: TimeInterval = 24 * 60 * 60,
+        minimumReplicaCount: Int = 2,
+        requireTLS: Bool = true,
+        minimumPaddedRecordCount: Int = 128,
+        minimumFixedResponseSize: Int = 1_024
+    ) -> Bool {
+        issues(
+            for: profile,
+            evidence: evidence,
+            now: now,
+            maximumEvidenceAge: maximumEvidenceAge,
+            minimumReplicaCount: minimumReplicaCount,
+            requireTLS: requireTLS,
+            minimumPaddedRecordCount: minimumPaddedRecordCount,
+            minimumFixedResponseSize: minimumFixedResponseSize
+        ).isEmpty
+    }
+
+    private static func sorted(
+        _ issues: Set<HiddenRetrievalPIRDeploymentEvidenceIssue>
+    ) -> [HiddenRetrievalPIRDeploymentEvidenceIssue] {
+        issues.sorted { $0.rawValue < $1.rawValue }
+    }
+
+    private static func normalizedEndpointKey(_ endpoint: RelayEndpoint) -> String {
+        [
+            endpoint.transport.rawValue,
+            endpoint.useTLS ? "tls" : "plain",
+            endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            String(endpoint.port)
+        ].joined(separator: "://")
     }
 }
 

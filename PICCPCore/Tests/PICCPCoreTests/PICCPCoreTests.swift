@@ -785,6 +785,157 @@ final class PICCPCoreTests: XCTestCase {
         }
     }
 
+    func testHiddenRetrievalPIRPromotionRequiresFreshDeploymentEvidence() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let replicaAEndpoint = RelayEndpoint(host: "pir-a.example.org", port: 443, useTLS: true, transport: .http)
+        let replicaBEndpoint = RelayEndpoint(host: "pir-b.example.org", port: 443, useTLS: true, transport: .http)
+        let support = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: replicaAEndpoint
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: replicaBEndpoint
+                )
+            ]
+        )
+        let profile = HiddenRetrievalPIROperationalProfile(
+            support: support,
+            paddedRecordCount: 256,
+            fixedResponseSize: 2_048
+        )
+
+        XCTAssertEqual(
+            HiddenRetrievalPIRPromotionValidator.issues(for: profile, evidence: nil, now: now),
+            [.missingDeploymentEvidence]
+        )
+
+        let staleAndWeakEvidence = HiddenRetrievalPIRDeploymentEvidence(
+            collectedAt: now,
+            replicaEvidence: [
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: replicaAEndpoint,
+                    checkedAt: now.addingTimeInterval(-90_000),
+                    isAvailable: true,
+                    nonCollusionAttestationDigest: "same-attestation"
+                ),
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: replicaBEndpoint,
+                    checkedAt: now,
+                    isAvailable: false,
+                    nonCollusionAttestationDigest: "same-attestation"
+                )
+            ]
+        )
+        XCTAssertEqual(
+            HiddenRetrievalPIRPromotionValidator.issues(
+                for: profile,
+                evidence: staleAndWeakEvidence,
+                now: now
+            ),
+            [
+                .duplicateNonCollusionAttestation,
+                .staleReplicaEvidence,
+                .unavailableReplicaEvidence
+            ]
+        )
+
+        let validEvidence = HiddenRetrievalPIRDeploymentEvidence(
+            collectedAt: now,
+            replicaEvidence: [
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: replicaAEndpoint,
+                    checkedAt: now.addingTimeInterval(-60),
+                    isAvailable: true,
+                    nonCollusionAttestationDigest: "operator-a-attestation-digest"
+                ),
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: replicaBEndpoint,
+                    checkedAt: now.addingTimeInterval(-120),
+                    isAvailable: true,
+                    nonCollusionAttestationDigest: "operator-b-attestation-digest"
+                )
+            ]
+        )
+        XCTAssertTrue(
+            HiddenRetrievalPIRPromotionValidator.issues(
+                for: profile,
+                evidence: validEvidence,
+                now: now
+            ).isEmpty
+        )
+        XCTAssertTrue(HiddenRetrievalPIRPromotionValidator.isPromotable(profile, evidence: validEvidence, now: now))
+        XCTAssertNoThrow(try HiddenRetrievalPIRPromotionValidator.validate(profile, evidence: validEvidence, now: now))
+    }
+
+    func testHiddenRetrievalPIRPromotionRejectsMismatchedDeploymentEvidence() {
+        let now = Date(timeIntervalSince1970: 12_000)
+        let support = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-a.example.org", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "pir-b.example.org", port: 443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let profile = HiddenRetrievalPIROperationalProfile(
+            support: support,
+            paddedRecordCount: 256,
+            fixedResponseSize: 2_048
+        )
+        let evidence = HiddenRetrievalPIRDeploymentEvidence(
+            collectedAt: now,
+            replicaEvidence: [
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-a.example.org", port: 443, useTLS: true, transport: .http),
+                    checkedAt: now,
+                    isAvailable: true,
+                    nonCollusionAttestationDigest: "attestation-a"
+                ),
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-a",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "pir-b.evil.example.org", port: 443, useTLS: true, transport: .http),
+                    checkedAt: now,
+                    isAvailable: true,
+                    nonCollusionAttestationDigest: ""
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            HiddenRetrievalPIRPromotionValidator.issues(for: profile, evidence: evidence, now: now),
+            [
+                .duplicateReplicaEvidence,
+                .missingNonCollusionAttestation,
+                .operatorEvidenceMismatch,
+                .replicaEvidenceMismatch
+            ]
+        )
+    }
+
     func testRelayInfoAdvertisesGroupSecurityModel() throws {
         let defaultInfo = RelayConfiguration().makeInfo(now: Date(timeIntervalSince1970: 1_000))
         XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)
@@ -1934,6 +2085,51 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertTrue(fallbackResult.ingestResult.accepted.isEmpty)
         XCTAssertTrue(fallbackResult.ingestResult.rejected.isEmpty)
         XCTAssertEqual(fallbackResult.nodes.map(\.endpoint.host), ["cached-relay.example.org"])
+        let queryCount = await transport.queryCount()
+        XCTAssertEqual(queryCount, 2)
+    }
+
+    func testOpenFederationDHTDiscoveryEngineDropsExpiredCacheWhenQueryFails() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "stale-cache-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let cachedRecord = try makeDHTRecord(
+            host: "short-lived-relay.example.org",
+            federationName: federationName,
+            issuedAt: now,
+            lifetimeSeconds: 10
+        )
+        let transport = MockOpenFederationDHTTransport(recordsByNamespace: [namespace: [cachedRecord]])
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 8,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 16
+            )
+        )
+
+        let warmResult = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: now
+        )
+        XCTAssertEqual(warmResult.nodes.map(\.endpoint.host), ["short-lived-relay.example.org"])
+
+        await transport.setQueryFailureEnabled(true)
+        let fallbackResult = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: cachedRecord.expiresAt.addingTimeInterval(OpenFederationDHTRecord.maxClockSkewSeconds + 1)
+        )
+
+        XCTAssertTrue(fallbackResult.ingestResult.accepted.isEmpty)
+        XCTAssertTrue(fallbackResult.ingestResult.rejected.isEmpty)
+        XCTAssertTrue(fallbackResult.nodes.isEmpty)
         let queryCount = await transport.queryCount()
         XCTAssertEqual(queryCount, 2)
     }
@@ -8096,6 +8292,161 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertNil(
             GroupRatchetRecovery.state(
                 from: descriptor,
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+    }
+
+    func testClientStateGroupRatchetRecoveryFaultInjectionFailsClosed() throws {
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Offline Member")
+        let groupId = UUID(uuidString: "EEEEEEEE-FFFF-AAAA-BBBB-222222222222")!
+        let inboxId = "group-fault-injection-inbox"
+        let createdAt = Date(timeIntervalSince1970: 4_000)
+        let members = [
+            RelayGroupMember(fingerprint: creator.fingerprint),
+            RelayGroupMember(fingerprint: member.fingerprint)
+        ]
+        let recipients = [
+            relayGroupMemberProfile(identity: creator, relay: relay),
+            relayGroupMemberProfile(identity: member, relay: relay)
+        ]
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("fault injection epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let epoch0State = MLSGroupEpochState.initial(
+            groupId: groupId,
+            title: "Fault Injection",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            members: members,
+            createdAt: createdAt,
+            ratchetSecretDistribution: epoch0Distribution
+        )
+        let staleMemberRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("fault injection epoch 1".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: groupId,
+            epoch: 1,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch1State = epoch0State.advancing(
+            title: "Fault Injection 1",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 4_010),
+            ratchetSecretDistribution: epoch1Distribution
+        )
+        let epoch2Secret = Data(SHA256.hash(data: Data("fault injection epoch 2".utf8)))
+        let epoch2Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch2Secret,
+            groupId: groupId,
+            epoch: 2,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch2State = epoch1State.advancing(
+            title: "Fault Injection 2",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 4_020),
+            ratchetSecretDistribution: epoch2Distribution
+        )
+
+        func descriptor(history: [MLSGroupCommitSummary]) -> RelayGroupDescriptor {
+            RelayGroupDescriptor(
+                id: groupId,
+                title: "Fault Injection 2",
+                inboxId: inboxId,
+                createdByFingerprint: creator.fingerprint,
+                epoch: epoch2State.epoch,
+                members: members,
+                mlsEpochState: epoch2State,
+                mlsEpochHistory: history,
+                createdAt: createdAt,
+                updatedAt: Date(timeIntervalSince1970: 4_020)
+            )
+        }
+
+        let validHistory = [
+            epoch0State.lastCommit,
+            epoch1State.lastCommit,
+            epoch2State.lastCommit
+        ]
+        XCTAssertNotNil(
+            GroupRatchetRecovery.state(
+                from: descriptor(history: validHistory),
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+
+        let duplicateEpochHistory = [
+            epoch0State.lastCommit,
+            epoch1State.lastCommit,
+            epoch1State.lastCommit,
+            epoch2State.lastCommit
+        ]
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptor(history: duplicateEpochHistory),
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+
+        let brokenLinkCommit = MLSGroupCommitSummary(
+            operation: epoch1State.lastCommit.operation,
+            actorFingerprint: epoch1State.lastCommit.actorFingerprint,
+            epoch: epoch1State.lastCommit.epoch,
+            committedAt: epoch1State.lastCommit.committedAt,
+            memberFingerprints: epoch1State.lastCommit.memberFingerprints,
+            previousTranscriptHash: Data("tampered-transcript".utf8),
+            transcriptHash: epoch1State.lastCommit.transcriptHash,
+            ratchetSecretDistribution: epoch1State.lastCommit.ratchetSecretDistribution
+        )
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptor(history: [epoch0State.lastCommit, brokenLinkCommit, epoch2State.lastCommit]),
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+
+        let missingDistributionCommit = MLSGroupCommitSummary(
+            operation: epoch1State.lastCommit.operation,
+            actorFingerprint: epoch1State.lastCommit.actorFingerprint,
+            epoch: epoch1State.lastCommit.epoch,
+            committedAt: epoch1State.lastCommit.committedAt,
+            memberFingerprints: epoch1State.lastCommit.memberFingerprints,
+            previousTranscriptHash: epoch1State.lastCommit.previousTranscriptHash,
+            transcriptHash: epoch1State.lastCommit.transcriptHash,
+            ratchetSecretDistribution: nil
+        )
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptor(history: [epoch0State.lastCommit, missingDistributionCommit, epoch2State.lastCommit]),
                 identity: member,
                 existing: staleMemberRatchet
             )
