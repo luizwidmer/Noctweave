@@ -204,6 +204,18 @@ Relay state persists through a normalized SQLite-backed store. The relay writes 
 
 Attachment chunk records can either store the encrypted chunk inline or reference an external blob backend. The Linux relay supports an IPFS-compatible attachment backend for storage offload: encrypted chunks are pinned as separate objects, while SQLite stores the CID, size, digest, and expiry metadata needed to verify and reconstruct the relay response. This is a storage scalability feature, not an anonymity layer; clients still interact with the relay API by default.
 
+### 6.2.1 IPFS-backed attachment offload
+
+The IPFS path is implemented in the Linux relay as an operator-selected attachment storage mode. Operators enable it with `--attachment-storage ipfs` or `NOCTYRA_ATTACHMENT_STORAGE=ipfs`, then provide:
+
+- `--ipfs-api-endpoint` / `NOCTYRA_IPFS_API_ENDPOINT`, defaulting to `http://127.0.0.1:5001`
+- `--ipfs-gateway-endpoint` / `NOCTYRA_IPFS_GATEWAY_ENDPOINT`, used as a fetch fallback
+- `--ipfs-timeout-seconds` / `NOCTYRA_IPFS_TIMEOUT_SECONDS`, defaulting to 10 seconds
+
+When a relay receives an encrypted attachment chunk, it posts the chunk to the configured IPFS HTTP API using `/api/v0/add` with `pin=true`, CIDv1, and raw leaves. The relay stores only an external attachment record in SQLite: backend name, CID locator, byte count, SHA-256 digest, and expiry time. Fetch reconstructs the normal relay attachment response by first trying `/api/v0/cat`; if that fails, the relay falls back to the configured gateway path `/ipfs/<cid>`. Returned bytes must match both the stored byte count and SHA-256 digest or the fetch fails closed.
+
+Expiry handling remains relay-owned. When attachment TTL cleanup deletes a chunk record, the relay performs a best-effort `/api/v0/pin/rm` for the stored CID. Unpinning is not treated as cryptographic erasure: IPFS peers or gateways may retain content they have seen. This is acceptable because Noctyra only sends already-encrypted attachment chunks to IPFS, but operators should still prefer a relay-controlled IPFS node or private IPFS cluster. Public gateways and public DHT provider lookups can leak CID interest and should not be treated as a privacy layer.
+
 Attachment storage is bounded by:
 
 - chunk size limits
@@ -366,6 +378,7 @@ The reference implementation delivers:
 - relay-managed TLS and reverse-proxy TLS deployment patterns
 - macOS relay, Linux relay parity path, and Docker deployment support
 - relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and software version
+- Linux relay IPFS-compatible attachment offload with pinned encrypted chunks, CID metadata in SQLite, digest-verified fetch, and best-effort unpin on TTL cleanup
 - optional relay-advertised hidden-retrieval cover queries
 - optional relay-advertised replicated XOR-PIR for non-colluding replicated buckets, with padded query shares, fixed-size response shares, PIR plan-integrity validation, and replica-set metadata validation
 - optional relay-advertised onion packet support with ML-KEM per-hop wrapping and AES-GCM layer protection
