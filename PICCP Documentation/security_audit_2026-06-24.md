@@ -215,14 +215,14 @@ No high-severity implementation findings remain from this pass. This does not re
    - Release blocker: no.
 
 2. **Network anonymity remains out of scope**
-   - Current: metadata reduction only.
-   - Required for stronger claims: PIR, mixnet, onion routing, or cover traffic.
+   - Current: metadata reduction, replicated XOR-PIR primitives under a non-collusion assumption, onion packet primitives, mixnet batch/cover scheduling, and mixnet route-policy validation.
+   - Required for stronger claims: single-server cryptographic PIR, full mixnet deployment, continuous cover traffic, shared route selection, and network-wide latency scheduling.
    - Release blocker: no, provided the product does not claim network anonymity beyond metadata reduction.
 
 ### Low
 1. **Release engineering remains incomplete**
-   - Current: dependency SBOM and release signing policy are documented, with a deterministic machine-readable SBOM snapshot and local release verification script.
-   - Required: CI enforcement, required container vulnerability scanning, signed provenance attestations, and external audit.
+   - Current: dependency SBOM and release signing policy are documented, with deterministic machine-readable SBOM snapshots, a local release verification script, and local release provenance manifests.
+   - Required: final Apple notarization/signing artifact binding, public registry-pushed Docker digest binding if images are published, required container vulnerability scanning in release CI, and external audit.
 
 ## Verification Plan
 
