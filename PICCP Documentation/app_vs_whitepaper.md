@@ -3,7 +3,7 @@
 ## Overview
 This document summarizes the current Noctyra client + relay implementation against the PICCP whitepaper v0.8.
 
-Last reviewed: June 28, 2026.
+Last reviewed: June 29, 2026.
 
 ## Implemented Protocol Surface
 
@@ -41,6 +41,7 @@ Last reviewed: June 28, 2026.
 - Relay-backed group delivery uses signed group-ratchet envelopes stored in the group inbox for text, image attachments, and voice messages; clients fetch, decrypt, and acknowledge those envelopes with member actor proofs. Group acknowledgements are member-scoped, so one online member cannot remove a pending ciphertext before another member fetches it.
 - Group-ratchet envelopes can be submitted through a federated peer relay and forwarded to the group-owning relay under the same federation policy used by direct-message forwarding.
 - Route and state coverage verifies offline epoch refresh, replay across multiple missed epoch distributions, recovery from stale persisted group state, encrypted attachment retrieval after another group member has already acknowledged the group envelope, and federated group-ratchet delivery from one relay to another.
+- A repository-owned group protocol model checker exhaustively explores a bounded state space of signed update, join approval, member removal, self-leave, stale-epoch, forked-transcript, duplicate-member, creator-removal, and no-op commit cases against the real MLS epoch/transcript state type.
 - Clients fail closed when relay-backed group-ratchet state is missing instead of silently downgrading group sends to pairwise direct-message fan-out.
 - Relay metadata can advertise decentralized wake policy for jittered pull or bounded long-poll clients.
 - Curated federation with allow-list, coordinator directory, quorum, and signed snapshot controls.
@@ -51,7 +52,7 @@ Last reviewed: June 28, 2026.
 - Direct and group message plaintexts are padded into fixed-size buckets before AEAD. Relays therefore see padded ciphertext bucket sizes instead of exact text, attachment-descriptor, or voice-descriptor plaintext lengths. Core and Linux relay stores also reject oversized direct/group envelope payloads before storing them.
 - Release verification workflow wired to run the local SBOM, dependency, relay test, and optional scanner checks in CI.
 - Local release provenance manifests can be generated from the checked-out commit, SBOM snapshots, package pins, Docker inputs, and release verifier inputs with `scripts/generate-release-provenance.py`; `scripts/verify-release.sh` validates the manifest schema and tracked-input hashes.
-- `scripts/verify-whitepaper-alignment.sh` runs focused checks for metadata timestamp bucketing, root-ratchet visible timestamp bucketing, relay pairing timestamp bucketing on core and Linux relay stores, hidden-retrieval cover-query safeguards, decentralized wake cycle planning, group-ratchet distribution validation and stale-state recovery, open-federation fallback/gateway simulation, Linux relay parity, and release provenance generation.
+- `scripts/verify-whitepaper-alignment.sh` runs focused checks for metadata timestamp bucketing, root-ratchet visible timestamp bucketing, relay pairing timestamp bucketing on core and Linux relay stores, hidden-retrieval cover-query safeguards, decentralized wake cycle planning, group-ratchet distribution validation and stale-state recovery, bounded group protocol model checking, open-federation fallback/gateway simulation, Linux relay parity, and release provenance generation.
 
 ### Client UX and Local Safety
 - Contact Book, Identity Management, Relays, Settings, My Code, and group chat flows.
@@ -102,6 +103,13 @@ Last reviewed: June 28, 2026.
 - Relay metadata can advertise mixnet scheduling support, batch interval, minimum batch size, cover packets per batch, and maximum release delay. The mac relay UI and Linux relay CLI can configure this advertisement.
 - This adds cover-packet and batching machinery, but still does not prove full mixnet deployment because continuous network cover traffic, shared route selection, and network-wide latency policy remain outside the current implementation.
 
+## Current Group-State Verification Alignment Pass
+- Core group protocol model checking now explores bounded commit sequences across update, join approval, member removal, and self-leave transitions.
+- The checker applies commits against the same `MLSGroupEpochState` transcript and tree-hash machinery used by relay group descriptors.
+- Accepted transitions must advance exactly one epoch, bind the previous transcript, produce a new transcript, and keep commit summaries aligned with the resulting member set.
+- Invalid transitions cover replayed/stale epochs, forked previous transcripts, wrong group IDs, create commits after initialization, unauthorized actors, duplicate member adds, creator removal, and no-op commits.
+- This materially improves regression coverage around group state evolution, but it is finite repository-owned model checking rather than a mechanized external MLS security proof.
+
 ## Current Message-Size Alignment Pass
 - Direct-message bodies now use a versioned padded plaintext envelope before AES-GCM encryption.
 - MLS-derived group message bodies use the same padded plaintext envelope.
@@ -119,14 +127,14 @@ Last reviewed: June 28, 2026.
 ## Whitepaper Limits That Remain True
 - No single-server cryptographic PIR deployment.
 - No full mixnet deployment. The implementation now has onion packet and mixnet scheduling primitives plus relay advertisement, but does not provide continuous network cover traffic, shared route selection policy, or network-wide latency scheduling.
-- No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and bounded rejoin recovery, and group ratchet epoch secrets can be distributed through ML-KEM-sealed member shares. Relay-backed text, image, and voice bodies now use the group-inbox ratchet path, and clients no longer preserve the old pairwise group fallback.
+- No full MLS-class formal group cryptographic protocol in the default shipped group engine; signed group commits protect registry updates, self-leave, join approval, stale-epoch rejection, missed-commit rejection, and bounded rejoin recovery, and group ratchet epoch secrets can be distributed through ML-KEM-sealed member shares. Relay-backed text, image, and voice bodies now use the group-inbox ratchet path, clients no longer preserve the old pairwise group fallback, and bounded model checking covers group state evolution, but this is still not an external formal MLS proof.
 - No claim of protection against a compromised OS or malicious device vendor.
 - No autonomous public DHT release mode; public-network adapters remain deferred until poisoning, churn, flooding, and operator-risk controls are externally validated.
 - No centralized push-notification server by design, so closed-app instant delivery remains out of scope. Compatible pull, intent, or long-poll clients can stage encrypted direct and group ciphertext for later unlocked processing.
 
 ## Alignment Summary
-- **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, coordinator-assisted federation, temporal-bucket timestamp minimization, fixed-size message-size buckets, fixed-size hidden-retrieval cover-query safeguards, replicated XOR-PIR primitive support, onion packet primitive support, mixnet batch/cover scheduling primitive support, decentralized wake cycle planning, ciphertext-only direct/group prefetch staging, group-ratchet epoch-secret distribution validation, fail-closed retained-epoch recovery, Linux relay parity for the same group and retrieval checks, and repository-owned whitepaper verification/provenance checks.
-- **Partially aligned**: anonymity-strength metadata protection, PIR-class hidden retrieval, MLS-class group cryptography, autonomous open federation, and closed-app delivery. Current controls now enforce deterministic bucketing, fixed ciphertext-size buckets for message bodies, exact cover-response validation, signed registry commits, MLS epoch state, group-context AEAD binding, structurally validated ML-KEM member shares, retained epoch replay, auditable wake scheduling, ciphertext-only direct/group staging, replicated XOR-PIR under a non-collusion assumption, per-hop onion packet wrapping, and deterministic mixnet batch/cover scheduling, but these do not claim strong anonymity, single-server cryptographic PIR, formal MLS proofs, public DHT release readiness, full mixnet deployment, or guaranteed background delivery.
+- **Aligned**: PQ identity, PQ session establishment, prekey handshake, ratcheting, rotation/burn continuity, relay-backed messaging, authenticated relay state changes, attachment controls, relay metadata, TLS deployment modes, coordinator-assisted federation, temporal-bucket timestamp minimization, fixed-size message-size buckets, fixed-size hidden-retrieval cover-query safeguards, replicated XOR-PIR primitive support, onion packet primitive support, mixnet batch/cover scheduling primitive support, decentralized wake cycle planning, ciphertext-only direct/group prefetch staging, group-ratchet epoch-secret distribution validation, fail-closed retained-epoch recovery, bounded group-state model checking, Linux relay parity for the same group and retrieval checks, and repository-owned whitepaper verification/provenance checks.
+- **Partially aligned**: anonymity-strength metadata protection, PIR-class hidden retrieval, MLS-class group cryptography, autonomous open federation, and closed-app delivery. Current controls now enforce deterministic bucketing, fixed ciphertext-size buckets for message bodies, exact cover-response validation, signed registry commits, MLS epoch state, group-context AEAD binding, structurally validated ML-KEM member shares, retained epoch replay, bounded group-state model checking, auditable wake scheduling, ciphertext-only direct/group staging, replicated XOR-PIR under a non-collusion assumption, per-hop onion packet wrapping, and deterministic mixnet batch/cover scheduling, but these do not claim strong anonymity, single-server cryptographic PIR, formal MLS proofs, public DHT release readiness, full mixnet deployment, or guaranteed background delivery.
 - **Deferred**: full mixnet deployment, autonomous public DHT release mode, external audit, Apple notarized artifact provenance, registry-pushed Docker image provenance, and formal MLS-class proof work.
 
 ## Next Alignment Targets
