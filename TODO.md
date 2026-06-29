@@ -130,6 +130,7 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Align group retained-history chain validation: core and Linux relay models now expose `MLSGroupEpochHistoryValidator`; client recovery fails closed unless retained epoch history is non-empty, duplicate-free, transcript-linked, contiguous within the retained window, and ends at the advertised current commit.
 - [x] Align retained-history fault-injection coverage: client-state group recovery now proves clean retained histories recover and duplicate epochs, broken transcript links, and missing retained secret distributions fail closed.
 - [x] Align open-federation cache-failure simulation: core discovery now verifies failed refreshes can use live cached nodes but evict expired cached nodes instead of returning stale peers.
+- [x] Shrink the next-alignment list: focused verification now includes coordinator signed-snapshot listing and curated coordinator-backed forwarding, and completed retained-history, open-federation, PIR promotion, and release-origin policy bullets are removed from the active target list.
 
 ## Deferred / open decisions
 - [x] Revisit open federation mode design and re-enable open-federation UX paths with coordinator throttles + reachability checks
