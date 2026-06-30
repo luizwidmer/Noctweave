@@ -991,6 +991,27 @@ final class RelayHandler: ChannelInboundHandler {
         switch relayConfiguration.federation.mode {
         case .solo:
             return eventLoop.makeSucceededFuture(.error("Relay is not configured for federation forwarding."))
+        case .manual:
+            guard relayConfiguration.federationAllowList.contains(destination) else {
+                return eventLoop.makeSucceededFuture(.error("Manual federation: destination relay is not in the node list."))
+            }
+            return fetchRelayInfo(from: destination, on: eventLoop).map { info in
+                guard let info else {
+                    return .error("Federation check failed: destination relay did not report its configuration.")
+                }
+                guard info.federation.mode == .manual else {
+                    return .error("Federation mismatch: destination relay is not manual.")
+                }
+                guard info.kind == .standard else {
+                    return .error("Manual federation requires destination relay kind standard.")
+                }
+                if let name = self.relayConfiguration.federation.name,
+                   !name.isEmpty,
+                   info.federation.name != name {
+                    return .error("Federation mismatch: destination relay name differs.")
+                }
+                return nil
+            }
         case .open:
             if !relayConfiguration.federationAllowList.isEmpty {
                 return eventLoop.makeSucceededFuture(.error("Open federation cannot use an allow list."))

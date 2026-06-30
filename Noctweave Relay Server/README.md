@@ -172,10 +172,10 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 - `--forwarding-timeout-seconds <seconds>`: timeout for relay-to-relay TCP/HTTP forwarding and federation checks (default: `8`, min `1`)
 - `--relay-kind <standard|discovery|bridge|archive|privateRelay|coordinator>`: advertise the relay kind (default: `standard`)
 - `--transport <tcp|http|websocket>`: advertised transport in relay info when no advertised endpoint is set (default: `tcp`)
-- `--federation-mode <solo|curated|open>`: advertise federation mode (default: `solo`)
+- `--federation-mode <solo|manual|curated|open>`: advertise federation mode (default: `solo`)
 - `--federation-name <name>`: optional federation name
 - `--federation-description <text>`: optional federation description
-- `--federation-allow <host:port,host:port>`: allow-list relays for curated federation (repeat or comma-separated)
+- `--federation-allow <host:port,host:port>`: manually listed relays for manual federation, or allow-list relays for curated federation (repeat or comma-separated)
 - `--allow-private-federation-endpoints <true|false>`: permit open-federation registration/forwarding to loopback, LAN, or private addresses (default: `false`; use only for an isolated development network)
 - `--curated-strict-policy <true|false>`: enforce allow-list + coordinator quorum for curated forwarding (default: `true`)
 - `--curated-coordinator-quorum <count>`: minimum coordinators that must report destination relay as healthy (default: `1`)
@@ -233,6 +233,17 @@ Security note:
 - Linux relay verifies actor-proof signatures when `liboqs` is available at runtime (included in the Docker image).
 - If `liboqs` is not available, actor-proof mutations are fail-closed.
 - See `Noctweave Documentation/relay_ops_hardening_guide.md` for TLS proxying, firewall, secrets, storage, federation, DHT, and log hygiene guidance.
+
+### Manual federation
+
+When `federation.mode=manual`, forwarding is intentionally simple and operator-managed:
+
+1. Destination relay endpoint must be present in `--federation-allow`.
+2. Destination relay must advertise `federation.mode=manual`.
+3. Destination relay must advertise relay kind `standard`.
+4. If federation name is set, destination name must match.
+
+Manual mode does not use coordinator quorum, signed directory snapshots, open-federation DHT records, or peer exchange. It is intended for small meshes where operators directly maintain the node list.
 
 ### Curated strict policy
 

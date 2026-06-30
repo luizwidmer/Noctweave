@@ -1376,6 +1376,25 @@ public final class RelayServer {
         switch configuration.federation.mode {
         case .solo:
             return .error("Relay is not configured for federation forwarding.")
+        case .manual:
+            guard configuration.federationAllowList.contains(destination) else {
+                return .error("Manual federation: destination relay is not in the node list.")
+            }
+            guard let info = try await fetchRelayInfo(endpoint: destination) else {
+                return .error("Federation check failed: destination relay did not report its configuration.")
+            }
+            guard info.federation.mode == .manual else {
+                return .error("Federation mismatch: destination relay is not manual.")
+            }
+            guard info.kind == .standard else {
+                return .error("Manual federation requires destination relay kind standard.")
+            }
+            if let name = configuration.federation.name,
+               !name.isEmpty,
+               info.federation.name != name {
+                return .error("Federation mismatch: destination relay name differs.")
+            }
+            return nil
         case .open:
             if !configuration.federationAllowList.isEmpty {
                 return .error("Open federation cannot use an allow list.")

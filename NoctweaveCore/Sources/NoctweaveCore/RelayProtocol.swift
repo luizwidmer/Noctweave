@@ -71,6 +71,7 @@ public enum RelayKind: String, Codable, CaseIterable {
 
 public enum FederationMode: String, Codable, CaseIterable {
     case solo
+    case manual
     case curated
     case open
 }

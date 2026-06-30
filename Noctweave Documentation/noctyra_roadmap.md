@@ -75,8 +75,9 @@ The Apple client applications and macOS GUI relay app are maintained outside thi
 ## Federation And Discovery
 
 - [x] Solo relay mode
+- [x] Manual standard-relay federation mode
 - [x] Curated federation mode
-- [x] Curated/open network isolation policy
+- [x] Manual/curated/open network isolation policy
 - [x] Coordinator registration and heartbeat routes
 - [x] Coordinator freshness filtering
 - [x] ML-DSA signed coordinator directory snapshots
@@ -198,5 +199,5 @@ These are intentionally not release blockers unless a future release claims them
 - Noctyra does not rely on centralized push notifications in the public protocol.
 - IPFS attachment offload is a storage feature, not an anonymity layer.
 - Open federation remains bounded by signed records, endpoint policy, cache limits, and poisoning/flood controls.
-- Curated and open federation modes remain separate network models.
+- Manual, curated, and open federation modes remain separate network models.
 - Relay operators should prefer TLS termination, minimal logs, explicit storage retention policy, and private IPFS infrastructure when enabling attachment offload.

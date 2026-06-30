@@ -269,15 +269,20 @@ The system therefore uses relay polling and foreground/background client fetch b
 
 ## 7.1 Modes
 
-The relay supports three federation modes:
+The relay supports four federation modes:
 
 - solo
+- manual
 - curated
 - open
 
 These modes are not cosmetic labels. They affect routing rules and compatibility expectations.
 
-## 7.2 Curated federation
+## 7.2 Manual federation
+
+Manual federation is the simplest multi-relay mode. Operators maintain a direct list of peer relay endpoints, and forwarding is permitted only when the destination is in that list, reports `manual` federation mode, reports relay kind `standard`, and matches the configured federation name when one is set. Manual mode does not use coordinator quorum, signed directory snapshots, DHT records, or peer exchange. It is intended for small operator-managed meshes.
+
+## 7.3 Curated federation
 
 Curated federation uses:
 
@@ -288,13 +293,13 @@ Curated federation uses:
 
 This creates a managed universe where forwarding can be restricted to approved relays and where directory responses can be authenticated.
 
-## 7.3 Open federation
+## 7.4 Open federation
 
 Open federation operates in a coordinator-assisted form with optional signed-record discovery. Nodes register, advertise health, and exchange directory information through coordinator infrastructure. Open relays can also explicitly enable relay-native DHT node mode: they accept and serve signed short-lived relay endpoint records over the Noctyra relay protocol, enforce namespace, signature, lifetime, public-endpoint, total-record, per-host, and query-size limits, and advertise bounded peer exchange hints through relay info. Reachability checks, throttling, public-endpoint restrictions, signed directory validation, and freshness filtering are part of the design. A production-grade autonomous public-network adapter such as BEP5 or libp2p remains out of release scope, and release verification rejects shipped source paths that introduce BEP5/libp2p/Kademlia adapter code.
 
 In other words, open federation is implemented for coordinator snapshots, bounded peer exchange, explicit relay-native DHT nodes, and HTTP sidecar integration, but it is not an unbounded autonomous public DHT network in the release profile.
 
-## 7.4 Relay-to-relay forwarding hardening
+## 7.5 Relay-to-relay forwarding hardening
 
 Relay-to-relay forwarding includes the following hardening properties:
 

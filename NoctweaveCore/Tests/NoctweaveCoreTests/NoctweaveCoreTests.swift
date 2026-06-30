@@ -7908,6 +7908,88 @@ final class NoctweaveCoreTests: XCTestCase {
         }
     }
 
+    func testManualFederationForwardsBetweenStandardListedRelays() async throws {
+        let federation = FederationDescriptor(mode: .manual, name: "manual-mesh")
+        let relayAEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39526)
+        let relayBEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39527)
+
+        let relayA = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                federationAllowList: [relayBEndpoint]
+            )
+        )
+        let relayB = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                federationAllowList: [relayAEndpoint]
+            )
+        )
+
+        let startedA = expectation(description: "relay A started (manual federation)")
+        relayA.onEvent = { event in
+            if case .started = event {
+                startedA.fulfill()
+            }
+        }
+        let startedB = expectation(description: "relay B started (manual federation)")
+        relayB.onEvent = { event in
+            if case .started = event {
+                startedB.fulfill()
+            }
+        }
+
+        try relayA.start(host: "0.0.0.0", port: relayAEndpoint.port)
+        try relayB.start(host: "0.0.0.0", port: relayBEndpoint.port)
+        defer {
+            relayA.stop()
+            relayB.stop()
+        }
+        await fulfillment(of: [startedA, startedB], timeout: 2.0)
+
+        let destinationAccessKey = SigningKeyPair()
+        let destinationInbox = InboxAddress.derived(from: destinationAccessKey.publicKeyData)
+        let envelope = Envelope(
+            conversationId: "manual-federation-test",
+            senderFingerprint: "sender-fp",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x01, count: 12),
+                ciphertext: Data([0xFA, 0xCE]),
+                tag: Data(repeating: 0x02, count: 16)
+            ),
+            signature: Data([0xAA])
+        )
+
+        let relayAClient = RelayClient(endpoint: relayAEndpoint)
+        let deliverResponse = try await relayAClient.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: destinationInbox,
+                    routingToken: destinationInbox,
+                    envelope: envelope,
+                    destinationRelay: relayBEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .delivered)
+
+        let relayBClient = RelayClient(endpoint: relayBEndpoint)
+        let fetchResponse = try await registerAndFetch(
+            client: relayBClient,
+            inboxId: destinationInbox,
+            accessKey: destinationAccessKey,
+            maxCount: 10
+        )
+        XCTAssertEqual(fetchResponse.type, .messages)
+        XCTAssertEqual(fetchResponse.messages?.first?.id, envelope.id)
+    }
+
     func testCuratedStrictPolicyRequiresCoordinatorQuorum() async throws {
         let federation = FederationDescriptor(mode: .curated, name: "mesh-d")
         let coordinatorAPrivateKey = FederationDirectorySignature.privateKeyData(from: nil)

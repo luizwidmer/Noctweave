@@ -608,6 +608,16 @@ private func parseHiddenRetrievalReplicas(_ value: String) -> [HiddenRetrievalPI
 }
 
 let config = ServerConfig.parse()
+if config.federationMode == .manual {
+    guard config.relayKind == .standard else {
+        print("[relay] manual federation requires --relay-kind standard")
+        exit(2)
+    }
+    guard !config.federationAllowList.isEmpty else {
+        print("[relay] manual federation requires at least one --federation-allow endpoint")
+        exit(2)
+    }
+}
 let fileURL: URL?
 if let dataDir = config.dataDir {
     try FileManager.default.createDirectory(

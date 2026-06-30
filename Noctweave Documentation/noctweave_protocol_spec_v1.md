@@ -50,7 +50,7 @@ TLS may be terminated by the relay or by an upstream reverse proxy. Clients reco
 
 ## Federation
 
-Relays can operate in `solo`, `curated`, or `open` federation mode. Curated federation uses allow lists, coordinator directory state, signed snapshots, and optional inter-relay forwarding tokens. Open federation uses signed short-lived relay records, bounded native relay-protocol DHT node mode, and capped peer exchange hints when enabled by the operator.
+Relays can operate in `solo`, `manual`, `curated`, or `open` federation mode. Manual federation uses an operator-maintained list of standard relay peers and no coordinator or discovery layer. Curated federation uses allow lists, coordinator directory state, signed snapshots, and optional inter-relay forwarding tokens. Open federation uses signed short-lived relay records, bounded native relay-protocol DHT node mode, and capped peer exchange hints when enabled by the operator.
 
 Coordinator nodes organize relay directories and health state; they do not need to carry user messages.
 

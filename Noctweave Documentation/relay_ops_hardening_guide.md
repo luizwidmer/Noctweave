@@ -108,6 +108,8 @@ Curated federation should use:
 --curated-coordinator-quorum 1
 ```
 
+Manual federation should use `--federation-mode manual` with a short, explicit `--federation-allow` node list. Use it for small standard-relay meshes where operators directly exchange endpoint lists and do not want coordinator quorum, signed directory snapshots, DHT records, or peer exchange.
+
 Open federation is more exposed. Keep `--allow-private-federation-endpoints false`, require TLS, use public advertised endpoints, and monitor peer churn.
 
 ## Open Federation And DHT
