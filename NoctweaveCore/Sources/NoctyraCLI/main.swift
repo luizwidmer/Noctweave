@@ -49,6 +49,10 @@ private struct CommandRunner {
             try writeJSON(contact)
         case "contacts":
             try await writeJSON(headlessClient(from: options).contacts())
+        case "continuity-audit":
+            try await writeJSON(headlessClient(from: options).continuityAudit())
+        case "purge-continuity-audit":
+            try await purgeContinuityAudit(options: options)
         case "send":
             try await sendText(options: options)
         case "receive":
@@ -164,6 +168,12 @@ private struct CommandRunner {
         try writeJSON(result)
     }
 
+    private func purgeContinuityAudit(options: ParsedOptions) async throws {
+        try requireConfirmation(options, key: "--confirm", expected: "PURGE")
+        let result = try await headlessClient(from: options).purgeContinuityAudit()
+        try writeJSON(result)
+    }
+
     private func send(_ request: RelayRequest, options: ParsedOptions) async throws {
         let endpoint = try endpoint(from: options)
         let authToken = options.value(for: "--auth")
@@ -249,6 +259,8 @@ private struct CommandRunner {
           NoctyraCLI import-contact --code <contact-code> [--state path]
           NoctyraCLI import-contact --file contact.noctweave --password <password> [--state path]
           NoctyraCLI contacts [--state path]
+          NoctyraCLI continuity-audit [--state path]
+          NoctyraCLI purge-continuity-audit --confirm PURGE [--state path]
           NoctyraCLI send --to <contact-name|fingerprint|uuid> --text <message> [--state path]
           NoctyraCLI receive [--max count] [--long-poll seconds] [--state path]
           NoctyraCLI allow-identity-reset --contact <contact> --allow true [--state path]

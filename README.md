@@ -80,7 +80,7 @@ swift run --package-path NoctweaveCore NoctyraCLI init --display-name Alice --re
 swift run --package-path NoctweaveCore NoctyraCLI export-contact
 ```
 
-The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` relay endpoints. It can initialize a headless identity, register an inbox, exchange contact offers, send direct encrypted text messages, fetch/decrypt received direct messages, rotate or burn identities with explicit confirmation, and still issue raw relay requests for diagnostics. See [`Noctweave Documentation/noctyra_cli_usage.md`](Noctweave%20Documentation/noctyra_cli_usage.md).
+The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` relay endpoints. It can initialize a headless identity, register an inbox, exchange contact offers, send direct encrypted text messages, fetch/decrypt received direct messages, inspect or purge continuity audit events, rotate or burn identities with explicit confirmation, and still issue raw relay requests for diagnostics. See [`Noctweave Documentation/noctyra_cli_usage.md`](Noctweave%20Documentation/noctyra_cli_usage.md).
 
 ## Documentation Map
 

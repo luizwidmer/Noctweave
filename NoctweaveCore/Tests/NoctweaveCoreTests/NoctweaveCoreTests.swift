@@ -158,6 +158,20 @@ final class NoctweaveCoreTests: XCTestCase {
         _ = try await alice.sendText(to: "Bob CLI", text: "after burn")
         let afterBurnBodies = try await bob.receive(maxCount: 10).map(\.body)
         XCTAssertEqual(afterBurnBodies, [.text("after burn")])
+
+        let aliceAudit = try await alice.continuityAudit()
+        XCTAssertEqual(aliceAudit.events.map(\.kind), [.identityRotated, .identityBurned])
+        XCTAssertEqual(aliceAudit.fingerprint, burn.newFingerprint)
+
+        let bobAudit = try await bob.continuityAudit()
+        XCTAssertEqual(bobAudit.events.map(\.kind), [.contactRotationReceived, .contactResetReceived])
+        XCTAssertEqual(bobAudit.events.map(\.contactDisplayName), ["Alice CLI", "Alice CLI"])
+
+        let purge = try await bob.purgeContinuityAudit()
+        XCTAssertEqual(purge.profileId, bobAudit.profileId)
+        XCTAssertEqual(purge.purgedCount, 2)
+        let purgedAudit = try await bob.continuityAudit()
+        XCTAssertTrue(purgedAudit.events.isEmpty)
     }
 
     func testHiddenRetrievalPlannerExtractsTargetFromCoverResponse() throws {

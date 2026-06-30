@@ -79,6 +79,18 @@ List contacts:
 NoctyraCLI contacts
 ```
 
+Inspect the active identity continuity audit:
+
+```sh
+NoctyraCLI continuity-audit
+```
+
+Purge the active identity continuity audit:
+
+```sh
+NoctyraCLI purge-continuity-audit --confirm PURGE
+```
+
 Send a direct text message:
 
 ```sh

@@ -80,6 +80,30 @@ public struct HeadlessIdentityChangeResult: Codable, Equatable {
     }
 }
 
+public struct HeadlessContinuityAudit: Codable, Equatable {
+    public let profileId: UUID
+    public let fingerprint: String
+    public let events: [ContinuityEvent]
+
+    public init(profileId: UUID, fingerprint: String, events: [ContinuityEvent]) {
+        self.profileId = profileId
+        self.fingerprint = fingerprint
+        self.events = events
+    }
+}
+
+public struct HeadlessContinuityAuditPurgeResult: Codable, Equatable {
+    public let profileId: UUID
+    public let fingerprint: String
+    public let purgedCount: Int
+
+    public init(profileId: UUID, fingerprint: String, purgedCount: Int) {
+        self.profileId = profileId
+        self.fingerprint = fingerprint
+        self.purgedCount = purgedCount
+    }
+}
+
 public enum HeadlessMessagingClientError: Error, Equatable {
     case stateAlreadyExists
     case missingState
@@ -207,6 +231,23 @@ public actor HeadlessMessagingClient {
         try await loadState().contacts.sorted { lhs, rhs in
             lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
         }
+    }
+
+    public func continuityAudit() async throws -> HeadlessContinuityAudit {
+        let state = try await loadState()
+        return continuityAudit(for: state)
+    }
+
+    public func purgeContinuityAudit() async throws -> HeadlessContinuityAuditPurgeResult {
+        var state = try await loadState()
+        let before = continuityAudit(for: state)
+        state.purgeContinuityEvents()
+        try await store.save(state)
+        return HeadlessContinuityAuditPurgeResult(
+            profileId: before.profileId,
+            fingerprint: before.fingerprint,
+            purgedCount: before.events.count
+        )
     }
 
     public func setContactIdentityReset(selector: String, allow: Bool) async throws -> Contact {
@@ -596,6 +637,15 @@ public actor HeadlessMessagingClient {
             relay: state.relay,
             contactCount: state.contacts.count,
             conversationCount: state.conversations.count
+        )
+    }
+
+    private func continuityAudit(for state: ClientState) -> HeadlessContinuityAudit {
+        let profile = state.identityProfile(id: state.activeIdentityId)
+        return HeadlessContinuityAudit(
+            profileId: state.activeIdentityId,
+            fingerprint: state.identity.fingerprint,
+            events: profile?.continuityEvents ?? []
         )
     }
 
