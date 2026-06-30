@@ -116,6 +116,10 @@ docker image inspect noctyra-relay:<version> --format '{{.Id}}'
    - Docker base image packages
    - Apple SDK release notes for CryptoKit/security fixes
 
+8. Review `noctweave_core_stability_policy.md` and record any source, CLI,
+   wire-format, persisted-state, Docker-flag, or relay API compatibility changes
+   in release notes.
+
 ## Release Packaging Policy
 
 Every release should have:
@@ -126,6 +130,9 @@ Every release should have:
 - Release notes that identify dependency changes, cryptographic dependency changes, and any deliberate storage/schema reset requirements.
 
 Cryptographic dependency updates require a dedicated release note section and should not be bundled silently with unrelated UI changes.
+
+Public `NoctweaveCore` releases must also follow the compatibility rules in
+`noctweave_core_stability_policy.md`.
 
 ## Red Flags
 

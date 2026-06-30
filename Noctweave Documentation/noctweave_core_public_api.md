@@ -1,6 +1,6 @@
 # NoctweaveCore Public API Notes
 
-`NoctweaveCore` is the shared Swift package for protocol implementers and Noctyra tooling. The package is not yet source-stability frozen, but public APIs should now be treated as candidate library surface rather than app-private implementation detail.
+`NoctweaveCore` is the shared Swift package for protocol implementers and Noctyra tooling. The package is not yet source-stability frozen, but public APIs should now be treated as candidate library surface rather than app-private implementation detail. Compatibility expectations are defined in `noctweave_core_stability_policy.md`.
 
 ## Package Products
 
@@ -33,4 +33,4 @@
 
 ## Stability Rules Before 1.0
 
-Public types may still change before the first stable release. Changes should be intentional, documented in the roadmap, and covered by tests when they affect wire format, state format, relay compatibility, or headless client behavior.
+Public types may still change before the first stable release. Changes should be intentional, documented in the roadmap or protocol docs, and covered by tests when they affect wire format, state format, relay compatibility, CLI behavior, or headless client behavior. See `noctweave_core_stability_policy.md` for the full pre-1.0 and post-1.0 rules.

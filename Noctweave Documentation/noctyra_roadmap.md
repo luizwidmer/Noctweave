@@ -176,7 +176,7 @@ These are finite release gates. They should stay bounded to a concrete artifact,
 - [ ] Add CI container build and vulnerability scan evidence.
 - [ ] Add a minimal public operator quickstart for common reverse-proxy deployments.
 - [ ] Add signed release artifact instructions for relay binaries and Docker images.
-- [ ] Add semantic-versioning and source-stability policy for public `NoctweaveCore` releases.
+- [x] Add semantic-versioning and source-stability policy for public `NoctweaveCore` releases.
 
 ## Deferred Research
 

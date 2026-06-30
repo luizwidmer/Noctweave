@@ -87,6 +87,7 @@ The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` rela
 - Relay API: [`noctyra_relay_openapi.yaml`](Noctweave%20Documentation/noctyra_relay_openapi.yaml)
 - Protocol spec: [`noctweave_protocol_spec_v1.md`](Noctweave%20Documentation/noctweave_protocol_spec_v1.md)
 - Core public API notes: [`noctweave_core_public_api.md`](Noctweave%20Documentation/noctweave_core_public_api.md)
+- Core stability policy: [`noctweave_core_stability_policy.md`](Noctweave%20Documentation/noctweave_core_stability_policy.md)
 - Wire format and test vectors: [`wire_format_and_test_vectors.md`](Noctweave%20Documentation/wire_format_and_test_vectors.md)
 - Relay hardening guide: [`relay_ops_hardening_guide.md`](Noctweave%20Documentation/relay_ops_hardening_guide.md)
 - Security requirements: [`security_requirements.md`](Noctweave%20Documentation/security_requirements.md)
