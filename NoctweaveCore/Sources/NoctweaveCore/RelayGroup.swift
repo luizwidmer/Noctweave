@@ -423,18 +423,58 @@ public struct RelayGroupJoinRequest: Codable, Equatable, Identifiable {
     public let id: UUID
     public let groupId: UUID
     public let requester: RelayGroupMemberProfile
+    public let invitedFingerprint: String?
     public let requestedAt: Date
 
     public init(
         id: UUID = UUID(),
         groupId: UUID,
         requester: RelayGroupMemberProfile,
+        invitedFingerprint: String? = nil,
         requestedAt: Date = Date()
     ) {
         self.id = id
         self.groupId = groupId
         self.requester = requester
+        self.invitedFingerprint = invitedFingerprint
         self.requestedAt = requestedAt
+    }
+}
+
+public struct RelayGroupInvitation: Codable, Equatable, Identifiable {
+    public let id: UUID
+    public let groupId: UUID
+    public let title: String
+    public let createdByFingerprint: String
+    public let invitedFingerprint: String
+    public let inboxId: String
+    public let epoch: UInt64
+    public let createdAt: Date
+    public let updatedAt: Date
+    public let invitedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        groupId: UUID,
+        title: String,
+        createdByFingerprint: String,
+        invitedFingerprint: String,
+        inboxId: String,
+        epoch: UInt64,
+        createdAt: Date,
+        updatedAt: Date,
+        invitedAt: Date = Date()
+    ) {
+        self.id = id
+        self.groupId = groupId
+        self.title = title
+        self.createdByFingerprint = createdByFingerprint
+        self.invitedFingerprint = invitedFingerprint
+        self.inboxId = inboxId
+        self.epoch = epoch
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.invitedAt = invitedAt
     }
 }
 
@@ -511,6 +551,7 @@ public struct CreateGroupRequest: Codable, Equatable {
     public let title: String
     public let creatorFingerprint: String
     public let memberFingerprints: [String]
+    public let invitedFingerprints: [String]
     public let creatorProfile: RelayGroupMemberProfile?
     public let memberProfiles: [RelayGroupMemberProfile]?
     public let initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution?
@@ -521,6 +562,7 @@ public struct CreateGroupRequest: Codable, Equatable {
         title: String,
         creatorFingerprint: String,
         memberFingerprints: [String],
+        invitedFingerprints: [String] = [],
         creatorProfile: RelayGroupMemberProfile? = nil,
         memberProfiles: [RelayGroupMemberProfile]? = nil,
         initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil,
@@ -530,6 +572,7 @@ public struct CreateGroupRequest: Codable, Equatable {
         self.title = title
         self.creatorFingerprint = creatorFingerprint
         self.memberFingerprints = memberFingerprints
+        self.invitedFingerprints = invitedFingerprints
         self.creatorProfile = creatorProfile
         self.memberProfiles = memberProfiles
         self.initialRatchetSecretDistribution = initialRatchetSecretDistribution
@@ -543,6 +586,7 @@ public struct CreateGroupRequest: Codable, Equatable {
                 title: title,
                 creatorFingerprint: creatorFingerprint,
                 memberFingerprints: memberFingerprints,
+                invitedFingerprints: invitedFingerprints,
                 creatorProfile: creatorProfile,
                 memberProfiles: memberProfiles,
                 initialRatchetSecretDistribution: initialRatchetSecretDistribution,
@@ -556,15 +600,18 @@ public struct CreateGroupRequest: Codable, Equatable {
 public struct RequestGroupJoinRequest: Codable, Equatable {
     public let groupId: UUID
     public let requesterProfile: RelayGroupMemberProfile
+    public let invitedFingerprint: String?
     public let requesterProof: RelayActorProof?
 
     public init(
         groupId: UUID,
         requesterProfile: RelayGroupMemberProfile,
+        invitedFingerprint: String? = nil,
         requesterProof: RelayActorProof? = nil
     ) {
         self.groupId = groupId
         self.requesterProfile = requesterProfile
+        self.invitedFingerprint = invitedFingerprint
         self.requesterProof = requesterProof
     }
 
@@ -573,6 +620,34 @@ public struct RequestGroupJoinRequest: Codable, Equatable {
             RequestGroupJoinProofPayload(
                 groupId: groupId,
                 requesterProfile: requesterProfile,
+                invitedFingerprint: invitedFingerprint,
+                signedAt: proof.signedAt,
+                nonce: proof.nonce
+            )
+        )
+    }
+}
+
+public struct ListGroupInvitationsRequest: Codable, Equatable {
+    public let invitedFingerprint: String
+    public let limit: Int?
+    public let invitedProof: RelayActorProof?
+
+    public init(
+        invitedFingerprint: String,
+        limit: Int? = nil,
+        invitedProof: RelayActorProof? = nil
+    ) {
+        self.invitedFingerprint = invitedFingerprint
+        self.limit = limit
+        self.invitedProof = invitedProof
+    }
+
+    public func signableData(for proof: RelayActorProof) throws -> Data {
+        try GroupProofEncoder.encode(
+            ListGroupInvitationsProofPayload(
+                invitedFingerprint: invitedFingerprint,
+                limit: limit,
                 signedAt: proof.signedAt,
                 nonce: proof.nonce
             )
@@ -900,6 +975,7 @@ private struct CreateGroupProofPayload: Codable {
     let title: String
     let creatorFingerprint: String
     let memberFingerprints: [String]
+    let invitedFingerprints: [String]
     let creatorProfile: RelayGroupMemberProfile?
     let memberProfiles: [RelayGroupMemberProfile]?
     let initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution?
@@ -910,6 +986,14 @@ private struct CreateGroupProofPayload: Codable {
 private struct RequestGroupJoinProofPayload: Codable {
     let groupId: UUID
     let requesterProfile: RelayGroupMemberProfile
+    let invitedFingerprint: String?
+    let signedAt: Date
+    let nonce: UUID
+}
+
+private struct ListGroupInvitationsProofPayload: Codable {
+    let invitedFingerprint: String
+    let limit: Int?
     let signedAt: Date
     let nonce: UUID
 }

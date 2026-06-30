@@ -767,6 +767,7 @@ public final class RelayServer {
                     memberFingerprints: create.memberFingerprints,
                     creatorProfile: create.creatorProfile,
                     memberProfiles: create.memberProfiles,
+                    invitedFingerprints: create.invitedFingerprints,
                     initialRatchetSecretDistribution: create.initialRatchetSecretDistribution
                 )
                 return .group(group)
@@ -815,6 +816,24 @@ public final class RelayServer {
             }
             let groups = await store.listGroups(memberFingerprint: list.memberFingerprint, limit: list.limit)
             return .groups(groups)
+        case .listGroupInvitations:
+            guard let list = request.listGroupInvitations else {
+                return .error("Missing list invitations payload")
+            }
+            let invitedFingerprint = list.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !invitedFingerprint.isEmpty else {
+                return .error("Invalid fingerprint")
+            }
+            if let proofFailure = await validateActorProof(
+                list.invitedProof,
+                expectedFingerprint: invitedFingerprint,
+                expectedSigningKey: nil,
+                signableDataBuilder: { proof in try list.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            let invitations = await store.listGroupInvitations(list)
+            return .groupInvitations(invitations)
         case .updateGroup:
             guard let update = request.updateGroup else {
                 return .error("Missing update group payload")

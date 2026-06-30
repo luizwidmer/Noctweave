@@ -396,6 +396,7 @@ public actor HeadlessMessagingClient {
             title: request.title,
             creatorFingerprint: request.creatorFingerprint,
             memberFingerprints: request.memberFingerprints,
+            invitedFingerprints: request.invitedFingerprints,
             creatorProfile: request.creatorProfile,
             memberProfiles: request.memberProfiles,
             initialRatchetSecretDistribution: request.initialRatchetSecretDistribution,

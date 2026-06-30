@@ -507,6 +507,7 @@ public enum RelayRequestType: String, Codable {
     case createGroup
     case getGroup
     case listGroups
+    case listGroupInvitations
     case updateGroup
     case deleteGroup
     case requestGroupJoin
@@ -1065,6 +1066,7 @@ public struct RelayRequest: Codable, Equatable {
     public let createGroup: CreateGroupRequest?
     public let getGroup: GetGroupRequest?
     public let listGroups: ListGroupsRequest?
+    public let listGroupInvitations: ListGroupInvitationsRequest?
     public let updateGroup: UpdateGroupRequest?
     public let deleteGroup: DeleteGroupRequest?
     public let requestGroupJoin: RequestGroupJoinRequest?
@@ -1097,6 +1099,7 @@ public struct RelayRequest: Codable, Equatable {
         createGroup: CreateGroupRequest? = nil,
         getGroup: GetGroupRequest? = nil,
         listGroups: ListGroupsRequest? = nil,
+        listGroupInvitations: ListGroupInvitationsRequest? = nil,
         updateGroup: UpdateGroupRequest? = nil,
         deleteGroup: DeleteGroupRequest? = nil,
         requestGroupJoin: RequestGroupJoinRequest? = nil,
@@ -1128,6 +1131,7 @@ public struct RelayRequest: Codable, Equatable {
         self.createGroup = createGroup
         self.getGroup = getGroup
         self.listGroups = listGroups
+        self.listGroupInvitations = listGroupInvitations
         self.updateGroup = updateGroup
         self.deleteGroup = deleteGroup
         self.requestGroupJoin = requestGroupJoin
@@ -1220,6 +1224,10 @@ public struct RelayRequest: Codable, Equatable {
         RelayRequest(type: .listGroups, listGroups: request)
     }
 
+    public static func listGroupInvitations(_ request: ListGroupInvitationsRequest) -> RelayRequest {
+        RelayRequest(type: .listGroupInvitations, listGroupInvitations: request)
+    }
+
     public static func updateGroup(_ request: UpdateGroupRequest) -> RelayRequest {
         RelayRequest(type: .updateGroup, updateGroup: request)
     }
@@ -1282,6 +1290,7 @@ public struct RelayRequest: Codable, Equatable {
             createGroup: createGroup,
             getGroup: getGroup,
             listGroups: listGroups,
+            listGroupInvitations: listGroupInvitations,
             updateGroup: updateGroup,
             deleteGroup: deleteGroup,
             requestGroupJoin: requestGroupJoin,
@@ -1307,6 +1316,7 @@ public enum RelayResponseType: String, Codable {
     case prekeyBundle
     case group
     case groups
+    case groupInvitations
     case groupJoinRequests
     case federationNodes
     case info
@@ -1333,6 +1343,7 @@ public struct RelayResponse: Codable, Equatable {
     public let prekeyBundle: PrekeyBundle?
     public let group: RelayGroupDescriptor?
     public let groups: [RelayGroupDescriptor]?
+    public let groupInvitations: [RelayGroupInvitation]?
     public let groupJoinRequests: [RelayGroupJoinRequest]?
     public let federationNodes: [FederationNodeRecord]?
     public let federationSnapshot: FederationDirectorySnapshot?
@@ -1351,6 +1362,7 @@ public struct RelayResponse: Codable, Equatable {
         prekeyBundle: PrekeyBundle? = nil,
         group: RelayGroupDescriptor? = nil,
         groups: [RelayGroupDescriptor]? = nil,
+        groupInvitations: [RelayGroupInvitation]? = nil,
         groupJoinRequests: [RelayGroupJoinRequest]? = nil,
         federationNodes: [FederationNodeRecord]? = nil,
         federationSnapshot: FederationDirectorySnapshot? = nil,
@@ -1368,6 +1380,7 @@ public struct RelayResponse: Codable, Equatable {
         self.prekeyBundle = prekeyBundle
         self.group = group
         self.groups = groups
+        self.groupInvitations = groupInvitations
         self.groupJoinRequests = groupJoinRequests
         self.federationNodes = federationNodes
         self.federationSnapshot = federationSnapshot
@@ -1414,6 +1427,10 @@ public struct RelayResponse: Codable, Equatable {
 
     public static func groups(_ groups: [RelayGroupDescriptor]) -> RelayResponse {
         RelayResponse(type: .groups, groups: groups)
+    }
+
+    public static func groupInvitations(_ invitations: [RelayGroupInvitation]) -> RelayResponse {
+        RelayResponse(type: .groupInvitations, groupInvitations: invitations)
     }
 
     public static func groupJoinRequests(_ requests: [RelayGroupJoinRequest]) -> RelayResponse {

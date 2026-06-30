@@ -12,6 +12,7 @@ public actor RelayStore {
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
     private var groups: [UUID: RelayGroupDescriptor] = [:]
     private var groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:]
+    private var groupInvitations: [String: [RelayGroupInvitation]] = [:]
     private var openFederationDHTCache = OpenFederationDHTCandidateCache(
         configuration: OpenFederationDHTDiscoveryConfiguration(isEnabled: false)
     )
@@ -36,6 +37,7 @@ public actor RelayStore {
     private let maxPrekeyBundles = 10_000
     private let maxOneTimePrekeysPerBundle = 64
     private let maxGroupJoinRequests = 256
+    private let maxGroupInvitationsPerIdentity = 256
     private let maxGroups = 10_000
     private let maxGroupsPerCreator = 100
     private let maxGroupMembers = 256
@@ -618,6 +620,7 @@ public actor RelayStore {
         memberFingerprints: [String],
         creatorProfile: RelayGroupMemberProfile? = nil,
         memberProfiles: [RelayGroupMemberProfile]? = nil,
+        invitedFingerprints: [String] = [],
         initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil
     ) throws -> RelayGroupDescriptor {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -642,7 +645,10 @@ public actor RelayStore {
             .filter { !$0.isEmpty })
         normalizedMembers.formUnion(profileByFingerprint.keys)
         normalizedMembers.insert(creator)
-        guard normalizedMembers.count >= 2 else {
+        let normalizedInvitedFingerprints = Set(invitedFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty && $0 != creator && !normalizedMembers.contains($0) })
+        guard normalizedMembers.count >= 2 || !normalizedInvitedFingerprints.isEmpty else {
             throw RelayStoreError.notEnoughGroupMembers
         }
         guard normalizedMembers.count <= maxGroupMembers else {
@@ -693,6 +699,25 @@ public actor RelayStore {
             updatedAt: now
         )
         groups[group.id] = group
+        for fingerprint in normalizedInvitedFingerprints.sorted() {
+            var invitations = groupInvitations[fingerprint, default: []]
+            invitations.removeAll { $0.groupId == group.id }
+            invitations.insert(
+                RelayGroupInvitation(
+                    groupId: group.id,
+                    title: group.title,
+                    createdByFingerprint: group.createdByFingerprint,
+                    invitedFingerprint: fingerprint,
+                    inboxId: group.inboxId,
+                    epoch: group.epoch,
+                    createdAt: group.createdAt,
+                    updatedAt: group.updatedAt,
+                    invitedAt: now
+                ),
+                at: 0
+            )
+            groupInvitations[fingerprint] = Array(invitations.prefix(maxGroupInvitationsPerIdentity))
+        }
         try saveToDisk()
         return group
     }
@@ -716,6 +741,23 @@ public actor RelayStore {
             return lhs.createdAt > rhs.createdAt
         }
         return Array(list.prefix(min(500, max(0, limit ?? 500))))
+    }
+
+    public func listGroupInvitations(_ request: ListGroupInvitationsRequest) -> [RelayGroupInvitation] {
+        let fingerprint = request.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fingerprint.isEmpty else {
+            return []
+        }
+        var invitations = groupInvitations[fingerprint, default: []].filter { invitation in
+            groups[invitation.groupId] != nil
+        }
+        invitations.sort { lhs, rhs in
+            if lhs.invitedAt != rhs.invitedAt {
+                return lhs.invitedAt > rhs.invitedAt
+            }
+            return lhs.updatedAt > rhs.updatedAt
+        }
+        return Array(invitations.prefix(min(500, max(0, request.limit ?? 500))))
     }
 
     public func updateGroup(_ request: UpdateGroupRequest) throws -> RelayGroupDescriptor {
@@ -972,6 +1014,7 @@ public actor RelayStore {
         }
         groups.removeValue(forKey: request.groupId)
         groupJoinRequests.removeValue(forKey: request.groupId)
+        removeGroupInvitations(groupId: request.groupId)
         try saveToDisk()
     }
 
@@ -981,6 +1024,12 @@ public actor RelayStore {
         }
         guard let requester = normalizedMemberProfile(request.requesterProfile) else {
             throw RelayStoreError.invalidFingerprint
+        }
+        let invitedFingerprint = request.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let invitedFingerprint, !invitedFingerprint.isEmpty {
+            guard groupInvitations[invitedFingerprint, default: []].contains(where: { $0.groupId == group.id }) else {
+                throw RelayStoreError.unauthorizedGroupMutation
+            }
         }
         if group.members.contains(where: { $0.fingerprint == requester.fingerprint }) {
             throw RelayStoreError.alreadyGroupMember
@@ -994,6 +1043,7 @@ public actor RelayStore {
                 id: existing.id,
                 groupId: group.id,
                 requester: requester,
+                invitedFingerprint: invitedFingerprint?.isEmpty == false ? invitedFingerprint : existing.invitedFingerprint,
                 requestedAt: now
             )
             pending[existingIndex] = refreshed
@@ -1006,6 +1056,7 @@ public actor RelayStore {
         let joinRequest = RelayGroupJoinRequest(
             groupId: group.id,
             requester: requester,
+            invitedFingerprint: invitedFingerprint?.isEmpty == false ? invitedFingerprint : nil,
             requestedAt: now
         )
         pending.insert(joinRequest, at: 0)
@@ -1074,6 +1125,9 @@ public actor RelayStore {
             groupJoinRequests[group.id] = refreshedPending
         }
         if updated.members.contains(where: { $0.fingerprint == joinRequest.requester.fingerprint }) {
+            if let invitedFingerprint = joinRequest.invitedFingerprint {
+                removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
+            }
             try saveToDisk()
             return updated
         }
@@ -1104,6 +1158,25 @@ public actor RelayStore {
             groupJoinRequests[group.id] = pending
         }
         try saveToDisk()
+    }
+
+    private func removeGroupInvitation(groupId: UUID, invitedFingerprint: String) {
+        let fingerprint = invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fingerprint.isEmpty, var invitations = groupInvitations[fingerprint] else {
+            return
+        }
+        invitations.removeAll { $0.groupId == groupId }
+        if invitations.isEmpty {
+            groupInvitations.removeValue(forKey: fingerprint)
+        } else {
+            groupInvitations[fingerprint] = invitations
+        }
+    }
+
+    private func removeGroupInvitations(groupId: UUID) {
+        for fingerprint in Array(groupInvitations.keys) {
+            removeGroupInvitation(groupId: groupId, invitedFingerprint: fingerprint)
+        }
     }
 
     private func normalizedMemberProfile(_ profile: RelayGroupMemberProfile?) -> RelayGroupMemberProfile? {
@@ -1277,6 +1350,7 @@ public actor RelayStore {
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
         groups = snapshot.groups
         groupJoinRequests = snapshot.groupJoinRequests
+        groupInvitations = snapshot.groupInvitations
         pruneAttachments(now: Date())
         prunePrekeys(now: Date())
         pruneFederationNodes(now: Date())
@@ -1291,7 +1365,8 @@ public actor RelayStore {
             federationNodes: federationNodes,
             coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys,
             groups: groups,
-            groupJoinRequests: groupJoinRequests
+            groupJoinRequests: groupJoinRequests,
+            groupInvitations: groupInvitations
         )
     }
 
@@ -1315,6 +1390,7 @@ private struct RelayStoreSnapshot: Codable {
     let coordinatorPinnedPublicKeys: [String: Data]
     let groups: [UUID: RelayGroupDescriptor]
     let groupJoinRequests: [UUID: [RelayGroupJoinRequest]]
+    let groupInvitations: [String: [RelayGroupInvitation]]
 
     init(
         mailboxes: [String: [StoredEnvelope]],
@@ -1324,7 +1400,8 @@ private struct RelayStoreSnapshot: Codable {
         federationNodes: [String: FederationNodeRecord] = [:],
         coordinatorPinnedPublicKeys: [String: Data] = [:],
         groups: [UUID: RelayGroupDescriptor] = [:],
-        groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:]
+        groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:],
+        groupInvitations: [String: [RelayGroupInvitation]] = [:]
     ) {
         self.mailboxes = mailboxes
         self.inboxRegistrations = inboxRegistrations
@@ -1334,6 +1411,7 @@ private struct RelayStoreSnapshot: Codable {
         self.coordinatorPinnedPublicKeys = coordinatorPinnedPublicKeys
         self.groups = groups
         self.groupJoinRequests = groupJoinRequests
+        self.groupInvitations = groupInvitations
     }
 
     init(from decoder: Decoder) throws {
@@ -1346,6 +1424,10 @@ private struct RelayStoreSnapshot: Codable {
         coordinatorPinnedPublicKeys = try container.decodeIfPresent([String: Data].self, forKey: .coordinatorPinnedPublicKeys) ?? [:]
         groups = try container.decodeIfPresent([UUID: RelayGroupDescriptor].self, forKey: .groups) ?? [:]
         groupJoinRequests = try container.decodeIfPresent([UUID: [RelayGroupJoinRequest]].self, forKey: .groupJoinRequests) ?? [:]
+        groupInvitations = try container.decodeIfPresent(
+            [String: [RelayGroupInvitation]].self,
+            forKey: .groupInvitations
+        ) ?? [:]
     }
 }
 
@@ -1439,7 +1521,8 @@ private enum SQLiteRelayStateStore {
             federationNodes: try loadFederationNodes(in: db),
             coordinatorPinnedPublicKeys: try loadCoordinatorPinnedPublicKeys(in: db),
             groups: try loadGroups(in: db),
-            groupJoinRequests: try loadGroupJoinRequests(in: db)
+            groupJoinRequests: try loadGroupJoinRequests(in: db),
+            groupInvitations: try loadGroupInvitations(in: db)
         )
     }
 
@@ -1481,6 +1564,16 @@ private enum SQLiteRelayStateStore {
             for (groupId, requests) in snapshot.groupJoinRequests {
                 for (position, request) in requests.enumerated() {
                     try insertGroupJoinRequest(groupId: groupId, position: position, request: request, in: db)
+                }
+            }
+            for (fingerprint, invitations) in snapshot.groupInvitations {
+                for (position, invitation) in invitations.enumerated() {
+                    try insertGroupInvitation(
+                        invitedFingerprint: fingerprint,
+                        position: position,
+                        invitation: invitation,
+                        in: db
+                    )
                 }
             }
             try insertMeta(key: normalizedSchemaKey, value: Data("1".utf8), in: db)
@@ -1571,6 +1664,21 @@ private enum SQLiteRelayStateStore {
             requests[groupId, default: []].append(request)
         }
         return requests
+    }
+
+    private static func loadGroupInvitations(in db: OpaquePointer) throws -> [String: [RelayGroupInvitation]] {
+        var invitations: [String: [RelayGroupInvitation]] = [:]
+        try queryRows(
+            "SELECT invited_fingerprint, value FROM relay_group_invitations ORDER BY invited_fingerprint, position;",
+            in: db
+        ) { statement in
+            let fingerprint = try readText(statement, column: 0, in: db)
+            guard let invitation = try? decode(RelayGroupInvitation.self, from: readBlob(statement, column: 1)) else {
+                return
+            }
+            invitations[fingerprint, default: []].append(invitation)
+        }
+        return invitations
     }
 
     private static func insertMailboxRecord(inboxId: String, position: Int, record: StoredEnvelope, in db: OpaquePointer) throws {
@@ -1665,6 +1773,24 @@ private enum SQLiteRelayStateStore {
         }
     }
 
+    private static func insertGroupInvitation(
+        invitedFingerprint: String,
+        position: Int,
+        invitation: RelayGroupInvitation,
+        in db: OpaquePointer
+    ) throws {
+        try executePrepared(
+            "INSERT INTO relay_group_invitations (invited_fingerprint, position, invitation_id, group_id, value) VALUES (?1, ?2, ?3, ?4, ?5);",
+            in: db
+        ) { statement in
+            try bindText(invitedFingerprint, to: 1, in: statement, db: db)
+            try bindInt(position, to: 2, in: statement, db: db)
+            try bindText(invitation.id.uuidString, to: 3, in: statement, db: db)
+            try bindText(invitation.groupId.uuidString, to: 4, in: statement, db: db)
+            try bindBlob(encode(invitation), to: 5, in: statement, db: db)
+        }
+    }
+
     private static func insertMeta(key: String, value: Data, in db: OpaquePointer) throws {
         try executePrepared(
             "INSERT INTO \(metaTableName) (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
@@ -1703,7 +1829,8 @@ private enum SQLiteRelayStateStore {
             "relay_federation_nodes",
             "relay_coordinator_pinned_keys",
             "relay_groups",
-            "relay_group_join_requests"
+            "relay_group_join_requests",
+            "relay_group_invitations"
         ] {
             try execute("DELETE FROM \(table);", in: db)
         }
@@ -1780,6 +1907,16 @@ private enum SQLiteRelayStateStore {
             PRIMARY KEY (group_id, position)
         );
         CREATE INDEX IF NOT EXISTS relay_group_join_requests_group_idx ON relay_group_join_requests(group_id);
+        CREATE TABLE IF NOT EXISTS relay_group_invitations (
+            invited_fingerprint TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            invitation_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            value BLOB NOT NULL,
+            PRIMARY KEY (invited_fingerprint, position)
+        );
+        CREATE INDEX IF NOT EXISTS relay_group_invitations_invited_idx ON relay_group_invitations(invited_fingerprint);
+        CREATE INDEX IF NOT EXISTS relay_group_invitations_group_idx ON relay_group_invitations(group_id);
         """
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw SQLiteRelayStateStoreError.execute(lastError(in: db))

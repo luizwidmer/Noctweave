@@ -5426,6 +5426,70 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertTrue(postApprove.isEmpty)
     }
 
+    func testRelayStoreGroupInvitationsDoNotExposeInviteeAsMember() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let invitee = Identity(displayName: "Invitee")
+        let scopedInvitee = GroupScopedIdentity(displayName: "Invitee in Group")
+
+        let created = try await store.createGroup(
+            title: "Opaque Ops",
+            creatorFingerprint: creator.fingerprint,
+            memberFingerprints: [],
+            invitedFingerprints: [invitee.fingerprint]
+        )
+
+        let creatorGroups = await store.listGroups(memberFingerprint: creator.fingerprint)
+        XCTAssertEqual(creatorGroups.map(\.id), [created.id])
+        let inviteeGroups = await store.listGroups(memberFingerprint: invitee.fingerprint)
+        XCTAssertTrue(inviteeGroups.isEmpty)
+
+        let invitations = await store.listGroupInvitations(
+            ListGroupInvitationsRequest(invitedFingerprint: invitee.fingerprint)
+        )
+        XCTAssertEqual(invitations.map(\.groupId), [created.id])
+        XCTAssertEqual(invitations.first?.invitedFingerprint, invitee.fingerprint)
+
+        let requested = try await store.requestGroupJoin(
+            RequestGroupJoinRequest(
+                groupId: created.id,
+                requesterProfile: RelayGroupMemberProfile(
+                    fingerprint: scopedInvitee.fingerprint,
+                    displayName: scopedInvitee.displayName,
+                    inboxId: InboxAddress.generate(),
+                    relay: RelayEndpoint(host: "127.0.0.1", port: 9339),
+                    signingPublicKey: scopedInvitee.signingKey.publicKeyData,
+                    agreementPublicKey: scopedInvitee.agreementKey.publicKeyData
+                ),
+                invitedFingerprint: invitee.fingerprint
+            )
+        )
+        XCTAssertEqual(requested.invitedFingerprint, invitee.fingerprint)
+
+        let joinCommit = try signedJoinApprovalCommit(
+            group: created,
+            joinRequest: requested,
+            signer: creator
+        )
+        let approved = try await store.approveGroupJoin(
+            ApproveGroupJoinRequest(
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                joinRequestId: requested.id,
+                groupCommit: joinCommit
+            )
+        )
+        XCTAssertTrue(approved.members.contains(where: { $0.fingerprint == scopedInvitee.fingerprint }))
+        XCTAssertFalse(approved.members.contains(where: { $0.fingerprint == invitee.fingerprint }))
+
+        let consumedInvitations = await store.listGroupInvitations(
+            ListGroupInvitationsRequest(invitedFingerprint: invitee.fingerprint)
+        )
+        XCTAssertTrue(consumedInvitations.isEmpty)
+        let scopedGroups = await store.listGroups(memberFingerprint: scopedInvitee.fingerprint)
+        XCTAssertEqual(scopedGroups.map(\.id), [created.id])
+    }
+
     func testRelayStoreGroupRejoinAdvancesFromCurrentTranscript() async throws {
         let store = RelayStore()
         let creator = Identity(displayName: "Creator")
@@ -5616,6 +5680,116 @@ final class NoctweaveCoreTests: XCTestCase {
         )
         XCTAssertEqual(approveResponse.type, .group)
         XCTAssertTrue(approveResponse.group?.members.contains(where: { $0.fingerprint == joiner.fingerprint }) ?? false)
+    }
+
+    func testRelayServerGroupInvitationRoutesKeepInviteeOutOfMembers() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39452)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "invitation route relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let invitee = Identity(displayName: "Invitee")
+        let scopedInvitee = Identity(displayName: "Invitee Scoped")
+        let client = RelayClient(endpoint: endpoint)
+
+        let createRequest = try signedCreateGroupRequest(
+            CreateGroupRequest(
+                title: "Opaque Federation",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [],
+                invitedFingerprints: [invitee.fingerprint],
+                creatorProfile: relayGroupMemberProfile(identity: creator, relay: endpoint)
+            ),
+            signer: creator
+        )
+        let createResponse = try await client.send(.createGroup(createRequest))
+        XCTAssertEqual(createResponse.type, .group)
+        guard let group = createResponse.group else {
+            XCTFail("Expected group in create response.")
+            return
+        }
+        XCTAssertEqual(group.members.map(\.fingerprint), [creator.fingerprint])
+
+        let inviteeGroups = try await client.send(
+            .listGroups(
+                try signedListGroupsRequest(
+                    ListGroupsRequest(memberFingerprint: invitee.fingerprint),
+                    signer: invitee
+                )
+            )
+        )
+        XCTAssertEqual(inviteeGroups.type, .groups)
+        XCTAssertTrue(inviteeGroups.groups?.isEmpty ?? false)
+
+        let invitationsResponse = try await client.send(
+            .listGroupInvitations(
+                try signedListGroupInvitationsRequest(
+                    ListGroupInvitationsRequest(invitedFingerprint: invitee.fingerprint),
+                    signer: invitee
+                )
+            )
+        )
+        XCTAssertEqual(invitationsResponse.type, .groupInvitations)
+        XCTAssertEqual(invitationsResponse.groupInvitations?.map(\.groupId), [group.id])
+
+        let requestJoin = try signedRequestGroupJoinRequest(
+            RequestGroupJoinRequest(
+                groupId: group.id,
+                requesterProfile: relayGroupMemberProfile(identity: scopedInvitee, relay: endpoint),
+                invitedFingerprint: invitee.fingerprint
+            ),
+            signer: scopedInvitee
+        )
+        let joinResponse = try await client.send(.requestGroupJoin(requestJoin))
+        XCTAssertEqual(joinResponse.type, .groupJoinRequests)
+        guard let joinRequest = joinResponse.groupJoinRequests?.first else {
+            XCTFail("Expected join request.")
+            return
+        }
+        XCTAssertEqual(joinRequest.invitedFingerprint, invitee.fingerprint)
+
+        let approveResponse = try await client.send(
+            .approveGroupJoin(
+                try signedApproveGroupJoinRequest(
+                    ApproveGroupJoinRequest(
+                        groupId: group.id,
+                        actorFingerprint: creator.fingerprint,
+                        joinRequestId: joinRequest.id,
+                        groupCommit: try signedJoinApprovalCommit(
+                            group: group,
+                            joinRequest: joinRequest,
+                            signer: creator
+                        )
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        XCTAssertEqual(approveResponse.type, .group)
+        XCTAssertTrue(approveResponse.group?.members.contains(where: { $0.fingerprint == scopedInvitee.fingerprint }) ?? false)
+        XCTAssertFalse(approveResponse.group?.members.contains(where: { $0.fingerprint == invitee.fingerprint }) ?? true)
+
+        let consumedResponse = try await client.send(
+            .listGroupInvitations(
+                try signedListGroupInvitationsRequest(
+                    ListGroupInvitationsRequest(invitedFingerprint: invitee.fingerprint),
+                    signer: invitee
+                )
+            )
+        )
+        XCTAssertEqual(consumedResponse.type, .groupInvitations)
+        XCTAssertTrue(consumedResponse.groupInvitations?.isEmpty ?? false)
     }
 
     func testRelayServerGroupRatchetMessageRoutes() async throws {
@@ -6999,6 +7173,7 @@ final class NoctweaveCoreTests: XCTestCase {
             title: request.title,
             creatorFingerprint: request.creatorFingerprint,
             memberFingerprints: request.memberFingerprints,
+            invitedFingerprints: request.invitedFingerprints,
             creatorProfile: request.creatorProfile,
             memberProfiles: request.memberProfiles,
             initialRatchetSecretDistribution: request.initialRatchetSecretDistribution,
@@ -7016,6 +7191,7 @@ final class NoctweaveCoreTests: XCTestCase {
         return RequestGroupJoinRequest(
             groupId: request.groupId,
             requesterProfile: request.requesterProfile,
+            invitedFingerprint: request.invitedFingerprint,
             requesterProof: proof
         )
     }
@@ -7032,6 +7208,20 @@ final class NoctweaveCoreTests: XCTestCase {
             actorFingerprint: request.actorFingerprint,
             limit: request.limit,
             actorProof: proof
+        )
+    }
+
+    private func signedListGroupInvitationsRequest(
+        _ request: ListGroupInvitationsRequest,
+        signer: Identity
+    ) throws -> ListGroupInvitationsRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return ListGroupInvitationsRequest(
+            invitedFingerprint: request.invitedFingerprint,
+            limit: request.limit,
+            invitedProof: proof
         )
     }
 
