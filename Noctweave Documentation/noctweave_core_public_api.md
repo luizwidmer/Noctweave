@@ -7,6 +7,7 @@
 - `NoctweaveCore`: protocol models, cryptographic wrappers, relay client/server primitives, messaging state, groups, federation, and metadata-reduction helpers.
 - `NoctyraCLI`: command-line diagnostics and headless messaging client.
 - `NoctweaveCoreTestHarness`: local protocol harness for development verification.
+- `NoctweaveJS`: JavaScript ESM relay client, relay request helpers, and web/database storage adapters for simple web integrations.
 
 ## Client-Facing APIs
 
@@ -26,6 +27,11 @@
 - `RelayClient`: transport-aware relay request client with timeout and response-size bounds.
 - `RelayRequest` and `RelayResponse`: canonical relay protocol request/response envelopes.
 - `RelayServer` and `RelayStore`: in-process relay implementation used by tests and local tools.
+- `NoctweaveJS/NoctweaveRelayClient`: browser/Node HTTP and WebSocket relay access for applications that need relay diagnostics, inbox polling, or custom protocol integration.
+
+## JavaScript Web Integration
+
+`NoctweaveJS` is intentionally scoped to relay transport and persistence. It provides `MemoryNoctweaveStore`, `BrowserLocalStorageStore`, `IndexedDBNoctweaveStore`, `DatabaseNoctweaveStore`, and `NoctweaveStateRepository` so simple web applications can store state in browser storage or in an application database. It does not claim to replace the Swift/liboqs post-quantum message engine; encrypted messaging from JavaScript must use a compatible audited crypto/WASM adapter.
 
 ## Operator And Federation APIs
 

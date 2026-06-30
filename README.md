@@ -10,6 +10,7 @@ The Noctyra Apple clients and macOS GUI relay app are proprietary products built
 
 - Protocol implementation work for Noctweave.
 - `NoctweaveCore`, the shared Swift package that defines protocol models, cryptographic flows, relay clients, relay/server primitives, ratchets, federation logic, and test helpers.
+- `NoctweaveJS`, a dependency-light JavaScript relay client and storage adapter package for simple web integrations.
 - The open Linux relay server, including Docker deployment support and operator documentation.
 - `NoctyraCLI`, an open command-line tool for relay diagnostics, API scripting, and headless messaging.
 - Public documentation for wire formats, relay APIs, security posture, federation behavior, and release verification.
@@ -24,6 +25,7 @@ The Noctyra Apple clients and macOS GUI relay app are proprietary products built
 
 - `NoctweaveCore/` - Swift package for Noctweave protocol models, post-quantum crypto bindings, relay client/server primitives, message ratchets, federation logic, and tests.
 - `NoctweaveCore/Sources/NoctyraCLI/` - open command-line client for relay diagnostics, API scripting, and headless messaging.
+- `NoctweaveJS/` - JavaScript ESM package for browser/Node relay access, request helpers, and memory, browser, IndexedDB, or database-backed state storage.
 - `Noctweave Relay Server/` - open Linux relay implementation with TCP, HTTP, WebSocket, Docker, SQLite persistence, federation, and relay tests.
 - `Noctweave Documentation/` - public protocol specs, OpenAPI schema, security notes, whitepaper alignment, and relay operator guidance.
 - `scripts/` - local test, SBOM, release verification, and relay helper scripts.
@@ -44,6 +46,7 @@ swift build --package-path NoctweaveCore
 swift test --package-path NoctweaveCore
 swift build --package-path "Noctweave Relay Server"
 swift test --package-path "Noctweave Relay Server"
+cd NoctweaveJS && npm test
 ```
 
 Run the combined public test suite:
@@ -84,6 +87,25 @@ swift run --package-path NoctweaveCore NoctyraCLI export-contact
 ```
 
 The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` relay endpoints. It can initialize a headless identity, register an inbox, exchange contact offers, send direct and group encrypted text, attachment, and voice messages, fetch/decrypt received direct and group messages, inspect or purge continuity audit events, rotate or burn identities with explicit confirmation, and still issue raw relay requests for diagnostics. See [`Noctweave Documentation/noctyra_cli_usage.md`](Noctweave%20Documentation/noctyra_cli_usage.md).
+
+## Use NoctweaveJS In Web Apps
+
+```js
+import {
+  BrowserLocalStorageStore,
+  NoctweaveRelayClient,
+  NoctweaveStateRepository
+} from "@noctweave/js-client";
+
+const relay = new NoctweaveRelayClient("https://relay.example");
+const store = new BrowserLocalStorageStore({ namespace: "my-app:noctweave" });
+const state = new NoctweaveStateRepository(store);
+
+await relay.health();
+await state.save({ selectedRelay: "https://relay.example" });
+```
+
+`NoctweaveJS` supports HTTP/HTTPS and WebSocket/WSS relays plus memory, browser `localStorage`, IndexedDB, and generic database adapters. It is a relay/storage integration package; full post-quantum message encryption still requires the protocol crypto layer or an audited WASM adapter. See [`NoctweaveJS/README.md`](NoctweaveJS/README.md).
 
 ## Documentation Map
 
