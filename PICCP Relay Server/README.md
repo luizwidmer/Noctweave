@@ -51,6 +51,10 @@ not appear in process listings:
 - `NOCTYRA_COORDINATOR_REGISTRATION_TOKEN`
 - `NOCTYRA_FEDERATION_FORWARDING_TOKEN`
 - `NOCTYRA_COORDINATOR_SIGNING_KEY` (base64)
+- `NOCTYRA_ATTACHMENT_STORAGE`
+- `NOCTYRA_IPFS_API_ENDPOINT`
+- `NOCTYRA_IPFS_GATEWAY_ENDPOINT`
+- `NOCTYRA_IPFS_TIMEOUT_SECONDS`
 - `NOCTYRA_ONION_TRANSPORT`
 - `NOCTYRA_ONION_MAX_HOPS`
 - `NOCTYRA_ONION_FIXED_SIZE_PACKETS`
@@ -69,6 +73,29 @@ not appear in process listings:
 Use `--attachments-enabled false` for a text-only relay. Attachment upload and
 download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
 bucket schedule to disable temporal bucketing.
+
+### IPFS attachment offload
+
+The relay can offload encrypted attachment chunks to an IPFS-compatible HTTP API while keeping only CID, size, digest, and expiry metadata in SQLite. Enable it with:
+
+```bash
+.build/debug/PICCPRelayServer \
+  --attachment-storage ipfs \
+  --ipfs-api-endpoint http://127.0.0.1:5001 \
+  --ipfs-gateway-endpoint http://127.0.0.1:8080 \
+  --ipfs-timeout-seconds 10
+```
+
+Equivalent environment configuration:
+
+```bash
+NOCTYRA_ATTACHMENT_STORAGE=ipfs
+NOCTYRA_IPFS_API_ENDPOINT=http://127.0.0.1:5001
+NOCTYRA_IPFS_GATEWAY_ENDPOINT=http://127.0.0.1:8080
+NOCTYRA_IPFS_TIMEOUT_SECONDS=10
+```
+
+Upload uses `/api/v0/add` with pinning enabled. Fetch first tries `/api/v0/cat`, then falls back to `<gateway>/ipfs/<cid>`. Returned bytes must match the stored byte count and SHA-256 digest or the fetch fails closed. TTL cleanup removes relay metadata and performs best-effort IPFS unpinning; it is not cryptographic erasure because other IPFS peers or gateways may retain content. Use a relay-controlled IPFS node or private IPFS cluster.
 
 Use `--hidden-retrieval true` to advertise optional cover-query hidden
 retrieval support. This is a metadata-reduction capability for compatible
@@ -174,6 +201,11 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 - `--attachment-default-ttl-minutes <minutes>`: default attachment retention TTL in minutes
 - `--attachment-max-ttl-seconds <seconds>`: max accepted attachment TTL (default: `21600`)
 - `--attachment-max-ttl-minutes <minutes>`: max accepted attachment TTL in minutes
+- `--attachments-enabled <true|false>`: enable or disable attachment upload/fetch routes (default: `true`)
+- `--attachment-storage <inline|ipfs>`: store encrypted attachment chunks inline in SQLite or offload them to IPFS while retaining verified metadata locally (default: `inline`)
+- `--ipfs-api-endpoint <url>`: IPFS HTTP API endpoint used for `/api/v0/add`, `/api/v0/cat`, and `/api/v0/pin/rm` when `--attachment-storage ipfs` is enabled (default: `http://127.0.0.1:5001`)
+- `--ipfs-gateway-endpoint <url>`: optional gateway fallback used as `<gateway>/ipfs/<cid>` when API fetch fails
+- `--ipfs-timeout-seconds <seconds>`: timeout for IPFS API and gateway requests (default: `10`, min `1`)
 - `--hidden-retrieval <true|false>`: advertise optional hidden-retrieval cover-query support (default: `false`)
 - `--hidden-retrieval-mode <coverQuery|replicatedXorPIR>`: advertised hidden-retrieval mode
 - `--hidden-retrieval-cover-size <count>`: default cover set size advertised to clients (default: `8`)
