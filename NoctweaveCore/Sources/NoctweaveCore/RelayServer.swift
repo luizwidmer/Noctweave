@@ -841,6 +841,39 @@ public final class RelayServer {
             }
             let invitations = await store.listGroupInvitations(list)
             return .groupInvitations(invitations)
+        case .inviteGroupMembers:
+            guard let invite = request.inviteGroupMembers else {
+                return .error("Missing invite group members payload")
+            }
+            guard let group = await store.fetchGroup(groupId: invite.groupId) else {
+                return relayStoreErrorResponse(.groupNotFound)
+            }
+            let actorFingerprint = invite.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard actorFingerprint == group.createdByFingerprint else {
+                return relayStoreErrorResponse(.unauthorizedGroupMutation)
+            }
+            guard let actorSigningKey = registeredSigningKey(
+                for: actorFingerprint,
+                in: group
+            ) else {
+                return .error("Group creator signing key is missing. Re-pair and re-join the group.")
+            }
+            if let proofFailure = await validateActorProof(
+                invite.actorProof,
+                expectedFingerprint: actorFingerprint,
+                expectedSigningKey: actorSigningKey,
+                signableDataBuilder: { proof in try invite.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            do {
+                let group = try await store.inviteGroupMembers(invite)
+                return .group(group)
+            } catch let error as RelayStoreError {
+                return relayStoreErrorResponse(error)
+            } catch {
+                return .error("Group invitation failed: \(error.localizedDescription)")
+            }
         case .updateGroup:
             guard let update = request.updateGroup else {
                 return .error("Missing update group payload")

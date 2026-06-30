@@ -508,6 +508,7 @@ public enum RelayRequestType: String, Codable {
     case getGroup
     case listGroups
     case listGroupInvitations
+    case inviteGroupMembers
     case updateGroup
     case deleteGroup
     case requestGroupJoin
@@ -1067,6 +1068,7 @@ public struct RelayRequest: Codable, Equatable {
     public let getGroup: GetGroupRequest?
     public let listGroups: ListGroupsRequest?
     public let listGroupInvitations: ListGroupInvitationsRequest?
+    public let inviteGroupMembers: InviteGroupMembersRequest?
     public let updateGroup: UpdateGroupRequest?
     public let deleteGroup: DeleteGroupRequest?
     public let requestGroupJoin: RequestGroupJoinRequest?
@@ -1100,6 +1102,7 @@ public struct RelayRequest: Codable, Equatable {
         getGroup: GetGroupRequest? = nil,
         listGroups: ListGroupsRequest? = nil,
         listGroupInvitations: ListGroupInvitationsRequest? = nil,
+        inviteGroupMembers: InviteGroupMembersRequest? = nil,
         updateGroup: UpdateGroupRequest? = nil,
         deleteGroup: DeleteGroupRequest? = nil,
         requestGroupJoin: RequestGroupJoinRequest? = nil,
@@ -1132,6 +1135,7 @@ public struct RelayRequest: Codable, Equatable {
         self.getGroup = getGroup
         self.listGroups = listGroups
         self.listGroupInvitations = listGroupInvitations
+        self.inviteGroupMembers = inviteGroupMembers
         self.updateGroup = updateGroup
         self.deleteGroup = deleteGroup
         self.requestGroupJoin = requestGroupJoin
@@ -1228,6 +1232,10 @@ public struct RelayRequest: Codable, Equatable {
         RelayRequest(type: .listGroupInvitations, listGroupInvitations: request)
     }
 
+    public static func inviteGroupMembers(_ request: InviteGroupMembersRequest) -> RelayRequest {
+        RelayRequest(type: .inviteGroupMembers, inviteGroupMembers: request)
+    }
+
     public static func updateGroup(_ request: UpdateGroupRequest) -> RelayRequest {
         RelayRequest(type: .updateGroup, updateGroup: request)
     }
@@ -1291,6 +1299,7 @@ public struct RelayRequest: Codable, Equatable {
             getGroup: getGroup,
             listGroups: listGroups,
             listGroupInvitations: listGroupInvitations,
+            inviteGroupMembers: inviteGroupMembers,
             updateGroup: updateGroup,
             deleteGroup: deleteGroup,
             requestGroupJoin: requestGroupJoin,

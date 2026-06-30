@@ -5791,6 +5791,79 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertTrue(consumedResponse.groupInvitations?.isEmpty ?? false)
     }
 
+    func testRelayServerCanInviteGroupMembersAfterCreation() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: UInt16.random(in: 39_460...39_900))
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "post creation invitation relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let invitee = Identity(displayName: "Later Invitee")
+        let client = RelayClient(endpoint: endpoint)
+
+        let createRequest = try signedCreateGroupRequest(
+            CreateGroupRequest(
+                title: "Expandable Group",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: relayGroupMemberProfile(identity: creator, relay: endpoint),
+                memberProfiles: [relayGroupMemberProfile(identity: member, relay: endpoint)]
+            ),
+            signer: creator
+        )
+        let createResponse = try await client.send(.createGroup(createRequest))
+        XCTAssertEqual(createResponse.type, .group)
+        guard let group = createResponse.group else {
+            XCTFail("Expected group in create response.")
+            return
+        }
+
+        let inviteRequest = try signedInviteGroupMembersRequest(
+            InviteGroupMembersRequest(
+                groupId: group.id,
+                actorFingerprint: creator.fingerprint,
+                invitedFingerprints: [invitee.fingerprint]
+            ),
+            signer: creator
+        )
+        let inviteResponse = try await client.send(.inviteGroupMembers(inviteRequest))
+        XCTAssertEqual(inviteResponse.type, .group)
+        XCTAssertFalse(inviteResponse.group?.members.contains { $0.fingerprint == invitee.fingerprint } ?? true)
+
+        let inviteeGroups = try await client.send(
+            .listGroups(
+                try signedListGroupsRequest(
+                    ListGroupsRequest(memberFingerprint: invitee.fingerprint),
+                    signer: invitee
+                )
+            )
+        )
+        XCTAssertEqual(inviteeGroups.type, .groups)
+        XCTAssertTrue(inviteeGroups.groups?.isEmpty ?? false)
+
+        let invitationsResponse = try await client.send(
+            .listGroupInvitations(
+                try signedListGroupInvitationsRequest(
+                    ListGroupInvitationsRequest(invitedFingerprint: invitee.fingerprint),
+                    signer: invitee
+                )
+            )
+        )
+        XCTAssertEqual(invitationsResponse.type, .groupInvitations)
+        XCTAssertEqual(invitationsResponse.groupInvitations?.map(\.groupId), [group.id])
+    }
+
     func testRelayServerScopedCreatorCanExchangeMessagesAfterInvitedMembersJoin() async throws {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: UInt16.random(in: 39_460...39_900))
         let server = RelayServer(
@@ -7497,6 +7570,21 @@ final class NoctweaveCoreTests: XCTestCase {
             invitedFingerprint: request.invitedFingerprint,
             limit: request.limit,
             invitedProof: proof
+        )
+    }
+
+    private func signedInviteGroupMembersRequest(
+        _ request: InviteGroupMembersRequest,
+        signer: Identity
+    ) throws -> InviteGroupMembersRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return InviteGroupMembersRequest(
+            groupId: request.groupId,
+            actorFingerprint: request.actorFingerprint,
+            invitedFingerprints: request.invitedFingerprints,
+            actorProof: proof
         )
     }
 

@@ -770,6 +770,55 @@ public actor RelayStore {
         }
     }
 
+    public func inviteGroupMembers(_ request: InviteGroupMembersRequest) throws -> RelayGroupDescriptor {
+        guard var group = groups[request.groupId] else {
+            throw RelayStoreError.groupNotFound
+        }
+        let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !actor.isEmpty else {
+            throw RelayStoreError.invalidFingerprint
+        }
+        guard actor == group.createdByFingerprint else {
+            throw RelayStoreError.unauthorizedGroupMutation
+        }
+
+        let currentMembers = Set(group.members.map(\.fingerprint))
+        let invitees = request.normalizedInvitedFingerprints.filter { fingerprint in
+            fingerprint != group.createdByFingerprint && !currentMembers.contains(fingerprint)
+        }
+        guard !invitees.isEmpty else {
+            return group
+        }
+        guard currentMembers.count + invitees.count <= maxGroupMembers else {
+            throw RelayStoreError.groupCapacityExceeded
+        }
+
+        let now = Date()
+        group.updatedAt = now
+        groups[group.id] = group
+        for fingerprint in invitees {
+            var invitations = groupInvitations[fingerprint, default: []]
+            invitations.removeAll { $0.groupId == group.id }
+            invitations.insert(
+                RelayGroupInvitation(
+                    groupId: group.id,
+                    title: group.title,
+                    createdByFingerprint: group.createdByFingerprint,
+                    invitedFingerprint: fingerprint,
+                    inboxId: group.inboxId,
+                    epoch: group.epoch,
+                    createdAt: group.createdAt,
+                    updatedAt: group.updatedAt,
+                    invitedAt: now
+                ),
+                at: 0
+            )
+            groupInvitations[fingerprint] = Array(invitations.prefix(maxGroupInvitationsPerIdentity))
+        }
+        try saveToDisk()
+        return group
+    }
+
     public func updateGroup(_ request: UpdateGroupRequest) throws -> RelayGroupDescriptor {
         guard var group = groups[request.groupId] else {
             throw RelayStoreError.groupNotFound

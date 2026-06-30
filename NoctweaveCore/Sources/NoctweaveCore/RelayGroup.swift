@@ -659,6 +659,43 @@ public struct ListGroupInvitationsRequest: Codable, Equatable {
     }
 }
 
+public struct InviteGroupMembersRequest: Codable, Equatable {
+    public let groupId: UUID
+    public let actorFingerprint: String
+    public let invitedFingerprints: [String]
+    public let actorProof: RelayActorProof?
+
+    public init(
+        groupId: UUID,
+        actorFingerprint: String,
+        invitedFingerprints: [String],
+        actorProof: RelayActorProof? = nil
+    ) {
+        self.groupId = groupId
+        self.actorFingerprint = actorFingerprint
+        self.invitedFingerprints = invitedFingerprints
+        self.actorProof = actorProof
+    }
+
+    public func signableData(for proof: RelayActorProof) throws -> Data {
+        try GroupProofEncoder.encode(
+            InviteGroupMembersProofPayload(
+                groupId: groupId,
+                actorFingerprint: actorFingerprint,
+                invitedFingerprints: invitedFingerprints,
+                signedAt: proof.signedAt,
+                nonce: proof.nonce
+            )
+        )
+    }
+
+    public var normalizedInvitedFingerprints: [String] {
+        Array(Set(invitedFingerprints.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty })).sorted()
+    }
+}
+
 public struct ListGroupJoinRequestsRequest: Codable, Equatable {
     public let groupId: UUID
     public let actorFingerprint: String
@@ -999,6 +1036,14 @@ private struct RequestGroupJoinProofPayload: Codable {
 private struct ListGroupInvitationsProofPayload: Codable {
     let invitedFingerprint: String
     let limit: Int?
+    let signedAt: Date
+    let nonce: UUID
+}
+
+private struct InviteGroupMembersProofPayload: Codable {
+    let groupId: UUID
+    let actorFingerprint: String
+    let invitedFingerprints: [String]
     let signedAt: Date
     let nonce: UUID
 }
