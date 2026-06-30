@@ -1,14 +1,14 @@
-# Noctyra
+# Noctweave
 
-Noctyra is the reference implementation of the Noctweave Protocol: a post-quantum secure messaging protocol centered on pairwise identity continuity, relay-backed delivery, and metadata reduction. This public repository contains the shared Swift core, the `NoctyraCLI` relay/API client, the Linux relay server, Docker packaging, and public protocol/operator documentation.
+Noctweave is a post-quantum secure messaging protocol centered on pairwise identity continuity, relay-backed delivery, and metadata reduction. This public repository contains the open protocol work and tooling: the shared Swift core, the `NoctyraCLI` relay/API client, the Linux relay server, Docker packaging, tests, and public protocol/operator documentation.
 
-The Apple messaging clients and macOS GUI relay app are proprietary and are intentionally not part of this repository.
+Noctyra is the reference client and relay product built on Noctweave. The Apple messaging clients and macOS GUI relay app are proprietary and are intentionally not part of this repository.
 
 ## What Is Included
 
-- `PICCPCore/` - Swift package for protocol models, post-quantum crypto bindings, relay client/server primitives, message ratchets, federation logic, and tests.
-- `PICCPCore/Sources/NoctyraCLI/` - command-line API client for relay diagnostics and scripted relay requests.
-- `PICCP Relay Server/` - Linux relay implementation with TCP, HTTP, WebSocket, Docker, persistence, federation, and relay tests.
+- `PICCPCore/` - Swift package for Noctweave protocol models, post-quantum crypto bindings, relay client/server primitives, message ratchets, federation logic, and tests.
+- `PICCPCore/Sources/NoctyraCLI/` - open command-line API client for relay diagnostics, health checks, endpoint inspection, and scripted relay requests.
+- `PICCP Relay Server/` - open Linux relay implementation with TCP, HTTP, WebSocket, Docker, SQLite persistence, federation, and relay tests.
 - `PICCP Documentation/` - public protocol specs, OpenAPI schema, security notes, whitepaper alignment, and relay operator guidance.
 - `scripts/` - local test, SBOM, release verification, and relay helper scripts.
 
@@ -36,7 +36,7 @@ Run the combined public test suite:
 scripts/run-tests.sh
 ```
 
-## Run A Local Relay
+## Run The Linux Relay
 
 ```sh
 swift build --package-path "PICCP Relay Server"
@@ -56,7 +56,7 @@ docker run --rm -p 9339:9339 -p 9340:9340 -v noctyra-data:/data noctyra-relay
 
 See [`PICCP Relay Server/README.md`](PICCP%20Relay%20Server/README.md) for all relay flags, TLS/reverse-proxy notes, federation settings, storage modes, and Docker + Let's Encrypt setup.
 
-## Use The CLI
+## Use NoctyraCLI
 
 ```sh
 swift run --package-path PICCPCore NoctyraCLI help
