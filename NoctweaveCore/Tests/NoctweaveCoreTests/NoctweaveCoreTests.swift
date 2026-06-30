@@ -4202,6 +4202,21 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(requests.first?.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
     }
 
+    func testRelayStorePairRequestFetchIsNonDestructive() async throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "alice-inbox", relay: relay)
+        let store = RelayStore()
+
+        _ = await store.sendPairRequest(targetFingerprint: "target", offer: offer)
+        let first = await store.fetchPairRequests(targetFingerprint: "target")
+        let second = await store.fetchPairRequests(targetFingerprint: "target")
+
+        XCTAssertEqual(first.count, 1)
+        XCTAssertEqual(second.count, 1)
+        XCTAssertEqual(first.first?.from.fingerprint, second.first?.from.fingerprint)
+    }
+
     func testRelayStoreInboxLimitIsEnforced() async throws {
         let store = RelayStore(maxInboxMessages: 1)
         let envelope = Envelope(

@@ -461,14 +461,7 @@ public actor RelayStore {
     public func fetchPairRequests(targetFingerprint: String, maxCount: Int? = nil) -> [PairingRequest] {
         let requests = pairRequests[targetFingerprint, default: []]
         let count = max(0, maxCount ?? requests.count)
-        let fetched = Array(requests.prefix(count))
-        let remaining = Array(requests.dropFirst(fetched.count))
-        if remaining.isEmpty {
-            pairRequests.removeValue(forKey: targetFingerprint)
-        } else {
-            pairRequests[targetFingerprint] = remaining
-        }
-        return fetched
+        return Array(requests.prefix(count))
     }
 
     public func uploadPrekeyBundle(

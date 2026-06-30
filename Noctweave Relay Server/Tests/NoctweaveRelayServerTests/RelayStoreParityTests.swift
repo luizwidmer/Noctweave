@@ -98,6 +98,18 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(requests.first?.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
     }
 
+    func testPairRequestFetchIsNonDestructive() {
+        let store = RelayStore(fileURL: nil, maxInboxMessages: nil)
+
+        XCTAssertEqual(store.sendPairRequest(targetFingerprint: "target", offer: makeContactOffer()), 1)
+        let first = store.fetchPairRequests(targetFingerprint: "target", maxCount: nil)
+        let second = store.fetchPairRequests(targetFingerprint: "target", maxCount: nil)
+
+        XCTAssertEqual(first.count, 1)
+        XCTAssertEqual(second.count, 1)
+        XCTAssertEqual(first.first?.from.fingerprint, second.first?.from.fingerprint)
+    }
+
     func testInboxLimitIsEnforced() throws {
         let store = RelayStore(fileURL: nil, maxInboxMessages: 1, temporalBucketSeconds: 300)
         let inboxId = InboxAddress.generate()
