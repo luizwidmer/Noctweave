@@ -1,21 +1,22 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-This repo is split into three top-level areas. The SwiftUI client app lives in `PICCP Messaging Client/` with source under `PICCP Messaging Client/PICCP Messaging Client/` and assets in `Assets.xcassets`. The SwiftUI server app mirrors that layout in `PICCP Server/` (`PICCP Server/PICCP Server/`). Project documentation and research materials are in `PICCP Documentation/` (e.g., `piccp_whitepaper.md`, roadmap PDFs).
+This public repo is limited to the shared protocol/core, command-line client, Linux relay, and public operator/protocol docs. `PICCPCore/` is the Swift package for cryptography, protocol models, relay client/server primitives, tests, and the `NoctyraCLI` executable target. `PICCP Relay Server/` contains the Linux/Docker relay implementation and relay tests. `PICCP Documentation/` contains public protocol, API, security, and relay-operations documents. Proprietary Apple client apps and macOS GUI relay apps live outside this public surface and are ignored by Git.
 
 ## Build, Test, and Development Commands
-Use Xcode for day-to-day development and simulator/device runs.
-- Open the client app: `open "PICCP Messaging Client/PICCP Messaging Client.xcodeproj"`
-- Open the server app: `open "PICCP Server/PICCP Server.xcodeproj"`
-- Build from CLI (client): `xcodebuild -project "PICCP Messaging Client/PICCP Messaging Client.xcodeproj" -scheme "Noctyra" build`
-- Build from CLI (server): `xcodebuild -project "PICCP Server/PICCP Server.xcodeproj" -scheme "Noctyra Relay" build`
-Run `xcodebuild -list -project <path>` if you need to confirm schemes.
+Use SwiftPM for public development.
+- Build core and CLI: `swift build --package-path PICCPCore`
+- Run the CLI: `swift run --package-path PICCPCore NoctyraCLI help`
+- Test core: `swift test --package-path PICCPCore`
+- Build Linux relay: `swift build --package-path "PICCP Relay Server"`
+- Test Linux relay: `swift test --package-path "PICCP Relay Server"`
+- Run full public tests: `scripts/run-tests.sh`
 
 ## Coding Style & Naming Conventions
-Follow standard Swift/Xcode formatting: 4-space indentation, braces on the same line, and SwiftUI views defined as `struct` types conforming to `View`. Use PascalCase for types (`ContentView`) and lowerCamelCase for properties and methods. Keep filenames aligned with their primary type (e.g., `PICCP_ServerApp.swift`). Asset names should match the identifiers referenced in code and stay in the app’s `Assets.xcassets` catalog.
+Follow standard Swift formatting: 4-space indentation, braces on the same line, PascalCase for types, and lowerCamelCase for properties and methods. Keep filenames aligned with their primary type or protocol area. Avoid adding UI-only abstractions, Apple-client assets, or proprietary app code to this public repository.
 
 ## Testing Guidelines
-There are no automated tests in this repo today. If you add tests, use XCTest targets (e.g., `PICCP Messaging ClientTests/`) and name files `*Tests.swift`. Example command: `xcodebuild test -project "PICCP Messaging Client/PICCP Messaging Client.xcodeproj" -scheme "Noctyra" -destination "platform=iOS Simulator,name=iPhone 15"`.
+Use XCTest in the existing SwiftPM test targets. Core tests live in `PICCPCore/Tests/PICCPCoreTests/`; Linux relay tests live in `PICCP Relay Server/Tests/PICCPRelayServerTests/`. Name test files `*Tests.swift` and prefer focused protocol, relay-route, parser, and persistence coverage. Run `scripts/run-tests.sh` before publishing public changes.
 
 ## Commit & Pull Request Guidelines
-This directory does not contain Git history, so there is no established commit convention. If you introduce one, keep messages short and imperative (e.g., `Add login view`) and consider adding a scope for clarity. PRs should include a concise summary, testing notes (or “not run”), and screenshots for UI changes. Link any relevant documentation updates in `PICCP Documentation/`.
+Use short imperative commit messages, for example `Add relay endpoint parser`. PRs should include a concise summary, tests run, and links to relevant public docs. Do not include proprietary client source, screenshots, private assets, credentials, local relay data, or App Store/legal review artifacts.

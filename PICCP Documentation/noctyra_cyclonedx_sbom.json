@@ -14,6 +14,18 @@
       "version": "unknown"
     },
     {
+      "bom-ref": "local-source:NoctyraCLI:unknown",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:PICCPCore/Sources/NoctyraCLI"
+        }
+      ],
+      "name": "NoctyraCLI",
+      "type": "library",
+      "version": "unknown"
+    },
+    {
       "bom-ref": "local-source:PICCP-Relay-Server:unknown",
       "externalReferences": [
         {
@@ -22,30 +34,6 @@
         }
       ],
       "name": "PICCP Relay Server",
-      "type": "library",
-      "version": "unknown"
-    },
-    {
-      "bom-ref": "local-source:PICCP-Messaging-Client:unknown",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "file:PICCP Messaging Client"
-        }
-      ],
-      "name": "PICCP Messaging Client",
-      "type": "library",
-      "version": "unknown"
-    },
-    {
-      "bom-ref": "local-source:PICCP-Server:unknown",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "file:PICCP Server"
-        }
-      ],
-      "name": "PICCP Server",
       "type": "library",
       "version": "unknown"
     },

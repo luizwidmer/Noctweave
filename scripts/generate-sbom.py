@@ -114,18 +114,13 @@ def workspace_components():
         },
         {
             "type": "local-source",
+            "name": "NoctyraCLI",
+            "source": "PICCPCore/Sources/NoctyraCLI",
+        },
+        {
+            "type": "local-source",
             "name": "PICCP Relay Server",
             "source": "PICCP Relay Server",
-        },
-        {
-            "type": "local-source",
-            "name": "PICCP Messaging Client",
-            "source": "PICCP Messaging Client",
-        },
-        {
-            "type": "local-source",
-            "name": "PICCP Server",
-            "source": "PICCP Server",
         },
     ]
 

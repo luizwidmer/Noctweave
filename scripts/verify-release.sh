@@ -10,6 +10,10 @@ source "$ROOT_DIR/scripts/liboqs-runtime.sh"
 
 cd "$ROOT_DIR"
 
+echo "Resolving Swift package pins..."
+(cd "$RELAY_DIR" && swift package resolve)
+git diff --exit-code -- "$RELAY_DIR/Package.resolved"
+
 echo "Refreshing machine-readable SBOM..."
 scripts/generate-sbom.py >/dev/null
 git diff --exit-code -- "$SBOM_PATH"
@@ -35,10 +39,6 @@ if not refs or any(not ref for ref in refs):
 if len(refs) != len(set(refs)):
     raise SystemExit("CycloneDX SBOM component bom-ref values must be unique")
 PY
-
-echo "Resolving Swift package pins..."
-(cd "$RELAY_DIR" && swift package resolve)
-git diff --exit-code -- "$RELAY_DIR/Package.resolved"
 
 echo "Checking Swift package dependency graph..."
 (cd "$RELAY_DIR" && swift package show-dependencies >/dev/null)
