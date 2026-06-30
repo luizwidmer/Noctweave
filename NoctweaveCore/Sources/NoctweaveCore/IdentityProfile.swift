@@ -13,6 +13,7 @@ public struct IdentityProfile: Codable, Identifiable {
     public var prekeys: PrekeyState
     public var continuityEvents: [ContinuityEvent]
     public var federationPolicy: FederationDescriptor?
+    public var locallyLeftRelayGroupIds: [UUID]
     public var isArchived: Bool
     public var archivedAt: Date?
     public let createdAt: Date
@@ -30,6 +31,7 @@ public struct IdentityProfile: Codable, Identifiable {
         prekeys: PrekeyState,
         continuityEvents: [ContinuityEvent] = [],
         federationPolicy: FederationDescriptor? = nil,
+        locallyLeftRelayGroupIds: [UUID] = [],
         isArchived: Bool = false,
         archivedAt: Date? = nil,
         createdAt: Date = Date()
@@ -46,6 +48,7 @@ public struct IdentityProfile: Codable, Identifiable {
         self.prekeys = prekeys
         self.continuityEvents = continuityEvents
         self.federationPolicy = federationPolicy
+        self.locallyLeftRelayGroupIds = locallyLeftRelayGroupIds
         self.isArchived = isArchived
         self.archivedAt = archivedAt
         self.createdAt = createdAt
@@ -64,6 +67,7 @@ public struct IdentityProfile: Codable, Identifiable {
         case prekeys
         case continuityEvents
         case federationPolicy
+        case locallyLeftRelayGroupIds
         case isArchived
         case archivedAt
         case createdAt
@@ -83,6 +87,7 @@ public struct IdentityProfile: Codable, Identifiable {
         prekeys = try container.decode(PrekeyState.self, forKey: .prekeys)
         continuityEvents = try container.decodeIfPresent([ContinuityEvent].self, forKey: .continuityEvents) ?? []
         federationPolicy = try container.decodeIfPresent(FederationDescriptor.self, forKey: .federationPolicy)
+        locallyLeftRelayGroupIds = try container.decodeIfPresent([UUID].self, forKey: .locallyLeftRelayGroupIds) ?? []
         isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
