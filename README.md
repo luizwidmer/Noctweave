@@ -86,9 +86,3 @@ scripts/verify-release.sh
 ```
 
 The script verifies SBOM freshness, package pins, dependency graph health, and Linux relay tests. Docker and Trivy checks run only when those tools are installed.
-
-## Public Repository Boundary
-
-Keep this repository limited to public core protocol code, CLI/API tooling, Linux relay code, Docker/ops support, and public documentation.
-
-Do not commit proprietary Apple client source, macOS GUI relay source, App Store/legal review artifacts, private assets, credentials, local relay data, build outputs, or screenshots.
