@@ -1,0 +1,65 @@
+# Noctweave Integration Agent Guide
+
+Copy this file to `AGENTS.md` in a downstream project when an AI coding agent needs project-local guidance for integrating Noctweave.
+
+## Role
+You are helping integrate Noctweave into another project. Treat Noctweave as a protocol/tooling dependency, not as a hosted service. There are no developer-operated relays, accounts, notification servers, or managed federation services in the public Noctweave repository.
+
+## Public Integration Surface
+Use only the public components:
+
+- `NoctweaveCore/`: Swift package with protocol models, relay client/server primitives, cryptographic flows, message ratchets, federation logic, and `NoctyraCLI`.
+- `Noctweave Relay Server/`: Linux/Docker relay implementation with TCP, HTTP, WebSocket, SQLite persistence, federation, IPFS attachment offload, and operator configuration.
+- `Noctweave Documentation/`: protocol specs, OpenAPI schema, relay hardening, security requirements, and whitepaper alignment notes.
+
+Do not depend on proprietary Apple client or macOS GUI relay app sources. They are outside the public integration boundary.
+
+## Integration Workflow
+Start by reading:
+
+- `README.md`
+- `Noctweave Documentation/noctweave_protocol_spec_v1.md`
+- `Noctweave Documentation/noctweave_core_public_api.md`
+- `Noctweave Relay Server/README.md`
+- `Noctweave Documentation/relay_ops_hardening_guide.md`
+
+For Swift projects, integrate `NoctweaveCore` as a package dependency or local package path. For non-Swift services, use the relay wire/API documentation and the Linux relay as the interoperability reference.
+
+## Commands
+Run these before claiming compatibility:
+
+```sh
+swift build --package-path NoctweaveCore
+swift test --package-path NoctweaveCore
+swift build --package-path "Noctweave Relay Server"
+swift test --package-path "Noctweave Relay Server"
+scripts/run-tests.sh
+```
+
+Use the CLI for smoke tests:
+
+```sh
+swift run --package-path NoctweaveCore NoctyraCLI health --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctyraCLI info --relay http://127.0.0.1:9340
+```
+
+## Security Expectations
+Preserve Noctweave’s security boundaries:
+
+- Public-key identity continuity uses post-quantum signatures.
+- Session establishment uses ML-KEM style post-quantum key agreement.
+- Payloads and attachments are end-to-end encrypted before relay submission.
+- Relays are storage and routing infrastructure, not trusted plaintext processors.
+- Federation modes are explicit trust domains: `solo`, `manual`, `curated`, and `open` must not be silently mixed.
+- TLS/reverse proxying protects transport metadata in transit but does not replace message encryption.
+- IPFS attachment offload is for relay storage pressure, not anonymity.
+
+Never add plaintext message logging, server-side decryption, implicit key escrow, silent downgrade paths, or cross-mode federation shortcuts.
+
+## Relay Integration Notes
+Relay endpoints may be raw TCP, TLS TCP, HTTP, HTTPS, WebSocket, or WSS depending on operator configuration. Client integrations should parse explicit schemes and avoid guessing ports when a URL already supplies a scheme.
+
+Manual federation is for small operator-managed meshes. Curated federation uses allow lists and coordinator policy. Open federation uses bounded signed discovery hints and must retain public endpoint safeguards.
+
+## Change Discipline
+Keep integration changes narrow and testable. Update public docs when protocol behavior, relay flags, or wire formats change. Add focused tests for new relay routes, parser behavior, persistence behavior, or federation policy.
