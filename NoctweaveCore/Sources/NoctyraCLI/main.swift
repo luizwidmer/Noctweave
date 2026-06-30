@@ -35,6 +35,24 @@ private struct CommandRunner {
         switch command {
         case "help", "--help", "-h":
             printHelp()
+        case "init":
+            try await initialize(options: options)
+        case "register":
+            try await headlessClient(from: options).registerInbox()
+            FileHandle.standardOutput.writeLine("registered")
+        case "status":
+            try await writeJSON(headlessClient(from: options).status())
+        case "export-contact":
+            try await exportContact(options: options)
+        case "import-contact":
+            let contact = try await importContact(options: options)
+            try writeJSON(contact)
+        case "contacts":
+            try await writeJSON(headlessClient(from: options).contacts())
+        case "send":
+            try await sendText(options: options)
+        case "receive":
+            try await receive(options: options)
         case "endpoint":
             let endpoint = try endpoint(from: options)
             try writeJSON(endpoint)
@@ -48,6 +66,75 @@ private struct CommandRunner {
         default:
             throw CLIError("Unknown command: \(command). Run `NoctyraCLI help`.")
         }
+    }
+
+    private func initialize(options: ParsedOptions) async throws {
+        guard let displayName = options.value(for: "--display-name") ?? options.value(for: "--name") else {
+            throw CLIError("Missing display name. Use `--display-name <name>`.")
+        }
+        let relay = try endpoint(from: options)
+        let client = try headlessClient(from: options)
+        let status = try await client.createState(
+            displayName: displayName,
+            relay: relay,
+            overwrite: try options.boolValue(for: "--overwrite") ?? false
+        )
+        if try options.boolValue(for: "--register") ?? true {
+            try await client.registerInbox()
+        }
+        try writeJSON(status)
+    }
+
+    private func exportContact(options: ParsedOptions) async throws {
+        let client = try headlessClient(from: options)
+        if let password = options.value(for: "--password") {
+            let data = try await client.exportContactPackage(password: password)
+            guard let out = options.value(for: "--out") else {
+                throw CLIError("Password-protected exports require `--out <path>` to avoid binary data in the terminal.")
+            }
+            try data.write(to: URL(fileURLWithPath: out), options: [.atomic])
+            FileHandle.standardOutput.writeLine(out)
+            return
+        }
+        FileHandle.standardOutput.writeLine(try await client.exportContactCode())
+    }
+
+    private func importContact(options: ParsedOptions) async throws -> Contact {
+        let client = try headlessClient(from: options)
+        if let code = options.value(for: "--code") {
+            return try await client.importContactCode(code)
+        }
+        guard let file = options.value(for: "--file") else {
+            throw CLIError("Missing contact input. Use `--code <base64>` or `--file <path> --password <password>`.")
+        }
+        guard let password = options.value(for: "--password") else {
+            throw CLIError("Password-protected contact files require `--password <password>`.")
+        }
+        let data = try Data(contentsOf: URL(fileURLWithPath: file))
+        return try await client.importContactPackage(data, password: password)
+    }
+
+    private func sendText(options: ParsedOptions) async throws {
+        guard let selector = options.value(for: "--to") else {
+            throw CLIError("Missing recipient. Use `--to <contact-name|fingerprint|uuid>`.")
+        }
+        guard let text = options.value(for: "--text") else {
+            throw CLIError("Missing message text. Use `--text <message>`.")
+        }
+        let sent = try await headlessClient(from: options).sendText(to: selector, text: text)
+        try writeJSON(sent)
+    }
+
+    private func receive(options: ParsedOptions) async throws {
+        let maxCount = try options.intValue(for: "--max") ?? 25
+        let longPoll = try options.intValue(for: "--long-poll")
+        let acknowledge = !(try options.boolValue(for: "--no-ack") ?? false)
+        let messages = try await headlessClient(from: options).receive(
+            maxCount: maxCount,
+            longPollTimeoutSeconds: longPoll,
+            acknowledge: acknowledge
+        )
+        try writeJSON(messages)
     }
 
     private func send(_ request: RelayRequest, options: ParsedOptions) async throws {
@@ -85,6 +172,28 @@ private struct CommandRunner {
         return try NoctweaveCoder.decode(RelayRequest.self, from: data)
     }
 
+    private func headlessClient(from options: ParsedOptions) throws -> HeadlessMessagingClient {
+        HeadlessMessagingClient(
+            stateURL: stateURL(from: options),
+            useEncryptedStore: try options.boolValue(for: "--encrypted-state") ?? false,
+            authToken: options.value(for: "--auth"),
+            timeout: try options.doubleValue(for: "--timeout") ?? RelayClient.defaultTimeout
+        )
+    }
+
+    private func stateURL(from options: ParsedOptions) -> URL {
+        if let path = options.value(for: "--state") {
+            return URL(fileURLWithPath: path)
+        }
+        if let path = ProcessInfo.processInfo.environment["NOCTYRA_CLI_STATE"], !path.isEmpty {
+            return URL(fileURLWithPath: path)
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return home
+            .appendingPathComponent(".noctyra", isDirectory: true)
+            .appendingPathComponent("headless-state.json")
+    }
+
     private func writeJSON<T: Encodable>(_ value: T) throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -99,6 +208,16 @@ private struct CommandRunner {
         NoctyraCLI
 
         Usage:
+          NoctyraCLI init --display-name <name> --relay <url|host:port> [--state path]
+          NoctyraCLI register [--state path] [--auth token]
+          NoctyraCLI status [--state path]
+          NoctyraCLI export-contact [--state path]
+          NoctyraCLI export-contact --password <password> --out contact.noctweave [--state path]
+          NoctyraCLI import-contact --code <contact-code> [--state path]
+          NoctyraCLI import-contact --file contact.noctweave --password <password> [--state path]
+          NoctyraCLI contacts [--state path]
+          NoctyraCLI send --to <contact-name|fingerprint|uuid> --text <message> [--state path]
+          NoctyraCLI receive [--max count] [--long-poll seconds] [--state path]
           NoctyraCLI endpoint --relay <url|host:port>
           NoctyraCLI health --relay <url|host:port> [--auth token] [--timeout seconds]
           NoctyraCLI info --relay <url|host:port> [--auth token] [--timeout seconds]
@@ -113,6 +232,10 @@ private struct CommandRunner {
           wss://relay.example
           tcp://relay.local:9339
           tls://relay.example:9339
+
+        Headless client state:
+          --state defaults to ~/.noctyra/headless-state.json or NOCTYRA_CLI_STATE.
+          State contains private identity keys. Protect it with filesystem permissions.
         """)
     }
 }
@@ -148,6 +271,28 @@ private struct ParsedOptions {
             throw CLIError("Invalid numeric value for \(key): \(value).")
         }
         return parsed
+    }
+
+    func intValue(for key: String) throws -> Int? {
+        guard let value = values[key] else { return nil }
+        guard let parsed = Int(value), parsed > 0 else {
+            throw CLIError("Invalid integer value for \(key): \(value).")
+        }
+        return parsed
+    }
+
+    func boolValue(for key: String) throws -> Bool? {
+        guard let value = values[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
+            return nil
+        }
+        switch value {
+        case "1", "true", "yes", "y", "on":
+            return true
+        case "0", "false", "no", "n", "off":
+            return false
+        default:
+            throw CLIError("Invalid boolean value for \(key): \(value).")
+        }
     }
 }
 

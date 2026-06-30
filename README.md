@@ -1,13 +1,13 @@
 # Noctweave
 
-Noctweave is a post-quantum secure messaging protocol centered on pairwise identity continuity, relay-backed delivery, and metadata reduction. This public repository contains the open protocol work and tooling: the shared Swift core, the `NoctyraCLI` relay/API client, the Linux relay server, Docker packaging, tests, and public protocol/operator documentation.
+Noctweave is a post-quantum secure messaging protocol centered on pairwise identity continuity, relay-backed delivery, and metadata reduction. This public repository contains the open protocol work and tooling: the shared Swift core, the `NoctyraCLI` headless messaging/API client, the Linux relay server, Docker packaging, tests, and public protocol/operator documentation.
 
 Noctyra is the reference client and relay product built on Noctweave. The Apple messaging clients and macOS GUI relay app are proprietary and are intentionally not part of this repository.
 
 ## What Is Included
 
 - `NoctweaveCore/` - Swift package for Noctweave protocol models, post-quantum crypto bindings, relay client/server primitives, message ratchets, federation logic, and tests.
-- `NoctweaveCore/Sources/NoctyraCLI/` - open command-line API client for relay diagnostics, health checks, endpoint inspection, and scripted relay requests.
+- `NoctweaveCore/Sources/NoctyraCLI/` - open command-line client for relay diagnostics and headless direct messaging.
 - `Noctweave Relay Server/` - open Linux relay implementation with TCP, HTTP, WebSocket, Docker, SQLite persistence, federation, and relay tests.
 - `Noctweave Documentation/` - public protocol specs, OpenAPI schema, security notes, whitepaper alignment, and relay operator guidance.
 - `scripts/` - local test, SBOM, release verification, and relay helper scripts.
@@ -63,14 +63,17 @@ swift run --package-path NoctweaveCore NoctyraCLI help
 swift run --package-path NoctweaveCore NoctyraCLI endpoint --relay https://relay.example
 swift run --package-path NoctweaveCore NoctyraCLI health --relay http://127.0.0.1:9340
 swift run --package-path NoctweaveCore NoctyraCLI info --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctyraCLI init --display-name Alice --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctyraCLI export-contact
 ```
 
-The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` relay endpoints. See [`Noctweave Documentation/noctyra_cli_usage.md`](Noctweave%20Documentation/noctyra_cli_usage.md).
+The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` relay endpoints. It can initialize a headless identity, register an inbox, exchange contact offers, send direct encrypted text messages, fetch/decrypt received direct messages, and still issue raw relay requests for diagnostics. See [`Noctweave Documentation/noctyra_cli_usage.md`](Noctweave%20Documentation/noctyra_cli_usage.md).
 
 ## Documentation Map
 
 - Relay API: [`noctyra_relay_openapi.yaml`](Noctweave%20Documentation/noctyra_relay_openapi.yaml)
 - Protocol spec: [`noctweave_protocol_spec_v1.md`](Noctweave%20Documentation/noctweave_protocol_spec_v1.md)
+- Core public API notes: [`noctweave_core_public_api.md`](Noctweave%20Documentation/noctweave_core_public_api.md)
 - Wire format and test vectors: [`wire_format_and_test_vectors.md`](Noctweave%20Documentation/wire_format_and_test_vectors.md)
 - Relay hardening guide: [`relay_ops_hardening_guide.md`](Noctweave%20Documentation/relay_ops_hardening_guide.md)
 - Security requirements: [`security_requirements.md`](Noctweave%20Documentation/security_requirements.md)

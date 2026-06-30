@@ -43,6 +43,54 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(first.requestedRecordIds, first.requestedRecordIds.sorted())
     }
 
+    func testHeadlessMessagingClientExchangesDirectMessagesThroughRelay() async throws {
+        let port = UInt16.random(in: 45_000...49_000)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noctweave-headless-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let aliceURL = root.appendingPathComponent("alice.json")
+        let bobURL = root.appendingPathComponent("bob.json")
+        let alice = HeadlessMessagingClient(stateURL: aliceURL, timeout: 3)
+        let bob = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+
+        let aliceStatus = try await alice.createState(displayName: "Alice CLI", relay: endpoint)
+        let bobStatus = try await bob.createState(displayName: "Bob CLI", relay: endpoint)
+        XCTAssertEqual(aliceStatus.contactCount, 0)
+        XCTAssertEqual(bobStatus.contactCount, 0)
+
+        try await alice.registerInbox()
+        try await bob.registerInbox()
+
+        let aliceCode = try await alice.exportContactCode()
+        let bobCode = try await bob.exportContactCode()
+        let importedBob = try await alice.importContactCode(bobCode)
+        let importedAlice = try await bob.importContactCode(aliceCode)
+        XCTAssertEqual(importedBob.displayName, "Bob CLI")
+        XCTAssertEqual(importedAlice.displayName, "Alice CLI")
+
+        let sent = try await alice.sendText(to: "Bob CLI", text: "hello from headless")
+        XCTAssertEqual(sent.messageCounter, 0)
+
+        let received = try await bob.receive(maxCount: 10)
+        XCTAssertEqual(received.count, 1)
+        XCTAssertEqual(received[0].contact.displayName, "Alice CLI")
+        XCTAssertEqual(received[0].body, .text("hello from headless"))
+
+        let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        let contacts = try await bobReloaded.contacts()
+        let status = try await bobReloaded.status()
+        XCTAssertEqual(contacts.count, 1)
+        XCTAssertEqual(status.conversationCount, 1)
+    }
+
     func testHiddenRetrievalPlannerExtractsTargetFromCoverResponse() throws {
         let plan = try HiddenRetrievalPlanner.makeCoverQuery(
             bucketId: "bucket-a",

@@ -7,13 +7,14 @@ This roadmap reflects repository evidence rather than early planning estimates. 
 
 ## Current Status
 
-Noctyra has moved past the initial prototype phase. The public repository now contains the shared Swift core, a command-line API client, a Linux relay server, Docker packaging, relay federation machinery, protocol documentation, security notes, SBOM generation, and release verification scripts.
+Noctyra has moved past the initial prototype phase. The public repository now contains the shared Swift core, a command-line headless messaging/API client, a Linux relay server, Docker packaging, relay federation machinery, protocol documentation, security notes, SBOM generation, and release verification scripts.
 
 The Apple client applications and macOS GUI relay app are maintained outside this public repository. Their behavior is referenced only where it affects public protocol compatibility.
 
 ## Completed Foundations
 
 - [x] Public protocol specification: `noctweave_protocol_spec_v1.md`
+- [x] Public core API orientation: `noctweave_core_public_api.md`
 - [x] Wire format and test vector documentation: `wire_format_and_test_vectors.md`
 - [x] Relay API/OpenAPI specification: `noctyra_relay_openapi.yaml`
 - [x] Security requirements document: `security_requirements.md`
@@ -123,6 +124,12 @@ The Apple client applications and macOS GUI relay app are maintained outside thi
 
 - [x] `NoctyraCLI` executable target
 - [x] Endpoint normalization for `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls`
+- [x] Public `HeadlessMessagingClient` API in `NoctweaveCore`
+- [x] Headless direct-message client state backed by `NoctweaveCore`
+- [x] Headless identity initialization with inbox access key generation
+- [x] Headless inbox registration with signed actor proof
+- [x] Headless contact-code and password-protected contact-package import/export
+- [x] Headless direct encrypted text send/fetch/decrypt/acknowledge flow
 - [x] Relay `health` command
 - [x] Relay `info` command
 - [x] Raw relay-request command from JSON string, file, or stdin
@@ -130,6 +137,9 @@ The Apple client applications and macOS GUI relay app are maintained outside thi
 - [x] Shared relay endpoint parser with tests
 - [x] Public combined test runner: `scripts/run-tests.sh`
 - [x] Public release verification script: `scripts/verify-release.sh`
+- [ ] Headless CLI group messaging commands
+- [ ] Headless CLI attachment and voice-message commands
+- [ ] Headless CLI identity rotation/burn commands with explicit confirmation
 
 ## Test And Verification Coverage
 
@@ -137,6 +147,7 @@ The Apple client applications and macOS GUI relay app are maintained outside thi
 - [x] Linux relay XCTest suite
 - [x] Direct encrypted message round trips
 - [x] Federated direct-message delivery
+- [x] Headless direct-message relay exchange with persistent state
 - [x] Federated group-ratchet delivery
 - [x] Relay TCP integration tests
 - [x] HTTP bridge security-header tests
@@ -162,8 +173,7 @@ These are finite release gates. They should stay bounded to a concrete artifact,
 - [ ] Add CI container build and vulnerability scan evidence.
 - [ ] Add a minimal public operator quickstart for common reverse-proxy deployments.
 - [ ] Add signed release artifact instructions for relay binaries and Docker images.
-- [ ] Decide whether `NoctweaveCore` should publish a stable public library API or remain an internal protocol package.
-- [ ] Decide whether `NoctyraCLI` remains a diagnostic/API tool or grows into a full headless messaging client.
+- [ ] Add semantic-versioning and source-stability policy for public `NoctweaveCore` releases.
 
 ## Deferred Research
 

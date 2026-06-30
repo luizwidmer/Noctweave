@@ -1,6 +1,8 @@
 import Foundation
 import CryptoKit
+#if canImport(Security)
 import Security
+#endif
 
 public enum InboxAddress {
     public static let hrp = "noctweave"
@@ -8,11 +10,14 @@ public enum InboxAddress {
 
     public static func generate() -> String {
         var bytes = [UInt8](repeating: 0, count: dataLength)
+        #if canImport(Security)
         let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        if status != errSecSuccess {
-            for i in bytes.indices {
-                bytes[i] = UInt8.random(in: 0...255)
-            }
+        if status == errSecSuccess {
+            return Bech32.encode(hrp: hrp, data: bytes)
+        }
+        #endif
+        for i in bytes.indices {
+            bytes[i] = UInt8.random(in: 0...255)
         }
         return Bech32.encode(hrp: hrp, data: bytes)
     }

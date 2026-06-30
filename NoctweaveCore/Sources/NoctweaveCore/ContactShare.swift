@@ -1,6 +1,8 @@
 import CryptoKit
 import Foundation
+#if canImport(Security)
 import Security
+#endif
 
 public enum ContactShareError: Error {
     case emptyPassword
@@ -115,9 +117,15 @@ public enum ContactShare {
 
     private static func randomSalt() throws -> Data {
         var bytes = [UInt8](repeating: 0, count: 16)
+        #if canImport(Security)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
             throw ContactShareError.entropyUnavailable
         }
+        #else
+        for index in bytes.indices {
+            bytes[index] = UInt8.random(in: 0...255)
+        }
+        #endif
         return Data(bytes)
     }
 }
