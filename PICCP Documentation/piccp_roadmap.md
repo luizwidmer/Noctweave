@@ -220,7 +220,7 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 **Team**: 2-3 people  
 
 ### Objectives
-- Build CLI client for testing and power users
+- Build CLI/API client for testing, diagnostics, and power users
 - Implement relay communication layer
 - Create contact management system
 - Develop local message storage
@@ -233,7 +233,7 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 - [x] Prekey bundle generation and upload
 - [x] Mailbox creation and management
 - [x] Basic send/receive loop
-- [ ] CLI interface with clear commands
+- [x] CLI interface with clear commands: `NoctyraCLI` supports endpoint normalization, relay health/info, and raw relay requests.
 
 #### Milestone 3.2: Contact Management (2 weeks)
 - [x] Contact database (identity keys, mailbox IDs)
@@ -262,7 +262,7 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 - [x] Settings panel
 
 ### Deliverables
-- [ ] `piccp-cli` command-line client
+- [x] `NoctyraCLI` command-line API client
 - [x] User documentation and tutorials
 - [x] (Optional) Noctyra SwiftUI GUI application
 - [ ] Client library for third-party integrations

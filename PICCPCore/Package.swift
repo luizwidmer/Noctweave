@@ -9,11 +9,13 @@ let package = Package(
     ],
     products: [
         .library(name: "PICCPCore", targets: ["PICCPCore"]),
+        .executable(name: "NoctyraCLI", targets: ["NoctyraCLI"]),
         .executable(name: "PICCPCoreTestHarness", targets: ["PICCPCoreTestHarness"])
     ],
     targets: [
         .binaryTarget(name: "liboqs", path: "Vendor/liboqs.xcframework"),
         .target(name: "PICCPCore", dependencies: ["liboqs"]),
+        .executableTarget(name: "NoctyraCLI", dependencies: ["PICCPCore"]),
         .executableTarget(name: "PICCPCoreTestHarness", dependencies: ["PICCPCore"]),
         .testTarget(name: "PICCPCoreTests", dependencies: ["PICCPCore"])
     ]

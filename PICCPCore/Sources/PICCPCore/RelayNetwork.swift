@@ -17,53 +17,61 @@ enum RelayNetworkError: Error {
 
 extension NWConnection {
     func awaitReady() async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            final class ResumeGate: @unchecked Sendable {
-                private let lock = NSLock()
-                private var resumed = false
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                final class ResumeGate: @unchecked Sendable {
+                    private let lock = NSLock()
+                    private var resumed = false
 
-                func claim() -> Bool {
-                    lock.lock()
-                    defer { lock.unlock() }
-                    guard !resumed else { return false }
-                    resumed = true
-                    return true
+                    func claim() -> Bool {
+                        lock.lock()
+                        defer { lock.unlock() }
+                        guard !resumed else { return false }
+                        resumed = true
+                        return true
+                    }
                 }
-            }
-            let gate = ResumeGate()
-            let resumeOnce: @Sendable (Result<Void, Error>) -> Void = { [self] result in
-                guard gate.claim() else { return }
-                self.stateUpdateHandler = nil
-                continuation.resume(with: result)
-            }
+                let gate = ResumeGate()
+                let resumeOnce: @Sendable (Result<Void, Error>) -> Void = { [self] result in
+                    guard gate.claim() else { return }
+                    self.stateUpdateHandler = nil
+                    continuation.resume(with: result)
+                }
 
-            stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    resumeOnce(.success(()))
-                case .failed(let error):
-                    resumeOnce(.failure(error))
-                case .cancelled:
-                    resumeOnce(.failure(RelayNetworkError.connectionFailed))
-                default:
-                    break
+                stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        resumeOnce(.success(()))
+                    case .failed(let error):
+                        resumeOnce(.failure(error))
+                    case .cancelled:
+                        resumeOnce(.failure(RelayNetworkError.connectionFailed))
+                    default:
+                        break
+                    }
                 }
+                start(queue: DispatchQueue(label: "PICCPCore.RelayNetwork"))
             }
-            start(queue: DispatchQueue(label: "PICCPCore.RelayNetwork"))
+        } onCancel: { [self] in
+            cancel()
         }
     }
 
     func sendLine(_ data: Data) async throws {
         var payload = data
         payload.append(0x0A)
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            send(content: payload, completion: .contentProcessed { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
-                }
-            })
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                send(content: payload, completion: .contentProcessed { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                })
+            }
+        } onCancel: { [self] in
+            cancel()
         }
     }
 
@@ -81,18 +89,22 @@ extension NWConnection {
     }
 
     private func receiveChunk() async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, isComplete, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, isComplete, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                        return
+                    }
+                    if isComplete && (data == nil || data?.isEmpty == true) {
+                        continuation.resume(throwing: RelayNetworkError.invalidResponse)
+                        return
+                    }
+                    continuation.resume(returning: data ?? Data())
                 }
-                if isComplete && (data == nil || data?.isEmpty == true) {
-                    continuation.resume(throwing: RelayNetworkError.invalidResponse)
-                    return
-                }
-                continuation.resume(returning: data ?? Data())
             }
+        } onCancel: { [self] in
+            cancel()
         }
     }
 }
