@@ -49,6 +49,14 @@ private struct CommandRunner {
             try writeJSON(contact)
         case "contacts":
             try await writeJSON(headlessClient(from: options).contacts())
+        case "group-create":
+            try await createGroup(options: options)
+        case "groups":
+            try await listGroups(options: options)
+        case "group-send":
+            try await sendGroupText(options: options)
+        case "group-receive":
+            try await receiveGroupMessages(options: options)
         case "continuity-audit":
             try await writeJSON(headlessClient(from: options).continuityAudit())
         case "purge-continuity-audit":
@@ -133,6 +141,49 @@ private struct CommandRunner {
         }
         let sent = try await headlessClient(from: options).sendText(to: selector, text: text)
         try writeJSON(sent)
+    }
+
+    private func createGroup(options: ParsedOptions) async throws {
+        guard let title = options.value(for: "--title") else {
+            throw CLIError("Missing group title. Use `--title <name>`.")
+        }
+        let members = memberSelectors(from: options)
+        guard !members.isEmpty else {
+            throw CLIError("Missing members. Use `--members <contact-a,contact-b>`.")
+        }
+        let group = try await headlessClient(from: options).createGroup(title: title, memberSelectors: members)
+        try writeJSON(group)
+    }
+
+    private func listGroups(options: ParsedOptions) async throws {
+        let refresh = try options.boolValue(for: "--refresh") ?? true
+        let limit = try options.intValue(for: "--limit") ?? 100
+        let groups = try await headlessClient(from: options).groups(refreshFromRelay: refresh, limit: limit)
+        try writeJSON(groups)
+    }
+
+    private func sendGroupText(options: ParsedOptions) async throws {
+        guard let selector = options.value(for: "--group") else {
+            throw CLIError("Missing group. Use `--group <title|uuid>`.")
+        }
+        guard let text = options.value(for: "--text") else {
+            throw CLIError("Missing message text. Use `--text <message>`.")
+        }
+        let sent = try await headlessClient(from: options).sendGroupText(to: selector, text: text)
+        try writeJSON(sent)
+    }
+
+    private func receiveGroupMessages(options: ParsedOptions) async throws {
+        let maxCount = try options.intValue(for: "--max") ?? 25
+        let longPoll = try options.intValue(for: "--long-poll")
+        let acknowledge = !(try options.boolValue(for: "--no-ack") ?? false)
+        let messages = try await headlessClient(from: options).receiveGroupMessages(
+            group: options.value(for: "--group"),
+            maxCount: maxCount,
+            longPollTimeoutSeconds: longPoll,
+            acknowledge: acknowledge
+        )
+        try writeJSON(messages)
     }
 
     private func receive(options: ParsedOptions) async throws {
@@ -246,6 +297,13 @@ private struct CommandRunner {
         }
     }
 
+    private func memberSelectors(from options: ParsedOptions) -> [String] {
+        (options.value(for: "--members") ?? options.value(for: "--member") ?? "")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
     private func printHelp() {
         FileHandle.standardOutput.writeLine("""
         NoctyraCLI
@@ -259,6 +317,10 @@ private struct CommandRunner {
           NoctyraCLI import-contact --code <contact-code> [--state path]
           NoctyraCLI import-contact --file contact.noctweave --password <password> [--state path]
           NoctyraCLI contacts [--state path]
+          NoctyraCLI group-create --title <name> --members <contact-a,contact-b> [--state path]
+          NoctyraCLI groups [--refresh true] [--limit count] [--state path]
+          NoctyraCLI group-send --group <title|uuid> --text <message> [--state path]
+          NoctyraCLI group-receive [--group <title|uuid>] [--max count] [--long-poll seconds] [--state path]
           NoctyraCLI continuity-audit [--state path]
           NoctyraCLI purge-continuity-audit --confirm PURGE [--state path]
           NoctyraCLI send --to <contact-name|fingerprint|uuid> --text <message> [--state path]

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Security)
+import Security
+#endif
 
 public struct HeadlessClientStatus: Codable, Equatable {
     public let displayName: String
@@ -104,12 +107,86 @@ public struct HeadlessContinuityAuditPurgeResult: Codable, Equatable {
     }
 }
 
+public struct HeadlessGroupSummary: Codable, Equatable {
+    public let id: UUID
+    public let title: String
+    public let inboxId: String?
+    public let memberCount: Int
+    public let relayEpoch: UInt64?
+    public let unreadCount: Int
+    public let createdByFingerprint: String?
+
+    public init(
+        id: UUID,
+        title: String,
+        inboxId: String?,
+        memberCount: Int,
+        relayEpoch: UInt64?,
+        unreadCount: Int,
+        createdByFingerprint: String?
+    ) {
+        self.id = id
+        self.title = title
+        self.inboxId = inboxId
+        self.memberCount = memberCount
+        self.relayEpoch = relayEpoch
+        self.unreadCount = unreadCount
+        self.createdByFingerprint = createdByFingerprint
+    }
+}
+
+public struct HeadlessSentGroupMessage: Codable, Equatable {
+    public let group: HeadlessGroupSummary
+    public let envelopeId: UUID
+    public let messageCounter: UInt64
+    public let storedCount: Int
+
+    public init(group: HeadlessGroupSummary, envelopeId: UUID, messageCounter: UInt64, storedCount: Int) {
+        self.group = group
+        self.envelopeId = envelopeId
+        self.messageCounter = messageCounter
+        self.storedCount = storedCount
+    }
+}
+
+public struct HeadlessReceivedGroupMessage: Codable, Equatable {
+    public let group: HeadlessGroupSummary
+    public let envelopeId: UUID
+    public let messageCounter: UInt64
+    public let senderFingerprint: String
+    public let senderDisplayName: String?
+    public let body: MessageBody
+    public let sentAt: Date
+
+    public init(
+        group: HeadlessGroupSummary,
+        envelopeId: UUID,
+        messageCounter: UInt64,
+        senderFingerprint: String,
+        senderDisplayName: String?,
+        body: MessageBody,
+        sentAt: Date
+    ) {
+        self.group = group
+        self.envelopeId = envelopeId
+        self.messageCounter = messageCounter
+        self.senderFingerprint = senderFingerprint
+        self.senderDisplayName = senderDisplayName
+        self.body = body
+        self.sentAt = sentAt
+    }
+}
+
 public enum HeadlessMessagingClientError: Error, Equatable {
     case stateAlreadyExists
     case missingState
     case missingInboxAccessKey
     case contactNotFound(String)
     case ambiguousContact(String)
+    case groupNotFound(String)
+    case ambiguousGroup(String)
+    case missingGroupRatchet(String)
+    case missingGroupSenderKey(String)
     case relayRejected(String)
     case unsupportedInboundSession
 }
@@ -127,6 +204,14 @@ extension HeadlessMessagingClientError: LocalizedError {
             return "No contact matched `\(selector)`."
         case .ambiguousContact(let selector):
             return "More than one contact matched `\(selector)`. Use the contact UUID or fingerprint."
+        case .groupNotFound(let selector):
+            return "No group matched `\(selector)`."
+        case .ambiguousGroup(let selector):
+            return "More than one group matched `\(selector)`. Use the group UUID."
+        case .missingGroupRatchet(let selector):
+            return "Group `\(selector)` is missing recoverable ratchet state. Refresh groups or recreate the group."
+        case .missingGroupSenderKey(let fingerprint):
+            return "Group sender signing key is missing for `\(fingerprint)`."
         case .relayRejected(let message):
             return "Relay rejected the request: \(message)"
         case .unsupportedInboundSession:
@@ -231,6 +316,64 @@ public actor HeadlessMessagingClient {
         try await loadState().contacts.sorted { lhs, rhs in
             lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
         }
+    }
+
+    public func createGroup(title: String, memberSelectors: [String]) async throws -> HeadlessGroupSummary {
+        var state = try await loadState()
+        let contacts = try memberSelectors.map { try resolveContact($0, in: state.contacts) }
+        let groupId = UUID()
+        let creatorProfile = groupMemberProfile(identity: state.identity, inboxId: state.inboxId, relay: state.relay)
+        let memberProfiles = contacts.map(groupMemberProfile(contact:))
+        let distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: Self.randomBytes(count: 32),
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: [creatorProfile] + memberProfiles
+        )
+        var request = CreateGroupRequest(
+            groupId: groupId,
+            title: title,
+            creatorFingerprint: state.identity.fingerprint,
+            memberFingerprints: contacts.map(\.fingerprint),
+            creatorProfile: creatorProfile,
+            memberProfiles: memberProfiles,
+            initialRatchetSecretDistribution: distribution
+        )
+        let proof = try Self.makeActorProof(signingKey: state.identity.signingKey) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        request = CreateGroupRequest(
+            groupId: request.groupId,
+            title: request.title,
+            creatorFingerprint: request.creatorFingerprint,
+            memberFingerprints: request.memberFingerprints,
+            creatorProfile: request.creatorProfile,
+            memberProfiles: request.memberProfiles,
+            initialRatchetSecretDistribution: request.initialRatchetSecretDistribution,
+            creatorProof: proof
+        )
+        let response = try await relayClient(for: state.relay).send(.createGroup(request), timeout: timeout)
+        guard response.type == .group, let descriptor = response.group else {
+            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+        }
+        let group = try groupConversation(from: descriptor, contacts: contacts, state: state, existing: nil)
+        state.upsert(group: group)
+        try await store.save(state)
+        return summary(for: group)
+    }
+
+    public func groups(refreshFromRelay: Bool = true, limit: Int = 100) async throws -> [HeadlessGroupSummary] {
+        var state = try await loadState()
+        if refreshFromRelay {
+            try await refreshGroups(into: &state, limit: limit)
+            try await store.save(state)
+        }
+        return state.groups
+            .sorted { lhs, rhs in
+                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
+            .map(summary(for:))
     }
 
     public func continuityAudit() async throws -> HeadlessContinuityAudit {
@@ -420,6 +563,143 @@ public actor HeadlessMessagingClient {
         )
     }
 
+    public func sendGroupText(to selector: String, text: String) async throws -> HeadlessSentGroupMessage {
+        var state = try await loadState()
+        try await refreshGroups(into: &state, limit: 100)
+        var group = try resolveGroup(selector, in: state.groups)
+        guard var ratchetState = group.groupRatchetState else {
+            throw HeadlessMessagingClientError.missingGroupRatchet(group.title)
+        }
+        let envelope = try GroupRatchet.encrypt(
+            body: .text(text),
+            senderSigningKey: state.identity.signingKey,
+            senderFingerprint: state.identity.fingerprint,
+            state: &ratchetState
+        )
+        group.groupRatchetState = ratchetState
+        group.messages.append(
+            Message(
+                direction: .sent,
+                body: text,
+                timestamp: envelope.sentAt,
+                counter: envelope.messageCounter
+            )
+        )
+        state.upsert(group: group)
+        let response = try await relayClient(for: state.relay).send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: group.id,
+                    groupInboxId: try groupInboxId(for: group),
+                    envelope: envelope
+                )
+            ),
+            timeout: timeout
+        )
+        guard response.type == .delivered || response.type == .ok else {
+            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+        }
+        try await store.save(state)
+        return HeadlessSentGroupMessage(
+            group: summary(for: group),
+            envelopeId: envelope.id,
+            messageCounter: envelope.messageCounter,
+            storedCount: response.delivered?.storedCount ?? 0
+        )
+    }
+
+    public func receiveGroupMessages(
+        group selector: String? = nil,
+        maxCount: Int = 25,
+        longPollTimeoutSeconds: Int? = nil,
+        acknowledge: Bool = true
+    ) async throws -> [HeadlessReceivedGroupMessage] {
+        var state = try await loadState()
+        try await refreshGroups(into: &state, limit: 100)
+        let targetGroups: [GroupConversation]
+        if let selector {
+            targetGroups = [try resolveGroup(selector, in: state.groups)]
+        } else {
+            targetGroups = state.groups
+        }
+
+        var received: [HeadlessReceivedGroupMessage] = []
+        for var group in targetGroups {
+            let inboxId = try groupInboxId(for: group)
+            var request = FetchGroupMessagesRequest(
+                groupId: group.id,
+                groupInboxId: inboxId,
+                maxCount: max(1, maxCount),
+                longPollTimeoutSeconds: longPollTimeoutSeconds,
+                actorFingerprint: state.identity.fingerprint
+            )
+            let proof = try Self.makeActorProof(signingKey: state.identity.signingKey) { actorProof in
+                try request.signableData(for: actorProof)
+            }
+            request = FetchGroupMessagesRequest(
+                groupId: request.groupId,
+                groupInboxId: request.groupInboxId,
+                maxCount: request.maxCount,
+                longPollTimeoutSeconds: request.longPollTimeoutSeconds,
+                actorFingerprint: request.actorFingerprint,
+                actorProof: proof
+            )
+            let response = try await relayClient(for: state.relay).send(
+                .fetchGroupMessages(request),
+                timeout: timeout + TimeInterval(longPollTimeoutSeconds ?? 0)
+            )
+            guard response.type == .groupMessages else {
+                if response.type == .ok {
+                    continue
+                }
+                throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+            }
+            var acknowledgedIds: [UUID] = []
+            for envelope in response.groupMessages ?? [] {
+                guard var ratchetState = group.groupRatchetState else {
+                    throw HeadlessMessagingClientError.missingGroupRatchet(group.title)
+                }
+                let sender = senderContact(for: envelope.senderFingerprint, in: state.contacts)
+                guard let senderKey = sender?.signingPublicKey
+                    ?? groupMemberSigningKey(for: envelope.senderFingerprint, group: group, state: state) else {
+                    throw HeadlessMessagingClientError.missingGroupSenderKey(envelope.senderFingerprint)
+                }
+                let body = try GroupRatchet.decrypt(
+                    envelope: envelope,
+                    senderPublicSigningKey: senderKey,
+                    state: &ratchetState
+                )
+                group.groupRatchetState = ratchetState
+                appendGroupMessage(
+                    body: body,
+                    direction: .received,
+                    senderDisplayName: sender?.displayName,
+                    counter: envelope.messageCounter,
+                    timestamp: envelope.sentAt,
+                    group: &group
+                )
+                acknowledgedIds.append(envelope.id)
+                received.append(
+                    HeadlessReceivedGroupMessage(
+                        group: summary(for: group),
+                        envelopeId: envelope.id,
+                        messageCounter: envelope.messageCounter,
+                        senderFingerprint: envelope.senderFingerprint,
+                        senderDisplayName: sender?.displayName,
+                        body: body,
+                        sentAt: envelope.sentAt
+                    )
+                )
+            }
+            state.upsert(group: group)
+            if acknowledge, !acknowledgedIds.isEmpty {
+                try await acknowledgeGroupMessages(acknowledgedIds, group: group, state: state)
+            }
+        }
+        try await store.save(state)
+        return received
+    }
+
     public func receive(maxCount: Int = 25, longPollTimeoutSeconds: Int? = nil, acknowledge: Bool = true) async throws -> [HeadlessReceivedMessage] {
         var state = try await loadState()
         let accessKey = try inboxAccessKey(from: state)
@@ -544,6 +824,80 @@ public actor HeadlessMessagingClient {
         return received
     }
 
+    private func refreshGroups(into state: inout ClientState, limit: Int) async throws {
+        var request = ListGroupsRequest(
+            memberFingerprint: state.identity.fingerprint,
+            limit: max(1, limit)
+        )
+        let proof = try Self.makeActorProof(signingKey: state.identity.signingKey) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        request = ListGroupsRequest(
+            memberFingerprint: request.memberFingerprint,
+            limit: request.limit,
+            memberProof: proof
+        )
+        let response = try await relayClient(for: state.relay).send(.listGroups(request), timeout: timeout)
+        guard response.type == .groups else {
+            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+        }
+        for descriptor in response.groups ?? [] {
+            let contacts = state.contacts.filter { contact in
+                descriptor.members.contains { $0.fingerprint == contact.fingerprint }
+            }
+            let existing = state.group(for: descriptor.id)
+            let group = try groupConversation(from: descriptor, contacts: contacts, state: state, existing: existing)
+            state.upsert(group: group)
+        }
+    }
+
+    private func groupConversation(
+        from descriptor: RelayGroupDescriptor,
+        contacts: [Contact],
+        state: ClientState,
+        existing: GroupConversation?
+    ) throws -> GroupConversation {
+        let ratchetState = GroupRatchetRecovery.state(
+            from: descriptor,
+            identity: state.identity,
+            existing: existing?.groupRatchetState
+        )
+        return GroupConversation(
+            id: descriptor.id,
+            title: descriptor.title,
+            memberContactIds: contacts.map(\.id),
+            relayInboxId: descriptor.inboxId,
+            relayEpoch: descriptor.epoch,
+            relayTranscriptHash: descriptor.mlsEpochState.confirmedTranscriptHash,
+            groupRatchetState: ratchetState,
+            createdByFingerprint: descriptor.createdByFingerprint,
+            messages: existing?.messages ?? [],
+            unreadCount: existing?.unreadCount ?? 0,
+            createdAt: existing?.createdAt ?? descriptor.createdAt
+        )
+    }
+
+    private func acknowledgeGroupMessages(_ ids: [UUID], group: GroupConversation, state: ClientState) async throws {
+        var request = AcknowledgeGroupMessagesRequest(
+            groupId: group.id,
+            groupInboxId: try groupInboxId(for: group),
+            messageIds: ids,
+            actorFingerprint: state.identity.fingerprint
+        )
+        let proof = try Self.makeActorProof(signingKey: state.identity.signingKey) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        request = AcknowledgeGroupMessagesRequest(
+            groupId: request.groupId,
+            groupInboxId: request.groupInboxId,
+            messageIds: request.messageIds,
+            actorFingerprint: request.actorFingerprint,
+            actorProof: proof
+        )
+        let response = try await relayClient(for: state.relay).send(.acknowledgeGroupMessages(request), timeout: timeout)
+        try requireOK(response)
+    }
+
     private func importContactOffer(_ offer: ContactOffer) async throws -> Contact {
         var state = try await loadState()
         let contact = try MessageEngine.contact(from: offer)
@@ -649,6 +1003,97 @@ public actor HeadlessMessagingClient {
         )
     }
 
+    private func summary(for group: GroupConversation) -> HeadlessGroupSummary {
+        HeadlessGroupSummary(
+            id: group.id,
+            title: group.title,
+            inboxId: group.relayInboxId,
+            memberCount: group.memberContactIds.count + 1,
+            relayEpoch: group.relayEpoch,
+            unreadCount: group.unreadCount,
+            createdByFingerprint: group.createdByFingerprint
+        )
+    }
+
+    private func groupMemberProfile(identity: Identity, inboxId: String, relay: RelayEndpoint) -> RelayGroupMemberProfile {
+        RelayGroupMemberProfile(
+            fingerprint: identity.fingerprint,
+            displayName: identity.displayName,
+            inboxId: inboxId,
+            relay: relay,
+            signingPublicKey: identity.signingKey.publicKeyData,
+            agreementPublicKey: identity.agreementKey.publicKeyData
+        )
+    }
+
+    private func groupMemberProfile(contact: Contact) -> RelayGroupMemberProfile {
+        RelayGroupMemberProfile(
+            fingerprint: contact.fingerprint,
+            displayName: contact.displayName,
+            inboxId: contact.inboxId,
+            relay: contact.relay,
+            signingPublicKey: contact.signingPublicKey,
+            agreementPublicKey: contact.agreementPublicKey
+        )
+    }
+
+    private func groupInboxId(for group: GroupConversation) throws -> String {
+        guard let inboxId = group.relayInboxId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !inboxId.isEmpty else {
+            throw HeadlessMessagingClientError.missingGroupRatchet(group.title)
+        }
+        return inboxId
+    }
+
+    private func senderContact(for fingerprint: String, in contacts: [Contact]) -> Contact? {
+        contacts.first { $0.fingerprint == fingerprint }
+    }
+
+    private func groupMemberSigningKey(for fingerprint: String, group: GroupConversation, state: ClientState) -> Data? {
+        if fingerprint == state.identity.fingerprint {
+            return state.identity.signingKey.publicKeyData
+        }
+        return state.contacts.first { contact in
+            group.memberContactIds.contains(contact.id) && contact.fingerprint == fingerprint
+        }?.signingPublicKey
+    }
+
+    private func appendGroupMessage(
+        body: MessageBody,
+        direction: MessageDirection,
+        senderDisplayName: String?,
+        counter: UInt64,
+        timestamp: Date,
+        group: inout GroupConversation
+    ) {
+        switch body {
+        case .text(let text):
+            group.messages.append(
+                Message(
+                    direction: direction,
+                    senderDisplayName: senderDisplayName,
+                    body: text,
+                    timestamp: timestamp,
+                    counter: counter
+                )
+            )
+        case .attachment(let descriptor):
+            let title = descriptor.fileName?.isEmpty == false ? descriptor.fileName! : "Attachment"
+            group.messages.append(
+                Message(
+                    direction: direction,
+                    senderDisplayName: senderDisplayName,
+                    body: title,
+                    timestamp: timestamp,
+                    counter: counter,
+                    attachment: AttachmentInfo(descriptor: descriptor)
+                )
+            )
+        case .identityRotation, .identityReset, .sessionReset, .resendRequest:
+            break
+        }
+    }
+
     private func relayClient(for endpoint: RelayEndpoint) -> RelayClient {
         RelayClient(endpoint: endpoint, authToken: authToken)
     }
@@ -676,6 +1121,39 @@ public actor HeadlessMessagingClient {
             throw HeadlessMessagingClientError.ambiguousContact(selector)
         }
         return matches[0]
+    }
+
+    private func resolveGroup(_ selector: String, in groups: [GroupConversation]) throws -> GroupConversation {
+        let needle = selector.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else {
+            throw HeadlessMessagingClientError.groupNotFound(selector)
+        }
+        let matches = groups.filter { group in
+            group.id.uuidString.caseInsensitiveCompare(needle) == .orderedSame
+                || group.title.localizedCaseInsensitiveCompare(needle) == .orderedSame
+        }
+        guard !matches.isEmpty else {
+            throw HeadlessMessagingClientError.groupNotFound(selector)
+        }
+        guard matches.count == 1 else {
+            throw HeadlessMessagingClientError.ambiguousGroup(selector)
+        }
+        return matches[0]
+    }
+
+    private static func randomBytes(count: Int) throws -> Data {
+        var bytes = [UInt8](repeating: 0, count: count)
+        #if canImport(Security)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard status == errSecSuccess else {
+            throw CryptoError.operationFailed
+        }
+        #else
+        for index in bytes.indices {
+            bytes[index] = UInt8.random(in: 0...255)
+        }
+        #endif
+        return Data(bytes)
     }
 
     private static func makeActorProof(

@@ -13,6 +13,7 @@
 - `HeadlessMessagingClient`: persistent headless identity, contact, send, receive, register, and contact-share workflows.
 - `HeadlessIdentityChangeResult`: structured result for identity rotation and burn operations.
 - `HeadlessContinuityAudit` and `HeadlessContinuityAuditPurgeResult`: structured inspection and purge results for active-identity continuity events.
+- `HeadlessGroupSummary`, `HeadlessSentGroupMessage`, and `HeadlessReceivedGroupMessage`: sanitized headless group messaging results that do not expose serialized ratchet keys.
 - `ClientState` and `ClientStateStore`: codable local state and optional platform encryption wrapper.
 - `Identity`, `IdentityProfile`, `Contact`, `Conversation`, and `Message`: core client state models.
 - `MessageEngine`: direct-message session creation, encryption, decryption, root ratchet, and message appending.

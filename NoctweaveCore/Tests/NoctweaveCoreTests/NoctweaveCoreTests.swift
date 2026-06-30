@@ -174,6 +174,55 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertTrue(purgedAudit.events.isEmpty)
     }
 
+    func testHeadlessMessagingClientExchangesGroupMessagesThroughRelay() async throws {
+        let port = UInt16.random(in: 53_001...57_000)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noctweave-headless-group-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), timeout: 3)
+        let bob = HeadlessMessagingClient(stateURL: root.appendingPathComponent("bob.json"), timeout: 3)
+        _ = try await alice.createState(displayName: "Alice CLI", relay: endpoint)
+        _ = try await bob.createState(displayName: "Bob CLI", relay: endpoint)
+        try await alice.registerInbox()
+        try await bob.registerInbox()
+
+        _ = try await alice.importContactCode(try await bob.exportContactCode())
+        _ = try await bob.importContactCode(try await alice.exportContactCode())
+
+        let created = try await alice.createGroup(title: "CLI Team", memberSelectors: ["Bob CLI"])
+        XCTAssertEqual(created.title, "CLI Team")
+        XCTAssertEqual(created.memberCount, 2)
+        XCTAssertNotNil(created.inboxId)
+
+        let bobGroups = try await bob.groups()
+        XCTAssertEqual(bobGroups.map(\.id), [created.id])
+
+        let sent = try await alice.sendGroupText(to: "CLI Team", text: "hello group")
+        XCTAssertEqual(sent.messageCounter, 0)
+        XCTAssertEqual(sent.storedCount, 1)
+
+        let bobReceived = try await bob.receiveGroupMessages(group: "CLI Team", maxCount: 10)
+        XCTAssertEqual(bobReceived.count, 1)
+        XCTAssertEqual(bobReceived[0].senderDisplayName, "Alice CLI")
+        XCTAssertEqual(bobReceived[0].body, .text("hello group"))
+
+        let reply = try await bob.sendGroupText(to: created.id.uuidString, text: "reply group")
+        XCTAssertEqual(reply.storedCount, 1)
+
+        let aliceReceived = try await alice.receiveGroupMessages(group: created.id.uuidString, maxCount: 10)
+        XCTAssertEqual(aliceReceived.count, 1)
+        XCTAssertEqual(aliceReceived[0].senderDisplayName, "Bob CLI")
+        XCTAssertEqual(aliceReceived[0].body, .text("reply group"))
+    }
+
     func testHiddenRetrievalPlannerExtractsTargetFromCoverResponse() throws {
         let plan = try HiddenRetrievalPlanner.makeCoverQuery(
             bucketId: "bucket-a",

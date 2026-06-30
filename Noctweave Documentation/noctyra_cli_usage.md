@@ -106,6 +106,36 @@ NoctyraCLI receive --long-poll 20
 
 Use `--no-ack true` when testing if you want fetched ciphertexts to remain queued on the relay.
 
+## Headless Groups
+
+Create a relay-backed encrypted group from existing contacts:
+
+```sh
+NoctyraCLI group-create --title "Ops" --members "Bob,Carol"
+```
+
+List local groups and refresh relay descriptors:
+
+```sh
+NoctyraCLI groups
+NoctyraCLI groups --refresh false
+```
+
+Send a group text message:
+
+```sh
+NoctyraCLI group-send --group "Ops" --text "status check"
+```
+
+Fetch, decrypt, and acknowledge group messages:
+
+```sh
+NoctyraCLI group-receive --group "Ops" --max 25
+NoctyraCLI group-receive --long-poll 20
+```
+
+Group creation currently uses contacts already imported into the headless state and creates the group on the active identity relay. The CLI returns sanitized group summaries rather than serialized ratchet keys.
+
 ## Identity Lifecycle
 
 Allow a contact to receive a new identity if you later burn your current identity:
