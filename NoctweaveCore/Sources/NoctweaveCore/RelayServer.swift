@@ -101,6 +101,28 @@ public final class RelayServer {
         configuration.federationAllowList = allowList
     }
 
+    public func updateFederationRuntimeSettings(from updated: RelayConfiguration) {
+        configuration.federation = updated.federation
+        configuration.federationAllowList = updated.federationAllowList
+        configuration.federationCoordinatorEndpoints = updated.federationCoordinatorEndpoints
+        configuration.coordinatorRegistrationToken = updated.coordinatorRegistrationToken
+        configuration.federationForwardingAuthToken = updated.federationForwardingAuthToken
+        configuration.coordinatorHeartbeatSeconds = updated.coordinatorHeartbeatSeconds
+        configuration.coordinatorDirectoryMaxStalenessSeconds = updated.coordinatorDirectoryMaxStalenessSeconds
+        let isOpenFederation = updated.federation.mode == .open
+        configuration.relayPeerExchangeLimit = isOpenFederation ? updated.relayPeerExchangeLimit : 0
+        configuration.openFederationDHTEnabled = isOpenFederation ? updated.openFederationDHTEnabled : false
+        configuration.openFederationDHTMaxRecords = updated.openFederationDHTMaxRecords
+        configuration.openFederationDHTMaxRecordsPerHost = updated.openFederationDHTMaxRecordsPerHost
+        configuration.openFederationDHTMaxQueryRecords = updated.openFederationDHTMaxQueryRecords
+        configuration.curatedStrictPolicyEnabled = updated.curatedStrictPolicyEnabled
+        configuration.curatedCoordinatorQuorum = updated.curatedCoordinatorQuorum
+        configuration.curatedRequireSignedDirectory = updated.curatedRequireSignedDirectory
+        configuration.allowPrivateFederationEndpoints = updated.allowPrivateFederationEndpoints
+        configuration.advertisedEndpoint = updated.advertisedEndpoint
+        startCoordinatorHeartbeatLoopIfNeeded()
+    }
+
     private func handleTCP(connection: NWConnection) {
         Task {
             do {
