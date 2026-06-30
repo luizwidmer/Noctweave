@@ -90,6 +90,10 @@ final class RelayHandler: ChannelInboundHandler {
 
     private func handle(_ request: RelayRequest, context: ChannelHandlerContext) -> EventLoopFuture<RelayResponse> {
         scheduleCoordinatorHeartbeatIfNeeded(on: context.eventLoop)
+        let requestSourceKey = normalizedFederationSourceKey(context.channel.remoteAddress?.description)
+        guard store.allowRelayRequest(sourceKey: requestSourceKey) else {
+            return context.eventLoop.makeSucceededFuture(.error("Rate limit exceeded"))
+        }
         if requiresAuthentication(for: request.type),
            let authFailure = validateAuthentication(token: request.authToken) {
             return context.eventLoop.makeSucceededFuture(authFailure)

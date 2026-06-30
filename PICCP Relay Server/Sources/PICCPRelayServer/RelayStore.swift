@@ -71,10 +71,14 @@ final class RelayStore {
     private let maxActorProofReplayEntries = 20_000
     private var coordinatorDirectoryCache: [FederationNodeRecord] = []
     private var actorProofReplayCache: [String: Date] = [:]
+    private var generalRequestAttemptsBySource: [String: [Date]] = [:]
     private var federationRegistrationAttemptsBySource: [String: [Date]] = [:]
     private var federationListAttemptsBySource: [String: [Date]] = [:]
     private var lastFederationRegistrationByEndpoint: [String: Date] = [:]
     private let federationRateWindowSeconds: TimeInterval = 60
+    private let generalRequestRateWindowSeconds: TimeInterval = 60
+    private let generalRequestMaxPerWindow = 240
+    private let generalRequestMaxSources = 10_000
     private let federationRegistrationMaxPerWindow = 24
     private let federationListMaxPerWindow = 120
     private let federationRegistrationMinEndpointIntervalSeconds: TimeInterval = 15
@@ -623,6 +627,28 @@ final class RelayStore {
             }
             attempts.append(now)
             federationListAttemptsBySource[source] = attempts
+            return true
+        }
+    }
+
+    func allowRelayRequest(sourceKey: String, now: Date = Date()) -> Bool {
+        performSync {
+            pruneGeneralRequestRateLimitsLocked(now: now)
+            let source = normalizedFederationSourceKey(sourceKey)
+            var attempts = generalRequestAttemptsBySource[source, default: []]
+            guard attempts.count < generalRequestMaxPerWindow else {
+                generalRequestAttemptsBySource[source] = attempts
+                return false
+            }
+            if generalRequestAttemptsBySource[source] == nil,
+               generalRequestAttemptsBySource.count >= generalRequestMaxSources,
+               let oldestSource = generalRequestAttemptsBySource.min(by: {
+                   ($0.value.first ?? now) < ($1.value.first ?? now)
+               })?.key {
+                generalRequestAttemptsBySource.removeValue(forKey: oldestSource)
+            }
+            attempts.append(now)
+            generalRequestAttemptsBySource[source] = attempts
             return true
         }
     }
@@ -1439,6 +1465,14 @@ final class RelayStore {
         let endpointCutoff = now.addingTimeInterval(-federationRegistrationMinEndpointIntervalSeconds * 2)
         lastFederationRegistrationByEndpoint = lastFederationRegistrationByEndpoint.filter { _, timestamp in
             timestamp >= endpointCutoff
+        }
+    }
+
+    private func pruneGeneralRequestRateLimitsLocked(now: Date) {
+        let cutoff = now.addingTimeInterval(-generalRequestRateWindowSeconds)
+        generalRequestAttemptsBySource = generalRequestAttemptsBySource.compactMapValues { attempts in
+            let filtered = attempts.filter { $0 >= cutoff }
+            return filtered.isEmpty ? nil : filtered
         }
     }
 }

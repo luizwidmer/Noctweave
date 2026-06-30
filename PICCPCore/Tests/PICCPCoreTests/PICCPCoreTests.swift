@@ -4503,6 +4503,23 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(headers["permissions-policy"], "camera=(), microphone=(), geolocation=(), interest-cohort=()")
     }
 
+    func testRelayRequestRateLimiterCapsSourceWindow() async {
+        let limiter = RelayRequestRateLimiter(maxRequests: 2, windowSeconds: 60)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let first = await limiter.allow(sourceKey: "client-a", now: now)
+        let second = await limiter.allow(sourceKey: "client-a", now: now.addingTimeInterval(1))
+        let capped = await limiter.allow(sourceKey: "client-a", now: now.addingTimeInterval(2))
+        let otherSource = await limiter.allow(sourceKey: "client-b", now: now.addingTimeInterval(2))
+        let afterWindow = await limiter.allow(sourceKey: "client-a", now: now.addingTimeInterval(61))
+
+        XCTAssertTrue(first)
+        XCTAssertTrue(second)
+        XCTAssertFalse(capped)
+        XCTAssertTrue(otherSource)
+        XCTAssertTrue(afterWindow)
+    }
+
     func testPasswordProtectedRelayEnforcesAuthentication() async throws {
         let relayPassword = "relay-secret"
         let serverEndpoint = RelayEndpoint(host: "0.0.0.0", port: 39439)

@@ -19,6 +19,7 @@ public final class RelayServer {
     private let coordinatorDirectorySigningPrivateKey: Data?
     private let coordinatorDirectoryPublicKey: Data?
     private var coordinatorDirectoryCache: [FederationNodeRecord] = []
+    private let requestRateLimiter = RelayRequestRateLimiter()
     public var configuration: RelayConfiguration
     private let listenerQueue = DispatchQueue(label: "PICCPCore.RelayServer")
 
@@ -316,6 +317,10 @@ public final class RelayServer {
     }
 
     private func handle(request: RelayRequest, sourceKey: String? = nil) async throws -> RelayResponse {
+        if let sourceKey,
+           await !requestRateLimiter.allow(sourceKey: sourceKey) {
+            return .error("Rate limit exceeded")
+        }
         if requiresAuthentication(for: request.type),
            let authFailure = validateAuthentication(token: request.authToken) {
             return authFailure
@@ -1804,5 +1809,48 @@ enum RelayHTTPSecurityHeaders {
         for field in fields {
             lines.append("\(field.name): \(field.value)")
         }
+    }
+}
+
+actor RelayRequestRateLimiter {
+    private let maxRequests: Int
+    private let windowSeconds: TimeInterval
+    private let maxSources: Int
+    private var attemptsBySource: [String: [Date]] = [:]
+
+    init(maxRequests: Int = 240, windowSeconds: TimeInterval = 60, maxSources: Int = 10_000) {
+        self.maxRequests = max(1, maxRequests)
+        self.windowSeconds = max(1, windowSeconds)
+        self.maxSources = max(1, maxSources)
+    }
+
+    func allow(sourceKey: String, now: Date = Date()) -> Bool {
+        let source = normalized(sourceKey)
+        let cutoff = now.addingTimeInterval(-windowSeconds)
+        attemptsBySource = attemptsBySource.compactMapValues { attempts in
+            let filtered = attempts.filter { $0 >= cutoff }
+            return filtered.isEmpty ? nil : filtered
+        }
+
+        var attempts = attemptsBySource[source, default: []]
+        guard attempts.count < maxRequests else {
+            attemptsBySource[source] = attempts
+            return false
+        }
+        if attemptsBySource[source] == nil,
+           attemptsBySource.count >= maxSources,
+           let oldestSource = attemptsBySource.min(by: {
+               ($0.value.first ?? now) < ($1.value.first ?? now)
+           })?.key {
+            attemptsBySource.removeValue(forKey: oldestSource)
+        }
+        attempts.append(now)
+        attemptsBySource[source] = attempts
+        return true
+    }
+
+    private func normalized(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return trimmed.isEmpty ? "unknown" : trimmed
     }
 }

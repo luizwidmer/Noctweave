@@ -164,7 +164,7 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 - [x] Message ingestion endpoint
 - [x] Epoch bucketing logic
 - [x] Normalized SQLite storage backend with row-scoped corrupt-record skip behavior
-- [ ] Basic rate limiting
+- [x] Basic rate limiting
 
 #### Milestone 2.2: Message Retrieval (2 weeks)
 - [ ] Epoch listing endpoint

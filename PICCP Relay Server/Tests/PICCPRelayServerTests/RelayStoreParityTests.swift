@@ -109,6 +109,18 @@ final class RelayStoreParityTests: XCTestCase {
         }
     }
 
+    func testGeneralRelayRequestRateLimitIsEnforcedPerSource() {
+        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        for offset in 0..<240 {
+            XCTAssertTrue(store.allowRelayRequest(sourceKey: "client-a", now: now.addingTimeInterval(TimeInterval(offset) * 0.1)))
+        }
+        XCTAssertFalse(store.allowRelayRequest(sourceKey: "client-a", now: now.addingTimeInterval(30)))
+        XCTAssertTrue(store.allowRelayRequest(sourceKey: "client-b", now: now.addingTimeInterval(30)))
+        XCTAssertTrue(store.allowRelayRequest(sourceKey: "client-a", now: now.addingTimeInterval(61)))
+    }
+
     func testRelayStoreRejectsOversizedEnvelopePayloads() throws {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
         let oversizedEnvelope = makeEnvelope(payload: EncryptedPayload(
