@@ -9065,6 +9065,88 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(state.conversations[0].contactId, contactId)
     }
 
+    func testClientStateMergeUpsertConversationPreservesConcurrentMessages() {
+        let identity = Identity(displayName: "Owner")
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        let contactId = UUID()
+        var state = ClientState(identity: identity, relay: relay, inboxId: "owner-inbox")
+
+        let received = Message(
+            id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
+            direction: .received,
+            body: "arrived while sending",
+            timestamp: Date(timeIntervalSince1970: 10),
+            counter: 1
+        )
+        var existing = makeConversation(contactId: contactId, body: "seed", timestamp: Date(timeIntervalSince1970: 1))
+        existing.messages = [received]
+        existing.unreadCount = 1
+        state.conversations = [existing]
+
+        let sent = Message(
+            id: UUID(uuidString: "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF")!,
+            direction: .sent,
+            body: "sent while receiving",
+            timestamp: Date(timeIntervalSince1970: 11),
+            counter: 2
+        )
+        var outboundSnapshot = existing
+        outboundSnapshot.messages = [sent]
+        outboundSnapshot.unreadCount = 0
+        outboundSnapshot.sendChain = ChainKeyState(keyData: Data(repeating: 0x44, count: 32), counter: 3)
+
+        state.mergeUpsert(conversation: outboundSnapshot)
+
+        XCTAssertEqual(state.conversations.count, 1)
+        XCTAssertEqual(state.conversations[0].messages.map(\.body), ["arrived while sending", "sent while receiving"])
+        XCTAssertEqual(state.conversations[0].unreadCount, 1)
+        XCTAssertEqual(state.conversations[0].sendChain.counter, 3)
+    }
+
+    func testClientStateMergeUpsertGroupPreservesConcurrentMessages() {
+        let identity = Identity(displayName: "Owner")
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        let groupId = UUID()
+        var state = ClientState(identity: identity, relay: relay, inboxId: "owner-inbox")
+
+        let received = Message(
+            id: UUID(uuidString: "CCCCCCCC-DDDD-EEEE-FFFF-AAAAAAAAAAAA")!,
+            direction: .received,
+            senderDisplayName: "Peer",
+            body: "group inbound",
+            timestamp: Date(timeIntervalSince1970: 20),
+            counter: 4
+        )
+        let existing = GroupConversation(
+            id: groupId,
+            title: "Team",
+            memberContactIds: [],
+            messages: [received],
+            unreadCount: 1
+        )
+        state.groups = [existing]
+
+        let sent = Message(
+            id: UUID(uuidString: "DDDDDDDD-EEEE-FFFF-AAAA-BBBBBBBBBBBB")!,
+            direction: .sent,
+            senderDisplayName: "Owner",
+            body: "group outbound",
+            timestamp: Date(timeIntervalSince1970: 21),
+            counter: 5
+        )
+        var outboundSnapshot = existing
+        outboundSnapshot.messages = [sent]
+        outboundSnapshot.unreadCount = 0
+        outboundSnapshot.relayEpoch = 8
+
+        state.mergeUpsert(group: outboundSnapshot)
+
+        XCTAssertEqual(state.groups.count, 1)
+        XCTAssertEqual(state.groups[0].messages.map(\.body), ["group inbound", "group outbound"])
+        XCTAssertEqual(state.groups[0].unreadCount, 1)
+        XCTAssertEqual(state.groups[0].relayEpoch, 8)
+    }
+
     func testGroupConversationPersistsInClientState() throws {
         let identity = Identity(displayName: "Alice")
         let relay = RelayEndpoint(host: "localhost", port: 9339)

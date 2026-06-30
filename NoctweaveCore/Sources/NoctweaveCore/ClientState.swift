@@ -235,6 +235,28 @@ public struct ClientState: Codable {
         }
     }
 
+    public mutating func mergeUpsert(conversation incoming: Conversation) {
+        if let index = conversations.firstIndex(where: { $0.contactId == incoming.contactId }) {
+            var merged = incoming
+            merged.messages = mergedMessages(conversations[index].messages, incoming.messages)
+            merged.unreadCount = max(conversations[index].unreadCount, incoming.unreadCount)
+            conversations[index] = merged
+        } else {
+            conversations.append(incoming)
+        }
+    }
+
+    public mutating func mergeUpsert(group incoming: GroupConversation) {
+        if let index = groups.firstIndex(where: { $0.id == incoming.id }) {
+            var merged = incoming
+            merged.messages = mergedMessages(groups[index].messages, incoming.messages)
+            merged.unreadCount = max(groups[index].unreadCount, incoming.unreadCount)
+            groups[index] = merged
+        } else {
+            groups.append(incoming)
+        }
+    }
+
     public func contact(for fingerprint: String) -> Contact? {
         contacts.first { $0.fingerprint == fingerprint }
     }
@@ -301,7 +323,7 @@ public struct ClientState: Codable {
     }
 }
 
-private extension ClientState {
+fileprivate extension ClientState {
     func activeProfileIndex() -> Int {
         identityProfiles.firstIndex(where: { $0.id == activeIdentityId }) ?? 0
     }
@@ -420,6 +442,24 @@ private extension ClientState {
             return candidate.receiveChain.counter > existing.receiveChain.counter ? candidate : existing
         }
         return existing.id <= candidate.id ? existing : candidate
+    }
+
+    func mergedMessages(_ messageSets: [Message]...) -> [Message] {
+        var byId: [UUID: Message] = [:]
+        for messages in messageSets {
+            for message in messages {
+                byId[message.id] = message
+            }
+        }
+        return byId.values.sorted { lhs, rhs in
+            if lhs.timestamp != rhs.timestamp {
+                return lhs.timestamp < rhs.timestamp
+            }
+            if lhs.counter != rhs.counter {
+                return lhs.counter < rhs.counter
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
     }
 }
 
