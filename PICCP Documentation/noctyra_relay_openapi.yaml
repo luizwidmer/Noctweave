@@ -3,7 +3,7 @@ info:
   title: Noctyra Relay API
   version: "1.0"
   description: |
-    HTTP/WebSocket bridge for the Noctyra/PICCP relay protocol. TCP uses the
+    HTTP/WebSocket bridge for Noctweave Protocol relay requests. TCP uses the
     same RelayRequest and RelayResponse JSON objects as one newline-delimited
     request per connection.
 servers:

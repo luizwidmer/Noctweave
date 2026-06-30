@@ -1,5 +1,5 @@
 ---
-title: "Noctyra / PICCP: A Post-Quantum Secure Messaging System with Pairwise Identity Continuity"
+title: "Noctweave Protocol: A Post-Quantum Secure Messaging System with Pairwise Identity Continuity"
 author: "Luiz Widmer - Independent Researcher"
 date: "Version 0.8 - June 2026"
 papersize: a4
@@ -9,9 +9,9 @@ fontsize: 11pt
 
 # Abstract
 
-PICCP (Pairwise Identity Continuity Communication Protocol) is a post-quantum secure messaging protocol centered on selective identity continuity rather than permanent global identity. Noctyra is the reference client and Noctyra Relay is the reference relay implementation. Together they use pure post-quantum identity and session establishment with ML-DSA-65 and ML-KEM-768, symmetric ratcheting for forward secrecy, selective identity rotation and identity burn, encrypted attachment transfer, relay-backed group coordination, coordinator-assisted federation, and pull-only message delivery without centralized push infrastructure.
+The Noctweave Protocol is a post-quantum secure messaging protocol centered on selective identity continuity rather than permanent global identity. Noctyra is the reference client and Noctyra Relay is the reference relay implementation. Together they use pure post-quantum identity and session establishment with ML-DSA-65 and ML-KEM-768, symmetric ratcheting for forward secrecy, selective identity rotation and identity burn, encrypted attachment transfer, relay-backed group coordination, coordinator-assisted federation, and pull-only message delivery without centralized push infrastructure.
 
-PICCP is intentionally pragmatic. It provides end-to-end confidentiality and pairwise continuity while remaining explicit about unresolved network-anonymity problems. The protocol minimizes metadata rather than claiming to eliminate it, and it is structured so stronger anonymity layers, such as mixnet or PIR-assisted retrieval, can be added without discarding the identity, relay, and continuity model.
+Noctweave is intentionally pragmatic. It provides end-to-end confidentiality and pairwise continuity while remaining explicit about unresolved network-anonymity problems. The protocol minimizes metadata rather than claiming to eliminate it, and it is structured so stronger anonymity layers, such as mixnet or PIR-assisted retrieval, can be added without discarding the identity, relay, and continuity model.
 
 # 1. Introduction
 
@@ -24,11 +24,11 @@ Most deployed messaging systems still inherit one or more structural privacy wea
 - central key-distribution or notification infrastructure
 - coarse identity semantics where a user is expected to remain the same entity forever
 
-PICCP was designed against that backdrop. Its central claim is that identity continuity is not the same thing as permanent identity. A user may need to prove continuity to a chosen contact while being intentionally unlinkable to everyone else. This leads to a model where identity is not a public social anchor but a cryptographic state that can be rotated, archived, or burned.
+Noctweave was designed against that backdrop. Its central claim is that identity continuity is not the same thing as permanent identity. A user may need to prove continuity to a chosen contact while being intentionally unlinkable to everyone else. This leads to a model where identity is not a public social anchor but a cryptographic state that can be rotated, archived, or burned.
 
 ## 1.2 Design stance
 
-PICCP prioritizes deployable post-quantum confidentiality and selective continuity over idealized anonymity claims. The protocol therefore adopts relays, bounded metadata minimization, and coordinator-assisted federation while treating PIR, mixnet transport, and MLS-class group work as explicit optional layers with clear limits rather than pretending they are fully solved.
+Noctweave prioritizes deployable post-quantum confidentiality and selective continuity over idealized anonymity claims. The protocol therefore adopts relays, bounded metadata minimization, and coordinator-assisted federation while treating PIR, mixnet transport, and MLS-class group work as explicit optional layers with clear limits rather than pretending they are fully solved.
 
 # 2. System Model
 
@@ -56,13 +56,13 @@ Inbox routing addresses are bech32-encoded capability-style addresses. They are 
 
 ## 2.3 Pairwise continuity
 
-PICCP treats continuity as pairwise, not universal. Contacts may learn that a new keyset belongs to the same peer only if that peer explicitly discloses continuity to them. If a user burns an identity, continuity can be selectively withheld. This is not a side feature. It is one of the main privacy properties of the design.
+Noctweave treats continuity as pairwise, not universal. Contacts may learn that a new keyset belongs to the same peer only if that peer explicitly discloses continuity to them. If a user burns an identity, continuity can be selectively withheld. This is not a side feature. It is one of the main privacy properties of the design.
 
 # 3. Threat Model
 
 ## 3.1 Adversaries considered
 
-PICCP is designed against the following practical adversaries:
+Noctweave is designed against the following practical adversaries:
 
 - passive network observers
 - active relay operators
@@ -73,7 +73,7 @@ PICCP is designed against the following practical adversaries:
 
 ## 3.2 Security goals
 
-PICCP targets:
+Noctweave targets:
 
 - post-quantum resistance for long-term identity and session establishment
 - end-to-end confidentiality for message and attachment payloads
@@ -85,7 +85,7 @@ PICCP targets:
 
 ## 3.3 Non-goals and limits
 
-PICCP does not claim:
+Noctweave does not claim:
 
 - strong global anonymity against a nation-state-grade traffic analyst
 - protection against a fully compromised operating system
@@ -95,7 +95,7 @@ PICCP does not claim:
 - MLS-equivalent formal group security proofs
 - guaranteed closed-app delivery without a client polling window
 
-PICCP is therefore best understood as a post-quantum, continuity-aware encrypted messenger with metadata minimization, not as a finished anonymous network.
+Noctweave is therefore best understood as a post-quantum, continuity-aware encrypted messenger with metadata minimization, not as a finished anonymous network.
 
 # 4. Cryptographic Construction
 
@@ -119,7 +119,7 @@ The system follows the same architectural split:
 
 ## 4.3 Prekey bundle flow
 
-PICCP uses a post-quantum prekey-bundle flow analogous in role to PQ-X3DH:
+Noctweave uses a post-quantum prekey-bundle flow analogous in role to PQ-X3DH:
 
 - each identity publishes a signed prekey and individually identity-signed
   one-time prekeys to its relay
@@ -309,7 +309,7 @@ The Linux relay path is part of the supported deployment model rather than a tra
 
 ## 8.1 Groups
 
-PICCP supports groups through relay-backed coordination while the group cryptography path is MLS-derived. Current group state is controlled through actor proofs and signed group commits for title edits, member additions, member removals, self-leave operations, and join approvals. Each signed commit is bound to the group ID, actor fingerprint, base epoch, and previous transcript hash so stale or replayed membership edits are rejected. Group descriptors carry a required MLS epoch state containing a tree hash, confirmed transcript hash, ciphersuite label, last commit summary, and bounded `mlsEpochHistory` of recent signed commit summaries. Approved joins carry an explicit signed `joinApprove` commit payload and advance the epoch with a `joinApprove` commit summary. A bounded group protocol model checker explores signed update, join approval, member removal, self-leave, stale-epoch, forked-transcript, duplicate-member, creator-removal, and no-op commit cases against the same epoch and transcript state used by relay descriptors. Group ratchet epoch secrets are distributed through signed group create, commit, and join-approval payloads by sealing the secret to each post-commit member with ML-KEM and AEAD-bound metadata. Clients that were offline across multiple group commits can replay retained epoch-secret distributions in order when those commits remain inside the relay's bounded descriptor history; before recovery, the retained history must be non-empty, duplicate-free, transcript-linked, contiguous inside the retained window, and ended by the advertised current commit. The same recovery path is used for stale persisted app state and route-level refresh. The group ratchet state transition itself rejects skipped epoch jumps, so direct callers cannot bypass the retained-history recovery path by jumping from a stale epoch to a later one. Relay-backed text, image, and voice group messages are delivered as signed group-ratchet envelopes to the group inbox. A sender can submit a group envelope through another relay in the same federation; that relay applies federation policy and forwards the ciphertext to the group-owning relay, which performs group membership and signature validation before storage. Group inbox acknowledgements are member-scoped: the relay keeps an envelope until all pending non-sender members have acknowledged it, so an online member cannot remove a ciphertext before an offline peer has fetched it. The envelope context is used as AEAD data to bind ciphertexts to the group ID, epoch, sender fingerprint, message counter, and confirmed transcript hash. Attachment chunks are encrypted under the same group message key as the descriptor envelope and bind chunk metadata into AEAD. The relay coordinates membership and registry state, validates member signatures for group-inbox ciphertexts, and does not receive plaintext group messages or group epoch secrets. Supported flows include:
+Noctweave supports groups through relay-backed coordination while the group cryptography path is MLS-derived. Current group state is controlled through actor proofs and signed group commits for title edits, member additions, member removals, self-leave operations, and join approvals. Each signed commit is bound to the group ID, actor fingerprint, base epoch, and previous transcript hash so stale or replayed membership edits are rejected. Group descriptors carry a required MLS epoch state containing a tree hash, confirmed transcript hash, ciphersuite label, last commit summary, and bounded `mlsEpochHistory` of recent signed commit summaries. Approved joins carry an explicit signed `joinApprove` commit payload and advance the epoch with a `joinApprove` commit summary. A bounded group protocol model checker explores signed update, join approval, member removal, self-leave, stale-epoch, forked-transcript, duplicate-member, creator-removal, and no-op commit cases against the same epoch and transcript state used by relay descriptors. Group ratchet epoch secrets are distributed through signed group create, commit, and join-approval payloads by sealing the secret to each post-commit member with ML-KEM and AEAD-bound metadata. Clients that were offline across multiple group commits can replay retained epoch-secret distributions in order when those commits remain inside the relay's bounded descriptor history; before recovery, the retained history must be non-empty, duplicate-free, transcript-linked, contiguous inside the retained window, and ended by the advertised current commit. The same recovery path is used for stale persisted app state and route-level refresh. The group ratchet state transition itself rejects skipped epoch jumps, so direct callers cannot bypass the retained-history recovery path by jumping from a stale epoch to a later one. Relay-backed text, image, and voice group messages are delivered as signed group-ratchet envelopes to the group inbox. A sender can submit a group envelope through another relay in the same federation; that relay applies federation policy and forwards the ciphertext to the group-owning relay, which performs group membership and signature validation before storage. Group inbox acknowledgements are member-scoped: the relay keeps an envelope until all pending non-sender members have acknowledged it, so an online member cannot remove a ciphertext before an offline peer has fetched it. The envelope context is used as AEAD data to bind ciphertexts to the group ID, epoch, sender fingerprint, message counter, and confirmed transcript hash. Attachment chunks are encrypted under the same group message key as the descriptor envelope and bind chunk metadata into AEAD. The relay coordinates membership and registry state, validates member signatures for group-inbox ciphertexts, and does not receive plaintext group messages or group epoch secrets. Supported flows include:
 
 - create
 - list
@@ -405,7 +405,7 @@ These are genuine open areas and remain on the roadmap because they are material
 
 # 11. Conclusion
 
-PICCP is an implemented post-quantum messaging system with selective identity continuity, relay-backed deployment, and a clear separation between delivered security properties and deferred anonymity work. The Noctyra implementation is not a finished anonymity network, but it is a working encrypted messenger that enforces the core ideas that motivate the protocol:
+Noctweave is an implemented post-quantum messaging system with selective identity continuity, relay-backed deployment, and a clear separation between delivered security properties and deferred anonymity work. The Noctyra implementation is not a finished anonymity network, but it is a working encrypted messenger that enforces the core ideas that motivate the protocol:
 
 - identity need not be permanent
 - long-term continuity should survive quantum-era attacks

@@ -1,6 +1,6 @@
 # Noctyra
 
-Noctyra is a post-quantum secure messaging protocol stack. This public repository contains the shared Swift core, the `NoctyraCLI` relay/API client, the Linux relay server, Docker packaging, and public protocol/operator documentation.
+Noctyra is the reference implementation of the Noctweave Protocol: a post-quantum secure messaging protocol centered on pairwise identity continuity, relay-backed delivery, and metadata reduction. This public repository contains the shared Swift core, the `NoctyraCLI` relay/API client, the Linux relay server, Docker packaging, and public protocol/operator documentation.
 
 The Apple messaging clients and macOS GUI relay app are proprietary and are intentionally not part of this repository.
 
@@ -70,7 +70,7 @@ The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` rela
 ## Documentation Map
 
 - Relay API: [`noctyra_relay_openapi.yaml`](PICCP%20Documentation/noctyra_relay_openapi.yaml)
-- Protocol spec: [`piccp_protocol_spec_v1.md`](PICCP%20Documentation/piccp_protocol_spec_v1.md)
+- Protocol spec: [`noctweave_protocol_spec_v1.md`](PICCP%20Documentation/noctweave_protocol_spec_v1.md)
 - Wire format and test vectors: [`wire_format_and_test_vectors.md`](PICCP%20Documentation/wire_format_and_test_vectors.md)
 - Relay hardening guide: [`relay_ops_hardening_guide.md`](PICCP%20Documentation/relay_ops_hardening_guide.md)
 - Security requirements: [`security_requirements.md`](PICCP%20Documentation/security_requirements.md)

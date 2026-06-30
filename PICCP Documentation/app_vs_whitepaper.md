@@ -1,7 +1,7 @@
 # Noctyra Implementation vs Whitepaper
 
 ## Overview
-This document summarizes the current Noctyra client + relay implementation against the PICCP whitepaper v0.8.
+This document summarizes the current Noctyra client + relay implementation against the Noctweave Protocol whitepaper v0.8.
 
 Last reviewed: June 29, 2026.
 

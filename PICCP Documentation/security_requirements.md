@@ -1,6 +1,6 @@
 # Noctyra Security Requirements
 
-This document defines the repository-owned security requirements for the current Noctyra/PICCP implementation. External audit, formal proofs, and large-scale operational validation remain separate roadmap items.
+This document defines the repository-owned security requirements for the current Noctweave Protocol implementation. External audit, formal proofs, and large-scale operational validation remain separate roadmap items.
 
 | ID | Requirement | Current control | Verification evidence |
 |----|-------------|-----------------|-----------------------|
@@ -21,7 +21,7 @@ This document defines the repository-owned security requirements for the current
 | SR-15 | Optional PIR/mixnet/onion claims must not be advertised unless usable. | Relay metadata suppresses weak replicated-PIR, onion, and mixnet capabilities. | whitepaper alignment verifier and relay info suppression tests. |
 | SR-16 | Background helper paths must not expose identity signing keys or message counts. | Prefetch profiles use delegated inbox keys and metadata-blind status. | source guards in `scripts/verify-whitepaper-alignment.sh`. |
 | SR-17 | UI capture protections must be best-effort and not overclaimed. | Secure containers, reveal gates, secure typing, and secure camera are documented as OS-bound mitigations. | client UI sources and whitepaper caveats. |
-| SR-18 | Release claims must distinguish internal verification from external assurance. | Roadmap keeps external audit, formal proof, side-channel analysis, and load reports unchecked. | `piccp_roadmap.md` and security audit residual-risk notes. |
+| SR-18 | Release claims must distinguish internal verification from external assurance. | Roadmap keeps external audit, formal proof, side-channel analysis, and load reports unchecked. | `noctyra_roadmap.md` and security audit residual-risk notes. |
 
 ## Non-Goals
 

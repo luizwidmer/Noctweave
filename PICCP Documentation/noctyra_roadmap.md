@@ -13,7 +13,7 @@ The Apple client applications and macOS GUI relay app are maintained outside thi
 
 ## Completed Foundations
 
-- [x] Public protocol specification: `piccp_protocol_spec_v1.md`
+- [x] Public protocol specification: `noctweave_protocol_spec_v1.md`
 - [x] Wire format and test vector documentation: `wire_format_and_test_vectors.md`
 - [x] Relay API/OpenAPI specification: `noctyra_relay_openapi.yaml`
 - [x] Security requirements document: `security_requirements.md`

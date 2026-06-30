@@ -1,6 +1,6 @@
-# PICCP Wire Format And Test Vectors
+# Noctweave Protocol Wire Format And Test Vectors
 
-PICCP wire messages are JSON encoded with the shared `PICCPCoder` rules:
+Noctweave Protocol wire messages are JSON encoded with the shared `PICCPCoder` rules:
 
 - Dates use ISO-8601 strings.
 - Binary `Data` fields use base64.

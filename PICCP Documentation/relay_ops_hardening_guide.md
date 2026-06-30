@@ -69,7 +69,7 @@ Use a dedicated data volume with restrictive permissions:
 docker run --rm \
   -p 127.0.0.1:9340:9340 \
   -v noctyra-relay-data:/data \
-  piccp-relay
+  noctyra-relay
 ```
 
 Persist `/data` for normal operation. Use `--memory-only` only for throwaway relays or development because queued messages, attachments, and coordinator keys disappear on restart.

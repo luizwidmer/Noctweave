@@ -1,6 +1,6 @@
-# PICCP Relay Server (Linux)
+# Noctyra Relay Server (Linux)
 
-A relay server that matches the line-delimited JSON protocol used by the Noctyra clients, with optional HTTP/WebSocket bridge support.
+A Linux relay server for the Noctweave Protocol, used by Noctyra clients and compatible tooling. It supports line-delimited TCP plus optional HTTP/WebSocket bridge support.
 
 ## What it does
 
@@ -27,7 +27,7 @@ swift build -c release
 ## Run (local)
 
 ```bash
-.build/debug/PICCPRelayServer --host 0.0.0.0 --port 9339 --data-dir /tmp/piccp
+.build/debug/PICCPRelayServer --host 0.0.0.0 --port 9339 --data-dir /tmp/noctyra-relay
 ```
 
 In-memory only (no disk writes):
@@ -130,8 +130,8 @@ Use `--wake-mode pullOnly` or `--wake-mode longPoll` to advertise a decentralize
 Use `--open-federation-dht-node true` with `--federation-mode open` to make the relay act as a bounded open-federation DHT node. The relay then accepts and serves signed short-lived relay records through the relay protocol. Keep `--allow-private-federation-endpoints false` for public networks so records and forwarding do not target loopback or LAN addresses. PEX is separate: `--relay-peer-exchange-limit <count>` controls how many known open relays are advertised in `/info`; set it to `0` to disable peer hints.
 
 ```bash
-docker build -t piccp-relay ./"PICCP Relay Server"
-docker run --rm -p 9339:9339 -v piccp-data:/data piccp-relay
+docker build -t noctyra-relay ./"PICCP Relay Server"
+docker run --rm -p 9339:9339 -v noctyra-data:/data noctyra-relay
 ```
 
 ### Docker + Let's Encrypt (automatic TLS)

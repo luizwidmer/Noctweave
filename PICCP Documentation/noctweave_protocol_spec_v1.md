@@ -1,6 +1,6 @@
-# PICCP v1 Protocol Specification
+# Noctweave Protocol v1 Specification
 
-This document records the current Noctyra/PICCP v1 protocol surface implemented by the repository. The whitepaper explains rationale; this file defines the release contract used by the client, core package, and relay.
+This document records the current Noctweave Protocol v1 surface implemented by the repository. The whitepaper explains rationale; this file defines the release contract used by the client, core package, and relay.
 
 ## Cryptographic Profile
 
