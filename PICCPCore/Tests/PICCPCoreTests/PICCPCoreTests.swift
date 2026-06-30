@@ -1954,6 +1954,98 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(Set(result.nodes.map(\.endpoint.host)), ["local-relay.example.org", "remote-relay.example.org"])
     }
 
+    func testRelayCanServeOpenFederationDHTRecordsWhenEnabled() async throws {
+        let federationName = "relay-dht-net"
+        let port: UInt16 = 39489
+        let serverEndpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                federation: FederationDescriptor(mode: .open, name: federationName),
+                relayPeerExchangeLimit: 7,
+                openFederationDHTEnabled: true,
+                openFederationDHTMaxRecords: 8,
+                openFederationDHTMaxRecordsPerHost: 2,
+                openFederationDHTMaxQueryRecords: 4,
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let started = expectation(description: "dht relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let client = RelayClient(endpoint: serverEndpoint)
+        let infoResponse = try await client.send(.info())
+        XCTAssertEqual(infoResponse.relayInfo?.openFederationDiscovery?.dhtNodeEnabled, true)
+        XCTAssertEqual(infoResponse.relayInfo?.openFederationDiscovery?.peerExchangeLimit, 7)
+
+        let record = try makeDHTRecord(
+            host: "relay-a.dht.example.org",
+            federationName: federationName,
+            issuedAt: Date()
+        )
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let publishResponse = try await client.send(
+            .publishOpenFederationDHTRecord(
+                PublishOpenFederationDHTRecordRequest(namespace: namespace, record: record)
+            )
+        )
+        XCTAssertEqual(publishResponse.type, .ok)
+
+        let listResponse = try await client.send(
+            .listOpenFederationDHTRecords(
+                ListOpenFederationDHTRecordsRequest(namespace: namespace, limit: 4)
+            )
+        )
+        XCTAssertEqual(listResponse.type, .openFederationDHTRecords)
+        XCTAssertEqual(listResponse.openFederationDHTRecords?.map(\.endpoint.host), ["relay-a.dht.example.org"])
+    }
+
+    func testRelayRejectsOpenFederationDHTRoutesWhenDisabled() async throws {
+        let federationName = "relay-dht-disabled-net"
+        let port: UInt16 = 39490
+        let serverEndpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                federation: FederationDescriptor(mode: .open, name: federationName),
+                openFederationDHTEnabled: false,
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let started = expectation(description: "disabled dht relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let record = try makeDHTRecord(
+            host: "relay-disabled.dht.example.org",
+            federationName: federationName,
+            issuedAt: Date()
+        )
+        let response = try await RelayClient(endpoint: serverEndpoint).send(
+            .publishOpenFederationDHTRecord(
+                PublishOpenFederationDHTRecordRequest(
+                    namespace: OpenFederationDHTRecord.namespace(federationName: federationName),
+                    record: record
+                )
+            )
+        )
+        XCTAssertEqual(response.type, .error)
+        XCTAssertTrue((response.error ?? "").contains("DHT-enabled"))
+    }
+
     func testOpenFederationDHTDiscoveryEngineDisabledDoesNotTouchTransport() async throws {
         let transport = MockOpenFederationDHTTransport()
         var engine = OpenFederationDHTDiscoveryEngine(

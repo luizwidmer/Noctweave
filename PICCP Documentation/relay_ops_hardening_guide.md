@@ -112,12 +112,12 @@ Open federation is more exposed. Keep `--allow-private-federation-endpoints fals
 
 ## Open Federation And DHT
 
-Open-federation DHT records are discovery hints, not authority. A relay should accept them only after signed-record validation, namespace matching, lifetime checks, TLS/public-routability checks, and host/total caps.
+Open-federation DHT records are discovery hints, not authority. Enable DHT node mode only for open-federation relays that should participate in relay discovery. A relay should accept records only after signed-record validation, namespace matching, lifetime checks, TLS/public-routability checks, and host/total caps.
 
-The current Linux relay supports:
+The current relay supports:
 
 - HTTP gateway sidecar integration for BEP5/libp2p/custom discovery processes.
-- Native relay-protocol DHT publish/list routes.
+- Native relay-protocol DHT publish/list routes when DHT node mode is enabled.
 - Bounded PEX-style traversal from `knownOpenPeers`.
 
 Do not publish user identifiers, contact codes, inbox addresses, or message metadata to any public DHT. Only relay endpoint records belong in this path.

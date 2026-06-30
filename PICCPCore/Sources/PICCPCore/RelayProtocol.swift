@@ -134,6 +134,34 @@ public struct HiddenRetrievalSupport: Codable, Equatable {
     }
 }
 
+public struct OpenFederationDiscoverySupport: Codable, Equatable {
+    public var dhtNodeEnabled: Bool
+    public var peerExchangeEnabled: Bool
+    public var peerExchangeLimit: Int
+    public var requirePublicEndpoint: Bool
+    public var maxDHTRecords: Int
+    public var maxDHTRecordsPerHost: Int
+    public var maxDHTQueryRecords: Int
+
+    public init(
+        dhtNodeEnabled: Bool = false,
+        peerExchangeEnabled: Bool = false,
+        peerExchangeLimit: Int = 0,
+        requirePublicEndpoint: Bool = true,
+        maxDHTRecords: Int = 256,
+        maxDHTRecordsPerHost: Int = 4,
+        maxDHTQueryRecords: Int = 256
+    ) {
+        self.dhtNodeEnabled = dhtNodeEnabled
+        self.peerExchangeEnabled = peerExchangeEnabled
+        self.peerExchangeLimit = max(0, peerExchangeLimit)
+        self.requirePublicEndpoint = requirePublicEndpoint
+        self.maxDHTRecords = max(1, maxDHTRecords)
+        self.maxDHTRecordsPerHost = max(1, maxDHTRecordsPerHost)
+        self.maxDHTQueryRecords = max(1, maxDHTQueryRecords)
+    }
+}
+
 public struct RelayInfo: Codable, Equatable {
     public var kind: RelayKind
     public var federation: FederationDescriptor
@@ -163,6 +191,7 @@ public struct RelayInfo: Codable, Equatable {
     public var curatedRequireSignedDirectory: Bool?
     public var federationDirectoryPublicKey: Data?
     public var knownOpenPeers: [RelayEndpoint]?
+    public var openFederationDiscovery: OpenFederationDiscoverySupport?
     public var advertisedAt: Date
 
     public init(
@@ -194,6 +223,7 @@ public struct RelayInfo: Codable, Equatable {
         curatedRequireSignedDirectory: Bool? = nil,
         federationDirectoryPublicKey: Data? = nil,
         knownOpenPeers: [RelayEndpoint]? = nil,
+        openFederationDiscovery: OpenFederationDiscoverySupport? = nil,
         advertisedAt: Date = Date()
     ) {
         self.kind = kind
@@ -229,6 +259,7 @@ public struct RelayInfo: Codable, Equatable {
         self.curatedRequireSignedDirectory = curatedRequireSignedDirectory
         self.federationDirectoryPublicKey = federationDirectoryPublicKey
         self.knownOpenPeers = knownOpenPeers
+        self.openFederationDiscovery = openFederationDiscovery
         self.advertisedAt = advertisedAt
     }
 }
@@ -263,6 +294,10 @@ public struct RelayConfiguration: Codable, Equatable {
     public var coordinatorHeartbeatSeconds: Int?
     public var coordinatorDirectoryMaxStalenessSeconds: Int?
     public var relayPeerExchangeLimit: Int?
+    public var openFederationDHTEnabled: Bool
+    public var openFederationDHTMaxRecords: Int
+    public var openFederationDHTMaxRecordsPerHost: Int
+    public var openFederationDHTMaxQueryRecords: Int
     public var coordinatorDirectorySigningPrivateKey: Data?
     public var curatedStrictPolicyEnabled: Bool
     public var curatedCoordinatorQuorum: Int
@@ -301,6 +336,10 @@ public struct RelayConfiguration: Codable, Equatable {
         coordinatorHeartbeatSeconds: Int? = nil,
         coordinatorDirectoryMaxStalenessSeconds: Int? = 300,
         relayPeerExchangeLimit: Int? = 12,
+        openFederationDHTEnabled: Bool = false,
+        openFederationDHTMaxRecords: Int = 256,
+        openFederationDHTMaxRecordsPerHost: Int = 4,
+        openFederationDHTMaxQueryRecords: Int = 256,
         coordinatorDirectorySigningPrivateKey: Data? = nil,
         curatedStrictPolicyEnabled: Bool = true,
         curatedCoordinatorQuorum: Int = 1,
@@ -348,6 +387,10 @@ public struct RelayConfiguration: Codable, Equatable {
         self.coordinatorHeartbeatSeconds = coordinatorHeartbeatSeconds
         self.coordinatorDirectoryMaxStalenessSeconds = coordinatorDirectoryMaxStalenessSeconds
         self.relayPeerExchangeLimit = relayPeerExchangeLimit
+        self.openFederationDHTEnabled = openFederationDHTEnabled
+        self.openFederationDHTMaxRecords = max(1, openFederationDHTMaxRecords)
+        self.openFederationDHTMaxRecordsPerHost = max(1, openFederationDHTMaxRecordsPerHost)
+        self.openFederationDHTMaxQueryRecords = max(1, openFederationDHTMaxQueryRecords)
         self.coordinatorDirectorySigningPrivateKey = coordinatorDirectorySigningPrivateKey
         self.curatedStrictPolicyEnabled = curatedStrictPolicyEnabled
         self.curatedCoordinatorQuorum = max(1, curatedCoordinatorQuorum)
@@ -390,7 +433,27 @@ public struct RelayConfiguration: Codable, Equatable {
             curatedRequireSignedDirectory: curatedMode ? curatedRequireSignedDirectory : nil,
             federationDirectoryPublicKey: nil,
             knownOpenPeers: nil,
+            openFederationDiscovery: advertisedOpenFederationDiscovery,
             advertisedAt: now
+        )
+    }
+
+    public var advertisedOpenFederationDiscovery: OpenFederationDiscoverySupport? {
+        guard federation.mode == .open, kind != .coordinator else {
+            return nil
+        }
+        let peerLimit = max(0, relayPeerExchangeLimit ?? 0)
+        guard openFederationDHTEnabled || peerLimit > 0 else {
+            return nil
+        }
+        return OpenFederationDiscoverySupport(
+            dhtNodeEnabled: openFederationDHTEnabled,
+            peerExchangeEnabled: peerLimit > 0,
+            peerExchangeLimit: peerLimit,
+            requirePublicEndpoint: !allowPrivateFederationEndpoints,
+            maxDHTRecords: openFederationDHTMaxRecords,
+            maxDHTRecordsPerHost: openFederationDHTMaxRecordsPerHost,
+            maxDHTQueryRecords: openFederationDHTMaxQueryRecords
         )
     }
 
@@ -451,6 +514,8 @@ public enum RelayRequestType: String, Codable {
     case rejectGroupJoin
     case registerFederationNode
     case listFederationNodes
+    case publishOpenFederationDHTRecord
+    case listOpenFederationDHTRecords
 }
 
 public struct DeliverRequest: Codable, Equatable {
@@ -958,6 +1023,26 @@ public struct FederationDirectorySnapshot: Codable, Equatable {
     }
 }
 
+public struct PublishOpenFederationDHTRecordRequest: Codable, Equatable {
+    public let namespace: String
+    public let record: OpenFederationDHTRecord
+
+    public init(namespace: String, record: OpenFederationDHTRecord) {
+        self.namespace = namespace
+        self.record = record
+    }
+}
+
+public struct ListOpenFederationDHTRecordsRequest: Codable, Equatable {
+    public let namespace: String
+    public let limit: Int?
+
+    public init(namespace: String, limit: Int? = nil) {
+        self.namespace = namespace
+        self.limit = limit
+    }
+}
+
 public struct RelayRequest: Codable, Equatable {
     public let type: RelayRequestType
     public let authToken: String?
@@ -987,6 +1072,8 @@ public struct RelayRequest: Codable, Equatable {
     public let rejectGroupJoin: RejectGroupJoinRequest?
     public let registerFederationNode: FederationNodeRegistrationRequest?
     public let listFederationNodes: ListFederationNodesRequest?
+    public let publishOpenFederationDHTRecord: PublishOpenFederationDHTRecordRequest?
+    public let listOpenFederationDHTRecords: ListOpenFederationDHTRecordsRequest?
 
     public init(
         type: RelayRequestType,
@@ -1016,7 +1103,9 @@ public struct RelayRequest: Codable, Equatable {
         approveGroupJoin: ApproveGroupJoinRequest? = nil,
         rejectGroupJoin: RejectGroupJoinRequest? = nil,
         registerFederationNode: FederationNodeRegistrationRequest? = nil,
-        listFederationNodes: ListFederationNodesRequest? = nil
+        listFederationNodes: ListFederationNodesRequest? = nil,
+        publishOpenFederationDHTRecord: PublishOpenFederationDHTRecordRequest? = nil,
+        listOpenFederationDHTRecords: ListOpenFederationDHTRecordsRequest? = nil
     ) {
         self.type = type
         self.authToken = authToken
@@ -1046,6 +1135,8 @@ public struct RelayRequest: Codable, Equatable {
         self.rejectGroupJoin = rejectGroupJoin
         self.registerFederationNode = registerFederationNode
         self.listFederationNodes = listFederationNodes
+        self.publishOpenFederationDHTRecord = publishOpenFederationDHTRecord
+        self.listOpenFederationDHTRecords = listOpenFederationDHTRecords
     }
 
     public static func deliver(_ request: DeliverRequest) -> RelayRequest {
@@ -1160,6 +1251,14 @@ public struct RelayRequest: Codable, Equatable {
         RelayRequest(type: .listFederationNodes, listFederationNodes: request)
     }
 
+    public static func publishOpenFederationDHTRecord(_ request: PublishOpenFederationDHTRecordRequest) -> RelayRequest {
+        RelayRequest(type: .publishOpenFederationDHTRecord, publishOpenFederationDHTRecord: request)
+    }
+
+    public static func listOpenFederationDHTRecords(_ request: ListOpenFederationDHTRecordsRequest) -> RelayRequest {
+        RelayRequest(type: .listOpenFederationDHTRecords, listOpenFederationDHTRecords: request)
+    }
+
     public func withAuthToken(_ token: String?) -> RelayRequest {
         RelayRequest(
             type: type,
@@ -1189,7 +1288,9 @@ public struct RelayRequest: Codable, Equatable {
             approveGroupJoin: approveGroupJoin,
             rejectGroupJoin: rejectGroupJoin,
             registerFederationNode: registerFederationNode,
-            listFederationNodes: listFederationNodes
+            listFederationNodes: listFederationNodes,
+            publishOpenFederationDHTRecord: publishOpenFederationDHTRecord,
+            listOpenFederationDHTRecords: listOpenFederationDHTRecords
         )
     }
 }
@@ -1208,6 +1309,7 @@ public enum RelayResponseType: String, Codable {
     case groupJoinRequests
     case federationNodes
     case info
+    case openFederationDHTRecords
     case error
 }
 
@@ -1234,6 +1336,7 @@ public struct RelayResponse: Codable, Equatable {
     public let federationNodes: [FederationNodeRecord]?
     public let federationSnapshot: FederationDirectorySnapshot?
     public let relayInfo: RelayInfo?
+    public let openFederationDHTRecords: [OpenFederationDHTRecord]?
     public let error: String?
 
     public init(
@@ -1251,6 +1354,7 @@ public struct RelayResponse: Codable, Equatable {
         federationNodes: [FederationNodeRecord]? = nil,
         federationSnapshot: FederationDirectorySnapshot? = nil,
         relayInfo: RelayInfo? = nil,
+        openFederationDHTRecords: [OpenFederationDHTRecord]? = nil,
         error: String? = nil
     ) {
         self.type = type
@@ -1267,6 +1371,7 @@ public struct RelayResponse: Codable, Equatable {
         self.federationNodes = federationNodes
         self.federationSnapshot = federationSnapshot
         self.relayInfo = relayInfo
+        self.openFederationDHTRecords = openFederationDHTRecords
         self.error = error
     }
 
@@ -1323,6 +1428,10 @@ public struct RelayResponse: Codable, Equatable {
 
     public static func info(_ info: RelayInfo) -> RelayResponse {
         RelayResponse(type: .info, relayInfo: info)
+    }
+
+    public static func openFederationDHTRecords(_ records: [OpenFederationDHTRecord]) -> RelayResponse {
+        RelayResponse(type: .openFederationDHTRecords, openFederationDHTRecords: records)
     }
 
     public static func error(_ message: String) -> RelayResponse {

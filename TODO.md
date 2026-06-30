@@ -7,7 +7,7 @@ The current security/DHT goal is complete when all of the following are true:
 
 - [x] Security audit is current, with threat scenarios documented for client, relay, federation, DHT discovery, storage, and transport.
 - [x] All high- and medium-severity audit findings discovered in this cycle are patched, covered by tests, or explicitly deferred with a rationale and release blocker status.
-- [x] Open-federation relay discovery has a documented final stance: coordinator snapshots + bounded relay-protocol peer exchange + HTTP sidecar gateway; autonomous BEP5/libp2p is deferred.
+- [x] Open-federation relay discovery has a documented final stance: coordinator snapshots + bounded relay-protocol peer exchange + explicit relay-native DHT node mode + HTTP sidecar gateway; autonomous BEP5/libp2p is deferred.
 - [x] Autonomous public-DHT bootstrap is out of release scope; if it is reintroduced later, the BEP5/libp2p adapter must be feature-gated, bounded, tested against poisoning/churn/flood cases, and disabled by default in release builds.
 - [x] If autonomous public-DHT bootstrap is rejected or deferred, that decision is documented with threat, operations, and maintenance rationale.
 - [x] Linux relay and mac relay feature parity is verified for the selected federation/discovery mode.
@@ -141,7 +141,8 @@ The current security/DHT goal is complete when all of the following are true:
 - [x] Add HTTP gateway/sidecar adapter for relay-operator DHT publish/query integration
 - [x] Extend DHT poisoning/flood simulation through the HTTP gateway adapter
 - [x] Add Linux relay native custom-overlay DHT routes and bounded PEX-style traversal tests
-- [x] Defer autonomous public-DHT participation (BEP5/libp2p) out of release scope; use the HTTP sidecar gateway for operator experiments
+- [x] Add mac/core relay native DHT-node routes, advertised DHT/PEX capability metadata, mac UI controls, and Linux CLI/env parity
+- [x] Defer autonomous public-DHT participation (BEP5/libp2p) out of release scope; use the relay-native bounded DHT node path or HTTP sidecar gateway for operator experiments
 - [x] Require DHT poisoning/churn simulations before any future autonomous public-network adapter can be exposed in release builds
 - [x] Add a release verifier guard that fails if BEP5/libp2p/Kademlia autonomous public-DHT adapter code appears in shipped source paths.
 

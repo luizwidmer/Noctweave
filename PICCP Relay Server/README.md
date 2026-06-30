@@ -8,6 +8,7 @@ A relay server that matches the line-delimited JSON protocol used by the Noctyra
 - Optional HTTP/WebSocket bridge endpoint at `POST /relay` and `ws(s)://.../relay`.
 - Supports `deliver`, `fetch`, `health`, `info`, prekey bundle upload/fetch, pairing discovery requests, and attachment chunk relay.
 - Supports federation coordinator directory APIs (`registerFederationNode`, `listFederationNodes`).
+- Supports explicit open-federation DHT node mode and bounded PEX peer hints when enabled by the operator.
 - Persists mailboxes + attachment chunks to `relay_store.sqlite` (unless `--memory-only`).
 
 ## Build (local)
@@ -59,6 +60,11 @@ not appear in process listings:
 - `NOCTYRA_MIXNET_COVER_PACKETS_PER_BATCH`
 - `NOCTYRA_MIXNET_MAX_DELAY_SECONDS`
 - `NOCTYRA_HIDDEN_RETRIEVAL_REPLICAS`
+- `NOCTYRA_OPEN_FEDERATION_DHT_NODE`
+- `NOCTYRA_OPEN_FEDERATION_DHT_MAX_RECORDS`
+- `NOCTYRA_OPEN_FEDERATION_DHT_MAX_RECORDS_PER_HOST`
+- `NOCTYRA_OPEN_FEDERATION_DHT_MAX_QUERY_RECORDS`
+- `NOCTYRA_RELAY_PEER_EXCHANGE_LIMIT`
 
 Use `--attachments-enabled false` for a text-only relay. Attachment upload and
 download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
@@ -93,6 +99,8 @@ for compatible clients and federated paths; it is not a claim that the entire
 network has global cover traffic.
 
 Use `--wake-mode pullOnly` or `--wake-mode longPoll` to advertise a decentralized wake policy for compatible clients. This does not enable centralized push and does not guarantee closed-app delivery; it only publishes relay-supported polling or long-poll bounds.
+
+Use `--open-federation-dht-node true` with `--federation-mode open` to make the relay act as a bounded open-federation DHT node. The relay then accepts and serves signed short-lived relay records through the relay protocol. Keep `--allow-private-federation-endpoints false` for public networks so records and forwarding do not target loopback or LAN addresses. PEX is separate: `--relay-peer-exchange-limit <count>` controls how many known open relays are advertised in `/info`; set it to `0` to disable peer hints.
 
 ```bash
 docker build -t piccp-relay ./"PICCP Relay Server"
@@ -151,6 +159,10 @@ Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443
 - `--coordinator-heartbeat-seconds <seconds>`: relay heartbeat interval to coordinators (default: `45`, min `15`)
 - `--coordinator-directory-max-staleness-seconds <seconds>`: max acceptable heartbeat age for coordinator directory listings (default: `300`)
 - `--relay-peer-exchange-limit <count>`: max open-federation peer hints advertised in relay info (default: `12`)
+- `--open-federation-dht-node <true|false>`: enable open-federation DHT record publish/list routes on open non-coordinator relays (default: `false`)
+- `--open-federation-dht-max-records <count>`: max signed relay records retained in the DHT cache (default: `256`)
+- `--open-federation-dht-max-records-per-host <count>`: max accepted DHT records per host to limit flooding (default: `4`)
+- `--open-federation-dht-max-query-records <count>`: max records returned by a DHT list request (default: `256`)
 - `--coordinator-directory-signing-key <base64>`: optional ML-DSA-65 private key bundle for deterministic coordinator snapshot signing
 - `--advertised-endpoint <host:port|https://host:port|wss://host:port>`: endpoint this relay publishes to coordinators
 - `--advertise-tls <true|false>`: override TLS status in `relayInfo.tlsEnabled` (defaults to advertised endpoint scheme when set)

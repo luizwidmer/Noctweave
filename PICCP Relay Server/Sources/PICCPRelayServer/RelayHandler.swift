@@ -391,6 +391,8 @@ final class RelayHandler: ChannelInboundHandler {
                         attachmentsEnabled: info.attachmentsEnabled,
                         attachmentStorageBackend: info.attachmentStorageBackend,
                         hiddenRetrieval: info.hiddenRetrieval,
+                        onionTransport: info.onionTransport,
+                        mixnetTransport: info.mixnetTransport,
                         wakeSupport: info.wakeSupport,
                         relayName: info.relayName,
                         operatorNote: info.operatorNote,
@@ -405,6 +407,7 @@ final class RelayHandler: ChannelInboundHandler {
                         curatedRequireSignedDirectory: info.curatedRequireSignedDirectory,
                         federationDirectoryPublicKey: info.federationDirectoryPublicKey,
                         knownOpenPeers: hints,
+                        openFederationDiscovery: info.openFederationDiscovery,
                         advertisedAt: info.advertisedAt
                     )
                 }
@@ -1083,16 +1086,17 @@ final class RelayHandler: ChannelInboundHandler {
 
     private func openFederationDHTConfiguration() -> OpenFederationDHTDiscoveryConfiguration? {
         guard relayConfiguration.federation.mode == .open,
-              relayConfiguration.kind != .coordinator else {
+              relayConfiguration.kind != .coordinator,
+              relayConfiguration.openFederationDHTEnabled else {
             return nil
         }
         return OpenFederationDHTDiscoveryConfiguration(
             isEnabled: true,
             federationName: relayConfiguration.federation.name,
             requirePublicEndpoint: !relayConfiguration.allowPrivateFederationEndpoints,
-            maxRecords: 256,
-            maxRecordsPerHost: 4,
-            maxQueryRecords: 256
+            maxRecords: relayConfiguration.openFederationDHTMaxRecords,
+            maxRecordsPerHost: relayConfiguration.openFederationDHTMaxRecordsPerHost,
+            maxQueryRecords: relayConfiguration.openFederationDHTMaxQueryRecords
         )
     }
 

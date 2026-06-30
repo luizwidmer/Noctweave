@@ -290,9 +290,9 @@ This creates a managed universe where forwarding can be restricted to approved r
 
 ## 7.3 Open federation
 
-Open federation operates in a coordinator-assisted form with optional signed-record discovery experiments. Nodes register, advertise health, and exchange directory information through coordinator infrastructure. Reachability checks, throttling, public-endpoint restrictions, signed directory validation, and freshness filtering are part of the design. A production-grade autonomous public-network adapter such as BEP5 or libp2p remains out of release scope, and release verification rejects shipped source paths that introduce BEP5/libp2p/Kademlia adapter code.
+Open federation operates in a coordinator-assisted form with optional signed-record discovery. Nodes register, advertise health, and exchange directory information through coordinator infrastructure. Open relays can also explicitly enable relay-native DHT node mode: they accept and serve signed short-lived relay endpoint records over the Noctyra relay protocol, enforce namespace, signature, lifetime, public-endpoint, total-record, per-host, and query-size limits, and advertise bounded peer exchange hints through relay info. Reachability checks, throttling, public-endpoint restrictions, signed directory validation, and freshness filtering are part of the design. A production-grade autonomous public-network adapter such as BEP5 or libp2p remains out of release scope, and release verification rejects shipped source paths that introduce BEP5/libp2p/Kademlia adapter code.
 
-In other words, open federation is implemented for coordinator snapshots, bounded peer exchange, and HTTP sidecar or native overlay experiments, but it is not an unbounded autonomous public DHT network in the release profile.
+In other words, open federation is implemented for coordinator snapshots, bounded peer exchange, explicit relay-native DHT nodes, and HTTP sidecar integration, but it is not an unbounded autonomous public DHT network in the release profile.
 
 ## 7.4 Relay-to-relay forwarding hardening
 
@@ -386,6 +386,7 @@ The reference implementation delivers:
 - explicit group-security-model advertisement, required MLS epoch metadata, and bounded group epoch history
 - bounded group protocol model checking over commit state transitions
 - release verification that blocks autonomous public-DHT adapter code from shipped source paths
+- relay-native open-federation DHT node mode with signed short-lived relay records, bounded cache/query limits, and bounded PEX hints
 - relay-advertised decentralized wake policy for jittered pull or bounded long-poll clients, bounded wake-to-prefetch execution planning, plus encrypted ciphertext-only prefetch persistence for OS-permitted helper fetch paths
 - ciphertext-only direct prefetch staging for app-intent or widget-triggered Apple sync paths using delegated inbox-access keys; helper config omits identity names, identity fingerprints, and group routing metadata, helper status omits message and failure counts, caps helper work queues, and group helper fetch remains deferred until a non-identity delegated group credential exists
 
@@ -395,7 +396,7 @@ The following areas remain future work:
 
 - single-server cryptographic PIR hidden retrieval
 - full mixnet deployment with live network-wide cover execution and network-wide latency scheduling
-- DHT-style autonomous open-federation discovery
+- autonomous public-DHT open-federation discovery using BEP5/libp2p/Kademlia-style networks
 - device-lab fault-injection coverage around retained group epoch histories and model-checked group state transitions, only after real device automation infrastructure exists; repository-owned deterministic fault-injection coverage is already present
 - external independent security audit
 - stronger closed-app background delivery that does not require centralized push infrastructure or rely on OS-opportunistic intent/widget execution

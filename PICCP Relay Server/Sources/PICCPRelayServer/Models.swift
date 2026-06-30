@@ -327,6 +327,34 @@ struct HiddenRetrievalSupport: Codable, Equatable {
     }
 }
 
+struct OpenFederationDiscoverySupport: Codable, Equatable {
+    let dhtNodeEnabled: Bool
+    let peerExchangeEnabled: Bool
+    let peerExchangeLimit: Int
+    let requirePublicEndpoint: Bool
+    let maxDHTRecords: Int
+    let maxDHTRecordsPerHost: Int
+    let maxDHTQueryRecords: Int
+
+    init(
+        dhtNodeEnabled: Bool = false,
+        peerExchangeEnabled: Bool = false,
+        peerExchangeLimit: Int = 0,
+        requirePublicEndpoint: Bool = true,
+        maxDHTRecords: Int = 256,
+        maxDHTRecordsPerHost: Int = 4,
+        maxDHTQueryRecords: Int = 256
+    ) {
+        self.dhtNodeEnabled = dhtNodeEnabled
+        self.peerExchangeEnabled = peerExchangeEnabled
+        self.peerExchangeLimit = max(0, peerExchangeLimit)
+        self.requirePublicEndpoint = requirePublicEndpoint
+        self.maxDHTRecords = max(1, maxDHTRecords)
+        self.maxDHTRecordsPerHost = max(1, maxDHTRecordsPerHost)
+        self.maxDHTQueryRecords = max(1, maxDHTQueryRecords)
+    }
+}
+
 enum HiddenRetrievalPIRReplicaSetIssue: String, Codable, Equatable, Hashable {
     case hiddenRetrievalUnavailable
     case unsupportedMode
@@ -618,6 +646,7 @@ struct RelayInfo: Codable, Equatable {
     let curatedRequireSignedDirectory: Bool?
     let federationDirectoryPublicKey: Data?
     let knownOpenPeers: [RelayEndpoint]?
+    let openFederationDiscovery: OpenFederationDiscoverySupport?
     let advertisedAt: Date
 
     init(
@@ -649,6 +678,7 @@ struct RelayInfo: Codable, Equatable {
         curatedRequireSignedDirectory: Bool? = nil,
         federationDirectoryPublicKey: Data? = nil,
         knownOpenPeers: [RelayEndpoint]? = nil,
+        openFederationDiscovery: OpenFederationDiscoverySupport? = nil,
         advertisedAt: Date = Date()
     ) {
         self.kind = kind
@@ -684,6 +714,7 @@ struct RelayInfo: Codable, Equatable {
         self.curatedRequireSignedDirectory = curatedRequireSignedDirectory
         self.federationDirectoryPublicKey = federationDirectoryPublicKey
         self.knownOpenPeers = knownOpenPeers
+        self.openFederationDiscovery = openFederationDiscovery
         self.advertisedAt = advertisedAt
     }
 }
@@ -715,6 +746,10 @@ struct RelayConfiguration: Codable, Equatable {
     var coordinatorHeartbeatSeconds: Int?
     var coordinatorDirectoryMaxStalenessSeconds: Int?
     var relayPeerExchangeLimit: Int?
+    var openFederationDHTEnabled: Bool
+    var openFederationDHTMaxRecords: Int
+    var openFederationDHTMaxRecordsPerHost: Int
+    var openFederationDHTMaxQueryRecords: Int
     var coordinatorDirectorySigningPrivateKey: Data?
     var curatedStrictPolicyEnabled: Bool
     var curatedCoordinatorQuorum: Int
@@ -751,6 +786,10 @@ struct RelayConfiguration: Codable, Equatable {
         coordinatorHeartbeatSeconds: Int? = nil,
         coordinatorDirectoryMaxStalenessSeconds: Int? = 300,
         relayPeerExchangeLimit: Int? = 12,
+        openFederationDHTEnabled: Bool = false,
+        openFederationDHTMaxRecords: Int = 256,
+        openFederationDHTMaxRecordsPerHost: Int = 4,
+        openFederationDHTMaxQueryRecords: Int = 256,
         coordinatorDirectorySigningPrivateKey: Data? = nil,
         curatedStrictPolicyEnabled: Bool = true,
         curatedCoordinatorQuorum: Int = 1,
@@ -796,6 +835,10 @@ struct RelayConfiguration: Codable, Equatable {
         self.coordinatorHeartbeatSeconds = coordinatorHeartbeatSeconds
         self.coordinatorDirectoryMaxStalenessSeconds = coordinatorDirectoryMaxStalenessSeconds
         self.relayPeerExchangeLimit = relayPeerExchangeLimit
+        self.openFederationDHTEnabled = openFederationDHTEnabled
+        self.openFederationDHTMaxRecords = max(1, openFederationDHTMaxRecords)
+        self.openFederationDHTMaxRecordsPerHost = max(1, openFederationDHTMaxRecordsPerHost)
+        self.openFederationDHTMaxQueryRecords = max(1, openFederationDHTMaxQueryRecords)
         self.coordinatorDirectorySigningPrivateKey = coordinatorDirectorySigningPrivateKey
         self.curatedStrictPolicyEnabled = curatedStrictPolicyEnabled
         self.curatedCoordinatorQuorum = max(1, curatedCoordinatorQuorum)
@@ -837,7 +880,27 @@ struct RelayConfiguration: Codable, Equatable {
             curatedStrictPolicyEnabled: curatedMode ? curatedStrictPolicyEnabled : nil,
             curatedCoordinatorQuorum: curatedMode ? curatedCoordinatorQuorum : nil,
             curatedRequireSignedDirectory: curatedMode ? curatedRequireSignedDirectory : nil,
+            openFederationDiscovery: advertisedOpenFederationDiscovery,
             advertisedAt: now
+        )
+    }
+
+    var advertisedOpenFederationDiscovery: OpenFederationDiscoverySupport? {
+        guard federation.mode == .open, kind != .coordinator else {
+            return nil
+        }
+        let peerLimit = max(0, relayPeerExchangeLimit ?? 0)
+        guard openFederationDHTEnabled || peerLimit > 0 else {
+            return nil
+        }
+        return OpenFederationDiscoverySupport(
+            dhtNodeEnabled: openFederationDHTEnabled,
+            peerExchangeEnabled: peerLimit > 0,
+            peerExchangeLimit: peerLimit,
+            requirePublicEndpoint: !allowPrivateFederationEndpoints,
+            maxDHTRecords: openFederationDHTMaxRecords,
+            maxDHTRecordsPerHost: openFederationDHTMaxRecordsPerHost,
+            maxDHTQueryRecords: openFederationDHTMaxQueryRecords
         )
     }
 

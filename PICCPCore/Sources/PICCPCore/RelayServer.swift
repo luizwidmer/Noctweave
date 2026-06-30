@@ -1030,6 +1030,42 @@ public final class RelayServer {
             }
             let remoteNodes = try await fetchCoordinatorNodeDirectory(request: listRequest)
             return .federationNodes(remoteNodes)
+        case .publishOpenFederationDHTRecord:
+            guard let dhtConfiguration = openFederationDHTConfiguration() else {
+                return .error("Open-federation DHT is available only on DHT-enabled open non-coordinator relays.")
+            }
+            guard let publish = request.publishOpenFederationDHTRecord else {
+                return .error("Missing open-federation DHT record payload")
+            }
+            let expectedNamespace = OpenFederationDHTRecord.namespace(federationName: dhtConfiguration.federationName)
+            guard publish.namespace == expectedNamespace else {
+                return .error("Open-federation DHT namespace mismatch.")
+            }
+            let result = await store.ingestOpenFederationDHTRecords(
+                [publish.record],
+                configuration: dhtConfiguration
+            )
+            guard !result.accepted.isEmpty else {
+                let reason = result.rejected.first.map { "\($0.reason)" } ?? "record rejected"
+                return .error("Open-federation DHT record rejected: \(reason)")
+            }
+            return .ok()
+        case .listOpenFederationDHTRecords:
+            guard let dhtConfiguration = openFederationDHTConfiguration() else {
+                return .error("Open-federation DHT is available only on DHT-enabled open non-coordinator relays.")
+            }
+            guard let list = request.listOpenFederationDHTRecords else {
+                return .error("Missing open-federation DHT list payload")
+            }
+            let expectedNamespace = OpenFederationDHTRecord.namespace(federationName: dhtConfiguration.federationName)
+            guard list.namespace == expectedNamespace else {
+                return .error("Open-federation DHT namespace mismatch.")
+            }
+            let records = await store.listOpenFederationDHTRecords(
+                configuration: dhtConfiguration,
+                limit: list.limit
+            )
+            return .openFederationDHTRecords(records)
         }
     }
 
@@ -1668,6 +1704,22 @@ public final class RelayServer {
             }
         }
         return peers
+    }
+
+    private func openFederationDHTConfiguration() -> OpenFederationDHTDiscoveryConfiguration? {
+        guard configuration.federation.mode == .open,
+              configuration.kind != .coordinator,
+              configuration.openFederationDHTEnabled else {
+            return nil
+        }
+        return OpenFederationDHTDiscoveryConfiguration(
+            isEnabled: true,
+            federationName: configuration.federation.name,
+            requirePublicEndpoint: !configuration.allowPrivateFederationEndpoints,
+            maxRecords: configuration.openFederationDHTMaxRecords,
+            maxRecordsPerHost: configuration.openFederationDHTMaxRecordsPerHost,
+            maxQueryRecords: configuration.openFederationDHTMaxQueryRecords
+        )
     }
 
     private func boundedAttachmentTTL(requested: Int?) -> Int {

@@ -343,6 +343,33 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(store.coordinatorDirectoryCacheSnapshot(), [node])
     }
 
+    func testRelayInfoAdvertisesOpenFederationDHTAndPEXSupport() {
+        let info = RelayConfiguration(
+            federation: FederationDescriptor(mode: .open, name: "open-mesh"),
+            relayPeerExchangeLimit: 9,
+            openFederationDHTEnabled: true,
+            openFederationDHTMaxRecords: 128,
+            openFederationDHTMaxRecordsPerHost: 3,
+            openFederationDHTMaxQueryRecords: 64,
+            allowPrivateFederationEndpoints: false
+        ).makeInfo()
+
+        XCTAssertEqual(info.openFederationDiscovery?.dhtNodeEnabled, true)
+        XCTAssertEqual(info.openFederationDiscovery?.peerExchangeEnabled, true)
+        XCTAssertEqual(info.openFederationDiscovery?.peerExchangeLimit, 9)
+        XCTAssertEqual(info.openFederationDiscovery?.requirePublicEndpoint, true)
+        XCTAssertEqual(info.openFederationDiscovery?.maxDHTRecords, 128)
+        XCTAssertEqual(info.openFederationDiscovery?.maxDHTRecordsPerHost, 3)
+        XCTAssertEqual(info.openFederationDiscovery?.maxDHTQueryRecords, 64)
+
+        let solo = RelayConfiguration(
+            federation: FederationDescriptor(mode: .solo),
+            relayPeerExchangeLimit: 9,
+            openFederationDHTEnabled: true
+        ).makeInfo()
+        XCTAssertNil(solo.openFederationDiscovery)
+    }
+
     func testFederationDirectorySignatureUsesMLDSAAndRejectsTampering() throws {
         guard OQSSignatureVerifier.shared.isAvailable else {
             throw XCTSkip("liboqs runtime is unavailable")

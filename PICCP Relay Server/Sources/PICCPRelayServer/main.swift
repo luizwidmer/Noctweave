@@ -43,6 +43,10 @@ struct ServerConfig {
     var coordinatorHeartbeatSeconds: Int
     var coordinatorDirectoryMaxStalenessSeconds: Int
     var relayPeerExchangeLimit: Int
+    var openFederationDHTEnabled: Bool
+    var openFederationDHTMaxRecords: Int
+    var openFederationDHTMaxRecordsPerHost: Int
+    var openFederationDHTMaxQueryRecords: Int
     var coordinatorDirectorySigningPrivateKey: Data?
     var curatedStrictPolicyEnabled: Bool
     var curatedCoordinatorQuorum: Int
@@ -119,7 +123,14 @@ struct ServerConfig {
         var federationCoordinatorEndpoints: [RelayEndpoint] = []
         var coordinatorHeartbeatSeconds: Int = 45
         var coordinatorDirectoryMaxStalenessSeconds: Int = 300
-        var relayPeerExchangeLimit: Int = 12
+        var relayPeerExchangeLimit: Int = Int(environment["NOCTYRA_RELAY_PEER_EXCHANGE_LIMIT"] ?? "") ?? 12
+        var openFederationDHTEnabled = parseBoolFlag(
+            environment["NOCTYRA_OPEN_FEDERATION_DHT_NODE"] ?? "false",
+            defaultValue: false
+        )
+        var openFederationDHTMaxRecords = Int(environment["NOCTYRA_OPEN_FEDERATION_DHT_MAX_RECORDS"] ?? "") ?? 256
+        var openFederationDHTMaxRecordsPerHost = Int(environment["NOCTYRA_OPEN_FEDERATION_DHT_MAX_RECORDS_PER_HOST"] ?? "") ?? 4
+        var openFederationDHTMaxQueryRecords = Int(environment["NOCTYRA_OPEN_FEDERATION_DHT_MAX_QUERY_RECORDS"] ?? "") ?? 256
         var coordinatorDirectorySigningPrivateKey: Data? = environment["NOCTYRA_COORDINATOR_SIGNING_KEY"]
             .flatMap { Data(base64Encoded: $0) }
         var curatedStrictPolicyEnabled = true
@@ -377,6 +388,24 @@ struct ServerConfig {
                 if let value = iterator.next(), let parsed = Int(value) {
                     relayPeerExchangeLimit = max(0, parsed)
                 }
+            case "--open-federation-dht-node":
+                if let value = iterator.next() {
+                    openFederationDHTEnabled = parseBoolFlag(value, defaultValue: true)
+                } else {
+                    openFederationDHTEnabled = true
+                }
+            case "--open-federation-dht-max-records":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    openFederationDHTMaxRecords = max(1, parsed)
+                }
+            case "--open-federation-dht-max-records-per-host":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    openFederationDHTMaxRecordsPerHost = max(1, parsed)
+                }
+            case "--open-federation-dht-max-query-records":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    openFederationDHTMaxQueryRecords = max(1, parsed)
+                }
             case "--coordinator-directory-signing-key":
                 if let value = iterator.next(),
                    let decoded = Data(base64Encoded: value) {
@@ -501,6 +530,10 @@ struct ServerConfig {
             coordinatorHeartbeatSeconds: coordinatorHeartbeatSeconds,
             coordinatorDirectoryMaxStalenessSeconds: coordinatorDirectoryMaxStalenessSeconds,
             relayPeerExchangeLimit: relayPeerExchangeLimit,
+            openFederationDHTEnabled: openFederationDHTEnabled,
+            openFederationDHTMaxRecords: openFederationDHTMaxRecords,
+            openFederationDHTMaxRecordsPerHost: openFederationDHTMaxRecordsPerHost,
+            openFederationDHTMaxQueryRecords: openFederationDHTMaxQueryRecords,
             coordinatorDirectorySigningPrivateKey: coordinatorDirectorySigningPrivateKey,
             curatedStrictPolicyEnabled: curatedStrictPolicyEnabled,
             curatedCoordinatorQuorum: curatedCoordinatorQuorum,
@@ -648,6 +681,10 @@ var relayConfiguration = RelayConfiguration(
     coordinatorHeartbeatSeconds: config.coordinatorHeartbeatSeconds,
     coordinatorDirectoryMaxStalenessSeconds: config.coordinatorDirectoryMaxStalenessSeconds,
     relayPeerExchangeLimit: config.relayPeerExchangeLimit,
+    openFederationDHTEnabled: config.openFederationDHTEnabled,
+    openFederationDHTMaxRecords: config.openFederationDHTMaxRecords,
+    openFederationDHTMaxRecordsPerHost: config.openFederationDHTMaxRecordsPerHost,
+    openFederationDHTMaxQueryRecords: config.openFederationDHTMaxQueryRecords,
     coordinatorDirectorySigningPrivateKey: config.coordinatorDirectorySigningPrivateKey,
     curatedStrictPolicyEnabled: config.curatedStrictPolicyEnabled,
     curatedCoordinatorQuorum: config.curatedCoordinatorQuorum,

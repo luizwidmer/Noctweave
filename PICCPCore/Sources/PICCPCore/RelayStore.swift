@@ -12,6 +12,9 @@ public actor RelayStore {
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
     private var groups: [UUID: RelayGroupDescriptor] = [:]
     private var groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:]
+    private var openFederationDHTCache = OpenFederationDHTCandidateCache(
+        configuration: OpenFederationDHTDiscoveryConfiguration(isEnabled: false)
+    )
     private var actorProofReplayCache: [String: Date] = [:]
     private var federationRegistrationAttemptsBySource: [String: [Date]] = [:]
     private var federationListAttemptsBySource: [String: [Date]] = [:]
@@ -86,6 +89,29 @@ public actor RelayStore {
         prunePrekeys(now: Date())
         pruneFederationNodes(now: Date())
         try SQLiteRelayStateStore.saveState(currentSnapshot(), at: sqliteStoreURL(for: storeURL))
+    }
+
+    public func ingestOpenFederationDHTRecords(
+        _ records: [OpenFederationDHTRecord],
+        configuration: OpenFederationDHTDiscoveryConfiguration,
+        now: Date = Date()
+    ) -> OpenFederationDHTDiscoveryIngestResult {
+        openFederationDHTCache.configuration = configuration
+        return openFederationDHTCache.ingest(records, now: now)
+    }
+
+    public func listOpenFederationDHTRecords(
+        configuration: OpenFederationDHTDiscoveryConfiguration,
+        now: Date = Date(),
+        limit: Int?
+    ) -> [OpenFederationDHTRecord] {
+        openFederationDHTCache.configuration = configuration
+        openFederationDHTCache.evictExpired(now: now)
+        let boundedLimit = max(0, min(limit ?? configuration.maxQueryRecords, configuration.maxQueryRecords))
+        guard boundedLimit > 0 else {
+            return []
+        }
+        return Array(openFederationDHTCache.records(now: now).prefix(boundedLimit))
     }
 
     public func consumeActorProofNonce(
