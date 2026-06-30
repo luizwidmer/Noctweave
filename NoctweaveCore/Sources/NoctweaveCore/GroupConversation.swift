@@ -1,5 +1,39 @@
 import Foundation
 
+public struct GroupScopedIdentity: Codable, Equatable {
+    public var displayName: String
+    public var signingKey: SigningKeyPair
+    public var agreementKey: AgreementKeyPair
+    public let createdAt: Date
+
+    public init(displayName: String, createdAt: Date = Date()) {
+        self.displayName = displayName
+        self.signingKey = SigningKeyPair()
+        self.agreementKey = AgreementKeyPair()
+        self.createdAt = createdAt
+    }
+
+    public var fingerprint: String {
+        CryptoBox.fingerprint(for: signingKey.publicKeyData)
+    }
+
+    public var memberProfile: RelayGroupMemberProfile {
+        RelayGroupMemberProfile(
+            fingerprint: fingerprint,
+            displayName: displayName,
+            signingPublicKey: signingKey.publicKeyData,
+            agreementPublicKey: agreementKey.publicKeyData
+        )
+    }
+
+    public static func == (lhs: GroupScopedIdentity, rhs: GroupScopedIdentity) -> Bool {
+        lhs.displayName == rhs.displayName
+            && lhs.signingKey.publicKeyData == rhs.signingKey.publicKeyData
+            && lhs.agreementKey.publicKeyData == rhs.agreementKey.publicKeyData
+            && lhs.createdAt == rhs.createdAt
+    }
+}
+
 public struct GroupConversation: Codable, Identifiable, Equatable {
     public let id: UUID
     public var title: String
@@ -9,6 +43,9 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
     public var relayTranscriptHash: Data?
     public var groupRatchetState: GroupRatchetState?
     public var createdByFingerprint: String?
+    public var memberProfiles: [RelayGroupMemberProfile]
+    public var scopedIdentity: GroupScopedIdentity?
+    public var isPendingInvitation: Bool
     public var messages: [Message]
     public var unreadCount: Int
     public let createdAt: Date
@@ -22,6 +59,9 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         relayTranscriptHash: Data? = nil,
         groupRatchetState: GroupRatchetState? = nil,
         createdByFingerprint: String? = nil,
+        memberProfiles: [RelayGroupMemberProfile] = [],
+        scopedIdentity: GroupScopedIdentity? = nil,
+        isPendingInvitation: Bool = false,
         messages: [Message] = [],
         unreadCount: Int = 0,
         createdAt: Date = Date()
@@ -34,6 +74,9 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         self.relayTranscriptHash = relayTranscriptHash
         self.groupRatchetState = groupRatchetState
         self.createdByFingerprint = createdByFingerprint
+        self.memberProfiles = Self.uniqueMemberProfiles(memberProfiles)
+        self.scopedIdentity = scopedIdentity
+        self.isPendingInvitation = isPendingInvitation
         self.messages = messages
         self.unreadCount = unreadCount
         self.createdAt = createdAt
@@ -48,6 +91,9 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         case relayTranscriptHash
         case groupRatchetState
         case createdByFingerprint
+        case memberProfiles
+        case scopedIdentity
+        case isPendingInvitation
         case messages
         case unreadCount
         case createdAt
@@ -63,8 +109,52 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         relayTranscriptHash = try container.decodeIfPresent(Data.self, forKey: .relayTranscriptHash)
         groupRatchetState = try container.decodeIfPresent(GroupRatchetState.self, forKey: .groupRatchetState)
         createdByFingerprint = try container.decodeIfPresent(String.self, forKey: .createdByFingerprint)
+        memberProfiles = Self.uniqueMemberProfiles(
+            try container.decodeIfPresent([RelayGroupMemberProfile].self, forKey: .memberProfiles) ?? []
+        )
+        scopedIdentity = try container.decodeIfPresent(GroupScopedIdentity.self, forKey: .scopedIdentity)
+        isPendingInvitation = try container.decodeIfPresent(Bool.self, forKey: .isPendingInvitation) ?? false
         messages = try container.decodeIfPresent([Message].self, forKey: .messages) ?? []
         unreadCount = try container.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(memberContactIds, forKey: .memberContactIds)
+        try container.encodeIfPresent(relayInboxId, forKey: .relayInboxId)
+        try container.encodeIfPresent(relayEpoch, forKey: .relayEpoch)
+        try container.encodeIfPresent(relayTranscriptHash, forKey: .relayTranscriptHash)
+        try container.encodeIfPresent(groupRatchetState, forKey: .groupRatchetState)
+        try container.encodeIfPresent(createdByFingerprint, forKey: .createdByFingerprint)
+        try container.encode(memberProfiles, forKey: .memberProfiles)
+        try container.encodeIfPresent(scopedIdentity, forKey: .scopedIdentity)
+        try container.encode(isPendingInvitation, forKey: .isPendingInvitation)
+        try container.encode(messages, forKey: .messages)
+        try container.encode(unreadCount, forKey: .unreadCount)
+        try container.encode(createdAt, forKey: .createdAt)
+    }
+
+    public var resolvedMemberCount: Int {
+        memberProfiles.isEmpty ? memberContactIds.count + 1 : memberProfiles.count
+    }
+
+    private static func uniqueMemberProfiles(_ profiles: [RelayGroupMemberProfile]) -> [RelayGroupMemberProfile] {
+        var byFingerprint: [String: RelayGroupMemberProfile] = [:]
+        for profile in profiles {
+            let fingerprint = profile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !fingerprint.isEmpty else { continue }
+            byFingerprint[fingerprint] = RelayGroupMemberProfile(
+                fingerprint: fingerprint,
+                displayName: profile.displayName,
+                inboxId: profile.inboxId,
+                relay: profile.relay,
+                signingPublicKey: profile.signingPublicKey,
+                agreementPublicKey: profile.agreementPublicKey
+            )
+        }
+        return byFingerprint.values.sorted { $0.fingerprint < $1.fingerprint }
     }
 }

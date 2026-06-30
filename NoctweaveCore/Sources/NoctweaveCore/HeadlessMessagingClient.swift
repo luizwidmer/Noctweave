@@ -935,6 +935,7 @@ public actor HeadlessMessagingClient {
                     throw HeadlessMessagingClientError.missingGroupRatchet(group.title)
                 }
                 let sender = senderContact(for: envelope.senderFingerprint, in: state.contacts)
+                let senderProfile = group.memberProfiles.first { $0.fingerprint == envelope.senderFingerprint }
                 guard let senderKey = sender?.signingPublicKey
                     ?? groupMemberSigningKey(for: envelope.senderFingerprint, group: group, state: state) else {
                     throw HeadlessMessagingClientError.missingGroupSenderKey(envelope.senderFingerprint)
@@ -949,7 +950,7 @@ public actor HeadlessMessagingClient {
                 appendGroupMessage(
                     body: body,
                     direction: .received,
-                    senderDisplayName: sender?.displayName,
+                    senderDisplayName: sender?.displayName ?? senderProfile?.displayName,
                     counter: envelope.messageCounter,
                     timestamp: envelope.sentAt,
                     group: &group,
@@ -969,7 +970,7 @@ public actor HeadlessMessagingClient {
                         envelopeId: envelope.id,
                         messageCounter: envelope.messageCounter,
                         senderFingerprint: envelope.senderFingerprint,
-                        senderDisplayName: sender?.displayName,
+                        senderDisplayName: sender?.displayName ?? senderProfile?.displayName,
                         body: body,
                         sentAt: envelope.sentAt
                     )
@@ -1158,6 +1159,7 @@ public actor HeadlessMessagingClient {
             relayTranscriptHash: descriptor.mlsEpochState.confirmedTranscriptHash,
             groupRatchetState: ratchetState,
             createdByFingerprint: descriptor.createdByFingerprint,
+            memberProfiles: groupMemberProfiles(from: descriptor, preferredRelay: state.relay),
             messages: existing?.messages ?? [],
             unreadCount: existing?.unreadCount ?? 0,
             createdAt: existing?.createdAt ?? descriptor.createdAt
@@ -1295,7 +1297,7 @@ public actor HeadlessMessagingClient {
             id: group.id,
             title: group.title,
             inboxId: group.relayInboxId,
-            memberCount: group.memberContactIds.count + 1,
+            memberCount: group.resolvedMemberCount,
             relayEpoch: group.relayEpoch,
             unreadCount: group.unreadCount,
             createdByFingerprint: group.createdByFingerprint
@@ -1324,6 +1326,41 @@ public actor HeadlessMessagingClient {
         )
     }
 
+    private func groupMemberProfile(member: RelayGroupMember) -> RelayGroupMemberProfile {
+        RelayGroupMemberProfile(
+            fingerprint: member.fingerprint,
+            displayName: member.displayName,
+            inboxId: member.inboxId,
+            relay: member.relay,
+            signingPublicKey: member.signingPublicKey,
+            agreementPublicKey: member.agreementPublicKey
+        )
+    }
+
+    private func groupMemberProfiles(
+        from descriptor: RelayGroupDescriptor,
+        preferredRelay: RelayEndpoint
+    ) -> [RelayGroupMemberProfile] {
+        var byFingerprint: [String: RelayGroupMemberProfile] = [:]
+        for member in descriptor.members {
+            let fingerprint = member.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !fingerprint.isEmpty else { continue }
+            var profile = groupMemberProfile(member: member)
+            if profile.relay == nil, profile.inboxId != nil {
+                profile = RelayGroupMemberProfile(
+                    fingerprint: profile.fingerprint,
+                    displayName: profile.displayName,
+                    inboxId: profile.inboxId,
+                    relay: preferredRelay,
+                    signingPublicKey: profile.signingPublicKey,
+                    agreementPublicKey: profile.agreementPublicKey
+                )
+            }
+            byFingerprint[fingerprint] = profile
+        }
+        return byFingerprint.values.sorted { $0.fingerprint < $1.fingerprint }
+    }
+
     private func groupInboxId(for group: GroupConversation) throws -> String {
         guard let inboxId = group.relayInboxId?.trimmingCharacters(in: .whitespacesAndNewlines),
               !inboxId.isEmpty else {
@@ -1339,6 +1376,11 @@ public actor HeadlessMessagingClient {
     private func groupMemberSigningKey(for fingerprint: String, group: GroupConversation, state: ClientState) -> Data? {
         if fingerprint == state.identity.fingerprint {
             return state.identity.signingKey.publicKeyData
+        }
+        if let profile = group.memberProfiles.first(where: { $0.fingerprint == fingerprint }),
+           let signingPublicKey = profile.signingPublicKey,
+           !signingPublicKey.isEmpty {
+            return signingPublicKey
         }
         return state.contacts.first { contact in
             group.memberContactIds.contains(contact.id) && contact.fingerprint == fingerprint
