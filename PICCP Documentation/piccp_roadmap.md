@@ -31,6 +31,8 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 **Tracking file:** See `TODO.md` in repo root for active checklist items.  
 **Note:** Phase sections below remain the long-horizon plan. Checked items reflect repository evidence in the current Noctyra client, Noctyra Relay, documentation, or automated tests. Unchecked items either need external review, formal proof work, published benchmarks, full release/beta evidence, or a deliberately different product target such as a separate CLI/Electron client.
 
+**Easy-first pass status:** Completed easy, repository-owned items in this pass include Phase 0 protocol/API/security documentation, evidence-backed checkbox alignment, HTTP security headers, and basic relay request rate limiting. Remaining unchecked items are not classified as easy-first work because they require external audit, formal or side-channel analysis, fuzzing infrastructure, coverage/benchmark instrumentation, operational dashboards, separate CLI/third-party client products, or real beta/launch/community evidence.
+
 ---
 
 ## Phase 0: Specification Finalization
