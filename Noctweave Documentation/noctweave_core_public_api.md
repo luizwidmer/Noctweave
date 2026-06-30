@@ -5,15 +5,16 @@
 ## Package Products
 
 - `NoctweaveCore`: protocol models, cryptographic wrappers, relay client/server primitives, messaging state, groups, federation, and metadata-reduction helpers.
-- `NoctyraCLI`: command-line diagnostics and headless direct messaging client.
+- `NoctyraCLI`: command-line diagnostics and headless messaging client.
 - `NoctweaveCoreTestHarness`: local protocol harness for development verification.
 
 ## Client-Facing APIs
 
-- `HeadlessMessagingClient`: persistent headless identity, contact, send, receive, register, and contact-share workflows.
+- `HeadlessMessagingClient`: persistent headless identity, contact, send, receive, register, contact-share, attachment, voice-message, and group workflows.
 - `HeadlessIdentityChangeResult`: structured result for identity rotation and burn operations.
 - `HeadlessContinuityAudit` and `HeadlessContinuityAuditPurgeResult`: structured inspection and purge results for active-identity continuity events.
 - `HeadlessGroupSummary`, `HeadlessSentGroupMessage`, and `HeadlessReceivedGroupMessage`: sanitized headless group messaging results that do not expose serialized ratchet keys.
+- `HeadlessSentAttachment` and `HeadlessFetchedAttachment`: headless direct/group attachment and voice-message transfer results.
 - `ClientState` and `ClientStateStore`: codable local state and optional platform encryption wrapper.
 - `Identity`, `IdentityProfile`, `Contact`, `Conversation`, and `Message`: core client state models.
 - `MessageEngine`: direct-message session creation, encryption, decryption, root ratchet, and message appending.

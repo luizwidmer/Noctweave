@@ -23,7 +23,7 @@ The Noctyra Apple clients and macOS GUI relay app are proprietary products built
 ## Public Components
 
 - `NoctweaveCore/` - Swift package for Noctweave protocol models, post-quantum crypto bindings, relay client/server primitives, message ratchets, federation logic, and tests.
-- `NoctweaveCore/Sources/NoctyraCLI/` - open command-line client for relay diagnostics, API scripting, and headless direct messaging.
+- `NoctweaveCore/Sources/NoctyraCLI/` - open command-line client for relay diagnostics, API scripting, and headless messaging.
 - `Noctweave Relay Server/` - open Linux relay implementation with TCP, HTTP, WebSocket, Docker, SQLite persistence, federation, and relay tests.
 - `Noctweave Documentation/` - public protocol specs, OpenAPI schema, security notes, whitepaper alignment, and relay operator guidance.
 - `scripts/` - local test, SBOM, release verification, and relay helper scripts.
@@ -83,7 +83,7 @@ swift run --package-path NoctweaveCore NoctyraCLI init --display-name Alice --re
 swift run --package-path NoctweaveCore NoctyraCLI export-contact
 ```
 
-The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` relay endpoints. It can initialize a headless identity, register an inbox, exchange contact offers, send direct and group encrypted text messages, fetch/decrypt received direct and group messages, inspect or purge continuity audit events, rotate or burn identities with explicit confirmation, and still issue raw relay requests for diagnostics. See [`Noctweave Documentation/noctyra_cli_usage.md`](Noctweave%20Documentation/noctyra_cli_usage.md).
+The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` relay endpoints. It can initialize a headless identity, register an inbox, exchange contact offers, send direct and group encrypted text, attachment, and voice messages, fetch/decrypt received direct and group messages, inspect or purge continuity audit events, rotate or burn identities with explicit confirmation, and still issue raw relay requests for diagnostics. See [`Noctweave Documentation/noctyra_cli_usage.md`](Noctweave%20Documentation/noctyra_cli_usage.md).
 
 ## Documentation Map
 

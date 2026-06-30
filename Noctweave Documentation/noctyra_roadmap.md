@@ -141,7 +141,7 @@ The Apple client applications and macOS GUI relay app are maintained outside thi
 - [x] Public combined test runner: `scripts/run-tests.sh`
 - [x] Public release verification script: `scripts/verify-release.sh`
 - [x] Headless CLI group messaging commands
-- [ ] Headless CLI attachment and voice-message commands
+- [x] Headless CLI attachment and voice-message commands
 
 ## Test And Verification Coverage
 
@@ -152,6 +152,8 @@ The Apple client applications and macOS GUI relay app are maintained outside thi
 - [x] Headless direct-message relay exchange with persistent state
 - [x] Headless identity rotation and burn/reset relay exchange
 - [x] Headless group-message relay exchange with persistent state
+- [x] Headless direct attachment relay exchange with persisted recovery metadata
+- [x] Headless group voice-message relay exchange with persisted recovery metadata
 - [x] Federated group-ratchet delivery
 - [x] Relay TCP integration tests
 - [x] HTTP bridge security-header tests

@@ -38,7 +38,7 @@ Both commands print JSON `RelayResponse` values, which makes them suitable for s
 
 ## Headless Messaging
 
-The CLI can maintain a local headless client state file, register its inbox, exchange contact offers, send encrypted direct text messages, and fetch/decrypt received messages.
+The CLI can maintain a local headless client state file, register its inbox, exchange contact offers, send encrypted direct text messages and attachments, and fetch/decrypt received messages.
 
 Initialize an identity and register its inbox:
 
@@ -97,6 +97,18 @@ Send a direct text message:
 NoctyraCLI send --to "Bob" --text "hello from headless"
 ```
 
+Send an encrypted direct attachment:
+
+```sh
+NoctyraCLI send-attachment --to "Bob" --file ./photo.jpg --mime image/jpeg --ttl 3600
+```
+
+Send a voice message through the same encrypted attachment pipeline:
+
+```sh
+NoctyraCLI send-voice --to "Bob" --file ./note.m4a
+```
+
 Fetch, decrypt, and acknowledge messages:
 
 ```sh
@@ -105,6 +117,14 @@ NoctyraCLI receive --long-poll 20
 ```
 
 Use `--no-ack true` when testing if you want fetched ciphertexts to remain queued on the relay.
+
+Download an attachment after receiving its descriptor:
+
+```sh
+NoctyraCLI download-attachment --id <attachment-uuid> --out ./downloads/
+```
+
+Attachment downloads require local recovery metadata saved when the message is sent or received. Protect the state file because it includes the per-message attachment keys needed for later recovery.
 
 ## Headless Groups
 
@@ -125,6 +145,13 @@ Send a group text message:
 
 ```sh
 NoctyraCLI group-send --group "Ops" --text "status check"
+```
+
+Send a group attachment or group voice message:
+
+```sh
+NoctyraCLI group-send-attachment --group "Ops" --file ./briefing.pdf --mime application/pdf
+NoctyraCLI group-send-voice --group "Ops" --file ./note.m4a
 ```
 
 Fetch, decrypt, and acknowledge group messages:

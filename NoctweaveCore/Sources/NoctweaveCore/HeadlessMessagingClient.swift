@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 #if canImport(Security)
 import Security
@@ -39,6 +40,44 @@ public struct HeadlessSentMessage: Codable, Equatable {
         self.envelopeId = envelopeId
         self.messageCounter = messageCounter
         self.storedCount = storedCount
+    }
+}
+
+public struct HeadlessSentAttachment: Codable, Equatable {
+    public let contact: Contact?
+    public let group: HeadlessGroupSummary?
+    public let envelopeId: UUID
+    public let messageCounter: UInt64
+    public let descriptor: AttachmentDescriptor
+    public let uploadedChunkCount: Int
+    public let storedCount: Int
+
+    public init(
+        contact: Contact?,
+        group: HeadlessGroupSummary?,
+        envelopeId: UUID,
+        messageCounter: UInt64,
+        descriptor: AttachmentDescriptor,
+        uploadedChunkCount: Int,
+        storedCount: Int
+    ) {
+        self.contact = contact
+        self.group = group
+        self.envelopeId = envelopeId
+        self.messageCounter = messageCounter
+        self.descriptor = descriptor
+        self.uploadedChunkCount = uploadedChunkCount
+        self.storedCount = storedCount
+    }
+}
+
+public struct HeadlessFetchedAttachment: Codable, Equatable {
+    public let descriptor: AttachmentDescriptor
+    public let data: Data
+
+    public init(descriptor: AttachmentDescriptor, data: Data) {
+        self.descriptor = descriptor
+        self.data = data
     }
 }
 
@@ -187,6 +226,9 @@ public enum HeadlessMessagingClientError: Error, Equatable {
     case ambiguousGroup(String)
     case missingGroupRatchet(String)
     case missingGroupSenderKey(String)
+    case attachmentNotFound(String)
+    case missingAttachmentKey(String)
+    case attachmentDigestMismatch(String)
     case relayRejected(String)
     case unsupportedInboundSession
 }
@@ -212,6 +254,12 @@ extension HeadlessMessagingClientError: LocalizedError {
             return "Group `\(selector)` is missing recoverable ratchet state. Refresh groups or recreate the group."
         case .missingGroupSenderKey(let fingerprint):
             return "Group sender signing key is missing for `\(fingerprint)`."
+        case .attachmentNotFound(let selector):
+            return "No attachment matched `\(selector)` in local state."
+        case .missingAttachmentKey(let selector):
+            return "Attachment `\(selector)` is missing local recovery metadata."
+        case .attachmentDigestMismatch(let selector):
+            return "Attachment `\(selector)` failed digest verification."
         case .relayRejected(let message):
             return "Relay rejected the request: \(message)"
         case .unsupportedInboundSession:
@@ -563,6 +611,90 @@ public actor HeadlessMessagingClient {
         )
     }
 
+    public func sendAttachment(
+        to selector: String,
+        data: Data,
+        fileName: String?,
+        mimeType: String = "application/octet-stream",
+        chunkSize: Int = 64 * 1024,
+        ttlSeconds: Int? = nil
+    ) async throws -> HeadlessSentAttachment {
+        var state = try await loadState()
+        let contact = try resolveContact(selector, in: state.contacts)
+        var conversation: Conversation
+        var kemCiphertext: Data?
+        if let existing = state.conversation(for: contact.id) {
+            conversation = existing
+        } else {
+            let session = try MessageEngine.createOutboundSession(identity: state.identity, contact: contact)
+            conversation = session.conversation
+            kemCiphertext = session.kemCiphertext
+        }
+        let prepared = try MessageEngine.prepareMessageKey(conversation: &conversation)
+        let context = AttachmentCryptoContext(
+            conversationId: conversation.id,
+            sessionId: conversation.sessionId,
+            messageCounter: prepared.counter
+        )
+        let (descriptor, chunks) = try Self.encryptAttachmentChunks(
+            data: data,
+            fileName: fileName,
+            mimeType: mimeType,
+            chunkSize: chunkSize,
+            messageKey: prepared.key,
+            context: context
+        )
+        try await upload(chunks: chunks, to: contact.relay, ttlSeconds: ttlSeconds)
+        let envelope = try MessageEngine.encrypt(
+            body: .attachment(descriptor),
+            senderSigningKey: state.identity.signingKey,
+            senderFingerprint: state.identity.fingerprint,
+            conversation: conversation,
+            messageCounter: prepared.counter,
+            messageKey: prepared.key,
+            kemCiphertext: kemCiphertext
+        )
+        _ = MessageEngine.appendMessage(
+            body: .attachment(descriptor),
+            direction: .sent,
+            counter: envelope.messageCounter,
+            timestamp: envelope.sentAt,
+            conversation: &conversation,
+            attachmentRelay: contact.relay,
+            messageKey: prepared.key
+        )
+        state.upsert(conversation: conversation)
+        let response = try await deliver(envelope: envelope, to: contact, from: state)
+        try await store.save(state)
+        return HeadlessSentAttachment(
+            contact: contact,
+            group: nil,
+            envelopeId: envelope.id,
+            messageCounter: envelope.messageCounter,
+            descriptor: descriptor,
+            uploadedChunkCount: chunks.count,
+            storedCount: response.delivered?.storedCount ?? 0
+        )
+    }
+
+    public func sendVoice(
+        to selector: String,
+        data: Data,
+        fileName: String?,
+        mimeType: String = "audio/m4a",
+        chunkSize: Int = 64 * 1024,
+        ttlSeconds: Int? = nil
+    ) async throws -> HeadlessSentAttachment {
+        try await sendAttachment(
+            to: selector,
+            data: data,
+            fileName: fileName,
+            mimeType: mimeType,
+            chunkSize: chunkSize,
+            ttlSeconds: ttlSeconds
+        )
+    }
+
     public func sendGroupText(to selector: String, text: String) async throws -> HeadlessSentGroupMessage {
         var state = try await loadState()
         try await refreshGroups(into: &state, limit: 100)
@@ -606,6 +738,149 @@ public actor HeadlessMessagingClient {
             messageCounter: envelope.messageCounter,
             storedCount: response.delivered?.storedCount ?? 0
         )
+    }
+
+    public func sendGroupAttachment(
+        to selector: String,
+        data: Data,
+        fileName: String?,
+        mimeType: String = "application/octet-stream",
+        chunkSize: Int = 64 * 1024,
+        ttlSeconds: Int? = nil
+    ) async throws -> HeadlessSentAttachment {
+        var state = try await loadState()
+        try await refreshGroups(into: &state, limit: 100)
+        var group = try resolveGroup(selector, in: state.groups)
+        guard var ratchetState = group.groupRatchetState else {
+            throw HeadlessMessagingClientError.missingGroupRatchet(group.title)
+        }
+        let prepared = try GroupRatchet.prepareMessageKey(
+            senderFingerprint: state.identity.fingerprint,
+            state: &ratchetState
+        )
+        let context = Self.groupAttachmentContext(
+            groupId: group.id,
+            epoch: ratchetState.epoch,
+            transcriptHash: ratchetState.transcriptHash,
+            messageCounter: prepared.counter
+        )
+        let (descriptor, chunks) = try Self.encryptAttachmentChunks(
+            data: data,
+            fileName: fileName,
+            mimeType: mimeType,
+            chunkSize: chunkSize,
+            messageKey: prepared.key,
+            context: context
+        )
+        try await upload(chunks: chunks, to: state.relay, ttlSeconds: ttlSeconds)
+        let envelope = try GroupRatchet.encrypt(
+            body: .attachment(descriptor),
+            senderSigningKey: state.identity.signingKey,
+            senderFingerprint: state.identity.fingerprint,
+            messageCounter: prepared.counter,
+            messageKey: prepared.key,
+            state: ratchetState
+        )
+        group.groupRatchetState = ratchetState
+        appendGroupMessage(
+            body: .attachment(descriptor),
+            direction: .sent,
+            senderDisplayName: nil,
+            counter: envelope.messageCounter,
+            timestamp: envelope.sentAt,
+            group: &group,
+            attachmentRelay: state.relay,
+            attachmentCryptoContext: context,
+            messageKey: prepared.key
+        )
+        state.upsert(group: group)
+        let response = try await relayClient(for: state.relay).send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: group.id,
+                    groupInboxId: try groupInboxId(for: group),
+                    envelope: envelope
+                )
+            ),
+            timeout: timeout
+        )
+        guard response.type == .delivered || response.type == .ok else {
+            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+        }
+        try await store.save(state)
+        return HeadlessSentAttachment(
+            contact: nil,
+            group: summary(for: group),
+            envelopeId: envelope.id,
+            messageCounter: envelope.messageCounter,
+            descriptor: descriptor,
+            uploadedChunkCount: chunks.count,
+            storedCount: response.delivered?.storedCount ?? 0
+        )
+    }
+
+    public func sendGroupVoice(
+        to selector: String,
+        data: Data,
+        fileName: String?,
+        mimeType: String = "audio/m4a",
+        chunkSize: Int = 64 * 1024,
+        ttlSeconds: Int? = nil
+    ) async throws -> HeadlessSentAttachment {
+        try await sendGroupAttachment(
+            to: selector,
+            data: data,
+            fileName: fileName,
+            mimeType: mimeType,
+            chunkSize: chunkSize,
+            ttlSeconds: ttlSeconds
+        )
+    }
+
+    public func fetchAttachment(id: UUID) async throws -> HeadlessFetchedAttachment {
+        let state = try await loadState()
+        let info = try attachmentInfo(id: id, in: state)
+        guard let messageKeyData = info.messageKeyData,
+              let context = info.cryptoContext else {
+            throw HeadlessMessagingClientError.missingAttachmentKey(id.uuidString)
+        }
+        let relay = info.relay ?? state.relay
+        let messageKey = AttachmentCrypto.key(from: messageKeyData)
+        var recovered = Data()
+        for chunkIndex in 0..<info.descriptor.chunkCount {
+            let response = try await relayClient(for: relay).send(
+                .fetchAttachment(FetchAttachmentRequest(attachmentId: id, chunkIndex: chunkIndex)),
+                timeout: timeout
+            )
+            guard response.type == .attachment, let chunk = response.attachment else {
+                throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+            }
+            let byteCount = Self.attachmentChunkPlaintextSize(
+                descriptor: info.descriptor,
+                chunkIndex: chunkIndex
+            )
+            let aad = AttachmentCrypto.authenticatedData(
+                conversationId: context.conversationId,
+                sessionId: context.sessionId,
+                messageCounter: context.messageCounter,
+                attachmentId: id,
+                chunkIndex: chunkIndex,
+                byteCount: byteCount
+            )
+            let plaintext = try AttachmentCrypto.decryptChunk(
+                payload: chunk.payload,
+                messageKey: messageKey,
+                attachmentId: id,
+                chunkIndex: chunkIndex,
+                authenticatedData: aad
+            )
+            recovered.append(plaintext)
+        }
+        guard recovered.count == info.descriptor.byteCount,
+              AttachmentCrypto.sha256(recovered) == info.descriptor.sha256 else {
+            throw HeadlessMessagingClientError.attachmentDigestMismatch(id.uuidString)
+        }
+        return HeadlessFetchedAttachment(descriptor: info.descriptor, data: recovered)
     }
 
     public func receiveGroupMessages(
@@ -664,11 +939,12 @@ public actor HeadlessMessagingClient {
                     ?? groupMemberSigningKey(for: envelope.senderFingerprint, group: group, state: state) else {
                     throw HeadlessMessagingClientError.missingGroupSenderKey(envelope.senderFingerprint)
                 }
-                let body = try GroupRatchet.decrypt(
+                let decrypted = try GroupRatchet.decryptWithKey(
                     envelope: envelope,
                     senderPublicSigningKey: senderKey,
                     state: &ratchetState
                 )
+                let body = decrypted.body
                 group.groupRatchetState = ratchetState
                 appendGroupMessage(
                     body: body,
@@ -676,7 +952,15 @@ public actor HeadlessMessagingClient {
                     senderDisplayName: sender?.displayName,
                     counter: envelope.messageCounter,
                     timestamp: envelope.sentAt,
-                    group: &group
+                    group: &group,
+                    attachmentRelay: state.relay,
+                    attachmentCryptoContext: Self.groupAttachmentContext(
+                        groupId: envelope.groupId,
+                        epoch: envelope.epoch,
+                        transcriptHash: envelope.transcriptHash,
+                        messageCounter: envelope.messageCounter
+                    ),
+                    messageKey: decrypted.messageKey
                 )
                 acknowledgedIds.append(envelope.id)
                 received.append(
@@ -746,9 +1030,9 @@ public actor HeadlessMessagingClient {
             } else {
                 throw HeadlessMessagingClientError.unsupportedInboundSession
             }
-            let body: MessageBody
+            let decrypted: (body: MessageBody, messageKey: SymmetricKey)
             do {
-                body = try MessageEngine.decrypt(envelope: envelope, contact: contact, conversation: &conversation)
+                decrypted = try MessageEngine.decryptWithKey(envelope: envelope, contact: contact, conversation: &conversation)
             } catch {
                 guard let kemCiphertext = envelope.kemCiphertext else {
                     throw error
@@ -758,18 +1042,21 @@ public actor HeadlessMessagingClient {
                     contact: contact,
                     kemCiphertext: kemCiphertext
                 )
-                body = try MessageEngine.decrypt(envelope: envelope, contact: contact, conversation: &conversation)
+                decrypted = try MessageEngine.decryptWithKey(envelope: envelope, contact: contact, conversation: &conversation)
                 if let previousConversation {
                     conversation.messages = previousConversation.messages
                     conversation.unreadCount = previousConversation.unreadCount
                 }
             }
+            let body = decrypted.body
             _ = MessageEngine.appendMessage(
                 body: body,
                 direction: .received,
                 counter: envelope.messageCounter,
                 timestamp: envelope.sentAt,
-                conversation: &conversation
+                conversation: &conversation,
+                attachmentRelay: state.relay,
+                messageKey: decrypted.messageKey
             )
             conversation.markMessageProcessed()
             switch body {
@@ -1064,7 +1351,10 @@ public actor HeadlessMessagingClient {
         senderDisplayName: String?,
         counter: UInt64,
         timestamp: Date,
-        group: inout GroupConversation
+        group: inout GroupConversation,
+        attachmentRelay: RelayEndpoint? = nil,
+        attachmentCryptoContext: AttachmentCryptoContext? = nil,
+        messageKey: SymmetricKey? = nil
     ) {
         switch body {
         case .text(let text):
@@ -1086,12 +1376,51 @@ public actor HeadlessMessagingClient {
                     body: title,
                     timestamp: timestamp,
                     counter: counter,
-                    attachment: AttachmentInfo(descriptor: descriptor)
+                    attachment: AttachmentInfo(
+                        descriptor: descriptor,
+                        relay: attachmentRelay,
+                        cryptoContext: attachmentCryptoContext,
+                        messageKeyData: messageKey.map(AttachmentCrypto.keyData)
+                    )
                 )
             )
         case .identityRotation, .identityReset, .sessionReset, .resendRequest:
             break
         }
+    }
+
+    private func upload(chunks: [AttachmentChunk], to relay: RelayEndpoint, ttlSeconds: Int?) async throws {
+        let client = relayClient(for: relay)
+        for chunk in chunks {
+            let response = try await client.send(
+                .uploadAttachment(
+                    UploadAttachmentRequest(
+                        attachmentId: chunk.attachmentId,
+                        chunkIndex: chunk.chunkIndex,
+                        payload: chunk.payload,
+                        ttlSeconds: ttlSeconds
+                    )
+                ),
+                timeout: timeout
+            )
+            guard response.type == .attachment || response.type == .ok else {
+                throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+            }
+        }
+    }
+
+    private func attachmentInfo(id: UUID, in state: ClientState) throws -> AttachmentInfo {
+        for conversation in state.conversations {
+            if let info = conversation.messages.compactMap(\.attachment).first(where: { $0.descriptor.id == id }) {
+                return info
+            }
+        }
+        for group in state.groups {
+            if let info = group.messages.compactMap(\.attachment).first(where: { $0.descriptor.id == id }) {
+                return info
+            }
+        }
+        throw HeadlessMessagingClientError.attachmentNotFound(id.uuidString)
     }
 
     private func relayClient(for endpoint: RelayEndpoint) -> RelayClient {
@@ -1154,6 +1483,78 @@ public actor HeadlessMessagingClient {
         }
         #endif
         return Data(bytes)
+    }
+
+    private static func encryptAttachmentChunks(
+        data: Data,
+        fileName: String?,
+        mimeType: String,
+        chunkSize: Int,
+        messageKey: SymmetricKey,
+        context: AttachmentCryptoContext
+    ) throws -> (AttachmentDescriptor, [AttachmentChunk]) {
+        let safeChunkSize = max(1, min(chunkSize, 64 * 1024))
+        let attachmentId = UUID()
+        let chunkCount = data.isEmpty ? 0 : Int(ceil(Double(data.count) / Double(safeChunkSize)))
+        let descriptor = AttachmentDescriptor(
+            id: attachmentId,
+            fileName: fileName,
+            mimeType: mimeType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? "application/octet-stream"
+                : mimeType,
+            byteCount: data.count,
+            sha256: AttachmentCrypto.sha256(data),
+            chunkCount: chunkCount,
+            chunkSize: safeChunkSize
+        )
+        var chunks: [AttachmentChunk] = []
+        for chunkIndex in 0..<chunkCount {
+            let start = data.index(data.startIndex, offsetBy: chunkIndex * safeChunkSize)
+            let endOffset = min(data.count, (chunkIndex + 1) * safeChunkSize)
+            let end = data.index(data.startIndex, offsetBy: endOffset)
+            let plaintext = data[start..<end]
+            let aad = AttachmentCrypto.authenticatedData(
+                conversationId: context.conversationId,
+                sessionId: context.sessionId,
+                messageCounter: context.messageCounter,
+                attachmentId: attachmentId,
+                chunkIndex: chunkIndex,
+                byteCount: plaintext.count
+            )
+            let payload = try AttachmentCrypto.encryptChunk(
+                plaintext: Data(plaintext),
+                messageKey: messageKey,
+                attachmentId: attachmentId,
+                chunkIndex: chunkIndex,
+                authenticatedData: aad
+            )
+            chunks.append(AttachmentChunk(attachmentId: attachmentId, chunkIndex: chunkIndex, payload: payload))
+        }
+        return (descriptor, chunks)
+    }
+
+    private static func attachmentChunkPlaintextSize(
+        descriptor: AttachmentDescriptor,
+        chunkIndex: Int
+    ) -> Int {
+        guard descriptor.chunkCount > 0 else { return 0 }
+        if chunkIndex == descriptor.chunkCount - 1 {
+            return descriptor.byteCount - (descriptor.chunkSize * chunkIndex)
+        }
+        return descriptor.chunkSize
+    }
+
+    private static func groupAttachmentContext(
+        groupId: UUID,
+        epoch: UInt64,
+        transcriptHash: Data,
+        messageCounter: UInt64
+    ) -> AttachmentCryptoContext {
+        AttachmentCryptoContext(
+            conversationId: "group:\(groupId.uuidString)",
+            sessionId: "epoch:\(epoch):\(transcriptHash.base64EncodedString())",
+            messageCounter: messageCounter
+        )
     }
 
     private static func makeActorProof(

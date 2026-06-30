@@ -32,10 +32,34 @@ public struct AttachmentDescriptor: Codable, Equatable, Identifiable {
 public struct AttachmentInfo: Codable, Equatable {
     public let descriptor: AttachmentDescriptor
     public var localFileName: String?
+    public var relay: RelayEndpoint?
+    public var cryptoContext: AttachmentCryptoContext?
+    public var messageKeyData: Data?
 
-    public init(descriptor: AttachmentDescriptor, localFileName: String? = nil) {
+    public init(
+        descriptor: AttachmentDescriptor,
+        localFileName: String? = nil,
+        relay: RelayEndpoint? = nil,
+        cryptoContext: AttachmentCryptoContext? = nil,
+        messageKeyData: Data? = nil
+    ) {
         self.descriptor = descriptor
         self.localFileName = localFileName
+        self.relay = relay
+        self.cryptoContext = cryptoContext
+        self.messageKeyData = messageKeyData
+    }
+}
+
+public struct AttachmentCryptoContext: Codable, Equatable {
+    public let conversationId: String
+    public let sessionId: String
+    public let messageCounter: UInt64
+
+    public init(conversationId: String, sessionId: String, messageCounter: UInt64) {
+        self.conversationId = conversationId
+        self.sessionId = sessionId
+        self.messageCounter = messageCounter
     }
 }
 
@@ -44,6 +68,14 @@ public enum AttachmentCrypto {
 
     public static func sha256(_ data: Data) -> Data {
         Data(SHA256.hash(data: data))
+    }
+
+    public static func keyData(_ key: SymmetricKey) -> Data {
+        key.withUnsafeBytes { Data($0) }
+    }
+
+    public static func key(from data: Data) -> SymmetricKey {
+        SymmetricKey(data: data)
     }
 
     public static func deriveKey(

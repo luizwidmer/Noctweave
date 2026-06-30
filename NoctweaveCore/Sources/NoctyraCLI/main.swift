@@ -55,6 +55,10 @@ private struct CommandRunner {
             try await listGroups(options: options)
         case "group-send":
             try await sendGroupText(options: options)
+        case "group-send-attachment":
+            try await sendGroupAttachment(options: options, voice: false)
+        case "group-send-voice":
+            try await sendGroupAttachment(options: options, voice: true)
         case "group-receive":
             try await receiveGroupMessages(options: options)
         case "continuity-audit":
@@ -63,8 +67,14 @@ private struct CommandRunner {
             try await purgeContinuityAudit(options: options)
         case "send":
             try await sendText(options: options)
+        case "send-attachment":
+            try await sendAttachment(options: options, voice: false)
+        case "send-voice":
+            try await sendAttachment(options: options, voice: true)
         case "receive":
             try await receive(options: options)
+        case "download-attachment":
+            try await downloadAttachment(options: options)
         case "allow-identity-reset":
             try await allowIdentityReset(options: options)
         case "rotate-identity":
@@ -143,6 +153,35 @@ private struct CommandRunner {
         try writeJSON(sent)
     }
 
+    private func sendAttachment(options: ParsedOptions, voice: Bool) async throws {
+        guard let selector = options.value(for: "--to") else {
+            throw CLIError("Missing recipient. Use `--to <contact-name|fingerprint|uuid>`.")
+        }
+        let input = try attachmentInput(from: options, voice: voice)
+        let client = try headlessClient(from: options)
+        let sent: HeadlessSentAttachment
+        if voice {
+            sent = try await client.sendVoice(
+                to: selector,
+                data: input.data,
+                fileName: input.fileName,
+                mimeType: input.mimeType,
+                chunkSize: input.chunkSize,
+                ttlSeconds: input.ttlSeconds
+            )
+        } else {
+            sent = try await client.sendAttachment(
+                to: selector,
+                data: input.data,
+                fileName: input.fileName,
+                mimeType: input.mimeType,
+                chunkSize: input.chunkSize,
+                ttlSeconds: input.ttlSeconds
+            )
+        }
+        try writeJSON(sent)
+    }
+
     private func createGroup(options: ParsedOptions) async throws {
         guard let title = options.value(for: "--title") else {
             throw CLIError("Missing group title. Use `--title <name>`.")
@@ -173,6 +212,35 @@ private struct CommandRunner {
         try writeJSON(sent)
     }
 
+    private func sendGroupAttachment(options: ParsedOptions, voice: Bool) async throws {
+        guard let selector = options.value(for: "--group") else {
+            throw CLIError("Missing group. Use `--group <title|uuid>`.")
+        }
+        let input = try attachmentInput(from: options, voice: voice)
+        let client = try headlessClient(from: options)
+        let sent: HeadlessSentAttachment
+        if voice {
+            sent = try await client.sendGroupVoice(
+                to: selector,
+                data: input.data,
+                fileName: input.fileName,
+                mimeType: input.mimeType,
+                chunkSize: input.chunkSize,
+                ttlSeconds: input.ttlSeconds
+            )
+        } else {
+            sent = try await client.sendGroupAttachment(
+                to: selector,
+                data: input.data,
+                fileName: input.fileName,
+                mimeType: input.mimeType,
+                chunkSize: input.chunkSize,
+                ttlSeconds: input.ttlSeconds
+            )
+        }
+        try writeJSON(sent)
+    }
+
     private func receiveGroupMessages(options: ParsedOptions) async throws {
         let maxCount = try options.intValue(for: "--max") ?? 25
         let longPoll = try options.intValue(for: "--long-poll")
@@ -196,6 +264,36 @@ private struct CommandRunner {
             acknowledge: acknowledge
         )
         try writeJSON(messages)
+    }
+
+    private func downloadAttachment(options: ParsedOptions) async throws {
+        guard let rawId = options.value(for: "--id"),
+              let attachmentId = UUID(uuidString: rawId) else {
+            throw CLIError("Missing or invalid attachment id. Use `--id <uuid>`.")
+        }
+        guard let out = options.value(for: "--out") else {
+            throw CLIError("Missing output path. Use `--out <path-or-directory>`.")
+        }
+        let fetched = try await headlessClient(from: options).fetchAttachment(id: attachmentId)
+        let outputURL = try resolvedAttachmentOutputURL(
+            rawPath: out,
+            descriptor: fetched.descriptor,
+            attachmentId: attachmentId
+        )
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try fetched.data.write(to: outputURL, options: [.atomic])
+        try writeJSON(
+            CLIDownloadedAttachment(
+                attachmentId: attachmentId,
+                outputPath: outputURL.path,
+                byteCount: fetched.data.count,
+                sha256Base64: AttachmentCrypto.sha256(fetched.data).base64EncodedString(),
+                descriptor: fetched.descriptor
+            )
+        )
     }
 
     private func allowIdentityReset(options: ParsedOptions) async throws {
@@ -304,6 +402,71 @@ private struct CommandRunner {
             .filter { !$0.isEmpty }
     }
 
+    private func attachmentInput(from options: ParsedOptions, voice: Bool) throws -> CLIAttachmentInput {
+        guard let file = options.value(for: "--file") else {
+            throw CLIError("Missing file. Use `--file <path>`.")
+        }
+        let fileURL = URL(fileURLWithPath: file)
+        let data = try Data(contentsOf: fileURL)
+        let fileName = options.value(for: "--name") ?? fileURL.lastPathComponent
+        let mimeType = options.value(for: "--mime") ?? defaultMIMEType(for: fileURL, voice: voice)
+        let chunkSize = try options.intValue(for: "--chunk-size") ?? 64 * 1024
+        let ttlSeconds = try options.intValue(for: "--ttl")
+        return CLIAttachmentInput(
+            data: data,
+            fileName: fileName.isEmpty ? nil : fileName,
+            mimeType: mimeType,
+            chunkSize: chunkSize,
+            ttlSeconds: ttlSeconds
+        )
+    }
+
+    private func resolvedAttachmentOutputURL(
+        rawPath: String,
+        descriptor: AttachmentDescriptor,
+        attachmentId: UUID
+    ) throws -> URL {
+        let url = URL(fileURLWithPath: rawPath)
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            return url.appendingPathComponent(
+                descriptor.fileName?.isEmpty == false ? descriptor.fileName! : "\(attachmentId.uuidString).bin"
+            )
+        }
+        return url
+    }
+
+    private func defaultMIMEType(for url: URL, voice: Bool) -> String {
+        if voice {
+            return "audio/m4a"
+        }
+        switch url.pathExtension.lowercased() {
+        case "jpg", "jpeg":
+            return "image/jpeg"
+        case "png":
+            return "image/png"
+        case "gif":
+            return "image/gif"
+        case "webp":
+            return "image/webp"
+        case "m4a":
+            return "audio/m4a"
+        case "mp3":
+            return "audio/mpeg"
+        case "wav":
+            return "audio/wav"
+        case "txt":
+            return "text/plain"
+        case "json":
+            return "application/json"
+        case "pdf":
+            return "application/pdf"
+        default:
+            return "application/octet-stream"
+        }
+    }
+
     private func printHelp() {
         FileHandle.standardOutput.writeLine("""
         NoctyraCLI
@@ -320,11 +483,16 @@ private struct CommandRunner {
           NoctyraCLI group-create --title <name> --members <contact-a,contact-b> [--state path]
           NoctyraCLI groups [--refresh true] [--limit count] [--state path]
           NoctyraCLI group-send --group <title|uuid> --text <message> [--state path]
+          NoctyraCLI group-send-attachment --group <title|uuid> --file <path> [--mime type] [--ttl seconds] [--state path]
+          NoctyraCLI group-send-voice --group <title|uuid> --file <path> [--mime audio/m4a] [--ttl seconds] [--state path]
           NoctyraCLI group-receive [--group <title|uuid>] [--max count] [--long-poll seconds] [--state path]
           NoctyraCLI continuity-audit [--state path]
           NoctyraCLI purge-continuity-audit --confirm PURGE [--state path]
           NoctyraCLI send --to <contact-name|fingerprint|uuid> --text <message> [--state path]
+          NoctyraCLI send-attachment --to <contact> --file <path> [--mime type] [--ttl seconds] [--state path]
+          NoctyraCLI send-voice --to <contact> --file <path> [--mime audio/m4a] [--ttl seconds] [--state path]
           NoctyraCLI receive [--max count] [--long-poll seconds] [--state path]
+          NoctyraCLI download-attachment --id <uuid> --out <path-or-directory> [--state path]
           NoctyraCLI allow-identity-reset --contact <contact> --allow true [--state path]
           NoctyraCLI rotate-identity --confirm ROTATE [--state path]
           NoctyraCLI burn-identity --confirm BURN [--state path]
@@ -348,6 +516,22 @@ private struct CommandRunner {
           State contains private identity keys. Protect it with filesystem permissions.
         """)
     }
+}
+
+private struct CLIAttachmentInput {
+    let data: Data
+    let fileName: String?
+    let mimeType: String
+    let chunkSize: Int
+    let ttlSeconds: Int?
+}
+
+private struct CLIDownloadedAttachment: Codable {
+    let attachmentId: UUID
+    let outputPath: String
+    let byteCount: Int
+    let sha256Base64: String
+    let descriptor: AttachmentDescriptor
 }
 
 private struct ParsedOptions {

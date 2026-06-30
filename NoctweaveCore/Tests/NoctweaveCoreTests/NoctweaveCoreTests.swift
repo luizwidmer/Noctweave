@@ -223,6 +223,118 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(aliceReceived[0].body, .text("reply group"))
     }
 
+    func testHeadlessMessagingClientExchangesAttachmentsThroughRelay() async throws {
+        let port = UInt16.random(in: 57_001...60_000)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noctweave-headless-attachment-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), timeout: 3)
+        let bobURL = root.appendingPathComponent("bob.json")
+        let bob = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        _ = try await alice.createState(displayName: "Alice CLI", relay: endpoint)
+        _ = try await bob.createState(displayName: "Bob CLI", relay: endpoint)
+        try await alice.registerInbox()
+        try await bob.registerInbox()
+
+        _ = try await alice.importContactCode(try await bob.exportContactCode())
+        _ = try await bob.importContactCode(try await alice.exportContactCode())
+
+        let payload = Data("headless encrypted image bytes".utf8)
+        let sent = try await alice.sendAttachment(
+            to: "Bob CLI",
+            data: payload,
+            fileName: "photo.bin",
+            mimeType: "application/octet-stream",
+            chunkSize: 8,
+            ttlSeconds: 600
+        )
+        XCTAssertEqual(sent.uploadedChunkCount, 4)
+        XCTAssertEqual(sent.descriptor.byteCount, payload.count)
+
+        let rawChunk = try await RelayClient(endpoint: endpoint).send(
+            .fetchAttachment(
+                FetchAttachmentRequest(
+                    attachmentId: sent.descriptor.id,
+                    chunkIndex: 0
+                )
+            )
+        )
+        XCTAssertEqual(rawChunk.type, .attachment)
+        XCTAssertNotEqual(rawChunk.attachment?.payload.ciphertext, payload.prefix(8))
+
+        let received = try await bob.receive(maxCount: 10)
+        XCTAssertEqual(received.count, 1)
+        guard case .attachment(let descriptor) = received[0].body else {
+            return XCTFail("Expected attachment descriptor")
+        }
+        XCTAssertEqual(descriptor.id, sent.descriptor.id)
+
+        let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        let fetched = try await bobReloaded.fetchAttachment(id: descriptor.id)
+        XCTAssertEqual(fetched.descriptor.fileName, "photo.bin")
+        XCTAssertEqual(fetched.data, payload)
+    }
+
+    func testHeadlessMessagingClientExchangesGroupVoiceThroughRelay() async throws {
+        let port = UInt16.random(in: 60_001...63_000)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noctweave-headless-group-voice-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), timeout: 3)
+        let bobURL = root.appendingPathComponent("bob.json")
+        let bob = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        _ = try await alice.createState(displayName: "Alice CLI", relay: endpoint)
+        _ = try await bob.createState(displayName: "Bob CLI", relay: endpoint)
+        try await alice.registerInbox()
+        try await bob.registerInbox()
+
+        _ = try await alice.importContactCode(try await bob.exportContactCode())
+        _ = try await bob.importContactCode(try await alice.exportContactCode())
+
+        let group = try await alice.createGroup(title: "Voice Team", memberSelectors: ["Bob CLI"])
+        _ = try await bob.groups()
+
+        let voice = Data([0x00, 0x01, 0x02, 0x03, 0xFE, 0xFF])
+        let sent = try await alice.sendGroupVoice(
+            to: group.id.uuidString,
+            data: voice,
+            fileName: "note.m4a",
+            mimeType: "audio/m4a",
+            chunkSize: 3,
+            ttlSeconds: 600
+        )
+        XCTAssertEqual(sent.uploadedChunkCount, 2)
+        XCTAssertEqual(sent.descriptor.mimeType, "audio/m4a")
+
+        let received = try await bob.receiveGroupMessages(group: "Voice Team", maxCount: 10)
+        XCTAssertEqual(received.count, 1)
+        guard case .attachment(let descriptor) = received[0].body else {
+            return XCTFail("Expected voice attachment descriptor")
+        }
+        XCTAssertEqual(descriptor.fileName, "note.m4a")
+        XCTAssertEqual(descriptor.mimeType, "audio/m4a")
+
+        let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        let fetched = try await bobReloaded.fetchAttachment(id: descriptor.id)
+        XCTAssertEqual(fetched.data, voice)
+    }
+
     func testHiddenRetrievalPlannerExtractsTargetFromCoverResponse() throws {
         let plan = try HiddenRetrievalPlanner.makeCoverQuery(
             bucketId: "bucket-a",

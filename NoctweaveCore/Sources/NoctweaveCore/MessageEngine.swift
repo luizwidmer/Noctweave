@@ -269,7 +269,9 @@ public enum MessageEngine {
         direction: MessageDirection,
         counter: UInt64,
         timestamp: Date,
-        conversation: inout Conversation
+        conversation: inout Conversation,
+        attachmentRelay: RelayEndpoint? = nil,
+        messageKey: SymmetricKey? = nil
     ) -> Message? {
         switch body {
         case .text(let text):
@@ -279,12 +281,21 @@ public enum MessageEngine {
         case .attachment(let descriptor):
             let title = descriptor.fileName?.isEmpty == false ? descriptor.fileName! : "Image"
             let message = Message(
-                direction: direction,
-                body: title,
-                timestamp: timestamp,
-                counter: counter,
-                attachment: AttachmentInfo(descriptor: descriptor)
-            )
+                    direction: direction,
+                    body: title,
+                    timestamp: timestamp,
+                    counter: counter,
+                    attachment: AttachmentInfo(
+                        descriptor: descriptor,
+                        relay: attachmentRelay,
+                        cryptoContext: AttachmentCryptoContext(
+                            conversationId: conversation.id,
+                            sessionId: conversation.sessionId,
+                            messageCounter: counter
+                        ),
+                        messageKeyData: messageKey.map(AttachmentCrypto.keyData)
+                    )
+                )
             conversation.messages.append(message)
             return message
         case .identityRotation:
