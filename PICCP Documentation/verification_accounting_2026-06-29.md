@@ -38,4 +38,4 @@ This pass accounts for repository-owned verification after the recent client, re
 
 ## Stop Condition
 
-This verification goal is complete when the commands above pass or are accounted for with explicit environment blockers. Future OS wake behavior, UI tuning, proxy deployment, or platform-specific policy changes must be tracked as separate TODO items with a named platform, trigger condition, acceptance test, and stop condition.
+This verification goal is complete when the commands above pass or are accounted for with explicit environment blockers. There is no standing follow-up to "keep tuning" OS wake behavior, UI polish, proxy deployment, or platform policy. Future work in those areas must be opened as a finite TODO item with a single named platform or subsystem, a trigger condition, expected behavior, an acceptance test, and a stop condition.
