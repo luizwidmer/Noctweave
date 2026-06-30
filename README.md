@@ -1,21 +1,24 @@
 # Noctweave
 
-Noctweave is a post-quantum secure messaging protocol centered on pairwise identity continuity, relay-backed delivery, federation, and metadata reduction.
+Noctweave is a post-quantum secure messaging protocol for pairwise identity continuity, relay-backed delivery, federation, and metadata reduction.
 
-This GitHub repository is the public Noctweave protocol and open tooling workspace. It contains the shared Swift protocol core, the Linux relay server, Docker/operator tooling, `NoctyraCLI`, tests, and public protocol documentation.
+This GitHub repository is the public home for the Noctweave protocol and open tooling. It is focused on the protocol core, Linux relay, Docker/operator tooling, `NoctyraCLI`, test coverage, and public technical documentation.
 
-The proprietary Noctyra Apple clients and macOS GUI relay app are not part of this repository.
+The Noctyra Apple clients and macOS GUI relay app are proprietary products built on the protocol. They are not distributed from this repository.
 
-## Repository Scope
+## What This Repository Contains
 
-This repo is intended for:
+- Protocol implementation work for Noctweave.
+- `NoctweaveCore`, the shared Swift package that defines protocol models, cryptographic flows, relay clients, relay/server primitives, ratchets, federation logic, and test helpers.
+- The open Linux relay server, including Docker deployment support and operator documentation.
+- `NoctyraCLI`, an open command-line tool for relay diagnostics, API scripting, and headless messaging.
+- Public documentation for wire formats, relay APIs, security posture, federation behavior, and release verification.
 
-- protocol review and implementation work around Noctweave;
-- relay operators running the open Linux relay;
-- developers using `NoctyraCLI` as a headless messaging client or relay API client;
-- contributors validating wire formats, relay behavior, federation behavior, and release artifacts.
+## What This Repository Does Not Contain
 
-It is not the distribution point for the closed-source Noctyra iOS, iPadOS, macOS messaging client, or macOS GUI relay app.
+- The closed-source Noctyra iOS, iPadOS, or macOS messaging client.
+- The closed-source macOS GUI relay application.
+- Hosted relays, account services, notification infrastructure, or managed federation services.
 
 ## Public Components
 
