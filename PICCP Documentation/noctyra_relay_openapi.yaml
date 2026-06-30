@@ -1,0 +1,344 @@
+openapi: 3.1.0
+info:
+  title: Noctyra Relay API
+  version: "1.0"
+  description: |
+    HTTP/WebSocket bridge for the Noctyra/PICCP relay protocol. TCP uses the
+    same RelayRequest and RelayResponse JSON objects as one newline-delimited
+    request per connection.
+servers:
+  - url: http://localhost:9339
+    description: Local HTTP relay bridge
+  - url: https://relay.example.org
+    description: TLS relay bridge or reverse proxy
+paths:
+  /health:
+    get:
+      summary: Health probe
+      operationId: getHealth
+      responses:
+        "200":
+          description: Relay is accepting requests
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RelayResponse"
+                  - type: object
+                    properties:
+                      status:
+                        type: string
+                        examples: ["ok"]
+  /relay:
+    post:
+      summary: Submit one relay protocol request
+      operationId: postRelayRequest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RelayRequest"
+      responses:
+        "200":
+          description: Relay protocol response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelayResponse"
+        "400":
+          description: Malformed request or rejected relay operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelayResponse"
+    get:
+      summary: WebSocket upgrade endpoint
+      operationId: websocketRelay
+      responses:
+        "101":
+          description: WebSocket upgrade accepted; clients exchange RelayRequest and RelayResponse JSON frames.
+components:
+  schemas:
+    RelayRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          $ref: "#/components/schemas/RelayRequestType"
+        authToken:
+          type: string
+          nullable: true
+          description: Optional relay password or inter-relay forwarding token.
+        deliver:
+          $ref: "#/components/schemas/DeliverRequest"
+        fetch:
+          $ref: "#/components/schemas/FetchRequest"
+        registerInbox:
+          type: object
+        acknowledgeMessages:
+          type: object
+        deliverGroupMessage:
+          type: object
+        fetchGroupMessages:
+          type: object
+        acknowledgeGroupMessages:
+          type: object
+        announce:
+          type: object
+        listAnnouncements:
+          type: object
+        sendPairRequest:
+          type: object
+        fetchPairRequests:
+          type: object
+        uploadAttachment:
+          type: object
+        fetchAttachment:
+          type: object
+        uploadPrekeys:
+          type: object
+        fetchPrekeyBundle:
+          type: object
+        createGroup:
+          type: object
+        getGroup:
+          type: object
+        listGroups:
+          type: object
+        updateGroup:
+          type: object
+        deleteGroup:
+          type: object
+        requestGroupJoin:
+          type: object
+        listGroupJoinRequests:
+          type: object
+        approveGroupJoin:
+          type: object
+        rejectGroupJoin:
+          type: object
+        registerFederationNode:
+          type: object
+        listFederationNodes:
+          type: object
+        publishOpenFederationDHTRecord:
+          type: object
+        listOpenFederationDHTRecords:
+          type: object
+      additionalProperties: false
+    RelayRequestType:
+      type: string
+      enum:
+        - deliver
+        - registerInbox
+        - fetch
+        - acknowledgeMessages
+        - deliverGroupMessage
+        - fetchGroupMessages
+        - acknowledgeGroupMessages
+        - health
+        - info
+        - announce
+        - listAnnouncements
+        - sendPairRequest
+        - fetchPairRequests
+        - uploadAttachment
+        - fetchAttachment
+        - uploadPrekeys
+        - fetchPrekeyBundle
+        - createGroup
+        - getGroup
+        - listGroups
+        - updateGroup
+        - deleteGroup
+        - requestGroupJoin
+        - listGroupJoinRequests
+        - approveGroupJoin
+        - rejectGroupJoin
+        - registerFederationNode
+        - listFederationNodes
+        - publishOpenFederationDHTRecord
+        - listOpenFederationDHTRecords
+    RelayResponse:
+      type: object
+      required: [type]
+      properties:
+        type:
+          $ref: "#/components/schemas/RelayResponseType"
+        delivered:
+          type: object
+          properties:
+            storedCount:
+              type: integer
+              minimum: 0
+        messages:
+          type: array
+          items:
+            type: object
+        groupMessages:
+          type: array
+          items:
+            type: object
+        announcements:
+          type: array
+          items:
+            type: object
+        pairRequests:
+          type: array
+          items:
+            type: object
+        attachment:
+          type: object
+        prekeyBundle:
+          type: object
+        group:
+          type: object
+        groups:
+          type: array
+          items:
+            type: object
+        groupJoinRequests:
+          type: array
+          items:
+            type: object
+        federationNodes:
+          type: array
+          items:
+            type: object
+        federationSnapshot:
+          type: object
+        relayInfo:
+          $ref: "#/components/schemas/RelayInfo"
+        openFederationDHTRecords:
+          type: array
+          items:
+            type: object
+        error:
+          type: string
+      additionalProperties: false
+    RelayResponseType:
+      type: string
+      enum:
+        - ok
+        - delivered
+        - messages
+        - groupMessages
+        - announcements
+        - pairRequests
+        - attachment
+        - prekeyBundle
+        - group
+        - groups
+        - groupJoinRequests
+        - federationNodes
+        - info
+        - openFederationDHTRecords
+        - error
+    DeliverRequest:
+      type: object
+      required: [inboxId, envelope]
+      properties:
+        inboxId:
+          type: string
+        routingToken:
+          type: string
+          nullable: true
+        envelope:
+          type: object
+          description: AEAD-protected direct message envelope.
+        destinationRelay:
+          $ref: "#/components/schemas/RelayEndpoint"
+      additionalProperties: false
+    FetchRequest:
+      type: object
+      required: [inboxId]
+      properties:
+        inboxId:
+          type: string
+        routingToken:
+          type: string
+          nullable: true
+        maxCount:
+          type: integer
+          minimum: 1
+        longPollTimeoutSeconds:
+          type: integer
+          minimum: 0
+        accessProof:
+          type: object
+          nullable: true
+      additionalProperties: false
+    RelayEndpoint:
+      type: object
+      required: [host, port]
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        useTLS:
+          type: boolean
+          default: false
+        transport:
+          type: string
+          enum: [tcp, http, websocket]
+          default: tcp
+        tlsCertificateFingerprintSHA256:
+          type: string
+          contentEncoding: base64
+          nullable: true
+        directorySigningPublicKey:
+          type: string
+          contentEncoding: base64
+          nullable: true
+      additionalProperties: false
+    RelayInfo:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [standard, discovery, bridge, archive, privateRelay, coordinator]
+        federation:
+          type: object
+        temporalBucketSeconds:
+          type: integer
+        temporalBucketScheduleSeconds:
+          type: array
+          items:
+            type: integer
+        attachmentDefaultTTLSeconds:
+          type: integer
+        attachmentMaxTTLSeconds:
+          type: integer
+        attachmentsEnabled:
+          type: boolean
+        attachmentStorageBackend:
+          type: string
+        hiddenRetrieval:
+          type: object
+        onionTransport:
+          type: object
+        mixnetTransport:
+          type: object
+        wakeSupport:
+          type: object
+        relayName:
+          type: string
+        operatorNote:
+          type: string
+        softwareVersion:
+          type: string
+        requiresPassword:
+          type: boolean
+        tlsEnabled:
+          type: boolean
+        transport:
+          type: string
+          enum: [tcp, http, websocket]
+        advertisedAt:
+          type: string
+          format: date-time
+      additionalProperties: true

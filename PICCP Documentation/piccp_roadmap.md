@@ -44,11 +44,11 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 - Document test vectors for all cryptographic operations
 
 ### Deliverables
-- [ ] Complete protocol specification (PICCP v1.0 spec)
-- [ ] Wire format documentation with test vectors
-- [ ] Relay API specification (OpenAPI/Swagger)
+- [x] Complete protocol specification (PICCP v1.0 spec): `piccp_protocol_spec_v1.md`
+- [x] Wire format documentation with test vectors: `wire_format_and_test_vectors.md`
+- [x] Relay API specification (OpenAPI/Swagger): `noctyra_relay_openapi.yaml`
 - [x] Threat model refinement
-- [ ] Security requirements document
+- [x] Security requirements document: `security_requirements.md`
 
 ### Dependencies
 - Community feedback on whitepaper
