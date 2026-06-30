@@ -1,0 +1,9683 @@
+import Foundation
+import CryptoKit
+import SQLite3
+import XCTest
+@testable import NoctweaveCore
+
+final class NoctweaveCoreTests: XCTestCase {
+    func testMetadataMinimizerBucketsVisibleTimestamps() {
+        let precise = Date(timeIntervalSince1970: 1_765_400_123)
+
+        XCTAssertEqual(
+            MetadataMinimizer.bucketedTimestamp(precise, bucketSeconds: 300),
+            Date(timeIntervalSince1970: 1_765_400_100)
+        )
+        XCTAssertEqual(MetadataMinimizer.bucketedTimestamp(precise, bucketSeconds: 1), precise)
+        XCTAssertEqual(MetadataMinimizer.bucketedTimestamp(precise, bucketSeconds: nil), precise)
+    }
+
+    func testHiddenRetrievalPlannerBuildsDeterministicCoverQuery() throws {
+        let records = ["msg-4", "msg-1", "msg-3", "msg-2", "msg-5"]
+        let secret = Data("client-local-cover-secret".utf8)
+
+        let first = try HiddenRetrievalPlanner.makeCoverQuery(
+            bucketId: "bucket-2026-06-25T10:00",
+            availableRecordIds: records,
+            targetRecordId: "msg-3",
+            coverSetSize: 3,
+            secret: secret
+        )
+        let second = try HiddenRetrievalPlanner.makeCoverQuery(
+            bucketId: "bucket-2026-06-25T10:00",
+            availableRecordIds: records.reversed(),
+            targetRecordId: "msg-3",
+            coverSetSize: 3,
+            secret: secret
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.bucketId, "bucket-2026-06-25T10:00")
+        XCTAssertEqual(first.requestedRecordIds.count, 3)
+        XCTAssertTrue(first.requestedRecordIds.contains("msg-3"))
+        XCTAssertNotNil(first.targetOffset)
+        XCTAssertEqual(first.requestedRecordIds, first.requestedRecordIds.sorted())
+    }
+
+    func testHiddenRetrievalPlannerExtractsTargetFromCoverResponse() throws {
+        let plan = try HiddenRetrievalPlanner.makeCoverQuery(
+            bucketId: "bucket-a",
+            availableRecordIds: ["a", "b", "c", "d"],
+            targetRecordId: "c",
+            coverSetSize: 4,
+            secret: Data("secret".utf8)
+        )
+        let response = [
+            "a": Data("decoy-a".utf8),
+            "b": Data("decoy-b".utf8),
+            "c": Data("target".utf8),
+            "d": Data("decoy-d".utf8)
+        ]
+
+        XCTAssertEqual(
+            try HiddenRetrievalPlanner.extractTarget(from: response, using: plan),
+            Data("target".utf8)
+        )
+    }
+
+    func testHiddenRetrievalPlannerRejectsIncompleteCoverResponse() throws {
+        let plan = try HiddenRetrievalPlanner.makeCoverQuery(
+            bucketId: "bucket-a",
+            availableRecordIds: ["a", "b", "c", "d"],
+            targetRecordId: "c",
+            coverSetSize: 4,
+            secret: Data("secret".utf8)
+        )
+        let response = [
+            "c": Data("target".utf8)
+        ]
+
+        XCTAssertThrowsError(try HiddenRetrievalPlanner.extractTarget(from: response, using: plan)) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .incompleteCoverResponse)
+        }
+    }
+
+    func testHiddenRetrievalPlannerRejectsMalformedPublicQueryPlans() throws {
+        let response = [
+            "a": Data("decoy-a".utf8),
+            "b": Data("decoy-b".utf8),
+            "c": Data("target".utf8)
+        ]
+        let missingTarget = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["a", "b"],
+            targetRecordId: "c"
+        )
+        let duplicateTarget = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["a", "c", "c"],
+            targetRecordId: "c"
+        )
+        let targetOnly = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["c"],
+            targetRecordId: "c"
+        )
+        let emptyBucket = HiddenRetrievalQueryPlan(
+            bucketId: " ",
+            requestedRecordIds: ["a", "c"],
+            targetRecordId: "c"
+        )
+        let emptyTarget = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["a", "b"],
+            targetRecordId: " "
+        )
+        let emptyRequestedRecord = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["a", " "],
+            targetRecordId: "a"
+        )
+        let extraResponseRecords = HiddenRetrievalQueryPlan(
+            bucketId: "bucket-a",
+            requestedRecordIds: ["a", "c"],
+            targetRecordId: "c"
+        )
+
+        for plan in [missingTarget, duplicateTarget, targetOnly, emptyBucket, emptyTarget, emptyRequestedRecord] {
+            XCTAssertThrowsError(try HiddenRetrievalPlanner.extractTarget(from: response, using: plan)) { error in
+                XCTAssertEqual(error as? HiddenRetrievalError, .malformedPublicPlan)
+            }
+            XCTAssertNil(HiddenRetrievalPlanner.targetIfValid(from: response, using: plan))
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.extractTarget(from: response, using: extraResponseRecords)
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .unexpectedResponseRecords)
+        }
+    }
+
+    func testHiddenRetrievalPlannerRejectsInvalidQueries() throws {
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: " ",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: "a",
+                coverSetSize: 2,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidBucketId)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: " ",
+                coverSetSize: 2,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidTargetRecordId)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", " "],
+                targetRecordId: "a",
+                coverSetSize: 2,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordId)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: "a",
+                coverSetSize: 2,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidSecret)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a"],
+                targetRecordId: "a",
+                coverSetSize: 0,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidCoverSetSize)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", "b", "c"],
+                targetRecordId: "a",
+                coverSetSize: 3,
+                secret: Data("secret".utf8),
+                maximumCoverSetSize: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .coverSetTooLarge)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: "a",
+                coverSetSize: 1,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidCoverSetSize)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: [],
+                targetRecordId: "a",
+                coverSetSize: 2,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .emptyBucket)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: "c",
+                coverSetSize: 2,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .targetMissing)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeCoverQuery(
+                bucketId: "bucket",
+                availableRecordIds: ["a", "b"],
+                targetRecordId: "a",
+                coverSetSize: 3,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .insufficientBucketRecords)
+        }
+    }
+
+    func testHiddenRetrievalPlannerCanonicalizesBucketAndRecordIds() throws {
+        let plan = try HiddenRetrievalPlanner.makeCoverQuery(
+            bucketId: " bucket-a ",
+            availableRecordIds: [" a ", "b", "c"],
+            targetRecordId: " a ",
+            coverSetSize: 2,
+            secret: Data("secret".utf8)
+        )
+
+        XCTAssertEqual(plan.bucketId, "bucket-a")
+        XCTAssertEqual(plan.targetRecordId, "a")
+        XCTAssertTrue(plan.requestedRecordIds.contains("a"))
+        XCTAssertFalse(plan.requestedRecordIds.contains(" a "))
+    }
+
+    func testHiddenRetrievalPlannerBuildsReplicatedXORPIRQuery() throws {
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: " bucket-pir ",
+            orderedRecordIds: [" a ", "b", "c", "d"],
+            targetRecordId: " c ",
+            replicaCount: 3,
+            secret: Data("client-local-pir-secret".utf8)
+        )
+
+        XCTAssertEqual(plan.bucketId, "bucket-pir")
+        XCTAssertEqual(plan.orderedRecordIds, ["a", "b", "c", "d"])
+        XCTAssertEqual(plan.targetRecordId, "c")
+        XCTAssertEqual(plan.targetIndex, 2)
+        XCTAssertEqual(plan.shares.map(\.replicaIndex), [0, 1, 2])
+        XCTAssertTrue(plan.shares.allSatisfy { $0.recordCount == 4 })
+
+        let records = [
+            Data("record-a-16bytes".utf8),
+            Data("record-b-16bytes".utf8),
+            Data("record-c-16bytes".utf8),
+            Data("record-d-16bytes".utf8)
+        ]
+        let responses = try plan.shares.map {
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(records: records, share: $0)
+        }
+
+        XCTAssertEqual(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: responses, using: plan),
+            records[2]
+        )
+    }
+
+    func testHiddenRetrievalPlannerReplicatedXORPIRDoesNotSendTargetOnlyShares() throws {
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: "bucket-pir",
+            orderedRecordIds: ["a", "b", "c", "d", "e"],
+            targetRecordId: "d",
+            replicaCount: 2,
+            secret: Data("client-local-pir-secret".utf8)
+        )
+
+        let unitTarget = testBitset(recordCount: plan.orderedRecordIds.count, enabledIndex: plan.targetIndex)
+        XCTAssertTrue(plan.shares.allSatisfy { $0.selectionBits != unitTarget })
+
+        let combined = plan.shares
+            .map(\.selectionBits)
+            .reduce(Data(repeating: 0, count: unitTarget.count), xorTestData)
+        XCTAssertEqual(combined, unitTarget)
+    }
+
+    func testHiddenRetrievalPlannerBuildsPaddedReplicatedXORPIRQuery() throws {
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: "bucket-pir",
+            orderedRecordIds: ["a", "b", "c"],
+            targetRecordId: "b",
+            replicaCount: 3,
+            secret: Data("client-local-padded-pir-secret".utf8),
+            paddedRecordCount: 16
+        )
+
+        XCTAssertEqual(plan.orderedRecordIds.count, 3)
+        XCTAssertEqual(plan.shares.map(\.recordCount), [16, 16, 16])
+        XCTAssertTrue(plan.shares.allSatisfy { $0.selectionBits.count == 2 })
+
+        let records = [
+            Data("record-a-16bytes".utf8),
+            Data("record-b-16bytes".utf8),
+            Data("record-c-16bytes".utf8)
+        ]
+        let responses = try plan.shares.map {
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(records: records, share: $0)
+        }
+
+        XCTAssertEqual(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: responses, using: plan),
+            records[1]
+        )
+
+        let unitTarget = testBitset(recordCount: 16, enabledIndex: plan.targetIndex)
+        let combined = plan.shares
+            .map(\.selectionBits)
+            .reduce(Data(repeating: 0, count: unitTarget.count), xorTestData)
+        XCTAssertEqual(combined, unitTarget)
+    }
+
+    func testHiddenRetrievalPlannerBuildsFixedSizeReplicatedXORPIRResponses() throws {
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: "bucket-pir",
+            orderedRecordIds: ["a", "b", "c"],
+            targetRecordId: "c",
+            replicaCount: 3,
+            secret: Data("client-local-fixed-response-pir-secret".utf8),
+            paddedRecordCount: 16
+        )
+        let records = [
+            Data("record-a".utf8),
+            Data("record-b".utf8),
+            Data("record-c".utf8)
+        ]
+        let fixedResponseSize = 32
+
+        let responses = try plan.shares.map {
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(
+                records: records,
+                share: $0,
+                fixedResponseSize: fixedResponseSize
+            )
+        }
+
+        XCTAssertTrue(responses.allSatisfy { $0.payload.count == fixedResponseSize })
+        var expected = records[2]
+        expected.append(Data(repeating: 0, count: fixedResponseSize - expected.count))
+        XCTAssertEqual(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(
+                from: responses,
+                using: plan,
+                fixedResponseSize: fixedResponseSize
+            ),
+            expected
+        )
+    }
+
+    func testHiddenRetrievalPlannerRejectsMalformedReplicatedXORPIRInputs() throws {
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+                bucketId: "bucket-pir",
+                orderedRecordIds: ["a", "b"],
+                targetRecordId: "a",
+                replicaCount: 1,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidReplicaCount)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+                bucketId: "bucket-pir",
+                orderedRecordIds: ["a", "a"],
+                targetRecordId: "a",
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordCount)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+                bucketId: "bucket-pir",
+                orderedRecordIds: ["a", "b", "c"],
+                targetRecordId: "a",
+                secret: Data("secret".utf8),
+                paddedRecordCount: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordCount)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(
+                records: [Data("short".utf8), Data("longer".utf8)],
+                share: HiddenRetrievalPIRQueryShare(
+                    replicaIndex: 0,
+                    recordCount: 2,
+                    selectionBits: Data([0b0000_0011])
+                )
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordSize)
+        }
+
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: "bucket-pir",
+            orderedRecordIds: ["a", "b"],
+            targetRecordId: "a",
+            secret: Data("secret".utf8)
+        )
+        let response = HiddenRetrievalPIRResponseShare(replicaIndex: 0, payload: Data("target".utf8))
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: [response], using: plan)
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .malformedPIRResponse)
+        }
+
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(
+                records: [Data("record-a".utf8), Data("record-b".utf8)],
+                share: plan.shares[0],
+                fixedResponseSize: 4
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordSize)
+        }
+
+        let completeResponses = try plan.shares.map {
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(
+                records: [Data("record-a".utf8), Data("record-b".utf8)],
+                share: $0,
+                fixedResponseSize: 16
+            )
+        }
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(
+                from: completeResponses,
+                using: plan,
+                fixedResponseSize: 32
+            )
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidRecordSize)
+        }
+    }
+
+    func testHiddenRetrievalPlannerRejectsMalformedReplicatedXORPIRPlans() throws {
+        let plan = try HiddenRetrievalPlanner.makeReplicatedXORPIRQuery(
+            bucketId: "bucket-pir",
+            orderedRecordIds: ["a", "b", "c"],
+            targetRecordId: "b",
+            replicaCount: 3,
+            secret: Data("client-local-pir-plan-secret".utf8),
+            paddedRecordCount: 8
+        )
+        let records = [
+            Data("record-a".utf8),
+            Data("record-b".utf8),
+            Data("record-c".utf8)
+        ]
+        let responses = try plan.shares.map {
+            try HiddenRetrievalPlanner.evaluateReplicatedXORPIRShare(records: records, share: $0)
+        }
+
+        let duplicateReplicaPlan = HiddenRetrievalPIRQueryPlan(
+            bucketId: plan.bucketId,
+            orderedRecordIds: plan.orderedRecordIds,
+            targetRecordId: plan.targetRecordId,
+            targetIndex: plan.targetIndex,
+            shares: [
+                plan.shares[0],
+                HiddenRetrievalPIRQueryShare(
+                    replicaIndex: 0,
+                    recordCount: plan.shares[1].recordCount,
+                    selectionBits: plan.shares[1].selectionBits
+                ),
+                plan.shares[2]
+            ]
+        )
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: responses, using: duplicateReplicaPlan)
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .malformedPIRShare)
+        }
+
+        let wrongTargetPlan = HiddenRetrievalPIRQueryPlan(
+            bucketId: plan.bucketId,
+            orderedRecordIds: plan.orderedRecordIds,
+            targetRecordId: "c",
+            targetIndex: plan.targetIndex,
+            shares: plan.shares
+        )
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: responses, using: wrongTargetPlan)
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .targetMissing)
+        }
+
+        let zeroedSharePlan = HiddenRetrievalPIRQueryPlan(
+            bucketId: plan.bucketId,
+            orderedRecordIds: plan.orderedRecordIds,
+            targetRecordId: plan.targetRecordId,
+            targetIndex: plan.targetIndex,
+            shares: [
+                HiddenRetrievalPIRQueryShare(
+                    replicaIndex: 0,
+                    recordCount: plan.shares[0].recordCount,
+                    selectionBits: Data(repeating: 0, count: plan.shares[0].selectionBits.count)
+                ),
+                plan.shares[1],
+                plan.shares[2]
+            ]
+        )
+        XCTAssertThrowsError(
+            try HiddenRetrievalPlanner.recoverReplicatedXORPIRTarget(from: responses, using: zeroedSharePlan)
+        ) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .malformedPIRShare)
+        }
+    }
+
+    func testRelayInfoAdvertisesOptionalHiddenRetrievalSupport() throws {
+        let info = RelayConfiguration(
+            hiddenRetrieval: HiddenRetrievalSupport(
+                defaultCoverSetSize: 64,
+                maxCoverSetSize: 16
+            )
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(info.hiddenRetrieval?.mode, .coverQuery)
+        XCTAssertEqual(info.hiddenRetrieval?.defaultCoverSetSize, 16)
+        XCTAssertEqual(info.hiddenRetrieval?.maxCoverSetSize, 16)
+
+        let encoded = try NoctweaveCoder.encode(info)
+        let decoded = try NoctweaveCoder.decode(RelayInfo.self, from: encoded)
+
+        XCTAssertEqual(decoded.hiddenRetrieval, info.hiddenRetrieval)
+    }
+
+    func testHiddenRetrievalSupportAdvertisesReplicatedXORPIRMode() throws {
+        let info = RelayConfiguration(
+            hiddenRetrieval: HiddenRetrievalSupport(
+                mode: .replicatedXorPIR,
+                defaultCoverSetSize: 8,
+                maxCoverSetSize: 32,
+                replicatedXorPIRReplicas: [
+                    HiddenRetrievalPIRReplica(
+                        replicaId: "replica-a",
+                        operatorId: "operator-a",
+                        endpoint: RelayEndpoint(host: "pir-a.example", port: 443, useTLS: true, transport: .http)
+                    ),
+                    HiddenRetrievalPIRReplica(
+                        replicaId: "replica-b",
+                        operatorId: "operator-b",
+                        endpoint: RelayEndpoint(host: "pir-b.example", port: 443, useTLS: true, transport: .http)
+                    )
+                ]
+            )
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(info.hiddenRetrieval?.mode, .replicatedXorPIR)
+        XCTAssertTrue(HiddenRetrievalPIRReplicaSetValidator.isUsable(info.hiddenRetrieval))
+        XCTAssertEqual(try HiddenRetrievalPIRReplicaSetValidator.validate(info.hiddenRetrieval).count, 2)
+
+        let encoded = try NoctweaveCoder.encode(info)
+        let decoded = try NoctweaveCoder.decode(RelayInfo.self, from: encoded)
+
+        XCTAssertEqual(decoded.hiddenRetrieval?.mode, .replicatedXorPIR)
+        XCTAssertEqual(decoded.hiddenRetrieval?.replicatedXorPIRReplicas, info.hiddenRetrieval?.replicatedXorPIRReplicas)
+    }
+
+    func testHiddenRetrievalSupportDoesNotAdvertiseTargetOnlyPlans() {
+        let support = HiddenRetrievalSupport(defaultCoverSetSize: 1, maxCoverSetSize: 1)
+
+        XCTAssertEqual(support.defaultCoverSetSize, 2)
+        XCTAssertEqual(support.maxCoverSetSize, 2)
+    }
+
+    func testHiddenRetrievalReplicaSetValidatorRejectsMisleadingReplicatedPIRMetadata() {
+        XCTAssertEqual(
+            HiddenRetrievalPIRReplicaSetValidator.issues(for: nil),
+            [.hiddenRetrievalUnavailable]
+        )
+        XCTAssertEqual(
+            HiddenRetrievalPIRReplicaSetValidator.issues(for: HiddenRetrievalSupport()),
+            [.unsupportedMode]
+        )
+
+        let duplicatedSingleOperator = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "same",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir.example", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "same",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir.example", port: 443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let issues = HiddenRetrievalPIRReplicaSetValidator.issues(for: duplicatedSingleOperator)
+
+        XCTAssertTrue(issues.contains(.duplicateReplicaId))
+        XCTAssertTrue(issues.contains(.duplicateOperatorId))
+        XCTAssertTrue(issues.contains(.duplicateEndpoint))
+        XCTAssertThrowsError(try HiddenRetrievalPIRReplicaSetValidator.validate(duplicatedSingleOperator)) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidReplicaSet)
+        }
+
+        let noTLS = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-a.example", port: 80, useTLS: false, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "pir-b.example", port: 443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+
+        XCTAssertTrue(HiddenRetrievalPIRReplicaSetValidator.issues(for: noTLS).contains(.insecureEndpoint))
+        XCTAssertTrue(HiddenRetrievalPIRReplicaSetValidator.isUsable(noTLS, requireTLS: false))
+
+        let sameHostDifferentPorts = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-shared.example", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "PIR-SHARED.example", port: 8443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let sameHostIssues = HiddenRetrievalPIRReplicaSetValidator.issues(for: sameHostDifferentPorts)
+        XCTAssertTrue(sameHostIssues.contains(.duplicateHost))
+        XCTAssertFalse(sameHostIssues.contains(.duplicateEndpoint))
+    }
+
+    func testRelayInfoSuppressesWeakReplicatedPIRAdvertisement() {
+        let weakReplicas = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-shared.example", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "pir-shared.example", port: 8443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let weakInfo = RelayConfiguration(hiddenRetrieval: weakReplicas).makeInfo()
+        XCTAssertNil(weakInfo.hiddenRetrieval)
+
+        let coverQueryInfo = RelayConfiguration(
+            hiddenRetrieval: HiddenRetrievalSupport(mode: .coverQuery)
+        ).makeInfo()
+        XCTAssertEqual(coverQueryInfo.hiddenRetrieval?.mode, .coverQuery)
+    }
+
+    func testHiddenRetrievalPIROperationalValidatorRequiresPaddingAndFixedResponses() {
+        let support = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-a.example.org", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "pir-b.example.org", port: 443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+
+        let weak = HiddenRetrievalPIROperationalProfile(
+            support: support,
+            paddedRecordCount: 16,
+            fixedResponseSize: nil
+        )
+        XCTAssertEqual(
+            HiddenRetrievalPIROperationalValidator.issues(for: weak),
+            [.missingFixedResponseSize, .paddedRecordCountTooSmall]
+        )
+        XCTAssertFalse(HiddenRetrievalPIROperationalValidator.isOperationallyUsable(weak))
+
+        let operational = HiddenRetrievalPIROperationalProfile(
+            support: support,
+            paddedRecordCount: 256,
+            fixedResponseSize: 2_048
+        )
+        XCTAssertTrue(HiddenRetrievalPIROperationalValidator.issues(for: operational).isEmpty)
+        XCTAssertTrue(HiddenRetrievalPIROperationalValidator.isOperationallyUsable(operational))
+        XCTAssertNoThrow(try HiddenRetrievalPIROperationalValidator.validate(operational))
+    }
+
+    func testHiddenRetrievalPIROperationalValidatorRejectsWeakReplicaSets() {
+        let weakSupport = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir.example.org", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir.example.org", port: 8443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let profile = HiddenRetrievalPIROperationalProfile(
+            support: weakSupport,
+            paddedRecordCount: 256,
+            fixedResponseSize: 2_048
+        )
+
+        XCTAssertEqual(
+            HiddenRetrievalPIROperationalValidator.issues(for: profile),
+            [.invalidReplicaSet]
+        )
+        XCTAssertThrowsError(try HiddenRetrievalPIROperationalValidator.validate(profile)) { error in
+            XCTAssertEqual(error as? HiddenRetrievalError, .invalidReplicaSet)
+        }
+    }
+
+    func testHiddenRetrievalPIRPromotionRequiresFreshDeploymentEvidence() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let replicaAEndpoint = RelayEndpoint(host: "pir-a.example.org", port: 443, useTLS: true, transport: .http)
+        let replicaBEndpoint = RelayEndpoint(host: "pir-b.example.org", port: 443, useTLS: true, transport: .http)
+        let support = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: replicaAEndpoint
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: replicaBEndpoint
+                )
+            ]
+        )
+        let profile = HiddenRetrievalPIROperationalProfile(
+            support: support,
+            paddedRecordCount: 256,
+            fixedResponseSize: 2_048
+        )
+
+        XCTAssertEqual(
+            HiddenRetrievalPIRPromotionValidator.issues(for: profile, evidence: nil, now: now),
+            [.missingDeploymentEvidence]
+        )
+
+        let staleAndWeakEvidence = HiddenRetrievalPIRDeploymentEvidence(
+            collectedAt: now,
+            replicaEvidence: [
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: replicaAEndpoint,
+                    checkedAt: now.addingTimeInterval(-90_000),
+                    isAvailable: true,
+                    nonCollusionAttestationDigest: "same-attestation"
+                ),
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: replicaBEndpoint,
+                    checkedAt: now,
+                    isAvailable: false,
+                    nonCollusionAttestationDigest: "same-attestation"
+                )
+            ]
+        )
+        XCTAssertEqual(
+            HiddenRetrievalPIRPromotionValidator.issues(
+                for: profile,
+                evidence: staleAndWeakEvidence,
+                now: now
+            ),
+            [
+                .duplicateNonCollusionAttestation,
+                .staleReplicaEvidence,
+                .unavailableReplicaEvidence
+            ]
+        )
+
+        let validEvidence = HiddenRetrievalPIRDeploymentEvidence(
+            collectedAt: now,
+            replicaEvidence: [
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: replicaAEndpoint,
+                    checkedAt: now.addingTimeInterval(-60),
+                    isAvailable: true,
+                    nonCollusionAttestationDigest: "operator-a-attestation-digest"
+                ),
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: replicaBEndpoint,
+                    checkedAt: now.addingTimeInterval(-120),
+                    isAvailable: true,
+                    nonCollusionAttestationDigest: "operator-b-attestation-digest"
+                )
+            ]
+        )
+        XCTAssertTrue(
+            HiddenRetrievalPIRPromotionValidator.issues(
+                for: profile,
+                evidence: validEvidence,
+                now: now
+            ).isEmpty
+        )
+        XCTAssertTrue(HiddenRetrievalPIRPromotionValidator.isPromotable(profile, evidence: validEvidence, now: now))
+        XCTAssertNoThrow(try HiddenRetrievalPIRPromotionValidator.validate(profile, evidence: validEvidence, now: now))
+    }
+
+    func testHiddenRetrievalPIRPromotionRejectsMismatchedDeploymentEvidence() {
+        let now = Date(timeIntervalSince1970: 12_000)
+        let support = HiddenRetrievalSupport(
+            mode: .replicatedXorPIR,
+            replicatedXorPIRReplicas: [
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-a.example.org", port: 443, useTLS: true, transport: .http)
+                ),
+                HiddenRetrievalPIRReplica(
+                    replicaId: "replica-b",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "pir-b.example.org", port: 443, useTLS: true, transport: .http)
+                )
+            ]
+        )
+        let profile = HiddenRetrievalPIROperationalProfile(
+            support: support,
+            paddedRecordCount: 256,
+            fixedResponseSize: 2_048
+        )
+        let evidence = HiddenRetrievalPIRDeploymentEvidence(
+            collectedAt: now,
+            replicaEvidence: [
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-a",
+                    operatorId: "operator-a",
+                    endpoint: RelayEndpoint(host: "pir-a.example.org", port: 443, useTLS: true, transport: .http),
+                    checkedAt: now,
+                    isAvailable: true,
+                    nonCollusionAttestationDigest: "attestation-a"
+                ),
+                HiddenRetrievalPIRReplicaDeploymentEvidence(
+                    replicaId: "replica-a",
+                    operatorId: "operator-b",
+                    endpoint: RelayEndpoint(host: "pir-b.evil.example.org", port: 443, useTLS: true, transport: .http),
+                    checkedAt: now,
+                    isAvailable: true,
+                    nonCollusionAttestationDigest: ""
+                )
+            ]
+        )
+
+        XCTAssertEqual(
+            HiddenRetrievalPIRPromotionValidator.issues(for: profile, evidence: evidence, now: now),
+            [
+                .duplicateReplicaEvidence,
+                .missingNonCollusionAttestation,
+                .operatorEvidenceMismatch,
+                .replicaEvidenceMismatch
+            ]
+        )
+    }
+
+    func testRelayInfoAdvertisesGroupSecurityModel() throws {
+        let defaultInfo = RelayConfiguration().makeInfo(now: Date(timeIntervalSince1970: 1_000))
+        XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)
+
+        let mlsInfo = RelayConfiguration(
+            groupSecurityModel: .mlsDerivedTree
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(mlsInfo.groupSecurityModel, .mlsDerivedTree)
+
+        let encoded = try NoctweaveCoder.encode(mlsInfo)
+        let decoded = try NoctweaveCoder.decode(RelayInfo.self, from: encoded)
+
+        XCTAssertEqual(decoded.groupSecurityModel, .mlsDerivedTree)
+    }
+
+    func testDecentralizedWakeSupportNormalizesPolicy() {
+        let pullOnly = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 1,
+            maxPollIntervalSeconds: 2,
+            jitterPermille: 2_000,
+            longPollTimeoutSeconds: 60
+        )
+
+        XCTAssertEqual(pullOnly.minPollIntervalSeconds, 5)
+        XCTAssertEqual(pullOnly.maxPollIntervalSeconds, 5)
+        XCTAssertEqual(pullOnly.jitterPermille, 1_000)
+        XCTAssertNil(pullOnly.longPollTimeoutSeconds)
+
+        let longPoll = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 10,
+            maxPollIntervalSeconds: 30,
+            jitterPermille: -1,
+            longPollTimeoutSeconds: 120
+        )
+
+        XCTAssertEqual(longPoll.jitterPermille, 0)
+        XCTAssertEqual(longPoll.longPollTimeoutSeconds, 30)
+    }
+
+    func testDecentralizedWakePlannerIsDeterministicAndBounded() {
+        let support = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 20,
+            maxPollIntervalSeconds: 120,
+            jitterPermille: 500,
+            longPollTimeoutSeconds: 40
+        )
+        let now = Date(timeIntervalSince1970: 1_234)
+        let seed = Data("identity-seed".utf8)
+
+        let first = DecentralizedWakePlanner.makePlan(
+            support: support,
+            identitySeed: seed,
+            relayIdentifier: "relay.example.org",
+            failureCount: 2,
+            now: now
+        )
+        let second = DecentralizedWakePlanner.makePlan(
+            support: support,
+            identitySeed: seed,
+            relayIdentifier: "relay.example.org",
+            failureCount: 2,
+            now: now
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertGreaterThanOrEqual(first.nextPollDelaySeconds, 80)
+        XCTAssertLessThanOrEqual(first.nextPollDelaySeconds, 120)
+        XCTAssertEqual(first.longPollTimeoutSeconds, 40)
+        XCTAssertEqual(first.failureBackoffStep, 2)
+
+        let capped = DecentralizedWakePlanner.makePlan(
+            support: support,
+            identitySeed: seed,
+            relayIdentifier: "relay.example.org",
+            failureCount: 99,
+            now: now
+        )
+        XCTAssertEqual(capped.failureBackoffStep, 6)
+        XCTAssertLessThanOrEqual(capped.nextPollDelaySeconds, 120)
+    }
+
+    func testDecentralizedWakePlannerCapsLongPollTimeoutToNextDelay() {
+        let support = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 20,
+            maxPollIntervalSeconds: 300,
+            jitterPermille: 0,
+            longPollTimeoutSeconds: 300
+        )
+
+        let plan = DecentralizedWakePlanner.makePlan(
+            support: support,
+            identitySeed: Data("wake-identity".utf8),
+            relayIdentifier: "relay.example.org",
+            failureCount: 0,
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertEqual(plan.nextPollDelaySeconds, 20)
+        XCTAssertEqual(plan.longPollTimeoutSeconds, 20)
+    }
+
+    func testDecentralizedWakePlannerUsesBoundedPullDefaultsWithoutRelayPolicy() {
+        let now = Date(timeIntervalSince1970: 9_876)
+        let plan = DecentralizedWakePlanner.makePlan(
+            support: nil,
+            identitySeed: Data("fallback-identity".utf8),
+            relayIdentifier: "relay-without-policy",
+            failureCount: 99,
+            now: now
+        )
+
+        XCTAssertNil(plan.longPollTimeoutSeconds)
+        XCTAssertEqual(plan.failureBackoffStep, 6)
+        XCTAssertGreaterThanOrEqual(plan.nextPollDelaySeconds, 60)
+        XCTAssertLessThanOrEqual(plan.nextPollDelaySeconds, 300)
+    }
+
+    func testDecentralizedWakePlannerSpreadsManyIdentitiesAcrossRelayWindow() {
+        let support = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 30,
+            maxPollIntervalSeconds: 120,
+            jitterPermille: 1_000,
+            longPollTimeoutSeconds: 30
+        )
+        let relayIdentifier = "relay.example.org"
+        let now = Date(timeIntervalSince1970: 123_456)
+        let plans = (0..<128).map { index in
+            DecentralizedWakePlanner.makePlan(
+                support: support,
+                identitySeed: Data("identity-\(index)".utf8),
+                relayIdentifier: relayIdentifier,
+                failureCount: 0,
+                now: now
+            )
+        }
+        let delayHistogram = Dictionary(
+            grouping: plans,
+            by: \.nextPollDelaySeconds
+        ).mapValues(\.count)
+
+        XCTAssertEqual(plans.map(\.longPollTimeoutSeconds).allSatisfy { $0 == 30 }, true)
+        XCTAssertEqual(plans.map(\.failureBackoffStep).allSatisfy { $0 == 0 }, true)
+        XCTAssertGreaterThanOrEqual(delayHistogram.count, 24)
+        XCTAssertLessThanOrEqual(delayHistogram.values.max() ?? 0, 12)
+        XCTAssertTrue(plans.allSatisfy { plan in
+            plan.nextPollDelaySeconds >= 30 && plan.nextPollDelaySeconds <= 60
+        })
+
+        let backedOff = DecentralizedWakePlanner.makePlan(
+            support: support,
+            identitySeed: Data("identity-0".utf8),
+            relayIdentifier: relayIdentifier,
+            failureCount: 99,
+            now: now
+        )
+        XCTAssertEqual(backedOff.failureBackoffStep, 6)
+        XCTAssertLessThanOrEqual(backedOff.nextPollDelaySeconds, 120)
+    }
+
+    func testDecentralizedWakePlannerIncludesProfilesWithoutAdvertisedPolicy() {
+        let slowAdvertised = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 120,
+            maxPollIntervalSeconds: 240,
+            jitterPermille: 0
+        )
+        let now = Date(timeIntervalSince1970: 10_000)
+        let delay = DecentralizedWakePlanner.nextPollDelaySeconds(
+            for: [
+                DecentralizedWakeProfile(
+                    support: slowAdvertised,
+                    identitySeed: Data("slow-profile".utf8),
+                    relayIdentifier: "slow-relay"
+                ),
+                DecentralizedWakeProfile(
+                    support: nil,
+                    identitySeed: Data("local-default-profile".utf8),
+                    relayIdentifier: "relay-without-policy"
+                )
+            ],
+            defaultDelaySeconds: 8,
+            maxDelaySeconds: 300,
+            now: now
+        )
+
+        XCTAssertEqual(delay, 8)
+    }
+
+    func testDecentralizedWakePlannerBuildsAuditableCyclePlan() {
+        let longPoll = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 30,
+            maxPollIntervalSeconds: 120,
+            jitterPermille: 0,
+            longPollTimeoutSeconds: 90
+        )
+        let slow = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 120,
+            maxPollIntervalSeconds: 240,
+            jitterPermille: 0
+        )
+
+        let cycle = DecentralizedWakePlanner.makeCyclePlan(
+            for: [
+                DecentralizedWakeProfile(
+                    support: slow,
+                    identitySeed: Data("identity-b".utf8),
+                    relayIdentifier: " relay-b ",
+                    failureCount: 0
+                ),
+                DecentralizedWakeProfile(
+                    support: longPoll,
+                    identitySeed: Data("identity-a".utf8),
+                    relayIdentifier: "relay-a",
+                    failureCount: 0
+                ),
+                DecentralizedWakeProfile(
+                    support: longPoll,
+                    identitySeed: Data("identity-a".utf8),
+                    relayIdentifier: "relay-a",
+                    failureCount: 2
+                ),
+                DecentralizedWakeProfile(
+                    support: nil,
+                    identitySeed: Data("identity-c".utf8),
+                    relayIdentifier: " ",
+                    failureCount: 99
+                )
+            ],
+            defaultDelaySeconds: 12,
+            maxDelaySeconds: 300,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        XCTAssertEqual(cycle.profilePlans.map(\.relayIdentifier), ["default-relay", "relay-a", "relay-b"])
+        XCTAssertEqual(cycle.profilePlans.count, 3)
+        XCTAssertEqual(cycle.nextPollDelaySeconds, 12)
+        XCTAssertNil(cycle.longPollTimeoutSeconds)
+        XCTAssertEqual(cycle.profilePlans[0].plan.failureBackoffStep, 6)
+        XCTAssertEqual(cycle.profilePlans[1].plan.nextPollDelaySeconds, 30)
+        XCTAssertEqual(cycle.profilePlans[1].plan.longPollTimeoutSeconds, 30)
+    }
+
+    func testDecentralizedWakePlannerReturnsDefaultCycleForNoProfiles() {
+        let cycle = DecentralizedWakePlanner.makeCyclePlan(
+            for: [],
+            defaultDelaySeconds: 3,
+            maxDelaySeconds: 4,
+            now: Date(timeIntervalSince1970: 10_000)
+        )
+
+        XCTAssertTrue(cycle.profilePlans.isEmpty)
+        XCTAssertEqual(cycle.nextPollDelaySeconds, 5)
+        XCTAssertNil(cycle.longPollTimeoutSeconds)
+    }
+
+    func testDecentralizedWakePlannerSelectsFastestAdvertisedProfile() {
+        let slow = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 120,
+            maxPollIntervalSeconds: 240,
+            jitterPermille: 0
+        )
+        let fast = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 15,
+            maxPollIntervalSeconds: 60,
+            jitterPermille: 0
+        )
+        let now = Date(timeIntervalSince1970: 10_000)
+        let delay = DecentralizedWakePlanner.nextPollDelaySeconds(
+            for: [
+                DecentralizedWakeProfile(
+                    support: slow,
+                    identitySeed: Data("slow-profile".utf8),
+                    relayIdentifier: "slow-relay"
+                ),
+                DecentralizedWakeProfile(
+                    support: fast,
+                    identitySeed: Data("fast-profile".utf8),
+                    relayIdentifier: "fast-relay"
+                )
+            ],
+            defaultDelaySeconds: 8,
+            maxDelaySeconds: 300,
+            now: now
+        )
+
+        XCTAssertEqual(delay, 15)
+    }
+
+    func testDecentralizedWakePlannerDoesNotLetBackedOffProfileDelayHealthyProfile() {
+        let support = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 30,
+            maxPollIntervalSeconds: 300,
+            jitterPermille: 0
+        )
+        let now = Date(timeIntervalSince1970: 10_000)
+        let delay = DecentralizedWakePlanner.nextPollDelaySeconds(
+            for: [
+                DecentralizedWakeProfile(
+                    support: support,
+                    identitySeed: Data("failing-profile".utf8),
+                    relayIdentifier: "relay-a",
+                    failureCount: 4
+                ),
+                DecentralizedWakeProfile(
+                    support: support,
+                    identitySeed: Data("healthy-profile".utf8),
+                    relayIdentifier: "relay-b",
+                    failureCount: 0
+                )
+            ],
+            defaultDelaySeconds: 8,
+            maxDelaySeconds: 300,
+            now: now
+        )
+
+        XCTAssertEqual(delay, 30)
+    }
+
+    func testDecentralizedPrefetchExecutionPlannerCapsProfilesAndEnvelopeBudgets() {
+        let longPoll = DecentralizedWakeSupport(
+            mode: .longPoll,
+            minPollIntervalSeconds: 10,
+            maxPollIntervalSeconds: 60,
+            jitterPermille: 0,
+            longPollTimeoutSeconds: 30
+        )
+        let pullOnly = DecentralizedWakeSupport(
+            mode: .pullOnly,
+            minPollIntervalSeconds: 20,
+            maxPollIntervalSeconds: 120,
+            jitterPermille: 0
+        )
+        let plan = DecentralizedPrefetchExecutionPlanner.makePlan(
+            for: [
+                DecentralizedWakeProfile(
+                    support: pullOnly,
+                    identitySeed: Data("identity-c".utf8),
+                    relayIdentifier: "relay-c"
+                ),
+                DecentralizedWakeProfile(
+                    support: longPoll,
+                    identitySeed: Data("identity-a".utf8),
+                    relayIdentifier: "relay-a"
+                ),
+                DecentralizedWakeProfile(
+                    support: pullOnly,
+                    identitySeed: Data("identity-b".utf8),
+                    relayIdentifier: "relay-b"
+                )
+            ],
+            defaultDelaySeconds: 60,
+            maxDelaySeconds: 300,
+            policy: DecentralizedPrefetchExecutionPolicy(
+                maxProfilesPerCycle: 2,
+                maxRecordsPerPullProfile: 3,
+                maxRecordsPerLongPollProfile: 5,
+                maxTotalRecordsPerCycle: 7
+            ),
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertEqual(plan.profileExecutions.map(\.relayIdentifier), ["relay-a", "relay-b"])
+        XCTAssertEqual(plan.profileExecutions.map(\.maxEnvelopeCount), [5, 2])
+        XCTAssertEqual(plan.maxTotalEnvelopeCount, 7)
+        XCTAssertEqual(plan.nextCycleDelaySeconds, 10)
+        XCTAssertEqual(plan.longPollTimeoutSeconds, 10)
+        XCTAssertEqual(plan.profileExecutions.first?.longPollTimeoutSeconds, 10)
+    }
+
+    func testRelayInfoAdvertisesDecentralizedWakeSupport() throws {
+        let info = RelayConfiguration(
+            wakeSupport: DecentralizedWakeSupport(
+                mode: .longPoll,
+                minPollIntervalSeconds: 30,
+                maxPollIntervalSeconds: 180,
+                jitterPermille: 125,
+                longPollTimeoutSeconds: 45
+            )
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(info.wakeSupport?.mode, .longPoll)
+        XCTAssertEqual(info.wakeSupport?.minPollIntervalSeconds, 30)
+        XCTAssertEqual(info.wakeSupport?.maxPollIntervalSeconds, 180)
+        XCTAssertEqual(info.wakeSupport?.jitterPermille, 125)
+        XCTAssertEqual(info.wakeSupport?.longPollTimeoutSeconds, 45)
+
+        let encoded = try NoctweaveCoder.encode(info)
+        let decoded = try NoctweaveCoder.decode(RelayInfo.self, from: encoded)
+
+        XCTAssertEqual(decoded.wakeSupport, info.wakeSupport)
+    }
+
+    func testDecentralizedPrefetchStagerStagesDirectCiphertextOnlyRecords() throws {
+        let envelope = Envelope(
+            id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+            conversationId: "conversation-a",
+            sessionId: "session-a",
+            senderFingerprint: "sender-a",
+            sentAt: Date(timeIntervalSince1970: 1_000),
+            messageCounter: 7,
+            payload: EncryptedPayload(
+                nonce: Data([0x01, 0x02]),
+                ciphertext: Data([0xAA, 0xBB, 0xCC]),
+                tag: Data([0x03, 0x04])
+            ),
+            signature: Data([0x05, 0x06])
+        )
+
+        let batch = try DecentralizedPrefetchStager.stageDirectMessages(
+            [envelope],
+            inboxId: " inbox-a ",
+            relayIdentifier: " relay-a ",
+            stagedAt: Date(timeIntervalSince1970: 2_000)
+        )
+
+        XCTAssertTrue(batch.isCiphertextOnly)
+        XCTAssertEqual(batch.messageIds, [envelope.id])
+        XCTAssertEqual(batch.records.first?.kind, .directMessage)
+        XCTAssertEqual(batch.records.first?.relayIdentifier, "relay-a")
+        XCTAssertEqual(batch.records.first?.inboxId, "inbox-a")
+        XCTAssertNil(batch.records.first?.groupId)
+        XCTAssertEqual(batch.records.first?.acknowledgementDeferred, true)
+        let decoded = try NoctweaveCoder.decode(
+            Envelope.self,
+            from: try XCTUnwrap(batch.records.first?.sealedEnvelope)
+        )
+        XCTAssertEqual(decoded, envelope)
+    }
+
+    func testDecentralizedPrefetchStagerStagesGroupCiphertextOnlyRecords() throws {
+        let groupId = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+        let envelope = GroupRatchetEnvelope(
+            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+            groupId: groupId,
+            epoch: 4,
+            transcriptHash: Data([0x10, 0x11]),
+            senderFingerprint: "sender-b",
+            sentAt: Date(timeIntervalSince1970: 3_000),
+            messageCounter: 9,
+            payload: EncryptedPayload(
+                nonce: Data([0x12, 0x13]),
+                ciphertext: Data([0xBA, 0xAD, 0xF0, 0x0D]),
+                tag: Data([0x14, 0x15])
+            ),
+            signature: Data([0x16, 0x17])
+        )
+
+        let batch = try DecentralizedPrefetchStager.stageGroupMessages(
+            [envelope],
+            groupInboxId: " group-inbox ",
+            relayIdentifier: " relay-b ",
+            stagedAt: Date(timeIntervalSince1970: 4_000)
+        )
+
+        XCTAssertTrue(batch.isCiphertextOnly)
+        XCTAssertEqual(batch.messageIds, [envelope.id])
+        XCTAssertEqual(batch.records.first?.kind, .groupMessage)
+        XCTAssertEqual(batch.records.first?.groupId, groupId)
+        XCTAssertEqual(batch.records.first?.acknowledgementDeferred, true)
+        let decoded = try NoctweaveCoder.decode(
+            GroupRatchetEnvelope.self,
+            from: try XCTUnwrap(batch.records.first?.sealedEnvelope)
+        )
+        XCTAssertEqual(decoded, envelope)
+    }
+
+    func testDecentralizedPrefetchStagerDoesNotAcknowledgeRelayMessages() async throws {
+        let store = RelayStore()
+        let envelope = Envelope(
+            id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
+            conversationId: "conversation-c",
+            sessionId: "session-c",
+            senderFingerprint: "sender-c",
+            sentAt: Date(timeIntervalSince1970: 5_000),
+            messageCounter: 11,
+            payload: EncryptedPayload(
+                nonce: Data([0x21]),
+                ciphertext: Data([0x31, 0x32, 0x33]),
+                tag: Data([0x41])
+            ),
+            signature: Data([0x51])
+        )
+
+        try await store.deliver(envelope, to: "inbox-c")
+        let fetched = try await store.fetch(inboxId: "inbox-c")
+        let batch = try DecentralizedPrefetchStager.stageDirectMessages(
+            fetched,
+            inboxId: "inbox-c",
+            relayIdentifier: "relay-c"
+        )
+        let fetchedAfterStaging = try await store.fetch(inboxId: "inbox-c")
+
+        XCTAssertTrue(batch.isCiphertextOnly)
+        XCTAssertEqual(batch.messageIds, [envelope.id])
+        XCTAssertEqual(fetchedAfterStaging.map(\.id), [envelope.id])
+    }
+
+    func testDecentralizedPrefetchBatchStorePersistsEncryptedCiphertextOnlyBatch() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("prefetch.batch")
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let envelope = Envelope(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
+            conversationId: "conversation-d",
+            sessionId: "session-d",
+            senderFingerprint: "sender-d",
+            sentAt: Date(timeIntervalSince1970: 6_000),
+            messageCounter: 13,
+            payload: EncryptedPayload(
+                nonce: Data([0x61]),
+                ciphertext: Data("sealed-direct-ciphertext".utf8),
+                tag: Data([0x62])
+            ),
+            signature: Data([0x63])
+        )
+        let batch = try DecentralizedPrefetchStager.stageDirectMessages(
+            [envelope],
+            inboxId: "inbox-d",
+            relayIdentifier: "relay-d",
+            stagedAt: Date(timeIntervalSince1970: 7_000)
+        )
+        let encodedBatch = try NoctweaveCoder.encode(batch)
+        let store = try DecentralizedPrefetchBatchStore(
+            fileURL: fileURL,
+            protectionKey: Data(repeating: 0xA5, count: 32)
+        )
+
+        try await store.save(batch)
+        let rawStored = try Data(contentsOf: fileURL)
+        XCTAssertNotEqual(rawStored, encodedBatch)
+        XCTAssertNil(rawStored.range(of: try XCTUnwrap(batch.records.first?.sealedEnvelope)))
+        XCTAssertNil(rawStored.range(of: Data("sealed-direct-ciphertext".utf8)))
+
+        let maybeReloaded = try await store.load()
+        let reloaded = try XCTUnwrap(maybeReloaded)
+        XCTAssertEqual(reloaded, batch)
+        XCTAssertTrue(reloaded.isCiphertextOnly)
+        XCTAssertEqual(reloaded.records.first?.acknowledgementDeferred, true)
+    }
+
+    func testDecentralizedPrefetchBatchStoreRejectsWrongKeyAndAcknowledgedRecords() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("prefetch.batch")
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let acknowledged = DecentralizedPrefetchBatch(
+            records: [
+                DecentralizedPrefetchRecord(
+                    id: UUID(uuidString: "66666666-6666-6666-6666-666666666666")!,
+                    kind: .directMessage,
+                    relayIdentifier: "relay-e",
+                    inboxId: "inbox-e",
+                    groupId: nil,
+                    stagedAt: Date(timeIntervalSince1970: 8_000),
+                    sealedEnvelope: Data([0x70, 0x71]),
+                    acknowledgementDeferred: false
+                )
+            ],
+            stagedAt: Date(timeIntervalSince1970: 8_000)
+        )
+        let store = try DecentralizedPrefetchBatchStore(
+            fileURL: fileURL,
+            protectionKey: Data(repeating: 0xB6, count: 32)
+        )
+
+        do {
+            try await store.save(acknowledged)
+            XCTFail("Expected acknowledged prefetch records to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? DecentralizedPrefetchError, .invalidBatch)
+        }
+
+        let valid = DecentralizedPrefetchBatch(
+            records: [
+                DecentralizedPrefetchRecord(
+                    id: UUID(uuidString: "77777777-7777-7777-7777-777777777777")!,
+                    kind: .groupMessage,
+                    relayIdentifier: "relay-f",
+                    inboxId: "group-inbox-f",
+                    groupId: UUID(uuidString: "88888888-8888-8888-8888-888888888888")!,
+                    stagedAt: Date(timeIntervalSince1970: 9_000),
+                    sealedEnvelope: Data([0x80, 0x81, 0x82]),
+                    acknowledgementDeferred: true
+                )
+            ],
+            stagedAt: Date(timeIntervalSince1970: 9_000)
+        )
+        try await store.save(valid)
+
+        let wrongKeyStore = try DecentralizedPrefetchBatchStore(
+            fileURL: fileURL,
+            protectionKey: Data(repeating: 0xC7, count: 32)
+        )
+        do {
+            _ = try await wrongKeyStore.load()
+            XCTFail("Expected wrong prefetch protection key to fail closed.")
+        } catch {
+            XCTAssertEqual(error as? DecentralizedPrefetchError, .invalidStoredBatch)
+        }
+    }
+
+    func testRatchetRecoveryPolicyClassifiesRecoverableFailures() throws {
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.invalidPayload), .recover)
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterOutOfOrder), .recover)
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterWindowExceeded), .recover)
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterReplay), .acknowledge)
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.invalidSignature), .acknowledge)
+        XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.operationFailed), .retryLater)
+
+        let key = SymmetricKey(size: .bits256)
+        let wrongKey = SymmetricKey(size: .bits256)
+        let sealed = try AES.GCM.seal(Data("message".utf8), using: key)
+        XCTAssertThrowsError(try AES.GCM.open(sealed, using: wrongKey)) { error in
+            XCTAssertEqual(RatchetRecoveryPolicy.decision(for: error), .recover)
+        }
+    }
+
+    func testPublicRelayEndpointPolicyRejectsIPv6TransitionPrivateTargets() {
+        let endpoints = [
+            RelayEndpoint(host: "64:ff9b::7f00:1", port: 443, useTLS: true),
+            RelayEndpoint(host: "64:ff9b::0a00:1", port: 443, useTLS: true),
+            RelayEndpoint(host: "2002:0a00:0001::1", port: 443, useTLS: true),
+            RelayEndpoint(host: "2001:0000:4136:e378:8000:63bf:3fff:fdd2", port: 443, useTLS: true)
+        ]
+
+        for endpoint in endpoints {
+            XCTAssertFalse(
+                PublicRelayEndpointPolicy.permits(endpoint),
+                "Expected public endpoint policy to reject \(endpoint.host)"
+            )
+        }
+    }
+
+    func testOpenFederationDHTRecordValidatesSignedRelayAdvertisement() throws {
+        let signingKey = SigningKeyPair()
+        let endpoint = RelayEndpoint(
+            host: "relay.example.org",
+            port: 443,
+            useTLS: true,
+            transport: .websocket
+        )
+        let record = try OpenFederationDHTRecord.signed(
+            endpoint: endpoint,
+            federationName: "Example Open Net",
+            signingKey: signingKey
+        )
+
+        XCTAssertNoThrow(
+            try record.validate(
+                expectedFederationName: "example open net",
+                requirePublicEndpoint: false
+            )
+        )
+        XCTAssertEqual(record.signatureAlgorithm, OpenFederationDHTRecord.signatureAlgorithm)
+        XCTAssertEqual(
+            record.relayIdentityDigest,
+            OpenFederationDHTRecord.relayIdentityDigest(publicKey: signingKey.publicKeyData)
+        )
+    }
+
+    func testOpenFederationDHTRecordRejectsTamperedEndpoint() throws {
+        let signingKey = SigningKeyPair()
+        let record = try OpenFederationDHTRecord.signed(
+            endpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: "poison-test",
+            signingKey: signingKey
+        )
+        let tampered = OpenFederationDHTRecord(
+            namespace: record.namespace,
+            relayIdentityDigest: record.relayIdentityDigest,
+            endpoint: RelayEndpoint(host: "evil.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: record.federationName,
+            issuedAt: record.issuedAt,
+            expiresAt: record.expiresAt,
+            relaySigningPublicKey: record.relaySigningPublicKey,
+            signature: record.signature
+        )
+
+        XCTAssertThrowsError(
+            try tampered.validate(expectedFederationName: "poison-test", requirePublicEndpoint: false)
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .invalidSignature)
+        }
+    }
+
+    func testOpenFederationDHTRecordRejectsNamespaceMismatch() throws {
+        let record = try OpenFederationDHTRecord.signed(
+            endpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: "one-open-net",
+            signingKey: SigningKeyPair()
+        )
+
+        XCTAssertThrowsError(
+            try record.validate(expectedFederationName: "other-open-net", requirePublicEndpoint: false)
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .namespaceMismatch)
+        }
+    }
+
+    func testOpenFederationDHTRecordRejectsExpiredAndOverlongRecords() throws {
+        let signingKey = SigningKeyPair()
+        let endpoint = RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket)
+        let expired = try OpenFederationDHTRecord.signed(
+            endpoint: endpoint,
+            federationName: "expiry-test",
+            signingKey: signingKey,
+            issuedAt: Date(timeIntervalSince1970: 100),
+            lifetimeSeconds: 60
+        )
+        XCTAssertThrowsError(
+            try expired.validate(expectedFederationName: "expiry-test", now: Date(), requirePublicEndpoint: false)
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .expired)
+        }
+
+        let overlong = OpenFederationDHTRecord(
+            namespace: OpenFederationDHTRecord.namespace(federationName: "expiry-test"),
+            relayIdentityDigest: OpenFederationDHTRecord.relayIdentityDigest(publicKey: signingKey.publicKeyData),
+            endpoint: endpoint,
+            federationName: "expiry-test",
+            issuedAt: Date(timeIntervalSince1970: 100),
+            expiresAt: Date(timeIntervalSince1970: 10_000),
+            relaySigningPublicKey: signingKey.publicKeyData,
+            signature: Data()
+        )
+        let signedOverlong = OpenFederationDHTRecord(
+            namespace: overlong.namespace,
+            relayIdentityDigest: overlong.relayIdentityDigest,
+            endpoint: overlong.endpoint,
+            federationName: overlong.federationName,
+            issuedAt: overlong.issuedAt,
+            expiresAt: overlong.expiresAt,
+            relaySigningPublicKey: overlong.relaySigningPublicKey,
+            signature: try signingKey.sign(NoctweaveCoder.encode(
+                [
+                    "endpoint": "force-invalid-signature-for-overlong-record"
+                ],
+                sortedKeys: true
+            ))
+        )
+        XCTAssertThrowsError(
+            try signedOverlong.validate(
+                expectedFederationName: "expiry-test",
+                now: Date(timeIntervalSince1970: 200),
+                requirePublicEndpoint: false
+            )
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .invalidLifetime)
+        }
+    }
+
+    func testOpenFederationDHTRecordRequiresSecureHttpOrWebSocketEndpoint() throws {
+        let record = try OpenFederationDHTRecord.signed(
+            endpoint: RelayEndpoint(host: "relay.example.org", port: 9339, useTLS: false, transport: .tcp),
+            federationName: "secure-only",
+            signingKey: SigningKeyPair()
+        )
+
+        XCTAssertThrowsError(
+            try record.validate(expectedFederationName: "secure-only", requirePublicEndpoint: false)
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .insecureEndpoint)
+        }
+    }
+
+    func testOpenFederationDHTDiscoveryIsFeatureGated() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let record = try makeDHTRecord(host: "relay.example.org", federationName: "gated-net", issuedAt: now)
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: false,
+                federationName: "gated-net",
+                requirePublicEndpoint: false
+            )
+        )
+
+        let result = cache.ingest([record], now: now)
+
+        XCTAssertTrue(result.accepted.isEmpty)
+        XCTAssertEqual(result.rejected.map(\.reason), [.discoveryDisabled])
+        XCTAssertEqual(cache.count, 0)
+    }
+
+    func testOpenFederationDHTDiscoveryAcceptsValidatedSignedRecords() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let record = try makeDHTRecord(host: "relay-a.example.org", federationName: "open-net", issuedAt: now)
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false
+            )
+        )
+
+        let result = cache.ingest([record], now: now)
+        let nodes = cache.federationNodes(now: now)
+
+        XCTAssertEqual(result.accepted, [record])
+        XCTAssertTrue(result.rejected.isEmpty)
+        XCTAssertEqual(nodes.count, 1)
+        XCTAssertEqual(nodes[0].endpoint, record.endpoint)
+        XCTAssertEqual(nodes[0].relayInfo.federation.mode, .open)
+        XCTAssertEqual(nodes[0].relayInfo.federation.name, "open-net")
+    }
+
+    func testOpenFederationDHTDiscoveryRejectsPoisonedRecords() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let valid = try makeDHTRecord(host: "relay-a.example.org", federationName: "open-net", issuedAt: now)
+        let wrongFederation = try makeDHTRecord(host: "relay-b.example.org", federationName: "other-net", issuedAt: now)
+        let tampered = OpenFederationDHTRecord(
+            namespace: valid.namespace,
+            relayIdentityDigest: valid.relayIdentityDigest,
+            endpoint: RelayEndpoint(host: "poison.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: valid.federationName,
+            issuedAt: valid.issuedAt,
+            expiresAt: valid.expiresAt,
+            relaySigningPublicKey: valid.relaySigningPublicKey,
+            signature: valid.signature
+        )
+        let insecure = try makeDHTRecord(
+            endpoint: RelayEndpoint(host: "plain.example.org", port: 80, useTLS: false, transport: .http),
+            federationName: "open-net",
+            issuedAt: now
+        )
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false
+            )
+        )
+
+        let result = cache.ingest([valid, wrongFederation, tampered, insecure], now: now)
+
+        XCTAssertEqual(result.accepted, [valid])
+        XCTAssertEqual(
+            result.rejected.map(\.reason),
+            [
+                .validationFailed(.namespaceMismatch),
+                .validationFailed(.invalidSignature),
+                .validationFailed(.insecureEndpoint)
+            ]
+        )
+        XCTAssertEqual(cache.records(now: now), [valid])
+    }
+
+    func testOpenFederationDHTDiscoveryCapsHostFloods() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let records = try (0..<5).map { index in
+            try makeDHTRecord(host: "crowded.example.org", federationName: "open-net", issuedAt: now.addingTimeInterval(Double(index)))
+        }
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false,
+                maxRecords: 10,
+                maxRecordsPerHost: 2
+            )
+        )
+
+        let result = cache.ingest(records, now: now)
+
+        XCTAssertEqual(result.accepted.count, 2)
+        XCTAssertEqual(result.rejected.map(\.reason), [.hostLimitExceeded, .hostLimitExceeded, .hostLimitExceeded])
+        XCTAssertEqual(cache.records(now: now).count, 2)
+    }
+
+    func testOpenFederationDHTDiscoveryAppliesHostCapToRelayIdentityHostMoves() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let movingKey = SigningKeyPair()
+        let original = try makeDHTRecord(
+            host: "original.example.org",
+            federationName: "open-net",
+            signingKey: movingKey,
+            issuedAt: now
+        )
+        let crowded = try makeDHTRecord(
+            host: "crowded.example.org",
+            federationName: "open-net",
+            issuedAt: now.addingTimeInterval(1)
+        )
+        let movedIntoCrowdedHost = try makeDHTRecord(
+            host: "crowded.example.org",
+            federationName: "open-net",
+            signingKey: movingKey,
+            issuedAt: now.addingTimeInterval(2)
+        )
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false,
+                maxRecords: 10,
+                maxRecordsPerHost: 1
+            )
+        )
+
+        let initial = cache.ingest([original, crowded], now: now)
+        XCTAssertEqual(initial.accepted.count, 2)
+
+        let move = cache.ingest([movedIntoCrowdedHost], now: now.addingTimeInterval(2))
+
+        XCTAssertTrue(move.accepted.isEmpty)
+        XCTAssertEqual(move.rejected.map(\.reason), [.hostLimitExceeded])
+        XCTAssertEqual(
+            Set(cache.records(now: now).map(\.endpoint.host)),
+            ["original.example.org", "crowded.example.org"]
+        )
+    }
+
+    func testOpenFederationDHTDiscoveryCapsTotalRecords() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let records = try (0..<5).map { index in
+            try makeDHTRecord(
+                host: "relay-\(index).example.org",
+                federationName: "open-net",
+                issuedAt: now.addingTimeInterval(Double(index)),
+                lifetimeSeconds: 300 + Double(index)
+            )
+        }
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false,
+                maxRecords: 3,
+                maxRecordsPerHost: 2
+            )
+        )
+
+        _ = cache.ingest(records, now: now)
+        let keptHosts = cache.records(now: now).map(\.endpoint.host)
+
+        XCTAssertEqual(cache.count, 3)
+        XCTAssertEqual(keptHosts, ["relay-4.example.org", "relay-3.example.org", "relay-2.example.org"])
+    }
+
+    func testOpenFederationDHTDiscoveryHandlesChurnAndStaleRecords() throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let signingKey = SigningKeyPair()
+        let older = try makeDHTRecord(
+            host: "relay.example.org",
+            federationName: "open-net",
+            signingKey: signingKey,
+            issuedAt: now,
+            lifetimeSeconds: 120
+        )
+        let newer = try makeDHTRecord(
+            host: "relay-new.example.org",
+            federationName: "open-net",
+            signingKey: signingKey,
+            issuedAt: now.addingTimeInterval(60),
+            lifetimeSeconds: 300
+        )
+        var cache = OpenFederationDHTCandidateCache(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "open-net",
+                requirePublicEndpoint: false
+            )
+        )
+
+        XCTAssertEqual(cache.ingest([newer, older], now: now.addingTimeInterval(60)).rejected.map(\.reason), [.staleDuplicate])
+        XCTAssertEqual(cache.records(now: now.addingTimeInterval(60)), [newer])
+
+        cache.evictExpired(now: newer.expiresAt.addingTimeInterval(1))
+        XCTAssertTrue(cache.records(now: newer.expiresAt.addingTimeInterval(1)).isEmpty)
+    }
+
+    func testOpenFederationDHTDiscoveryEnginePublishesAndQueriesBehindFeatureFlag() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "open-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let localEndpoint = RelayEndpoint(host: "local-relay.example.org", port: 443, useTLS: true, transport: .websocket)
+        let localKey = SigningKeyPair()
+        let remoteRecord = try makeDHTRecord(host: "remote-relay.example.org", federationName: federationName, issuedAt: now)
+        let transport = MockOpenFederationDHTTransport(recordsByNamespace: [namespace: [remoteRecord]])
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 8,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 16
+            )
+        )
+
+        let result = try await engine.refresh(
+            transport: transport,
+            localEndpoint: localEndpoint,
+            signingKey: localKey,
+            now: now
+        )
+
+        let publishedRecords = await transport.publishedRecords()
+        let lastQueryLimit = await transport.lastQueryLimit()
+        XCTAssertEqual(result.publishedRecord?.endpoint, localEndpoint)
+        XCTAssertEqual(publishedRecords.count, 1)
+        XCTAssertEqual(lastQueryLimit, 16)
+        XCTAssertEqual(Set(result.nodes.map(\.endpoint.host)), ["local-relay.example.org", "remote-relay.example.org"])
+    }
+
+    func testRelayCanServeOpenFederationDHTRecordsWhenEnabled() async throws {
+        let federationName = "relay-dht-net"
+        let port: UInt16 = 39489
+        let serverEndpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                federation: FederationDescriptor(mode: .open, name: federationName),
+                relayPeerExchangeLimit: 7,
+                openFederationDHTEnabled: true,
+                openFederationDHTMaxRecords: 8,
+                openFederationDHTMaxRecordsPerHost: 2,
+                openFederationDHTMaxQueryRecords: 4,
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let started = expectation(description: "dht relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let client = RelayClient(endpoint: serverEndpoint)
+        let infoResponse = try await client.send(.info())
+        XCTAssertEqual(infoResponse.relayInfo?.openFederationDiscovery?.dhtNodeEnabled, true)
+        XCTAssertEqual(infoResponse.relayInfo?.openFederationDiscovery?.peerExchangeLimit, 7)
+
+        let record = try makeDHTRecord(
+            host: "relay-a.dht.example.org",
+            federationName: federationName,
+            issuedAt: Date()
+        )
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let publishResponse = try await client.send(
+            .publishOpenFederationDHTRecord(
+                PublishOpenFederationDHTRecordRequest(namespace: namespace, record: record)
+            )
+        )
+        XCTAssertEqual(publishResponse.type, .ok)
+
+        let listResponse = try await client.send(
+            .listOpenFederationDHTRecords(
+                ListOpenFederationDHTRecordsRequest(namespace: namespace, limit: 4)
+            )
+        )
+        XCTAssertEqual(listResponse.type, .openFederationDHTRecords)
+        XCTAssertEqual(listResponse.openFederationDHTRecords?.map(\.endpoint.host), ["relay-a.dht.example.org"])
+    }
+
+    func testRelayRejectsOpenFederationDHTRoutesWhenDisabled() async throws {
+        let federationName = "relay-dht-disabled-net"
+        let port: UInt16 = 39490
+        let serverEndpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                federation: FederationDescriptor(mode: .open, name: federationName),
+                openFederationDHTEnabled: false,
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let started = expectation(description: "disabled dht relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let record = try makeDHTRecord(
+            host: "relay-disabled.dht.example.org",
+            federationName: federationName,
+            issuedAt: Date()
+        )
+        let response = try await RelayClient(endpoint: serverEndpoint).send(
+            .publishOpenFederationDHTRecord(
+                PublishOpenFederationDHTRecordRequest(
+                    namespace: OpenFederationDHTRecord.namespace(federationName: federationName),
+                    record: record
+                )
+            )
+        )
+        XCTAssertEqual(response.type, .error)
+        XCTAssertTrue((response.error ?? "").contains("DHT-enabled"))
+    }
+
+    func testOpenFederationDHTDiscoveryEngineDisabledDoesNotTouchTransport() async throws {
+        let transport = MockOpenFederationDHTTransport()
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: false,
+                federationName: "disabled-net",
+                requirePublicEndpoint: false
+            )
+        )
+
+        do {
+            _ = try await engine.refresh(
+                transport: transport,
+                localEndpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket),
+                signingKey: SigningKeyPair(),
+                now: Date(timeIntervalSince1970: 1_000)
+            )
+            XCTFail("Expected disabled DHT discovery to throw before transport access")
+        } catch {
+            XCTAssertEqual(error as? OpenFederationDHTDiscoveryError, .disabled)
+        }
+
+        let publishedRecords = await transport.publishedRecords()
+        let queryCount = await transport.queryCount()
+        XCTAssertTrue(publishedRecords.isEmpty)
+        XCTAssertEqual(queryCount, 0)
+    }
+
+    func testOpenFederationDHTDiscoveryEngineRejectsInvalidLocalAdvertisementBeforePublish() async throws {
+        let transport = MockOpenFederationDHTTransport()
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: "public-net",
+                requirePublicEndpoint: true
+            )
+        )
+
+        do {
+            _ = try await engine.refresh(
+                transport: transport,
+                localEndpoint: RelayEndpoint(host: "127.0.0.1", port: 443, useTLS: true, transport: .websocket),
+                signingKey: SigningKeyPair(),
+                now: Date(timeIntervalSince1970: 1_000)
+            )
+            XCTFail("Expected non-public local advertisement to be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? OpenFederationDHTDiscoveryError,
+                .invalidLocalAdvertisement(.nonPublicEndpoint)
+            )
+        }
+
+        let publishedRecords = await transport.publishedRecords()
+        let queryCount = await transport.queryCount()
+        XCTAssertTrue(publishedRecords.isEmpty)
+        XCTAssertEqual(queryCount, 0)
+    }
+
+    func testOpenFederationDHTDiscoveryEngineHonorsTransportQueryLimit() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "limited-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let records = try (0..<5).map { index in
+            try makeDHTRecord(host: "relay-\(index).example.org", federationName: federationName, issuedAt: now)
+        }
+        let transport = MockOpenFederationDHTTransport(recordsByNamespace: [namespace: records])
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 10,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 2
+            )
+        )
+
+        let result = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: now
+        )
+
+        let lastQueryLimit = await transport.lastQueryLimit()
+        XCTAssertEqual(lastQueryLimit, 2)
+        XCTAssertEqual(result.ingestResult.accepted.count, 2)
+        XCTAssertEqual(Set(result.nodes.map(\.endpoint.host)), ["relay-0.example.org", "relay-1.example.org"])
+    }
+
+    func testOpenFederationDHTDiscoveryEngineFallsBackToCachedNodesWhenQueryFails() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "resilient-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let cachedRecord = try makeDHTRecord(
+            host: "cached-relay.example.org",
+            federationName: federationName,
+            issuedAt: now
+        )
+        let transport = MockOpenFederationDHTTransport(recordsByNamespace: [namespace: [cachedRecord]])
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 8,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 16
+            )
+        )
+
+        let warmResult = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: now
+        )
+        XCTAssertEqual(warmResult.nodes.map(\.endpoint.host), ["cached-relay.example.org"])
+
+        await transport.setQueryFailureEnabled(true)
+        let fallbackResult = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: now.addingTimeInterval(30)
+        )
+
+        XCTAssertTrue(fallbackResult.ingestResult.accepted.isEmpty)
+        XCTAssertTrue(fallbackResult.ingestResult.rejected.isEmpty)
+        XCTAssertEqual(fallbackResult.nodes.map(\.endpoint.host), ["cached-relay.example.org"])
+        let queryCount = await transport.queryCount()
+        XCTAssertEqual(queryCount, 2)
+    }
+
+    func testOpenFederationDHTDiscoveryEngineDropsExpiredCacheWhenQueryFails() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "stale-cache-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let cachedRecord = try makeDHTRecord(
+            host: "short-lived-relay.example.org",
+            federationName: federationName,
+            issuedAt: now,
+            lifetimeSeconds: 10
+        )
+        let transport = MockOpenFederationDHTTransport(recordsByNamespace: [namespace: [cachedRecord]])
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 8,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 16
+            )
+        )
+
+        let warmResult = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: now
+        )
+        XCTAssertEqual(warmResult.nodes.map(\.endpoint.host), ["short-lived-relay.example.org"])
+
+        await transport.setQueryFailureEnabled(true)
+        let fallbackResult = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: cachedRecord.expiresAt.addingTimeInterval(OpenFederationDHTRecord.maxClockSkewSeconds + 1)
+        )
+
+        XCTAssertTrue(fallbackResult.ingestResult.accepted.isEmpty)
+        XCTAssertTrue(fallbackResult.ingestResult.rejected.isEmpty)
+        XCTAssertTrue(fallbackResult.nodes.isEmpty)
+        let queryCount = await transport.queryCount()
+        XCTAssertEqual(queryCount, 2)
+    }
+
+    func testOpenFederationDHTHTTPGatewayTransportPublishesWithAuthHeader() async throws {
+        let namespace = OpenFederationDHTRecord.namespace(federationName: "gateway-net")
+        let record = try makeDHTRecord(
+            host: "relay.gateway.example.org",
+            federationName: "gateway-net",
+            issuedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        let protocolHarness = DHTGatewayURLProtocolHarness()
+        protocolHarness.handler = { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.url?.path, "/mesh/v1/open-federation/dht/records")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer gateway-token")
+            let body = try XCTUnwrap(DHTGatewayURLProtocolHarness.bodyData(from: request))
+            let decoded = try NoctweaveCoder.decode(DHTGatewayPublishRequestProbe.self, from: body)
+            XCTAssertEqual(decoded.namespace, namespace)
+            XCTAssertEqual(decoded.record, record)
+            return (200, Data())
+        }
+        let transport = OpenFederationDHTHTTPGatewayTransport(
+            baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org/mesh")),
+            session: protocolHarness.makeSession(),
+            authToken: " gateway-token "
+        )
+
+        try await transport.publish(record, namespace: namespace)
+        XCTAssertEqual(protocolHarness.requestCount, 1)
+    }
+
+    func testOpenFederationDHTHTTPGatewayTransportQueriesRecords() async throws {
+        let namespace = OpenFederationDHTRecord.namespace(federationName: "gateway-net")
+        let records = try (0..<3).map { index in
+            try makeDHTRecord(
+                host: "relay-\(index).gateway.example.org",
+                federationName: "gateway-net",
+                issuedAt: Date(timeIntervalSince1970: 1_000 + Double(index))
+            )
+        }
+        let response = try NoctweaveCoder.encode(
+            DHTGatewayQueryResponseProbe(records: records),
+            sortedKeys: true
+        )
+        let protocolHarness = DHTGatewayURLProtocolHarness()
+        protocolHarness.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/v1/open-federation/dht/records")
+            let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
+            let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+            XCTAssertEqual(query["namespace"], namespace)
+            XCTAssertEqual(query["limit"], "2")
+            return (200, response)
+        }
+        let transport = OpenFederationDHTHTTPGatewayTransport(
+            baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
+            session: protocolHarness.makeSession()
+        )
+
+        let queried = try await transport.query(namespace: namespace, limit: 2)
+        XCTAssertEqual(queried, Array(records.prefix(2)))
+        XCTAssertEqual(protocolHarness.requestCount, 1)
+    }
+
+    func testOpenFederationDHTHTTPGatewayRefreshAppliesPoisoningAndFloodGuards() async throws {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let federationName = "gateway-net"
+        let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
+        let valid = try makeDHTRecord(host: "relay-a.gateway.example.org", federationName: federationName, issuedAt: now)
+        let wrongFederation = try makeDHTRecord(host: "relay-b.gateway.example.org", federationName: "other-net", issuedAt: now)
+        let tampered = OpenFederationDHTRecord(
+            namespace: valid.namespace,
+            relayIdentityDigest: valid.relayIdentityDigest,
+            endpoint: RelayEndpoint(host: "poison.gateway.example.org", port: 443, useTLS: true, transport: .websocket),
+            federationName: valid.federationName,
+            issuedAt: valid.issuedAt,
+            expiresAt: valid.expiresAt,
+            relaySigningPublicKey: valid.relaySigningPublicKey,
+            signature: valid.signature
+        )
+        let flooded = try (0..<3).map { index in
+            try makeDHTRecord(
+                host: "crowded.gateway.example.org",
+                federationName: federationName,
+                issuedAt: now.addingTimeInterval(Double(index + 1))
+            )
+        }
+        let response = try NoctweaveCoder.encode(
+            DHTGatewayQueryResponseProbe(records: [valid, wrongFederation, tampered] + flooded),
+            sortedKeys: true
+        )
+        let protocolHarness = DHTGatewayURLProtocolHarness()
+        protocolHarness.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            let components = try XCTUnwrap(URLComponents(url: try XCTUnwrap(request.url), resolvingAgainstBaseURL: false))
+            let query = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+            XCTAssertEqual(query["namespace"], namespace)
+            XCTAssertEqual(query["limit"], "12")
+            return (200, response)
+        }
+        let transport = OpenFederationDHTHTTPGatewayTransport(
+            baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
+            session: protocolHarness.makeSession()
+        )
+        var engine = OpenFederationDHTDiscoveryEngine(
+            configuration: OpenFederationDHTDiscoveryConfiguration(
+                isEnabled: true,
+                federationName: federationName,
+                requirePublicEndpoint: false,
+                maxRecords: 8,
+                maxRecordsPerHost: 2,
+                maxQueryRecords: 12
+            )
+        )
+
+        let result = try await engine.refresh(
+            transport: transport,
+            localEndpoint: nil,
+            signingKey: nil,
+            now: now
+        )
+
+        XCTAssertEqual(result.ingestResult.accepted.count, 3)
+        XCTAssertEqual(
+            result.ingestResult.rejected.map(\.reason),
+            [
+                .validationFailed(.namespaceMismatch),
+                .validationFailed(.invalidSignature),
+                .hostLimitExceeded
+            ]
+        )
+        XCTAssertEqual(result.nodes.count, 3)
+        XCTAssertEqual(protocolHarness.requestCount, 1)
+    }
+
+    func testOpenFederationDHTHTTPGatewayTransportRejectsOversizedResponse() async throws {
+        let protocolHarness = DHTGatewayURLProtocolHarness()
+        protocolHarness.handler = { _ in
+            (200, Data(repeating: 0x41, count: 2_048))
+        }
+        let transport = OpenFederationDHTHTTPGatewayTransport(
+            baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
+            session: protocolHarness.makeSession(),
+            maxResponseBytes: 1_024
+        )
+
+        do {
+            _ = try await transport.query(namespace: "oversized", limit: 1)
+            XCTFail("Expected oversized DHT gateway response to be rejected")
+        } catch {
+            XCTAssertEqual(error as? OpenFederationDHTGatewayTransportError, .responseTooLarge)
+        }
+    }
+
+    func testContactOfferCodeRoundTrip() throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "inbox-1", relay: relay)
+        let code = try ContactOfferCode.encode(offer)
+        let decoded = try ContactOfferCode.decode(code)
+        XCTAssertEqual(decoded, offer)
+    }
+
+    func testContactOfferBindsInboxAccessKey() throws {
+        let identity = Identity(displayName: "Alice")
+        let accessKey = SigningKeyPair()
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(
+            identity: identity,
+            inboxId: "inbox-1",
+            relay: relay,
+            inboxAccessPublicKey: accessKey.publicKeyData
+        )
+
+        XCTAssertEqual(offer.version, 3)
+        XCTAssertEqual(offer.inboxAccessPublicKey, accessKey.publicKeyData)
+        XCTAssertNoThrow(try offer.verified())
+    }
+
+    func testInboxAddressIsDerivedFromAccessKey() {
+        let accessKey = SigningKeyPair()
+        let address = InboxAddress.derived(from: accessKey.publicKeyData)
+
+        XCTAssertTrue(InboxAddress.isValid(address))
+        XCTAssertTrue(InboxAddress.isBound(address, to: accessKey.publicKeyData))
+        XCTAssertFalse(InboxAddress.isBound(address, to: SigningKeyPair().publicKeyData))
+    }
+
+    func testContactShareRoundTrip() throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "inbox-1", relay: relay)
+        let data = try ContactShare.encode(offer, password: "correct horse")
+        let decoded = try ContactShare.decode(data, password: "correct horse")
+        XCTAssertEqual(decoded, offer)
+    }
+
+    func testContactShareWrongPasswordFails() throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "inbox-1", relay: relay)
+        let data = try ContactShare.encode(offer, password: "secret")
+        XCTAssertThrowsError(try ContactShare.decode(data, password: "wrong password"))
+    }
+
+    func testContactOfferCodeRejectsTamperedPayload() throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "inbox-1", relay: relay)
+        let code = try ContactOfferCode.encode(offer)
+        let data = try XCTUnwrap(Data(base64Encoded: code))
+        var tampered = try NoctweaveCoder.decode(ContactOffer.self, from: data)
+        tampered = ContactOffer(
+            version: tampered.version,
+            displayName: "Mallory",
+            inboxId: tampered.inboxId,
+            relay: tampered.relay,
+            signingPublicKey: tampered.signingPublicKey,
+            agreementPublicKey: tampered.agreementPublicKey,
+            fingerprint: tampered.fingerprint,
+            signature: tampered.signature
+        )
+        let tamperedCode = try NoctweaveCoder.encode(tampered).base64EncodedString()
+        XCTAssertThrowsError(try ContactOfferCode.decode(tamperedCode))
+    }
+
+    func testContactSafetyNumberIsSymmetricAndIdentityBound() {
+        let aliceToBob = ContactSafetyNumber.make(
+            localFingerprint: "alice-fingerprint",
+            remoteFingerprint: "bob-fingerprint"
+        )
+        let bobToAlice = ContactSafetyNumber.make(
+            localFingerprint: "bob-fingerprint",
+            remoteFingerprint: "alice-fingerprint"
+        )
+        let aliceToMallory = ContactSafetyNumber.make(
+            localFingerprint: "alice-fingerprint",
+            remoteFingerprint: "mallory-fingerprint"
+        )
+
+        XCTAssertEqual(aliceToBob, bobToAlice)
+        XCTAssertNotEqual(aliceToBob, aliceToMallory)
+        XCTAssertEqual(aliceToBob.split(separator: " ").count, 12)
+    }
+
+    func testOneTimePrekeySignatureRejectsRelaySubstitution() throws {
+        let identity = Identity(displayName: "Alice")
+        let prekeys = try PrekeyState.generate(identity: identity, oneTimeCount: 1)
+        let bundle = try prekeys.bundle(identity: identity)
+        let original = try XCTUnwrap(bundle.oneTimePrekeys.first)
+
+        XCTAssertTrue(original.verify(using: identity.signingKey.publicKeyData))
+
+        let substituted = OneTimePrekey(
+            id: original.id,
+            publicKey: AgreementKeyPair().publicKeyData,
+            signature: original.signature
+        )
+        XCTAssertFalse(substituted.verify(using: identity.signingKey.publicKeyData))
+    }
+
+    func testUnsignedOneTimePrekeyDecodeFailsClosed() throws {
+        struct UnsignedOneTimePrekey: Codable {
+            let id: UUID
+            let publicKey: Data
+        }
+
+        let unsigned = UnsignedOneTimePrekey(
+            id: UUID(),
+            publicKey: AgreementKeyPair().publicKeyData
+        )
+        let data = try NoctweaveCoder.encode(unsigned)
+
+        XCTAssertThrowsError(try NoctweaveCoder.decode(OneTimePrekey.self, from: data))
+    }
+
+    func testConversationBootstrapKeysMatch() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: bob.displayName,
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: alice.displayName,
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        var bobConversation = try MessageEngine.createInboundSession(identity: bob, contact: aliceContact, kemCiphertext: session.kemCiphertext)
+
+        let (aliceCounter, aliceKey) = try aliceConversation.sendChain.nextMessageKey()
+        let bobKey = try bobConversation.receiveChain.messageKey(for: aliceCounter)
+
+        XCTAssertEqual(aliceKey.dataRepresentation, bobKey.dataRepresentation)
+    }
+
+    func testRatchetStateTransitions() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: bob.displayName,
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var conversation = session.conversation
+
+        XCTAssertEqual(conversation.ratchetState, .initializing)
+        conversation.markMessageProcessed()
+        XCTAssertEqual(conversation.ratchetState, .active)
+        XCTAssertTrue(conversation.transition(to: .reset))
+        XCTAssertEqual(conversation.ratchetState, .reset)
+        conversation.markMessageProcessed()
+        XCTAssertEqual(conversation.ratchetState, .healed)
+        XCTAssertFalse(conversation.transition(to: .active))
+        XCTAssertEqual(conversation.ratchetState, .healed)
+    }
+
+    func testOutOfOrderMessagesWithinWindow() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+
+        let count = 20
+        var envelopes: [Envelope] = []
+        for index in 0..<count {
+            let envelope = try MessageEngine.encrypt(
+                body: .text("msg-\(index)"),
+                senderSigningKey: alice.signingKey,
+                senderFingerprint: alice.fingerprint,
+                conversation: &aliceConversation,
+                kemCiphertext: index == 0 ? session.kemCiphertext : nil
+            )
+            envelopes.append(envelope)
+        }
+
+        var order = Array(0..<count)
+        order.swapAt(1, 2)
+        order.swapAt(5, 7)
+        order.shuffle()
+
+        var received: [String] = []
+        for index in order {
+            let body = try MessageEngine.decrypt(
+                envelope: envelopes[index],
+                contact: aliceContact,
+                conversation: &bobConversation
+            )
+            if case .text(let text) = body {
+                received.append(text)
+            }
+        }
+        XCTAssertEqual(received.count, count)
+        XCTAssertEqual(Set(received), Set((0..<count).map { "msg-\($0)" }))
+    }
+
+    func testMessageEngineBucketsVisibleEnvelopeTimestamp() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        let preciseSentAt = Date(timeIntervalSince1970: 1_765_400_123)
+
+        let envelope = try MessageEngine.encrypt(
+            body: .text("bucketed hello"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation,
+            kemCiphertext: session.kemCiphertext,
+            sentAt: preciseSentAt,
+            metadataBucketSeconds: 300
+        )
+
+        XCTAssertEqual(envelope.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
+        XCTAssertTrue(envelope.verifySignature(publicSigningKey: alice.signingKey.publicKeyData))
+
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+        let body = try MessageEngine.decrypt(
+            envelope: envelope,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+        XCTAssertEqual(body, .text("bucketed hello"))
+    }
+
+    func testMessageEnginePadsSmallPlaintextsToFixedCiphertextSize() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+
+        let short = try MessageEngine.encrypt(
+            body: .text("ok"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation,
+            kemCiphertext: session.kemCiphertext
+        )
+        let longer = try MessageEngine.encrypt(
+            body: .text("this is longer but should stay in the same padding bucket"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation
+        )
+
+        XCTAssertEqual(short.payload.ciphertext.count, PaddedMessagePlaintext.minimumPaddedBytes)
+        XCTAssertEqual(longer.payload.ciphertext.count, PaddedMessagePlaintext.minimumPaddedBytes)
+        XCTAssertEqual(
+            try MessageEngine.decrypt(envelope: short, contact: aliceContact, conversation: &bobConversation),
+            .text("ok")
+        )
+        XCTAssertEqual(
+            try MessageEngine.decrypt(envelope: longer, contact: aliceContact, conversation: &bobConversation),
+            .text("this is longer but should stay in the same padding bucket")
+        )
+    }
+
+    func testReplayIsRejected() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+
+        let envelope = try MessageEngine.encrypt(
+            body: .text("once"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation,
+            kemCiphertext: session.kemCiphertext
+        )
+        _ = try MessageEngine.decrypt(
+            envelope: envelope,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+
+        XCTAssertThrowsError(
+            try MessageEngine.decrypt(
+                envelope: envelope,
+                contact: aliceContact,
+                conversation: &bobConversation
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .counterReplay)
+        }
+    }
+
+    func testGroupMessageAuthenticatedContextIsBoundToCiphertextAndSignature() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        let groupId = UUID()
+        let context = MessageAuthenticatedContext.group(
+            groupId: groupId,
+            epoch: 7,
+            senderFingerprint: alice.fingerprint,
+            transcriptHash: Data(SHA256.hash(data: Data("group-transcript-7".utf8)))
+        )
+
+        let envelope = try MessageEngine.encrypt(
+            body: .text("group hello"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation,
+            kemCiphertext: session.kemCiphertext,
+            authenticatedContext: context
+        )
+
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+        let decrypted = try MessageEngine.decrypt(
+            envelope: envelope,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+        XCTAssertEqual(decrypted, .text("group hello"))
+
+        let tamperedContext = MessageAuthenticatedContext.group(
+            groupId: groupId,
+            epoch: 8,
+            senderFingerprint: alice.fingerprint,
+            transcriptHash: Data(SHA256.hash(data: Data("group-transcript-8".utf8)))
+        )
+        let unsignedContextTamper = Envelope(
+            id: envelope.id,
+            conversationId: envelope.conversationId,
+            sessionId: envelope.sessionId,
+            senderFingerprint: envelope.senderFingerprint,
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter,
+            kemCiphertext: envelope.kemCiphertext,
+            prekey: envelope.prekey,
+            rootRatchet: envelope.rootRatchet,
+            authenticatedContext: tamperedContext,
+            payload: envelope.payload,
+            signature: envelope.signature
+        )
+        var unsignedTamperConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+        XCTAssertThrowsError(
+            try MessageEngine.decrypt(
+                envelope: unsignedContextTamper,
+                contact: aliceContact,
+                conversation: &unsignedTamperConversation
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidSignature)
+        }
+
+        let resignableData = try Envelope.signableData(
+            conversationId: envelope.conversationId,
+            sessionId: envelope.sessionId,
+            senderFingerprint: envelope.senderFingerprint,
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter,
+            kemCiphertext: envelope.kemCiphertext,
+            prekey: envelope.prekey,
+            rootRatchet: envelope.rootRatchet,
+            authenticatedContext: tamperedContext,
+            payload: envelope.payload
+        )
+        let resignedTamper = Envelope(
+            id: envelope.id,
+            conversationId: envelope.conversationId,
+            sessionId: envelope.sessionId,
+            senderFingerprint: envelope.senderFingerprint,
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter,
+            kemCiphertext: envelope.kemCiphertext,
+            prekey: envelope.prekey,
+            rootRatchet: envelope.rootRatchet,
+            authenticatedContext: tamperedContext,
+            payload: envelope.payload,
+            signature: try alice.signingKey.sign(resignableData)
+        )
+        XCTAssertTrue(resignedTamper.verifySignature(publicSigningKey: alice.signingKey.publicKeyData))
+        var resignedTamperConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+        XCTAssertThrowsError(
+            try MessageEngine.decrypt(
+                envelope: resignedTamper,
+                contact: aliceContact,
+                conversation: &resignedTamperConversation
+            )
+        )
+    }
+
+    func testGroupRatchetEncryptsOnceForSharedGroupState() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var bobState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: bob.fingerprint
+        )
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("hello group"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+        XCTAssertEqual(envelope.groupId, groupId)
+        XCTAssertEqual(envelope.epoch, 0)
+        XCTAssertEqual(envelope.transcriptHash, transcriptHash)
+
+        let body = try GroupRatchet.decrypt(
+            envelope: envelope,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &bobState
+        )
+        XCTAssertEqual(body, .text("hello group"))
+        XCTAssertNotNil(bobState.receiveChains[alice.fingerprint])
+    }
+
+    func testGroupRatchetBucketsVisibleEnvelopeTimestamp() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var bobState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: bob.fingerprint
+        )
+        let preciseSentAt = Date(timeIntervalSince1970: 1_765_400_123)
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("bucketed group"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState,
+            sentAt: preciseSentAt,
+            metadataBucketSeconds: 300
+        )
+
+        XCTAssertEqual(envelope.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
+        let body = try GroupRatchet.decrypt(
+            envelope: envelope,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &bobState
+        )
+        XCTAssertEqual(body, .text("bucketed group"))
+    }
+
+    func testGroupRatchetPadsSmallPlaintextsToFixedCiphertextSize() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-padding".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group padding secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var bobState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: bob.fingerprint
+        )
+
+        let short = try GroupRatchet.encrypt(
+            body: .text("hi"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+        let longer = try GroupRatchet.encrypt(
+            body: .text("this group message is longer but remains in the same padding bucket"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+
+        XCTAssertEqual(short.payload.ciphertext.count, PaddedMessagePlaintext.minimumPaddedBytes)
+        XCTAssertEqual(longer.payload.ciphertext.count, PaddedMessagePlaintext.minimumPaddedBytes)
+        XCTAssertEqual(
+            try GroupRatchet.decrypt(
+                envelope: short,
+                senderPublicSigningKey: alice.signingKey.publicKeyData,
+                state: &bobState
+            ),
+            .text("hi")
+        )
+        XCTAssertEqual(
+            try GroupRatchet.decrypt(
+                envelope: longer,
+                senderPublicSigningKey: alice.signingKey.publicKeyData,
+                state: &bobState
+            ),
+            .text("this group message is longer but remains in the same padding bucket")
+        )
+    }
+
+    func testGroupRatchetAttachmentDescriptorAndChunkUseSameMessageKey() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-attachment".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group attachment secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 1,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var bobState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 1,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: bob.fingerprint
+        )
+        let plaintext = Data("group image bytes".utf8)
+        let attachmentId = UUID()
+        let prepared = try GroupRatchet.prepareMessageKey(
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+        let descriptor = AttachmentDescriptor(
+            id: attachmentId,
+            fileName: "image.jpg",
+            mimeType: "image/jpeg",
+            byteCount: plaintext.count,
+            sha256: AttachmentCrypto.sha256(plaintext),
+            chunkCount: 1,
+            chunkSize: 64 * 1024
+        )
+        let chunkAAD = AttachmentCrypto.authenticatedData(
+            conversationId: "group:\(groupId.uuidString)",
+            sessionId: "epoch:1:\(transcriptHash.base64EncodedString())",
+            messageCounter: prepared.counter,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            byteCount: plaintext.count
+        )
+        let encryptedChunk = try AttachmentCrypto.encryptChunk(
+            plaintext: plaintext,
+            messageKey: prepared.key,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            authenticatedData: chunkAAD
+        )
+        let envelope = try GroupRatchet.encrypt(
+            body: .attachment(descriptor),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            messageCounter: prepared.counter,
+            messageKey: prepared.key,
+            state: aliceState
+        )
+
+        let decrypted = try GroupRatchet.decryptWithKey(
+            envelope: envelope,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &bobState
+        )
+        XCTAssertEqual(decrypted.body, .attachment(descriptor))
+        let recoveredChunk = try AttachmentCrypto.decryptChunk(
+            payload: encryptedChunk,
+            messageKey: decrypted.messageKey,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            authenticatedData: chunkAAD
+        )
+        XCTAssertEqual(recoveredChunk, plaintext)
+    }
+
+    func testGroupRatchetEpochSecretDistributionSealsToMembers() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let outsider = Identity(displayName: "Mallory")
+        let groupId = UUID()
+        let secret = Data(SHA256.hash(data: Data("epoch secret".utf8)))
+        let distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: secret,
+            groupId: groupId,
+            epoch: 3,
+            operation: .joinApprove,
+            recipients: [
+                relayGroupMemberProfile(identity: alice),
+                relayGroupMemberProfile(identity: bob)
+            ]
+        )
+
+        XCTAssertEqual(distribution.groupId, groupId)
+        XCTAssertEqual(distribution.epoch, 3)
+        XCTAssertEqual(Set(distribution.memberFingerprints), [alice.fingerprint, bob.fingerprint])
+        XCTAssertEqual(distribution.shares.count, 2)
+        XCTAssertEqual(
+            try distribution.openSecret(recipientFingerprint: alice.fingerprint, agreementKey: alice.agreementKey),
+            secret
+        )
+        XCTAssertEqual(
+            try distribution.openSecret(recipientFingerprint: bob.fingerprint, agreementKey: bob.agreementKey),
+            secret
+        )
+        XCTAssertThrowsError(
+            try distribution.openSecret(recipientFingerprint: outsider.fingerprint, agreementKey: outsider.agreementKey)
+        )
+    }
+
+    func testGroupRatchetEpochSecretDistributionRejectsMalformedStructure() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let groupId = UUID()
+        let distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: Data(SHA256.hash(data: Data("epoch secret".utf8))),
+            groupId: groupId,
+            epoch: 3,
+            operation: .update,
+            recipients: [
+                relayGroupMemberProfile(identity: alice),
+                relayGroupMemberProfile(identity: bob)
+            ]
+        )
+        let duplicateMember = GroupRatchetEpochSecretDistribution(
+            groupId: groupId,
+            epoch: 3,
+            operation: .update,
+            memberFingerprints: [alice.fingerprint, bob.fingerprint, bob.fingerprint],
+            shares: distribution.shares
+        )
+        let duplicateShare = GroupRatchetEpochSecretDistribution(
+            groupId: groupId,
+            epoch: 3,
+            operation: .update,
+            memberFingerprints: [alice.fingerprint, bob.fingerprint],
+            shares: [distribution.shares[0], distribution.shares[0]]
+        )
+        let emptyCiphertext = GroupRatchetSecretShare(
+            recipientFingerprint: alice.fingerprint,
+            kemCiphertext: Data(),
+            encryptedSecret: distribution.shares[0].encryptedSecret
+        )
+        let emptySharePayload = GroupRatchetEpochSecretDistribution(
+            groupId: groupId,
+            epoch: 3,
+            operation: .update,
+            memberFingerprints: [alice.fingerprint],
+            shares: [emptyCiphertext]
+        )
+
+        XCTAssertTrue(distribution.isStructurallyValid)
+        XCTAssertFalse(duplicateMember.isStructurallyValid)
+        XCTAssertFalse(duplicateShare.isStructurallyValid)
+        XCTAssertFalse(emptySharePayload.isStructurallyValid)
+        XCTAssertThrowsError(
+            try duplicateMember.openSecret(recipientFingerprint: alice.fingerprint, agreementKey: alice.agreementKey)
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+        XCTAssertThrowsError(
+            try duplicateShare.openSecret(recipientFingerprint: alice.fingerprint, agreementKey: alice.agreementKey)
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+    }
+
+    func testGroupRatchetEpochSecretDistributionRejectsDuplicateRecipientsAtSealTime() throws {
+        let alice = Identity(displayName: "Alice")
+        let groupId = UUID()
+
+        XCTAssertThrowsError(
+            try GroupRatchetEpochSecretDistribution.seal(
+                secret: Data(SHA256.hash(data: Data("epoch secret".utf8))),
+                groupId: groupId,
+                epoch: 3,
+                operation: .update,
+                recipients: [
+                    relayGroupMemberProfile(identity: alice),
+                    relayGroupMemberProfile(identity: alice)
+                ]
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+    }
+
+    func testRelayStoreCarriesRatchetEpochSecretDistribution() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let joiner = Identity(displayName: "Joiner")
+        let groupId = UUID()
+        let initialSecret = Data(SHA256.hash(data: Data("initial group secret".utf8)))
+        let initialDistribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: initialSecret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: [
+                relayGroupMemberProfile(identity: creator),
+                relayGroupMemberProfile(identity: member)
+            ]
+        )
+
+        let created = try await store.createGroup(
+            groupId: groupId,
+            title: "Ops",
+            creatorFingerprint: creator.fingerprint,
+            memberFingerprints: [member.fingerprint],
+            creatorProfile: relayGroupMemberProfile(identity: creator),
+            memberProfiles: [relayGroupMemberProfile(identity: member)],
+            initialRatchetSecretDistribution: initialDistribution
+        )
+        XCTAssertEqual(created.id, groupId)
+        XCTAssertEqual(created.mlsEpochState.lastCommit.ratchetSecretDistribution, initialDistribution)
+        XCTAssertEqual(
+            try created.mlsEpochState.lastCommit.ratchetSecretDistribution?.openSecret(
+                recipientFingerprint: member.fingerprint,
+                agreementKey: member.agreementKey
+            ),
+            initialSecret
+        )
+
+        let requested = try await store.requestGroupJoin(
+            RequestGroupJoinRequest(
+                groupId: groupId,
+                requesterProfile: relayGroupMemberProfile(identity: joiner)
+            )
+        )
+        let joinSecret = Data(SHA256.hash(data: Data("join epoch secret".utf8)))
+        let joinDistribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: joinSecret,
+            groupId: groupId,
+            epoch: created.epoch + 1,
+            operation: .joinApprove,
+            recipients: [
+                relayGroupMemberProfile(identity: creator),
+                relayGroupMemberProfile(identity: member),
+                relayGroupMemberProfile(identity: joiner)
+            ]
+        )
+        let joinCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .joinApprove,
+                groupId: groupId,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                addMemberFingerprints: [joiner.fingerprint],
+                addMemberProfiles: [requested.requester],
+                ratchetSecretDistribution: joinDistribution
+            ),
+            signer: creator
+        )
+        let approved = try await store.approveGroupJoin(
+            ApproveGroupJoinRequest(
+                groupId: groupId,
+                actorFingerprint: creator.fingerprint,
+                joinRequestId: requested.id,
+                groupCommit: joinCommit
+            )
+        )
+
+        XCTAssertEqual(approved.epoch, 1)
+        XCTAssertEqual(approved.mlsEpochState.lastCommit.ratchetSecretDistribution, joinDistribution)
+        XCTAssertEqual(
+            try approved.mlsEpochState.lastCommit.ratchetSecretDistribution?.openSecret(
+                recipientFingerprint: joiner.fingerprint,
+                agreementKey: joiner.agreementKey
+            ),
+            joinSecret
+        )
+    }
+
+    func testRelayStoreRejectsRatchetSecretDistributionWithMissingMemberShare() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let groupId = UUID()
+        let distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: Data(SHA256.hash(data: Data("bad secret".utf8))),
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: [relayGroupMemberProfile(identity: creator)]
+        )
+
+        do {
+            _ = try await store.createGroup(
+                groupId: groupId,
+                title: "Ops",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: relayGroupMemberProfile(identity: creator),
+                memberProfiles: [relayGroupMemberProfile(identity: member)],
+                initialRatchetSecretDistribution: distribution
+            )
+            XCTFail("Expected missing group member share to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? RelayStoreError, .invalidGroupCommit)
+        }
+    }
+
+    func testRelayStoreRejectsStructurallyInvalidRatchetSecretDistribution() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let groupId = UUID()
+        let malformedShare = GroupRatchetSecretShare(
+            recipientFingerprint: creator.fingerprint,
+            kemCiphertext: Data([0x01]),
+            encryptedSecret: EncryptedPayload(
+                nonce: Data(repeating: 0x02, count: 12),
+                ciphertext: Data([0x03]),
+                tag: Data(repeating: 0x04, count: 16)
+            )
+        )
+        let distribution = GroupRatchetEpochSecretDistribution(
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            memberFingerprints: [creator.fingerprint, member.fingerprint, member.fingerprint],
+            shares: [malformedShare, malformedShare]
+        )
+
+        XCTAssertFalse(distribution.isStructurallyValid)
+        do {
+            _ = try await store.createGroup(
+                groupId: groupId,
+                title: "Ops",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: relayGroupMemberProfile(identity: creator),
+                memberProfiles: [relayGroupMemberProfile(identity: member)],
+                initialRatchetSecretDistribution: distribution
+            )
+            XCTFail("Expected malformed group ratchet distribution to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? RelayStoreError, .invalidGroupCommit)
+        }
+    }
+
+    func testGroupRatchetRejectsReplayAndAllowsBoundedOutOfOrderDelivery() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var receiverState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret
+        )
+
+        let first = try GroupRatchet.encrypt(
+            body: .text("first"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+        let second = try GroupRatchet.encrypt(
+            body: .text("second"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+
+        let secondBody = try GroupRatchet.decrypt(
+            envelope: second,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &receiverState
+        )
+        XCTAssertEqual(secondBody, .text("second"))
+
+        let firstBody = try GroupRatchet.decrypt(
+            envelope: first,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &receiverState
+        )
+        XCTAssertEqual(firstBody, .text("first"))
+
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: second,
+                senderPublicSigningKey: alice.signingKey.publicKeyData,
+                state: &receiverState
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .counterReplay)
+        }
+    }
+
+    func testGroupRatchetBindsTranscriptAndSignature() throws {
+        let groupId = UUID()
+        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let wrongTranscriptHash = Data(SHA256.hash(data: Data("wrong epoch".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        let mallory = Identity(displayName: "Mallory")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var receiverState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: wrongTranscriptHash,
+            groupSecret: groupSecret
+        )
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("bound"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: envelope,
+                senderPublicSigningKey: alice.signingKey.publicKeyData,
+                state: &receiverState
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+
+        var validReceiverState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcriptHash,
+            groupSecret: groupSecret
+        )
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: envelope,
+                senderPublicSigningKey: mallory.signingKey.publicKeyData,
+                state: &validReceiverState
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+    }
+
+    func testGroupRatchetAdvancesEpochAndRejectsOldEpochMessages() throws {
+        let groupId = UUID()
+        let transcript0 = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let transcript1 = Data(SHA256.hash(data: Data("epoch-1".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let commitSecret = Data(SHA256.hash(data: Data("commit secret".utf8)))
+        let alice = Identity(displayName: "Alice")
+        var aliceState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcript0,
+            groupSecret: groupSecret,
+            localSenderFingerprint: alice.fingerprint
+        )
+        var receiverState = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcript0,
+            groupSecret: groupSecret
+        )
+
+        let oldEnvelope = try GroupRatchet.encrypt(
+            body: .text("old"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+
+        try aliceState.advanceEpoch(to: 1, transcriptHash: transcript1, commitSecret: commitSecret)
+        try receiverState.advanceEpoch(to: 1, transcriptHash: transcript1, commitSecret: commitSecret)
+
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: oldEnvelope,
+                senderPublicSigningKey: alice.signingKey.publicKeyData,
+                state: &receiverState
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+
+        let newEnvelope = try GroupRatchet.encrypt(
+            body: .text("new"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            state: &aliceState
+        )
+        let body = try GroupRatchet.decrypt(
+            envelope: newEnvelope,
+            senderPublicSigningKey: alice.signingKey.publicKeyData,
+            state: &receiverState
+        )
+        XCTAssertEqual(body, .text("new"))
+        XCTAssertEqual(newEnvelope.epoch, 1)
+        XCTAssertEqual(newEnvelope.transcriptHash, transcript1)
+    }
+
+    func testGroupRatchetRejectsSkippedEpochAdvance() throws {
+        let groupId = UUID()
+        let transcript0 = Data(SHA256.hash(data: Data("epoch-0".utf8)))
+        let transcript1 = Data(SHA256.hash(data: Data("epoch-1".utf8)))
+        let transcript2 = Data(SHA256.hash(data: Data("epoch-2".utf8)))
+        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
+        let commitSecret1 = Data(SHA256.hash(data: Data("commit secret 1".utf8)))
+        let commitSecret2 = Data(SHA256.hash(data: Data("commit secret 2".utf8)))
+        var state = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: transcript0,
+            groupSecret: groupSecret,
+            localSenderFingerprint: "alice"
+        )
+
+        XCTAssertThrowsError(
+            try state.advanceEpoch(to: 2, transcriptHash: transcript2, commitSecret: commitSecret2)
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+        XCTAssertEqual(state.epoch, 0)
+        XCTAssertEqual(state.transcriptHash, transcript0)
+
+        try state.advanceEpoch(to: 1, transcriptHash: transcript1, commitSecret: commitSecret1)
+        XCTAssertEqual(state.epoch, 1)
+        XCTAssertEqual(state.transcriptHash, transcript1)
+    }
+
+    func testCounterWindowExceeded() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+
+        let target = Int(ChainKeyState.defaultMaxSkip + 5)
+        var envelopes: [Envelope] = []
+        for index in 0..<target {
+            let envelope = try MessageEngine.encrypt(
+                body: .text("msg-\(index)"),
+                senderSigningKey: alice.signingKey,
+                senderFingerprint: alice.fingerprint,
+                conversation: &aliceConversation,
+                kemCiphertext: index == 0 ? session.kemCiphertext : nil
+            )
+            envelopes.append(envelope)
+        }
+
+        let farEnvelope = envelopes.last!
+        XCTAssertThrowsError(
+            try MessageEngine.decrypt(
+                envelope: farEnvelope,
+                contact: aliceContact,
+                conversation: &bobConversation
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .counterWindowExceeded)
+        }
+    }
+
+    func testMessageEncryptDecryptRoundTrip() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+        var bobConversation = try MessageEngine.createInboundSession(identity: bob, contact: aliceContact, kemCiphertext: session.kemCiphertext)
+
+        let envelope = try MessageEngine.encrypt(
+            body: .text("Hello"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation,
+            kemCiphertext: session.kemCiphertext
+        )
+
+        let body = try MessageEngine.decrypt(
+            envelope: envelope,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+
+        XCTAssertEqual(body, .text("Hello"))
+    }
+
+    func testPostQuantumOperationsRejectMalformedBufferLengths() throws {
+        XCTAssertThrowsError(
+            try SigningKeyPair(
+                privateKeyData: Data([0x01]),
+                publicKeyData: Data([0x02])
+            )
+        )
+        XCTAssertFalse(
+            SigningKeyPair.verify(
+                signature: Data([0x01]),
+                data: Data("message".utf8),
+                publicKeyData: Data([0x02])
+            )
+        )
+        XCTAssertThrowsError(
+            try AgreementKeyPair.encapsulate(to: Data([0x01]))
+        )
+
+        let validAgreementKey = AgreementKeyPair()
+        XCTAssertThrowsError(
+            try validAgreementKey.decapsulate(ciphertext: Data([0x01]))
+        )
+    }
+
+    func testIdentityRotationVerification() throws {
+        var identity = Identity(displayName: "Alice")
+        let oldSigningKey = identity.signingKey
+        let rotation = try identity.rotateKeys().rotation
+        XCTAssertTrue(rotation.verify(using: oldSigningKey.publicKeyData))
+        XCTAssertFalse(rotation.verify(using: identity.signingKey.publicKeyData))
+    }
+
+    func testIdentityRotationBootstrapSessionAllowsPostRotationMessages() throws {
+        var alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        var aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+
+        let initialSession = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = initialSession.conversation
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: initialSession.kemCiphertext
+        )
+
+        let beforeEnvelope = try MessageEngine.encrypt(
+            body: .text("before-rotation"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation
+        )
+        let beforeBody = try MessageEngine.decrypt(
+            envelope: beforeEnvelope,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+        XCTAssertEqual(beforeBody, .text("before-rotation"))
+
+        var previousAlice = alice
+        let rotationContext = try alice.rotateKeys()
+        previousAlice.signingKey = rotationContext.oldSigningKey
+        previousAlice.agreementKey = rotationContext.oldAgreementKey
+
+        let bootstrapSession = try MessageEngine.createOutboundSession(identity: previousAlice, contact: bobContact)
+        var bootstrapConversation = bootstrapSession.conversation
+        let rotationEnvelope = try MessageEngine.encrypt(
+            body: .identityRotation(rotationContext.rotation),
+            senderSigningKey: rotationContext.oldSigningKey,
+            senderFingerprint: rotationContext.oldFingerprint,
+            conversation: &bootstrapConversation,
+            kemCiphertext: bootstrapSession.kemCiphertext
+        )
+        bootstrapConversation.markMessageProcessed()
+
+        XCTAssertThrowsError(
+            try MessageEngine.decrypt(
+                envelope: rotationEnvelope,
+                contact: aliceContact,
+                conversation: &bobConversation
+            )
+        ) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+
+        bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: bootstrapSession.kemCiphertext
+        )
+        let rotationBody = try MessageEngine.decrypt(
+            envelope: rotationEnvelope,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+        guard case .identityRotation(let rotation) = rotationBody else {
+            return XCTFail("Expected identity rotation payload")
+        }
+        XCTAssertTrue(aliceContact.apply(rotation: rotation))
+        XCTAssertEqual(aliceContact.signingPublicKey, alice.signingKey.publicKeyData)
+
+        bootstrapConversation.messages = aliceConversation.messages
+        bootstrapConversation.unreadCount = aliceConversation.unreadCount
+        aliceConversation = bootstrapConversation
+
+        let afterEnvelope = try MessageEngine.encrypt(
+            body: .text("after-rotation"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation
+        )
+        let afterBody = try MessageEngine.decrypt(
+            envelope: afterEnvelope,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+        XCTAssertEqual(afterBody, .text("after-rotation"))
+    }
+
+    func testRootRatchetRoundTrip() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob",
+            relay: RelayEndpoint(host: "localhost", port: 0),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice",
+            relay: RelayEndpoint(host: "localhost", port: 0),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceContact,
+            kemCiphertext: session.kemCiphertext
+        )
+        let originalSessionId = aliceConversation.sessionId
+
+        let ratchetContext = try MessageEngine.createRootRatchet(contact: bobContact, conversation: aliceConversation)
+        let preciseRatchetSentAt = Date(timeIntervalSince1970: 1_765_400_123)
+        let visibleRatchet = RootRatchet(
+            counter: ratchetContext.ratchet.counter,
+            kemCiphertext: ratchetContext.ratchet.kemCiphertext,
+            sentAt: preciseRatchetSentAt
+        )
+        let envelope = try MessageEngine.encrypt(
+            body: .text("Root ratchet"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation,
+            rootRatchet: visibleRatchet,
+            metadataBucketSeconds: 300
+        )
+        XCTAssertEqual(envelope.rootRatchet?.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
+        MessageEngine.applyRootRatchet(
+            sharedSecret: ratchetContext.sharedSecret,
+            counter: ratchetContext.ratchet.counter,
+            identity: alice,
+            contact: bobContact,
+            conversation: &aliceConversation
+        )
+
+        let body = try MessageEngine.decrypt(
+            envelope: envelope,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+        XCTAssertEqual(body, .text("Root ratchet"))
+
+        let bobSecret = try bob.agreementKey.decapsulate(ciphertext: ratchetContext.ratchet.kemCiphertext)
+        MessageEngine.applyRootRatchet(
+            sharedSecret: bobSecret,
+            counter: ratchetContext.ratchet.counter,
+            identity: bob,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+
+        XCTAssertEqual(aliceConversation.rootCounter, 1)
+        XCTAssertEqual(bobConversation.rootCounter, 1)
+        XCTAssertNotEqual(aliceConversation.sessionId, originalSessionId)
+
+        let followUp = try MessageEngine.encrypt(
+            body: .text("After ratchet"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation
+        )
+        let followUpBody = try MessageEngine.decrypt(
+            envelope: followUp,
+            contact: aliceContact,
+            conversation: &bobConversation
+        )
+        XCTAssertEqual(followUpBody, .text("After ratchet"))
+    }
+
+    func testRelayStoreDeliverFetch() async throws {
+        let store = RelayStore()
+        let envelope = Envelope(
+            conversationId: "conv",
+            senderFingerprint: "fingerprint",
+            sentAt: Date(),
+            messageCounter: 0,
+            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([1, 2, 3]), tag: Data()),
+            signature: Data([4, 5, 6])
+        )
+
+        let count = try await store.deliver(envelope, to: "inbox")
+        XCTAssertEqual(count, 1)
+
+        let fetched = try await store.fetch(inboxId: "inbox")
+        XCTAssertEqual(fetched, [envelope])
+        _ = try await store.acknowledge(inboxId: "inbox", messageIds: [envelope.id])
+
+        let empty = try await store.fetch(inboxId: "inbox")
+        XCTAssertEqual(empty.count, 0)
+    }
+
+    func testRelayStoreBucketsVisiblePairingAnnouncementTimes() async throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "alice-inbox", relay: relay)
+        let store = RelayStore(temporalBucketSeconds: 300)
+        let now = Date(timeIntervalSince1970: 1_765_400_123)
+
+        let announcement = await store.announce(offer, ttlSeconds: 300, now: now)
+
+        XCTAssertEqual(announcement.announcedAt, Date(timeIntervalSince1970: 1_765_400_100))
+        XCTAssertEqual(announcement.expiresAt, Date(timeIntervalSince1970: 1_765_400_400))
+    }
+
+    func testRelayStoreBucketsVisiblePairRequestTimes() async throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "alice-inbox", relay: relay)
+        let store = RelayStore(temporalBucketSeconds: 300)
+        let now = Date(timeIntervalSince1970: 1_765_400_123)
+
+        let requestCount = await store.sendPairRequest(targetFingerprint: "target", offer: offer, now: now)
+        XCTAssertEqual(requestCount, 1)
+        let requests = await store.fetchPairRequests(targetFingerprint: "target")
+
+        XCTAssertEqual(requests.first?.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
+    }
+
+    func testRelayStoreInboxLimitIsEnforced() async throws {
+        let store = RelayStore(maxInboxMessages: 1)
+        let envelope = Envelope(
+            conversationId: "bounded-inbox",
+            senderFingerprint: "fingerprint",
+            sentAt: Date(),
+            messageCounter: 0,
+            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([1]), tag: Data()),
+            signature: Data([2])
+        )
+
+        _ = try await store.deliver(envelope, to: "inbox")
+        do {
+            _ = try await store.deliver(envelope, to: "inbox")
+            XCTFail("Expected inbox capacity to be enforced.")
+        } catch RelayStoreError.inboxFull {
+            // Expected.
+        }
+    }
+
+    func testRelayStoreRejectsOversizedEnvelopePayloads() async throws {
+        let store = RelayStore()
+        let oversizedPayload = EncryptedPayload(
+            nonce: Data(repeating: 0x01, count: 12),
+            ciphertext: Data(repeating: 0x02, count: 100 * 1024),
+            tag: Data(repeating: 0x03, count: 16)
+        )
+        let envelope = Envelope(
+            conversationId: "oversized",
+            senderFingerprint: "fingerprint",
+            sentAt: Date(),
+            messageCounter: 0,
+            payload: oversizedPayload,
+            signature: Data([4, 5, 6])
+        )
+
+        do {
+            _ = try await store.deliver(envelope, to: "inbox")
+            XCTFail("Expected oversized direct envelope payload to be rejected.")
+        } catch RelayStoreError.invalidEnvelopePayload {
+            // Expected.
+        }
+
+        do {
+            _ = try await store.deliverGroupEnvelope(
+                envelope,
+                to: "group-inbox",
+                recipientFingerprints: ["member-a"]
+            )
+            XCTFail("Expected oversized group envelope payload to be rejected.")
+        } catch RelayStoreError.invalidEnvelopePayload {
+            // Expected.
+        }
+    }
+
+    func testRelayRejectsPrekeyUploadWithoutIdentityProof() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39488)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration()
+        )
+        let started = expectation(description: "prekey proof relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let identity = Identity(displayName: "Prekey Owner")
+        let prekeys = try PrekeyState.generate(identity: identity)
+        let request = UploadPrekeyBundleRequest(
+            fingerprint: identity.fingerprint,
+            bundle: try prekeys.bundle(identity: identity)
+        )
+        let response = try await RelayClient(endpoint: endpoint).send(.uploadPrekeys(request))
+
+        XCTAssertEqual(response.type, .error)
+        XCTAssertTrue((response.error ?? "").localizedCaseInsensitiveContains("proof"))
+    }
+
+    func testRelayAcceptsPrekeyUploadWithValidIdentityProof() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39489)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration()
+        )
+        let started = expectation(description: "signed prekey relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let identity = Identity(displayName: "Prekey Owner")
+        let prekeys = try PrekeyState.generate(identity: identity)
+        let bundle = try prekeys.bundle(identity: identity)
+        let unsigned = UploadPrekeyBundleRequest(
+            fingerprint: identity.fingerprint,
+            bundle: bundle
+        )
+        let signedAt = Date()
+        let nonce = UUID()
+        let placeholder = RelayActorProof(
+            fingerprint: identity.fingerprint,
+            publicSigningKey: identity.signingKey.publicKeyData,
+            signedAt: signedAt,
+            nonce: nonce,
+            signature: Data()
+        )
+        let signature = try identity.signingKey.sign(unsigned.signableData(for: placeholder))
+        let proof = RelayActorProof(
+            fingerprint: identity.fingerprint,
+            publicSigningKey: identity.signingKey.publicKeyData,
+            signedAt: signedAt,
+            nonce: nonce,
+            signature: signature
+        )
+        let request = UploadPrekeyBundleRequest(
+            fingerprint: identity.fingerprint,
+            bundle: bundle,
+            actorProof: proof
+        )
+        let client = RelayClient(endpoint: endpoint)
+        let upload = try await client.send(.uploadPrekeys(request))
+        XCTAssertEqual(upload.type, .ok)
+
+        let fetched = try await client.send(
+            .fetchPrekeyBundle(FetchPrekeyBundleRequest(fingerprint: identity.fingerprint))
+        )
+        XCTAssertEqual(fetched.type, .prekeyBundle)
+        XCTAssertEqual(fetched.prekeyBundle?.identityFingerprint, identity.fingerprint)
+    }
+
+    func testRelayLongPollFetchReturnsMessageDeliveredDuringWait() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39491)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil),
+            configuration: RelayConfiguration(
+                wakeSupport: DecentralizedWakeSupport(
+                    mode: .longPoll,
+                    minPollIntervalSeconds: 5,
+                    maxPollIntervalSeconds: 5,
+                    jitterPermille: 0,
+                    longPollTimeoutSeconds: 5
+                )
+            )
+        )
+        let started = expectation(description: "long-poll relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let client = RelayClient(endpoint: endpoint)
+        let accessKey = SigningKeyPair()
+        let inboxId = InboxAddress.derived(from: accessKey.publicKeyData)
+        let identity = Identity(displayName: "Long Poll Owner")
+        let offer = try MessageEngine.makeContactOffer(
+            identity: identity,
+            inboxId: inboxId,
+            relay: endpoint,
+            inboxAccessPublicKey: accessKey.publicKeyData
+        )
+        var registration = RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            contactOffer: offer
+        )
+        let registrationProof = try makeInboxProof(signingKey: accessKey) { proof in
+            try registration.signableData(for: proof)
+        }
+        registration = RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            contactOffer: offer,
+            accessProof: registrationProof
+        )
+        let registrationResponse = try await client.send(.registerInbox(registration))
+        XCTAssertEqual(registrationResponse.type, .ok)
+
+        var fetch = FetchRequest(
+            inboxId: inboxId,
+            routingToken: inboxId,
+            maxCount: 10,
+            longPollTimeoutSeconds: 5
+        )
+        let fetchProof = try makeInboxProof(signingKey: accessKey) { proof in
+            try fetch.signableData(for: proof)
+        }
+        fetch = FetchRequest(
+            inboxId: inboxId,
+            routingToken: inboxId,
+            maxCount: 10,
+            longPollTimeoutSeconds: 5,
+            accessProof: fetchProof
+        )
+        let signedFetch = fetch
+
+        async let fetchResponse = client.send(.fetch(signedFetch), timeout: 7)
+        try await Task.sleep(nanoseconds: 250_000_000)
+        let envelope = Envelope(
+            conversationId: "long-poll",
+            senderFingerprint: "sender",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([1]), tag: Data()),
+            signature: Data([2])
+        )
+        let deliveryResponse = try await client.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: inboxId,
+                    routingToken: inboxId,
+                    envelope: envelope,
+                    destinationRelay: nil
+                )
+            )
+        )
+        XCTAssertEqual(deliveryResponse.type, .delivered)
+
+        let response = try await fetchResponse
+        XCTAssertEqual(response.type, .messages)
+        XCTAssertEqual(response.messages?.map(\.id), [envelope.id])
+    }
+
+    func testRelayStoreAttachmentRoundTrip() async throws {
+        let store = RelayStore()
+        let attachmentId = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0xA5, count: 12),
+            ciphertext: Data([2, 3]),
+            tag: Data(repeating: 0x5A, count: 16)
+        )
+
+        _ = try await store.storeAttachment(
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 60
+        )
+
+        let fetched = try await store.fetchAttachment(attachmentId: attachmentId, chunkIndex: 0)
+        XCTAssertEqual(fetched?.payload, payload)
+    }
+
+    func testRelayStoreCanOffloadAttachmentChunksToExternalBlobStore() async throws {
+        let blobStore = TestAttachmentBlobStore()
+        let store = RelayStore(attachmentBlobStore: blobStore)
+        let attachmentId = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0xA5, count: 12),
+            ciphertext: Data([2, 3, 4]),
+            tag: Data(repeating: 0x5A, count: 16)
+        )
+
+        _ = try await store.storeAttachment(
+            attachmentId: attachmentId,
+            chunkIndex: 1,
+            payload: payload,
+            ttlSeconds: 60
+        )
+
+        let fetched = try await store.fetchAttachment(attachmentId: attachmentId, chunkIndex: 1)
+        XCTAssertEqual(fetched?.payload, payload)
+        XCTAssertEqual(blobStore.putCount, 1)
+        XCTAssertEqual(blobStore.records.values.first?.backend, "test-blob")
+    }
+
+    func testRelayStoreRejectsCorruptExternalAttachmentBlob() async throws {
+        let blobStore = TestAttachmentBlobStore()
+        let store = RelayStore(attachmentBlobStore: blobStore)
+        let attachmentId = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0xA5, count: 12),
+            ciphertext: Data([2, 3, 4]),
+            tag: Data(repeating: 0x5A, count: 16)
+        )
+
+        _ = try await store.storeAttachment(
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 60
+        )
+        blobStore.corruptAll()
+
+        do {
+            _ = try await store.fetchAttachment(attachmentId: attachmentId, chunkIndex: 0)
+            XCTFail("Expected corrupt external attachment blob to be rejected")
+        } catch {
+            XCTAssertTrue(error is AttachmentBlobStoreError || error is RelayStoreError)
+        }
+    }
+
+    func testRelayStoreDiskPersistenceUsesSQLite() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        let requestedURL = tempDirectory.appendingPathComponent("relay_store.json")
+        let sqliteURL = tempDirectory.appendingPathComponent("relay_store.sqlite")
+        defer {
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
+
+        let store = RelayStore(storeURL: requestedURL)
+        let envelope = Envelope(
+            conversationId: "conv",
+            senderFingerprint: "fingerprint",
+            sentAt: Date(),
+            messageCounter: 0,
+            payload: EncryptedPayload(
+                nonce: Data(),
+                ciphertext: Data([0x11, 0x22]),
+                tag: Data()
+            ),
+            signature: Data([0x33, 0x44])
+        )
+
+        _ = try await store.deliver(envelope, to: "sqlite-inbox")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sqliteURL.path))
+        let sqliteHeader = try Data(contentsOf: sqliteURL).prefix(16)
+        XCTAssertEqual(Data("SQLite format 3\0".utf8), Data(sqliteHeader))
+
+        let reloaded = RelayStore(storeURL: requestedURL)
+        try await reloaded.loadFromDisk()
+        let fetched = try await reloaded.fetch(inboxId: "sqlite-inbox")
+        XCTAssertEqual(fetched.count, 1)
+        XCTAssertEqual(fetched.first?.id, envelope.id)
+        XCTAssertEqual(fetched.first?.conversationId, envelope.conversationId)
+        XCTAssertEqual(fetched.first?.senderFingerprint, envelope.senderFingerprint)
+        XCTAssertEqual(fetched.first?.messageCounter, envelope.messageCounter)
+        XCTAssertEqual(fetched.first?.kemCiphertext, envelope.kemCiphertext)
+        XCTAssertEqual(fetched.first?.payload, envelope.payload)
+        XCTAssertEqual(fetched.first?.signature, envelope.signature)
+    }
+
+    func testRelayStoreDiskPersistenceSkipsCorruptNormalizedMessageRow() async throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
+        let requestedURL = tempDirectory.appendingPathComponent("relay_store.json")
+        let sqliteURL = tempDirectory.appendingPathComponent("relay_store.sqlite")
+        let first = Envelope(
+            conversationId: "conv",
+            senderFingerprint: "fingerprint",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([0x01]), tag: Data()),
+            signature: Data([0x11])
+        )
+        let second = Envelope(
+            conversationId: "conv",
+            senderFingerprint: "fingerprint",
+            sentAt: Date(),
+            messageCounter: 2,
+            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([0x02]), tag: Data()),
+            signature: Data([0x22])
+        )
+
+        let writer = RelayStore(storeURL: requestedURL)
+        _ = try await writer.deliver(first, to: "sqlite-inbox")
+        _ = try await writer.deliver(second, to: "sqlite-inbox")
+        try overwriteMailboxEnvelope(at: sqliteURL, envelopeId: second.id, with: Data([0xDE, 0xAD, 0xBE, 0xEF]))
+
+        let reloaded = RelayStore(storeURL: requestedURL)
+        try await reloaded.loadFromDisk()
+        let fetched = try await reloaded.fetch(inboxId: "sqlite-inbox")
+        XCTAssertEqual(fetched.map(\.id), [first.id])
+    }
+
+    func testRelayStoreRejectsInvalidAttachmentPayload() async throws {
+        let store = RelayStore()
+        let attachmentId = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data([1]),
+            ciphertext: Data([2, 3]),
+            tag: Data([4])
+        )
+
+        do {
+            _ = try await store.storeAttachment(
+                attachmentId: attachmentId,
+                chunkIndex: 0,
+                payload: payload,
+                ttlSeconds: 60
+            )
+            XCTFail("Expected invalid attachment payload to be rejected.")
+        } catch RelayStoreError.invalidAttachmentPayload {
+            // Expected.
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    private func overwriteMailboxEnvelope(at sqliteURL: URL, envelopeId: UUID, with data: Data) throws {
+        var db: OpaquePointer?
+        guard sqlite3_open(sqliteURL.path, &db) == SQLITE_OK, let db else {
+            throw NSError(domain: "NoctweaveCoreTests.SQLite", code: 5)
+        }
+        defer { sqlite3_close(db) }
+
+        let sql = "UPDATE relay_mailbox_envelopes SET value = ?1 WHERE envelope_id = ?2;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            throw NSError(domain: "NoctweaveCoreTests.SQLite", code: 6)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        let bindBlobResult = data.withUnsafeBytes { buffer in
+            sqlite3_bind_blob(statement, 1, buffer.baseAddress, Int32(buffer.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        }
+        guard bindBlobResult == SQLITE_OK else {
+            throw NSError(domain: "NoctweaveCoreTests.SQLite", code: 7)
+        }
+        guard sqlite3_bind_text(statement, 2, envelopeId.uuidString, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self)) == SQLITE_OK else {
+            throw NSError(domain: "NoctweaveCoreTests.SQLite", code: 8)
+        }
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw NSError(domain: "NoctweaveCoreTests.SQLite", code: 9)
+        }
+        XCTAssertEqual(sqlite3_changes(db), 1)
+    }
+
+    func testClientStateStoreSaveLoad() async throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let fileURL = temp.appendingPathComponent("state.json")
+        let store = ClientStateStore(fileURL: fileURL, useEncryption: false)
+
+        let state = ClientState(
+            identity: Identity(displayName: "Alice"),
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            inboxId: "inbox"
+        )
+
+        try await store.save(state)
+        let loaded = try await store.load()
+        XCTAssertEqual(loaded?.inboxId, state.inboxId)
+        XCTAssertEqual(loaded?.identity.displayName, state.identity.displayName)
+    }
+
+    func testClientStateStoreEncryptionProtectsPayload() async throws {
+        #if canImport(Security)
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let fileURL = temp.appendingPathComponent("state.json")
+        let store = ClientStateStore(fileURL: fileURL, useEncryption: true)
+
+        let state = ClientState(
+            identity: Identity(displayName: "Alice"),
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            inboxId: "inbox"
+        )
+
+        try await store.save(state)
+        let rawData = try Data(contentsOf: fileURL)
+        let rawString = String(data: rawData, encoding: .utf8) ?? ""
+        XCTAssertFalse(rawString.contains("Alice"))
+        XCTAssertFalse(rawString.contains("inbox"))
+        XCTAssertFalse(rawString.contains("identity"))
+
+        let loaded = try await store.load()
+        XCTAssertEqual(loaded?.identity.displayName, "Alice")
+        XCTAssertEqual(loaded?.inboxId, "inbox")
+        #else
+        throw XCTSkip("Keychain unavailable on this platform.")
+        #endif
+    }
+
+    func testPrivacyDefaultsToSecureTyping() throws {
+        let state = ClientState(
+            identity: Identity(displayName: "Alice"),
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            inboxId: "inbox"
+        )
+        XCTAssertTrue(state.privacy.secureTypingEnabled)
+        XCTAssertFalse(state.privacy.useSecureCameraCapture)
+    }
+
+    func testPrivacySettingsPersist() throws {
+        var state = ClientState(
+            identity: Identity(displayName: "Alice"),
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            inboxId: "inbox"
+        )
+        state.privacy.secureTypingEnabled = false
+        state.privacy.useSecureCameraCapture = true
+        let data = try NoctweaveCoder.encode(state)
+        let decoded = try NoctweaveCoder.decode(ClientState.self, from: data)
+        XCTAssertFalse(decoded.privacy.secureTypingEnabled)
+        XCTAssertTrue(decoded.privacy.useSecureCameraCapture)
+    }
+
+    func testRelayRequestEncoding() throws {
+        let relay = RelayRequest.fetch(FetchRequest(inboxId: "inbox", maxCount: 10))
+        let data = try NoctweaveCoder.encode(relay)
+        let decoded = try NoctweaveCoder.decode(RelayRequest.self, from: data)
+        XCTAssertEqual(decoded, relay)
+    }
+
+    func testRelayRequestAuthTokenInjection() throws {
+        let request = RelayRequest.fetch(FetchRequest(inboxId: "inbox", maxCount: 10))
+        let authenticated = request.withAuthToken("relay-secret")
+        XCTAssertEqual(authenticated.type, .fetch)
+        XCTAssertEqual(authenticated.fetch?.inboxId, "inbox")
+        XCTAssertEqual(authenticated.authToken, "relay-secret")
+    }
+
+    func testRelayInfoAdvertisesPasswordRequirement() throws {
+        let openRelay = RelayConfiguration(accessPassword: nil)
+        XCTAssertEqual(openRelay.makeInfo().requiresPassword, false)
+        XCTAssertEqual(openRelay.makeInfo().attachmentDefaultTTLSeconds, 3600)
+        XCTAssertEqual(openRelay.makeInfo().attachmentMaxTTLSeconds, 21600)
+
+        let protectedRelay = RelayConfiguration(accessPassword: "  relay-secret  ")
+        XCTAssertEqual(protectedRelay.makeInfo().requiresPassword, true)
+
+        let curatedRelay = RelayConfiguration(
+            federation: FederationDescriptor(mode: .curated, name: "mesh-test"),
+            curatedStrictPolicyEnabled: true,
+            curatedCoordinatorQuorum: 2,
+            curatedRequireSignedDirectory: true
+        )
+        let curatedInfo = curatedRelay.makeInfo()
+        XCTAssertEqual(curatedInfo.curatedStrictPolicyEnabled, true)
+        XCTAssertEqual(curatedInfo.curatedCoordinatorQuorum, 2)
+        XCTAssertEqual(curatedInfo.curatedRequireSignedDirectory, true)
+    }
+
+    func testRelayInfoAdvertisesTemporalBucketSchedule() throws {
+        let relay = RelayConfiguration(
+            temporalBucketSeconds: 300,
+            temporalBucketScheduleSeconds: [60, 120, 300],
+            attachmentDefaultTTLSeconds: 1200,
+            attachmentMaxTTLSeconds: 7200
+        )
+        let info = relay.makeInfo()
+        XCTAssertEqual(info.temporalBucketSeconds, 300)
+        XCTAssertEqual(info.temporalBucketScheduleSeconds ?? [], [60, 120, 300])
+        XCTAssertEqual(info.attachmentDefaultTTLSeconds, 1200)
+        XCTAssertEqual(info.attachmentMaxTTLSeconds, 7200)
+
+        let encoded = try NoctweaveCoder.encode(info)
+        let decoded = try NoctweaveCoder.decode(RelayInfo.self, from: encoded)
+        XCTAssertEqual(decoded.temporalBucketScheduleSeconds ?? [], [60, 120, 300])
+        XCTAssertEqual(decoded.attachmentDefaultTTLSeconds, 1200)
+        XCTAssertEqual(decoded.attachmentMaxTTLSeconds, 7200)
+    }
+
+    func testRelayConfigurationNormalizesAttachmentTTLPolicy() {
+        let relay = RelayConfiguration(
+            attachmentDefaultTTLSeconds: 30,
+            attachmentMaxTTLSeconds: 45,
+            attachmentsEnabled: false
+        )
+        XCTAssertEqual(relay.attachmentDefaultTTLSeconds, 60)
+        XCTAssertEqual(relay.attachmentMaxTTLSeconds, 60)
+        XCTAssertEqual(relay.makeInfo().attachmentsEnabled, false)
+    }
+
+    func testRelayHTTPResponsesIncludeSecurityHeaders() {
+        var headerLines: [String] = []
+        RelayHTTPSecurityHeaders.append(to: &headerLines)
+        let headers = Dictionary(
+            uniqueKeysWithValues: headerLines.compactMap { line -> (String, String)? in
+                guard let separator = line.firstIndex(of: ":") else {
+                    return nil
+                }
+                let name = String(line[..<separator]).lowercased()
+                let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+                return (name, value)
+            }
+        )
+
+        XCTAssertEqual(headers["cache-control"], "no-store")
+        XCTAssertEqual(headers["pragma"], "no-cache")
+        XCTAssertEqual(headers["x-content-type-options"], "nosniff")
+        XCTAssertEqual(headers["x-frame-options"], "DENY")
+        XCTAssertEqual(headers["referrer-policy"], "no-referrer")
+        XCTAssertEqual(headers["cross-origin-resource-policy"], "same-origin")
+        XCTAssertEqual(headers["content-security-policy"], "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+        XCTAssertEqual(headers["permissions-policy"], "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+    }
+
+    func testRelayRequestRateLimiterCapsSourceWindow() async {
+        let limiter = RelayRequestRateLimiter(maxRequests: 2, windowSeconds: 60)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+        let first = await limiter.allow(sourceKey: "client-a", now: now)
+        let second = await limiter.allow(sourceKey: "client-a", now: now.addingTimeInterval(1))
+        let capped = await limiter.allow(sourceKey: "client-a", now: now.addingTimeInterval(2))
+        let otherSource = await limiter.allow(sourceKey: "client-b", now: now.addingTimeInterval(2))
+        let afterWindow = await limiter.allow(sourceKey: "client-a", now: now.addingTimeInterval(61))
+
+        XCTAssertTrue(first)
+        XCTAssertTrue(second)
+        XCTAssertFalse(capped)
+        XCTAssertTrue(otherSource)
+        XCTAssertTrue(afterWindow)
+    }
+
+    func testPasswordProtectedRelayEnforcesAuthentication() async throws {
+        let relayPassword = "relay-secret"
+        let serverEndpoint = RelayEndpoint(host: "0.0.0.0", port: 39439)
+        let clientEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39439)
+        let store = RelayStore(storeURL: nil, temporalBucketSeconds: 300)
+        let server = RelayServer(
+            store: store,
+            configuration: RelayConfiguration(accessPassword: relayPassword)
+        )
+        let started = expectation(description: "relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: serverEndpoint.host, port: serverEndpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let client = RelayClient(endpoint: clientEndpoint)
+        let health = try await client.send(.health())
+        XCTAssertEqual(health.type, .ok)
+
+        let inbox = InboxAddress.generate()
+        let request = RelayRequest.deliver(
+            DeliverRequest(
+                inboxId: inbox,
+                routingToken: inbox,
+                envelope: Envelope(
+                    conversationId: "auth-test",
+                    senderFingerprint: "sender",
+                    sentAt: Date(),
+                    messageCounter: 1,
+                    payload: EncryptedPayload(nonce: Data(), ciphertext: Data([1]), tag: Data()),
+                    signature: Data([1])
+                )
+            )
+        )
+        let unauthorized = try await client.send(request)
+        XCTAssertEqual(unauthorized.type, .error)
+        XCTAssertTrue((unauthorized.error ?? "").localizedCaseInsensitiveContains("unauthorized"))
+
+        let authenticatedClient = RelayClient(endpoint: clientEndpoint, authToken: relayPassword)
+        let authorized = try await authenticatedClient.send(request)
+        XCTAssertEqual(authorized.type, .delivered)
+    }
+
+    func testPairRequestFetchRequiresIdentityProof() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39488)
+        let server = RelayServer(store: RelayStore())
+        let started = expectation(description: "pair proof relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let recipient = Identity(displayName: "Recipient")
+        let sender = Identity(displayName: "Sender")
+        let senderOffer = try MessageEngine.makeContactOffer(
+            identity: sender,
+            inboxId: InboxAddress.generate(),
+            relay: endpoint
+        )
+        let client = RelayClient(endpoint: endpoint)
+        let unsignedSendResponse = try await client.send(
+            .sendPairRequest(
+                SendPairRequest(
+                    targetFingerprint: recipient.fingerprint,
+                    offer: senderOffer
+                )
+            )
+        )
+        XCTAssertEqual(unsignedSendResponse.type, .error)
+
+        var sendRequest = SendPairRequest(
+            targetFingerprint: recipient.fingerprint,
+            offer: senderOffer
+        )
+        let sendProof = try makeActorProof(identity: sender) { actorProof in
+            try sendRequest.signableData(for: actorProof)
+        }
+        let redirectedRequest = SendPairRequest(
+            targetFingerprint: Identity(displayName: "Mallory").fingerprint,
+            offer: senderOffer,
+            actorProof: sendProof
+        )
+        let redirectedResponse = try await client.send(.sendPairRequest(redirectedRequest))
+        XCTAssertEqual(redirectedResponse.type, .error)
+
+        sendRequest = SendPairRequest(
+            targetFingerprint: recipient.fingerprint,
+            offer: senderOffer,
+            actorProof: sendProof
+        )
+        let sendResponse = try await client.send(.sendPairRequest(sendRequest))
+        XCTAssertEqual(sendResponse.type, .ok)
+
+        let unsignedResponse = try await client.send(
+            .fetchPairRequests(
+                FetchPairRequestsRequest(
+                    fingerprint: recipient.fingerprint,
+                    maxCount: 10
+                )
+            )
+        )
+        XCTAssertEqual(unsignedResponse.type, .error)
+
+        var signedRequest = FetchPairRequestsRequest(
+            fingerprint: recipient.fingerprint,
+            maxCount: 10
+        )
+        let proof = try makeActorProof(identity: recipient) { actorProof in
+            try signedRequest.signableData(for: actorProof)
+        }
+        signedRequest = FetchPairRequestsRequest(
+            fingerprint: recipient.fingerprint,
+            maxCount: 10,
+            actorProof: proof
+        )
+        let signedResponse = try await client.send(.fetchPairRequests(signedRequest))
+        XCTAssertEqual(signedResponse.type, .pairRequests)
+        XCTAssertEqual(signedResponse.pairRequests?.first?.from.fingerprint, sender.fingerprint)
+    }
+
+    func testInboxRegistrationRequiresIdentityBoundAccessKey() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39489)
+        let server = RelayServer(store: RelayStore())
+        let started = expectation(description: "mailbox binding relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let accessKey = SigningKeyPair()
+        let inboxId = InboxAddress.derived(from: accessKey.publicKeyData)
+        let otherAccessKey = SigningKeyPair()
+        let identity = Identity(displayName: "Mailbox owner")
+        let mismatchedOffer = try MessageEngine.makeContactOffer(
+            identity: identity,
+            inboxId: inboxId,
+            relay: endpoint,
+            inboxAccessPublicKey: otherAccessKey.publicKeyData
+        )
+        let client = RelayClient(endpoint: endpoint)
+
+        var missingOffer = RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessKey.publicKeyData
+        )
+        let missingProof = try makeInboxProof(signingKey: accessKey) { proof in
+            try missingOffer.signableData(for: proof)
+        }
+        missingOffer = RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            accessProof: missingProof
+        )
+        let missingResponse = try await client.send(.registerInbox(missingOffer))
+        XCTAssertEqual(missingResponse.type, .error)
+
+        var mismatched = RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            contactOffer: mismatchedOffer
+        )
+        let mismatchedProof = try makeInboxProof(signingKey: accessKey) { proof in
+            try mismatched.signableData(for: proof)
+        }
+        mismatched = RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            contactOffer: mismatchedOffer,
+            accessProof: mismatchedProof
+        )
+        let mismatchedResponse = try await client.send(.registerInbox(mismatched))
+        XCTAssertEqual(mismatchedResponse.type, .error)
+    }
+
+    func testRelayStoreGroupLifecycle() async throws {
+        let store = RelayStore()
+        let creator = "creator-fingerprint"
+        let memberA = "member-a"
+        let memberB = "member-b"
+
+        let created = try await store.createGroup(
+            title: "Ops",
+            creatorFingerprint: creator,
+            memberFingerprints: [memberA]
+        )
+        XCTAssertEqual(created.title, "Ops")
+        XCTAssertTrue(created.members.contains(where: { $0.fingerprint == creator }))
+        XCTAssertTrue(created.members.contains(where: { $0.fingerprint == memberA }))
+        XCTAssertEqual(created.mlsEpochState.epoch, 0)
+        XCTAssertEqual(created.mlsEpochState.lastCommit.operation, .create)
+        XCTAssertEqual(created.mlsEpochState.lastCommit.memberFingerprints, [creator, memberA].sorted())
+        XCTAssertEqual(created.mlsEpochHistory.map(\.epoch), [0])
+        XCTAssertFalse(created.mlsEpochState.confirmedTranscriptHash.isEmpty)
+
+        let listedForCreator = await store.listGroups(memberFingerprint: creator)
+        XCTAssertEqual(listedForCreator.count, 1)
+        XCTAssertEqual(listedForCreator[0].id, created.id)
+
+        let updated = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: created.id,
+                actorFingerprint: creator,
+                title: "Ops Team",
+                addMemberFingerprints: [memberB],
+                groupCommit: SignedGroupCommit(
+                    operation: .update,
+                    groupId: created.id,
+                    actorFingerprint: creator,
+                    baseEpoch: created.epoch,
+                    previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                    title: "Ops Team",
+                    addMemberFingerprints: [memberB]
+                )
+            )
+        )
+        XCTAssertEqual(updated.title, "Ops Team")
+        XCTAssertTrue(updated.members.contains(where: { $0.fingerprint == memberB }))
+        XCTAssertEqual(updated.epoch, 1)
+        XCTAssertEqual(updated.mlsEpochState.epoch, 1)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.operation, .update)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.previousTranscriptHash, created.mlsEpochState.confirmedTranscriptHash)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.memberFingerprints, [creator, memberA, memberB].sorted())
+        XCTAssertEqual(updated.mlsEpochHistory.map(\.epoch), [0, 1])
+    }
+
+    func testRelayStoreBoundsGroupEpochHistoryToRecentContiguousCommits() async throws {
+        let store = RelayStore()
+        let creator = "creator-fingerprint"
+        let member = "member-a"
+
+        var current = try await store.createGroup(
+            title: "History 0",
+            creatorFingerprint: creator,
+            memberFingerprints: [member]
+        )
+
+        for index in 1...70 {
+            let title = "History \(index)"
+            current = try await store.updateGroup(
+                UpdateGroupRequest(
+                    groupId: current.id,
+                    actorFingerprint: creator,
+                    title: title,
+                    groupCommit: SignedGroupCommit(
+                        operation: .update,
+                        groupId: current.id,
+                        actorFingerprint: creator,
+                        baseEpoch: current.epoch,
+                        previousTranscriptHash: current.mlsEpochState.confirmedTranscriptHash,
+                        title: title
+                    )
+                )
+            )
+        }
+
+        XCTAssertEqual(current.epoch, 70)
+        XCTAssertEqual(current.mlsEpochHistory.count, 64)
+        XCTAssertEqual(current.mlsEpochHistory.map(\.epoch), Array(UInt64(7)...UInt64(70)))
+        XCTAssertEqual(current.mlsEpochHistory.last?.transcriptHash, current.mlsEpochState.confirmedTranscriptHash)
+        XCTAssertTrue(
+            MLSGroupEpochHistoryValidator.isValid(
+                currentState: current.mlsEpochState,
+                history: current.mlsEpochHistory
+            )
+        )
+    }
+
+    func testMLSGroupEpochHistoryValidatorRejectsMalformedHistory() async throws {
+        let store = RelayStore()
+        let creator = "creator-fingerprint"
+        let member = "member-a"
+
+        let created = try await store.createGroup(
+            title: "History 0",
+            creatorFingerprint: creator,
+            memberFingerprints: [member]
+        )
+        let epoch1 = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: created.id,
+                actorFingerprint: creator,
+                title: "History 1",
+                groupCommit: SignedGroupCommit(
+                    operation: .update,
+                    groupId: created.id,
+                    actorFingerprint: creator,
+                    baseEpoch: created.epoch,
+                    previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                    title: "History 1"
+                )
+            )
+        )
+        let epoch2 = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: epoch1.id,
+                actorFingerprint: creator,
+                title: "History 2",
+                groupCommit: SignedGroupCommit(
+                    operation: .update,
+                    groupId: epoch1.id,
+                    actorFingerprint: creator,
+                    baseEpoch: epoch1.epoch,
+                    previousTranscriptHash: epoch1.mlsEpochState.confirmedTranscriptHash,
+                    title: "History 2"
+                )
+            )
+        )
+
+        XCTAssertTrue(
+            MLSGroupEpochHistoryValidator.isValid(
+                currentState: epoch2.mlsEpochState,
+                history: epoch2.mlsEpochHistory
+            )
+        )
+
+        let skippedIssues = MLSGroupEpochHistoryValidator.issues(
+            currentState: epoch2.mlsEpochState,
+            history: [created.mlsEpochState.lastCommit, epoch2.mlsEpochState.lastCommit]
+        )
+        XCTAssertTrue(skippedIssues.contains(.nonContiguousEpoch))
+        XCTAssertTrue(skippedIssues.contains(.brokenTranscriptLink))
+
+        let missingCurrentIssues = MLSGroupEpochHistoryValidator.issues(
+            currentState: epoch2.mlsEpochState,
+            history: [created.mlsEpochState.lastCommit, epoch1.mlsEpochState.lastCommit]
+        )
+        XCTAssertTrue(missingCurrentIssues.contains(.currentCommitMissing))
+        XCTAssertTrue(missingCurrentIssues.contains(.currentStateMismatch))
+    }
+
+    func testRelayStoreRejectsStaleEpochAndMissedTranscriptGroupCommits() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+
+        let created = try await store.createGroup(
+            title: "Ops",
+            creatorFingerprint: creator.fingerprint,
+            memberFingerprints: [member.fingerprint]
+        )
+
+        let currentUpdateCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                title: "Ops Current"
+            ),
+            signer: creator
+        )
+        let updated = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                title: "Ops Current",
+                groupCommit: currentUpdateCommit
+            )
+        )
+        XCTAssertEqual(updated.epoch, 1)
+        XCTAssertEqual(updated.mlsEpochState.lastCommit.previousTranscriptHash, created.mlsEpochState.confirmedTranscriptHash)
+
+        let staleEpochCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                title: "Ops Stale"
+            ),
+            signer: creator
+        )
+        do {
+            _ = try await store.updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    title: "Ops Stale",
+                    groupCommit: staleEpochCommit
+                )
+            )
+            XCTFail("Expected stale epoch commit to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? RelayStoreError, .invalidGroupCommit)
+        }
+
+        let missedTranscriptCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: updated.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                title: "Ops Missed"
+            ),
+            signer: creator
+        )
+        do {
+            _ = try await store.updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    title: "Ops Missed",
+                    groupCommit: missedTranscriptCommit
+                )
+            )
+            XCTFail("Expected missed transcript commit to be rejected.")
+        } catch {
+            XCTAssertEqual(error as? RelayStoreError, .invalidGroupCommit)
+        }
+
+        let final = await store.fetchGroup(groupId: created.id)
+        XCTAssertEqual(final?.title, "Ops Current")
+        XCTAssertEqual(final?.epoch, updated.epoch)
+        XCTAssertEqual(final?.mlsEpochState.confirmedTranscriptHash, updated.mlsEpochState.confirmedTranscriptHash)
+    }
+
+    func testRelayStoreGroupMemberCanLeaveButCannotMutateOthers() async throws {
+        let store = RelayStore()
+        let creator = "creator-fingerprint"
+        let memberA = "member-a"
+        let memberB = "member-b"
+
+        let created = try await store.createGroup(
+            title: "Ops",
+            creatorFingerprint: creator,
+            memberFingerprints: [memberA, memberB]
+        )
+
+        do {
+            _ = try await store.updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: memberA,
+                    title: "Changed by member"
+                )
+            )
+            XCTFail("Expected unauthorized member mutation to fail.")
+        } catch {
+            XCTAssertTrue(error is RelayStoreError)
+        }
+
+        let left = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: created.id,
+                actorFingerprint: memberA,
+                removeMemberFingerprints: [memberA],
+                groupCommit: SignedGroupCommit(
+                    operation: .selfLeave,
+                    groupId: created.id,
+                    actorFingerprint: memberA,
+                    baseEpoch: created.epoch,
+                    previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                    removeMemberFingerprints: [memberA]
+                )
+            )
+        )
+        XCTAssertFalse(left.members.contains(where: { $0.fingerprint == memberA }))
+        XCTAssertTrue(left.members.contains(where: { $0.fingerprint == creator }))
+        XCTAssertTrue(left.members.contains(where: { $0.fingerprint == memberB }))
+        XCTAssertEqual(left.mlsEpochState.epoch, 1)
+        XCTAssertEqual(left.mlsEpochState.lastCommit.operation, .selfLeave)
+        XCTAssertEqual(left.mlsEpochState.lastCommit.previousTranscriptHash, created.mlsEpochState.confirmedTranscriptHash)
+    }
+
+    func testRelayStoreAllowsMemberSelfLeaveFromTwoMemberGroup() async throws {
+        let store = RelayStore()
+        let creator = "creator-fingerprint"
+        let member = "member-a"
+        let created = try await store.createGroup(
+            title: "Ops",
+            creatorFingerprint: creator,
+            memberFingerprints: [member]
+        )
+
+        let left = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: created.id,
+                actorFingerprint: member,
+                removeMemberFingerprints: [member],
+                groupCommit: SignedGroupCommit(
+                    operation: .selfLeave,
+                    groupId: created.id,
+                    actorFingerprint: member,
+                    baseEpoch: created.epoch,
+                    previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                    removeMemberFingerprints: [member]
+                )
+            )
+        )
+
+        XCTAssertFalse(left.members.contains(where: { $0.fingerprint == member }))
+        XCTAssertTrue(left.members.contains(where: { $0.fingerprint == creator }))
+        XCTAssertEqual(left.members.count, 1)
+        XCTAssertEqual(left.mlsEpochState.lastCommit.operation, .selfLeave)
+    }
+
+    func testRelayStoreGroupCreatorCanDelete() async throws {
+        let store = RelayStore()
+        let creator = "creator-fingerprint"
+        let member = "member-a"
+        let created = try await store.createGroup(
+            title: "Ops",
+            creatorFingerprint: creator,
+            memberFingerprints: [member]
+        )
+
+        do {
+            try await store.deleteGroup(
+                DeleteGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: member
+                )
+            )
+            XCTFail("Expected non-creator delete to fail.")
+        } catch {
+            XCTAssertTrue(error is RelayStoreError)
+        }
+
+        try await store.deleteGroup(
+            DeleteGroupRequest(
+                groupId: created.id,
+                actorFingerprint: creator
+            )
+        )
+        let creatorGroups = await store.listGroups(memberFingerprint: creator)
+        XCTAssertTrue(creatorGroups.isEmpty)
+        let memberGroups = await store.listGroups(memberFingerprint: member)
+        XCTAssertTrue(memberGroups.isEmpty)
+    }
+
+    func testRelayStoreGroupJoinRequestLifecycle() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let joiner = Identity(displayName: "Joiner")
+
+        let created = try await store.createGroup(
+            title: "Ops",
+            creatorFingerprint: creator.fingerprint,
+            memberFingerprints: [member.fingerprint]
+        )
+
+        let joinProfile = RelayGroupMemberProfile(
+            fingerprint: joiner.fingerprint,
+            displayName: joiner.displayName,
+            inboxId: InboxAddress.generate(),
+            relay: RelayEndpoint(host: "127.0.0.1", port: 9339),
+            signingPublicKey: joiner.signingKey.publicKeyData,
+            agreementPublicKey: joiner.agreementKey.publicKeyData
+        )
+
+        let requested = try await store.requestGroupJoin(
+            RequestGroupJoinRequest(groupId: created.id, requesterProfile: joinProfile)
+        )
+        XCTAssertEqual(requested.groupId, created.id)
+        XCTAssertEqual(requested.requester.fingerprint, joiner.fingerprint)
+
+        let listed = try await store.listGroupJoinRequests(
+            ListGroupJoinRequestsRequest(groupId: created.id, actorFingerprint: creator.fingerprint)
+        )
+        XCTAssertEqual(listed.count, 1)
+        XCTAssertEqual(listed[0].id, requested.id)
+
+        let joinCommit = try signedJoinApprovalCommit(
+            group: created,
+            joinRequest: requested,
+            signer: creator
+        )
+        let approved = try await store.approveGroupJoin(
+            ApproveGroupJoinRequest(
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                joinRequestId: requested.id,
+                groupCommit: joinCommit
+            )
+        )
+        XCTAssertTrue(approved.members.contains(where: { $0.fingerprint == joiner.fingerprint }))
+
+        let postApprove = try await store.listGroupJoinRequests(
+            ListGroupJoinRequestsRequest(groupId: created.id, actorFingerprint: creator.fingerprint)
+        )
+        XCTAssertTrue(postApprove.isEmpty)
+    }
+
+    func testRelayStoreGroupRejoinAdvancesFromCurrentTranscript() async throws {
+        let store = RelayStore()
+        let creator = Identity(displayName: "Creator")
+        let memberA = Identity(displayName: "Member A")
+        let memberB = Identity(displayName: "Member B")
+        let relay = RelayEndpoint(host: "127.0.0.1", port: 9339)
+
+        let created = try await store.createGroup(
+            title: "Ops",
+            creatorFingerprint: creator.fingerprint,
+            memberFingerprints: [memberA.fingerprint, memberB.fingerprint]
+        )
+
+        let leaveCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .selfLeave,
+                groupId: created.id,
+                actorFingerprint: memberA.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                removeMemberFingerprints: [memberA.fingerprint]
+            ),
+            signer: memberA
+        )
+        let left = try await store.updateGroup(
+            UpdateGroupRequest(
+                groupId: created.id,
+                actorFingerprint: memberA.fingerprint,
+                removeMemberFingerprints: [memberA.fingerprint],
+                groupCommit: leaveCommit
+            )
+        )
+        XCTAssertEqual(left.epoch, 1)
+        XCTAssertFalse(left.members.contains(where: { $0.fingerprint == memberA.fingerprint }))
+        XCTAssertEqual(left.mlsEpochState.lastCommit.operation, .selfLeave)
+
+        let joinProfile = relayGroupMemberProfile(identity: memberA, relay: relay)
+        let requested = try await store.requestGroupJoin(
+            RequestGroupJoinRequest(groupId: left.id, requesterProfile: joinProfile)
+        )
+        XCTAssertEqual(requested.requester.fingerprint, memberA.fingerprint)
+
+        let rejoinCommit = try signedJoinApprovalCommit(
+            group: left,
+            joinRequest: requested,
+            signer: creator
+        )
+        let rejoined = try await store.approveGroupJoin(
+            ApproveGroupJoinRequest(
+                groupId: left.id,
+                actorFingerprint: creator.fingerprint,
+                joinRequestId: requested.id,
+                groupCommit: rejoinCommit
+            )
+        )
+
+        XCTAssertEqual(rejoined.epoch, 2)
+        XCTAssertTrue(rejoined.members.contains(where: { $0.fingerprint == memberA.fingerprint }))
+        XCTAssertTrue(rejoined.members.contains(where: { $0.fingerprint == memberB.fingerprint }))
+        XCTAssertEqual(rejoined.mlsEpochState.lastCommit.operation, .joinApprove)
+        XCTAssertEqual(rejoined.mlsEpochState.lastCommit.previousTranscriptHash, left.mlsEpochState.confirmedTranscriptHash)
+        XCTAssertNotEqual(rejoined.mlsEpochState.confirmedTranscriptHash, left.mlsEpochState.confirmedTranscriptHash)
+
+        let pending = try await store.listGroupJoinRequests(
+            ListGroupJoinRequestsRequest(groupId: left.id, actorFingerprint: creator.fingerprint)
+        )
+        XCTAssertTrue(pending.isEmpty)
+        let groupsForMemberA = await store.listGroups(memberFingerprint: memberA.fingerprint)
+        XCTAssertEqual(groupsForMemberA.map(\.id), [created.id])
+    }
+
+    func testRelayServerGroupJoinRoutes() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39442)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "join route relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let joiner = Identity(displayName: "Joiner")
+        let client = RelayClient(endpoint: endpoint)
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+
+        let createRequest = try signedCreateGroupRequest(
+            CreateGroupRequest(
+                title: "Federated",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: creatorProfile
+            ),
+            signer: creator
+        )
+        let createResponse = try await client.send(
+            .createGroup(createRequest)
+        )
+        XCTAssertEqual(createResponse.type, .group)
+        guard let group = createResponse.group else {
+            XCTFail("Expected group in create response.")
+            return
+        }
+
+        let anonymousLookup = try await client.send(
+            .getGroup(GetGroupRequest(groupId: group.id))
+        )
+        XCTAssertEqual(anonymousLookup.type, .error)
+
+        let signedLookup = try signedGetGroupRequest(
+            GetGroupRequest(groupId: group.id, memberFingerprint: creator.fingerprint),
+            signer: creator
+        )
+        let lookupResponse = try await client.send(.getGroup(signedLookup))
+        XCTAssertEqual(lookupResponse.type, .group)
+        XCTAssertEqual(lookupResponse.group?.id, group.id)
+
+        let joinProfile = relayGroupMemberProfile(identity: joiner, relay: endpoint)
+        let requestJoin = try signedRequestGroupJoinRequest(
+            RequestGroupJoinRequest(groupId: group.id, requesterProfile: joinProfile),
+            signer: joiner
+        )
+        let requestJoinResponse = try await client.send(
+            .requestGroupJoin(requestJoin)
+        )
+        XCTAssertEqual(requestJoinResponse.type, .groupJoinRequests)
+        guard let joinRequest = requestJoinResponse.groupJoinRequests?.first else {
+            XCTFail("Expected a join request payload.")
+            return
+        }
+
+        let listJoin = try signedListGroupJoinRequestsRequest(
+            ListGroupJoinRequestsRequest(groupId: group.id, actorFingerprint: creator.fingerprint),
+            signer: creator
+        )
+        let listResponse = try await client.send(
+            .listGroupJoinRequests(listJoin)
+        )
+        XCTAssertEqual(listResponse.type, .groupJoinRequests)
+        XCTAssertEqual(listResponse.groupJoinRequests?.count, 1)
+
+        let unsignedCommit = SignedGroupCommit(
+            operation: .joinApprove,
+            groupId: group.id,
+            actorFingerprint: creator.fingerprint,
+            baseEpoch: group.epoch,
+            previousTranscriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            addMemberFingerprints: [joinRequest.requester.fingerprint],
+            addMemberProfiles: [joinRequest.requester]
+        )
+        let badApproveJoin = try signedApproveGroupJoinRequest(
+            ApproveGroupJoinRequest(
+                groupId: group.id,
+                actorFingerprint: creator.fingerprint,
+                joinRequestId: joinRequest.id,
+                groupCommit: unsignedCommit
+            ),
+            signer: creator
+        )
+        let badApproveResponse = try await client.send(
+            .approveGroupJoin(badApproveJoin)
+        )
+        XCTAssertEqual(badApproveResponse.type, .error)
+
+        let joinCommit = try signedJoinApprovalCommit(
+            group: group,
+            joinRequest: joinRequest,
+            signer: creator
+        )
+        let approveJoin = try signedApproveGroupJoinRequest(
+            ApproveGroupJoinRequest(
+                groupId: group.id,
+                actorFingerprint: creator.fingerprint,
+                joinRequestId: joinRequest.id,
+                groupCommit: joinCommit
+            ),
+            signer: creator
+        )
+        let approveResponse = try await client.send(
+            .approveGroupJoin(approveJoin)
+        )
+        XCTAssertEqual(approveResponse.type, .group)
+        XCTAssertTrue(approveResponse.group?.members.contains(where: { $0.fingerprint == joiner.fingerprint }) ?? false)
+    }
+
+    func testRelayServerGroupRatchetMessageRoutes() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39444)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "group ratchet route relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let nonMember = Identity(displayName: "Outsider")
+        let client = RelayClient(endpoint: endpoint)
+        let createRequest = try signedCreateGroupRequest(
+            CreateGroupRequest(
+                title: "Ratchet",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: relayGroupMemberProfile(identity: creator, relay: endpoint),
+                memberProfiles: [relayGroupMemberProfile(identity: member, relay: endpoint)]
+            ),
+            signer: creator
+        )
+        let createResponse = try await client.send(.createGroup(createRequest))
+        XCTAssertEqual(createResponse.type, .group)
+        guard let group = createResponse.group else {
+            XCTFail("Expected group in create response.")
+            return
+        }
+
+        let groupSecret = Data(repeating: 0x33, count: 32)
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        var memberRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: member.fingerprint
+        )
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("one group ciphertext"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+
+        let deliverResponse = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: group.id,
+                    groupInboxId: group.inboxId,
+                    envelope: envelope
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .delivered)
+
+        let rejectedFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: nonMember.fingerprint
+                    ),
+                    signer: nonMember
+                )
+            )
+        )
+        XCTAssertEqual(rejectedFetch.type, .error)
+
+        let fetchResponse = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: member.fingerprint
+                    ),
+                    signer: member
+                )
+            )
+        )
+        XCTAssertEqual(fetchResponse.type, .groupMessages)
+        XCTAssertEqual(fetchResponse.groupMessages?.count, 1)
+        let fetchedEnvelope = try XCTUnwrap(fetchResponse.groupMessages?.first)
+        let body = try GroupRatchet.decrypt(
+            envelope: fetchedEnvelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &memberRatchet
+        )
+        XCTAssertEqual(body, .text("one group ciphertext"))
+
+        let acknowledgementResponse = try await client.send(
+            .acknowledgeGroupMessages(
+                try signedAcknowledgeGroupMessagesRequest(
+                    AcknowledgeGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        messageIds: [fetchedEnvelope.id],
+                        actorFingerprint: member.fingerprint
+                    ),
+                    signer: member
+                )
+            )
+        )
+        XCTAssertEqual(acknowledgementResponse.type, .ok)
+
+        let emptyFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: member.fingerprint
+                    ),
+                    signer: member
+                )
+            )
+        )
+        XCTAssertEqual(emptyFetch.type, .groupMessages)
+        XCTAssertTrue(emptyFetch.groupMessages?.isEmpty ?? false)
+    }
+
+    func testFederatedRelaysSupportGroupRatchetMessageDelivery() async throws {
+        let federation = FederationDescriptor(mode: .open, name: "group-mesh")
+        let relayAEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39530)
+        let relayBEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39531)
+        let relayA = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                groupCreationMode: .allowed,
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let relayB = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                groupCreationMode: .allowed,
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let startedA = expectation(description: "group relay A started")
+        relayA.onEvent = { (event: RelayServer.Event) in
+            if case .started = event {
+                startedA.fulfill()
+            }
+        }
+        let startedB = expectation(description: "group relay B started")
+        relayB.onEvent = { (event: RelayServer.Event) in
+            if case .started = event {
+                startedB.fulfill()
+            }
+        }
+        try relayA.start(host: "0.0.0.0", port: relayAEndpoint.port)
+        try relayB.start(host: "0.0.0.0", port: relayBEndpoint.port)
+        defer {
+            relayA.stop()
+            relayB.stop()
+        }
+        await fulfillment(of: [startedA, startedB], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator Relay A")
+        let member = Identity(displayName: "Member Relay B")
+        let relayAClient = RelayClient(endpoint: relayAEndpoint)
+        let relayBClient = RelayClient(endpoint: relayBEndpoint)
+
+        let createResponse = try await relayBClient.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        title: "Federated Group",
+                        creatorFingerprint: creator.fingerprint,
+                        memberFingerprints: [member.fingerprint],
+                        creatorProfile: relayGroupMemberProfile(identity: creator, relay: relayAEndpoint),
+                        memberProfiles: [relayGroupMemberProfile(identity: member, relay: relayBEndpoint)]
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        XCTAssertEqual(createResponse.type, .group)
+        let group = try XCTUnwrap(createResponse.group)
+
+        let groupSecret = Data(SHA256.hash(data: Data("federated group shared secret".utf8)))
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        var memberRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: member.fingerprint
+        )
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("hello across group federation"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let deliverResponse = try await relayAClient.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: group.id,
+                    groupInboxId: group.inboxId,
+                    envelope: envelope,
+                    destinationRelay: relayBEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .delivered)
+        XCTAssertEqual(deliverResponse.delivered?.storedCount, 1)
+
+        let fetchedAtRelayB = try await relayBClient.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: member.fingerprint
+                    ),
+                    signer: member
+                )
+            )
+        )
+        XCTAssertEqual(fetchedAtRelayB.type, .groupMessages)
+        let fetchedEnvelope = try XCTUnwrap(fetchedAtRelayB.groupMessages?.first)
+        let body = try GroupRatchet.decrypt(
+            envelope: fetchedEnvelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &memberRatchet
+        )
+        XCTAssertEqual(body, .text("hello across group federation"))
+    }
+
+    func testRelayServerGroupAcknowledgementsAreMemberScoped() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39510)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "member-scoped group ack relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let memberA = Identity(displayName: "Member A")
+        let memberB = Identity(displayName: "Member B")
+        let client = RelayClient(endpoint: endpoint)
+        let createResponse = try await client.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        title: "Scoped Ack",
+                        creatorFingerprint: creator.fingerprint,
+                        memberFingerprints: [memberA.fingerprint, memberB.fingerprint],
+                        creatorProfile: relayGroupMemberProfile(identity: creator, relay: endpoint),
+                        memberProfiles: [
+                            relayGroupMemberProfile(identity: memberA, relay: endpoint),
+                            relayGroupMemberProfile(identity: memberB, relay: endpoint)
+                        ]
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        XCTAssertEqual(createResponse.type, .group)
+        let group = try XCTUnwrap(createResponse.group)
+        let groupSecret = Data(SHA256.hash(data: Data("member scoped group ack secret".utf8)))
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        var memberARatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: memberA.fingerprint
+        )
+        var memberBRatchet = GroupRatchetState.initialize(
+            groupId: group.id,
+            epoch: group.epoch,
+            transcriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: groupSecret,
+            localSenderFingerprint: memberB.fingerprint
+        )
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("deliver to both recipients"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let deliver = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: group.id,
+                    groupInboxId: group.inboxId,
+                    envelope: envelope
+                )
+            )
+        )
+        XCTAssertEqual(deliver.type, .delivered)
+
+        let memberAFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: memberA.fingerprint
+                    ),
+                    signer: memberA
+                )
+            )
+        )
+        let memberAEnvelope = try XCTUnwrap(memberAFetch.groupMessages?.first)
+        XCTAssertEqual(
+            try GroupRatchet.decrypt(
+                envelope: memberAEnvelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &memberARatchet
+            ),
+            .text("deliver to both recipients")
+        )
+        let memberAAck = try await client.send(
+            .acknowledgeGroupMessages(
+                try signedAcknowledgeGroupMessagesRequest(
+                    AcknowledgeGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        messageIds: [memberAEnvelope.id],
+                        actorFingerprint: memberA.fingerprint
+                    ),
+                    signer: memberA
+                )
+            )
+        )
+        XCTAssertEqual(memberAAck.type, .ok)
+
+        let memberAAfterAck = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: memberA.fingerprint
+                    ),
+                    signer: memberA
+                )
+            )
+        )
+        XCTAssertTrue(memberAAfterAck.groupMessages?.isEmpty ?? false)
+
+        let memberBFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: group.id,
+                        groupInboxId: group.inboxId,
+                        actorFingerprint: memberB.fingerprint
+                    ),
+                    signer: memberB
+                )
+            )
+        )
+        let memberBEnvelope = try XCTUnwrap(memberBFetch.groupMessages?.first)
+        XCTAssertEqual(memberBEnvelope.id, envelope.id)
+        XCTAssertEqual(
+            try GroupRatchet.decrypt(
+                envelope: memberBEnvelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &memberBRatchet
+            ),
+            .text("deliver to both recipients")
+        )
+    }
+
+    func testOfflineGroupMemberRefreshesEpochAndRetrievesAttachmentAfterPeerAck() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39511)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "offline group attachment relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let memberA = Identity(displayName: "Member A")
+        let memberB = Identity(displayName: "Offline Member B")
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+        let memberAProfile = relayGroupMemberProfile(identity: memberA, relay: endpoint)
+        let memberBProfile = relayGroupMemberProfile(identity: memberB, relay: endpoint)
+        let client = RelayClient(endpoint: endpoint)
+        let groupId = UUID()
+        let epoch0Secret = Data(SHA256.hash(data: Data("group epoch 0 secret".utf8)))
+        let initialDistribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: [creatorProfile, memberAProfile, memberBProfile]
+        )
+        let createResponse = try await client.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        groupId: groupId,
+                        title: "Offline Attachments",
+                        creatorFingerprint: creator.fingerprint,
+                        memberFingerprints: [memberA.fingerprint, memberB.fingerprint],
+                        creatorProfile: creatorProfile,
+                        memberProfiles: [memberAProfile, memberBProfile],
+                        initialRatchetSecretDistribution: initialDistribution
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        XCTAssertEqual(createResponse.type, .group)
+        let created = try XCTUnwrap(createResponse.group)
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        var memberARatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: memberA.fingerprint
+        )
+        var memberBRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: memberB.fingerprint
+        )
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("group epoch 1 secret after title commit".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: created.id,
+            epoch: created.epoch + 1,
+            operation: .update,
+            recipients: [creatorProfile, memberAProfile, memberBProfile]
+        )
+        let updateCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                title: "Offline Attachments v2",
+                ratchetSecretDistribution: epoch1Distribution
+            ),
+            signer: creator
+        )
+        let updateResponse = try await client.send(
+            .updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    title: "Offline Attachments v2",
+                    groupCommit: updateCommit
+                )
+            )
+        )
+        XCTAssertEqual(updateResponse.type, .group)
+        let updated = try XCTUnwrap(updateResponse.group)
+        XCTAssertEqual(updated.epoch, created.epoch + 1)
+        try creatorRatchet.advanceEpoch(
+            to: updated.epoch,
+            transcriptHash: updated.mlsEpochState.confirmedTranscriptHash,
+            commitSecret: epoch1Secret
+        )
+        try memberARatchet.advanceEpoch(
+            to: updated.epoch,
+            transcriptHash: updated.mlsEpochState.confirmedTranscriptHash,
+            commitSecret: epoch1Secret
+        )
+
+        let plaintext = Data("offline member image bytes".utf8)
+        let attachmentId = UUID()
+        let prepared = try GroupRatchet.prepareMessageKey(
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let descriptor = AttachmentDescriptor(
+            id: attachmentId,
+            fileName: "offline.jpg",
+            mimeType: "image/jpeg",
+            byteCount: plaintext.count,
+            sha256: AttachmentCrypto.sha256(plaintext),
+            chunkCount: 1,
+            chunkSize: 64 * 1024
+        )
+        let chunkAAD = AttachmentCrypto.authenticatedData(
+            conversationId: "group:\(created.id.uuidString)",
+            sessionId: "epoch:\(updated.epoch):\(updated.mlsEpochState.confirmedTranscriptHash.base64EncodedString())",
+            messageCounter: prepared.counter,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            byteCount: plaintext.count
+        )
+        let encryptedChunk = try AttachmentCrypto.encryptChunk(
+            plaintext: plaintext,
+            messageKey: prepared.key,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            authenticatedData: chunkAAD
+        )
+        let uploadChunk = try await client.send(
+            .uploadAttachment(
+                UploadAttachmentRequest(
+                    attachmentId: attachmentId,
+                    chunkIndex: 0,
+                    payload: encryptedChunk,
+                    ttlSeconds: 600
+                )
+            )
+        )
+        XCTAssertEqual(uploadChunk.type, .attachment)
+        let attachmentEnvelope = try GroupRatchet.encrypt(
+            body: .attachment(descriptor),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            messageCounter: prepared.counter,
+            messageKey: prepared.key,
+            state: creatorRatchet
+        )
+        let deliver = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: updated.id,
+                    groupInboxId: updated.inboxId,
+                    envelope: attachmentEnvelope
+                )
+            )
+        )
+        XCTAssertEqual(deliver.type, .delivered)
+
+        let memberAFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: updated.id,
+                        groupInboxId: updated.inboxId,
+                        actorFingerprint: memberA.fingerprint
+                    ),
+                    signer: memberA
+                )
+            )
+        )
+        let memberAEnvelope = try XCTUnwrap(memberAFetch.groupMessages?.first)
+        let memberADecrypted = try GroupRatchet.decryptWithKey(
+            envelope: memberAEnvelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &memberARatchet
+        )
+        XCTAssertEqual(memberADecrypted.body, .attachment(descriptor))
+        let memberAAck = try await client.send(
+            .acknowledgeGroupMessages(
+                try signedAcknowledgeGroupMessagesRequest(
+                    AcknowledgeGroupMessagesRequest(
+                        groupId: updated.id,
+                        groupInboxId: updated.inboxId,
+                        messageIds: [memberAEnvelope.id],
+                        actorFingerprint: memberA.fingerprint
+                    ),
+                    signer: memberA
+                )
+            )
+        )
+        XCTAssertEqual(memberAAck.type, .ok)
+
+        let staleMemberBFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: updated.id,
+                        groupInboxId: updated.inboxId,
+                        actorFingerprint: memberB.fingerprint
+                    ),
+                    signer: memberB
+                )
+            )
+        )
+        let memberBEnvelope = try XCTUnwrap(staleMemberBFetch.groupMessages?.first)
+        XCTAssertThrowsError(
+            try GroupRatchet.decryptWithKey(
+                envelope: memberBEnvelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &memberBRatchet
+            )
+        )
+
+        let refreshedGroupResponse = try await client.send(
+            .getGroup(
+                try signedGetGroupRequest(
+                    GetGroupRequest(groupId: updated.id, memberFingerprint: memberB.fingerprint),
+                    signer: memberB
+                )
+            )
+        )
+        let refreshedGroup = try XCTUnwrap(refreshedGroupResponse.group)
+        let refreshedSecret = try XCTUnwrap(
+            refreshedGroup.mlsEpochState.lastCommit.ratchetSecretDistribution?
+                .openSecret(recipientFingerprint: memberB.fingerprint, agreementKey: memberB.agreementKey)
+        )
+        XCTAssertEqual(refreshedSecret, epoch1Secret)
+        try memberBRatchet.advanceEpoch(
+            to: refreshedGroup.epoch,
+            transcriptHash: refreshedGroup.mlsEpochState.confirmedTranscriptHash,
+            commitSecret: refreshedSecret
+        )
+        let memberBDecrypted = try GroupRatchet.decryptWithKey(
+            envelope: memberBEnvelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &memberBRatchet
+        )
+        XCTAssertEqual(memberBDecrypted.body, .attachment(descriptor))
+
+        let fetchedChunkResponse = try await client.send(
+            .fetchAttachment(FetchAttachmentRequest(attachmentId: attachmentId, chunkIndex: 0))
+        )
+        let fetchedChunk = try XCTUnwrap(fetchedChunkResponse.attachment)
+        let recovered = try AttachmentCrypto.decryptChunk(
+            payload: fetchedChunk.payload,
+            messageKey: memberBDecrypted.messageKey,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            authenticatedData: chunkAAD
+        )
+        XCTAssertEqual(recovered, plaintext)
+    }
+
+    func testOfflineGroupMemberReplaysMultipleEpochDistributionsBeforeDecrypting() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39512)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "long offline group relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Long Offline")
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+        let memberProfile = relayGroupMemberProfile(identity: member, relay: endpoint)
+        let client = RelayClient(endpoint: endpoint)
+        let epoch0Secret = Data(SHA256.hash(data: Data("long offline epoch 0 secret".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
+            epoch: 0,
+            operation: .create,
+            recipients: [creatorProfile, memberProfile]
+        )
+        let groupId = epoch0Distribution.groupId
+        let create = try signedCreateGroupRequest(
+            CreateGroupRequest(
+                groupId: groupId,
+                title: "Long Offline",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: creatorProfile,
+                memberProfiles: [memberProfile],
+                initialRatchetSecretDistribution: epoch0Distribution
+            ),
+            signer: creator
+        )
+        let createResponse = try await client.send(.createGroup(create))
+        XCTAssertEqual(createResponse.type, .group)
+        let created = try XCTUnwrap(createResponse.group)
+        XCTAssertEqual(created.mlsEpochHistory.map(\.epoch), [0])
+
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        var offlineMemberRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("long offline epoch 1 secret".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: created.id,
+            epoch: created.epoch + 1,
+            operation: .update,
+            recipients: [creatorProfile, memberProfile]
+        )
+        let epoch1Commit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                title: "Long Offline 1",
+                ratchetSecretDistribution: epoch1Distribution
+            ),
+            signer: creator
+        )
+        let epoch1Response = try await client.send(
+            .updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    title: "Long Offline 1",
+                    groupCommit: epoch1Commit
+                )
+            )
+        )
+        let epoch1Group = try XCTUnwrap(epoch1Response.group)
+        try creatorRatchet.advanceEpoch(
+            to: epoch1Group.epoch,
+            transcriptHash: epoch1Group.mlsEpochState.confirmedTranscriptHash,
+            commitSecret: epoch1Secret
+        )
+
+        let epoch2Secret = Data(SHA256.hash(data: Data("long offline epoch 2 secret".utf8)))
+        let epoch2Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch2Secret,
+            groupId: created.id,
+            epoch: epoch1Group.epoch + 1,
+            operation: .update,
+            recipients: [creatorProfile, memberProfile]
+        )
+        let epoch2Commit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .update,
+                groupId: created.id,
+                actorFingerprint: creator.fingerprint,
+                baseEpoch: epoch1Group.epoch,
+                previousTranscriptHash: epoch1Group.mlsEpochState.confirmedTranscriptHash,
+                title: "Long Offline 2",
+                ratchetSecretDistribution: epoch2Distribution
+            ),
+            signer: creator
+        )
+        let epoch2Response = try await client.send(
+            .updateGroup(
+                UpdateGroupRequest(
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    title: "Long Offline 2",
+                    groupCommit: epoch2Commit
+                )
+            )
+        )
+        let epoch2Group = try XCTUnwrap(epoch2Response.group)
+        try creatorRatchet.advanceEpoch(
+            to: epoch2Group.epoch,
+            transcriptHash: epoch2Group.mlsEpochState.confirmedTranscriptHash,
+            commitSecret: epoch2Secret
+        )
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("message after two missed epochs"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let deliver = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: epoch2Group.id,
+                    groupInboxId: epoch2Group.inboxId,
+                    envelope: envelope
+                )
+            )
+        )
+        XCTAssertEqual(deliver.type, .delivered)
+
+        let staleFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: epoch2Group.id,
+                        groupInboxId: epoch2Group.inboxId,
+                        actorFingerprint: member.fingerprint
+                    ),
+                    signer: member
+                )
+            )
+        )
+        let staleEnvelope = try XCTUnwrap(staleFetch.groupMessages?.first)
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: staleEnvelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &offlineMemberRatchet
+            )
+        )
+
+        let refreshedResponse = try await client.send(
+            .getGroup(
+                try signedGetGroupRequest(
+                    GetGroupRequest(groupId: epoch2Group.id, memberFingerprint: member.fingerprint),
+                    signer: member
+                )
+            )
+        )
+        let refreshed = try XCTUnwrap(refreshedResponse.group)
+        XCTAssertEqual(refreshed.mlsEpochHistory.map(\.epoch), [0, 1, 2])
+        offlineMemberRatchet = try XCTUnwrap(
+            GroupRatchetRecovery.state(
+                from: refreshed,
+                identity: member,
+                existing: offlineMemberRatchet
+            )
+        )
+        XCTAssertEqual(offlineMemberRatchet.epoch, epoch2Group.epoch)
+        let recovered = try GroupRatchet.decrypt(
+            envelope: staleEnvelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &offlineMemberRatchet
+        )
+        XCTAssertEqual(recovered, .text("message after two missed epochs"))
+    }
+
+    func testMultipleOfflineGroupMembersReplayRetainedEpochsIndependently() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39513)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "multi offline group relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let memberA = Identity(displayName: "Offline A")
+        let memberB = Identity(displayName: "Offline B")
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+        let memberAProfile = relayGroupMemberProfile(identity: memberA, relay: endpoint)
+        let memberBProfile = relayGroupMemberProfile(identity: memberB, relay: endpoint)
+        let recipients = [creatorProfile, memberAProfile, memberBProfile]
+        let client = RelayClient(endpoint: endpoint)
+        let groupId = UUID(uuidString: "CCCCCCCC-DDDD-EEEE-FFFF-AAAAAAAAAAAA")!
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("multi offline epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let createResponse = try await client.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        groupId: groupId,
+                        title: "Multi Offline",
+                        creatorFingerprint: creator.fingerprint,
+                        memberFingerprints: [memberA.fingerprint, memberB.fingerprint],
+                        creatorProfile: creatorProfile,
+                        memberProfiles: [memberAProfile, memberBProfile],
+                        initialRatchetSecretDistribution: epoch0Distribution
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        let created = try XCTUnwrap(createResponse.group)
+
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        let memberARatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: memberA.fingerprint
+        )
+        let memberBRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: memberB.fingerprint
+        )
+
+        var latestGroup = created
+        for epoch in UInt64(1)...2 {
+            let secret = Data(SHA256.hash(data: Data("multi offline epoch \(epoch)".utf8)))
+            let distribution = try GroupRatchetEpochSecretDistribution.seal(
+                secret: secret,
+                groupId: created.id,
+                epoch: latestGroup.epoch + 1,
+                operation: .update,
+                recipients: recipients
+            )
+            let commit = try signedGroupCommit(
+                SignedGroupCommit(
+                    operation: .update,
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    baseEpoch: latestGroup.epoch,
+                    previousTranscriptHash: latestGroup.mlsEpochState.confirmedTranscriptHash,
+                    title: "Multi Offline \(epoch)",
+                    ratchetSecretDistribution: distribution
+                ),
+                signer: creator
+            )
+            let response = try await client.send(
+                .updateGroup(
+                    UpdateGroupRequest(
+                        groupId: created.id,
+                        actorFingerprint: creator.fingerprint,
+                        title: "Multi Offline \(epoch)",
+                        groupCommit: commit
+                    )
+                )
+            )
+            latestGroup = try XCTUnwrap(response.group)
+            try creatorRatchet.advanceEpoch(
+                to: latestGroup.epoch,
+                transcriptHash: latestGroup.mlsEpochState.confirmedTranscriptHash,
+                commitSecret: secret
+            )
+        }
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("message after shared outage"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        let delivered = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: latestGroup.id,
+                    groupInboxId: latestGroup.inboxId,
+                    envelope: envelope
+                )
+            )
+        )
+        XCTAssertEqual(delivered.type, .delivered)
+
+        for (member, staleRatchet) in [(memberA, memberARatchet), (memberB, memberBRatchet)] {
+            let fetch = try await client.send(
+                .fetchGroupMessages(
+                    try signedFetchGroupMessagesRequest(
+                        FetchGroupMessagesRequest(
+                            groupId: latestGroup.id,
+                            groupInboxId: latestGroup.inboxId,
+                            actorFingerprint: member.fingerprint
+                        ),
+                        signer: member
+                    )
+                )
+            )
+            let fetchedEnvelope = try XCTUnwrap(fetch.groupMessages?.first)
+            var unrecovered = staleRatchet
+            XCTAssertThrowsError(
+                try GroupRatchet.decrypt(
+                    envelope: fetchedEnvelope,
+                    senderPublicSigningKey: creator.signingKey.publicKeyData,
+                    state: &unrecovered
+                )
+            )
+
+            let refreshedResponse = try await client.send(
+                .getGroup(
+                    try signedGetGroupRequest(
+                        GetGroupRequest(groupId: latestGroup.id, memberFingerprint: member.fingerprint),
+                        signer: member
+                    )
+                )
+            )
+            let refreshed = try XCTUnwrap(refreshedResponse.group)
+            XCTAssertEqual(refreshed.mlsEpochHistory.map(\.epoch), [0, 1, 2])
+
+            var recoveredRatchet = try XCTUnwrap(
+                GroupRatchetRecovery.state(
+                    from: refreshed,
+                    identity: member,
+                    existing: staleRatchet
+                )
+            )
+            XCTAssertEqual(recoveredRatchet.epoch, latestGroup.epoch)
+            let recovered = try GroupRatchet.decrypt(
+                envelope: fetchedEnvelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &recoveredRatchet
+            )
+            XCTAssertEqual(recovered, .text("message after shared outage"))
+        }
+    }
+
+    func testOfflineGroupMemberFailsClosedWhenRetainedEpochWindowExpires() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39514)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "expired epoch history group relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Expired Offline")
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+        let memberProfile = relayGroupMemberProfile(identity: member, relay: endpoint)
+        let recipients = [creatorProfile, memberProfile]
+        let client = RelayClient(endpoint: endpoint)
+        let groupId = UUID(uuidString: "DDDDDDDD-EEEE-FFFF-AAAA-BBBBBBBBBBBB")!
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("expired window epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let createdResponse = try await client.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        groupId: groupId,
+                        title: "Expired Window",
+                        creatorFingerprint: creator.fingerprint,
+                        memberFingerprints: [member.fingerprint],
+                        creatorProfile: creatorProfile,
+                        memberProfiles: [memberProfile],
+                        initialRatchetSecretDistribution: epoch0Distribution
+                    ),
+                    signer: creator
+                )
+            )
+        )
+        let created = try XCTUnwrap(createdResponse.group)
+        let staleMemberRatchet = GroupRatchetState.initialize(
+            groupId: created.id,
+            epoch: created.epoch,
+            transcriptHash: created.mlsEpochState.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        var latestGroup = created
+        for epoch in UInt64(1)...65 {
+            let secret = Data(SHA256.hash(data: Data("expired window epoch \(epoch)".utf8)))
+            let distribution = try GroupRatchetEpochSecretDistribution.seal(
+                secret: secret,
+                groupId: created.id,
+                epoch: latestGroup.epoch + 1,
+                operation: .update,
+                recipients: recipients
+            )
+            let commit = try signedGroupCommit(
+                SignedGroupCommit(
+                    operation: .update,
+                    groupId: created.id,
+                    actorFingerprint: creator.fingerprint,
+                    baseEpoch: latestGroup.epoch,
+                    previousTranscriptHash: latestGroup.mlsEpochState.confirmedTranscriptHash,
+                    title: "Expired Window \(epoch)",
+                    ratchetSecretDistribution: distribution
+                ),
+                signer: creator
+            )
+            let response = try await client.send(
+                .updateGroup(
+                    UpdateGroupRequest(
+                        groupId: created.id,
+                        actorFingerprint: creator.fingerprint,
+                        title: "Expired Window \(epoch)",
+                        groupCommit: commit
+                    )
+                )
+            )
+            latestGroup = try XCTUnwrap(response.group)
+        }
+
+        XCTAssertEqual(latestGroup.epoch, 65)
+        XCTAssertEqual(latestGroup.mlsEpochHistory.count, 64)
+        XCTAssertEqual(latestGroup.mlsEpochHistory.first?.epoch, 2)
+
+        let refreshedResponse = try await client.send(
+            .getGroup(
+                try signedGetGroupRequest(
+                    GetGroupRequest(groupId: latestGroup.id, memberFingerprint: member.fingerprint),
+                    signer: member
+                )
+            )
+        )
+        let refreshed = try XCTUnwrap(refreshedResponse.group)
+        XCTAssertEqual(refreshed.mlsEpochHistory.first?.epoch, 2)
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: refreshed,
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+    }
+
+    func testRelayServerDeleteGroupRoute() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39443)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "delete route relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let client = RelayClient(endpoint: endpoint)
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+        let memberProfile = relayGroupMemberProfile(identity: member, relay: endpoint)
+
+        let createRequest = try signedCreateGroupRequest(
+            CreateGroupRequest(
+                title: "Disposable",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: creatorProfile,
+                memberProfiles: [memberProfile]
+            ),
+            signer: creator
+        )
+        let createResponse = try await client.send(
+            .createGroup(createRequest)
+        )
+        XCTAssertEqual(createResponse.type, .group)
+        guard let group = createResponse.group else {
+            XCTFail("Expected group in create response.")
+            return
+        }
+
+        let memberDelete = try signedDeleteGroupRequest(
+            DeleteGroupRequest(
+                groupId: group.id,
+                actorFingerprint: member.fingerprint
+            ),
+            signer: member
+        )
+        let unauthorizedDelete = try await client.send(
+            .deleteGroup(memberDelete)
+        )
+        XCTAssertEqual(unauthorizedDelete.type, .error)
+        XCTAssertTrue((unauthorizedDelete.error ?? "").localizedCaseInsensitiveContains("unauthorized"))
+
+        let creatorDelete = try signedDeleteGroupRequest(
+            DeleteGroupRequest(
+                groupId: group.id,
+                actorFingerprint: creator.fingerprint
+            ),
+            signer: creator
+        )
+        let deleteResponse = try await client.send(
+            .deleteGroup(creatorDelete)
+        )
+        XCTAssertEqual(deleteResponse.type, .ok)
+
+        let creatorList = try signedListGroupsRequest(
+            ListGroupsRequest(memberFingerprint: creator.fingerprint, limit: 32),
+            signer: creator
+        )
+        let creatorGroups = try await client.send(
+            .listGroups(creatorList)
+        )
+        XCTAssertEqual(creatorGroups.type, .groups)
+        XCTAssertTrue((creatorGroups.groups ?? []).isEmpty)
+
+        let memberList = try signedListGroupsRequest(
+            ListGroupsRequest(memberFingerprint: member.fingerprint, limit: 32),
+            signer: member
+        )
+        let memberGroups = try await client.send(
+            .listGroups(memberList)
+        )
+        XCTAssertEqual(memberGroups.type, .groups)
+        XCTAssertTrue((memberGroups.groups ?? []).isEmpty)
+    }
+
+    func testRelayServerRejectsReplayedActorProof() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39479)
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "replay guard relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "0.0.0.0", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let client = RelayClient(endpoint: endpoint)
+        let creatorProfile = relayGroupMemberProfile(identity: creator, relay: endpoint)
+
+        let signedCreate = try signedCreateGroupRequest(
+            CreateGroupRequest(
+                title: "Replay Guard",
+                creatorFingerprint: creator.fingerprint,
+                memberFingerprints: [member.fingerprint],
+                creatorProfile: creatorProfile
+            ),
+            signer: creator
+        )
+
+        let first = try await client.send(.createGroup(signedCreate))
+        XCTAssertEqual(first.type, .group)
+
+        let replay = try await client.send(.createGroup(signedCreate))
+        XCTAssertEqual(replay.type, .error)
+        XCTAssertTrue((replay.error ?? "").localizedCaseInsensitiveContains("replay"))
+    }
+
+    func testRelayServerGroupCreationPolicyIsEnforced() async throws {
+        let disabledEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39440)
+        let disabledServer = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .disabled)
+        )
+        let startedDisabled = expectation(description: "disabled relay started")
+        disabledServer.onEvent = { event in
+            if case .started = event {
+                startedDisabled.fulfill()
+            }
+        }
+        try disabledServer.start(host: "0.0.0.0", port: disabledEndpoint.port)
+        defer { disabledServer.stop() }
+        await fulfillment(of: [startedDisabled], timeout: 2.0)
+
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Member")
+        let disabledClient = RelayClient(endpoint: disabledEndpoint)
+        let unsignedRequest = CreateGroupRequest(
+            title: "Team",
+            creatorFingerprint: creator.fingerprint,
+            memberFingerprints: [member.fingerprint],
+            creatorProfile: relayGroupMemberProfile(identity: creator, relay: disabledEndpoint),
+            memberProfiles: [relayGroupMemberProfile(identity: member, relay: disabledEndpoint)]
+        )
+        let createRequest = RelayRequest.createGroup(
+            try signedCreateGroupRequest(unsignedRequest, signer: creator)
+        )
+        let disabledResponse = try await disabledClient.send(createRequest)
+        XCTAssertEqual(disabledResponse.type, .error)
+        XCTAssertTrue((disabledResponse.error ?? "").localizedCaseInsensitiveContains("disabled"))
+
+        let enabledEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39441)
+        let enabledServer = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let startedEnabled = expectation(description: "enabled relay started")
+        enabledServer.onEvent = { event in
+            if case .started = event {
+                startedEnabled.fulfill()
+            }
+        }
+        try enabledServer.start(host: "0.0.0.0", port: enabledEndpoint.port)
+        defer { enabledServer.stop() }
+        await fulfillment(of: [startedEnabled], timeout: 2.0)
+
+        let enabledClient = RelayClient(endpoint: enabledEndpoint)
+        let enabledResponse = try await enabledClient.send(createRequest)
+        XCTAssertEqual(enabledResponse.type, .group)
+        XCTAssertEqual(enabledResponse.group?.title, "Team")
+        XCTAssertNotNil(enabledResponse.group?.inboxId)
+    }
+
+    private func relayGroupMemberProfile(
+        identity: Identity,
+        relay: RelayEndpoint = RelayEndpoint(host: "127.0.0.1", port: 9339)
+    ) -> RelayGroupMemberProfile {
+        RelayGroupMemberProfile(
+            fingerprint: identity.fingerprint,
+            displayName: identity.displayName,
+            inboxId: InboxAddress.generate(),
+            relay: relay,
+            signingPublicKey: identity.signingKey.publicKeyData,
+            agreementPublicKey: identity.agreementKey.publicKeyData
+        )
+    }
+
+    private func signedCreateGroupRequest(_ request: CreateGroupRequest, signer: Identity) throws -> CreateGroupRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return CreateGroupRequest(
+            groupId: request.groupId,
+            title: request.title,
+            creatorFingerprint: request.creatorFingerprint,
+            memberFingerprints: request.memberFingerprints,
+            creatorProfile: request.creatorProfile,
+            memberProfiles: request.memberProfiles,
+            initialRatchetSecretDistribution: request.initialRatchetSecretDistribution,
+            creatorProof: proof
+        )
+    }
+
+    private func signedRequestGroupJoinRequest(
+        _ request: RequestGroupJoinRequest,
+        signer: Identity
+    ) throws -> RequestGroupJoinRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return RequestGroupJoinRequest(
+            groupId: request.groupId,
+            requesterProfile: request.requesterProfile,
+            requesterProof: proof
+        )
+    }
+
+    private func signedListGroupJoinRequestsRequest(
+        _ request: ListGroupJoinRequestsRequest,
+        signer: Identity
+    ) throws -> ListGroupJoinRequestsRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return ListGroupJoinRequestsRequest(
+            groupId: request.groupId,
+            actorFingerprint: request.actorFingerprint,
+            limit: request.limit,
+            actorProof: proof
+        )
+    }
+
+    private func signedApproveGroupJoinRequest(
+        _ request: ApproveGroupJoinRequest,
+        signer: Identity
+    ) throws -> ApproveGroupJoinRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return ApproveGroupJoinRequest(
+            groupId: request.groupId,
+            actorFingerprint: request.actorFingerprint,
+            joinRequestId: request.joinRequestId,
+            groupCommit: request.groupCommit,
+            actorProof: proof
+        )
+    }
+
+    private func signedFetchGroupMessagesRequest(
+        _ request: FetchGroupMessagesRequest,
+        signer: Identity
+    ) throws -> FetchGroupMessagesRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return FetchGroupMessagesRequest(
+            groupId: request.groupId,
+            groupInboxId: request.groupInboxId,
+            maxCount: request.maxCount,
+            longPollTimeoutSeconds: request.longPollTimeoutSeconds,
+            actorFingerprint: request.actorFingerprint,
+            actorProof: proof
+        )
+    }
+
+    private func signedAcknowledgeGroupMessagesRequest(
+        _ request: AcknowledgeGroupMessagesRequest,
+        signer: Identity
+    ) throws -> AcknowledgeGroupMessagesRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return AcknowledgeGroupMessagesRequest(
+            groupId: request.groupId,
+            groupInboxId: request.groupInboxId,
+            messageIds: request.messageIds,
+            actorFingerprint: request.actorFingerprint,
+            actorProof: proof
+        )
+    }
+
+    private func signedJoinApprovalCommit(
+        group: RelayGroupDescriptor,
+        joinRequest: RelayGroupJoinRequest,
+        signer: Identity
+    ) throws -> SignedGroupCommit {
+        var commit = SignedGroupCommit(
+            operation: .joinApprove,
+            groupId: group.id,
+            actorFingerprint: signer.fingerprint,
+            baseEpoch: group.epoch,
+            previousTranscriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            addMemberFingerprints: [joinRequest.requester.fingerprint],
+            addMemberProfiles: [joinRequest.requester]
+        )
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try commit.signableData(for: actorProof)
+        }
+        commit = SignedGroupCommit(
+            operation: commit.operation,
+            groupId: commit.groupId,
+            actorFingerprint: commit.actorFingerprint,
+            baseEpoch: commit.baseEpoch,
+            previousTranscriptHash: commit.previousTranscriptHash,
+            title: commit.title,
+            addMemberFingerprints: commit.addMemberFingerprints,
+            addMemberProfiles: commit.addMemberProfiles,
+            removeMemberFingerprints: commit.removeMemberFingerprints,
+            ratchetSecretDistribution: commit.ratchetSecretDistribution,
+            actorProof: proof
+        )
+        return commit
+    }
+
+    private func signedGroupCommit(_ commit: SignedGroupCommit, signer: Identity) throws -> SignedGroupCommit {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try commit.signableData(for: actorProof)
+        }
+        return SignedGroupCommit(
+            operation: commit.operation,
+            groupId: commit.groupId,
+            actorFingerprint: commit.actorFingerprint,
+            baseEpoch: commit.baseEpoch,
+            previousTranscriptHash: commit.previousTranscriptHash,
+            title: commit.title,
+            addMemberFingerprints: commit.addMemberFingerprints,
+            addMemberProfiles: commit.addMemberProfiles,
+            removeMemberFingerprints: commit.removeMemberFingerprints,
+            ratchetSecretDistribution: commit.ratchetSecretDistribution,
+            actorProof: proof
+        )
+    }
+
+    private func signedDeleteGroupRequest(_ request: DeleteGroupRequest, signer: Identity) throws -> DeleteGroupRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return DeleteGroupRequest(
+            groupId: request.groupId,
+            actorFingerprint: request.actorFingerprint,
+            actorProof: proof
+        )
+    }
+
+    private func signedListGroupsRequest(_ request: ListGroupsRequest, signer: Identity) throws -> ListGroupsRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return ListGroupsRequest(
+            memberFingerprint: request.memberFingerprint,
+            limit: request.limit,
+            memberProof: proof
+        )
+    }
+
+    private func signedGetGroupRequest(_ request: GetGroupRequest, signer: Identity) throws -> GetGroupRequest {
+        let proof = try makeActorProof(identity: signer) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        return GetGroupRequest(
+            groupId: request.groupId,
+            memberFingerprint: request.memberFingerprint,
+            memberProof: proof
+        )
+    }
+
+    private func makeActorProof(
+        identity: Identity,
+        signableDataBuilder: (RelayActorProof) throws -> Data
+    ) throws -> RelayActorProof {
+        let signedAt = Date()
+        let nonce = UUID()
+        let placeholder = RelayActorProof(
+            fingerprint: identity.fingerprint,
+            publicSigningKey: identity.signingKey.publicKeyData,
+            signedAt: signedAt,
+            nonce: nonce,
+            signature: Data()
+        )
+        let signableData = try signableDataBuilder(placeholder)
+        let signature = try identity.signingKey.sign(signableData)
+        return RelayActorProof(
+            fingerprint: identity.fingerprint,
+            publicSigningKey: identity.signingKey.publicKeyData,
+            signedAt: signedAt,
+            nonce: nonce,
+            signature: signature
+        )
+    }
+
+    func testCoordinatorRegistersAndListsFederationNodes() async throws {
+        let coordinatorEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39464)
+        let nodeEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39463)
+        let federation = FederationDescriptor(mode: .curated, name: "mesh-a")
+        let coordinator = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .coordinator,
+                federation: federation
+            )
+        )
+        let nodeRelay = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                temporalBucketSeconds: 120
+            )
+        )
+        let started = expectation(description: "coordinator started")
+        coordinator.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        let startedNode = expectation(description: "node relay started")
+        nodeRelay.onEvent = { event in
+            if case .started = event {
+                startedNode.fulfill()
+            }
+        }
+        try coordinator.start(host: "0.0.0.0", port: coordinatorEndpoint.port)
+        try nodeRelay.start(host: "0.0.0.0", port: nodeEndpoint.port)
+        defer { coordinator.stop() }
+        defer { nodeRelay.stop() }
+        await fulfillment(of: [started, startedNode], timeout: 5.0)
+
+        let client = RelayClient(endpoint: coordinatorEndpoint)
+        let nodeInfo = RelayConfiguration(
+            kind: .standard,
+            federation: federation,
+            temporalBucketSeconds: 120
+        ).makeInfo()
+
+        let registerResponse = try await client.send(
+            .registerFederationNode(
+                FederationNodeRegistrationRequest(
+                    endpoint: nodeEndpoint,
+                    relayInfo: nodeInfo,
+                    ttlSeconds: 120
+                )
+            )
+        )
+        XCTAssertEqual(registerResponse.type, .federationNodes)
+        XCTAssertEqual(registerResponse.federationNodes?.first?.endpoint, nodeEndpoint)
+
+        let listResponse = try await client.send(
+            .listFederationNodes(
+                ListFederationNodesRequest(
+                    mode: .curated,
+                    federationName: "mesh-a",
+                    onlyHealthy: true,
+                    requireSignedSnapshot: true
+                )
+            )
+        )
+        XCTAssertEqual(listResponse.type, .federationNodes)
+        XCTAssertEqual(listResponse.federationNodes?.count, 1)
+        XCTAssertEqual(listResponse.federationNodes?.first?.endpoint, nodeEndpoint)
+        let snapshot = try XCTUnwrap(listResponse.federationSnapshot)
+        XCTAssertGreaterThan(snapshot.validUntil, Date())
+
+        let infoResponse = try await client.send(.info())
+        XCTAssertEqual(infoResponse.type, .info)
+        XCTAssertEqual(infoResponse.relayInfo?.kind, .coordinator)
+        XCTAssertEqual(infoResponse.relayInfo?.coordinatorReportedRelayCount, 1)
+        let publicKey = try XCTUnwrap(infoResponse.relayInfo?.federationDirectoryPublicKey)
+        XCTAssertTrue(FederationDirectorySignature.verify(snapshot: snapshot, trustedPublicKey: publicKey))
+    }
+
+    func testCoordinatorRegistrationTokenIsEnforcedWhenConfigured() async throws {
+        let coordinatorEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39486)
+        let nodeEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39487)
+        let token = "mesh-secret-token"
+        let federation = FederationDescriptor(mode: .curated, name: "mesh-token")
+        let coordinator = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .coordinator,
+                federation: federation,
+                coordinatorRegistrationToken: token
+            )
+        )
+        let nodeRelay = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation
+            )
+        )
+        let started = expectation(description: "coordinator token started")
+        coordinator.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        let startedNode = expectation(description: "coordinator token node started")
+        nodeRelay.onEvent = { event in
+            if case .started = event {
+                startedNode.fulfill()
+            }
+        }
+        try coordinator.start(host: "0.0.0.0", port: coordinatorEndpoint.port)
+        try nodeRelay.start(host: "0.0.0.0", port: nodeEndpoint.port)
+        defer { coordinator.stop() }
+        defer { nodeRelay.stop() }
+        await fulfillment(of: [started, startedNode], timeout: 2.0)
+
+        let client = RelayClient(endpoint: coordinatorEndpoint)
+        let request = RelayRequest.registerFederationNode(
+            FederationNodeRegistrationRequest(
+                endpoint: nodeEndpoint,
+                relayInfo: RelayConfiguration(
+                    kind: .standard,
+                    federation: federation
+                ).makeInfo(),
+                ttlSeconds: 120
+            )
+        )
+
+        let unauthorized = try await client.send(request)
+        XCTAssertEqual(unauthorized.type, .error)
+        XCTAssertEqual(unauthorized.error, "Unauthorized: coordinator registration token is required.")
+
+        let wrongToken = try await client.send(request.withAuthToken("wrong-token"))
+        XCTAssertEqual(wrongToken.type, .error)
+        XCTAssertEqual(wrongToken.error, "Unauthorized: coordinator registration token is required.")
+
+        let authorized = try await client.send(request.withAuthToken(token))
+        XCTAssertEqual(authorized.type, .federationNodes)
+        XCTAssertEqual(authorized.federationNodes?.count, 1)
+    }
+
+    func testFederationNodeListingRespectsMaxStaleness() async throws {
+        let store = RelayStore(storeURL: nil, temporalBucketSeconds: 300)
+        let federation = FederationDescriptor(mode: .open, name: "mesh-stale")
+        let endpoint = RelayEndpoint(host: "relay-stale.example", port: 9339)
+        let info = RelayConfiguration(kind: .standard, federation: federation).makeInfo(now: Date())
+        _ = try await store.registerFederationNode(
+            FederationNodeRegistrationRequest(
+                endpoint: endpoint,
+                relayInfo: info,
+                ttlSeconds: 120
+            )
+        )
+        try await Task.sleep(nanoseconds: 2_100_000_000)
+        let staleFiltered = await store.listFederationNodes(
+            ListFederationNodesRequest(
+                mode: .open,
+                federationName: "mesh-stale",
+                onlyHealthy: true,
+                maxStalenessSeconds: 1
+            )
+        )
+        XCTAssertTrue(staleFiltered.isEmpty)
+    }
+
+    func testCuratedRelayForwardsUsingCoordinatorDirectory() async throws {
+        let federation = FederationDescriptor(mode: .curated, name: "mesh-b")
+        let coordinatorPrivateKey = FederationDirectorySignature.privateKeyData(from: nil)
+        let coordinatorPublicKey = try XCTUnwrap(FederationDirectorySignature.publicKeyData(from: coordinatorPrivateKey))
+        let coordinatorEndpoint = RelayEndpoint(
+            host: "127.0.0.1",
+            port: 39465,
+            directorySigningPublicKey: coordinatorPublicKey
+        )
+        let relayXEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39466)
+        let relayYEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39467)
+
+        let coordinator = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .coordinator,
+                federation: federation,
+                coordinatorDirectorySigningPrivateKey: coordinatorPrivateKey
+            )
+        )
+        let relayX = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                federationCoordinatorEndpoints: [coordinatorEndpoint],
+                curatedStrictPolicyEnabled: true,
+                curatedCoordinatorQuorum: 1,
+                curatedRequireSignedDirectory: true,
+                federationAllowList: [relayYEndpoint]
+            )
+        )
+        let relayY = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation
+            )
+        )
+
+        let startedCoordinator = expectation(description: "coordinator started")
+        coordinator.onEvent = { event in
+            if case .started = event {
+                startedCoordinator.fulfill()
+            }
+        }
+        let startedX = expectation(description: "relay x started")
+        relayX.onEvent = { event in
+            if case .started = event {
+                startedX.fulfill()
+            }
+        }
+        let startedY = expectation(description: "relay y started")
+        relayY.onEvent = { event in
+            if case .started = event {
+                startedY.fulfill()
+            }
+        }
+
+        try coordinator.start(host: "0.0.0.0", port: coordinatorEndpoint.port)
+        try relayX.start(host: "0.0.0.0", port: relayXEndpoint.port)
+        try relayY.start(host: "0.0.0.0", port: relayYEndpoint.port)
+        defer {
+            relayX.stop()
+            relayY.stop()
+            coordinator.stop()
+        }
+        await fulfillment(of: [startedCoordinator, startedX, startedY], timeout: 2.0)
+
+        let coordinatorClient = RelayClient(endpoint: coordinatorEndpoint)
+        _ = try await coordinatorClient.send(
+            .registerFederationNode(
+                FederationNodeRegistrationRequest(
+                    endpoint: relayYEndpoint,
+                    relayInfo: RelayConfiguration(
+                        kind: .standard,
+                        federation: federation
+                    ).makeInfo(),
+                    ttlSeconds: 120
+                )
+            )
+        )
+
+        let destinationAccessKey = SigningKeyPair()
+        let destinationInbox = InboxAddress.derived(from: destinationAccessKey.publicKeyData)
+        let envelope = Envelope(
+            conversationId: "federated-test",
+            senderFingerprint: "sender-fp",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x01, count: 12),
+                ciphertext: Data([0xDE, 0xAD, 0xBE, 0xEF]),
+                tag: Data(repeating: 0x02, count: 16)
+            ),
+            signature: Data([0xAA])
+        )
+
+        let xClient = RelayClient(endpoint: relayXEndpoint)
+        let deliverResponse = try await xClient.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: destinationInbox,
+                    routingToken: destinationInbox,
+                    envelope: envelope,
+                    destinationRelay: relayYEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .delivered)
+
+        let yClient = RelayClient(endpoint: relayYEndpoint)
+        let fetchResponse = try await registerAndFetch(
+            client: yClient,
+            inboxId: destinationInbox,
+            accessKey: destinationAccessKey,
+            maxCount: 10
+        )
+        XCTAssertEqual(fetchResponse.type, .messages)
+        XCTAssertEqual(fetchResponse.messages?.count, 1)
+        XCTAssertEqual(fetchResponse.messages?.first?.id, envelope.id)
+    }
+
+    func testCuratedStrictPolicyRejectsDestinationOutsideAllowList() async throws {
+        let federation = FederationDescriptor(mode: .curated, name: "mesh-c")
+        let coordinatorPrivateKey = FederationDirectorySignature.privateKeyData(from: nil)
+        let coordinatorPublicKey = try XCTUnwrap(FederationDirectorySignature.publicKeyData(from: coordinatorPrivateKey))
+        let coordinatorEndpoint = RelayEndpoint(
+            host: "127.0.0.1",
+            port: 39468,
+            directorySigningPublicKey: coordinatorPublicKey
+        )
+        let relayXEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39469)
+        let relayYEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39470)
+        let nonMatchingAllowListEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39999)
+
+        let coordinator = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .coordinator,
+                federation: federation,
+                coordinatorDirectorySigningPrivateKey: coordinatorPrivateKey
+            )
+        )
+        let relayX = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                federationCoordinatorEndpoints: [coordinatorEndpoint],
+                curatedStrictPolicyEnabled: true,
+                curatedCoordinatorQuorum: 1,
+                curatedRequireSignedDirectory: true,
+                federationAllowList: [nonMatchingAllowListEndpoint]
+            )
+        )
+        let relayY = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation
+            )
+        )
+
+        let startedCoordinator = expectation(description: "coordinator strict allowlist started")
+        coordinator.onEvent = { event in
+            if case .started = event {
+                startedCoordinator.fulfill()
+            }
+        }
+        let startedX = expectation(description: "relay x strict allowlist started")
+        relayX.onEvent = { event in
+            if case .started = event {
+                startedX.fulfill()
+            }
+        }
+        let startedY = expectation(description: "relay y strict allowlist started")
+        relayY.onEvent = { event in
+            if case .started = event {
+                startedY.fulfill()
+            }
+        }
+
+        try coordinator.start(host: "0.0.0.0", port: coordinatorEndpoint.port)
+        try relayX.start(host: "0.0.0.0", port: relayXEndpoint.port)
+        try relayY.start(host: "0.0.0.0", port: relayYEndpoint.port)
+        defer {
+            relayX.stop()
+            relayY.stop()
+            coordinator.stop()
+        }
+        await fulfillment(of: [startedCoordinator, startedX, startedY], timeout: 2.0)
+
+        let coordinatorClient = RelayClient(endpoint: coordinatorEndpoint)
+        _ = try await coordinatorClient.send(
+            .registerFederationNode(
+                FederationNodeRegistrationRequest(
+                    endpoint: relayYEndpoint,
+                    relayInfo: RelayConfiguration(
+                        kind: .standard,
+                        federation: federation
+                    ).makeInfo(),
+                    ttlSeconds: 120
+                )
+            )
+        )
+
+        let destinationInbox = InboxAddress.generate()
+        let envelope = Envelope(
+            conversationId: "strict-allowlist-test",
+            senderFingerprint: "sender-fp",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x01, count: 12),
+                ciphertext: Data([0x11, 0x22, 0x33]),
+                tag: Data(repeating: 0x02, count: 16)
+            ),
+            signature: Data([0xAA])
+        )
+
+        let xClient = RelayClient(endpoint: relayXEndpoint)
+        let deliverResponse = try await xClient.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: destinationInbox,
+                    routingToken: destinationInbox,
+                    envelope: envelope,
+                    destinationRelay: relayYEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .error)
+        XCTAssertTrue(
+            (deliverResponse.error ?? "").localizedCaseInsensitiveContains("allow list"),
+            "Expected strict curated allow-list failure, got: \(deliverResponse.error ?? "nil")"
+        )
+    }
+
+    func testFederationForwardingDoesNotReuseInboundClientAuthToken() async throws {
+        let federation = FederationDescriptor(mode: .open, name: "mesh-auth-isolation")
+        let relayXEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39475)
+        let relayYEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39476)
+
+        let relayX = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                accessPassword: "client-token",
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let relayY = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                accessPassword: "client-token"
+            )
+        )
+
+        let startedX = expectation(description: "relay x started (auth isolation)")
+        relayX.onEvent = { event in
+            if case .started = event {
+                startedX.fulfill()
+            }
+        }
+        let startedY = expectation(description: "relay y started (auth isolation)")
+        relayY.onEvent = { event in
+            if case .started = event {
+                startedY.fulfill()
+            }
+        }
+
+        try relayX.start(host: "0.0.0.0", port: relayXEndpoint.port)
+        try relayY.start(host: "0.0.0.0", port: relayYEndpoint.port)
+        defer {
+            relayX.stop()
+            relayY.stop()
+        }
+        await fulfillment(of: [startedX, startedY], timeout: 2.0)
+
+        let destinationAccessKey = SigningKeyPair()
+        let destinationInbox = InboxAddress.derived(from: destinationAccessKey.publicKeyData)
+        let envelope = Envelope(
+            conversationId: "forward-auth-isolation",
+            senderFingerprint: "sender-fp",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x01, count: 12),
+                ciphertext: Data([0x01, 0x02, 0x03]),
+                tag: Data(repeating: 0x02, count: 16)
+            ),
+            signature: Data([0xAA])
+        )
+
+        let xClient = RelayClient(endpoint: relayXEndpoint, authToken: "client-token")
+        let deliverResponse = try await xClient.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: destinationInbox,
+                    routingToken: destinationInbox,
+                    envelope: envelope,
+                    destinationRelay: relayYEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .error)
+        XCTAssertTrue((deliverResponse.error ?? "").localizedCaseInsensitiveContains("unauthorized"))
+
+        let yClient = RelayClient(endpoint: relayYEndpoint, authToken: "client-token")
+        let fetchResponse = try await registerAndFetch(
+            client: yClient,
+            inboxId: destinationInbox,
+            accessKey: destinationAccessKey,
+            maxCount: 10
+        )
+        XCTAssertEqual(fetchResponse.type, .messages)
+        XCTAssertEqual(fetchResponse.messages?.count ?? 0, 0)
+    }
+
+    func testFederationForwardingUsesDedicatedInterRelayTokenWhenConfigured() async throws {
+        let federation = FederationDescriptor(mode: .open, name: "mesh-auth-forward")
+        let relayXEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39477)
+        let relayYEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39478)
+
+        let relayX = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                accessPassword: "client-token",
+                federationForwardingAuthToken: "relay-token",
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let relayY = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                accessPassword: "relay-token"
+            )
+        )
+
+        let startedX = expectation(description: "relay x started (forward auth)")
+        relayX.onEvent = { event in
+            if case .started = event {
+                startedX.fulfill()
+            }
+        }
+        let startedY = expectation(description: "relay y started (forward auth)")
+        relayY.onEvent = { event in
+            if case .started = event {
+                startedY.fulfill()
+            }
+        }
+
+        try relayX.start(host: "0.0.0.0", port: relayXEndpoint.port)
+        try relayY.start(host: "0.0.0.0", port: relayYEndpoint.port)
+        defer {
+            relayX.stop()
+            relayY.stop()
+        }
+        await fulfillment(of: [startedX, startedY], timeout: 2.0)
+
+        let destinationAccessKey = SigningKeyPair()
+        let destinationInbox = InboxAddress.derived(from: destinationAccessKey.publicKeyData)
+        let envelope = Envelope(
+            conversationId: "forward-auth-success",
+            senderFingerprint: "sender-fp",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x01, count: 12),
+                ciphertext: Data([0xAA, 0xBB, 0xCC]),
+                tag: Data(repeating: 0x02, count: 16)
+            ),
+            signature: Data([0xAA])
+        )
+
+        let xClient = RelayClient(endpoint: relayXEndpoint, authToken: "client-token")
+        let deliverResponse = try await xClient.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: destinationInbox,
+                    routingToken: destinationInbox,
+                    envelope: envelope,
+                    destinationRelay: relayYEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .delivered)
+        XCTAssertEqual(deliverResponse.delivered?.storedCount, 1)
+
+        let yClient = RelayClient(endpoint: relayYEndpoint, authToken: "relay-token")
+        let fetchResponse = try await registerAndFetch(
+            client: yClient,
+            inboxId: destinationInbox,
+            accessKey: destinationAccessKey,
+            maxCount: 10
+        )
+        XCTAssertEqual(fetchResponse.type, .messages)
+        XCTAssertEqual(fetchResponse.messages?.count, 1)
+        XCTAssertEqual(fetchResponse.messages?.first?.id, envelope.id)
+    }
+
+    func testFederatedRelaysSupportEncryptedRoundTripBetweenClients() async throws {
+        let federation = FederationDescriptor(mode: .open, name: "mesh-client-roundtrip")
+        let relayAEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39520)
+        let relayBEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39521)
+
+        let relayA = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let relayB = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                allowPrivateFederationEndpoints: true
+            )
+        )
+
+        let startedA = expectation(description: "relay A started (client roundtrip)")
+        relayA.onEvent = { event in
+            if case .started = event {
+                startedA.fulfill()
+            }
+        }
+        let startedB = expectation(description: "relay B started (client roundtrip)")
+        relayB.onEvent = { event in
+            if case .started = event {
+                startedB.fulfill()
+            }
+        }
+
+        try relayA.start(host: "0.0.0.0", port: relayAEndpoint.port)
+        try relayB.start(host: "0.0.0.0", port: relayBEndpoint.port)
+        defer {
+            relayA.stop()
+            relayB.stop()
+        }
+        await fulfillment(of: [startedA, startedB], timeout: 2.0)
+
+        let alice = Identity(displayName: "Alice Federation")
+        let bob = Identity(displayName: "Bob Federation")
+        let aliceAccessKey = SigningKeyPair()
+        let bobAccessKey = SigningKeyPair()
+        let aliceInbox = InboxAddress.derived(from: aliceAccessKey.publicKeyData)
+        let bobInbox = InboxAddress.derived(from: bobAccessKey.publicKeyData)
+
+        let bobAsContactForAlice = Contact(
+            displayName: bob.displayName,
+            inboxId: bobInbox,
+            relay: relayBEndpoint,
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceAsContactForBob = Contact(
+            displayName: alice.displayName,
+            inboxId: aliceInbox,
+            relay: relayAEndpoint,
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobAsContactForAlice)
+        var aliceConversation = session.conversation
+        var bobConversation = try MessageEngine.createInboundSession(
+            identity: bob,
+            contact: aliceAsContactForBob,
+            kemCiphertext: session.kemCiphertext
+        )
+
+        let outboundEnvelope = try MessageEngine.encrypt(
+            body: .text("hello-over-federation"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &aliceConversation,
+            kemCiphertext: session.kemCiphertext
+        )
+
+        let relayAClient = RelayClient(endpoint: relayAEndpoint)
+        let deliverToRelayB = try await relayAClient.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: bobInbox,
+                    routingToken: bobInbox,
+                    envelope: outboundEnvelope,
+                    destinationRelay: relayBEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliverToRelayB.type, .delivered)
+
+        let relayBClient = RelayClient(endpoint: relayBEndpoint)
+        let fetchedAtRelayB = try await registerAndFetch(
+            client: relayBClient,
+            inboxId: bobInbox,
+            accessKey: bobAccessKey,
+            maxCount: 10
+        )
+        XCTAssertEqual(fetchedAtRelayB.type, .messages)
+        let receivedAtBob = try XCTUnwrap(fetchedAtRelayB.messages?.first)
+        let decryptedAtBob = try MessageEngine.decrypt(
+            envelope: receivedAtBob,
+            contact: aliceAsContactForBob,
+            conversation: &bobConversation
+        )
+        if case .text(let text) = decryptedAtBob {
+            XCTAssertEqual(text, "hello-over-federation")
+        } else {
+            XCTFail("Expected text message at Bob")
+        }
+
+        let replyEnvelope = try MessageEngine.encrypt(
+            body: .text("ack-from-bob"),
+            senderSigningKey: bob.signingKey,
+            senderFingerprint: bob.fingerprint,
+            conversation: &bobConversation,
+            kemCiphertext: nil
+        )
+
+        let deliverToRelayA = try await relayBClient.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: aliceInbox,
+                    routingToken: aliceInbox,
+                    envelope: replyEnvelope,
+                    destinationRelay: relayAEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliverToRelayA.type, .delivered)
+
+        let fetchedAtRelayA = try await registerAndFetch(
+            client: relayAClient,
+            inboxId: aliceInbox,
+            accessKey: aliceAccessKey,
+            maxCount: 10
+        )
+        XCTAssertEqual(fetchedAtRelayA.type, .messages)
+        let receivedAtAlice = try XCTUnwrap(fetchedAtRelayA.messages?.first)
+        let decryptedAtAlice = try MessageEngine.decrypt(
+            envelope: receivedAtAlice,
+            contact: bobAsContactForAlice,
+            conversation: &aliceConversation
+        )
+        if case .text(let text) = decryptedAtAlice {
+            XCTAssertEqual(text, "ack-from-bob")
+        } else {
+            XCTFail("Expected text message at Alice")
+        }
+    }
+
+    func testCuratedStrictPolicyRequiresCoordinatorQuorum() async throws {
+        let federation = FederationDescriptor(mode: .curated, name: "mesh-d")
+        let coordinatorAPrivateKey = FederationDirectorySignature.privateKeyData(from: nil)
+        let coordinatorAPublicKey = try XCTUnwrap(FederationDirectorySignature.publicKeyData(from: coordinatorAPrivateKey))
+        let coordinatorA = RelayEndpoint(
+            host: "127.0.0.1",
+            port: 39471,
+            directorySigningPublicKey: coordinatorAPublicKey
+        )
+        let coordinatorBPrivateKey = FederationDirectorySignature.privateKeyData(from: nil)
+        let coordinatorBPublicKey = try XCTUnwrap(FederationDirectorySignature.publicKeyData(from: coordinatorBPrivateKey))
+        let coordinatorB = RelayEndpoint(
+            host: "127.0.0.1",
+            port: 39472,
+            directorySigningPublicKey: coordinatorBPublicKey
+        )
+        let relayXEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39473)
+        let relayYEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39474)
+
+        let coordinatorNodeA = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .coordinator,
+                federation: federation,
+                coordinatorDirectorySigningPrivateKey: coordinatorAPrivateKey
+            )
+        )
+        let coordinatorNodeB = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .coordinator,
+                federation: federation,
+                coordinatorDirectorySigningPrivateKey: coordinatorBPrivateKey
+            )
+        )
+        let relayX = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .bridge,
+                federation: federation,
+                federationCoordinatorEndpoints: [coordinatorA, coordinatorB],
+                curatedStrictPolicyEnabled: true,
+                curatedCoordinatorQuorum: 2,
+                curatedRequireSignedDirectory: true,
+                federationAllowList: [relayYEndpoint]
+            )
+        )
+        let relayY = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation
+            )
+        )
+
+        let startedCoordinatorA = expectation(description: "coordinator A started")
+        coordinatorNodeA.onEvent = { event in
+            if case .started = event {
+                startedCoordinatorA.fulfill()
+            }
+        }
+        let startedCoordinatorB = expectation(description: "coordinator B started")
+        coordinatorNodeB.onEvent = { event in
+            if case .started = event {
+                startedCoordinatorB.fulfill()
+            }
+        }
+        let startedX = expectation(description: "relay x strict quorum started")
+        relayX.onEvent = { event in
+            if case .started = event {
+                startedX.fulfill()
+            }
+        }
+        let startedY = expectation(description: "relay y strict quorum started")
+        relayY.onEvent = { event in
+            if case .started = event {
+                startedY.fulfill()
+            }
+        }
+
+        try coordinatorNodeA.start(host: "0.0.0.0", port: coordinatorA.port)
+        try coordinatorNodeB.start(host: "0.0.0.0", port: coordinatorB.port)
+        try relayX.start(host: "0.0.0.0", port: relayXEndpoint.port)
+        try relayY.start(host: "0.0.0.0", port: relayYEndpoint.port)
+        defer {
+            relayX.stop()
+            relayY.stop()
+            coordinatorNodeA.stop()
+            coordinatorNodeB.stop()
+        }
+        await fulfillment(of: [startedCoordinatorA, startedCoordinatorB, startedX, startedY], timeout: 2.0)
+
+        let coordinatorClient = RelayClient(endpoint: coordinatorA)
+        _ = try await coordinatorClient.send(
+            .registerFederationNode(
+                FederationNodeRegistrationRequest(
+                    endpoint: relayYEndpoint,
+                    relayInfo: RelayConfiguration(
+                        kind: .standard,
+                        federation: federation
+                    ).makeInfo(),
+                    ttlSeconds: 120
+                )
+            )
+        )
+
+        let destinationInbox = InboxAddress.generate()
+        let envelope = Envelope(
+            conversationId: "strict-quorum-test",
+            senderFingerprint: "sender-fp",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x01, count: 12),
+                ciphertext: Data([0xAA, 0xBB, 0xCC]),
+                tag: Data(repeating: 0x02, count: 16)
+            ),
+            signature: Data([0xAA])
+        )
+
+        let xClient = RelayClient(endpoint: relayXEndpoint)
+        let deliverResponse = try await xClient.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: destinationInbox,
+                    routingToken: destinationInbox,
+                    envelope: envelope,
+                    destinationRelay: relayYEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliverResponse.type, .error)
+        XCTAssertTrue(
+            (deliverResponse.error ?? "").localizedCaseInsensitiveContains("quorum"),
+            "Expected strict curated quorum failure, got: \(deliverResponse.error ?? "nil")"
+        )
+    }
+
+    func testAttachmentCryptoRoundTrip() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let aliceContact = Contact(
+            displayName: "Alice",
+            inboxId: "alice-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: alice.signingKey.publicKeyData,
+            agreementPublicKey: alice.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var aliceConversation = session.conversation
+        var bobConversation = try MessageEngine.createInboundSession(identity: bob, contact: aliceContact, kemCiphertext: session.kemCiphertext)
+
+        let attachmentId = UUID()
+        let plaintext = Data("image-bytes".utf8)
+        let (counter, messageKey) = try MessageEngine.prepareMessageKey(conversation: &aliceConversation)
+        let receiverKey = try bobConversation.receiveChain.messageKey(for: counter)
+        let aad = AttachmentCrypto.authenticatedData(
+            conversationId: aliceConversation.id,
+            sessionId: aliceConversation.sessionId,
+            messageCounter: counter,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            byteCount: plaintext.count
+        )
+        let encrypted = try AttachmentCrypto.encryptChunk(
+            plaintext: plaintext,
+            messageKey: messageKey,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            authenticatedData: aad
+        )
+        let decrypted = try AttachmentCrypto.decryptChunk(
+            payload: encrypted,
+            messageKey: receiverKey,
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            authenticatedData: aad
+        )
+        XCTAssertEqual(decrypted, plaintext)
+    }
+
+    func testAttachmentMessageBodyRoundTrip() throws {
+        let descriptor = AttachmentDescriptor(
+            fileName: "photo.jpg",
+            mimeType: "image/jpeg",
+            byteCount: 123,
+            sha256: Data([0x01, 0x02]),
+            chunkCount: 1,
+            chunkSize: 123
+        )
+        let body = MessageBody.attachment(descriptor)
+        let data = try NoctweaveCoder.encode(body)
+        let decoded = try NoctweaveCoder.decode(MessageBody.self, from: data)
+        XCTAssertEqual(decoded, body)
+    }
+
+    func testFuzzedDeliveryOrderingAndReplays() throws {
+        let iterations = 8
+        let messageCount = 24
+
+        for seed in 0..<iterations {
+            var rng = SeededGenerator(seed: UInt64(seed + 1))
+            let alice = Identity(displayName: "Alice")
+            let bob = Identity(displayName: "Bob")
+            let bobContact = Contact(
+                displayName: "Bob",
+                inboxId: "bob-inbox",
+                relay: RelayEndpoint(host: "localhost", port: 9339),
+                signingPublicKey: bob.signingKey.publicKeyData,
+                agreementPublicKey: bob.agreementKey.publicKeyData
+            )
+            let aliceContact = Contact(
+                displayName: "Alice",
+                inboxId: "alice-inbox",
+                relay: RelayEndpoint(host: "localhost", port: 9339),
+                signingPublicKey: alice.signingKey.publicKeyData,
+                agreementPublicKey: alice.agreementKey.publicKeyData
+            )
+
+            let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+            var aliceConversation = session.conversation
+            var bobConversation = try MessageEngine.createInboundSession(
+                identity: bob,
+                contact: aliceContact,
+                kemCiphertext: session.kemCiphertext
+            )
+
+            var envelopes: [Envelope] = []
+            for index in 0..<messageCount {
+                let envelope = try MessageEngine.encrypt(
+                    body: .text("msg-\(index)"),
+                    senderSigningKey: alice.signingKey,
+                    senderFingerprint: alice.fingerprint,
+                    conversation: &aliceConversation,
+                    kemCiphertext: index == 0 ? session.kemCiphertext : nil
+                )
+                envelopes.append(envelope)
+            }
+
+            var deliveries: [Int] = []
+            for index in 0..<messageCount {
+                if rng.nextInt(upperBound: 100) < 85 {
+                    deliveries.append(index)
+                }
+                if rng.nextInt(upperBound: 100) < 25 {
+                    deliveries.append(index)
+                }
+            }
+            deliveries.shuffle(using: &rng)
+
+            var seen: Set<Int> = []
+            for index in deliveries {
+                if seen.contains(index) {
+                    XCTAssertThrowsError(
+                        try MessageEngine.decrypt(
+                            envelope: envelopes[index],
+                            contact: aliceContact,
+                            conversation: &bobConversation
+                        )
+                    ) { error in
+                        XCTAssertEqual(error as? CryptoError, .counterReplay)
+                    }
+                } else {
+                    let body = try MessageEngine.decrypt(
+                        envelope: envelopes[index],
+                        contact: aliceContact,
+                        conversation: &bobConversation
+                    )
+                    XCTAssertEqual(body, .text("msg-\(index)"))
+                    seen.insert(index)
+                }
+            }
+        }
+    }
+
+    func testMessageDecodingAllowsMissingOptionalSenderDisplayName() throws {
+        let json = """
+        {
+          "id": "E5C22757-5D8E-4F67-A2C1-73092E5B5E8E",
+          "direction": "received",
+          "body": "hello",
+          "timestamp": "2026-02-16T00:00:00Z",
+          "counter": 1,
+          "isMismatch": false
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let message = try decoder.decode(Message.self, from: Data(json.utf8))
+        XCTAssertNil(message.senderDisplayName)
+        XCTAssertEqual(message.body, "hello")
+    }
+
+    func testClientStateUpsertContactDeduplicatesAndRemapsReferences() {
+        let identity = Identity(displayName: "Owner")
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        var state = ClientState(identity: identity, relay: relay, inboxId: "owner-inbox")
+
+        let peerIdentity = Identity(displayName: "Peer")
+        let sharedSigning = peerIdentity.signingKey.publicKeyData
+        let sharedAgreement = peerIdentity.agreementKey.publicKeyData
+
+        let primaryId = UUID()
+        let duplicateId = UUID()
+        let primary = Contact(
+            id: primaryId,
+            displayName: "Peer",
+            inboxId: "peer-inbox",
+            relay: relay,
+            signingPublicKey: sharedSigning,
+            agreementPublicKey: sharedAgreement,
+            allowIdentityReset: true
+        )
+        let duplicate = Contact(
+            id: duplicateId,
+            displayName: "Peer Duplicate",
+            inboxId: "peer-inbox",
+            relay: relay,
+            signingPublicKey: sharedSigning,
+            agreementPublicKey: sharedAgreement
+        )
+        state.contacts = [primary, duplicate]
+
+        state.conversations = [
+            makeConversation(contactId: primaryId, body: "older", timestamp: Date(timeIntervalSince1970: 10)),
+            makeConversation(contactId: duplicateId, body: "newer", timestamp: Date(timeIntervalSince1970: 20))
+        ]
+        state.groups = [
+            GroupConversation(title: "Ops", memberContactIds: [primaryId, duplicateId])
+        ]
+
+        let updated = Contact(
+            id: UUID(),
+            displayName: "Peer Renamed",
+            inboxId: "peer-inbox",
+            relay: relay,
+            signingPublicKey: sharedSigning,
+            agreementPublicKey: sharedAgreement
+        )
+        state.upsert(contact: updated)
+
+        XCTAssertEqual(state.contacts.count, 1)
+        XCTAssertEqual(state.contacts[0].id, primaryId)
+        XCTAssertEqual(state.contacts[0].displayName, "Peer Renamed")
+        XCTAssertTrue(state.contacts[0].allowIdentityReset)
+
+        XCTAssertEqual(state.conversations.count, 1)
+        XCTAssertEqual(state.conversations[0].contactId, primaryId)
+        XCTAssertEqual(state.conversations[0].messages.last?.body, "newer")
+
+        XCTAssertEqual(state.groups.count, 1)
+        XCTAssertEqual(state.groups[0].memberContactIds, [primaryId])
+    }
+
+    func testClientStateUpsertContactMatchesByAddressWhenFingerprintChanges() {
+        let identity = Identity(displayName: "Owner")
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        var state = ClientState(identity: identity, relay: relay, inboxId: "owner-inbox")
+
+        let oldIdentity = Identity(displayName: "Peer")
+        let newIdentity = Identity(displayName: "Peer")
+        let contactId = UUID()
+
+        let existing = Contact(
+            id: contactId,
+            displayName: "Peer",
+            inboxId: "peer-stable-inbox",
+            relay: relay,
+            signingPublicKey: oldIdentity.signingKey.publicKeyData,
+            agreementPublicKey: oldIdentity.agreementKey.publicKeyData
+        )
+        state.contacts = [existing]
+        state.conversations = [makeConversation(contactId: contactId, body: "session", timestamp: Date(timeIntervalSince1970: 30))]
+
+        let incoming = Contact(
+            id: UUID(),
+            displayName: "Peer Rotated",
+            inboxId: "peer-stable-inbox",
+            relay: relay,
+            signingPublicKey: newIdentity.signingKey.publicKeyData,
+            agreementPublicKey: newIdentity.agreementKey.publicKeyData
+        )
+        state.upsert(contact: incoming)
+
+        XCTAssertEqual(state.contacts.count, 1)
+        XCTAssertEqual(state.contacts[0].id, contactId)
+        XCTAssertEqual(state.contacts[0].displayName, "Peer Rotated")
+        XCTAssertEqual(state.contacts[0].signingPublicKey, newIdentity.signingKey.publicKeyData)
+        XCTAssertEqual(state.conversations.count, 1)
+        XCTAssertEqual(state.conversations[0].contactId, contactId)
+    }
+
+    func testGroupConversationPersistsInClientState() throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let group = GroupConversation(
+            title: "Team",
+            memberContactIds: [UUID(), UUID()],
+            messages: [
+                Message(
+                    direction: .received,
+                    senderDisplayName: "Bob",
+                    body: "hi",
+                    timestamp: Date(timeIntervalSince1970: 100),
+                    counter: 1
+                )
+            ],
+            unreadCount: 1,
+            createdAt: Date(timeIntervalSince1970: 50)
+        )
+        var state = ClientState(
+            identity: identity,
+            relay: relay,
+            inboxId: "inbox"
+        )
+        state.groups = [group]
+
+        let data = try NoctweaveCoder.encode(state)
+        let decoded = try NoctweaveCoder.decode(ClientState.self, from: data)
+        XCTAssertEqual(decoded.groups.count, 1)
+        XCTAssertEqual(decoded.groups[0].title, "Team")
+        XCTAssertEqual(decoded.groups[0].messages.first?.senderDisplayName, "Bob")
+    }
+
+    func testClientStateGroupRatchetRecoveryReplaysRetainedEpochHistory() throws {
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Offline Member")
+        let groupId = UUID(uuidString: "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF")!
+        let inboxId = "group-recovery-inbox"
+        let createdAt = Date(timeIntervalSince1970: 1_000)
+        let members = [
+            RelayGroupMember(fingerprint: creator.fingerprint),
+            RelayGroupMember(fingerprint: member.fingerprint)
+        ]
+        let recipients = [
+            relayGroupMemberProfile(identity: creator, relay: relay),
+            relayGroupMemberProfile(identity: member, relay: relay)
+        ]
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("client persisted epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let epoch0State = MLSGroupEpochState.initial(
+            groupId: groupId,
+            title: "Recovery",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            members: members,
+            createdAt: createdAt,
+            ratchetSecretDistribution: epoch0Distribution
+        )
+        var creatorRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: creator.fingerprint
+        )
+        let staleMemberRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("client persisted epoch 1".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: groupId,
+            epoch: 1,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch1State = epoch0State.advancing(
+            title: "Recovery 1",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 1_010),
+            ratchetSecretDistribution: epoch1Distribution
+        )
+        try creatorRatchet.advanceEpoch(
+            to: epoch1State.epoch,
+            transcriptHash: epoch1State.confirmedTranscriptHash,
+            commitSecret: epoch1Secret
+        )
+
+        let epoch2Secret = Data(SHA256.hash(data: Data("client persisted epoch 2".utf8)))
+        let epoch2Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch2Secret,
+            groupId: groupId,
+            epoch: 2,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch2State = epoch1State.advancing(
+            title: "Recovery 2",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 1_020),
+            ratchetSecretDistribution: epoch2Distribution
+        )
+        try creatorRatchet.advanceEpoch(
+            to: epoch2State.epoch,
+            transcriptHash: epoch2State.confirmedTranscriptHash,
+            commitSecret: epoch2Secret
+        )
+
+        let descriptor = RelayGroupDescriptor(
+            id: groupId,
+            title: "Recovery 2",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            epoch: epoch2State.epoch,
+            members: members,
+            mlsEpochState: epoch2State,
+            mlsEpochHistory: [
+                epoch0State.lastCommit,
+                epoch1State.lastCommit,
+                epoch2State.lastCommit
+            ],
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 1_020)
+        )
+
+        let group = GroupConversation(
+            title: "Recovery",
+            memberContactIds: [],
+            relayInboxId: inboxId,
+            relayEpoch: 0,
+            relayTranscriptHash: epoch0State.confirmedTranscriptHash,
+            groupRatchetState: staleMemberRatchet,
+            createdByFingerprint: creator.fingerprint,
+            createdAt: createdAt
+        )
+        var appState = ClientState(identity: member, relay: relay, inboxId: "member-inbox")
+        appState.groups = [group]
+        let encoded = try NoctweaveCoder.encode(appState)
+        var decoded = try NoctweaveCoder.decode(ClientState.self, from: encoded)
+
+        let envelope = try GroupRatchet.encrypt(
+            body: .text("after retained history"),
+            senderSigningKey: creator.signingKey,
+            senderFingerprint: creator.fingerprint,
+            state: &creatorRatchet
+        )
+        var staleState = try XCTUnwrap(decoded.groups[0].groupRatchetState)
+        XCTAssertThrowsError(
+            try GroupRatchet.decrypt(
+                envelope: envelope,
+                senderPublicSigningKey: creator.signingKey.publicKeyData,
+                state: &staleState
+            )
+        )
+
+        let recoveredState = try XCTUnwrap(
+            GroupRatchetRecovery.state(
+                from: descriptor,
+                identity: decoded.identity,
+                existing: decoded.groups[0].groupRatchetState
+            )
+        )
+        decoded.groups[0].groupRatchetState = recoveredState
+        decoded.groups[0].relayEpoch = descriptor.epoch
+        decoded.groups[0].relayTranscriptHash = descriptor.mlsEpochState.confirmedTranscriptHash
+
+        var recovered = try XCTUnwrap(decoded.groups[0].groupRatchetState)
+        let body = try GroupRatchet.decrypt(
+            envelope: envelope,
+            senderPublicSigningKey: creator.signingKey.publicKeyData,
+            state: &recovered
+        )
+        XCTAssertEqual(body, .text("after retained history"))
+        XCTAssertEqual(recovered.epoch, 2)
+        XCTAssertEqual(recovered.transcriptHash, epoch2State.confirmedTranscriptHash)
+    }
+
+    func testClientStateGroupRatchetRecoveryDoesNotSkipMissingEpochHistory() throws {
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Offline Member")
+        let groupId = UUID(uuidString: "CCCCCCCC-DDDD-EEEE-FFFF-000000000000")!
+        let inboxId = "group-missing-history-inbox"
+        let createdAt = Date(timeIntervalSince1970: 2_000)
+        let members = [
+            RelayGroupMember(fingerprint: creator.fingerprint),
+            RelayGroupMember(fingerprint: member.fingerprint)
+        ]
+        let recipients = [
+            relayGroupMemberProfile(identity: creator, relay: relay),
+            relayGroupMemberProfile(identity: member, relay: relay)
+        ]
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("missing history epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let epoch0State = MLSGroupEpochState.initial(
+            groupId: groupId,
+            title: "Missing History",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            members: members,
+            createdAt: createdAt,
+            ratchetSecretDistribution: epoch0Distribution
+        )
+        let staleMemberRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("missing history epoch 1".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: groupId,
+            epoch: 1,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch1State = epoch0State.advancing(
+            title: "Missing History 1",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 2_010),
+            ratchetSecretDistribution: epoch1Distribution
+        )
+        let epoch2Secret = Data(SHA256.hash(data: Data("missing history epoch 2".utf8)))
+        let epoch2Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch2Secret,
+            groupId: groupId,
+            epoch: 2,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch2State = epoch1State.advancing(
+            title: "Missing History 2",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 2_020),
+            ratchetSecretDistribution: epoch2Distribution
+        )
+        let descriptorMissingEpoch1 = RelayGroupDescriptor(
+            id: groupId,
+            title: "Missing History 2",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            epoch: epoch2State.epoch,
+            members: members,
+            mlsEpochState: epoch2State,
+            mlsEpochHistory: [
+                epoch0State.lastCommit,
+                epoch2State.lastCommit
+            ],
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 2_020)
+        )
+
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptorMissingEpoch1,
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+
+        let descriptorMissingCurrent = RelayGroupDescriptor(
+            id: groupId,
+            title: "Missing Current Commit",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            epoch: epoch2State.epoch,
+            members: members,
+            mlsEpochState: epoch2State,
+            mlsEpochHistory: [
+                epoch0State.lastCommit,
+                epoch1State.lastCommit
+            ],
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 2_020)
+        )
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptorMissingCurrent,
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+    }
+
+    func testClientStateGroupRatchetRecoveryRejectsMismatchedRetainedDistribution() throws {
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Offline Member")
+        let groupId = UUID(uuidString: "DDDDDDDD-EEEE-FFFF-0000-111111111111")!
+        let inboxId = "group-mismatched-history-inbox"
+        let createdAt = Date(timeIntervalSince1970: 3_000)
+        let members = [
+            RelayGroupMember(fingerprint: creator.fingerprint),
+            RelayGroupMember(fingerprint: member.fingerprint)
+        ]
+        let recipients = [
+            relayGroupMemberProfile(identity: creator, relay: relay),
+            relayGroupMemberProfile(identity: member, relay: relay)
+        ]
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("mismatched history epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let epoch0State = MLSGroupEpochState.initial(
+            groupId: groupId,
+            title: "Mismatched History",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            members: members,
+            createdAt: createdAt,
+            ratchetSecretDistribution: epoch0Distribution
+        )
+        let staleMemberRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        let epoch1State = epoch0State.advancing(
+            title: "Mismatched History 1",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 3_010)
+        )
+        let wrongEpochDistribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: Data(SHA256.hash(data: Data("wrong epoch retained secret".utf8))),
+            groupId: groupId,
+            epoch: 2,
+            operation: .update,
+            recipients: recipients
+        )
+        let tamperedCommit = MLSGroupCommitSummary(
+            operation: .update,
+            actorFingerprint: creator.fingerprint,
+            epoch: epoch1State.epoch,
+            committedAt: Date(timeIntervalSince1970: 3_010),
+            memberFingerprints: members.map(\.fingerprint).sorted(),
+            previousTranscriptHash: epoch0State.confirmedTranscriptHash,
+            transcriptHash: epoch1State.confirmedTranscriptHash,
+            ratchetSecretDistribution: wrongEpochDistribution
+        )
+        let tamperedEpochState = MLSGroupEpochState(
+            groupId: groupId,
+            epoch: epoch1State.epoch,
+            treeHash: epoch1State.treeHash,
+            confirmedTranscriptHash: epoch1State.confirmedTranscriptHash,
+            lastCommit: tamperedCommit
+        )
+        let descriptor = RelayGroupDescriptor(
+            id: groupId,
+            title: "Mismatched History 1",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            epoch: epoch1State.epoch,
+            members: members,
+            mlsEpochState: tamperedEpochState,
+            mlsEpochHistory: [
+                epoch0State.lastCommit,
+                tamperedCommit
+            ],
+            createdAt: createdAt,
+            updatedAt: Date(timeIntervalSince1970: 3_010)
+        )
+
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptor,
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+    }
+
+    func testClientStateGroupRatchetRecoveryFaultInjectionFailsClosed() throws {
+        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
+        let creator = Identity(displayName: "Creator")
+        let member = Identity(displayName: "Offline Member")
+        let groupId = UUID(uuidString: "EEEEEEEE-FFFF-AAAA-BBBB-222222222222")!
+        let inboxId = "group-fault-injection-inbox"
+        let createdAt = Date(timeIntervalSince1970: 4_000)
+        let members = [
+            RelayGroupMember(fingerprint: creator.fingerprint),
+            RelayGroupMember(fingerprint: member.fingerprint)
+        ]
+        let recipients = [
+            relayGroupMemberProfile(identity: creator, relay: relay),
+            relayGroupMemberProfile(identity: member, relay: relay)
+        ]
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("fault injection epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: recipients
+        )
+        let epoch0State = MLSGroupEpochState.initial(
+            groupId: groupId,
+            title: "Fault Injection",
+            inboxId: inboxId,
+            createdByFingerprint: creator.fingerprint,
+            members: members,
+            createdAt: createdAt,
+            ratchetSecretDistribution: epoch0Distribution
+        )
+        let staleMemberRatchet = GroupRatchetState.initialize(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: epoch0State.confirmedTranscriptHash,
+            groupSecret: epoch0Secret,
+            localSenderFingerprint: member.fingerprint
+        )
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("fault injection epoch 1".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: groupId,
+            epoch: 1,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch1State = epoch0State.advancing(
+            title: "Fault Injection 1",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 4_010),
+            ratchetSecretDistribution: epoch1Distribution
+        )
+        let epoch2Secret = Data(SHA256.hash(data: Data("fault injection epoch 2".utf8)))
+        let epoch2Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch2Secret,
+            groupId: groupId,
+            epoch: 2,
+            operation: .update,
+            recipients: recipients
+        )
+        let epoch2State = epoch1State.advancing(
+            title: "Fault Injection 2",
+            inboxId: inboxId,
+            actorFingerprint: creator.fingerprint,
+            members: members,
+            operation: .update,
+            committedAt: Date(timeIntervalSince1970: 4_020),
+            ratchetSecretDistribution: epoch2Distribution
+        )
+
+        func descriptor(history: [MLSGroupCommitSummary]) -> RelayGroupDescriptor {
+            RelayGroupDescriptor(
+                id: groupId,
+                title: "Fault Injection 2",
+                inboxId: inboxId,
+                createdByFingerprint: creator.fingerprint,
+                epoch: epoch2State.epoch,
+                members: members,
+                mlsEpochState: epoch2State,
+                mlsEpochHistory: history,
+                createdAt: createdAt,
+                updatedAt: Date(timeIntervalSince1970: 4_020)
+            )
+        }
+
+        let validHistory = [
+            epoch0State.lastCommit,
+            epoch1State.lastCommit,
+            epoch2State.lastCommit
+        ]
+        XCTAssertNotNil(
+            GroupRatchetRecovery.state(
+                from: descriptor(history: validHistory),
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+
+        let duplicateEpochHistory = [
+            epoch0State.lastCommit,
+            epoch1State.lastCommit,
+            epoch1State.lastCommit,
+            epoch2State.lastCommit
+        ]
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptor(history: duplicateEpochHistory),
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+
+        let brokenLinkCommit = MLSGroupCommitSummary(
+            operation: epoch1State.lastCommit.operation,
+            actorFingerprint: epoch1State.lastCommit.actorFingerprint,
+            epoch: epoch1State.lastCommit.epoch,
+            committedAt: epoch1State.lastCommit.committedAt,
+            memberFingerprints: epoch1State.lastCommit.memberFingerprints,
+            previousTranscriptHash: Data("tampered-transcript".utf8),
+            transcriptHash: epoch1State.lastCommit.transcriptHash,
+            ratchetSecretDistribution: epoch1State.lastCommit.ratchetSecretDistribution
+        )
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptor(history: [epoch0State.lastCommit, brokenLinkCommit, epoch2State.lastCommit]),
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+
+        let missingDistributionCommit = MLSGroupCommitSummary(
+            operation: epoch1State.lastCommit.operation,
+            actorFingerprint: epoch1State.lastCommit.actorFingerprint,
+            epoch: epoch1State.lastCommit.epoch,
+            committedAt: epoch1State.lastCommit.committedAt,
+            memberFingerprints: epoch1State.lastCommit.memberFingerprints,
+            previousTranscriptHash: epoch1State.lastCommit.previousTranscriptHash,
+            transcriptHash: epoch1State.lastCommit.transcriptHash,
+            ratchetSecretDistribution: nil
+        )
+        XCTAssertNil(
+            GroupRatchetRecovery.state(
+                from: descriptor(history: [epoch0State.lastCommit, missingDistributionCommit, epoch2State.lastCommit]),
+                identity: member,
+                existing: staleMemberRatchet
+            )
+        )
+    }
+
+    private func registerAndFetch(
+        client: RelayClient,
+        inboxId: String,
+        accessKey: SigningKeyPair,
+        maxCount: Int
+    ) async throws -> RelayResponse {
+        let identity = Identity(displayName: "Mailbox owner")
+        let offer = try MessageEngine.makeContactOffer(
+            identity: identity,
+            inboxId: inboxId,
+            relay: RelayEndpoint(host: "127.0.0.1", port: 9339),
+            inboxAccessPublicKey: accessKey.publicKeyData
+        )
+        var registration = RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            contactOffer: offer
+        )
+        let registrationProof = try makeInboxProof(signingKey: accessKey) { proof in
+            try registration.signableData(for: proof)
+        }
+        registration = RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            contactOffer: offer,
+            accessProof: registrationProof
+        )
+        let registrationResponse = try await client.send(.registerInbox(registration))
+        guard registrationResponse.type == .ok else {
+            return registrationResponse
+        }
+
+        var fetch = FetchRequest(
+            inboxId: inboxId,
+            routingToken: inboxId,
+            maxCount: maxCount
+        )
+        let fetchProof = try makeInboxProof(signingKey: accessKey) { proof in
+            try fetch.signableData(for: proof)
+        }
+        fetch = FetchRequest(
+            inboxId: inboxId,
+            routingToken: inboxId,
+            maxCount: maxCount,
+            accessProof: fetchProof
+        )
+        return try await client.send(.fetch(fetch))
+    }
+
+    private func makeInboxProof(
+        signingKey: SigningKeyPair,
+        signableDataBuilder: (RelayActorProof) throws -> Data
+    ) throws -> RelayActorProof {
+        let signedAt = Date()
+        let nonce = UUID()
+        let fingerprint = CryptoBox.fingerprint(for: signingKey.publicKeyData)
+        let placeholder = RelayActorProof(
+            fingerprint: fingerprint,
+            publicSigningKey: signingKey.publicKeyData,
+            signedAt: signedAt,
+            nonce: nonce,
+            signature: Data()
+        )
+        return RelayActorProof(
+            fingerprint: fingerprint,
+            publicSigningKey: signingKey.publicKeyData,
+            signedAt: signedAt,
+            nonce: nonce,
+            signature: try signingKey.sign(signableDataBuilder(placeholder))
+        )
+    }
+
+    private func makeConversation(contactId: UUID, body: String, timestamp: Date) -> Conversation {
+        Conversation(
+            id: UUID().uuidString,
+            contactId: contactId,
+            sessionId: UUID().uuidString,
+            rootKey: Data(repeating: 0x11, count: 32),
+            rootCounter: 1,
+            sendChain: ChainKeyState(keyData: Data(repeating: 0x22, count: 32), counter: 1),
+            receiveChain: ChainKeyState(keyData: Data(repeating: 0x33, count: 32), counter: 2),
+            messages: [
+                Message(
+                    direction: .received,
+                    body: body,
+                    timestamp: timestamp,
+                    counter: 1
+                )
+            ],
+            unreadCount: 1,
+            ratchetState: .active
+        )
+    }
+
+    private func makeDHTRecord(
+        host: String,
+        federationName: String?,
+        signingKey: SigningKeyPair = SigningKeyPair(),
+        issuedAt: Date,
+        lifetimeSeconds: TimeInterval = 300
+    ) throws -> OpenFederationDHTRecord {
+        try makeDHTRecord(
+            endpoint: RelayEndpoint(host: host, port: 443, useTLS: true, transport: .websocket),
+            federationName: federationName,
+            signingKey: signingKey,
+            issuedAt: issuedAt,
+            lifetimeSeconds: lifetimeSeconds
+        )
+    }
+
+    private func makeDHTRecord(
+        endpoint: RelayEndpoint,
+        federationName: String?,
+        signingKey: SigningKeyPair = SigningKeyPair(),
+        issuedAt: Date,
+        lifetimeSeconds: TimeInterval = 300
+    ) throws -> OpenFederationDHTRecord {
+        try OpenFederationDHTRecord.signed(
+            endpoint: endpoint,
+            federationName: federationName,
+            signingKey: signingKey,
+            issuedAt: issuedAt,
+            lifetimeSeconds: lifetimeSeconds
+        )
+    }
+
+    func testOnionTransportPeelsThreeHopsInOrder() throws {
+        let hop1 = AgreementKeyPair()
+        let hop2 = AgreementKeyPair()
+        let hop3 = AgreementKeyPair()
+        let finalPayload = Data("fixed-size-message-frame".utf8)
+        let packet = try OnionTransport.seal(
+            finalPayload: finalPayload,
+            hops: [
+                OnionHopDescriptor(
+                    hopId: "relay-a",
+                    publicKeyData: hop1.publicKeyData,
+                    routingInstruction: "forward:relay-b",
+                    delayBucketSeconds: 60
+                ),
+                OnionHopDescriptor(
+                    hopId: "relay-b",
+                    publicKeyData: hop2.publicKeyData,
+                    routingInstruction: "forward:relay-c",
+                    delayBucketSeconds: 120
+                ),
+                OnionHopDescriptor(
+                    hopId: "relay-c",
+                    publicKeyData: hop3.publicKeyData,
+                    routingInstruction: "deliver:target-inbox",
+                    delayBucketSeconds: 300
+                )
+            ]
+        )
+
+        XCTAssertEqual(packet.entryHopId, "relay-a")
+        let first = try OnionTransport.peel(layer: packet.layer, using: hop1)
+        XCTAssertEqual(first.routingInstruction, "forward:relay-b")
+        XCTAssertEqual(first.nextHopId, "relay-b")
+        XCTAssertNil(first.finalPayload)
+
+        let secondLayer = try XCTUnwrap(first.nextLayer)
+        let second = try OnionTransport.peel(layer: secondLayer, using: hop2)
+        XCTAssertEqual(second.routingInstruction, "forward:relay-c")
+        XCTAssertEqual(second.nextHopId, "relay-c")
+        XCTAssertNil(second.finalPayload)
+
+        let thirdLayer = try XCTUnwrap(second.nextLayer)
+        let third = try OnionTransport.peel(layer: thirdLayer, using: hop3)
+        XCTAssertEqual(third.routingInstruction, "deliver:target-inbox")
+        XCTAssertNil(third.nextHopId)
+        XCTAssertNil(third.nextLayer)
+        XCTAssertEqual(third.finalPayload, finalPayload)
+    }
+
+    func testOnionTransportRejectsWrongHopKey() throws {
+        let intendedHop = AgreementKeyPair()
+        let wrongHop = AgreementKeyPair()
+        let packet = try OnionTransport.seal(
+            finalPayload: Data("payload".utf8),
+            hops: [
+                OnionHopDescriptor(
+                    hopId: "relay-a",
+                    publicKeyData: intendedHop.publicKeyData,
+                    routingInstruction: "deliver"
+                )
+            ]
+        )
+
+        XCTAssertThrowsError(try OnionTransport.peel(layer: packet.layer, using: wrongHop))
+    }
+
+    func testOnionTransportRejectsTamperedLayer() throws {
+        let hop = AgreementKeyPair()
+        let packet = try OnionTransport.seal(
+            finalPayload: Data("payload".utf8),
+            hops: [
+                OnionHopDescriptor(
+                    hopId: "relay-a",
+                    publicKeyData: hop.publicKeyData,
+                    routingInstruction: "deliver"
+                )
+            ]
+        )
+        var tamperedTag = packet.layer.payload.tag
+        tamperedTag.append(0x01)
+        let tamperedLayer = OnionLayer(
+            hopId: packet.layer.hopId,
+            kemCiphertext: packet.layer.kemCiphertext,
+            payload: EncryptedPayload(
+                nonce: packet.layer.payload.nonce,
+                ciphertext: packet.layer.payload.ciphertext,
+                tag: tamperedTag
+            )
+        )
+
+        XCTAssertThrowsError(try OnionTransport.peel(layer: tamperedLayer, using: hop))
+    }
+
+    func testRelayInfoAdvertisesOptionalOnionTransportSupport() throws {
+        let info = RelayConfiguration(
+            onionTransport: OnionTransportSupport(enabled: true, maxHops: 5, requiresFixedSizePackets: true)
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(info.onionTransport?.enabled, true)
+        XCTAssertEqual(info.onionTransport?.maxHops, 5)
+        XCTAssertEqual(info.onionTransport?.requiresFixedSizePackets, true)
+
+        let decoded = try NoctweaveCoder.decode(RelayInfo.self, from: NoctweaveCoder.encode(info))
+        XCTAssertEqual(decoded.onionTransport, info.onionTransport)
+    }
+
+    func testRelayInfoSuppressesUnusableOnionTransportSupport() {
+        let disabledInfo = RelayConfiguration(
+            onionTransport: OnionTransportSupport(enabled: false, maxHops: 5, requiresFixedSizePackets: true)
+        ).makeInfo()
+        XCTAssertNil(disabledInfo.onionTransport)
+
+        let oneHopInfo = RelayConfiguration(
+            onionTransport: OnionTransportSupport(enabled: true, maxHops: 1, requiresFixedSizePackets: true)
+        ).makeInfo()
+        XCTAssertNil(oneHopInfo.onionTransport)
+
+        XCTAssertEqual(
+            OnionTransportPolicyValidator.issues(for: OnionTransportSupport(enabled: true, maxHops: 1)),
+            [.insufficientHops]
+        )
+    }
+
+    func testMixnetSchedulerBuildsDeterministicBatchWithCoverTraffic() throws {
+        let policy = MixnetTransportSupport(
+            batchIntervalSeconds: 30,
+            minBatchSize: 5,
+            coverPacketsPerBatch: 1,
+            maxDelaySeconds: 10
+        )
+        let now = Date(timeIntervalSince1970: 1_000)
+        let secret = Data("mixnet-test-secret".utf8)
+        let first = try MixnetScheduler.makeBatchPlan(
+            pendingPacketIds: ["msg-c", "msg-a", "msg-b"],
+            now: now,
+            policy: policy,
+            secret: secret
+        )
+        let second = try MixnetScheduler.makeBatchPlan(
+            pendingPacketIds: ["msg-b", "msg-c", "msg-a"],
+            now: now,
+            policy: policy,
+            secret: secret
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.realPacketCount, 3)
+        XCTAssertEqual(first.coverPacketCount, 2)
+        XCTAssertEqual(first.packets.count, 5)
+        XCTAssertTrue(first.packets.allSatisfy { $0.batchId == first.batchId })
+        XCTAssertTrue(first.packets.allSatisfy { $0.releaseAt == first.releaseAt })
+        XCTAssertLessThanOrEqual(first.packets.first?.delaySeconds ?? 0, 10)
+    }
+
+    func testMixnetSchedulerCanEmitPureCoverBatch() throws {
+        let policy = MixnetTransportSupport(
+            batchIntervalSeconds: 60,
+            minBatchSize: 3,
+            coverPacketsPerBatch: 3,
+            maxDelaySeconds: 0
+        )
+        let plan = try MixnetScheduler.makeBatchPlan(
+            pendingPacketIds: [],
+            now: Date(timeIntervalSince1970: 1_001),
+            policy: policy,
+            secret: Data("cover-secret".utf8)
+        )
+
+        XCTAssertEqual(plan.realPacketCount, 0)
+        XCTAssertEqual(plan.coverPacketCount, 3)
+        XCTAssertEqual(plan.releaseAt, Date(timeIntervalSince1970: 1_020))
+        XCTAssertTrue(plan.packets.allSatisfy { $0.packetId.hasPrefix("cover-") })
+    }
+
+    func testMixnetSchedulerBuildsContinuousCoverCycle() throws {
+        let policy = MixnetTransportSupport(
+            batchIntervalSeconds: 30,
+            minBatchSize: 4,
+            coverPacketsPerBatch: 2,
+            maxDelaySeconds: 10
+        )
+        let now = Date(timeIntervalSince1970: 1_001)
+        let secret = Data("cycle-secret".utf8)
+
+        let first = try MixnetScheduler.makeCoverCyclePlan(
+            pendingPacketIdsByBatch: [
+                ["message-a", "message-b"],
+                [],
+                ["message-c"]
+            ],
+            now: now,
+            policy: policy,
+            secret: secret,
+            horizonSeconds: 95
+        )
+        let second = try MixnetScheduler.makeCoverCyclePlan(
+            pendingPacketIdsByBatch: [
+                ["message-b", "message-a"],
+                [],
+                ["message-c"]
+            ],
+            now: now,
+            policy: policy,
+            secret: secret,
+            horizonSeconds: 95
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertTrue(first.coversEveryInterval)
+        XCTAssertEqual(first.cycleStart, Date(timeIntervalSince1970: 1_020))
+        XCTAssertEqual(first.batchIntervalSeconds, 30)
+        XCTAssertEqual(first.batches.count, 4)
+        XCTAssertEqual(first.batches.map(\.realPacketCount), [2, 0, 1, 0])
+        XCTAssertTrue(first.batches.allSatisfy { $0.coverPacketCount >= 2 })
+        XCTAssertTrue(first.batches.allSatisfy { $0.packets.count >= policy.minBatchSize })
+    }
+
+    func testMixnetInterRelayCoverCoordinatorBuildsDeterministicLinkCoverPlan() throws {
+        let policy = MixnetTransportSupport(
+            batchIntervalSeconds: 30,
+            minBatchSize: 4,
+            coverPacketsPerBatch: 2,
+            maxDelaySeconds: 10
+        )
+        let relays = [
+            mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRelayPeer(id: "relay-b", operatorId: "operator-b", host: "relay-b.example"),
+            mixnetRelayPeer(id: "relay-c", operatorId: "operator-c", host: "relay-c.example")
+        ]
+        let secret = Data("inter-relay-cover-secret".utf8)
+
+        let first = try MixnetInterRelayCoverCoordinator.makePlan(
+            relays: relays,
+            now: Date(timeIntervalSince1970: 1_001),
+            policy: policy,
+            secret: secret,
+            horizonSeconds: 95,
+            coverPacketsPerLink: 2
+        )
+        let second = try MixnetInterRelayCoverCoordinator.makePlan(
+            relays: relays.reversed(),
+            now: Date(timeIntervalSince1970: 1_001),
+            policy: policy,
+            secret: secret,
+            horizonSeconds: 95,
+            coverPacketsPerLink: 2
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertTrue(first.coversEveryRelayLinkEachInterval)
+        XCTAssertEqual(first.cycleStart, Date(timeIntervalSince1970: 1_020))
+        XCTAssertEqual(first.batches.count, 4)
+        XCTAssertEqual(first.relayIds, ["relay-a", "relay-b", "relay-c"])
+        XCTAssertTrue(first.batches.allSatisfy { $0.packets.count == 12 })
+        XCTAssertTrue(first.batches.flatMap(\.packets).allSatisfy { $0.packetId.hasPrefix("relay-cover-") })
+        XCTAssertTrue(first.batches.flatMap(\.packets).allSatisfy { $0.sourceRelayId != $0.destinationRelayId })
+        XCTAssertLessThanOrEqual(first.batches.first?.packets.first?.delaySeconds ?? 0, 10)
+    }
+
+    func testMixnetInterRelayCoverCoordinatorRejectsWeakRelaySets() {
+        let policy = MixnetTransportSupport(batchIntervalSeconds: 30, minBatchSize: 4, coverPacketsPerBatch: 2)
+        let diverse = [
+            mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRelayPeer(id: "relay-b", operatorId: "operator-b", host: "relay-b.example")
+        ]
+
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: diverse,
+                now: Date(),
+                policy: policy,
+                secret: Data(),
+                horizonSeconds: 60
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .emptySecret)
+        }
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: diverse,
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .invalidHorizon)
+        }
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: diverse,
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 60,
+                coverPacketsPerLink: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .invalidCoverPacketCount)
+        }
+
+        let duplicateRelay = [
+            mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRelayPeer(id: " relay-a ", operatorId: "operator-b", host: "relay-b.example")
+        ]
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: duplicateRelay,
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 60
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .invalidRelaySet)
+        }
+
+        let sameOperator = [
+            mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRelayPeer(id: "relay-b", operatorId: "operator-a", host: "relay-b.example")
+        ]
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: sameOperator,
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 60
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .insufficientDiversity)
+        }
+
+        let sameHost = [
+            mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-shared.example"),
+            mixnetRelayPeer(id: "relay-b", operatorId: "operator-b", host: "relay-shared.example")
+        ]
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: sameHost,
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 60
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .insufficientDiversity)
+        }
+
+        XCTAssertThrowsError(
+            try MixnetInterRelayCoverCoordinator.makePlan(
+                relays: [mixnetRelayPeer(id: "relay-a", operatorId: "operator-a", host: "relay-a.example", useTLS: false)],
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 60
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetInterRelayCoverError, .invalidEndpoint)
+        }
+    }
+
+    func testMixnetSchedulerRejectsMalformedInputs() {
+        let policy = MixnetTransportSupport(minBatchSize: 1, coverPacketsPerBatch: 0)
+        XCTAssertThrowsError(
+            try MixnetScheduler.makeBatchPlan(
+                pendingPacketIds: ["msg-a"],
+                now: Date(),
+                policy: policy,
+                secret: Data()
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetSchedulerError, .emptySecret)
+        }
+        XCTAssertThrowsError(
+            try MixnetScheduler.makeBatchPlan(
+                pendingPacketIds: ["msg-a", " "],
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8)
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetSchedulerError, .blankPacketId)
+        }
+        XCTAssertThrowsError(
+            try MixnetScheduler.makeCoverCyclePlan(
+                pendingPacketIds: [],
+                now: Date(),
+                policy: policy,
+                secret: Data("secret".utf8),
+                horizonSeconds: 0
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetSchedulerError, .invalidHorizon)
+        }
+    }
+
+    func testMixnetPacketPadderProducesFixedSizePackets() throws {
+        let shortPayload = Data("short".utf8)
+        let longerPayload = Data("longer-payload".utf8)
+        let fixedPayloadSize = 64
+
+        let shortPacket = try MixnetPacketPadder.pad(
+            packetId: " packet-a ",
+            payload: shortPayload,
+            fixedPayloadSize: fixedPayloadSize
+        )
+        let longerPacket = try MixnetPacketPadder.pad(
+            packetId: "packet-b",
+            payload: longerPayload,
+            fixedPayloadSize: fixedPayloadSize
+        )
+
+        XCTAssertEqual(shortPacket.packetId, "packet-a")
+        XCTAssertEqual(shortPacket.paddedPayload.count, fixedPayloadSize)
+        XCTAssertEqual(longerPacket.paddedPayload.count, fixedPayloadSize)
+        XCTAssertEqual(shortPacket.fixedPayloadSize, longerPacket.fixedPayloadSize)
+        XCTAssertEqual(try MixnetPacketPadder.open(shortPacket), shortPayload)
+        XCTAssertEqual(try MixnetPacketPadder.open(longerPacket), longerPayload)
+    }
+
+    func testMixnetPacketPadderRejectsMalformedPackets() throws {
+        XCTAssertThrowsError(
+            try MixnetPacketPadder.pad(packetId: " ", payload: Data("payload".utf8), fixedPayloadSize: 32)
+        ) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .blankPacketId)
+        }
+        XCTAssertThrowsError(
+            try MixnetPacketPadder.pad(packetId: "packet", payload: Data(), fixedPayloadSize: 32)
+        ) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .invalidPayload)
+        }
+        XCTAssertThrowsError(
+            try MixnetPacketPadder.pad(packetId: "packet", payload: Data("payload".utf8), fixedPayloadSize: 0)
+        ) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .invalidFixedSize)
+        }
+        XCTAssertThrowsError(
+            try MixnetPacketPadder.pad(packetId: "packet", payload: Data("payload".utf8), fixedPayloadSize: 3)
+        ) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .payloadTooLarge)
+        }
+
+        let wrongSizePacket = MixnetFixedSizePacket(
+            packetId: "packet",
+            paddedPayload: Data(repeating: 1, count: 31),
+            originalPayloadSize: 8,
+            fixedPayloadSize: 32
+        )
+        XCTAssertThrowsError(try MixnetPacketPadder.open(wrongSizePacket)) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .malformedPacket)
+        }
+
+        let oversizedOriginalPacket = MixnetFixedSizePacket(
+            packetId: "packet",
+            paddedPayload: Data(repeating: 1, count: 32),
+            originalPayloadSize: 33,
+            fixedPayloadSize: 32
+        )
+        XCTAssertThrowsError(try MixnetPacketPadder.open(oversizedOriginalPacket)) { error in
+            XCTAssertEqual(error as? MixnetPacketPaddingError, .malformedPacket)
+        }
+    }
+
+    func testMixnetRouteSelectorBuildsDeterministicDiverseRoute() throws {
+        let candidates = [
+            mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRouteCandidate(id: "hop-b", operatorId: "operator-b", host: "relay-b.example"),
+            mixnetRouteCandidate(id: "hop-c", operatorId: "operator-c", host: "relay-c.example"),
+            mixnetRouteCandidate(id: "hop-d", operatorId: "operator-d", host: "relay-d.example")
+        ]
+        let secret = Data("route-secret".utf8)
+
+        let first = try MixnetRouteSelector.makeRoutePlan(
+            candidates: candidates,
+            secret: secret,
+            routeContext: "batch-1",
+            hopCount: 3
+        )
+        let second = try MixnetRouteSelector.makeRoutePlan(
+            candidates: candidates.reversed(),
+            secret: secret,
+            routeContext: "batch-1",
+            hopCount: 3
+        )
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.selectedCandidates.count, 3)
+        XCTAssertEqual(Set(first.selectedCandidates.map(\.operatorId)).count, 3)
+        XCTAssertEqual(Set(first.selectedCandidates.map { $0.endpoint.host }).count, 3)
+        XCTAssertEqual(first.onionHops.map(\.hopId), first.selectedCandidates.map(\.hopId))
+        XCTAssertFalse(first.routeId.isEmpty)
+    }
+
+    func testMixnetRouteSelectorRejectsWeakRoutes() {
+        let diverse = [
+            mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRouteCandidate(id: "hop-b", operatorId: "operator-b", host: "relay-b.example")
+        ]
+
+        XCTAssertThrowsError(
+            try MixnetRouteSelector.makeRoutePlan(
+                candidates: diverse,
+                secret: Data(),
+                routeContext: "batch-1",
+                hopCount: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetRouteSelectionError, .emptySecret)
+        }
+        XCTAssertThrowsError(
+            try MixnetRouteSelector.makeRoutePlan(
+                candidates: diverse,
+                secret: Data("route-secret".utf8),
+                routeContext: "batch-1",
+                hopCount: 1
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetRouteSelectionError, .invalidRouteLength)
+        }
+
+        let sameOperator = [
+            mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-a.example"),
+            mixnetRouteCandidate(id: "hop-b", operatorId: "operator-a", host: "relay-b.example")
+        ]
+        XCTAssertThrowsError(
+            try MixnetRouteSelector.makeRoutePlan(
+                candidates: sameOperator,
+                secret: Data("route-secret".utf8),
+                routeContext: "batch-1",
+                hopCount: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetRouteSelectionError, .insufficientDiversity)
+        }
+
+        let sameHost = [
+            mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-shared.example"),
+            mixnetRouteCandidate(id: "hop-b", operatorId: "operator-b", host: "relay-shared.example")
+        ]
+        XCTAssertThrowsError(
+            try MixnetRouteSelector.makeRoutePlan(
+                candidates: sameHost,
+                secret: Data("route-secret".utf8),
+                routeContext: "batch-1",
+                hopCount: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetRouteSelectionError, .insufficientDiversity)
+        }
+
+        XCTAssertThrowsError(
+            try MixnetRouteSelector.makeRoutePlan(
+                candidates: [mixnetRouteCandidate(id: "hop-a", operatorId: "operator-a", host: "relay-a.example", useTLS: false)],
+                secret: Data("route-secret".utf8),
+                routeContext: "batch-1",
+                hopCount: 2
+            )
+        ) { error in
+            XCTAssertEqual(error as? MixnetRouteSelectionError, .invalidEndpoint)
+        }
+    }
+
+    func testRelayInfoAdvertisesOptionalMixnetTransportSupport() throws {
+        let support = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: 45,
+            minBatchSize: 12,
+            coverPacketsPerBatch: 4,
+            maxDelaySeconds: 90
+        )
+        let onion = OnionTransportSupport(enabled: true, maxHops: 3, requiresFixedSizePackets: true)
+        let info = RelayConfiguration(
+            onionTransport: onion,
+            mixnetTransport: support
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+
+        XCTAssertEqual(info.onionTransport, onion)
+        XCTAssertEqual(info.mixnetTransport, support)
+        let decoded = try NoctweaveCoder.decode(RelayInfo.self, from: NoctweaveCoder.encode(info))
+        XCTAssertEqual(decoded.mixnetTransport, support)
+    }
+
+    func testRelayInfoSuppressesMisleadingMixnetAdvertisement() {
+        let mixnet = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: 45,
+            minBatchSize: 12,
+            coverPacketsPerBatch: 4,
+            maxDelaySeconds: 90
+        )
+        let missingOnionInfo = RelayConfiguration(mixnetTransport: mixnet).makeInfo()
+        XCTAssertNil(missingOnionInfo.mixnetTransport)
+
+        let weakOnion = OnionTransportSupport(enabled: true, maxHops: 1, requiresFixedSizePackets: false)
+        let weakOnionInfo = RelayConfiguration(
+            onionTransport: weakOnion,
+            mixnetTransport: mixnet
+        ).makeInfo()
+        XCTAssertNil(weakOnionInfo.onionTransport)
+        XCTAssertNil(weakOnionInfo.mixnetTransport)
+    }
+
+    func testMixnetRoutePolicyValidatorAcceptsOnionBackedCoverBatches() {
+        let mixnet = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: 45,
+            minBatchSize: 12,
+            coverPacketsPerBatch: 4,
+            maxDelaySeconds: 90
+        )
+        let onion = OnionTransportSupport(enabled: true, maxHops: 3, requiresFixedSizePackets: true)
+
+        XCTAssertTrue(MixnetRoutePolicyValidator.isUsable(mixnetSupport: mixnet, onionSupport: onion))
+        XCTAssertEqual(
+            MixnetRoutePolicyValidator.issues(for: mixnet, onionSupport: onion),
+            []
+        )
+    }
+
+    func testMixnetRoutePolicyValidatorRejectsMisleadingMixnetAdvertisements() {
+        XCTAssertEqual(
+            MixnetRoutePolicyValidator.issues(for: nil, onionSupport: nil),
+            [.notAdvertised]
+        )
+
+        let weakMixnet = MixnetTransportSupport(
+            enabled: false,
+            batchIntervalSeconds: 5,
+            minBatchSize: 1,
+            coverPacketsPerBatch: 0,
+            maxDelaySeconds: 0
+        )
+        let weakOnion = OnionTransportSupport(enabled: false, maxHops: 1, requiresFixedSizePackets: false)
+        let issues = MixnetRoutePolicyValidator.issues(for: weakMixnet, onionSupport: weakOnion)
+
+        XCTAssertTrue(issues.contains(.disabled))
+        XCTAssertTrue(issues.contains(.insufficientBatchSize))
+        XCTAssertTrue(issues.contains(.coverTrafficDisabled))
+        XCTAssertTrue(issues.contains(.batchIntervalTooShort))
+        XCTAssertTrue(issues.contains(.releaseDelayDisabled))
+        XCTAssertTrue(issues.contains(.onionTransportDisabled))
+        XCTAssertTrue(issues.contains(.insufficientOnionHops))
+        XCTAssertTrue(issues.contains(.fixedSizePacketsNotRequired))
+
+        let missingOnion = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: 30,
+            minBatchSize: 8,
+            coverPacketsPerBatch: 2,
+            maxDelaySeconds: 120
+        )
+        XCTAssertTrue(
+            MixnetRoutePolicyValidator.issues(for: missingOnion, onionSupport: nil).contains(.missingOnionTransport)
+        )
+    }
+}
+
+private func mixnetRouteCandidate(
+    id: String,
+    operatorId: String,
+    host: String,
+    useTLS: Bool = true
+) -> MixnetRouteCandidate {
+    MixnetRouteCandidate(
+        hopId: id,
+        operatorId: operatorId,
+        endpoint: RelayEndpoint(host: host, port: 443, useTLS: useTLS, transport: .http),
+        onionHop: OnionHopDescriptor(
+            hopId: id,
+            publicKeyData: Data("public-key-\(id)".utf8),
+            routingInstruction: "route-to-\(host)",
+            delayBucketSeconds: 30
+        )
+    )
+}
+
+private func mixnetRelayPeer(
+    id: String,
+    operatorId: String,
+    host: String,
+    useTLS: Bool = true
+) -> MixnetRelayPeer {
+    MixnetRelayPeer(
+        relayId: id,
+        operatorId: operatorId,
+        endpoint: RelayEndpoint(host: host, port: 443, useTLS: useTLS, transport: .http)
+    )
+}
+
+private func testBitset(recordCount: Int, enabledIndex: Int) -> Data {
+    var bitset = Data(repeating: 0, count: (recordCount + 7) / 8)
+    bitset[enabledIndex / 8] = UInt8(1) << UInt8(enabledIndex % 8)
+    return bitset
+}
+
+private func xorTestData(_ lhs: Data, _ rhs: Data) -> Data {
+    Data(zip(lhs, rhs).map { $0 ^ $1 })
+}
+
+private struct SeededGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        self.state = seed == 0 ? 0x123456789ABCDEF : seed
+    }
+
+    mutating func next() -> UInt64 {
+        state = state &* 6364136223846793005 &+ 1
+        return state
+    }
+
+    mutating func nextInt(upperBound: Int) -> Int {
+        guard upperBound > 0 else { return 0 }
+        return Int(next() % UInt64(upperBound))
+    }
+}
+
+private extension Array {
+    mutating func shuffle(using generator: inout SeededGenerator) {
+        guard count > 1 else { return }
+        for index in stride(from: count - 1, through: 1, by: -1) {
+            let swapIndex = generator.nextInt(upperBound: index + 1)
+            if swapIndex != index {
+                swapAt(index, swapIndex)
+            }
+        }
+    }
+}
+
+private actor MockOpenFederationDHTTransport: OpenFederationDHTTransport {
+    private var recordsByNamespace: [String: [OpenFederationDHTRecord]]
+    private var published: [OpenFederationDHTRecord] = []
+    private var queries = 0
+    private var mostRecentLimit: Int?
+    private var queryFailureEnabled = false
+
+    init(recordsByNamespace: [String: [OpenFederationDHTRecord]] = [:]) {
+        self.recordsByNamespace = recordsByNamespace
+    }
+
+    func publish(_ record: OpenFederationDHTRecord, namespace: String) async throws {
+        published.append(record)
+        recordsByNamespace[namespace, default: []].append(record)
+    }
+
+    func query(namespace: String, limit: Int) async throws -> [OpenFederationDHTRecord] {
+        queries += 1
+        mostRecentLimit = limit
+        if queryFailureEnabled {
+            throw MockOpenFederationDHTTransportError.queryFailed
+        }
+        return Array((recordsByNamespace[namespace] ?? []).prefix(limit))
+    }
+
+    func publishedRecords() -> [OpenFederationDHTRecord] {
+        published
+    }
+
+    func queryCount() -> Int {
+        queries
+    }
+
+    func lastQueryLimit() -> Int? {
+        mostRecentLimit
+    }
+
+    func setQueryFailureEnabled(_ enabled: Bool) {
+        queryFailureEnabled = enabled
+    }
+}
+
+private enum MockOpenFederationDHTTransportError: Error {
+    case queryFailed
+}
+
+private struct DHTGatewayPublishRequestProbe: Codable {
+    let namespace: String
+    let record: OpenFederationDHTRecord
+}
+
+private struct DHTGatewayQueryResponseProbe: Codable {
+    let records: [OpenFederationDHTRecord]
+}
+
+private final class DHTGatewayURLProtocolHarness {
+    typealias Handler = (URLRequest) throws -> (status: Int, body: Data)
+
+    private let state = LockedState()
+
+    var handler: Handler? {
+        get { state.handler }
+        set { state.handler = newValue }
+    }
+
+    var requestCount: Int {
+        state.requests.count
+    }
+
+    func makeSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DHTGatewayURLProtocol.self]
+        let token = UUID().uuidString
+        configuration.httpAdditionalHeaders = ["X-Noctyra-Test-Token": token]
+        DHTGatewayURLProtocol.register(harness: self, token: token)
+        return URLSession(configuration: configuration)
+    }
+
+    fileprivate func handle(_ request: URLRequest) throws -> (status: Int, body: Data) {
+        state.requests.append(request)
+        guard let handler = state.handler else {
+            return (500, Data())
+        }
+        return try handler(request)
+    }
+
+    static func bodyData(from request: URLRequest) -> Data? {
+        if let body = request.httpBody {
+            return body
+        }
+        guard let stream = request.httpBodyStream else {
+            return nil
+        }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count > 0 {
+                data.append(buffer, count: count)
+            } else {
+                break
+            }
+        }
+        return data
+    }
+
+    private final class LockedState {
+        private let lock = NSLock()
+        private var _handler: Handler?
+        private var _requests: [URLRequest] = []
+
+        var handler: Handler? {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return _handler
+            }
+            set {
+                lock.lock()
+                _handler = newValue
+                lock.unlock()
+            }
+        }
+
+        var requests: [URLRequest] {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return _requests
+            }
+            set {
+                lock.lock()
+                _requests = newValue
+                lock.unlock()
+            }
+        }
+    }
+}
+
+private final class TestAttachmentBlobStore: AttachmentBlobStore {
+    let backendName = "test-blob"
+    private(set) var records: [String: AttachmentExternalRecord] = [:]
+    private var blobs: [String: Data] = [:]
+    private(set) var putCount = 0
+
+    func put(_ data: Data, attachmentId: UUID, chunkIndex: Int, expiresAt: Date) throws -> AttachmentExternalRecord {
+        putCount += 1
+        let locator = "\(attachmentId.uuidString)-\(chunkIndex)-\(putCount)"
+        blobs[locator] = data
+        let record = AttachmentExternalRecord(
+            backend: backendName,
+            locator: locator,
+            byteCount: data.count,
+            sha256Hex: AttachmentBlobDigest.sha256Hex(data),
+            expiresAt: expiresAt
+        )
+        records[locator] = record
+        return record
+    }
+
+    func get(_ record: AttachmentExternalRecord) throws -> Data {
+        guard let data = blobs[record.locator] else {
+            throw AttachmentBlobStoreError.fetchFailed("missing test blob")
+        }
+        guard data.count == record.byteCount,
+              AttachmentBlobDigest.sha256Hex(data) == record.sha256Hex else {
+            throw AttachmentBlobStoreError.digestMismatch
+        }
+        return data
+    }
+
+    func delete(_ record: AttachmentExternalRecord) {
+        blobs.removeValue(forKey: record.locator)
+        records.removeValue(forKey: record.locator)
+    }
+
+    func corruptAll() {
+        blobs = blobs.mapValues { data in
+            var corrupted = data
+            corrupted.append(0x00)
+            return corrupted
+        }
+    }
+}
+
+private final class DHTGatewayURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var harnesses: [String: DHTGatewayURLProtocolHarness] = [:]
+
+    static func register(harness: DHTGatewayURLProtocolHarness, token: String) {
+        lock.lock()
+        harnesses[token] = harness
+        lock.unlock()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.value(forHTTPHeaderField: "X-Noctyra-Test-Token") != nil
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let token = request.value(forHTTPHeaderField: "X-Noctyra-Test-Token"),
+              let harness = Self.harness(for: token),
+              let url = request.url else {
+            client?.urlProtocol(self, didFailWithError: OpenFederationDHTGatewayTransportError.invalidURL)
+            return
+        }
+
+        do {
+            let result = try harness.handle(request)
+            let response = HTTPURLResponse(
+                url: url,
+                statusCode: result.status,
+                httpVersion: "HTTP/1.1",
+                headerFields: ["Content-Type": "application/json"]
+            )!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            if !result.body.isEmpty {
+                client?.urlProtocol(self, didLoad: result.body)
+            }
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+
+    private static func harness(for token: String) -> DHTGatewayURLProtocolHarness? {
+        lock.lock()
+        defer { lock.unlock() }
+        return harnesses[token]
+    }
+}

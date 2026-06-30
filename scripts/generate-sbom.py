@@ -22,7 +22,7 @@ def read_text(path):
 
 
 def package_resolved_components():
-    path = ROOT / "PICCP Relay Server" / "Package.resolved"
+    path = ROOT / "Noctweave Relay Server" / "Package.resolved"
     payload = json.loads(read_text(path))
     components = []
     for pin in payload.get("pins", []):
@@ -41,7 +41,7 @@ def package_resolved_components():
 
 
 def docker_components():
-    path = ROOT / "PICCP Relay Server" / "Dockerfile"
+    path = ROOT / "Noctweave Relay Server" / "Dockerfile"
     text = read_text(path)
     components = []
 
@@ -81,7 +81,7 @@ def docker_components():
 
 def vendored_components():
     components = []
-    liboqs = ROOT / "PICCPCore" / "Vendor" / "liboqs.xcframework"
+    liboqs = ROOT / "NoctweaveCore" / "Vendor" / "liboqs.xcframework"
     if liboqs.exists():
         files = sorted(path for path in liboqs.rglob("*") if path.is_file())
         tree_digest = hashlib.sha256()
@@ -109,18 +109,18 @@ def workspace_components():
     return [
         {
             "type": "local-source",
-            "name": "PICCPCore",
-            "source": "PICCPCore",
+            "name": "NoctweaveCore",
+            "source": "NoctweaveCore",
         },
         {
             "type": "local-source",
             "name": "NoctyraCLI",
-            "source": "PICCPCore/Sources/NoctyraCLI",
+            "source": "NoctweaveCore/Sources/NoctyraCLI",
         },
         {
             "type": "local-source",
-            "name": "PICCP Relay Server",
-            "source": "PICCP Relay Server",
+            "name": "Noctweave Relay Server",
+            "source": "Noctweave Relay Server",
         },
     ]
 
@@ -136,9 +136,9 @@ def make_sbom():
         "name": "Noctyra",
         "generatedBy": "scripts/generate-sbom.py",
         "inputs": [
-            "PICCP Relay Server/Package.resolved",
-            "PICCP Relay Server/Dockerfile",
-            "PICCPCore/Vendor/liboqs.xcframework",
+            "Noctweave Relay Server/Package.resolved",
+            "Noctweave Relay Server/Dockerfile",
+            "NoctweaveCore/Vendor/liboqs.xcframework",
         ],
         "components": components,
     }
@@ -222,12 +222,12 @@ def main():
     parser = argparse.ArgumentParser(description="Generate the Noctyra machine-readable SBOM snapshot.")
     parser.add_argument(
         "--output",
-        default="PICCP Documentation/noctyra_sbom.json",
+        default="Noctweave Documentation/noctyra_sbom.json",
         help="Output path relative to the repository root.",
     )
     parser.add_argument(
         "--cyclonedx-output",
-        default="PICCP Documentation/noctyra_cyclonedx_sbom.json",
+        default="Noctweave Documentation/noctyra_cyclonedx_sbom.json",
         help="CycloneDX JSON output path relative to the repository root.",
     )
     args = parser.parse_args()

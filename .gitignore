@@ -30,13 +30,13 @@ Package.resolved
 *.tar.gz
 
 # Nested repositories kept with their own history
-PICCP Messaging Client/
-PICCP Server/
-PICCPCore/liboqs/
+Noctyra Messaging Client/
+Noctyra Relay/
+NoctweaveCore/liboqs/
 
 # Private/proprietary app assets and local product artifacts
 OtherResources/
 TODO.md
-PICCP Documentation/Legal/
-PICCP Documentation/*.pdf
-PICCP Documentation/noctyra_x_article.md
+Noctweave Documentation/Legal/
+Noctweave Documentation/*.pdf
+Noctweave Documentation/noctyra_x_article.md

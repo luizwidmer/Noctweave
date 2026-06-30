@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RELAY_DIR="$ROOT_DIR/PICCP Relay Server"
-SBOM_PATH="$ROOT_DIR/PICCP Documentation/noctyra_sbom.json"
-CYCLONEDX_SBOM_PATH="$ROOT_DIR/PICCP Documentation/noctyra_cyclonedx_sbom.json"
+RELAY_DIR="$ROOT_DIR/Noctweave Relay Server"
+SBOM_PATH="$ROOT_DIR/Noctweave Documentation/noctyra_sbom.json"
+CYCLONEDX_SBOM_PATH="$ROOT_DIR/Noctweave Documentation/noctyra_cyclonedx_sbom.json"
 
 source "$ROOT_DIR/scripts/liboqs-runtime.sh"
 
