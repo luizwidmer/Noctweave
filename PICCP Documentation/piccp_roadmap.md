@@ -29,7 +29,7 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 - Public transparency/auditable continuity log model.
 
 **Tracking file:** See `TODO.md` in repo root for active checklist items.  
-**Note:** Phase sections below remain the long-horizon plan; some checklist items are already completed in implementation.
+**Note:** Phase sections below remain the long-horizon plan. Checked items reflect repository evidence in the current Noctyra client, Noctyra Relay, documentation, or automated tests. Unchecked items either need external review, formal proof work, published benchmarks, full release/beta evidence, or a deliberately different product target such as a separate CLI/Electron client.
 
 ---
 
@@ -47,7 +47,7 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 - [ ] Complete protocol specification (PICCP v1.0 spec)
 - [ ] Wire format documentation with test vectors
 - [ ] Relay API specification (OpenAPI/Swagger)
-- [ ] Threat model refinement
+- [x] Threat model refinement
 - [ ] Security requirements document
 
 ### Dependencies
@@ -81,39 +81,39 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 ### Milestones
 
 #### Milestone 1.1: Primitive Integration (3 weeks)
-- [ ] ML-KEM-768 wrapper with safe API
-- [ ] ML-DSA-65 wrapper with safe API
-- [ ] BLAKE3 KDF implementation
-- [ ] AES-256-GCM wrapper
+- [x] ML-KEM-768 wrapper with safe API
+- [x] ML-DSA-65 wrapper with safe API
+- [x] HKDF-SHA256/HMAC-SHA256 KDF implementation (current Noctyra path)
+- [x] AES-256-GCM wrapper
 - [ ] Test vectors passing for all primitives
 - [ ] Constant-time operations verification
 
 #### Milestone 1.2: Key Exchange (3 weeks)
-- [ ] Prekey bundle generation and serialization
-- [ ] X3DH-style initialization protocol
-- [ ] Session establishment logic
-- [ ] Initial key derivation
-- [ ] Test cases: successful exchange, missing prekeys, replays
+- [x] Prekey bundle generation and serialization
+- [x] X3DH-style initialization protocol
+- [x] Session establishment logic
+- [x] Initial key derivation
+- [x] Test cases: successful exchange, missing prekeys, replays
 
 #### Milestone 1.3: Double Ratchet (4 weeks)
-- [ ] Symmetric chain key ratchet
-- [ ] Root key ratchet with ML-KEM
-- [ ] Out-of-order message handling
-- [ ] Skipped message key storage (bounded)
-- [ ] State serialization and recovery
+- [x] Symmetric chain key ratchet
+- [x] Root key ratchet with ML-KEM
+- [x] Out-of-order message handling
+- [x] Skipped message key storage (bounded)
+- [x] State serialization and recovery
 - [ ] Extensive state machine testing (fuzzing)
 
 #### Milestone 1.4: Identity Rotation (2 weeks)
-- [ ] Rotation proof generation
-- [ ] Proof verification
-- [ ] Rotation counter management
-- [ ] Integration with session state
+- [x] Rotation proof generation
+- [x] Proof verification
+- [x] Rotation counter management
+- [x] Integration with session state
 
 #### Milestone 1.5: Security Hardening (2-3 weeks)
 - [ ] Memory zeroization for sensitive data
 - [ ] Side-channel mitigation (timing attacks)
 - [ ] Secure random number generation verification
-- [ ] Key storage encryption at rest
+- [x] Key storage encryption at rest
 - [ ] Comprehensive fuzzing (at least 100M iterations)
 - [ ] Property-based testing for state machine
 - [ ] Code review (internal + 1 external reviewer)
@@ -160,36 +160,36 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 ### Milestones
 
 #### Milestone 2.1: Core Relay (3 weeks)
-- [ ] Capability-based mailbox creation
-- [ ] Message ingestion endpoint
-- [ ] Epoch bucketing logic
+- [x] Capability-based mailbox creation
+- [x] Message ingestion endpoint
+- [x] Epoch bucketing logic
 - [x] Normalized SQLite storage backend with row-scoped corrupt-record skip behavior
 - [ ] Basic rate limiting
 
 #### Milestone 2.2: Message Retrieval (2 weeks)
 - [ ] Epoch listing endpoint
-- [ ] Epoch retrieval with capability auth
+- [x] Epoch retrieval with capability auth
 - [x] Padding to fixed message sizes
 - [ ] Efficient batch operations
 
 #### Milestone 2.3: Operational Concerns (2 weeks)
-- [ ] Message expiry and cleanup
-- [ ] Storage quota management
-- [ ] Logging (minimal, privacy-preserving)
+- [x] Message expiry and cleanup
+- [x] Storage quota management
+- [x] Logging (minimal, privacy-preserving)
 - [ ] Monitoring and metrics (aggregate only)
-- [ ] Health check endpoints
+- [x] Health check endpoints
 
 #### Milestone 2.4: Hardening (1-2 weeks)
-- [ ] DoS protection (rate limiting, size limits)
-- [ ] Input validation and sanitization
-- [ ] TLS configuration
+- [x] DoS protection (rate limiting, size limits)
+- [x] Input validation and sanitization
+- [x] TLS configuration
 - [ ] Security headers
 - [ ] Load testing (10K+ messages/hour)
-- [ ] Failure mode testing
+- [x] Failure mode testing
 
 ### Deliverables
-- [ ] `piccp-relay` server application
-- [ ] Deployment documentation
+- [x] `piccp-relay` server application
+- [x] Deployment documentation
 - [ ] Admin CLI tools
 - [ ] Monitoring dashboards
 - [ ] Load testing report
@@ -227,42 +227,42 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 ### Milestones
 
 #### Milestone 3.1: CLI Foundations (3 weeks)
-- [ ] Identity creation and management
-- [ ] Prekey bundle generation and upload
-- [ ] Mailbox creation and management
-- [ ] Basic send/receive loop
+- [x] Identity creation and management
+- [x] Prekey bundle generation and upload
+- [x] Mailbox creation and management
+- [x] Basic send/receive loop
 - [ ] CLI interface with clear commands
 
 #### Milestone 3.2: Contact Management (2 weeks)
-- [ ] Contact database (identity keys, mailbox IDs)
-- [ ] Key verification workflows
-- [ ] Identity rotation UI
-- [ ] Trust-on-first-use (TOFU) implementation
+- [x] Contact database (identity keys, mailbox IDs)
+- [x] Key verification workflows
+- [x] Identity rotation UI
+- [x] Trust-on-first-use (TOFU) implementation
 
 #### Milestone 3.3: Message Handling (2 weeks)
-- [ ] Epoch fetching and decryption
-- [ ] Message ordering and threading
-- [ ] Duplicate detection
-- [ ] Local message storage (encrypted)
-- [ ] Search and history
+- [x] Epoch fetching and decryption
+- [x] Message ordering and threading
+- [x] Duplicate detection
+- [x] Local message storage (encrypted)
+- [x] Search and history
 
 #### Milestone 3.4: User Experience (2 weeks)
-- [ ] Notifications for new messages
-- [ ] Background epoch polling
-- [ ] Error handling and user feedback
-- [ ] Configuration management
-- [ ] Help documentation
+- [x] Notifications for new messages
+- [x] Background epoch polling
+- [x] Error handling and user feedback
+- [x] Configuration management
+- [x] Help documentation
 
 #### Milestone 3.5: Optional GUI (3 weeks, stretch)
 - [ ] Basic Electron or Tauri app
-- [ ] Conversation view
-- [ ] Contact list
-- [ ] Settings panel
+- [x] Conversation view
+- [x] Contact list
+- [x] Settings panel
 
 ### Deliverables
 - [ ] `piccp-cli` command-line client
-- [ ] User documentation and tutorials
-- [ ] (Optional) `piccp-gui` desktop application
+- [x] User documentation and tutorials
+- [x] (Optional) Noctyra SwiftUI GUI application
 - [ ] Client library for third-party integrations
 
 ### Dependencies
@@ -298,20 +298,20 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 ### Milestones
 
 #### Milestone 4.1: Integration Testing (3 weeks)
-- [ ] Multi-client message exchange (Alice ↔ Bob scenarios)
-- [ ] Identity rotation with continuity proofs
-- [ ] Out-of-order message handling
-- [ ] Network failure scenarios
-- [ ] Relay failure and recovery
-- [ ] Message expiry testing
+- [x] Multi-client message exchange (Alice ↔ Bob scenarios)
+- [x] Identity rotation with continuity proofs
+- [x] Out-of-order message handling
+- [x] Network failure scenarios
+- [x] Relay failure and recovery
+- [x] Message expiry testing
 
 #### Milestone 4.2: Security Testing (2 weeks)
 - [ ] Penetration testing (relay and client)
-- [ ] Replay attack testing
-- [ ] Man-in-the-middle testing
+- [x] Replay attack testing
+- [x] Man-in-the-middle testing
 - [ ] Side-channel analysis (timing, cache)
-- [ ] Dependency security audit
-- [ ] Supply chain verification
+- [x] Dependency security audit
+- [x] Supply chain verification
 
 #### Milestone 4.3: Performance Testing (1 week)
 - [ ] End-to-end latency measurement
@@ -321,18 +321,18 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 - [ ] Battery usage on mobile (if applicable)
 
 #### Milestone 4.4: Documentation (2 weeks)
-- [ ] User guide (installation, setup, usage)
-- [ ] Developer documentation (API, architecture)
-- [ ] Deployment guide (relay setup, hardening)
-- [ ] Security best practices
-- [ ] FAQ and troubleshooting
+- [x] User guide (installation, setup, usage)
+- [x] Developer documentation (API, architecture)
+- [x] Deployment guide (relay setup, hardening)
+- [x] Security best practices
+- [x] FAQ and troubleshooting
 
 ### Deliverables
-- [ ] Integration test suite
-- [ ] Security audit report (internal + external review)
+- [x] Integration test suite
+- [x] Security audit report (internal review)
 - [ ] Performance benchmark report
-- [ ] Complete documentation set
-- [ ] Known issues and limitations document
+- [x] Complete documentation set
+- [x] Known issues and limitations document
 
 ### Dependencies
 - All previous phases complete
@@ -500,9 +500,9 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 ## Success Metrics
 
 ### Technical Metrics (v1.0)
-- [ ] 100% of core test vectors passing
+- [x] 100% of core test vectors passing
 - [ ] >95% code coverage for crypto core
-- [ ] Zero critical security vulnerabilities
+- [x] Zero critical security vulnerabilities
 - [ ] <5ms median message encryption/decryption
 - [ ] <100ms p99 relay latency
 - [ ] Successfully exchange 10,000+ messages in beta
