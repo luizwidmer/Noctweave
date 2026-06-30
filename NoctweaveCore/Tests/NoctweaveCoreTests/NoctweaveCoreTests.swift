@@ -7468,6 +7468,114 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(fetchResponse.messages?.first?.id, envelope.id)
     }
 
+    func testManualFederationAllowListCanUpdateWhileRunning() async throws {
+        let federation = FederationDescriptor(mode: .manual, name: "manual-live")
+        let basePort = UInt16.random(in: 40_000...43_000)
+        let relayXEndpoint = RelayEndpoint(host: "127.0.0.1", port: basePort)
+        let relayYEndpoint = RelayEndpoint(host: "127.0.0.1", port: basePort + 1)
+
+        let relayX = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                federationAllowList: []
+            )
+        )
+        let relayY = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation
+            )
+        )
+
+        let startedX = expectation(description: "manual relay x started")
+        relayX.onEvent = { event in
+            if case .started = event {
+                startedX.fulfill()
+            }
+        }
+        let startedY = expectation(description: "manual relay y started")
+        relayY.onEvent = { event in
+            if case .started = event {
+                startedY.fulfill()
+            }
+        }
+
+        try relayX.start(host: "0.0.0.0", port: relayXEndpoint.port)
+        try relayY.start(host: "0.0.0.0", port: relayYEndpoint.port)
+        defer {
+            relayX.stop()
+            relayY.stop()
+        }
+        await fulfillment(of: [startedX, startedY], timeout: 2.0)
+
+        let destinationAccessKey = SigningKeyPair()
+        let destinationInbox = InboxAddress.derived(from: destinationAccessKey.publicKeyData)
+        let blockedEnvelope = Envelope(
+            conversationId: "manual-live-test",
+            senderFingerprint: "sender-fp",
+            sentAt: Date(),
+            messageCounter: 1,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x01, count: 12),
+                ciphertext: Data([0x01, 0x02, 0x03]),
+                tag: Data(repeating: 0x02, count: 16)
+            ),
+            signature: Data([0xAA])
+        )
+
+        let xClient = RelayClient(endpoint: relayXEndpoint)
+        let blockedResponse = try await xClient.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: destinationInbox,
+                    routingToken: destinationInbox,
+                    envelope: blockedEnvelope,
+                    destinationRelay: relayYEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(blockedResponse.type, .error)
+        XCTAssertTrue((blockedResponse.error ?? "").contains("not in the node list"))
+
+        relayX.updateFederationAllowList([relayYEndpoint])
+        let deliveredEnvelope = Envelope(
+            conversationId: "manual-live-test",
+            senderFingerprint: "sender-fp",
+            sentAt: Date(),
+            messageCounter: 2,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x03, count: 12),
+                ciphertext: Data([0xAA, 0xBB, 0xCC]),
+                tag: Data(repeating: 0x04, count: 16)
+            ),
+            signature: Data([0xBB])
+        )
+        let deliveredResponse = try await xClient.send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: destinationInbox,
+                    routingToken: destinationInbox,
+                    envelope: deliveredEnvelope,
+                    destinationRelay: relayYEndpoint
+                )
+            )
+        )
+        XCTAssertEqual(deliveredResponse.type, .delivered)
+
+        let yClient = RelayClient(endpoint: relayYEndpoint)
+        let fetchResponse = try await registerAndFetch(
+            client: yClient,
+            inboxId: destinationInbox,
+            accessKey: destinationAccessKey,
+            maxCount: 10
+        )
+        XCTAssertEqual(fetchResponse.type, .messages)
+        XCTAssertEqual(fetchResponse.messages?.map(\.id), [deliveredEnvelope.id])
+    }
+
     func testCuratedStrictPolicyRejectsDestinationOutsideAllowList() async throws {
         let federation = FederationDescriptor(mode: .curated, name: "mesh-c")
         let coordinatorPrivateKey = FederationDirectorySignature.privateKeyData(from: nil)

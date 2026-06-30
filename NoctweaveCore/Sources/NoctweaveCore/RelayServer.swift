@@ -97,6 +97,10 @@ public final class RelayServer {
         onEvent?(.stopped)
     }
 
+    public func updateFederationAllowList(_ allowList: [RelayEndpoint]) {
+        configuration.federationAllowList = allowList
+    }
+
     private func handleTCP(connection: NWConnection) {
         Task {
             do {
