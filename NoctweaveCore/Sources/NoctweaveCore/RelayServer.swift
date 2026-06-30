@@ -785,8 +785,15 @@ public final class RelayServer {
             }
             let memberFingerprint = get.memberFingerprint?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !memberFingerprint.isEmpty,
-                  let memberKey = registeredSigningKey(for: memberFingerprint, in: group) else {
+            guard !memberFingerprint.isEmpty else {
+                return .error("Group membership is required")
+            }
+            let memberKey = registeredSigningKey(for: memberFingerprint, in: group)
+            let isInvited = await store.hasGroupInvitation(
+                groupId: get.groupId,
+                invitedFingerprint: memberFingerprint
+            )
+            guard memberKey != nil || isInvited else {
                 return .error("Group membership is required")
             }
             if let proofFailure = await validateActorProof(
@@ -923,7 +930,22 @@ public final class RelayServer {
             ) {
                 return proofFailure
             }
+            if let groupCommit = join.groupCommit {
+                if let proofFailure = await validateActorProof(
+                    groupCommit.actorProof,
+                    expectedFingerprint: requesterFingerprint,
+                    expectedSigningKey: requesterSigningKey,
+                    signableDataBuilder: { proof in try groupCommit.signableData(for: proof) }
+                ) {
+                    return proofFailure
+                }
+            }
             do {
+                if join.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
+                   join.groupCommit != nil {
+                    let group = try await store.acceptGroupInvitation(join)
+                    return .group(group)
+                }
                 let created = try await store.requestGroupJoin(join)
                 return .groupJoinRequests([created])
             } catch let error as RelayStoreError {

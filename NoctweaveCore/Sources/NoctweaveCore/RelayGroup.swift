@@ -601,17 +601,20 @@ public struct RequestGroupJoinRequest: Codable, Equatable {
     public let groupId: UUID
     public let requesterProfile: RelayGroupMemberProfile
     public let invitedFingerprint: String?
+    public let groupCommit: SignedGroupCommit?
     public let requesterProof: RelayActorProof?
 
     public init(
         groupId: UUID,
         requesterProfile: RelayGroupMemberProfile,
         invitedFingerprint: String? = nil,
+        groupCommit: SignedGroupCommit? = nil,
         requesterProof: RelayActorProof? = nil
     ) {
         self.groupId = groupId
         self.requesterProfile = requesterProfile
         self.invitedFingerprint = invitedFingerprint
+        self.groupCommit = groupCommit
         self.requesterProof = requesterProof
     }
 
@@ -621,6 +624,7 @@ public struct RequestGroupJoinRequest: Codable, Equatable {
                 groupId: groupId,
                 requesterProfile: requesterProfile,
                 invitedFingerprint: invitedFingerprint,
+                groupCommit: groupCommit,
                 signedAt: proof.signedAt,
                 nonce: proof.nonce
             )
@@ -987,6 +991,7 @@ private struct RequestGroupJoinProofPayload: Codable {
     let groupId: UUID
     let requesterProfile: RelayGroupMemberProfile
     let invitedFingerprint: String?
+    let groupCommit: SignedGroupCommit?
     let signedAt: Date
     let nonce: UUID
 }

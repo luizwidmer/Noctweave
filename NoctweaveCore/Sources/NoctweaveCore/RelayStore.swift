@@ -760,6 +760,16 @@ public actor RelayStore {
         return Array(invitations.prefix(min(500, max(0, request.limit ?? 500))))
     }
 
+    public func hasGroupInvitation(groupId: UUID, invitedFingerprint: String) -> Bool {
+        let fingerprint = invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fingerprint.isEmpty else {
+            return false
+        }
+        return groupInvitations[fingerprint, default: []].contains { invitation in
+            invitation.groupId == groupId && groups[groupId] != nil
+        }
+    }
+
     public func updateGroup(_ request: UpdateGroupRequest) throws -> RelayGroupDescriptor {
         guard var group = groups[request.groupId] else {
             throw RelayStoreError.groupNotFound
@@ -1068,6 +1078,89 @@ public actor RelayStore {
         return joinRequest
     }
 
+    public func acceptGroupInvitation(_ request: RequestGroupJoinRequest) throws -> RelayGroupDescriptor {
+        guard var group = groups[request.groupId] else {
+            throw RelayStoreError.groupNotFound
+        }
+        guard let requester = normalizedMemberProfile(request.requesterProfile) else {
+            throw RelayStoreError.invalidFingerprint
+        }
+        let invitedFingerprint = request.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !invitedFingerprint.isEmpty,
+              groupInvitations[invitedFingerprint, default: []].contains(where: { $0.groupId == group.id }) else {
+            throw RelayStoreError.unauthorizedGroupMutation
+        }
+        if group.members.contains(where: { $0.fingerprint == requester.fingerprint }) {
+            removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
+            try saveToDisk()
+            return group
+        }
+        guard let commit = request.groupCommit,
+              commit.operation == .joinApprove,
+              commit.groupId == group.id,
+              commit.actorFingerprint == requester.fingerprint,
+              commit.baseEpoch == group.epoch,
+              commit.previousTranscriptHash == group.mlsEpochState.confirmedTranscriptHash,
+              commit.title == nil,
+              Set(commit.addMemberFingerprints) == Set([requester.fingerprint]),
+              commit.addMemberProfiles == [requester],
+              commit.removeMemberFingerprints.isEmpty else {
+            throw RelayStoreError.invalidGroupCommit
+        }
+
+        let memberProfiles = projectedGroupMemberProfiles(
+            currentMembers: group.members,
+            addProfiles: [requester]
+        )
+        try validateRatchetSecretDistribution(
+            commit.ratchetSecretDistribution,
+            groupId: group.id,
+            epoch: group.epoch + 1,
+            operation: .joinApprove,
+            memberFingerprints: memberProfiles.map(\.fingerprint)
+        )
+
+        var memberMap = Dictionary(uniqueKeysWithValues: group.members.map { ($0.fingerprint, $0) })
+        memberMap[requester.fingerprint] = makeGroupMember(
+            fingerprint: requester.fingerprint,
+            existing: nil,
+            profile: requester,
+            joinedAt: Date()
+        )
+        guard memberMap.count <= maxGroupMembers else {
+            throw RelayStoreError.groupCapacityExceeded
+        }
+
+        let now = Date()
+        group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
+        group.epoch += 1
+        group.updatedAt = now
+        group.mlsEpochState = group.mlsEpochState.advancing(
+            title: group.title,
+            inboxId: group.inboxId,
+            actorFingerprint: requester.fingerprint,
+            members: group.members,
+            operation: .joinApprove,
+            committedAt: now,
+            ratchetSecretDistribution: commit.ratchetSecretDistribution
+        )
+        group.mlsEpochHistory = boundedGroupEpochHistory(
+            group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
+        )
+        groups[group.id] = group
+        removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
+        if var pending = groupJoinRequests[group.id] {
+            pending.removeAll { $0.requester.fingerprint == requester.fingerprint }
+            if pending.isEmpty {
+                groupJoinRequests.removeValue(forKey: group.id)
+            } else {
+                groupJoinRequests[group.id] = pending
+            }
+        }
+        try saveToDisk()
+        return group
+    }
+
     public func listGroupJoinRequests(_ request: ListGroupJoinRequestsRequest) throws -> [RelayGroupJoinRequest] {
         guard let group = groups[request.groupId] else {
             throw RelayStoreError.groupNotFound
@@ -1222,6 +1315,38 @@ public actor RelayStore {
             signingPublicKey: profile?.signingPublicKey ?? existing?.signingPublicKey,
             agreementPublicKey: profile?.agreementPublicKey ?? existing?.agreementPublicKey
         )
+    }
+
+    private func projectedGroupMemberProfiles(
+        currentMembers: [RelayGroupMember],
+        addProfiles: [RelayGroupMemberProfile]
+    ) -> [RelayGroupMemberProfile] {
+        var profiles = Dictionary(uniqueKeysWithValues: currentMembers.map { member in
+            (
+                member.fingerprint,
+                RelayGroupMemberProfile(
+                    fingerprint: member.fingerprint,
+                    displayName: member.displayName,
+                    inboxId: member.inboxId,
+                    relay: member.relay,
+                    signingPublicKey: member.signingPublicKey,
+                    agreementPublicKey: member.agreementPublicKey
+                )
+            )
+        })
+        for profile in addProfiles {
+            let fingerprint = profile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !fingerprint.isEmpty else { continue }
+            profiles[fingerprint] = RelayGroupMemberProfile(
+                fingerprint: fingerprint,
+                displayName: profile.displayName,
+                inboxId: profile.inboxId,
+                relay: profile.relay,
+                signingPublicKey: profile.signingPublicKey,
+                agreementPublicKey: profile.agreementPublicKey
+            )
+        }
+        return profiles.values.sorted { $0.fingerprint < $1.fingerprint }
     }
 
     private func pruneAnnouncements(now: Date) {

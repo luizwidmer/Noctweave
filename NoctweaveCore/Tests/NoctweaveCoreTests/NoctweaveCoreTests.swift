@@ -5743,42 +5743,41 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(invitationsResponse.type, .groupInvitations)
         XCTAssertEqual(invitationsResponse.groupInvitations?.map(\.groupId), [group.id])
 
-        let requestJoin = try signedRequestGroupJoinRequest(
+        let scopedInviteeProfile = relayGroupMemberProfile(identity: scopedInvitee, relay: endpoint)
+        let acceptDistribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: Data("accepted-invitation-secret".utf8),
+            groupId: group.id,
+            epoch: group.epoch + 1,
+            operation: .joinApprove,
+            recipients: [
+                relayGroupMemberProfile(identity: creator, relay: endpoint),
+                scopedInviteeProfile
+            ]
+        )
+        var acceptCommit = SignedGroupCommit(
+            operation: .joinApprove,
+            groupId: group.id,
+            actorFingerprint: scopedInvitee.fingerprint,
+            baseEpoch: group.epoch,
+            previousTranscriptHash: group.mlsEpochState.confirmedTranscriptHash,
+            addMemberFingerprints: [scopedInvitee.fingerprint],
+            addMemberProfiles: [scopedInviteeProfile],
+            ratchetSecretDistribution: acceptDistribution
+        )
+        acceptCommit = try signedGroupCommit(acceptCommit, signer: scopedInvitee)
+        let acceptInvite = try signedRequestGroupJoinRequest(
             RequestGroupJoinRequest(
                 groupId: group.id,
-                requesterProfile: relayGroupMemberProfile(identity: scopedInvitee, relay: endpoint),
-                invitedFingerprint: invitee.fingerprint
+                requesterProfile: scopedInviteeProfile,
+                invitedFingerprint: invitee.fingerprint,
+                groupCommit: acceptCommit
             ),
             signer: scopedInvitee
         )
-        let joinResponse = try await client.send(.requestGroupJoin(requestJoin))
-        XCTAssertEqual(joinResponse.type, .groupJoinRequests)
-        guard let joinRequest = joinResponse.groupJoinRequests?.first else {
-            XCTFail("Expected join request.")
-            return
-        }
-        XCTAssertEqual(joinRequest.invitedFingerprint, invitee.fingerprint)
-
-        let approveResponse = try await client.send(
-            .approveGroupJoin(
-                try signedApproveGroupJoinRequest(
-                    ApproveGroupJoinRequest(
-                        groupId: group.id,
-                        actorFingerprint: creator.fingerprint,
-                        joinRequestId: joinRequest.id,
-                        groupCommit: try signedJoinApprovalCommit(
-                            group: group,
-                            joinRequest: joinRequest,
-                            signer: creator
-                        )
-                    ),
-                    signer: creator
-                )
-            )
-        )
-        XCTAssertEqual(approveResponse.type, .group)
-        XCTAssertTrue(approveResponse.group?.members.contains(where: { $0.fingerprint == scopedInvitee.fingerprint }) ?? false)
-        XCTAssertFalse(approveResponse.group?.members.contains(where: { $0.fingerprint == invitee.fingerprint }) ?? true)
+        let acceptResponse = try await client.send(.requestGroupJoin(acceptInvite))
+        XCTAssertEqual(acceptResponse.type, .group)
+        XCTAssertTrue(acceptResponse.group?.members.contains(where: { $0.fingerprint == scopedInvitee.fingerprint }) ?? false)
+        XCTAssertFalse(acceptResponse.group?.members.contains(where: { $0.fingerprint == invitee.fingerprint }) ?? true)
 
         let consumedResponse = try await client.send(
             .listGroupInvitations(
@@ -7192,6 +7191,7 @@ final class NoctweaveCoreTests: XCTestCase {
             groupId: request.groupId,
             requesterProfile: request.requesterProfile,
             invitedFingerprint: request.invitedFingerprint,
+            groupCommit: request.groupCommit,
             requesterProof: proof
         )
     }
