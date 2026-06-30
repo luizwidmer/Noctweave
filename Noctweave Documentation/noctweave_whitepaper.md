@@ -7,6 +7,8 @@ geometry: margin=1in
 fontsize: 11pt
 ---
 
+License: `CC-BY-NC-SA-4.0`. See [`../LICENSE-DOCS.md`](../LICENSE-DOCS.md).
+
 # Abstract
 
 The Noctweave Protocol is a post-quantum secure messaging protocol centered on selective identity continuity rather than permanent global identity. Noctyra is the reference client and Noctyra Relay is the reference relay implementation. Together they use pure post-quantum identity and session establishment with ML-DSA-65 and ML-KEM-768, symmetric ratcheting for forward secrecy, selective identity rotation and identity burn, encrypted attachment transfer, relay-backed group coordination, coordinator-assisted federation, and pull-only message delivery without centralized push infrastructure.

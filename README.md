@@ -106,3 +106,9 @@ scripts/verify-release.sh
 ```
 
 The script verifies SBOM freshness, package pins, dependency graph health, and Linux relay tests. Docker and Trivy checks run only when those tools are installed.
+
+## License
+
+Noctweave public source code is licensed under `AGPL-3.0-or-later`. Commercial licenses are available for proprietary products, hosted commercial deployments, private forks, and integrations that cannot comply with AGPL terms. See [`COMMERCIAL-LICENSE.md`](COMMERCIAL-LICENSE.md).
+
+Noctweave documentation and whitepaper materials are licensed under `CC-BY-NC-SA-4.0` unless otherwise noted. See [`LICENSE-DOCS.md`](LICENSE-DOCS.md).
