@@ -11,6 +11,7 @@
 ## Client-Facing APIs
 
 - `HeadlessMessagingClient`: persistent headless identity, contact, send, receive, register, and contact-share workflows.
+- `HeadlessIdentityChangeResult`: structured result for identity rotation and burn operations.
 - `ClientState` and `ClientStateStore`: codable local state and optional platform encryption wrapper.
 - `Identity`, `IdentityProfile`, `Contact`, `Conversation`, and `Message`: core client state models.
 - `MessageEngine`: direct-message session creation, encryption, decryption, root ratchet, and message appending.

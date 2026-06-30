@@ -61,6 +61,25 @@ public struct HeadlessReceivedMessage: Codable, Equatable {
     }
 }
 
+public struct HeadlessIdentityChangeResult: Codable, Equatable {
+    public let oldFingerprint: String
+    public let newFingerprint: String
+    public let notifiedContacts: [String]
+    public let failedContacts: [String]
+
+    public init(
+        oldFingerprint: String,
+        newFingerprint: String,
+        notifiedContacts: [String],
+        failedContacts: [String]
+    ) {
+        self.oldFingerprint = oldFingerprint
+        self.newFingerprint = newFingerprint
+        self.notifiedContacts = notifiedContacts
+        self.failedContacts = failedContacts
+    }
+}
+
 public enum HeadlessMessagingClientError: Error, Equatable {
     case stateAlreadyExists
     case missingState
@@ -190,6 +209,138 @@ public actor HeadlessMessagingClient {
         }
     }
 
+    public func setContactIdentityReset(selector: String, allow: Bool) async throws -> Contact {
+        var state = try await loadState()
+        var contact = try resolveContact(selector, in: state.contacts)
+        contact.allowIdentityReset = allow
+        state.updateContact(contact)
+        try await store.save(state)
+        return contact
+    }
+
+    public func rotateIdentity() async throws -> HeadlessIdentityChangeResult {
+        var state = try await loadState()
+        var previousIdentity = state.identity
+        let rotationContext = try state.identity.rotateKeys()
+        previousIdentity.signingKey = rotationContext.oldSigningKey
+        previousIdentity.agreementKey = rotationContext.oldAgreementKey
+
+        let oldFingerprint = rotationContext.oldFingerprint
+        let newFingerprint = state.identity.fingerprint
+        state.appendContinuityEvent(
+            ContinuityEvent(
+                kind: .identityRotated,
+                oldFingerprint: oldFingerprint,
+                newFingerprint: newFingerprint
+            )
+        )
+        if let regenerated = try? PrekeyState.generate(identity: state.identity) {
+            state.prekeys = regenerated
+        }
+
+        var rebuiltByContact: [UUID: Conversation] = [:]
+        var notified: [String] = []
+        var failed: [String] = []
+        for contact in state.contacts {
+            let existingConversation = state.conversation(for: contact.id)
+            do {
+                let bootstrapSession = try MessageEngine.createOutboundSession(
+                    identity: previousIdentity,
+                    contact: contact
+                )
+                var bootstrapConversation = bootstrapSession.conversation
+                let envelope = try MessageEngine.encrypt(
+                    body: .identityRotation(rotationContext.rotation),
+                    senderSigningKey: rotationContext.oldSigningKey,
+                    senderFingerprint: oldFingerprint,
+                    conversation: &bootstrapConversation,
+                    kemCiphertext: bootstrapSession.kemCiphertext
+                )
+                bootstrapConversation.markMessageProcessed()
+                _ = try await deliver(envelope: envelope, to: contact, from: state)
+                if let existingConversation {
+                    bootstrapConversation.messages = existingConversation.messages
+                    bootstrapConversation.unreadCount = existingConversation.unreadCount
+                }
+                rebuiltByContact[contact.id] = bootstrapConversation
+                notified.append(contact.displayName)
+            } catch {
+                if let existingConversation {
+                    rebuiltByContact[contact.id] = existingConversation
+                }
+                failed.append(contact.displayName)
+            }
+        }
+        state.conversations = state.contacts.compactMap { rebuiltByContact[$0.id] }
+        try await store.save(state)
+        return HeadlessIdentityChangeResult(
+            oldFingerprint: oldFingerprint,
+            newFingerprint: newFingerprint,
+            notifiedContacts: notified,
+            failedContacts: failed
+        )
+    }
+
+    public func burnIdentity() async throws -> HeadlessIdentityChangeResult {
+        var state = try await loadState()
+        let oldIdentity = state.identity
+        let oldSigningKey = oldIdentity.signingKey
+        let oldFingerprint = oldIdentity.fingerprint
+
+        state.identity = Identity(displayName: oldIdentity.displayName)
+        let newInboxAccessKey = SigningKeyPair()
+        state.inboxAccessKey = newInboxAccessKey
+        state.inboxId = InboxAddress.derived(from: newInboxAccessKey.publicKeyData)
+        let newFingerprint = state.identity.fingerprint
+        if let regenerated = try? PrekeyState.generate(identity: state.identity) {
+            state.prekeys = regenerated
+        }
+        state.appendContinuityEvent(
+            ContinuityEvent(
+                kind: .identityBurned,
+                oldFingerprint: oldFingerprint,
+                newFingerprint: newFingerprint
+            )
+        )
+
+        try await registerInbox(for: state)
+
+        let retainedContacts = state.contacts.filter(\.allowIdentityReset)
+        let newOffer = try contactOffer(for: state)
+        var notified: [String] = []
+        var failed: [String] = []
+        for contact in retainedContacts {
+            do {
+                let reset = try IdentityReset.create(newOffer: newOffer, signingKey: oldSigningKey)
+                let session = try MessageEngine.createOutboundSession(identity: oldIdentity, contact: contact)
+                var conversation = session.conversation
+                let envelope = try MessageEngine.encrypt(
+                    body: .identityReset(reset),
+                    senderSigningKey: oldSigningKey,
+                    senderFingerprint: oldFingerprint,
+                    conversation: &conversation,
+                    kemCiphertext: session.kemCiphertext
+                )
+                conversation.markMessageProcessed()
+                _ = try await deliver(envelope: envelope, to: contact, from: state)
+                notified.append(contact.displayName)
+            } catch {
+                failed.append(contact.displayName)
+            }
+        }
+
+        state.contacts = retainedContacts
+        state.conversations = []
+        state.groups = []
+        try await store.save(state)
+        return HeadlessIdentityChangeResult(
+            oldFingerprint: oldFingerprint,
+            newFingerprint: newFingerprint,
+            notifiedContacts: notified,
+            failedContacts: failed
+        )
+    }
+
     public func sendText(to selector: String, text: String) async throws -> HeadlessSentMessage {
         var state = try await loadState()
         let contact = try resolveContact(selector, in: state.contacts)
@@ -218,20 +369,7 @@ public actor HeadlessMessagingClient {
         )
         state.upsert(conversation: conversation)
 
-        let response = try await relayClient(for: contact.relay).send(
-            .deliver(
-                DeliverRequest(
-                    inboxId: contact.inboxId,
-                    routingToken: contact.inboxId,
-                    envelope: envelope,
-                    destinationRelay: contact.relay == state.relay ? nil : contact.relay
-                )
-            ),
-            timeout: timeout
-        )
-        guard response.type == .delivered || response.type == .ok else {
-            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
-        }
+        let response = try await deliver(envelope: envelope, to: contact, from: state)
         try await store.save(state)
         return HeadlessSentMessage(
             contact: contact,
@@ -271,10 +409,11 @@ public actor HeadlessMessagingClient {
         var received: [HeadlessReceivedMessage] = []
         var acknowledgedIds: [UUID] = []
         for envelope in response.messages ?? [] {
-            guard let contact = state.contact(for: envelope.senderFingerprint) else {
+            guard var contact = state.contact(for: envelope.senderFingerprint) else {
                 continue
             }
             var conversation: Conversation
+            let previousConversation = state.conversation(for: contact.id)
             if let existing = state.conversation(for: contact.id) {
                 conversation = existing
             } else if let kemCiphertext = envelope.kemCiphertext {
@@ -286,7 +425,24 @@ public actor HeadlessMessagingClient {
             } else {
                 throw HeadlessMessagingClientError.unsupportedInboundSession
             }
-            let body = try MessageEngine.decrypt(envelope: envelope, contact: contact, conversation: &conversation)
+            let body: MessageBody
+            do {
+                body = try MessageEngine.decrypt(envelope: envelope, contact: contact, conversation: &conversation)
+            } catch {
+                guard let kemCiphertext = envelope.kemCiphertext else {
+                    throw error
+                }
+                conversation = try MessageEngine.createInboundSession(
+                    identity: state.identity,
+                    contact: contact,
+                    kemCiphertext: kemCiphertext
+                )
+                body = try MessageEngine.decrypt(envelope: envelope, contact: contact, conversation: &conversation)
+                if let previousConversation {
+                    conversation.messages = previousConversation.messages
+                    conversation.unreadCount = previousConversation.unreadCount
+                }
+            }
             _ = MessageEngine.appendMessage(
                 body: body,
                 direction: .received,
@@ -295,6 +451,38 @@ public actor HeadlessMessagingClient {
                 conversation: &conversation
             )
             conversation.markMessageProcessed()
+            switch body {
+            case .identityRotation(let rotation):
+                let previousFingerprint = contact.fingerprint
+                if contact.apply(rotation: rotation) {
+                    state.updateContact(contact)
+                    state.appendContinuityEvent(
+                        ContinuityEvent(
+                            kind: .contactRotationReceived,
+                            contactId: contact.id,
+                            contactDisplayName: contact.displayName,
+                            oldFingerprint: previousFingerprint,
+                            newFingerprint: contact.fingerprint
+                        )
+                    )
+                }
+            case .identityReset(let reset):
+                let previousFingerprint = contact.fingerprint
+                if contact.apply(reset: reset) {
+                    state.updateContact(contact)
+                    state.appendContinuityEvent(
+                        ContinuityEvent(
+                            kind: .contactResetReceived,
+                            contactId: contact.id,
+                            contactDisplayName: contact.displayName,
+                            oldFingerprint: previousFingerprint,
+                            newFingerprint: contact.fingerprint
+                        )
+                    )
+                }
+            case .text, .attachment, .sessionReset, .resendRequest:
+                break
+            }
             state.upsert(conversation: conversation)
             acknowledgedIds.append(envelope.id)
             received.append(
@@ -331,6 +519,50 @@ public actor HeadlessMessagingClient {
         request = AcknowledgeMessagesRequest(inboxId: state.inboxId, messageIds: ids, accessProof: proof)
         let response = try await relayClient(for: state.relay).send(.acknowledgeMessages(request), timeout: timeout)
         try requireOK(response)
+    }
+
+    private func registerInbox(for state: ClientState) async throws {
+        let accessKey = try inboxAccessKey(from: state)
+        let offer = try MessageEngine.makeContactOffer(
+            identity: state.identity,
+            inboxId: state.inboxId,
+            relay: state.relay,
+            inboxAccessPublicKey: accessKey.publicKeyData
+        )
+        var request = RegisterInboxRequest(
+            inboxId: state.inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            contactOffer: offer
+        )
+        let proof = try Self.makeActorProof(signingKey: accessKey) { actorProof in
+            try request.signableData(for: actorProof)
+        }
+        request = RegisterInboxRequest(
+            inboxId: state.inboxId,
+            accessPublicKey: accessKey.publicKeyData,
+            contactOffer: offer,
+            accessProof: proof
+        )
+        let response = try await relayClient(for: state.relay).send(.registerInbox(request), timeout: timeout)
+        try requireOK(response)
+    }
+
+    private func deliver(envelope: Envelope, to contact: Contact, from state: ClientState) async throws -> RelayResponse {
+        let response = try await relayClient(for: contact.relay).send(
+            .deliver(
+                DeliverRequest(
+                    inboxId: contact.inboxId,
+                    routingToken: contact.inboxId,
+                    envelope: envelope,
+                    destinationRelay: contact.relay == state.relay ? nil : contact.relay
+                )
+            ),
+            timeout: timeout
+        )
+        guard response.type == .delivered || response.type == .ok else {
+            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+        }
+        return response
     }
 
     private func loadState() async throws -> ClientState {

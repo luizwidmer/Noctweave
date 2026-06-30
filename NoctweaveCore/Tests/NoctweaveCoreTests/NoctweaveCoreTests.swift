@@ -91,6 +91,75 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(status.conversationCount, 1)
     }
 
+    func testHeadlessMessagingClientRotatesAndBurnsIdentityWithContactReset() async throws {
+        let port = UInt16.random(in: 49_001...53_000)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noctweave-headless-identity-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), timeout: 3)
+        let bob = HeadlessMessagingClient(stateURL: root.appendingPathComponent("bob.json"), timeout: 3)
+        let initialAliceStatus = try await alice.createState(displayName: "Alice CLI", relay: endpoint)
+        _ = try await bob.createState(displayName: "Bob CLI", relay: endpoint)
+        try await alice.registerInbox()
+        try await bob.registerInbox()
+
+        _ = try await alice.importContactCode(try await bob.exportContactCode())
+        _ = try await bob.importContactCode(try await alice.exportContactCode())
+
+        _ = try await alice.sendText(to: "Bob CLI", text: "before rotate")
+        let beforeRotateBodies = try await bob.receive(maxCount: 10).map(\.body)
+        XCTAssertEqual(beforeRotateBodies, [.text("before rotate")])
+
+        let rotation = try await alice.rotateIdentity()
+        XCTAssertEqual(rotation.notifiedContacts, ["Bob CLI"])
+        XCTAssertTrue(rotation.failedContacts.isEmpty)
+        XCTAssertEqual(rotation.oldFingerprint, initialAliceStatus.fingerprint)
+        XCTAssertNotEqual(rotation.newFingerprint, initialAliceStatus.fingerprint)
+
+        let rotationMessages = try await bob.receive(maxCount: 10)
+        XCTAssertEqual(rotationMessages.count, 1)
+        guard case .identityRotation = rotationMessages[0].body else {
+            return XCTFail("Expected identity rotation control message")
+        }
+        let rotatedContactFingerprint = try await bob.contacts().first?.fingerprint
+        XCTAssertEqual(rotatedContactFingerprint, rotation.newFingerprint)
+
+        _ = try await alice.sendText(to: "Bob CLI", text: "after rotate")
+        let afterRotateBodies = try await bob.receive(maxCount: 10).map(\.body)
+        XCTAssertEqual(afterRotateBodies, [.text("after rotate")])
+
+        let allowedContact = try await alice.setContactIdentityReset(selector: "Bob CLI", allow: true)
+        XCTAssertTrue(allowedContact.allowIdentityReset)
+
+        let burn = try await alice.burnIdentity()
+        XCTAssertEqual(burn.notifiedContacts, ["Bob CLI"])
+        XCTAssertTrue(burn.failedContacts.isEmpty)
+        XCTAssertEqual(burn.oldFingerprint, rotation.newFingerprint)
+        XCTAssertNotEqual(burn.newFingerprint, rotation.newFingerprint)
+        let alicePostBurnStatus = try await alice.status()
+        XCTAssertEqual(alicePostBurnStatus.conversationCount, 0)
+
+        let resetMessages = try await bob.receive(maxCount: 10)
+        XCTAssertEqual(resetMessages.count, 1)
+        guard case .identityReset = resetMessages[0].body else {
+            return XCTFail("Expected identity reset control message")
+        }
+        let resetContactFingerprint = try await bob.contacts().first?.fingerprint
+        XCTAssertEqual(resetContactFingerprint, burn.newFingerprint)
+
+        _ = try await alice.sendText(to: "Bob CLI", text: "after burn")
+        let afterBurnBodies = try await bob.receive(maxCount: 10).map(\.body)
+        XCTAssertEqual(afterBurnBodies, [.text("after burn")])
+    }
+
     func testHiddenRetrievalPlannerExtractsTargetFromCoverResponse() throws {
         let plan = try HiddenRetrievalPlanner.makeCoverQuery(
             bucketId: "bucket-a",

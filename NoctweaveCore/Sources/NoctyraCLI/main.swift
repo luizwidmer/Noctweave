@@ -53,6 +53,12 @@ private struct CommandRunner {
             try await sendText(options: options)
         case "receive":
             try await receive(options: options)
+        case "allow-identity-reset":
+            try await allowIdentityReset(options: options)
+        case "rotate-identity":
+            try await rotateIdentity(options: options)
+        case "burn-identity":
+            try await burnIdentity(options: options)
         case "endpoint":
             let endpoint = try endpoint(from: options)
             try writeJSON(endpoint)
@@ -137,6 +143,27 @@ private struct CommandRunner {
         try writeJSON(messages)
     }
 
+    private func allowIdentityReset(options: ParsedOptions) async throws {
+        guard let selector = options.value(for: "--contact") else {
+            throw CLIError("Missing contact. Use `--contact <contact-name|fingerprint|uuid>`.")
+        }
+        let allow = try options.boolValue(for: "--allow") ?? true
+        let contact = try await headlessClient(from: options).setContactIdentityReset(selector: selector, allow: allow)
+        try writeJSON(contact)
+    }
+
+    private func rotateIdentity(options: ParsedOptions) async throws {
+        try requireConfirmation(options, key: "--confirm", expected: "ROTATE")
+        let result = try await headlessClient(from: options).rotateIdentity()
+        try writeJSON(result)
+    }
+
+    private func burnIdentity(options: ParsedOptions) async throws {
+        try requireConfirmation(options, key: "--confirm", expected: "BURN")
+        let result = try await headlessClient(from: options).burnIdentity()
+        try writeJSON(result)
+    }
+
     private func send(_ request: RelayRequest, options: ParsedOptions) async throws {
         let endpoint = try endpoint(from: options)
         let authToken = options.value(for: "--auth")
@@ -203,6 +230,12 @@ private struct CommandRunner {
         FileHandle.standardOutput.writeLine("")
     }
 
+    private func requireConfirmation(_ options: ParsedOptions, key: String, expected: String) throws {
+        guard options.value(for: key) == expected else {
+            throw CLIError("Missing confirmation. Use `\(key) \(expected)`.")
+        }
+    }
+
     private func printHelp() {
         FileHandle.standardOutput.writeLine("""
         NoctyraCLI
@@ -218,6 +251,9 @@ private struct CommandRunner {
           NoctyraCLI contacts [--state path]
           NoctyraCLI send --to <contact-name|fingerprint|uuid> --text <message> [--state path]
           NoctyraCLI receive [--max count] [--long-poll seconds] [--state path]
+          NoctyraCLI allow-identity-reset --contact <contact> --allow true [--state path]
+          NoctyraCLI rotate-identity --confirm ROTATE [--state path]
+          NoctyraCLI burn-identity --confirm BURN [--state path]
           NoctyraCLI endpoint --relay <url|host:port>
           NoctyraCLI health --relay <url|host:port> [--auth token] [--timeout seconds]
           NoctyraCLI info --relay <url|host:port> [--auth token] [--timeout seconds]

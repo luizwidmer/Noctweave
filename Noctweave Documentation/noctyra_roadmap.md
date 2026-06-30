@@ -130,6 +130,8 @@ The Apple client applications and macOS GUI relay app are maintained outside thi
 - [x] Headless inbox registration with signed actor proof
 - [x] Headless contact-code and password-protected contact-package import/export
 - [x] Headless direct encrypted text send/fetch/decrypt/acknowledge flow
+- [x] Headless identity rotation command with continuity notification delivery
+- [x] Headless identity burn command with opt-in reset notification delivery
 - [x] Relay `health` command
 - [x] Relay `info` command
 - [x] Raw relay-request command from JSON string, file, or stdin
@@ -139,7 +141,7 @@ The Apple client applications and macOS GUI relay app are maintained outside thi
 - [x] Public release verification script: `scripts/verify-release.sh`
 - [ ] Headless CLI group messaging commands
 - [ ] Headless CLI attachment and voice-message commands
-- [ ] Headless CLI identity rotation/burn commands with explicit confirmation
+- [ ] Headless CLI continuity-audit inspection and purge commands
 
 ## Test And Verification Coverage
 
@@ -148,6 +150,7 @@ The Apple client applications and macOS GUI relay app are maintained outside thi
 - [x] Direct encrypted message round trips
 - [x] Federated direct-message delivery
 - [x] Headless direct-message relay exchange with persistent state
+- [x] Headless identity rotation and burn/reset relay exchange
 - [x] Federated group-ratchet delivery
 - [x] Relay TCP integration tests
 - [x] HTTP bridge security-header tests

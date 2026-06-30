@@ -1,13 +1,26 @@
 # Noctweave
 
-Noctweave is a post-quantum secure messaging protocol centered on pairwise identity continuity, relay-backed delivery, and metadata reduction. This public repository contains the open protocol work and tooling: the shared Swift core, the `NoctyraCLI` headless messaging/API client, the Linux relay server, Docker packaging, tests, and public protocol/operator documentation.
+Noctweave is a post-quantum secure messaging protocol centered on pairwise identity continuity, relay-backed delivery, federation, and metadata reduction.
 
-Noctyra is the reference client and relay product built on Noctweave. The Apple messaging clients and macOS GUI relay app are proprietary and are intentionally not part of this repository.
+This GitHub repository is the public Noctweave protocol and open tooling workspace. It contains the shared Swift protocol core, the Linux relay server, Docker/operator tooling, `NoctyraCLI`, tests, and public protocol documentation.
 
-## What Is Included
+The proprietary Noctyra Apple clients and macOS GUI relay app are not part of this repository.
+
+## Repository Scope
+
+This repo is intended for:
+
+- protocol review and implementation work around Noctweave;
+- relay operators running the open Linux relay;
+- developers using `NoctyraCLI` as a headless messaging client or relay API client;
+- contributors validating wire formats, relay behavior, federation behavior, and release artifacts.
+
+It is not the distribution point for the closed-source Noctyra iOS, iPadOS, macOS messaging client, or macOS GUI relay app.
+
+## Public Components
 
 - `NoctweaveCore/` - Swift package for Noctweave protocol models, post-quantum crypto bindings, relay client/server primitives, message ratchets, federation logic, and tests.
-- `NoctweaveCore/Sources/NoctyraCLI/` - open command-line client for relay diagnostics and headless direct messaging.
+- `NoctweaveCore/Sources/NoctyraCLI/` - open command-line client for relay diagnostics, API scripting, and headless direct messaging.
 - `Noctweave Relay Server/` - open Linux relay implementation with TCP, HTTP, WebSocket, Docker, SQLite persistence, federation, and relay tests.
 - `Noctweave Documentation/` - public protocol specs, OpenAPI schema, security notes, whitepaper alignment, and relay operator guidance.
 - `scripts/` - local test, SBOM, release verification, and relay helper scripts.
@@ -36,7 +49,7 @@ Run the combined public test suite:
 scripts/run-tests.sh
 ```
 
-## Run The Linux Relay
+## Run The Open Linux Relay
 
 ```sh
 swift build --package-path "Noctweave Relay Server"
@@ -54,9 +67,9 @@ docker build -t noctyra-relay "Noctweave Relay Server"
 docker run --rm -p 9339:9339 -p 9340:9340 -v noctyra-data:/data noctyra-relay
 ```
 
-See [`Noctweave Relay Server/README.md`](Noctweave%20Relay%20Server/README.md) for all relay flags, TLS/reverse-proxy notes, federation settings, storage modes, and Docker + Let's Encrypt setup.
+See [`Noctweave Relay Server/README.md`](Noctweave%20Relay%20Server/README.md) for relay flags, HTTP/WebSocket mode, TLS/reverse-proxy notes, federation settings, storage modes, IPFS attachment offload, and Docker + Let's Encrypt setup.
 
-## Use NoctyraCLI
+## Use NoctyraCLI As A Headless Client
 
 ```sh
 swift run --package-path NoctweaveCore NoctyraCLI help
@@ -67,7 +80,7 @@ swift run --package-path NoctweaveCore NoctyraCLI init --display-name Alice --re
 swift run --package-path NoctweaveCore NoctyraCLI export-contact
 ```
 
-The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` relay endpoints. It can initialize a headless identity, register an inbox, exchange contact offers, send direct encrypted text messages, fetch/decrypt received direct messages, and still issue raw relay requests for diagnostics. See [`Noctweave Documentation/noctyra_cli_usage.md`](Noctweave%20Documentation/noctyra_cli_usage.md).
+The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls` relay endpoints. It can initialize a headless identity, register an inbox, exchange contact offers, send direct encrypted text messages, fetch/decrypt received direct messages, rotate or burn identities with explicit confirmation, and still issue raw relay requests for diagnostics. See [`Noctweave Documentation/noctyra_cli_usage.md`](Noctweave%20Documentation/noctyra_cli_usage.md).
 
 ## Documentation Map
 

@@ -94,6 +94,28 @@ NoctyraCLI receive --long-poll 20
 
 Use `--no-ack true` when testing if you want fetched ciphertexts to remain queued on the relay.
 
+## Identity Lifecycle
+
+Allow a contact to receive a new identity if you later burn your current identity:
+
+```sh
+NoctyraCLI allow-identity-reset --contact "Bob" --allow true
+```
+
+Rotate the active identity keys and notify contacts with an authenticated continuity message:
+
+```sh
+NoctyraCLI rotate-identity --confirm ROTATE
+```
+
+Burn the active identity, create a new inbox identity, register the new inbox, purge local conversations and groups, and notify only contacts marked with `allow-identity-reset`:
+
+```sh
+NoctyraCLI burn-identity --confirm BURN
+```
+
+The confirmation strings are intentionally exact. Use them only when the state change is intentional, because peers that are not opted in before a burn are removed from the local headless state and are not told the new identity.
+
 ## Raw Relay Requests
 
 Use `raw` to send any encoded `RelayRequest` supported by the relay API.
