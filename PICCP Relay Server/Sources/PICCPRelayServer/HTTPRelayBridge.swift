@@ -167,6 +167,7 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
         headers.add(name: "Content-Type", value: "application/json")
         headers.add(name: "Content-Length", value: "\(body.count)")
         headers.add(name: "Connection", value: "close")
+        HTTPRelaySecurityHeaders.apply(to: &headers)
         let responseHead = HTTPResponseHead(version: .http1_1, status: status, headers: headers)
         context.write(wrapOutboundOut(.head(responseHead)), promise: nil)
         var buffer = context.channel.allocator.buffer(capacity: body.count)
@@ -180,6 +181,25 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         context.close(promise: nil)
+    }
+}
+
+enum HTTPRelaySecurityHeaders {
+    static let fields: [(name: String, value: String)] = [
+        ("Cache-Control", "no-store"),
+        ("Pragma", "no-cache"),
+        ("X-Content-Type-Options", "nosniff"),
+        ("X-Frame-Options", "DENY"),
+        ("Referrer-Policy", "no-referrer"),
+        ("Cross-Origin-Resource-Policy", "same-origin"),
+        ("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"),
+        ("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+    ]
+
+    static func apply(to headers: inout HTTPHeaders) {
+        for field in fields {
+            headers.replaceOrAdd(name: field.name, value: field.value)
+        }
     }
 }
 

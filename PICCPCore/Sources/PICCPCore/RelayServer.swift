@@ -274,12 +274,14 @@ public final class RelayServer {
         contentType: String = "application/json"
     ) -> Data {
         var response = Data()
-        let header = [
+        var headerLines = [
             "HTTP/1.1 \(statusCode) \(reasonPhrase)",
             "Content-Type: \(contentType)",
             "Content-Length: \(body.count)",
             "Connection: close"
-        ].joined(separator: "\r\n") + "\r\n\r\n"
+        ]
+        RelayHTTPSecurityHeaders.append(to: &headerLines)
+        let header = headerLines.joined(separator: "\r\n") + "\r\n\r\n"
         response.append(Data(header.utf8))
         response.append(body)
         return response
@@ -1783,5 +1785,24 @@ public final class RelayServer {
             return nil
         }
         return response.relayInfo
+    }
+}
+
+enum RelayHTTPSecurityHeaders {
+    static let fields: [(name: String, value: String)] = [
+        ("Cache-Control", "no-store"),
+        ("Pragma", "no-cache"),
+        ("X-Content-Type-Options", "nosniff"),
+        ("X-Frame-Options", "DENY"),
+        ("Referrer-Policy", "no-referrer"),
+        ("Cross-Origin-Resource-Policy", "same-origin"),
+        ("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"),
+        ("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+    ]
+
+    static func append(to lines: inout [String]) {
+        for field in fields {
+            lines.append("\(field.name): \(field.value)")
+        }
     }
 }

@@ -4479,6 +4479,30 @@ final class PICCPCoreTests: XCTestCase {
         XCTAssertEqual(relay.makeInfo().attachmentsEnabled, false)
     }
 
+    func testRelayHTTPResponsesIncludeSecurityHeaders() {
+        var headerLines: [String] = []
+        RelayHTTPSecurityHeaders.append(to: &headerLines)
+        let headers = Dictionary(
+            uniqueKeysWithValues: headerLines.compactMap { line -> (String, String)? in
+                guard let separator = line.firstIndex(of: ":") else {
+                    return nil
+                }
+                let name = String(line[..<separator]).lowercased()
+                let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespaces)
+                return (name, value)
+            }
+        )
+
+        XCTAssertEqual(headers["cache-control"], "no-store")
+        XCTAssertEqual(headers["pragma"], "no-cache")
+        XCTAssertEqual(headers["x-content-type-options"], "nosniff")
+        XCTAssertEqual(headers["x-frame-options"], "DENY")
+        XCTAssertEqual(headers["referrer-policy"], "no-referrer")
+        XCTAssertEqual(headers["cross-origin-resource-policy"], "same-origin")
+        XCTAssertEqual(headers["content-security-policy"], "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+        XCTAssertEqual(headers["permissions-policy"], "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+    }
+
     func testPasswordProtectedRelayEnforcesAuthentication() async throws {
         let relayPassword = "relay-secret"
         let serverEndpoint = RelayEndpoint(host: "0.0.0.0", port: 39439)

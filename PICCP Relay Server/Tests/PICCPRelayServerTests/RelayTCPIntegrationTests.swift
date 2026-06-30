@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 import Crypto
 @preconcurrency import NIOCore
+@preconcurrency import NIOHTTP1
 @preconcurrency import NIOPosix
 @preconcurrency import NIOFoundationCompat
 @testable import PICCPRelayServer
@@ -29,6 +30,20 @@ final class RelayTCPIntegrationTests: XCTestCase {
 
         let response = try harness.send(.health())
         XCTAssertEqual(response.type, .ok)
+    }
+
+    func testHTTPBridgeResponsesIncludeSecurityHeaders() {
+        var headers = HTTPHeaders()
+        HTTPRelaySecurityHeaders.apply(to: &headers)
+
+        XCTAssertEqual(headers.first(name: "Cache-Control"), "no-store")
+        XCTAssertEqual(headers.first(name: "Pragma"), "no-cache")
+        XCTAssertEqual(headers.first(name: "X-Content-Type-Options"), "nosniff")
+        XCTAssertEqual(headers.first(name: "X-Frame-Options"), "DENY")
+        XCTAssertEqual(headers.first(name: "Referrer-Policy"), "no-referrer")
+        XCTAssertEqual(headers.first(name: "Cross-Origin-Resource-Policy"), "same-origin")
+        XCTAssertEqual(headers.first(name: "Content-Security-Policy"), "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+        XCTAssertEqual(headers.first(name: "Permissions-Policy"), "camera=(), microphone=(), geolocation=(), interest-cohort=()")
     }
 
     func testDeliverThenFetchRoundTripOverTCP() throws {

@@ -183,7 +183,7 @@ This roadmap outlines a realistic development timeline for PICCP, accounting for
 - [x] DoS protection (rate limiting, size limits)
 - [x] Input validation and sanitization
 - [x] TLS configuration
-- [ ] Security headers
+- [x] Security headers
 - [ ] Load testing (10K+ messages/hour)
 - [x] Failure mode testing
 
