@@ -5791,6 +5791,281 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertTrue(consumedResponse.groupInvitations?.isEmpty ?? false)
     }
 
+    func testRelayServerScopedCreatorCanExchangeMessagesAfterInvitedMembersJoin() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: UInt16.random(in: 39_460...39_900))
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(groupCreationMode: .allowed)
+        )
+        let started = expectation(description: "scoped creator relay started")
+        server.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try server.start(host: "127.0.0.1", port: endpoint.port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let creatorReal = Identity(displayName: "Creator Real")
+        let creatorScoped = Identity(displayName: "Creator Scoped")
+        let memberAReal = Identity(displayName: "Member A Real")
+        let memberBReal = Identity(displayName: "Member B Real")
+        let memberAScoped = Identity(displayName: "Member A Scoped")
+        let memberBScoped = Identity(displayName: "Member B Scoped")
+        let creatorProfile = relayGroupMemberProfile(identity: creatorScoped, relay: endpoint)
+        let memberAProfile = relayGroupMemberProfile(identity: memberAScoped, relay: endpoint)
+        let memberBProfile = relayGroupMemberProfile(identity: memberBScoped, relay: endpoint)
+        let groupId = UUID()
+        let client = RelayClient(endpoint: endpoint)
+
+        let epoch0Secret = Data(SHA256.hash(data: Data("scoped creator epoch 0".utf8)))
+        let epoch0Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch0Secret,
+            groupId: groupId,
+            epoch: 0,
+            operation: .create,
+            recipients: [creatorProfile]
+        )
+        let createResponse = try await client.send(
+            .createGroup(
+                try signedCreateGroupRequest(
+                    CreateGroupRequest(
+                        groupId: groupId,
+                        title: "Scoped Invites",
+                        creatorFingerprint: creatorScoped.fingerprint,
+                        memberFingerprints: [],
+                        invitedFingerprints: [memberAReal.fingerprint, memberBReal.fingerprint],
+                        creatorProfile: creatorProfile,
+                        initialRatchetSecretDistribution: epoch0Distribution
+                    ),
+                    signer: creatorScoped
+                )
+            )
+        )
+        XCTAssertEqual(createResponse.type, .group)
+        let created = try XCTUnwrap(createResponse.group)
+        XCTAssertEqual(created.members.map(\.fingerprint), [creatorScoped.fingerprint])
+
+        let epoch1Secret = Data(SHA256.hash(data: Data("scoped creator epoch 1".utf8)))
+        let epoch1Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch1Secret,
+            groupId: groupId,
+            epoch: created.epoch + 1,
+            operation: .joinApprove,
+            recipients: [creatorProfile, memberAProfile]
+        )
+        let memberACommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .joinApprove,
+                groupId: groupId,
+                actorFingerprint: memberAScoped.fingerprint,
+                baseEpoch: created.epoch,
+                previousTranscriptHash: created.mlsEpochState.confirmedTranscriptHash,
+                addMemberFingerprints: [memberAScoped.fingerprint],
+                addMemberProfiles: [memberAProfile],
+                ratchetSecretDistribution: epoch1Distribution
+            ),
+            signer: memberAScoped
+        )
+        let memberAAccept = try await client.send(
+            .requestGroupJoin(
+                try signedRequestGroupJoinRequest(
+                    RequestGroupJoinRequest(
+                        groupId: groupId,
+                        requesterProfile: memberAProfile,
+                        invitedFingerprint: memberAReal.fingerprint,
+                        groupCommit: memberACommit
+                    ),
+                    signer: memberAScoped
+                )
+            )
+        )
+        XCTAssertEqual(memberAAccept.type, .group)
+        let afterMemberA = try XCTUnwrap(memberAAccept.group)
+
+        let epoch2Secret = Data(SHA256.hash(data: Data("scoped creator epoch 2".utf8)))
+        let epoch2Distribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: epoch2Secret,
+            groupId: groupId,
+            epoch: afterMemberA.epoch + 1,
+            operation: .joinApprove,
+            recipients: [creatorProfile, memberAProfile, memberBProfile]
+        )
+        let memberBCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .joinApprove,
+                groupId: groupId,
+                actorFingerprint: memberBScoped.fingerprint,
+                baseEpoch: afterMemberA.epoch,
+                previousTranscriptHash: afterMemberA.mlsEpochState.confirmedTranscriptHash,
+                addMemberFingerprints: [memberBScoped.fingerprint],
+                addMemberProfiles: [memberBProfile],
+                ratchetSecretDistribution: epoch2Distribution
+            ),
+            signer: memberBScoped
+        )
+        let memberBAccept = try await client.send(
+            .requestGroupJoin(
+                try signedRequestGroupJoinRequest(
+                    RequestGroupJoinRequest(
+                        groupId: groupId,
+                        requesterProfile: memberBProfile,
+                        invitedFingerprint: memberBReal.fingerprint,
+                        groupCommit: memberBCommit
+                    ),
+                    signer: memberBScoped
+                )
+            )
+        )
+        XCTAssertEqual(memberBAccept.type, .group)
+        let accepted = try XCTUnwrap(memberBAccept.group)
+        XCTAssertEqual(Set(accepted.members.map(\.fingerprint)), [
+            creatorScoped.fingerprint,
+            memberAScoped.fingerprint,
+            memberBScoped.fingerprint
+        ])
+
+        var creatorRatchet = try XCTUnwrap(GroupRatchetRecovery.state(from: accepted, identity: creatorScoped))
+        var memberARatchet = try XCTUnwrap(GroupRatchetRecovery.state(from: accepted, identity: memberAScoped))
+        var memberBRatchet = try XCTUnwrap(GroupRatchetRecovery.state(from: accepted, identity: memberBScoped))
+
+        let creatorEnvelope = try GroupRatchet.encrypt(
+            body: .text("creator after joins"),
+            senderSigningKey: creatorScoped.signingKey,
+            senderFingerprint: creatorScoped.fingerprint,
+            state: &creatorRatchet
+        )
+        let creatorDeliver = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: groupId,
+                    groupInboxId: accepted.inboxId,
+                    envelope: creatorEnvelope
+                )
+            )
+        )
+        XCTAssertEqual(creatorDeliver.type, .delivered)
+        XCTAssertGreaterThan(creatorDeliver.delivered?.storedCount ?? 0, 0)
+
+        let memberAFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: groupId,
+                        groupInboxId: accepted.inboxId,
+                        actorFingerprint: memberAScoped.fingerprint
+                    ),
+                    signer: memberAScoped
+                )
+            )
+        )
+        let memberAEnvelope = try XCTUnwrap(memberAFetch.groupMessages?.first)
+        let memberABody = try GroupRatchet.decrypt(
+            envelope: memberAEnvelope,
+            senderPublicSigningKey: creatorScoped.signingKey.publicKeyData,
+            state: &memberARatchet
+        )
+        XCTAssertEqual(memberABody, .text("creator after joins"))
+
+        let memberBFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: groupId,
+                        groupInboxId: accepted.inboxId,
+                        actorFingerprint: memberBScoped.fingerprint
+                    ),
+                    signer: memberBScoped
+                )
+            )
+        )
+        let memberBEnvelope = try XCTUnwrap(memberBFetch.groupMessages?.first)
+        let memberBBody = try GroupRatchet.decrypt(
+            envelope: memberBEnvelope,
+            senderPublicSigningKey: creatorScoped.signingKey.publicKeyData,
+            state: &memberBRatchet
+        )
+        XCTAssertEqual(memberBBody, .text("creator after joins"))
+
+        let replyEnvelope = try GroupRatchet.encrypt(
+            body: .text("member a reply"),
+            senderSigningKey: memberAScoped.signingKey,
+            senderFingerprint: memberAScoped.fingerprint,
+            state: &memberARatchet
+        )
+        let replyDeliver = try await client.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: groupId,
+                    groupInboxId: accepted.inboxId,
+                    envelope: replyEnvelope
+                )
+            )
+        )
+        XCTAssertEqual(replyDeliver.type, .delivered)
+        XCTAssertGreaterThan(replyDeliver.delivered?.storedCount ?? 0, 0)
+
+        let creatorFetch = try await client.send(
+            .fetchGroupMessages(
+                try signedFetchGroupMessagesRequest(
+                    FetchGroupMessagesRequest(
+                        groupId: groupId,
+                        groupInboxId: accepted.inboxId,
+                        actorFingerprint: creatorScoped.fingerprint
+                    ),
+                    signer: creatorScoped
+                )
+            )
+        )
+        let creatorFetchedEnvelope = try XCTUnwrap(creatorFetch.groupMessages?.first)
+        let creatorBody = try GroupRatchet.decrypt(
+            envelope: creatorFetchedEnvelope,
+            senderPublicSigningKey: memberAScoped.signingKey.publicKeyData,
+            state: &creatorRatchet
+        )
+        XCTAssertEqual(creatorBody, .text("member a reply"))
+
+        let removeSecret = Data(SHA256.hash(data: Data("scoped creator remove member b".utf8)))
+        let removeDistribution = try GroupRatchetEpochSecretDistribution.seal(
+            secret: removeSecret,
+            groupId: groupId,
+            epoch: accepted.epoch + 1,
+            operation: .removeMembers,
+            recipients: [creatorProfile, memberAProfile]
+        )
+        let removeCommit = try signedGroupCommit(
+            SignedGroupCommit(
+                operation: .removeMembers,
+                groupId: groupId,
+                actorFingerprint: creatorScoped.fingerprint,
+                baseEpoch: accepted.epoch,
+                previousTranscriptHash: accepted.mlsEpochState.confirmedTranscriptHash,
+                removeMemberFingerprints: [memberBScoped.fingerprint],
+                ratchetSecretDistribution: removeDistribution
+            ),
+            signer: creatorScoped
+        )
+        let removeResponse = try await client.send(
+            .updateGroup(
+                UpdateGroupRequest(
+                    groupId: groupId,
+                    actorFingerprint: creatorScoped.fingerprint,
+                    removeMemberFingerprints: [memberBScoped.fingerprint],
+                    groupCommit: removeCommit
+                )
+            )
+        )
+        XCTAssertEqual(removeResponse.type, .group)
+        let removed = try XCTUnwrap(removeResponse.group)
+        XCTAssertEqual(Set(removed.members.map(\.fingerprint)), [
+            creatorScoped.fingerprint,
+            memberAScoped.fingerprint
+        ])
+
+        _ = creatorReal
+    }
+
     func testRelayServerGroupRatchetMessageRoutes() async throws {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39444)
         let server = RelayServer(

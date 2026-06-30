@@ -73,7 +73,10 @@ public struct GroupRatchetState: Codable, Equatable {
             epoch: epoch,
             transcriptHash: transcriptHash,
             groupSecret: commitSecret,
-            priorRootKey: rootKey
+            // Epoch commit secrets are distributed to every current member,
+            // including late joiners. The epoch root must therefore be
+            // recoverable from the commit secret alone.
+            priorRootKey: nil
         )
         self.epoch = epoch
         self.transcriptHash = transcriptHash
