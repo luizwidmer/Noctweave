@@ -673,7 +673,7 @@ public struct PrivacySettings: Codable, Equatable {
     public init(
         secureTypingEnabled: Bool = true,
         secureTypingKeyboard: SecureTypingKeyboard = .noctyra,
-        useSecureCameraCapture: Bool = false,
+        useSecureCameraCapture: Bool = true,
         hideSensitiveWhenUnfocused: Bool = true,
         macBlockWindowCapture: Bool = true
     ) {
@@ -696,7 +696,7 @@ public struct PrivacySettings: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         secureTypingEnabled = try container.decodeIfPresent(Bool.self, forKey: .secureTypingEnabled) ?? true
         secureTypingKeyboard = try container.decodeIfPresent(SecureTypingKeyboard.self, forKey: .secureTypingKeyboard) ?? .noctyra
-        useSecureCameraCapture = try container.decodeIfPresent(Bool.self, forKey: .useSecureCameraCapture) ?? false
+        useSecureCameraCapture = try container.decodeIfPresent(Bool.self, forKey: .useSecureCameraCapture) ?? true
         hideSensitiveWhenUnfocused = try container.decodeIfPresent(Bool.self, forKey: .hideSensitiveWhenUnfocused) ?? true
         macBlockWindowCapture = try container.decodeIfPresent(Bool.self, forKey: .macBlockWindowCapture) ?? true
     }
