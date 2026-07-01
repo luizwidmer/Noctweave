@@ -561,8 +561,18 @@ private func parseRelayEndpoint(_ value: String) -> RelayEndpoint? {
     guard !trimmed.isEmpty else { return nil }
     if let components = URLComponents(string: trimmed), let scheme = components.scheme, !scheme.isEmpty {
         guard let host = components.host else { return nil }
-        guard let port = UInt16(exactly: components.port ?? 9339) else { return nil }
-        switch scheme.lowercased() {
+        let loweredScheme = scheme.lowercased()
+        let defaultPort: Int
+        switch loweredScheme {
+        case "https", "wss":
+            defaultPort = 443
+        case "http", "ws":
+            defaultPort = 80
+        default:
+            defaultPort = 9339
+        }
+        guard let port = UInt16(exactly: components.port ?? defaultPort) else { return nil }
+        switch loweredScheme {
         case "http":
             return RelayEndpoint(host: host, port: port, useTLS: false, transport: .http)
         case "https":
@@ -611,10 +621,6 @@ let config = ServerConfig.parse()
 if config.federationMode == .manual {
     guard config.relayKind == .standard else {
         print("[relay] manual federation requires --relay-kind standard")
-        exit(2)
-    }
-    guard !config.federationAllowList.isEmpty else {
-        print("[relay] manual federation requires at least one --federation-allow endpoint")
         exit(2)
     }
 }

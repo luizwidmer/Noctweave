@@ -73,7 +73,7 @@ docker build -t noctyra-relay "Noctweave Relay Server"
 docker run --rm -p 9339:9339 -p 9340:9340 -v noctyra-data:/data noctyra-relay
 ```
 
-See [`Noctweave Relay Server/README.md`](Noctweave%20Relay%20Server/README.md) for relay flags, HTTP/WebSocket mode, TLS/reverse-proxy notes, federation settings, storage modes, IPFS attachment offload, and Docker + Let's Encrypt setup.
+See [`Noctweave Relay Server/README.md`](Noctweave%20Relay%20Server/README.md) for relay flags, HTTP/WebSocket mode, TLS/reverse-proxy notes, federation settings, storage modes, IPFS attachment offload, and Docker + Let's Encrypt setup. See [`Noctweave Documentation/federation_protocol_and_operations.md`](Noctweave%20Documentation/federation_protocol_and_operations.md) for federation modes, protocol requests, coordinator setup, open-federation DHT/PEX behavior, and operator recipes.
 
 ## Use NoctyraCLI As A Headless Client
 

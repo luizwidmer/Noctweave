@@ -233,6 +233,7 @@ Security note:
 - Linux relay verifies actor-proof signatures when `liboqs` is available at runtime (included in the Docker image).
 - If `liboqs` is not available, actor-proof mutations are fail-closed.
 - See `Noctweave Documentation/relay_ops_hardening_guide.md` for TLS proxying, firewall, secrets, storage, federation, DHT, and log hygiene guidance.
+- See `Noctweave Documentation/federation_protocol_and_operations.md` for the full federation protocol, endpoint syntax, coordinator recipes, open-federation DHT/PEX behavior, and failure semantics.
 
 ### Manual federation
 
@@ -244,6 +245,8 @@ When `federation.mode=manual`, forwarding is intentionally simple and operator-m
 4. If federation name is set, destination name must match.
 
 Manual mode does not use coordinator quorum, signed directory snapshots, open-federation DHT records, or peer exchange. It is intended for small meshes where operators directly maintain the node list.
+
+Manual mode can start with an empty node list. Forwarding fails closed until a destination is added to the list. This is useful when the macOS relay app is used to add peers while the relay is already running.
 
 ### Curated strict policy
 
