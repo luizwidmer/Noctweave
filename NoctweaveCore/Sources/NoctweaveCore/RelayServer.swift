@@ -16,16 +16,31 @@ public final class RelayServer {
     private var listener: NWListener?
     private var localEndpoint: RelayEndpoint?
     private var coordinatorHeartbeatTask: Task<Void, Never>?
+    private let coordinatorHeartbeatTaskLock = NSLock()
     private let coordinatorDirectorySigningPrivateKey: Data?
     private let coordinatorDirectoryPublicKey: Data?
+    private let coordinatorDirectoryCacheLock = NSLock()
     private var coordinatorDirectoryCache: [FederationNodeRecord] = []
     private let requestRateLimiter = RelayRequestRateLimiter()
-    public var configuration: RelayConfiguration
+    private let configurationLock = NSLock()
+    private var relayConfiguration: RelayConfiguration
+    public var configuration: RelayConfiguration {
+        get {
+            configurationLock.lock()
+            defer { configurationLock.unlock() }
+            return relayConfiguration
+        }
+        set {
+            configurationLock.lock()
+            relayConfiguration = newValue
+            configurationLock.unlock()
+        }
+    }
     private let listenerQueue = DispatchQueue(label: "NoctweaveCore.RelayServer")
 
     public init(store: RelayStore, configuration: RelayConfiguration = RelayConfiguration()) {
         self.store = store
-        self.configuration = configuration
+        self.relayConfiguration = configuration
         if configuration.kind == .coordinator {
             let keyData = FederationDirectorySignature.privateKeyData(
                 from: configuration.coordinatorDirectorySigningPrivateKey
@@ -46,6 +61,7 @@ public final class RelayServer {
         guard listener == nil else {
             return
         }
+        let configuration = configuration
         localEndpoint = RelayEndpoint(
             host: host,
             port: port,
@@ -90,37 +106,49 @@ public final class RelayServer {
     }
 
     public func stop() {
+        coordinatorHeartbeatTaskLock.lock()
         coordinatorHeartbeatTask?.cancel()
         coordinatorHeartbeatTask = nil
+        coordinatorHeartbeatTaskLock.unlock()
         listener?.cancel()
         listener = nil
         onEvent?(.stopped)
     }
 
     public func updateFederationAllowList(_ allowList: [RelayEndpoint]) {
-        configuration.federationAllowList = allowList
+        mutateConfiguration { configuration in
+            configuration.federationAllowList = allowList
+        }
     }
 
     public func updateFederationRuntimeSettings(from updated: RelayConfiguration) {
-        configuration.federation = updated.federation
-        configuration.federationAllowList = updated.federationAllowList
-        configuration.federationCoordinatorEndpoints = updated.federationCoordinatorEndpoints
-        configuration.coordinatorRegistrationToken = updated.coordinatorRegistrationToken
-        configuration.federationForwardingAuthToken = updated.federationForwardingAuthToken
-        configuration.coordinatorHeartbeatSeconds = updated.coordinatorHeartbeatSeconds
-        configuration.coordinatorDirectoryMaxStalenessSeconds = updated.coordinatorDirectoryMaxStalenessSeconds
         let isOpenFederation = updated.federation.mode == .open
-        configuration.relayPeerExchangeLimit = isOpenFederation ? updated.relayPeerExchangeLimit : 0
-        configuration.openFederationDHTEnabled = isOpenFederation ? updated.openFederationDHTEnabled : false
-        configuration.openFederationDHTMaxRecords = updated.openFederationDHTMaxRecords
-        configuration.openFederationDHTMaxRecordsPerHost = updated.openFederationDHTMaxRecordsPerHost
-        configuration.openFederationDHTMaxQueryRecords = updated.openFederationDHTMaxQueryRecords
-        configuration.curatedStrictPolicyEnabled = updated.curatedStrictPolicyEnabled
-        configuration.curatedCoordinatorQuorum = updated.curatedCoordinatorQuorum
-        configuration.curatedRequireSignedDirectory = updated.curatedRequireSignedDirectory
-        configuration.allowPrivateFederationEndpoints = updated.allowPrivateFederationEndpoints
-        configuration.advertisedEndpoint = updated.advertisedEndpoint
+        mutateConfiguration { configuration in
+            configuration.federation = updated.federation
+            configuration.federationAllowList = updated.federationAllowList
+            configuration.federationCoordinatorEndpoints = updated.federationCoordinatorEndpoints
+            configuration.coordinatorRegistrationToken = updated.coordinatorRegistrationToken
+            configuration.federationForwardingAuthToken = updated.federationForwardingAuthToken
+            configuration.coordinatorHeartbeatSeconds = updated.coordinatorHeartbeatSeconds
+            configuration.coordinatorDirectoryMaxStalenessSeconds = updated.coordinatorDirectoryMaxStalenessSeconds
+            configuration.relayPeerExchangeLimit = isOpenFederation ? updated.relayPeerExchangeLimit : 0
+            configuration.openFederationDHTEnabled = isOpenFederation ? updated.openFederationDHTEnabled : false
+            configuration.openFederationDHTMaxRecords = updated.openFederationDHTMaxRecords
+            configuration.openFederationDHTMaxRecordsPerHost = updated.openFederationDHTMaxRecordsPerHost
+            configuration.openFederationDHTMaxQueryRecords = updated.openFederationDHTMaxQueryRecords
+            configuration.curatedStrictPolicyEnabled = updated.curatedStrictPolicyEnabled
+            configuration.curatedCoordinatorQuorum = updated.curatedCoordinatorQuorum
+            configuration.curatedRequireSignedDirectory = updated.curatedRequireSignedDirectory
+            configuration.allowPrivateFederationEndpoints = updated.allowPrivateFederationEndpoints
+            configuration.advertisedEndpoint = updated.advertisedEndpoint
+        }
         startCoordinatorHeartbeatLoopIfNeeded()
+    }
+
+    private func mutateConfiguration(_ body: (inout RelayConfiguration) -> Void) {
+        configurationLock.lock()
+        body(&relayConfiguration)
+        configurationLock.unlock()
     }
 
     private func handleTCP(connection: NWConnection) {
@@ -1588,6 +1616,11 @@ public final class RelayServer {
     }
 
     private func startCoordinatorHeartbeatLoopIfNeeded() {
+        guard listener != nil else {
+            return
+        }
+        coordinatorHeartbeatTaskLock.lock()
+        defer { coordinatorHeartbeatTaskLock.unlock() }
         coordinatorHeartbeatTask?.cancel()
         coordinatorHeartbeatTask = nil
         guard configuration.kind != .coordinator else {
@@ -1690,7 +1723,7 @@ public final class RelayServer {
         if sorted.isEmpty, let firstError {
             throw firstError
         }
-        coordinatorDirectoryCache = sorted
+        setCoordinatorDirectoryCache(sorted)
         return sorted
     }
 
@@ -1811,7 +1844,7 @@ public final class RelayServer {
         let selfEndpoint = effectiveAdvertisedEndpoint()
         var seen = Set<String>()
         var peers: [RelayEndpoint] = []
-        for node in coordinatorDirectoryCache {
+        for node in coordinatorDirectoryCacheSnapshot() {
             guard node.relayInfo.federation.mode == .open,
                   node.relayInfo.kind != .coordinator else {
                 continue
@@ -1909,6 +1942,18 @@ public final class RelayServer {
             return nil
         }
         return response.relayInfo
+    }
+
+    private func setCoordinatorDirectoryCache(_ nodes: [FederationNodeRecord]) {
+        coordinatorDirectoryCacheLock.lock()
+        coordinatorDirectoryCache = nodes
+        coordinatorDirectoryCacheLock.unlock()
+    }
+
+    private func coordinatorDirectoryCacheSnapshot() -> [FederationNodeRecord] {
+        coordinatorDirectoryCacheLock.lock()
+        defer { coordinatorDirectoryCacheLock.unlock() }
+        return coordinatorDirectoryCache
     }
 }
 

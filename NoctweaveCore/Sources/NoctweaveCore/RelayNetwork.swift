@@ -15,23 +15,24 @@ enum RelayNetworkError: Error {
     case tlsConfigurationFailed(String)
 }
 
+private final class RelayNetworkContinuationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var resumed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !resumed else { return false }
+        resumed = true
+        return true
+    }
+}
+
 extension NWConnection {
     func awaitReady() async throws {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                final class ResumeGate: @unchecked Sendable {
-                    private let lock = NSLock()
-                    private var resumed = false
-
-                    func claim() -> Bool {
-                        lock.lock()
-                        defer { lock.unlock() }
-                        guard !resumed else { return false }
-                        resumed = true
-                        return true
-                    }
-                }
-                let gate = ResumeGate()
+                let gate = RelayNetworkContinuationGate()
                 let resumeOnce: @Sendable (Result<Void, Error>) -> Void = { [self] result in
                     guard gate.claim() else { return }
                     self.stateUpdateHandler = nil
@@ -62,7 +63,9 @@ extension NWConnection {
         payload.append(0x0A)
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let gate = RelayNetworkContinuationGate()
                 send(content: payload, completion: .contentProcessed { error in
+                    guard gate.claim() else { return }
                     if let error {
                         continuation.resume(throwing: error)
                     } else {
@@ -91,7 +94,9 @@ extension NWConnection {
     private func receiveChunk() async throws -> Data {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
+                let gate = RelayNetworkContinuationGate()
                 receive(minimumIncompleteLength: 1, maximumLength: 65_536) { data, _, isComplete, error in
+                    guard gate.claim() else { return }
                     if let error {
                         continuation.resume(throwing: error)
                         return

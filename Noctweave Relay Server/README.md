@@ -159,6 +159,89 @@ The relay listens internally on raw TCP `9339` and HTTP/WebSocket bridge `9340`.
 Caddy exposes TLS on `443` with automatic issuance/renewal and forwards `/relay` to the bridge.
 Point clients to `https://<RELAY_DOMAIN>:443/relay` or `wss://<RELAY_DOMAIN>:443/relay`.
 
+### Federation quick starts
+
+Use `solo` when the relay should never forward to another relay:
+
+```bash
+.build/debug/NoctweaveRelayServer \
+  --host 0.0.0.0 \
+  --http-port 9340 \
+  --transport http \
+  --advertised-endpoint https://relay.example.org \
+  --federation-mode solo
+```
+
+Use `manual` for a small mesh maintained directly by operators. Each relay must
+list the other relays by public advertised endpoint:
+
+```bash
+.build/debug/NoctweaveRelayServer \
+  --host 0.0.0.0 \
+  --http-port 9340 \
+  --relay-kind standard \
+  --transport http \
+  --advertised-endpoint https://relay-a.example.org \
+  --federation-mode manual \
+  --federation-name private-mesh \
+  --federation-allow https://relay-b.example.org
+```
+
+Use `curated` when membership is governed by an allow-list plus coordinator
+health. Start at least one coordinator, then point standard relays at it:
+
+```bash
+.build/debug/NoctweaveRelayServer \
+  --relay-kind coordinator \
+  --transport http \
+  --http-port 9340 \
+  --advertised-endpoint https://coord.example.org \
+  --federation-mode curated \
+  --federation-name trusted-net \
+  --coordinator-registration-token "$REGISTRATION_TOKEN"
+```
+
+```bash
+.build/debug/NoctweaveRelayServer \
+  --relay-kind standard \
+  --transport http \
+  --http-port 9340 \
+  --advertised-endpoint https://relay-a.example.org \
+  --federation-mode curated \
+  --federation-name trusted-net \
+  --federation-allow https://relay-b.example.org \
+  --federation-coordinator https://coord.example.org \
+  --coordinator-registration-token "$REGISTRATION_TOKEN"
+```
+
+Use `open` only for public federation. DHT and PEX are only meaningful in open
+mode:
+
+```bash
+.build/debug/NoctweaveRelayServer \
+  --relay-kind standard \
+  --transport http \
+  --http-port 9340 \
+  --advertised-endpoint https://relay.example.org \
+  --federation-mode open \
+  --federation-name public-open-net \
+  --open-federation-dht-node true \
+  --relay-peer-exchange-limit 12
+```
+
+Validate a relay before adding it to a federation:
+
+```bash
+curl -s https://relay.example.org/health
+curl -s https://relay.example.org/relay \
+  -H 'content-type: application/json' \
+  -d '{"type":"info"}'
+```
+
+For reverse-proxy deployments, advertise the public HTTPS/WSS URL, not the
+internal container, Docker bridge, or LAN address. Federation forwarding uses
+the advertised endpoint for policy checks and coordinator registration.
+
 ### Flags
 
 - `--host <ip>`: listen interface (default: `0.0.0.0`)

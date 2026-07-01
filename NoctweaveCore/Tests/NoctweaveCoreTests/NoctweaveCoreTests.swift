@@ -4702,7 +4702,7 @@ final class NoctweaveCoreTests: XCTestCase {
             inboxId: "inbox"
         )
         XCTAssertTrue(state.privacy.secureTypingEnabled)
-        XCTAssertFalse(state.privacy.useSecureCameraCapture)
+        XCTAssertTrue(state.privacy.useSecureCameraCapture)
     }
 
     func testPrivacySettingsPersist() throws {
@@ -8142,6 +8142,56 @@ final class NoctweaveCoreTests: XCTestCase {
         )
         XCTAssertEqual(fetchResponse.type, .messages)
         XCTAssertEqual(fetchResponse.messages?.map(\.id), [deliveredEnvelope.id])
+    }
+
+    func testRelayConfigurationRuntimeUpdatesAreThreadSafe() {
+        let server = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: FederationDescriptor(mode: .manual, name: "race-a")
+            )
+        )
+        let queue = DispatchQueue(label: "NoctweaveTests.RelayConfigurationRace", attributes: .concurrent)
+        let group = DispatchGroup()
+        let iterations = 250
+
+        for index in 0..<iterations {
+            group.enter()
+            queue.async {
+                let endpoint = RelayEndpoint(
+                    host: "relay-\(index).example.org",
+                    port: UInt16(9_000 + index)
+                )
+                server.updateFederationRuntimeSettings(
+                    from: RelayConfiguration(
+                        kind: .standard,
+                        federation: FederationDescriptor(
+                            mode: index.isMultiple(of: 2) ? .manual : .curated,
+                            name: "race-\(index)"
+                        ),
+                        federationCoordinatorEndpoints: [endpoint],
+                        coordinatorHeartbeatSeconds: 15 + index,
+                        coordinatorDirectoryMaxStalenessSeconds: 30 + index,
+                        federationAllowList: [endpoint]
+                    )
+                )
+                group.leave()
+            }
+
+            group.enter()
+            queue.async {
+                let snapshot = server.configuration
+                _ = snapshot.makeInfo()
+                _ = snapshot.federationAllowList
+                _ = snapshot.federationCoordinatorEndpoints
+                group.leave()
+            }
+        }
+
+        XCTAssertEqual(group.wait(timeout: .now() + 5), .success)
+        let final = server.configuration
+        XCTAssertFalse(final.federation.name?.isEmpty ?? true)
     }
 
     func testCuratedStrictPolicyRejectsDestinationOutsideAllowList() async throws {

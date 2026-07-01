@@ -50,9 +50,22 @@ TLS may be terminated by the relay or by an upstream reverse proxy. Clients reco
 
 ## Federation
 
-Relays can operate in `solo`, `manual`, `curated`, or `open` federation mode. Manual federation uses an operator-maintained list of standard relay peers and no coordinator or discovery layer. Curated federation uses allow lists, coordinator directory state, signed snapshots, and optional inter-relay forwarding tokens. Open federation uses signed short-lived relay records, bounded native relay-protocol DHT node mode, and capped peer exchange hints when enabled by the operator.
+Relays operate in exactly one federation mode: `solo`, `manual`, `curated`, or `open`. Modes are separate trust domains. A relay must not forward between curated and open networks or silently reinterpret one mode as another.
 
-Coordinator nodes organize relay directories and health state; they do not need to carry user messages.
+Forwarding is requested by setting `destinationRelay` on a direct or group delivery request. The receiving relay evaluates the destination before forwarding:
+
+1. `solo` rejects every destination relay.
+2. `manual` requires the destination endpoint to appear in the local operator-maintained node list, requires destination `info` to report `manual`, requires matching federation name when set, and requires relay kind `standard`.
+3. `curated` requires static allow-list membership, coordinator health state, configured coordinator quorum, fresh directory data, signed directory verification when required, matching federation name, and curated destination mode.
+4. `open` requires open destination mode, matching federation name, public secure endpoints unless local test mode explicitly allows private endpoints, and signed short-lived discovery records when DHT discovery is used.
+
+Client relay passwords are not forwarded. When a relay requires relay-to-relay authentication, it uses a dedicated federation forwarding token. Coordinator registration uses a separate coordinator registration token.
+
+Coordinator nodes organize relay directories and health state. They do not need to carry user messages. Relays register with coordinators using `registerFederationNode`; consumers query healthy directory state with `listFederationNodes`. Signed directory snapshots use ML-DSA-65.
+
+Open federation may advertise relay-native DHT node support and capped peer exchange hints. DHT records are signed short-lived relay advertisements validated by namespace, federation name, relay identity digest, signature, lifetime, endpoint transport, public endpoint policy, total-record limits, per-host limits, and query-size limits. Peer exchange is only a discovery hint; consumers must still validate the destination relay through `info` before forwarding.
+
+Runtime federation updates are allowed for future requests. Implementations must synchronize mutable relay configuration, coordinator heartbeat tasks, and coordinator directory caches so UI or operator changes do not race with active request handling. In-flight requests keep the routing decision already taken for that request.
 
 ## Metadata Reduction
 
