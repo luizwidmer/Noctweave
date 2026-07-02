@@ -57,6 +57,12 @@ Run the combined public test suite:
 scripts/run-tests.sh
 ```
 
+For Apple app development, open the root workspace so Xcode loads the client, relay app, and shared package together:
+
+```sh
+open Noctweave.xcworkspace
+```
+
 ## Run The Open Linux Relay
 
 ```sh
