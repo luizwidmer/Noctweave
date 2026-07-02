@@ -9,6 +9,7 @@ public struct AttachmentDescriptor: Codable, Equatable, Identifiable {
     public let sha256: Data
     public let chunkCount: Int
     public let chunkSize: Int
+    public let relayTTLSeconds: Int?
 
     public init(
         id: UUID = UUID(),
@@ -17,7 +18,8 @@ public struct AttachmentDescriptor: Codable, Equatable, Identifiable {
         byteCount: Int,
         sha256: Data,
         chunkCount: Int,
-        chunkSize: Int
+        chunkSize: Int,
+        relayTTLSeconds: Int? = nil
     ) {
         self.id = id
         self.fileName = fileName
@@ -26,6 +28,30 @@ public struct AttachmentDescriptor: Codable, Equatable, Identifiable {
         self.sha256 = sha256
         self.chunkCount = chunkCount
         self.chunkSize = chunkSize
+        self.relayTTLSeconds = relayTTLSeconds
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case fileName
+        case mimeType
+        case byteCount
+        case sha256
+        case chunkCount
+        case chunkSize
+        case relayTTLSeconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        fileName = try container.decodeIfPresent(String.self, forKey: .fileName)
+        mimeType = try container.decode(String.self, forKey: .mimeType)
+        byteCount = try container.decode(Int.self, forKey: .byteCount)
+        sha256 = try container.decode(Data.self, forKey: .sha256)
+        chunkCount = try container.decode(Int.self, forKey: .chunkCount)
+        chunkSize = try container.decode(Int.self, forKey: .chunkSize)
+        relayTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .relayTTLSeconds)
     }
 }
 

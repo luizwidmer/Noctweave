@@ -666,6 +666,7 @@ public struct PrivacySettings: Codable, Equatable {
     public var secureTypingEnabled: Bool
     public var secureTypingKeyboard: SecureTypingKeyboard
     public var useSecureCameraCapture: Bool
+    public var autoDownloadAttachments: Bool
     // macOS-only behaviors (safe to store cross-platform; ignored on iOS).
     public var hideSensitiveWhenUnfocused: Bool
     public var macBlockWindowCapture: Bool
@@ -674,12 +675,14 @@ public struct PrivacySettings: Codable, Equatable {
         secureTypingEnabled: Bool = true,
         secureTypingKeyboard: SecureTypingKeyboard = .noctyra,
         useSecureCameraCapture: Bool = true,
+        autoDownloadAttachments: Bool = true,
         hideSensitiveWhenUnfocused: Bool = true,
         macBlockWindowCapture: Bool = true
     ) {
         self.secureTypingEnabled = secureTypingEnabled
         self.secureTypingKeyboard = secureTypingKeyboard
         self.useSecureCameraCapture = useSecureCameraCapture
+        self.autoDownloadAttachments = autoDownloadAttachments
         self.hideSensitiveWhenUnfocused = hideSensitiveWhenUnfocused
         self.macBlockWindowCapture = macBlockWindowCapture
     }
@@ -688,6 +691,7 @@ public struct PrivacySettings: Codable, Equatable {
         case secureTypingEnabled
         case secureTypingKeyboard
         case useSecureCameraCapture
+        case autoDownloadAttachments
         case hideSensitiveWhenUnfocused
         case macBlockWindowCapture
     }
@@ -697,6 +701,7 @@ public struct PrivacySettings: Codable, Equatable {
         secureTypingEnabled = try container.decodeIfPresent(Bool.self, forKey: .secureTypingEnabled) ?? true
         secureTypingKeyboard = try container.decodeIfPresent(SecureTypingKeyboard.self, forKey: .secureTypingKeyboard) ?? .noctyra
         useSecureCameraCapture = try container.decodeIfPresent(Bool.self, forKey: .useSecureCameraCapture) ?? true
+        autoDownloadAttachments = try container.decodeIfPresent(Bool.self, forKey: .autoDownloadAttachments) ?? true
         hideSensitiveWhenUnfocused = try container.decodeIfPresent(Bool.self, forKey: .hideSensitiveWhenUnfocused) ?? true
         macBlockWindowCapture = try container.decodeIfPresent(Bool.self, forKey: .macBlockWindowCapture) ?? true
     }
@@ -706,6 +711,7 @@ public struct PrivacySettings: Codable, Equatable {
         try container.encode(secureTypingEnabled, forKey: .secureTypingEnabled)
         try container.encode(secureTypingKeyboard, forKey: .secureTypingKeyboard)
         try container.encode(useSecureCameraCapture, forKey: .useSecureCameraCapture)
+        try container.encode(autoDownloadAttachments, forKey: .autoDownloadAttachments)
         try container.encode(hideSensitiveWhenUnfocused, forKey: .hideSensitiveWhenUnfocused)
         try container.encode(macBlockWindowCapture, forKey: .macBlockWindowCapture)
     }

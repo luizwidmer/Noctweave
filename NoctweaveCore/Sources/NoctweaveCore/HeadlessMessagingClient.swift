@@ -643,7 +643,8 @@ public actor HeadlessMessagingClient {
             mimeType: mimeType,
             chunkSize: chunkSize,
             messageKey: prepared.key,
-            context: context
+            context: context,
+            relayTTLSeconds: ttlSeconds
         )
         try await upload(chunks: chunks, to: contact.relay, ttlSeconds: ttlSeconds)
         let envelope = try MessageEngine.encrypt(
@@ -771,7 +772,8 @@ public actor HeadlessMessagingClient {
             mimeType: mimeType,
             chunkSize: chunkSize,
             messageKey: prepared.key,
-            context: context
+            context: context,
+            relayTTLSeconds: ttlSeconds
         )
         try await upload(chunks: chunks, to: state.relay, ttlSeconds: ttlSeconds)
         let envelope = try GroupRatchet.encrypt(
@@ -1534,7 +1536,8 @@ public actor HeadlessMessagingClient {
         mimeType: String,
         chunkSize: Int,
         messageKey: SymmetricKey,
-        context: AttachmentCryptoContext
+        context: AttachmentCryptoContext,
+        relayTTLSeconds: Int?
     ) throws -> (AttachmentDescriptor, [AttachmentChunk]) {
         let safeChunkSize = max(1, min(chunkSize, 64 * 1024))
         let attachmentId = UUID()
@@ -1548,7 +1551,8 @@ public actor HeadlessMessagingClient {
             byteCount: data.count,
             sha256: AttachmentCrypto.sha256(data),
             chunkCount: chunkCount,
-            chunkSize: safeChunkSize
+            chunkSize: safeChunkSize,
+            relayTTLSeconds: relayTTLSeconds
         )
         var chunks: [AttachmentChunk] = []
         for chunkIndex in 0..<chunkCount {
