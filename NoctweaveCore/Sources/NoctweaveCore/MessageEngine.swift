@@ -279,7 +279,7 @@ public enum MessageEngine {
             conversation.messages.append(message)
             return message
         case .attachment(let descriptor):
-            let title = descriptor.fileName?.isEmpty == false ? descriptor.fileName! : "Image"
+            let title = attachmentTitle(for: descriptor)
             let message = Message(
                     direction: direction,
                     body: title,
@@ -307,6 +307,21 @@ public enum MessageEngine {
         case .resendRequest:
             return nil
         }
+    }
+
+    private static func attachmentTitle(for descriptor: AttachmentDescriptor) -> String {
+        let mimeType = descriptor.mimeType
+            .split(separator: ";", maxSplits: 1)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? descriptor.mimeType.lowercased()
+        if mimeType.hasPrefix("audio/") {
+            return "Voice message"
+        }
+        if mimeType.hasPrefix("image/") {
+            return "Image"
+        }
+        return "Attachment"
     }
 
     private static func deriveRootKey(sharedSecret: Data, priorRootKey: Data?) -> Data {

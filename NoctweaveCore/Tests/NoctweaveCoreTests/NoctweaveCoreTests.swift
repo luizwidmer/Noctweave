@@ -279,7 +279,7 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
         let fetched = try await bobReloaded.fetchAttachment(id: descriptor.id)
-        XCTAssertEqual(fetched.descriptor.fileName, "photo.bin")
+        XCTAssertNil(fetched.descriptor.fileName)
         XCTAssertEqual(fetched.data, payload)
     }
 
@@ -327,7 +327,7 @@ final class NoctweaveCoreTests: XCTestCase {
         guard case .attachment(let descriptor) = received[0].body else {
             return XCTFail("Expected voice attachment descriptor")
         }
-        XCTAssertEqual(descriptor.fileName, "note.m4a")
+        XCTAssertNil(descriptor.fileName)
         XCTAssertEqual(descriptor.mimeType, "audio/m4a")
 
         let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
@@ -8906,7 +8906,7 @@ final class NoctweaveCoreTests: XCTestCase {
 
     func testAttachmentMessageBodyRoundTrip() throws {
         let descriptor = AttachmentDescriptor(
-            fileName: "photo.jpg",
+            fileName: nil,
             mimeType: "image/jpeg",
             byteCount: 123,
             sha256: Data([0x01, 0x02]),

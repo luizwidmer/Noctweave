@@ -639,7 +639,7 @@ public actor HeadlessMessagingClient {
         )
         let (descriptor, chunks) = try Self.encryptAttachmentChunks(
             data: data,
-            fileName: fileName,
+            fileName: nil,
             mimeType: mimeType,
             chunkSize: chunkSize,
             messageKey: prepared.key,
@@ -767,7 +767,7 @@ public actor HeadlessMessagingClient {
         )
         let (descriptor, chunks) = try Self.encryptAttachmentChunks(
             data: data,
-            fileName: fileName,
+            fileName: nil,
             mimeType: mimeType,
             chunkSize: chunkSize,
             messageKey: prepared.key,
@@ -1411,7 +1411,7 @@ public actor HeadlessMessagingClient {
                 )
             )
         case .attachment(let descriptor):
-            let title = descriptor.fileName?.isEmpty == false ? descriptor.fileName! : "Attachment"
+            let title = Self.attachmentTitle(for: descriptor)
             group.messages.append(
                 Message(
                     direction: direction,
@@ -1541,7 +1541,7 @@ public actor HeadlessMessagingClient {
         let chunkCount = data.isEmpty ? 0 : Int(ceil(Double(data.count) / Double(safeChunkSize)))
         let descriptor = AttachmentDescriptor(
             id: attachmentId,
-            fileName: fileName,
+            fileName: nil,
             mimeType: mimeType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? "application/octet-stream"
                 : mimeType,
@@ -1574,6 +1574,21 @@ public actor HeadlessMessagingClient {
             chunks.append(AttachmentChunk(attachmentId: attachmentId, chunkIndex: chunkIndex, payload: payload))
         }
         return (descriptor, chunks)
+    }
+
+    private static func attachmentTitle(for descriptor: AttachmentDescriptor) -> String {
+        let mimeType = descriptor.mimeType
+            .split(separator: ";", maxSplits: 1)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? descriptor.mimeType.lowercased()
+        if mimeType.hasPrefix("audio/") {
+            return "Voice message"
+        }
+        if mimeType.hasPrefix("image/") {
+            return "Image"
+        }
+        return "Attachment"
     }
 
     private static func attachmentChunkPlaintextSize(
