@@ -28,6 +28,8 @@ The Noctyra Apple clients and macOS GUI relay app are proprietary products built
 - `NoctweaveJS/` - JavaScript ESM package for browser/Node relay access, request helpers, and memory, browser, IndexedDB, or database-backed state storage.
 - `Noctweave Relay Server/` - open Linux relay implementation with TCP, HTTP, WebSocket, Docker, SQLite persistence, federation, and relay tests.
 - `Noctweave Documentation/` - public protocol specs, OpenAPI schema, security notes, whitepaper alignment, and relay operator guidance.
+- `agent-guides/` - reusable `AGENTS.md` examples for downstream AI coding agents integrating Noctweave.
+- `agent-skills/` - Codex skill packages for agents that need to use Noctweave messaging or operate relays.
 - `scripts/` - local test, SBOM, release verification, and relay helper scripts.
 
 ## Requirements
@@ -106,6 +108,12 @@ await state.save({ selectedRelay: "https://relay.example" });
 ```
 
 `NoctweaveJS` supports HTTP/HTTPS and WebSocket/WSS relays plus memory, browser `localStorage`, IndexedDB, and generic database adapters. It is a relay/storage integration package; full post-quantum message encryption still requires the protocol crypto layer or an audited WASM adapter. See [`NoctweaveJS/README.md`](NoctweaveJS/README.md).
+
+## Agent Integration Resources
+
+Copy [`agent-guides/AGENTS.md.example`](agent-guides/AGENTS.md.example) into downstream projects as `AGENTS.md` when an AI coding agent needs local Noctweave integration guidance.
+
+Install or copy [`agent-skills/noctweave-messaging-relay/`](agent-skills/noctweave-messaging-relay/) into a Codex skills directory when an agent should operate NoctyraCLI messaging flows or Linux relays directly.
 
 ## Documentation Map
 
