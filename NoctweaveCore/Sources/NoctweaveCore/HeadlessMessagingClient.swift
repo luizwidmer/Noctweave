@@ -404,7 +404,7 @@ public actor HeadlessMessagingClient {
         )
         let response = try await relayClient(for: state.relay).send(.createGroup(request), timeout: timeout)
         guard response.type == .group, let descriptor = response.group else {
-            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
         }
         let group = try groupConversation(from: descriptor, contacts: contacts, state: state, existing: nil)
         state.upsert(group: group)
@@ -731,7 +731,7 @@ public actor HeadlessMessagingClient {
             timeout: timeout
         )
         guard response.type == .delivered || response.type == .ok else {
-            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
         }
         try await store.save(state)
         return HeadlessSentGroupMessage(
@@ -808,7 +808,7 @@ public actor HeadlessMessagingClient {
             timeout: timeout
         )
         guard response.type == .delivered || response.type == .ok else {
-            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
         }
         try await store.save(state)
         return HeadlessSentAttachment(
@@ -856,7 +856,7 @@ public actor HeadlessMessagingClient {
                 timeout: timeout
             )
             guard response.type == .attachment, let chunk = response.attachment else {
-                throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+                throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
             }
             let byteCount = Self.attachmentChunkPlaintextSize(
                 descriptor: info.descriptor,
@@ -930,7 +930,7 @@ public actor HeadlessMessagingClient {
                 if response.type == .ok {
                     continue
                 }
-                throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+                throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
             }
             var acknowledgedIds: [UUID] = []
             for envelope in response.groupMessages ?? [] {
@@ -1012,7 +1012,7 @@ public actor HeadlessMessagingClient {
             if response.type == .ok {
                 return []
             }
-            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
         }
 
         var received: [HeadlessReceivedMessage] = []
@@ -1130,7 +1130,7 @@ public actor HeadlessMessagingClient {
         )
         let response = try await relayClient(for: state.relay).send(.listGroups(request), timeout: timeout)
         guard response.type == .groups else {
-            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
         }
         for descriptor in response.groups ?? [] {
             let contacts = state.contacts.filter { contact in
@@ -1247,7 +1247,7 @@ public actor HeadlessMessagingClient {
             timeout: timeout
         )
         guard response.type == .delivered || response.type == .ok else {
-            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
         }
         return response
     }
@@ -1449,7 +1449,7 @@ public actor HeadlessMessagingClient {
                 timeout: timeout
             )
             guard response.type == .attachment || response.type == .ok else {
-                throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+                throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
             }
         }
     }
@@ -1474,8 +1474,38 @@ public actor HeadlessMessagingClient {
 
     private func requireOK(_ response: RelayResponse) throws {
         guard response.type == .ok || response.type == .delivered else {
-            throw HeadlessMessagingClientError.relayRejected(response.error ?? response.type.rawValue)
+            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
         }
+    }
+
+    private static func redactedRelayRejection(_ response: RelayResponse) -> String {
+        guard let error = response.error?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !error.isEmpty else {
+            return response.type == .error
+                ? "Relay rejected the request."
+                : "Relay returned an unexpected response."
+        }
+
+        let lowercased = error.lowercased()
+        if lowercased.contains("unauthorized") || lowercased.contains("forbidden") {
+            return "Relay authorization failed."
+        }
+        if lowercased.contains("proof") || lowercased.contains("signature") {
+            return "Relay proof verification failed."
+        }
+        if lowercased.contains("not found") || lowercased.contains("not registered") {
+            return "Relay resource was not found."
+        }
+        if lowercased.contains("rate") || lowercased.contains("quota") || lowercased.contains("limit") {
+            return "Relay rate limit was reached."
+        }
+        if lowercased.contains("disabled") || lowercased.contains("not allowed") {
+            return "Relay policy rejected the request."
+        }
+        if lowercased.contains("invalid") || lowercased.contains("malformed") || lowercased.contains("missing") {
+            return "Relay rejected an invalid request."
+        }
+        return "Relay rejected the request."
     }
 
     private func resolveContact(_ selector: String, in contacts: [Contact]) throws -> Contact {

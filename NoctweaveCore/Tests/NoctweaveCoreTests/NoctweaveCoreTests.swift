@@ -112,6 +112,36 @@ final class NoctweaveCoreTests: XCTestCase {
         }
     }
 
+    func testHeadlessMessagingClientRedactsRelayRejectionDetails() async throws {
+        let port = UInt16.random(in: 42_000...44_999)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noctweave-headless-redaction-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let client = HeadlessMessagingClient(
+            stateURL: root.appendingPathComponent("client.json"),
+            timeout: 3
+        )
+        _ = try await client.createState(displayName: "Unregistered CLI", relay: endpoint)
+
+        do {
+            _ = try await client.receive(maxCount: 1)
+            XCTFail("Unregistered headless fetch should be rejected by the relay.")
+        } catch let error as HeadlessMessagingClientError {
+            let description = error.localizedDescription
+            XCTAssertEqual(description, "Relay rejected the request: Relay resource was not found.")
+            XCTAssertFalse(description.localizedCaseInsensitiveContains("not registered"))
+            XCTAssertFalse(description.localizedCaseInsensitiveContains("inbox"))
+        }
+    }
+
     func testRelayHTTPResponseSummaryDoesNotEchoBodyText() {
         let cloudflareLikeBody = Data("Cloudflare error code: 1010 token=secret-value".utf8)
         let regularBody = Data("upstream failure token=secret-value".utf8)

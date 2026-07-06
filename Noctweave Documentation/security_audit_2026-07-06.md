@@ -27,11 +27,12 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Attachment store plaintext lifetime gaps**: Apple client attachment storage now wipes encrypted-at-rest payload buffers, loaded encrypted payloads, AES-GCM combined ciphertext buffers, and temporary keychain key `Data` copies. Outbound attachment chunk buffers are wiped even when chunk encryption throws.
 - **Best-effort local file deletion**: Apple client attachment, encrypted thread history, and ciphertext prefetch deletion paths now overwrite regular files with zero bytes before removing them. This reduces recoverable deleted-content residue from normal file paths; APFS copy-on-write behavior, snapshots, and SSD wear leveling still prevent a physical erasure guarantee.
 - **Prefetch status/error metadata leakage**: closed-app ciphertext prefetch no longer returns profile UUID prefixes or raw localized relay errors to the app UI. Relay-side prefetch failures are reduced to stable transport/status categories, and relay-provided error bodies are not propagated.
+- **Headless relay-client rejection leakage**: the public headless/CLI client no longer propagates raw relay rejection strings through `HeadlessMessagingClientError`. Direct, group, attachment, fetch, and acknowledgement paths now expose stable categories such as authorization failure, proof failure, not found, rate limit, policy rejection, invalid request, or generic relay rejection.
 
 ## Verification
 
 - `npm test` in `NoctweaveJS`: 16 passing tests.
-- `swift test` in `NoctweaveCore`: 218 passing tests after the state/prefetch wiping, relay endpoint parser, relay response redaction, and relay attachment TTL boundary changes.
+- `swift test` in `NoctweaveCore`: 219 passing tests after the state/prefetch wiping, relay endpoint parser, relay response redaction, relay attachment TTL boundary changes, and headless relay-client rejection redaction.
 - `swift test` in `Noctweave Relay Server`: 58 passing tests.
 - macOS Noctyra client Debug build succeeded.
 - iOS Noctyra generic Debug build succeeded.
@@ -42,6 +43,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - macOS and generic iOS Noctyra client Debug builds succeeded after attachment store wiping hardening.
 - macOS and generic iOS Noctyra client Debug builds succeeded after best-effort local deletion hardening.
 - macOS and generic iOS Noctyra client Debug builds succeeded after prefetch error redaction.
+- `swift build --product NoctyraCLI` succeeded after headless relay-client rejection redaction.
 
 ## Residual Risks
 
