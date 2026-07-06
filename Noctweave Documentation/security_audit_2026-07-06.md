@@ -41,6 +41,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Apple client destructive-delete residue**: app reset, action-pin attachment/thread purge, and local `.noctweave` document wipe paths now overwrite regular files before deletion instead of removing directories or files directly. This aligns bulk destructive operations with the per-attachment and per-thread secure deletion behavior.
 - **Apple client voice-recording temp residue**: voice-message `.m4a` temporary files are now overwritten before removal when a recording is sent, cancelled, or the sheet closes. The voice recorder privacy text now reflects the overwrite-before-delete behavior.
 - **Apple client camera diagnostic leakage**: secure camera capture and QR scanner camera-initialization failures no longer surface raw OS `localizedDescription` text to the UI. They now use stable generic camera/capture failure messages.
+- **Apple client relay action error leakage**: direct message send, attachment send, message fetch/acknowledgement, and relay-backed group action failures no longer surface raw relay rejection strings or OS transport errors. User-facing errors now use stable relay categories or generic local failure text.
 
 ## Verification
 
@@ -70,6 +71,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - macOS and generic iOS Noctyra client Debug builds succeeded after voice-recording temporary-file hardening.
 - macOS and generic iOS Noctyra client Debug builds succeeded after camera diagnostic redaction.
 - `swift test` in `NoctweaveCore`: 221 passing tests after decentralized prefetch batch delete hardening.
+- macOS and generic iOS Noctyra client Debug builds succeeded after relay action error redaction.
 
 ## Residual Risks
 
