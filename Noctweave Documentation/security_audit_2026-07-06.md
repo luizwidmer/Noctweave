@@ -47,6 +47,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Apple client storage diagnostic leakage**: state load/save, storage-protection migration, Keychain warmup, prekey publication, ciphertext-prefetch storage, and secure history eviction failures no longer surface raw `localizedDescription` text. User-facing errors now use stable storage/keychain/relay categories instead of OSStatus strings, local paths, or lower-layer transport details.
 - **Apple client file-provider diagnostic leakage**: attachment import, photo loading, contact-share export/AirDrop preparation, and contact-file import failures no longer expose raw document picker, Photos, or file-provider descriptions. User-facing errors now use stable categories such as permission denied, file too large, unavailable provider, or unreadable file.
 - **Apple client relay-facing diagnostic leakage**: relay pairing self-tests, relay pairing requests, relay-backed group membership operations, attachment downloads, root-ratchet failures, identity-rotation notices, and master-source fetches no longer surface raw relay rejection strings, lower-layer transport messages, or crypto/storage exception text. User-facing messages now use stable relay, storage, attachment, or secure-session categories.
+- **Final UI diagnostic cleanup**: direct/group fetch status, voice-message preparation, and client/relay donation purchase flows no longer surface raw relay, filesystem, microphone, or StoreKit error descriptions. These paths now use stable redacted categories while preserving actionable user/operator feedback.
 
 ## Verification
 
@@ -83,6 +84,11 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - macOS and generic iOS Noctyra client Debug builds succeeded after storage diagnostic redaction.
 - macOS and generic iOS Noctyra client Debug builds succeeded after file-provider diagnostic redaction.
 - macOS and generic iOS Noctyra client Debug builds succeeded after relay-facing diagnostic redaction.
+- `swift test` in `NoctweaveCore`: 221 passing tests in the final completion sweep.
+- `swift test` in `Noctweave Relay Server`: 59 passing tests in the final completion sweep.
+- `npm test` in `NoctweaveJS`: 19 passing tests in the final completion sweep.
+- `swift build --product NoctyraCLI` succeeded in the final completion sweep.
+- macOS Noctyra client, generic iOS Noctyra client, and macOS Noctyra Relay Debug builds succeeded after final UI diagnostic cleanup.
 
 ## Residual Risks
 
