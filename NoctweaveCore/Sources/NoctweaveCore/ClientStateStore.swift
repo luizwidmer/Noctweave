@@ -93,7 +93,7 @@ public actor ClientStateStore {
             try mutableURL.setResourceValues(values)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
         } catch {
-            print("[client] Failed to apply privacy attributes: \(error)")
+            print("[client] Failed to apply privacy attributes")
         }
     }
 }
