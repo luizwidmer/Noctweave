@@ -11,6 +11,10 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Attachment transfer plaintext lifetime**: outbound attachment payloads, per-chunk plaintext copies, inbound assembled payloads, and sanitized downloaded payloads are wiped after the encrypted upload/store step finishes.
 - **Mapped file import exposure**: user-selected attachment imports no longer use memory-mapped reads; bounded regular reads avoid leaving sensitive file-backed pages mapped into the process.
 - **Voice recording temp file lifetime**: voice recordings are removed from temporary storage as soon as they are loaded for the encrypted attachment pipeline, and the send callback wipes its plaintext `Data` copy after send completion.
+- **Client state plaintext lifetime**: encrypted client state loads/saves now wipe temporary encoded, encrypted, decrypted, and keychain `Data` copies after use.
+- **Thread history plaintext lifetime**: encrypted direct/group message history loads/saves now wipe temporary encoded, encrypted, decrypted, and keychain `Data` copies after use.
+- **Ciphertext prefetch plaintext lifetime**: prefetch config/status/batch reads and writes now wipe temporary encoded, encrypted, decrypted, and keychain `Data` copies after use. The prefetch batch remains ciphertext-only.
+- **Core decentralized prefetch buffer lifetime**: shared prefetch batch persistence now wipes encoded stored batches and decrypted encoded batches after persistence/decode.
 - **Browser storage plaintext risk**: NoctweaveJS now exposes `EncryptedNoctweaveStore`, an AES-256-GCM WebCrypto wrapper for localStorage, IndexedDB, memory, or custom database adapters. It refuses plaintext records when mounted.
 - **Browser state update race**: `NoctweaveStateRepository.update` is serialized to prevent concurrent read-modify-write calls from losing state.
 - **IndexedDB durability race**: IndexedDB operations now resolve after transaction completion instead of after request completion.
@@ -18,7 +22,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 ## Verification
 
 - `npm test` in `NoctweaveJS`: 16 passing tests.
-- `swift test` in `NoctweaveCore`: 214 passing tests.
+- `swift test` in `NoctweaveCore`: 214 passing tests after the state/prefetch wiping changes.
 - `swift test` in `Noctweave Relay Server`: 57 passing tests.
 - macOS Noctyra client Debug build succeeded.
 - iOS Noctyra generic Debug build succeeded.

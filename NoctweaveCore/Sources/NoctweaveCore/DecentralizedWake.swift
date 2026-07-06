@@ -1,5 +1,10 @@
 import CryptoKit
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public enum DecentralizedWakeMode: String, Codable, CaseIterable {
     case pullOnly
@@ -306,14 +311,16 @@ public actor DecentralizedPrefetchBatchStore {
             throw DecentralizedPrefetchError.invalidBatch
         }
 
-        let encodedBatch = try NoctweaveCoder.encode(batch)
+        var encodedBatch = try NoctweaveCoder.encode(batch)
+        defer { encodedBatch.secureWipe() }
         let payload = try CryptoBox.encrypt(
             encodedBatch,
             key: protectionKey,
             authenticatedData: DecentralizedPrefetchBatchStore.authenticatedData
         )
         let stored = DecentralizedPrefetchStoredBatch(version: 1, payload: payload)
-        let encodedStored = try NoctweaveCoder.encode(stored)
+        var encodedStored = try NoctweaveCoder.encode(stored)
+        defer { encodedStored.secureWipe() }
 
         let directory = fileURL.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: directory.path) {
@@ -331,20 +338,22 @@ public actor DecentralizedPrefetchBatchStore {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return nil
         }
-        let encodedStored = try Data(contentsOf: fileURL)
+        var encodedStored = try Data(contentsOf: fileURL)
+        defer { encodedStored.secureWipe() }
         guard let stored = try? NoctweaveCoder.decode(DecentralizedPrefetchStoredBatch.self, from: encodedStored) else {
             throw DecentralizedPrefetchError.invalidStoredBatch
         }
         guard stored.version == 1 else {
             throw DecentralizedPrefetchError.invalidStoredBatch
         }
-        guard let encodedBatch = try? CryptoBox.decrypt(
+        guard var encodedBatch = try? CryptoBox.decrypt(
             stored.payload,
             key: protectionKey,
             authenticatedData: DecentralizedPrefetchBatchStore.authenticatedData
         ) else {
             throw DecentralizedPrefetchError.invalidStoredBatch
         }
+        defer { encodedBatch.secureWipe() }
         guard let batch = try? NoctweaveCoder.decode(DecentralizedPrefetchBatch.self, from: encodedBatch) else {
             throw DecentralizedPrefetchError.invalidStoredBatch
         }
@@ -367,6 +376,22 @@ public actor DecentralizedPrefetchBatchStore {
 private struct DecentralizedPrefetchStoredBatch: Codable, Equatable {
     let version: Int
     let payload: EncryptedPayload
+}
+
+private extension Data {
+    mutating func secureWipe() {
+        guard !isEmpty else { return }
+        let byteCount = count
+        withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            #if canImport(Darwin)
+            _ = memset_s(baseAddress, byteCount, 0, byteCount)
+            #else
+            _ = memset(baseAddress, 0, byteCount)
+            #endif
+        }
+        removeAll(keepingCapacity: false)
+    }
 }
 
 public enum DecentralizedPrefetchExecutionPlanner {

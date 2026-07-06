@@ -1,5 +1,10 @@
 import Foundation
 import CryptoKit
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 #if canImport(Security)
 import Security
 #endif
@@ -17,8 +22,10 @@ public actor ClientStateStore {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return nil
         }
-        let data = try Data(contentsOf: fileURL)
-        let payload = try decryptIfNeeded(data)
+        var data = try Data(contentsOf: fileURL)
+        defer { data.secureWipe() }
+        var payload = try decryptIfNeeded(data)
+        defer { payload.secureWipe() }
         return try NoctweaveCoder.decode(ClientState.self, from: payload)
     }
 
@@ -27,8 +34,10 @@ public actor ClientStateStore {
         if !FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
-        let payload = try NoctweaveCoder.encode(state)
-        let data = try encryptIfNeeded(payload)
+        var payload = try NoctweaveCoder.encode(state)
+        defer { payload.secureWipe() }
+        var data = try encryptIfNeeded(payload)
+        defer { data.secureWipe() }
         try writeData(data)
     }
 
@@ -43,9 +52,10 @@ public actor ClientStateStore {
         }
         let key = try ClientStateKeychain.loadOrCreateKey()
         let sealed = try AES.GCM.seal(payload, using: key)
-        guard let combined = sealed.combined else {
+        guard var combined = sealed.combined else {
             throw ClientStateStoreError.encryptionFailed
         }
+        defer { combined.secureWipe() }
         let envelope = EncryptedStateEnvelope(version: 1, sealed: combined)
         return try NoctweaveCoder.encode(envelope)
     }
@@ -93,6 +103,22 @@ private struct EncryptedStateEnvelope: Codable {
     let sealed: Data
 }
 
+private extension Data {
+    mutating func secureWipe() {
+        guard !isEmpty else { return }
+        let byteCount = count
+        withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            #if canImport(Darwin)
+            _ = memset_s(baseAddress, byteCount, 0, byteCount)
+            #else
+            _ = memset(baseAddress, 0, byteCount)
+            #endif
+        }
+        removeAll(keepingCapacity: false)
+    }
+}
+
 private enum ClientStateStoreError: Error {
     case encryptionFailed
     case unexpectedPlaintextInEncryptedMode
@@ -126,14 +152,16 @@ private enum ClientStateKeychain {
         if status == errSecItemNotFound {
             return nil
         }
-        guard status == errSecSuccess, let data = item as? Data else {
+        guard status == errSecSuccess, var data = item as? Data else {
             throw ClientStateKeychainError.unavailable(status: status)
         }
+        defer { data.secureWipe() }
         return SymmetricKey(data: data)
     }
 
     private static func saveKey(_ key: SymmetricKey, service: String, account: String) throws {
-        let data = key.withUnsafeBytes { Data($0) }
+        var data = key.withUnsafeBytes { Data($0) }
+        defer { data.secureWipe() }
         var attributes: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
