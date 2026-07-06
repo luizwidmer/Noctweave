@@ -19,6 +19,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Browser storage plaintext risk**: NoctweaveJS now exposes `EncryptedNoctweaveStore`, an AES-256-GCM WebCrypto wrapper for localStorage, IndexedDB, memory, or custom database adapters. It refuses plaintext records when mounted.
 - **Browser state update race**: `NoctweaveStateRepository.update` is serialized to prevent concurrent read-modify-write calls from losing state.
 - **IndexedDB durability race**: IndexedDB operations now resolve after transaction completion instead of after request completion.
+- **Apple client state save race**: Noctyra client state persistence is now serialized and coalesced. If user actions, fetch loops, or lifecycle saves overlap, callers wait for one ordered drain and a final latest-state snapshot is written instead of allowing stale snapshots to overwrite newer messages or settings.
 
 ## Verification
 
@@ -28,6 +29,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - macOS Noctyra client Debug build succeeded.
 - iOS Noctyra generic Debug build succeeded.
 - macOS Noctyra Relay Debug build succeeded.
+- macOS and generic iOS Noctyra client Debug builds succeeded after serialized state persistence.
 
 ## Residual Risks
 
