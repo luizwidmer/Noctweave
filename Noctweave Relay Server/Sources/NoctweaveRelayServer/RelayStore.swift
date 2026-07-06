@@ -113,7 +113,7 @@ final class RelayStore {
                     applySnapshot(snapshot)
                 }
             } catch {
-                print("[relay] Failed to load store: \(error)")
+                print("[relay] Failed to load store")
             }
         }
     }
@@ -1296,7 +1296,7 @@ final class RelayStore {
             prunePrekeysLocked(now: Date())
             try SQLiteRelayStateStore.saveState(currentSnapshot(), at: sqliteStoreURL(for: fileURL))
         } catch {
-            print("[relay] Failed to save store: \(error)")
+            print("[relay] Failed to save store")
         }
     }
 

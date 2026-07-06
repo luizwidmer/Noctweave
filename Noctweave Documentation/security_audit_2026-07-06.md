@@ -22,6 +22,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **IndexedDB durability race**: IndexedDB operations now resolve after transaction completion instead of after request completion.
 - **Apple client state save race**: Noctyra client state persistence is now serialized and coalesced. If user actions, fetch loops, or lifecycle saves overlap, callers wait for one ordered drain and a final latest-state snapshot is written instead of allowing stale snapshots to overwrite newer messages or settings.
 - **Relay attachment retention bypass**: shared and Linux relay stores now clamp attachment TTLs at the persistence layer, not only in request handlers. Direct store callers cannot retain attachment chunks below the minimum or beyond the six-hour maximum retention boundary.
+- **Relay diagnostic metadata leakage**: relay pairing, announcement, forwarding, store, bridge, heartbeat, and protocol error paths no longer print or return request-specific operational details. Remote clients receive fixed error categories such as `Forwarding failed` instead of lower-layer timeout or storage details.
 
 ## Verification
 
@@ -32,6 +33,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - iOS Noctyra generic Debug build succeeded.
 - macOS Noctyra Relay Debug build succeeded.
 - macOS and generic iOS Noctyra client Debug builds succeeded after serialized state persistence.
+- macOS Noctyra client, macOS Noctyra Relay, and generic iOS Noctyra builds succeeded after relay diagnostic redaction.
 
 ## Residual Risks
 

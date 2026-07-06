@@ -395,7 +395,7 @@ final class RelayTCPIntegrationTests: XCTestCase {
             )
         )
         XCTAssertEqual(response.type, .error)
-        XCTAssertTrue((response.error ?? "").localizedCaseInsensitiveContains("timed out"))
+        XCTAssertEqual(response.error, "Forwarding failed")
     }
 
     private func makeEnvelope() -> Envelope {

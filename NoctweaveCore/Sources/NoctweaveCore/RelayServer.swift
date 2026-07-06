@@ -86,8 +86,8 @@ public final class RelayServer {
             switch state {
             case .ready:
                 self?.onEvent?(.started(port: port))
-            case .failed(let error):
-                self?.onEvent?(.error("Listener failed: \(error.localizedDescription)"))
+            case .failed:
+                self?.onEvent?(.error("Listener failed"))
             default:
                 break
             }
@@ -165,7 +165,7 @@ public final class RelayServer {
                 try await connection.sendLine(responseData)
                 connection.cancel()
             } catch {
-                onEvent?(.error("Connection error: \(error.localizedDescription)"))
+                onEvent?(.error("Connection error"))
                 connection.cancel()
             }
         }
@@ -182,7 +182,7 @@ public final class RelayServer {
                 )
                 try await sendRaw(responseData, on: connection)
             } catch {
-                onEvent?(.error("HTTP connection error: \(error.localizedDescription)"))
+                onEvent?(.error("HTTP connection error"))
                 let errorResponse = httpResponse(
                     statusCode: 400,
                     reasonPhrase: "Bad Request",
@@ -306,7 +306,7 @@ public final class RelayServer {
                 let body = try NoctweaveCoder.encode(response)
                 return httpResponse(statusCode: 200, reasonPhrase: "OK", body: body)
             } catch {
-                let body = try NoctweaveCoder.encode(RelayResponse.error("Relay processing failed: \(error.localizedDescription)"))
+                let body = try NoctweaveCoder.encode(RelayResponse.error("Relay processing failed"))
                 return httpResponse(statusCode: 200, reasonPhrase: "OK", body: body)
             }
         case ("GET", "/relay"):
@@ -394,16 +394,20 @@ public final class RelayServer {
             }
             if let destination = deliver.destinationRelay,
                destination != localEndpoint {
-                if let response = try await federationGate(forwardingTo: destination) {
-                    return response
+                do {
+                    if let response = try await federationGate(forwardingTo: destination) {
+                        return response
+                    }
+                    let forward = DeliverRequest(
+                        inboxId: deliver.inboxId,
+                        routingToken: routingToken,
+                        envelope: deliver.envelope
+                    )
+                    let client = RelayClient(endpoint: destination, authToken: configuration.federationForwardingAuthToken)
+                    return try await client.send(.deliver(forward))
+                } catch {
+                    return .error("Forwarding failed")
                 }
-                let forward = DeliverRequest(
-                    inboxId: deliver.inboxId,
-                    routingToken: routingToken,
-                    envelope: deliver.envelope
-                )
-                let client = RelayClient(endpoint: destination, authToken: configuration.federationForwardingAuthToken)
-                return try await client.send(.deliver(forward))
             }
             do {
                 let count = try await store.deliver(deliver.envelope, to: routingToken)
@@ -510,16 +514,20 @@ public final class RelayServer {
             }
             if let destination = deliver.destinationRelay,
                destination != localEndpoint {
-                if let response = try await federationGate(forwardingTo: destination) {
-                    return response
+                do {
+                    if let response = try await federationGate(forwardingTo: destination) {
+                        return response
+                    }
+                    let forward = DeliverGroupMessageRequest(
+                        groupId: deliver.groupId,
+                        groupInboxId: deliver.groupInboxId,
+                        envelope: deliver.envelope
+                    )
+                    let client = RelayClient(endpoint: destination, authToken: configuration.federationForwardingAuthToken)
+                    return try await client.send(.deliverGroupMessage(forward))
+                } catch {
+                    return .error("Forwarding failed")
                 }
-                let forward = DeliverGroupMessageRequest(
-                    groupId: deliver.groupId,
-                    groupInboxId: deliver.groupInboxId,
-                    envelope: deliver.envelope
-                )
-                let client = RelayClient(endpoint: destination, authToken: configuration.federationForwardingAuthToken)
-                return try await client.send(.deliverGroupMessage(forward))
             }
             guard let group = await store.fetchGroup(groupId: deliver.groupId),
                   group.inboxId == deliver.groupInboxId else {
@@ -631,16 +639,12 @@ public final class RelayServer {
             } catch {
                 return .error("Invalid contact offer.")
             }
-            let ttl = announce.ttlSeconds.map(String.init) ?? "default"
-            print("[relay] announce ttl=\(ttl)")
             let announcement = await store.announce(announce.offer, ttlSeconds: announce.ttlSeconds)
             return .announcements([announcement])
         case .listAnnouncements:
             guard let list = request.listAnnouncements else {
                 return .error("Missing list payload")
             }
-            let limit = list.limit.map(String.init) ?? "all"
-            print("[relay] list announcements limit=\(limit)")
             let announcements = await store.listAnnouncements(limit: list.limit)
             return .announcements(announcements)
         case .sendPairRequest:
@@ -660,7 +664,6 @@ public final class RelayServer {
             ) {
                 return proofFailure
             }
-            print("[relay] pair request received")
             _ = await store.sendPairRequest(targetFingerprint: pair.targetFingerprint, offer: pair.offer)
             return .ok()
         case .fetchPairRequests:
@@ -676,8 +679,6 @@ public final class RelayServer {
             ) {
                 return proofFailure
             }
-            let max = fetch.maxCount.map(String.init) ?? "all"
-            print("[relay] fetch pair requests max=\(max)")
             let requests = await store.fetchPairRequests(targetFingerprint: fetch.fingerprint, maxCount: fetch.maxCount)
             return .pairRequests(requests)
         case .uploadAttachment:
@@ -701,7 +702,7 @@ public final class RelayServer {
             } catch RelayStoreError.invalidAttachmentPayload {
                 return .error("Invalid attachment payload")
             } catch {
-                return .error("Attachment store error: \(error.localizedDescription)")
+                return .error("Attachment store error")
             }
         case .fetchAttachment:
             guard configuration.attachmentsEnabled != false else {
@@ -721,7 +722,7 @@ public final class RelayServer {
             } catch RelayStoreError.invalidChunkIndex {
                 return .error("Invalid chunk index")
             } catch {
-                return .error("Attachment store error: \(error.localizedDescription)")
+                return .error("Attachment store error")
             }
         case .uploadPrekeys:
             guard let upload = request.uploadPrekeys else {
@@ -802,7 +803,7 @@ public final class RelayServer {
             } catch let error as RelayStoreError {
                 return relayStoreErrorResponse(error)
             } catch {
-                return .error("Group creation failed: \(error.localizedDescription)")
+                return .error("Group creation failed")
             }
         case .getGroup:
             guard let get = request.getGroup else {
@@ -900,7 +901,7 @@ public final class RelayServer {
             } catch let error as RelayStoreError {
                 return relayStoreErrorResponse(error)
             } catch {
-                return .error("Group invitation failed: \(error.localizedDescription)")
+                return .error("Group invitation failed")
             }
         case .updateGroup:
             guard let update = request.updateGroup else {
@@ -936,7 +937,7 @@ public final class RelayServer {
             } catch let error as RelayStoreError {
                 return relayStoreErrorResponse(error)
             } catch {
-                return .error("Group update failed: \(error.localizedDescription)")
+                return .error("Group update failed")
             }
         case .deleteGroup:
             guard let delete = request.deleteGroup else {
@@ -969,7 +970,7 @@ public final class RelayServer {
             } catch let error as RelayStoreError {
                 return relayStoreErrorResponse(error)
             } catch {
-                return .error("Delete group failed: \(error.localizedDescription)")
+                return .error("Delete group failed")
             }
         case .requestGroupJoin:
             guard let join = request.requestGroupJoin else {
@@ -1012,7 +1013,7 @@ public final class RelayServer {
             } catch let error as RelayStoreError {
                 return relayStoreErrorResponse(error)
             } catch {
-                return .error("Group join request failed: \(error.localizedDescription)")
+                return .error("Group join request failed")
             }
         case .listGroupJoinRequests:
             guard let list = request.listGroupJoinRequests else {
@@ -1045,7 +1046,7 @@ public final class RelayServer {
             } catch let error as RelayStoreError {
                 return relayStoreErrorResponse(error)
             } catch {
-                return .error("List join requests failed: \(error.localizedDescription)")
+                return .error("List join requests failed")
             }
         case .approveGroupJoin:
             guard let approve = request.approveGroupJoin else {
@@ -1086,7 +1087,7 @@ public final class RelayServer {
             } catch let error as RelayStoreError {
                 return relayStoreErrorResponse(error)
             } catch {
-                return .error("Approve join failed: \(error.localizedDescription)")
+                return .error("Approve join failed")
             }
         case .rejectGroupJoin:
             guard let reject = request.rejectGroupJoin else {
@@ -1119,7 +1120,7 @@ public final class RelayServer {
             } catch let error as RelayStoreError {
                 return relayStoreErrorResponse(error)
             } catch {
-                return .error("Reject join failed: \(error.localizedDescription)")
+                return .error("Reject join failed")
             }
         case .registerFederationNode:
             guard configuration.kind == .coordinator else {
@@ -1146,7 +1147,7 @@ public final class RelayServer {
                 let node = try await store.registerFederationNode(registration)
                 return .federationNodes([node])
             } catch {
-                return .error("Coordinator registration failed: \(error.localizedDescription)")
+                return .error("Coordinator registration failed")
             }
         case .listFederationNodes:
             let listRequest = request.listFederationNodes ?? ListFederationNodesRequest()
@@ -1646,7 +1647,7 @@ public final class RelayServer {
                         )
                     }
                 } catch {
-                    self.onEvent?(.error("Coordinator heartbeat failed: \(error.localizedDescription)"))
+                    self.onEvent?(.error("Coordinator heartbeat failed"))
                 }
                 let waitNanos = UInt64(self.coordinatorHeartbeatInterval() * 1_000_000_000)
                 try? await Task.sleep(nanoseconds: waitNanos)

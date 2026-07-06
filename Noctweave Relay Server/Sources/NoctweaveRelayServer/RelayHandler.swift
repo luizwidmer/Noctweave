@@ -79,12 +79,12 @@ final class RelayHandler: ChannelInboundHandler {
                 switch result {
                 case .success(let response):
                     self.respond(response, context: responseContext.context)
-                case .failure(let error):
-                    self.respond(.error("Handler error: \(error.localizedDescription)"), context: responseContext.context)
+                case .failure:
+                    self.respond(.error("Handler error"), context: responseContext.context)
                 }
             }
         } catch {
-            respond(.error("Decode failed: \(error.localizedDescription)"), context: context)
+            respond(.error("Decode failed"), context: context)
         }
     }
 
@@ -130,7 +130,11 @@ final class RelayHandler: ChannelInboundHandler {
                         forward,
                         to: destination,
                         on: eventLoop
-                    )
+                    ).recover { _ in
+                        .error("Forwarding failed")
+                    }
+                }.recover { _ in
+                    .error("Forwarding failed")
                 }
             }
             do {
@@ -141,7 +145,7 @@ final class RelayHandler: ChannelInboundHandler {
             } catch RelayStoreError.relayCapacityExceeded {
                 return context.eventLoop.makeSucceededFuture(.error("Relay storage capacity reached"))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Store error: \(error.localizedDescription)"))
+                return context.eventLoop.makeSucceededFuture(.error("Store error"))
             }
         case .registerInbox:
             guard let registration = request.registerInbox else {
@@ -259,7 +263,11 @@ final class RelayHandler: ChannelInboundHandler {
                         forward,
                         to: destination,
                         on: eventLoop
-                    )
+                    ).recover { _ in
+                        .error("Forwarding failed")
+                    }
+                }.recover { _ in
+                    .error("Forwarding failed")
                 }
             }
             guard let group = store.fetchGroup(groupId: deliver.groupId),
@@ -288,7 +296,7 @@ final class RelayHandler: ChannelInboundHandler {
             } catch RelayStoreError.relayCapacityExceeded {
                 return context.eventLoop.makeSucceededFuture(.error("Relay storage capacity reached"))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Store error: \(error.localizedDescription)"))
+                return context.eventLoop.makeSucceededFuture(.error("Store error"))
             }
         case .fetchGroupMessages:
             guard let fetch = request.fetchGroupMessages else {
@@ -425,15 +433,12 @@ final class RelayHandler: ChannelInboundHandler {
                   announce.offer.verifySignature() else {
                 return context.eventLoop.makeSucceededFuture(.error("Invalid contact offer."))
             }
-            log("pairing announcement accepted", context: context)
             let announcement = store.announce(announce.offer, ttlSeconds: announce.ttlSeconds)
             return context.eventLoop.makeSucceededFuture(.announcements([announcement]))
         case .listAnnouncements:
             guard let list = request.listAnnouncements else {
                 return context.eventLoop.makeSucceededFuture(.error("Missing list payload"))
             }
-            let limit = list.limit.map(String.init) ?? "all"
-            log("list announcements limit=\(limit)", context: context)
             let announcements = store.listAnnouncements(limit: list.limit)
             return context.eventLoop.makeSucceededFuture(.announcements(announcements))
         case .sendPairRequest:
@@ -452,7 +457,6 @@ final class RelayHandler: ChannelInboundHandler {
             ) {
                 return context.eventLoop.makeSucceededFuture(proofFailure)
             }
-            log("pair request accepted", context: context)
             _ = store.sendPairRequest(targetFingerprint: request.targetFingerprint, offer: request.offer)
             return context.eventLoop.makeSucceededFuture(.ok())
         case .fetchPairRequests:
@@ -468,8 +472,6 @@ final class RelayHandler: ChannelInboundHandler {
             ) {
                 return context.eventLoop.makeSucceededFuture(proofFailure)
             }
-            let max = fetch.maxCount.map(String.init) ?? "all"
-            log("fetch pair requests max=\(max)", context: context)
             let requests = store.fetchPairRequests(targetFingerprint: fetch.fingerprint, maxCount: fetch.maxCount)
             return context.eventLoop.makeSucceededFuture(.pairRequests(requests))
         case .uploadAttachment:
@@ -497,7 +499,7 @@ final class RelayHandler: ChannelInboundHandler {
             } catch RelayStoreError.attachmentBlobUnavailable {
                 return context.eventLoop.makeSucceededFuture(.error("Attachment blob backend unavailable"))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Attachment store error: \(error.localizedDescription)"))
+                return context.eventLoop.makeSucceededFuture(.error("Attachment store error"))
             }
         case .fetchAttachment:
             guard relayConfiguration.attachmentsEnabled != false else {
@@ -521,7 +523,7 @@ final class RelayHandler: ChannelInboundHandler {
             } catch RelayStoreError.attachmentBlobUnavailable {
                 return context.eventLoop.makeSucceededFuture(.error("Attachment blob backend unavailable"))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Attachment store error: \(error.localizedDescription)"))
+                return context.eventLoop.makeSucceededFuture(.error("Attachment store error"))
             }
         case .uploadPrekeys:
             guard let upload = request.uploadPrekeys else {
@@ -556,7 +558,7 @@ final class RelayHandler: ChannelInboundHandler {
             } catch RelayStoreError.invalidPrekeyBundle {
                 return context.eventLoop.makeSucceededFuture(.error("Invalid prekey bundle."))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Prekey store error: \(error.localizedDescription)"))
+                return context.eventLoop.makeSucceededFuture(.error("Prekey store error"))
             }
         case .fetchPrekeyBundle:
             guard let fetch = request.fetchPrekeyBundle else {
@@ -566,7 +568,7 @@ final class RelayHandler: ChannelInboundHandler {
                 let bundle = try store.fetchPrekeyBundle(fingerprint: fetch.fingerprint)
                 return context.eventLoop.makeSucceededFuture(.prekeyBundle(bundle))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Prekey fetch error: \(error.localizedDescription)"))
+                return context.eventLoop.makeSucceededFuture(.error("Prekey fetch error"))
             }
         case .createGroup:
             guard let create = request.createGroup else {
@@ -850,7 +852,7 @@ final class RelayHandler: ChannelInboundHandler {
                     let node = try self.store.registerFederationNode(registration)
                     return eventLoop.makeSucceededFuture(.federationNodes([node]))
                 } catch {
-                    return eventLoop.makeSucceededFuture(.error("Coordinator registration failed: \(error.localizedDescription)"))
+                    return eventLoop.makeSucceededFuture(.error("Coordinator registration failed"))
                 }
             }
         case .listFederationNodes:
@@ -944,7 +946,7 @@ final class RelayHandler: ChannelInboundHandler {
         case RelayStoreError.alreadyGroupMember:
             return .error("Requester is already a group member")
         default:
-            return .error("Store error: \(error.localizedDescription)")
+            return .error("Store error")
         }
     }
 
@@ -1195,8 +1197,8 @@ final class RelayHandler: ChannelInboundHandler {
             return true
         }
         guard shouldSend else { return }
-        performCoordinatorHeartbeat(on: eventLoop).whenFailure { error in
-            print("[relay] coordinator heartbeat failed: \(error.localizedDescription)")
+        performCoordinatorHeartbeat(on: eventLoop).whenFailure { _ in
+            print("[relay] coordinator heartbeat failed")
         }
     }
 
@@ -1560,11 +1562,6 @@ final class RelayHandler: ChannelInboundHandler {
             }
         }
         return promise.futureResult
-    }
-
-    private func log(_ message: String, context: ChannelHandlerContext) {
-        _ = context
-        print("[relay] \(message)")
     }
 
     private func registeredSigningKey(

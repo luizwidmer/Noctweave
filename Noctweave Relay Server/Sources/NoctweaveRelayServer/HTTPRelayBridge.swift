@@ -154,10 +154,10 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
             switch result {
             case .success(let responseData):
                 self.sendHTTPResponse(status: .ok, body: responseData, context: responseContext.context)
-            case .failure(let error):
+            case .failure:
                 let body = Data(#"{"type":"error","error":"Bridge forward failed"}"#.utf8)
                 self.sendHTTPResponse(status: .badGateway, body: body, context: responseContext.context)
-                print("[relay] http bridge forward failure: \(error.localizedDescription)")
+                print("[relay] http bridge forward failure")
             }
         }
     }
@@ -243,10 +243,10 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
                 switch result {
                 case .success(let responseData):
                     self.send(frameType: frame.opcode, payload: responseData, context: responseContext.context)
-                case .failure(let error):
+                case .failure:
                     let response = Data(#"{"type":"error","error":"Bridge forward failed"}"#.utf8)
                     self.send(frameType: .text, payload: response, context: responseContext.context)
-                    print("[relay] websocket bridge forward failure: \(error.localizedDescription)")
+                    print("[relay] websocket bridge forward failure")
                 }
             }
         default:
