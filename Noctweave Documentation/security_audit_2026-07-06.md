@@ -16,6 +16,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Thread history plaintext lifetime**: encrypted direct/group message history loads/saves now wipe temporary encoded, encrypted, decrypted, and keychain `Data` copies after use.
 - **Ciphertext prefetch plaintext lifetime**: prefetch config/status/batch reads and writes now wipe temporary encoded, encrypted, decrypted, and keychain `Data` copies after use. The prefetch batch remains ciphertext-only.
 - **Core decentralized prefetch buffer lifetime**: shared prefetch batch persistence now wipes encoded stored batches and decrypted encoded batches after persistence/decode.
+- **Core decentralized prefetch deletion residue**: shared prefetch batch removal now overwrites regular encrypted batch files before unlinking them, reducing local residue from staged sealed envelopes and relay metadata.
 - **Relay URL parser downgrade risk**: relay endpoint parsing now rejects unknown URL schemes instead of silently treating them as plain TCP. It also rejects URL user info, query parameters, and fragments so relay secrets are not embedded in stored/displayed endpoint strings.
 - **Browser storage plaintext risk**: NoctweaveJS now exposes `EncryptedNoctweaveStore`, an AES-256-GCM WebCrypto wrapper for localStorage, IndexedDB, memory, or custom database adapters. It refuses plaintext records when mounted.
 - **Browser state update race**: `NoctweaveStateRepository.update` is serialized to prevent concurrent read-modify-write calls from losing state.
@@ -68,6 +69,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - macOS and generic iOS Noctyra client Debug builds succeeded after destructive-delete hardening.
 - macOS and generic iOS Noctyra client Debug builds succeeded after voice-recording temporary-file hardening.
 - macOS and generic iOS Noctyra client Debug builds succeeded after camera diagnostic redaction.
+- `swift test` in `NoctweaveCore`: 221 passing tests after decentralized prefetch batch delete hardening.
 
 ## Residual Risks
 

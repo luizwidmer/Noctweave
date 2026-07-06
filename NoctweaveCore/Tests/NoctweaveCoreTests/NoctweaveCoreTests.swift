@@ -1885,6 +1885,48 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(reloaded.records.first?.acknowledgementDeferred, true)
     }
 
+    func testDecentralizedPrefetchBatchStoreRemoveDeletesPersistedBatch() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("prefetch.batch")
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let envelope = Envelope(
+            id: UUID(uuidString: "56565656-5656-5656-5656-565656565656")!,
+            conversationId: "conversation-remove",
+            sessionId: "session-remove",
+            senderFingerprint: "sender-remove",
+            sentAt: Date(timeIntervalSince1970: 6_100),
+            messageCounter: 14,
+            payload: EncryptedPayload(
+                nonce: Data([0x65]),
+                ciphertext: Data("sealed-prefetch-remove-ciphertext".utf8),
+                tag: Data([0x66])
+            ),
+            signature: Data([0x67])
+        )
+        let batch = try DecentralizedPrefetchStager.stageDirectMessages(
+            [envelope],
+            inboxId: "inbox-remove",
+            relayIdentifier: "relay-remove",
+            stagedAt: Date(timeIntervalSince1970: 7_100)
+        )
+        let store = try DecentralizedPrefetchBatchStore(
+            fileURL: fileURL,
+            protectionKey: Data(repeating: 0xD8, count: 32)
+        )
+
+        try await store.save(batch)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+
+        try await store.remove()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        let reloaded = try await store.load()
+        XCTAssertNil(reloaded)
+
+        try await store.remove()
+    }
+
     func testDecentralizedPrefetchBatchStoreRejectsWrongKeyAndAcknowledgedRecords() async throws {
         let fileURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

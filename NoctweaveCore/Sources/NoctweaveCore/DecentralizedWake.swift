@@ -367,10 +367,40 @@ public actor DecentralizedPrefetchBatchStore {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return
         }
+        Self.bestEffortOverwriteFile(at: fileURL)
         try FileManager.default.removeItem(at: fileURL)
     }
 
     private static let authenticatedData = Data("NOCTYRA-DECENTRALIZED-PREFETCH-BATCH-V1".utf8)
+
+    private static func bestEffortOverwriteFile(at url: URL) {
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true,
+              let fileSize = values.fileSize,
+              fileSize > 0,
+              let handle = try? FileHandle(forWritingTo: url) else {
+            return
+        }
+
+        defer {
+            try? handle.close()
+        }
+
+        handle.seek(toFileOffset: 0)
+        let chunkSize = 64 * 1024
+        let zeros = Data(repeating: 0, count: min(chunkSize, fileSize))
+        var remaining = fileSize
+        while remaining > 0 {
+            let writeCount = min(chunkSize, remaining)
+            if writeCount == zeros.count {
+                handle.write(zeros)
+            } else {
+                handle.write(zeros.prefix(writeCount))
+            }
+            remaining -= writeCount
+        }
+        handle.synchronizeFile()
+    }
 }
 
 private struct DecentralizedPrefetchStoredBatch: Codable, Equatable {
