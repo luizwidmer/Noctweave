@@ -21,12 +21,13 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Browser state update race**: `NoctweaveStateRepository.update` is serialized to prevent concurrent read-modify-write calls from losing state.
 - **IndexedDB durability race**: IndexedDB operations now resolve after transaction completion instead of after request completion.
 - **Apple client state save race**: Noctyra client state persistence is now serialized and coalesced. If user actions, fetch loops, or lifecycle saves overlap, callers wait for one ordered drain and a final latest-state snapshot is written instead of allowing stale snapshots to overwrite newer messages or settings.
+- **Relay attachment retention bypass**: shared and Linux relay stores now clamp attachment TTLs at the persistence layer, not only in request handlers. Direct store callers cannot retain attachment chunks below the minimum or beyond the six-hour maximum retention boundary.
 
 ## Verification
 
 - `npm test` in `NoctweaveJS`: 16 passing tests.
-- `swift test` in `NoctweaveCore`: 217 passing tests after the state/prefetch wiping, relay endpoint parser, and relay response redaction changes.
-- `swift test` in `Noctweave Relay Server`: 57 passing tests.
+- `swift test` in `NoctweaveCore`: 218 passing tests after the state/prefetch wiping, relay endpoint parser, relay response redaction, and relay attachment TTL boundary changes.
+- `swift test` in `Noctweave Relay Server`: 58 passing tests.
 - macOS Noctyra client Debug build succeeded.
 - iOS Noctyra generic Debug build succeeded.
 - macOS Noctyra Relay Debug build succeeded.

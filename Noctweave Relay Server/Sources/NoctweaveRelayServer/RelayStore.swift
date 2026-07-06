@@ -49,6 +49,8 @@ final class RelayStore {
     private let maxPairRequests = 100
     private let maxPairRequestTargets = 2_048
     private let attachmentTTL: TimeInterval = 3600
+    private let minimumAttachmentTTL: TimeInterval = 60
+    private let maximumAttachmentTTL: TimeInterval = 6 * 3600
     private let maxAttachmentChunks = 512
     private let maxAttachmentChunkPayloadBytes = 128 * 1024
     private let maxEnvelopePayloadBytes = 96 * 1024
@@ -170,7 +172,7 @@ final class RelayStore {
                 throw RelayStoreError.invalidAttachmentPayload
             }
             pruneAttachmentsLocked(now: Date())
-            let ttl = TimeInterval(ttlSeconds ?? Int(attachmentTTL))
+            let ttl = boundedAttachmentTTL(ttlSeconds)
             let now = Date()
             let bucketKey = "attachment:\(attachmentId.uuidString):\(chunkIndex)"
             let storedAt = bucketed(now, discriminator: bucketKey)
@@ -1351,6 +1353,11 @@ final class RelayStore {
             }
             return filtered.isEmpty ? nil : filtered
         }
+    }
+
+    private func boundedAttachmentTTL(_ ttlSeconds: Int?) -> TimeInterval {
+        let requested = TimeInterval(ttlSeconds ?? Int(attachmentTTL))
+        return min(maximumAttachmentTTL, max(minimumAttachmentTTL, requested))
     }
 
     private func payload(for record: AttachmentRecord) throws -> EncryptedPayload {

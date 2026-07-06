@@ -52,6 +52,44 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(blobStore.records.values.first?.backend, "test-blob")
     }
 
+    func testStoreBoundsAttachmentTTLAtStoreBoundary() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
+        let requestedURL = tempDirectory.appendingPathComponent("relay_store.json")
+        let sqliteURL = tempDirectory.appendingPathComponent("relay_store.sqlite")
+        let store = RelayStore(fileURL: requestedURL, maxInboxMessages: nil, temporalBucketSeconds: 0)
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0x01, count: 12),
+            ciphertext: Data([0xAA, 0xBB, 0xCC]),
+            tag: Data(repeating: 0x02, count: 16)
+        )
+
+        let longTTLAttachment = UUID()
+        let longTTLStart = Date()
+        _ = try store.storeAttachment(
+            attachmentId: longTTLAttachment,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 10_000_000
+        )
+        let longTTLExpiry = try relayAttachmentExpiry(at: sqliteURL, attachmentId: longTTLAttachment)
+        XCTAssertLessThanOrEqual(longTTLExpiry.timeIntervalSince(longTTLStart), 6 * 3600 + 5)
+
+        let shortTTLAttachment = UUID()
+        let shortTTLStart = Date()
+        _ = try store.storeAttachment(
+            attachmentId: shortTTLAttachment,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: -1
+        )
+        let shortTTLExpiry = try relayAttachmentExpiry(at: sqliteURL, attachmentId: shortTTLAttachment)
+        XCTAssertGreaterThanOrEqual(shortTTLExpiry.timeIntervalSince(shortTTLStart), 55)
+    }
+
     func testExternalAttachmentBlobDigestMismatchIsRejected() throws {
         let blobStore = TestAttachmentBlobStore()
         let store = RelayStore(
@@ -1186,6 +1224,29 @@ final class RelayStoreParityTests: XCTestCase {
             throw NSError(domain: "NoctweaveRelayServerTests.SQLite", code: 9)
         }
         XCTAssertEqual(sqlite3_changes(db), 1)
+    }
+
+    private func relayAttachmentExpiry(at sqliteURL: URL, attachmentId: UUID) throws -> Date {
+        var db: OpaquePointer?
+        guard sqlite3_open(sqliteURL.path, &db) == SQLITE_OK, let db else {
+            throw NSError(domain: "NoctweaveRelayServerTests.SQLite", code: 10)
+        }
+        defer { sqlite3_close(db) }
+
+        let sql = "SELECT expires_at FROM relay_attachment_chunks WHERE attachment_id = ?1 LIMIT 1;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
+            throw NSError(domain: "NoctweaveRelayServerTests.SQLite", code: 11)
+        }
+        defer { sqlite3_finalize(statement) }
+
+        guard sqlite3_bind_text(statement, 1, attachmentId.uuidString, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self)) == SQLITE_OK else {
+            throw NSError(domain: "NoctweaveRelayServerTests.SQLite", code: 12)
+        }
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            throw NSError(domain: "NoctweaveRelayServerTests.SQLite", code: 13)
+        }
+        return Date(timeIntervalSince1970: sqlite3_column_double(statement, 0))
     }
 
     private func makeUnsignedDHTRecord(host: String, federationName: String) -> OpenFederationDHTRecord {
