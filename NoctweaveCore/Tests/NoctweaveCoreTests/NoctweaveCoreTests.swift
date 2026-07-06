@@ -142,6 +142,43 @@ final class NoctweaveCoreTests: XCTestCase {
         }
     }
 
+    func testSessionRecoveryRedactsRelayRejectionDetails() async throws {
+        let port = UInt16.random(in: 42_000...44_999)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: bob.displayName,
+            inboxId: "unregistered-bob-inbox",
+            relay: endpoint,
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let existingConversation = try MessageEngine.createOutboundSession(
+            identity: alice,
+            contact: bobContact
+        ).conversation
+
+        do {
+            _ = try await SessionRecovery.sendSessionReset(
+                identity: alice,
+                contact: bobContact,
+                existingConversation: existingConversation,
+                preferredRelay: endpoint
+            )
+            XCTFail("Session reset delivery to an unregistered inbox should fail.")
+        } catch SessionRecovery.SessionRecoveryError.relayError(let message) {
+            XCTAssertEqual(message, "Relay rejected an invalid request.")
+            XCTAssertFalse(message.localizedCaseInsensitiveContains("not registered"))
+            XCTAssertFalse(message.localizedCaseInsensitiveContains("inbox"))
+        }
+    }
+
     func testRelayHTTPResponseSummaryDoesNotEchoBodyText() {
         let cloudflareLikeBody = Data("Cloudflare error code: 1010 token=secret-value".utf8)
         let regularBody = Data("upstream failure token=secret-value".utf8)

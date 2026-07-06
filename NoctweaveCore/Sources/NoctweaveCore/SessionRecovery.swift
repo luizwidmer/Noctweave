@@ -146,9 +146,32 @@ public enum SessionRecovery {
         let response = try await client.send(request)
         guard response.type == .delivered else {
             if let error = response.error {
-                throw SessionRecoveryError.relayError(error)
+                throw SessionRecoveryError.relayError(redactedRelayError(error))
             }
             throw SessionRecoveryError.unexpectedResponse
         }
+    }
+
+    private static func redactedRelayError(_ error: String) -> String {
+        let lowercased = error.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lowercased.contains("unauthorized") || lowercased.contains("forbidden") {
+            return "Relay authorization failed."
+        }
+        if lowercased.contains("proof") || lowercased.contains("signature") {
+            return "Relay proof verification failed."
+        }
+        if lowercased.contains("not found") || lowercased.contains("not registered") {
+            return "Relay resource was not found."
+        }
+        if lowercased.contains("rate") || lowercased.contains("quota") || lowercased.contains("limit") {
+            return "Relay rate limit was reached."
+        }
+        if lowercased.contains("disabled") || lowercased.contains("not allowed") {
+            return "Relay policy rejected the request."
+        }
+        if lowercased.contains("invalid") || lowercased.contains("malformed") || lowercased.contains("missing") {
+            return "Relay rejected an invalid request."
+        }
+        return "Relay rejected the request."
     }
 }
