@@ -32,6 +32,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Relay actor-proof replay persistence gap**: Linux relay actor-proof nonce replay protection is now persisted in the SQLite relay store. A relay restart no longer clears still-fresh actor proof nonces and allows the same signed mutation/fetch proof to be replayed within its validity window.
 - **Contact-share temporary file lifetime**: Apple client AirDrop/contact-share exports now clear any previous temporary share file before creating a new one, wipe the in-memory password-protected share payload after writing, remove the temporary file on iOS share dismissal, sensitive-screen hiding, and view exit, and schedule a fallback cleanup after five minutes. Local deletion uses the same best-effort overwrite-before-remove behavior as other client file stores.
 - **Contact-share plaintext buffer lifetime**: core contact-share encode/decode now wipes serialized contact-offer plaintext, decrypted password-protected share plaintext, PBKDF2 password material, derived-key buffers, and intermediate HMAC blocks after use. The CLI also wipes encrypted contact-share import/export file buffers after import or write completion.
+- **Browser encrypted-store plaintext lifetime**: NoctweaveJS encrypted storage now clears decrypted JSON plaintext buffers after parsing, clears encoded JSON plaintext buffers after encryption, and wipes local raw-key/passphrase byte copies after WebCrypto imports them.
 
 ## Verification
 
@@ -52,6 +53,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - macOS and generic iOS Noctyra client Debug builds succeeded after contact-share temporary-file cleanup.
 - `swift test` in `NoctweaveCore`: 220 passing tests after contact-share plaintext buffer wiping.
 - `swift build --product NoctyraCLI` succeeded after CLI contact-share buffer wiping.
+- `npm test` in `NoctweaveJS`: 16 passing tests after encrypted-store buffer wiping.
 
 ## Residual Risks
 
