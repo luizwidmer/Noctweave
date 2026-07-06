@@ -35,6 +35,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Browser encrypted-store plaintext lifetime**: NoctweaveJS encrypted storage now clears decrypted JSON plaintext buffers after parsing, clears encoded JSON plaintext buffers after encryption, and wipes local raw-key/passphrase byte copies after WebCrypto imports them.
 - **Browser relay-client response leakage**: NoctweaveJS relay-client HTTP status and invalid-JSON errors no longer echo relay/proxy response bodies. Errors now report only status plus redacted response class and byte count, and oversized responses can be rejected from `Content-Length` before body decoding when that header is available.
 - **Browser native-message plaintext lifetime**: NoctweaveJS native-message encryption/decryption now wipes padded plaintext buffers, decrypted plaintext buffers, KEM shared secrets, serialized signing secret copies, message keys, chain-key derivation inputs, skipped-message key copies, and padding/body temporary byte arrays after use.
+- **Browser WebCrypto primitive buffer lifetime**: NoctweaveJS WebCrypto wrappers now import HMAC keys, HKDF input keying material, AES-GCM keys, and AES-GCM plaintext through local copies that are wiped after the WebCrypto call, avoiding mutation of caller-owned arrays while bounding wrapper-owned plaintext/key bytes.
 
 ## Verification
 
@@ -58,6 +59,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - `npm test` in `NoctweaveJS`: 16 passing tests after encrypted-store buffer wiping.
 - `npm test` in `NoctweaveJS`: 18 passing tests after relay-client response redaction.
 - `npm test` in `NoctweaveJS`: 18 passing tests after native-message transient buffer wiping.
+- `npm test` in `NoctweaveJS`: 18 passing tests after WebCrypto primitive buffer wiping.
 
 ## Residual Risks
 
