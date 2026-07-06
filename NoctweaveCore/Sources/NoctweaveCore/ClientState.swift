@@ -9,6 +9,7 @@ public struct ClientState: Codable {
     public var appearance: AppearanceSettings
     public var privacy: PrivacySettings
     public var appLock: AppLockSettings
+    public var chatList: ChatListSettings
     public var hasCompletedOnboarding: Bool
     public var hasAcceptedPrivacyPolicy: Bool
     public var hasAcceptedTermsOfUse: Bool
@@ -71,6 +72,7 @@ public struct ClientState: Codable {
         case appearance
         case privacy
         case appLock
+        case chatList
         case hasCompletedOnboarding
         case hasAcceptedPrivacyPolicy
         case hasAcceptedTermsOfUse
@@ -90,6 +92,7 @@ public struct ClientState: Codable {
         appearance: AppearanceSettings = AppearanceSettings(),
         privacy: PrivacySettings = PrivacySettings(),
         appLock: AppLockSettings = AppLockSettings(),
+        chatList: ChatListSettings = ChatListSettings(),
         hasCompletedOnboarding: Bool = true,
         hasAcceptedPrivacyPolicy: Bool = true,
         hasAcceptedTermsOfUse: Bool = true,
@@ -103,6 +106,7 @@ public struct ClientState: Codable {
         self.appearance = appearance
         self.privacy = privacy
         self.appLock = appLock
+        self.chatList = chatList
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.hasAcceptedPrivacyPolicy = hasAcceptedPrivacyPolicy
         self.hasAcceptedTermsOfUse = hasAcceptedTermsOfUse
@@ -141,6 +145,7 @@ public struct ClientState: Codable {
         appearance = try container.decodeIfPresent(AppearanceSettings.self, forKey: .appearance) ?? AppearanceSettings()
         privacy = try container.decodeIfPresent(PrivacySettings.self, forKey: .privacy) ?? PrivacySettings()
         appLock = try container.decodeIfPresent(AppLockSettings.self, forKey: .appLock) ?? AppLockSettings()
+        chatList = try container.decodeIfPresent(ChatListSettings.self, forKey: .chatList) ?? ChatListSettings()
         hasCompletedOnboarding = try container.decode(Bool.self, forKey: .hasCompletedOnboarding)
         hasAcceptedPrivacyPolicy = try container.decode(Bool.self, forKey: .hasAcceptedPrivacyPolicy)
         hasAcceptedTermsOfUse = try container.decode(Bool.self, forKey: .hasAcceptedTermsOfUse)
@@ -166,6 +171,7 @@ public struct ClientState: Codable {
         try container.encode(appearance, forKey: .appearance)
         try container.encode(privacy, forKey: .privacy)
         try container.encode(appLock, forKey: .appLock)
+        try container.encode(chatList, forKey: .chatList)
         try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
         try container.encode(hasAcceptedPrivacyPolicy, forKey: .hasAcceptedPrivacyPolicy)
         try container.encode(hasAcceptedTermsOfUse, forKey: .hasAcceptedTermsOfUse)
@@ -659,6 +665,22 @@ public struct AppearanceSettings: Codable, Equatable {
     // Default to Noir for a more subdued, privacy-forward look.
     public init(theme: ThemePalette = .noir) {
         self.theme = theme
+    }
+}
+
+public struct ChatListSettings: Codable, Equatable {
+    public var sortModeRaw: String
+    public var pinnedContactIds: [UUID]
+    public var pinnedGroupIds: [UUID]
+
+    public init(
+        sortModeRaw: String = "unread",
+        pinnedContactIds: [UUID] = [],
+        pinnedGroupIds: [UUID] = []
+    ) {
+        self.sortModeRaw = sortModeRaw
+        self.pinnedContactIds = pinnedContactIds
+        self.pinnedGroupIds = pinnedGroupIds
     }
 }
 
