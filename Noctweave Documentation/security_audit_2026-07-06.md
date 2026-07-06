@@ -33,6 +33,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Contact-share temporary file lifetime**: Apple client AirDrop/contact-share exports now clear any previous temporary share file before creating a new one, wipe the in-memory password-protected share payload after writing, remove the temporary file on iOS share dismissal, sensitive-screen hiding, and view exit, and schedule a fallback cleanup after five minutes. Local deletion uses the same best-effort overwrite-before-remove behavior as other client file stores.
 - **Contact-share plaintext buffer lifetime**: core contact-share encode/decode now wipes serialized contact-offer plaintext, decrypted password-protected share plaintext, PBKDF2 password material, derived-key buffers, and intermediate HMAC blocks after use. The CLI also wipes encrypted contact-share import/export file buffers after import or write completion.
 - **Browser encrypted-store plaintext lifetime**: NoctweaveJS encrypted storage now clears decrypted JSON plaintext buffers after parsing, clears encoded JSON plaintext buffers after encryption, and wipes local raw-key/passphrase byte copies after WebCrypto imports them.
+- **Browser relay-client response leakage**: NoctweaveJS relay-client HTTP status and invalid-JSON errors no longer echo relay/proxy response bodies. Errors now report only status plus redacted response class and byte count, and oversized responses can be rejected from `Content-Length` before body decoding when that header is available.
 
 ## Verification
 
@@ -54,6 +55,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - `swift test` in `NoctweaveCore`: 220 passing tests after contact-share plaintext buffer wiping.
 - `swift build --product NoctyraCLI` succeeded after CLI contact-share buffer wiping.
 - `npm test` in `NoctweaveJS`: 16 passing tests after encrypted-store buffer wiping.
+- `npm test` in `NoctweaveJS`: 18 passing tests after relay-client response redaction.
 
 ## Residual Risks
 
