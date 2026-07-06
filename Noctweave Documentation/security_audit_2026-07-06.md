@@ -6,6 +6,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 
 - **Silent relay transport fallback**: Swift relay clients no longer retry HTTP/WebSocket requests over another transport after failure. This removes an ambiguous downgrade path and makes proxy/TLS configuration failures explicit.
 - **Relay response preview leakage**: unexpected HTTP/relay responses are now reported by size instead of echoing arbitrary response bodies into UI/log surfaces. Cloudflare diagnostics remain narrowly detectable.
+- **Relay HTTP status body leakage**: relay-client HTTP status errors no longer echo even Cloudflare-like response bodies. Errors now expose only the HTTP status and a redacted payload classification/byte count.
 - **Attachment cache path traversal**: Apple client attachment reads/deletes now accept only internal UUID `.bin` file names. Corrupt local state or crafted attachment metadata cannot address files outside the attachment cache.
 - **Attachment plaintext cache scope**: decrypted attachment RAM cache entries are now scoped by active contact, group, or transient gallery context. Deleting an attachment purges every scoped plaintext buffer for that file.
 - **Attachment transfer plaintext lifetime**: outbound attachment payloads, per-chunk plaintext copies, inbound assembled payloads, and sanitized downloaded payloads are wiped after the encrypted upload/store step finishes.
@@ -24,7 +25,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 ## Verification
 
 - `npm test` in `NoctweaveJS`: 16 passing tests.
-- `swift test` in `NoctweaveCore`: 216 passing tests after the state/prefetch wiping and relay endpoint parser changes.
+- `swift test` in `NoctweaveCore`: 217 passing tests after the state/prefetch wiping, relay endpoint parser, and relay response redaction changes.
 - `swift test` in `Noctweave Relay Server`: 57 passing tests.
 - macOS Noctyra client Debug build succeeded.
 - iOS Noctyra generic Debug build succeeded.

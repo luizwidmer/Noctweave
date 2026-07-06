@@ -112,6 +112,22 @@ final class NoctweaveCoreTests: XCTestCase {
         }
     }
 
+    func testRelayHTTPResponseSummaryDoesNotEchoBodyText() {
+        let cloudflareLikeBody = Data("Cloudflare error code: 1010 token=secret-value".utf8)
+        let regularBody = Data("upstream failure token=secret-value".utf8)
+
+        XCTAssertEqual(
+            RelayClient.responseSummary(cloudflareLikeBody),
+            "<redacted Cloudflare error page, \(cloudflareLikeBody.count) bytes>"
+        )
+        XCTAssertEqual(
+            RelayClient.responseSummary(regularBody),
+            "<redacted \(regularBody.count) bytes>"
+        )
+        XCTAssertFalse(RelayClient.responseSummary(cloudflareLikeBody).contains("secret-value"))
+        XCTAssertFalse(RelayClient.responseSummary(regularBody).contains("secret-value"))
+    }
+
     func testHeadlessMessagingClientRotatesAndBurnsIdentityWithContactReset() async throws {
         let port = UInt16.random(in: 49_001...53_000)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)

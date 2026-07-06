@@ -199,36 +199,32 @@ public struct RelayClient {
         return false
     }
 
-    private static func responsePreview(_ data: Data) -> String {
+    static func responseSummary(_ data: Data) -> String {
         guard !data.isEmpty else {
             return "<empty>"
         }
-        if data.count > 256 {
+        guard data.count <= 256 else {
             return "<redacted \(data.count) bytes>"
         }
         let text = String(data: data, encoding: .utf8) ?? "<binary \(data.count) bytes>"
         let compact = text.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
         let lowercased = compact.lowercased()
-        guard lowercased.contains("cloudflare") || lowercased.contains("error code:") else {
-            return "<redacted \(data.count) bytes>"
+        if lowercased.contains("cloudflare") || lowercased.contains("error code:") {
+            return "<redacted Cloudflare error page, \(data.count) bytes>"
         }
-        if compact.count <= 160 {
-            return compact
-        }
-        let index = compact.index(compact.startIndex, offsetBy: 160)
-        return String(compact[..<index]) + "..."
+        return "<redacted \(data.count) bytes>"
     }
 
     private static func makeHTTPStatusError(response: HTTPURLResponse, data: Data) -> RelayClientResponseError {
-        let preview = responsePreview(data)
+        let summary = responseSummary(data)
         let serverHeader = response.value(forHTTPHeaderField: "Server")?.lowercased() ?? ""
-        let isCloudflare = serverHeader.contains("cloudflare") || preview.lowercased().contains("error code: 1010")
+        let isCloudflare = serverHeader.contains("cloudflare") || summary.contains("Cloudflare")
         if isCloudflare && response.statusCode == 403 {
             return .cloudflareBlocked(
                 details: "Cloudflare blocked relay traffic (HTTP 403 / code 1010). Disable WAF/challenge/bot protections for /relay, /health, and /info on this relay domain."
             )
         }
-        return .badHTTPStatus(code: response.statusCode, bodyPreview: preview)
+        return .badHTTPStatus(code: response.statusCode, bodySummary: summary)
     }
 
     private func makeURLSession() -> URLSession {
@@ -249,7 +245,7 @@ private struct RelayTimeoutError: LocalizedError {
 
 private enum RelayClientResponseError: LocalizedError {
     case invalidHTTPResponse
-    case badHTTPStatus(code: Int, bodyPreview: String)
+    case badHTTPStatus(code: Int, bodySummary: String)
     case invalidPayload(details: String)
     case cloudflareBlocked(details: String)
 
@@ -257,8 +253,8 @@ private enum RelayClientResponseError: LocalizedError {
         switch self {
         case .invalidHTTPResponse:
             return "Relay returned an invalid HTTP response."
-        case .badHTTPStatus(let code, let bodyPreview):
-            return "Relay returned HTTP \(code): \(bodyPreview)"
+        case .badHTTPStatus(let code, let bodySummary):
+            return "Relay returned HTTP \(code): \(bodySummary)"
         case .invalidPayload(let details):
             return details
         case .cloudflareBlocked(let details):
