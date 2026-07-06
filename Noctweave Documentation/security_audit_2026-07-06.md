@@ -45,6 +45,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **macOS relay operator diagnostic leakage**: the relay app no longer writes raw OS, Network.framework, keychain, federation-health, startup, or settings persistence errors into operator alerts/logs. These surfaces now use stable categories, and storage/TLS validation messages no longer expose absolute local paths.
 - **Apple client chat-list metadata leakage**: chat sort mode and pinned contact/group identifiers are no longer stored in unencrypted `UserDefaults`. They now live in encrypted client state, and the previous defaults keys are scrubbed when the chat list appears.
 - **Apple client storage diagnostic leakage**: state load/save, storage-protection migration, Keychain warmup, prekey publication, ciphertext-prefetch storage, and secure history eviction failures no longer surface raw `localizedDescription` text. User-facing errors now use stable storage/keychain/relay categories instead of OSStatus strings, local paths, or lower-layer transport details.
+- **Apple client file-provider diagnostic leakage**: attachment import, photo loading, contact-share export/AirDrop preparation, and contact-file import failures no longer expose raw document picker, Photos, or file-provider descriptions. User-facing errors now use stable categories such as permission denied, file too large, unavailable provider, or unreadable file.
 
 ## Verification
 
@@ -79,6 +80,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - `swift test` in `NoctweaveCore`: 221 passing tests after moving chat-list metadata into encrypted client state.
 - macOS and generic iOS Noctyra client Debug builds succeeded after moving chat-list metadata out of `UserDefaults`.
 - macOS and generic iOS Noctyra client Debug builds succeeded after storage diagnostic redaction.
+- macOS and generic iOS Noctyra client Debug builds succeeded after file-provider diagnostic redaction.
 
 ## Residual Risks
 
