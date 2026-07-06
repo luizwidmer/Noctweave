@@ -4,6 +4,8 @@ public enum RelayEndpointParserError: Error, Equatable, LocalizedError {
     case empty
     case missingHost
     case invalidPort(String)
+    case unsupportedScheme(String)
+    case unsupportedURLComponent(String)
 
     public var errorDescription: String? {
         switch self {
@@ -13,6 +15,10 @@ public enum RelayEndpointParserError: Error, Equatable, LocalizedError {
             return "Relay endpoint is missing a host."
         case .invalidPort(let value):
             return "Relay endpoint has an invalid port: \(value)."
+        case .unsupportedScheme(let value):
+            return "Relay endpoint has an unsupported scheme: \(value)."
+        case .unsupportedURLComponent(let value):
+            return "Relay endpoint cannot include \(value)."
         }
     }
 }
@@ -64,6 +70,15 @@ public enum RelayEndpointParser {
         guard let host = components.host, !host.isEmpty else {
             throw RelayEndpointParserError.missingHost
         }
+        if components.user != nil || components.password != nil {
+            throw RelayEndpointParserError.unsupportedURLComponent("user info")
+        }
+        if components.query != nil {
+            throw RelayEndpointParserError.unsupportedURLComponent("query parameters")
+        }
+        if components.fragment != nil {
+            throw RelayEndpointParserError.unsupportedURLComponent("fragments")
+        }
         let loweredScheme = scheme.lowercased()
         let defaultPort: UInt16
         let transport: RelayEndpointTransport
@@ -95,9 +110,7 @@ public enum RelayEndpointParser {
             transport = .tcp
             useTLS = false
         default:
-            defaultPort = defaultTCPPort
-            transport = .tcp
-            useTLS = false
+            throw RelayEndpointParserError.unsupportedScheme(scheme)
         }
 
         let parsedPort = components.port.map { UInt16(exactly: $0) } ?? defaultPort

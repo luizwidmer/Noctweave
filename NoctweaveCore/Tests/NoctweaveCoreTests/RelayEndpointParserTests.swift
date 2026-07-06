@@ -57,4 +57,22 @@ final class RelayEndpointParserTests: XCTestCase {
             XCTAssertEqual(error as? RelayEndpointParserError, .invalidPort("notaport"))
         }
     }
+
+    func testRejectsUnknownURLSchemeInsteadOfDowngradingToTCP() {
+        XCTAssertThrowsError(try RelayEndpointParser.parse("htps://relay.example")) { error in
+            XCTAssertEqual(error as? RelayEndpointParserError, .unsupportedScheme("htps"))
+        }
+    }
+
+    func testRejectsURLSecretsAndRequestComponents() {
+        XCTAssertThrowsError(try RelayEndpointParser.parse("https://user:pass@relay.example")) { error in
+            XCTAssertEqual(error as? RelayEndpointParserError, .unsupportedURLComponent("user info"))
+        }
+        XCTAssertThrowsError(try RelayEndpointParser.parse("https://relay.example?token=secret")) { error in
+            XCTAssertEqual(error as? RelayEndpointParserError, .unsupportedURLComponent("query parameters"))
+        }
+        XCTAssertThrowsError(try RelayEndpointParser.parse("https://relay.example#secret")) { error in
+            XCTAssertEqual(error as? RelayEndpointParserError, .unsupportedURLComponent("fragments"))
+        }
+    }
 }
