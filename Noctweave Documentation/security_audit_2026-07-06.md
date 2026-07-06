@@ -30,6 +30,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Headless relay-client rejection leakage**: the public headless/CLI client no longer propagates raw relay rejection strings through `HeadlessMessagingClientError`. Direct, group, attachment, fetch, and acknowledgement paths now expose stable categories such as authorization failure, proof failure, not found, rate limit, policy rejection, invalid request, or generic relay rejection.
 - **Session recovery relay rejection leakage**: automatic session reset and resend recovery no longer propagates raw relay rejection strings when recovery delivery fails. Rejections are reduced to the same stable categories used by the headless relay client.
 - **Relay actor-proof replay persistence gap**: Linux relay actor-proof nonce replay protection is now persisted in the SQLite relay store. A relay restart no longer clears still-fresh actor proof nonces and allows the same signed mutation/fetch proof to be replayed within its validity window.
+- **Contact-share temporary file lifetime**: Apple client AirDrop/contact-share exports now clear any previous temporary share file before creating a new one, wipe the in-memory password-protected share payload after writing, remove the temporary file on iOS share dismissal, sensitive-screen hiding, and view exit, and schedule a fallback cleanup after five minutes. Local deletion uses the same best-effort overwrite-before-remove behavior as other client file stores.
 
 ## Verification
 
@@ -47,6 +48,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - macOS and generic iOS Noctyra client Debug builds succeeded after prefetch error redaction.
 - `swift build --product NoctyraCLI` succeeded after headless relay-client rejection redaction.
 - `swift build --product NoctyraCLI` succeeded after session recovery rejection redaction.
+- macOS and generic iOS Noctyra client Debug builds succeeded after contact-share temporary-file cleanup.
 
 ## Residual Risks
 
