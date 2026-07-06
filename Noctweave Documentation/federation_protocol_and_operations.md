@@ -92,7 +92,7 @@ Forwarding fails closed when:
 
 ## Runtime Configuration
 
-The macOS relay app can add or remove manual federation peers while the relay is running. The core relay server also supports locked runtime updates for federation allow-lists, coordinator endpoints, curated policy, open DHT settings, private endpoint policy, and PEX limits.
+Relay operators can add or remove manual federation peers while the relay is running. The core relay server supports locked runtime updates for federation allow-lists, coordinator endpoints, curated policy, open DHT settings, private endpoint policy, and PEX limits.
 
 Runtime updates are applied to future requests. In-flight requests keep their already-captured routing decision. This avoids half-mutated forwarding behavior while still allowing operators to change peer lists without restarting the relay.
 
@@ -189,7 +189,7 @@ Coordinator nodes organize relay membership and health. They do not need to carr
 
 ## Federation Source Files
 
-The macOS relay app can fetch federation configuration from HTTPS JSON. Source files are useful when an operator wants a reviewable artifact.
+Relay operators can fetch federation configuration from HTTPS JSON. Source files are useful when an operator wants a reviewable artifact.
 
 ```json
 {

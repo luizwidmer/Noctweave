@@ -1,6 +1,6 @@
 # Noctyra CLI / Headless Client
 
-`NoctyraCLI` is a lightweight command-line client for relay operators, test scripts, power users, and headless direct messaging. It uses the same `NoctweaveCore` relay protocol as the Noctyra apps.
+`NoctyraCLI` is a lightweight command-line client for relay operators, test scripts, power users, and headless direct messaging. It uses the public `NoctweaveCore` relay protocol and storage models.
 
 ## Build
 

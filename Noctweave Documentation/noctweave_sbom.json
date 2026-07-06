@@ -104,6 +104,6 @@
     "Noctweave Relay Server/Dockerfile",
     "NoctweaveCore/Vendor/liboqs.xcframework"
   ],
-  "name": "Noctyra",
-  "schema": "noctyra-sbom-v1"
+  "name": "Noctweave",
+  "schema": "noctweave-sbom-v1"
 }

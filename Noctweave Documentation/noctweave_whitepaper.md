@@ -11,7 +11,7 @@ License: `CC-BY-NC-SA-4.0`. See [`../LICENSE-DOCS.md`](../LICENSE-DOCS.md).
 
 # Abstract
 
-The Noctweave Protocol is a post-quantum secure messaging protocol centered on selective identity continuity rather than permanent global identity. Noctyra is the reference client and Noctyra Relay is the reference relay implementation. Together they use pure post-quantum identity and session establishment with ML-DSA-65 and ML-KEM-768, symmetric ratcheting for forward secrecy, selective identity rotation and identity burn, encrypted attachment transfer, relay-backed group coordination, coordinator-assisted federation, and pull-only message delivery without centralized push infrastructure.
+The Noctweave Protocol is a post-quantum secure messaging protocol centered on selective identity continuity rather than permanent global identity. Its public implementation includes a Swift protocol core, a headless CLI client, a JavaScript relay integration package, and a Linux relay implementation. Together they define pure post-quantum identity and session establishment with ML-DSA-65 and ML-KEM-768, symmetric ratcheting for forward secrecy, selective identity rotation and identity burn, encrypted attachment transfer, relay-backed group coordination, coordinator-assisted federation, and pull-only message delivery without centralized push infrastructure.
 
 Noctweave is intentionally pragmatic. It provides end-to-end confidentiality and pairwise continuity while remaining explicit about unresolved network-anonymity problems. The protocol minimizes metadata rather than claiming to eliminate it, and it is structured so stronger anonymity layers, such as mixnet or PIR-assisted retrieval, can be added without discarding the identity, relay, and continuity model.
 
@@ -36,11 +36,12 @@ Noctweave prioritizes deployable post-quantum confidentiality and selective cont
 
 ## 2.1 Components
 
-The system has three primary components:
+The public system has four primary components:
 
-- the Noctyra client for iOS and macOS
-- the Noctyra Relay for macOS
-- a Linux relay deployment path with Docker parity for relay protocol behavior
+- `NoctweaveCore`, the Swift protocol core
+- `NoctyraCLI`, the headless command-line client
+- `NoctweaveJS`, the JavaScript relay integration package
+- `Noctweave Relay Server`, the Linux relay with Docker deployment support
 
 The client manages identities, contacts, conversations, groups, attachments, and local security controls. The relay stores encrypted envelopes and encrypted attachment chunks, exposes transport endpoints, and optionally participates in curated or open federations.
 
@@ -265,7 +266,7 @@ Relays can additionally advertise a mixnet scheduling policy: batch interval, mi
 
 The architecture is fully decentralized in the delivery path. The system does not rely on APNs or any equivalent centralized push-notification provider. Closed-app instant wake is excluded because it would introduce a credential-holding notification authority inconsistent with the decentralization model.
 
-The system therefore uses relay polling and foreground/background client fetch behavior rather than centralized push. Relays may advertise a decentralized wake policy for compatible clients: pull-only polling bounds, deterministic jitter, failure backoff, and bounded long-poll timeout support. Compatible clients can convert the wake cycle into a bounded prefetch execution plan before helper fetch work begins; that plan caps profiles per cycle, per-profile envelope counts, long-poll envelope counts, and total staged envelopes. Compatible closed-app helper surfaces can stage sealed envelopes into explicit ciphertext-only prefetch batches with acknowledgements deferred until normal unlocked sync. Those batches can be persisted through a caller-keyed encrypted store so app-intent or widget-style helpers do not leave raw staged batch data or sealed envelope bytes in helper storage. The Apple client publishes only per-inbox access keys to the helper path, so closed-app helper fetches are limited to direct inbox ciphertext until group fetch has a delegated credential that is not the long-term identity signing key. The helper configuration also omits identity display names, identity fingerprints, group IDs, and group inbox routing metadata. If an older helper config is read successfully, the client rewrites it in the current minimized form so ignored legacy identity-signing, identity-metadata, or group-routing fields do not remain on disk. If an older helper status is read successfully, count-bearing fields and messages are rewritten in the current minimized form. Helper profile lists, per-profile relay responses, and staged ciphertext batches are locally capped, and helper writes fail closed when the encrypted file would exceed the configured size bound. Group ciphertext remains fetched and decrypted during normal unlocked sync. Visible helper responses and persisted helper status are metadata-blind and do not report message counts, pending-envelope counts, group counts, or failed-profile counts outside the unlocked app. This improves active or background fetch behavior without creating a central notification service. It does not claim guaranteed closed-app delivery on operating systems that suspend the app.
+The system therefore uses relay polling and client fetch behavior rather than centralized push. Relays may advertise a decentralized wake policy for compatible clients: pull-only polling bounds, deterministic jitter, failure backoff, and bounded long-poll timeout support. Compatible clients can convert the wake cycle into a bounded prefetch execution plan before helper fetch work begins; that plan caps profiles per cycle, per-profile envelope counts, long-poll envelope counts, and total staged envelopes. Compatible helper surfaces can stage sealed envelopes into explicit ciphertext-only prefetch batches with acknowledgements deferred until normal unlocked sync. Those batches should be persisted through a caller-keyed encrypted store so helper paths do not leave raw staged batch data or sealed envelope bytes in helper storage. Helper fetches should be limited to delegated inbox access keys, not long-term identity signing keys. Helper configuration should omit identity display names, identity fingerprints, group IDs, and group inbox routing metadata unless a delegated group credential explicitly permits it. Group ciphertext remains fetched and decrypted during normal unlocked sync. Visible helper responses and persisted helper status should be metadata-blind and avoid reporting message counts, pending-envelope counts, group counts, or failed-profile counts outside the unlocked client. This improves active or background fetch behavior without creating a central notification service. It does not claim guaranteed closed-app delivery on operating systems that suspend the client.
 
 # 7. Federation
 
@@ -308,7 +309,7 @@ Relay-to-relay forwarding includes the following hardening properties:
 - forwarding timeouts prevent stalled peer exhaustion
 - actor-proof replay is rejected via nonce replay caches
 - curated forwarding isolates client auth from relay-to-relay auth
-- Linux relay parity was brought into line with macOS relay behavior
+- Linux relay behavior is the public relay baseline
 
 The Linux relay path is part of the supported deployment model rather than a transport shim.
 
@@ -360,11 +361,11 @@ Action PIN plans can combine operations such as app reset, identity burn, identi
 
 ## 9.3 Screen and capture protections
 
-The Apple clients include UI-level protections against screenshots, screen recording, and external display exposure on supported surfaces. Sensitive panes can be redacted behind secure containers and reveal gates. These mechanisms reduce casual capture and improve user awareness, but they are not equivalent to defeating a hostile OS.
+Compatible clients may include UI-level protections against screenshots, screen recording, and external display exposure on supported surfaces. Sensitive panes can be redacted behind secure containers and reveal gates. These mechanisms reduce casual capture and improve user awareness, but they are not equivalent to defeating a hostile OS.
 
 ## 9.4 Secure typing and local input
 
-Secure typing is user-selectable. Users can choose Apple's native secure text entry path, which preserves system behavior but may show system password affordances, or Noctyra's app-owned secure keyboard, which avoids the Apple password shortcut path. The app-owned keyboard includes letter, number, symbol, emoji, press-preview, delete-repeat, and long-press alternate-character layouts while keeping message composition inside the app's input view.
+Secure typing is client-selectable. Implementations may use native secure text entry where appropriate or an app-owned secure keyboard to keep message composition inside the client input view. This is a local hardening measure, not a protocol guarantee against a hostile operating system.
 
 # 10. Implementation Profile
 
@@ -383,7 +384,7 @@ The reference implementation delivers:
 - solo, curated, and coordinator-assisted open federation
 - TCP, HTTP, HTTPS, WebSocket, and WSS relay transports
 - relay-managed TLS and reverse-proxy TLS deployment patterns
-- macOS relay, Linux relay parity path, and Docker deployment support
+- Linux relay and Docker deployment support
 - relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and software version
 - Linux relay IPFS-compatible attachment offload with pinned encrypted chunks, CID metadata in SQLite, digest-verified fetch, and best-effort unpin on TTL cleanup
 - optional relay-advertised hidden-retrieval cover queries
@@ -412,7 +413,7 @@ These are genuine open areas and remain on the roadmap because they are material
 
 # 11. Conclusion
 
-Noctweave is an implemented post-quantum messaging system with selective identity continuity, relay-backed deployment, and a clear separation between delivered security properties and deferred anonymity work. The Noctyra implementation is not a finished anonymity network, but it is a working encrypted messenger that enforces the core ideas that motivate the protocol:
+Noctweave is an implemented post-quantum messaging system with selective identity continuity, relay-backed deployment, and a clear separation between delivered security properties and deferred anonymity work. The public implementation is not a finished anonymity network, but it provides working protocol components that enforce the core ideas that motivate the protocol:
 
 - identity need not be permanent
 - long-term continuity should survive quantum-era attacks

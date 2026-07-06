@@ -1,4 +1,4 @@
-# Noctyra Roadmap
+# Noctweave Roadmap
 
 **Last updated:** June 2026
 **Scope:** public core protocol, `NoctyraCLI`, Linux relay, Docker/ops tooling, and public protocol documentation.
@@ -7,18 +7,16 @@ This roadmap reflects repository evidence rather than early planning estimates. 
 
 ## Current Status
 
-Noctyra has moved past the initial prototype phase. The public repository now contains the shared Swift core, a command-line headless messaging/API client, a Linux relay server, Docker packaging, relay federation machinery, protocol documentation, security notes, SBOM generation, and release verification scripts.
-
-The Apple client applications and macOS GUI relay app are maintained outside this public repository. Their behavior is referenced only where it affects public protocol compatibility.
+Noctweave has moved past the initial prototype phase. The public repository now contains the shared Swift core, a command-line headless messaging/API client, a Linux relay server, Docker packaging, relay federation machinery, protocol documentation, security notes, SBOM generation, and release verification scripts.
 
 ## Completed Foundations
 
 - [x] Public protocol specification: `noctweave_protocol_spec_v1.md`
 - [x] Public core API orientation: `noctweave_core_public_api.md`
 - [x] Wire format and test vector documentation: `wire_format_and_test_vectors.md`
-- [x] Relay API/OpenAPI specification: `noctyra_relay_openapi.yaml`
+- [x] Relay API/OpenAPI specification: `noctweave_relay_openapi.yaml`
 - [x] Security requirements document: `security_requirements.md`
-- [x] Whitepaper alignment notes: `app_vs_whitepaper.md`
+- [x] Whitepaper alignment verifier: `scripts/verify-whitepaper-alignment.sh`
 - [x] Relay operator hardening guide: `relay_ops_hardening_guide.md`
 - [x] Machine-readable SBOM snapshots and generator
 - [x] Release verification script for SBOM freshness, package pins, dependency graph checks, and relay tests
@@ -176,7 +174,7 @@ These are finite release gates. They should stay bounded to a concrete artifact,
 - [ ] Publish a fresh public security audit report or explicitly mark the current release as unaudited.
 - [ ] Add public benchmark results for relay latency, relay throughput, and core encryption/decryption costs.
 - [ ] Add coverage reporting for `NoctweaveCore` and the Linux relay package.
-- [ ] Add CI jobs for Linux relay tests on Ubuntu, not only local/macOS verification.
+- [ ] Add CI jobs for Linux relay tests on Ubuntu.
 - [ ] Add CI container build and vulnerability scan evidence.
 - [ ] Add a minimal public operator quickstart for common reverse-proxy deployments.
 - [ ] Add signed release artifact instructions for relay binaries and Docker images.

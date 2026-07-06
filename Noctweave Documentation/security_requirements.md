@@ -1,4 +1,4 @@
-# Noctyra Security Requirements
+# Noctweave Security Requirements
 
 This document defines the repository-owned security requirements for the current Noctweave Protocol implementation. External audit, formal proofs, and large-scale operational validation remain separate roadmap items.
 
@@ -11,17 +11,17 @@ This document defines the repository-owned security requirements for the current
 | SR-05 | Replay must fail closed. | Actor-proof nonce cache, message counter windows, group epoch checks. | replay, actor-proof replay, stale epoch, and group model-checker tests. |
 | SR-06 | Inbox access must be bound to an access key, not just an address string. | Inbox registration and fetch routes require signed actor proofs for protected paths. | inbox registration/fetch proof tests. |
 | SR-07 | Key rotation must preserve continuity only when explicitly disclosed. | Signed rotation payloads and contact continuity controls. | identity rotation verification and post-rotation session tests. |
-| SR-08 | Identity burn must sever continuity for unselected contacts. | Burn/reset flow creates new identity state and omits unselected disclosure. | client identity management implementation and whitepaper alignment docs. |
-| SR-09 | Local state must be encrypted at rest. | Client state, thread messages, attachments, and prefetch batches use encrypted stores. | `ClientStateStore`, `ThreadMessageStore`, `AttachmentStore`, `CiphertextPrefetchStore` tests. |
-| SR-10 | Decrypted attachment material must be scoped to active use. | Decrypted attachments are cached in secure RAM buffers and cleared on lifecycle changes. | `ClientViewModel` secure buffer handling and lifecycle hooks. |
+| SR-08 | Identity burn must sever continuity for unselected contacts. | Burn/reset flow creates new identity state and omits unselected disclosure. | identity reset and continuity tests. |
+| SR-09 | Local state must be encrypted at rest. | Public storage primitives support encrypted client state and attachment metadata. | `ClientStateStore` and attachment store tests. |
+| SR-10 | Decrypted attachment material must be scoped to active use. | Implementations must decrypt only for active inspection and clear temporary plaintext buffers after use. | attachment handling requirements and store tests. |
 | SR-11 | Relay storage must tolerate row-level corruption. | SQLite persistence skips damaged records instead of dropping the whole store. | core and Linux relay SQLite corruption tests. |
 | SR-12 | Relays must bound storage and payload growth. | Inbox caps, mailbox caps, attachment chunk caps, group caps, and max payload checks. | relay capacity, oversized envelope, prekey, and attachment tests. |
 | SR-13 | Federation must not silently cross manual, curated, and open trust domains. | Federation mode policy, manual node-list checks, allow-list checks, coordinator quorum, and signed directory snapshots. | manual forwarding, curated forwarding, strict policy, and coordinator tests. |
 | SR-14 | Open federation discovery must be bounded and signed. | Signed short-lived DHT records, host caps, total caps, TTL checks, and feature gates. | DHT record validation, poisoning, flood, and native overlay tests. |
 | SR-15 | Optional PIR/mixnet/onion claims must not be advertised unless usable. | Relay metadata suppresses weak replicated-PIR, onion, and mixnet capabilities. | whitepaper alignment verifier and relay info suppression tests. |
-| SR-16 | Background helper paths must not expose identity signing keys or message counts. | Prefetch profiles use delegated inbox keys and metadata-blind status. | source guards in `scripts/verify-whitepaper-alignment.sh`. |
-| SR-17 | UI capture protections must be best-effort and not overclaimed. | Secure containers, reveal gates, secure typing, and secure camera are documented as OS-bound mitigations. | client UI sources and whitepaper caveats. |
-| SR-18 | Release claims must distinguish internal verification from external assurance. | Roadmap keeps external audit, formal proof, side-channel analysis, and load reports unchecked. | `noctyra_roadmap.md` and security audit residual-risk notes. |
+| SR-16 | Pull-only helper paths must not expose identity signing keys or message counts. | Prefetch profiles use delegated inbox keys and metadata-blind status where implemented by a client. | decentralized wake plan and whitepaper caveats. |
+| SR-17 | UI capture protections must be best-effort and not overclaimed. | Client implementations may add capture redaction and secure input, but the protocol does not claim to defeat a hostile OS. | whitepaper caveats. |
+| SR-18 | Release claims must distinguish internal verification from external assurance. | Roadmap keeps external audit, formal proof, side-channel analysis, and load reports unchecked. | `noctweave_roadmap.md` and release policy. |
 
 ## Non-Goals
 

@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: Noctyra Relay API
+  title: Noctweave Relay API
   version: "1.0"
   description: |
     HTTP/WebSocket bridge for Noctweave Protocol relay requests. TCP uses the

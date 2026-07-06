@@ -1,6 +1,6 @@
 # Group MLS Design
 
-Noctyra groups are moving toward an MLS-derived tree model as the product group protocol, not as a backwards-compatibility layer.
+Noctweave groups use an MLS-derived tree model as the group protocol direction, not as a backwards-compatibility layer.
 
 ## Current Implementation
 

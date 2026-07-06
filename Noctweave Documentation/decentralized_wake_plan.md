@@ -1,6 +1,6 @@
 # Decentralized Wake Plan
 
-Noctyra will not use APNs or any equivalent centralized notification authority for message delivery. That means closed-app instant delivery is intentionally not guaranteed today. The wake direction is a decentralized relay-advertised pull model that can improve latency while preserving the no-central-server stance.
+Noctweave does not require APNs or any equivalent centralized notification authority for message delivery. That means closed-app instant delivery is intentionally not guaranteed by the protocol. The wake direction is a decentralized relay-advertised pull model that can improve latency while preserving the no-central-server stance.
 
 ## Implemented Model
 
@@ -14,11 +14,11 @@ Relays can advertise `wakeSupport` metadata:
 
 Clients derive a local wake plan using `DecentralizedWakePlanner`. The planner uses identity-local seed material, relay identifier, current time bucket, and failure count to produce bounded jitter and backoff without contacting any third-party notification service.
 
-The client relay detail UI renders advertised wake policy metadata. Active sync loops consume the policy when the app is unlocked and the OS permits background or foreground network work. If a relay does not advertise wake metadata, clients fall back to bounded pull-only local defaults.
+Compatible clients can render advertised wake policy metadata. Active sync loops consume the policy when the client is unlocked and the operating system permits background or foreground network work. If a relay does not advertise wake metadata, clients fall back to bounded pull-only local defaults.
 
 For clients with multiple active identities, every active identity contributes to the next fetch cadence. Relays with advertised wake policy use their relay-provided plan; relays without advertised policy use the local default cadence so they are not delayed by slower policies from other active identities.
 
-Linux and mac relays can advertise wake policy settings, and the HTTP/WebSocket relay path supports bounded long-poll fetches when operators enable long-poll mode.
+Linux relays can advertise wake policy settings, and the HTTP/WebSocket relay path supports bounded long-poll fetches when operators enable long-poll mode.
 
 ## Security Properties
 
@@ -30,7 +30,7 @@ Linux and mac relays can advertise wake policy settings, and the HTTP/WebSocket 
 ## Limits
 
 - This is not a push-notification system.
-- iOS and macOS may still suspend or terminate apps according to OS policy.
+- Operating systems may still suspend or terminate clients according to local policy.
 - Closed-app instant delivery remains out of scope unless a future decentralized wake mechanism can work within platform constraints without introducing a central credential holder.
 - Long-polling increases relay connection occupancy and should be operator-configurable.
 

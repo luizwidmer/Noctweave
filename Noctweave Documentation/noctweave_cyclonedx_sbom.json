@@ -52,7 +52,7 @@
       "name": "swift-asn1",
       "properties": [
         {
-          "name": "noctyra:revision",
+          "name": "noctweave:revision",
           "value": "810496cf121e525d660cd0ea89a758740476b85f"
         }
       ],
@@ -75,7 +75,7 @@
       "name": "swift-atomics",
       "properties": [
         {
-          "name": "noctyra:revision",
+          "name": "noctweave:revision",
           "value": "b601256eab081c0f92f059e12818ac1d4f178ff7"
         }
       ],
@@ -98,7 +98,7 @@
       "name": "swift-collections",
       "properties": [
         {
-          "name": "noctyra:revision",
+          "name": "noctweave:revision",
           "value": "7b847a3b7008b2dc2f47ca3110d8c782fb2e5c7e"
         }
       ],
@@ -121,7 +121,7 @@
       "name": "swift-crypto",
       "properties": [
         {
-          "name": "noctyra:revision",
+          "name": "noctweave:revision",
           "value": "95ba0316a9b733e92bb6b071255ff46263bbe7dc"
         }
       ],
@@ -144,7 +144,7 @@
       "name": "swift-nio",
       "properties": [
         {
-          "name": "noctyra:revision",
+          "name": "noctweave:revision",
           "value": "a1605a3303a28e14d822dec8aaa53da8a9490461"
         }
       ],
@@ -167,7 +167,7 @@
       "name": "swift-system",
       "properties": [
         {
-          "name": "noctyra:revision",
+          "name": "noctweave:revision",
           "value": "395a77f0aa927f0ff73941d7ac35f2b46d47c9db"
         }
       ],
@@ -224,7 +224,7 @@
       "name": "liboqs",
       "properties": [
         {
-          "name": "noctyra:revision",
+          "name": "noctweave:revision",
           "value": "0.15.0"
         }
       ],
@@ -253,8 +253,8 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "application:Noctyra",
-      "name": "Noctyra",
+      "bom-ref": "application:Noctweave",
+      "name": "Noctweave",
       "type": "application"
     },
     "tools": {

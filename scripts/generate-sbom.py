@@ -132,8 +132,8 @@ def make_sbom():
     components.extend(docker_components())
     components.extend(vendored_components())
     return {
-        "schema": "noctyra-sbom-v1",
-        "name": "Noctyra",
+        "schema": "noctweave-sbom-v1",
+        "name": "Noctweave",
         "generatedBy": "scripts/generate-sbom.py",
         "inputs": [
             "Noctweave Relay Server/Package.resolved",
@@ -187,13 +187,13 @@ def cyclonedx_component(component):
     if revision and re.fullmatch(r"[0-9a-fA-F]{64}", revision):
         payload["hashes"] = [{"alg": "SHA-256", "content": component["revision"]}]
     elif revision:
-        payload["properties"] = [{"name": "noctyra:revision", "value": revision}]
+        payload["properties"] = [{"name": "noctweave:revision", "value": revision}]
     if external_references:
         payload["externalReferences"] = external_references
     return payload
 
 
-def make_cyclonedx_sbom(noctyra_sbom):
+def make_cyclonedx_sbom(noctweave_sbom):
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
@@ -210,24 +210,24 @@ def make_cyclonedx_sbom(noctyra_sbom):
             },
             "component": {
                 "type": "application",
-                "name": noctyra_sbom["name"],
-                "bom-ref": "application:Noctyra",
+                "name": noctweave_sbom["name"],
+                "bom-ref": "application:Noctweave",
             },
         },
-        "components": [cyclonedx_component(component) for component in noctyra_sbom["components"]],
+        "components": [cyclonedx_component(component) for component in noctweave_sbom["components"]],
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate the Noctyra machine-readable SBOM snapshot.")
+    parser = argparse.ArgumentParser(description="Generate the Noctweave machine-readable SBOM snapshot.")
     parser.add_argument(
         "--output",
-        default="Noctweave Documentation/noctyra_sbom.json",
+        default="Noctweave Documentation/noctweave_sbom.json",
         help="Output path relative to the repository root.",
     )
     parser.add_argument(
         "--cyclonedx-output",
-        default="Noctweave Documentation/noctyra_cyclonedx_sbom.json",
+        default="Noctweave Documentation/noctweave_cyclonedx_sbom.json",
         help="CycloneDX JSON output path relative to the repository root.",
     )
     args = parser.parse_args()

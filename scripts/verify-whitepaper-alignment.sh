@@ -15,79 +15,17 @@ swift test \
   --package-path "$ROOT_DIR/Noctweave Relay Server" \
   --filter 'RelayStoreParityTests/test(GroupDescriptorCarriesMLSEpochState|RelayStoreBucketsVisiblePair|RelayStoreRejectsOversizedEnvelopePayloads|StoreCanOffloadAttachmentChunksToExternalBlobStore|ExternalAttachmentBlobDigestMismatchIsRejected|RelayStoreRejectsStructurallyInvalidRatchetSecretDistribution|HiddenRetrievalSupport|RelayInfoSuppressesWeakReplicatedPIRAdvertisement|RelayInfoCarriesOptionalOnionTransportSupport|RelayInfoSuppressesUnusableOnionTransportSupport|RelayInfoCarriesOptionalMixnetTransportSupport|RelayInfoSuppressesMisleadingMixnetAdvertisement|MixnetRoutePolicyValidator|RelayInfoAdvertisesOpenFederationDHTAndPEXSupport|OpenFederationDHTHTTPGatewayRefresh|OpenFederationDHTNativeOverlay)'
 
+echo "Verifying public repository boundary..."
+if git -C "$ROOT_DIR" ls-files | grep -E '^(Noctyra Messaging Client|Noctyra Relay|Noctweave\.xcworkspace)/'; then
+  echo "Private Apple app workspaces or sources must not be tracked in the public repository." >&2
+  exit 1
+fi
+
 echo "Verifying release sources do not ship autonomous public-DHT adapters..."
 if grep -R -E "BEP5|libp2p|Kademlia|PublicDHT|AutonomousPublicDHT" \
   "$ROOT_DIR/NoctweaveCore/Sources" \
-  "$ROOT_DIR/Noctweave Relay Server/Sources" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client" \
-  "$ROOT_DIR/Noctyra Relay/Noctyra Relay"; then
+  "$ROOT_DIR/Noctweave Relay Server/Sources"; then
   echo "Autonomous public-DHT adapters are out of release scope; use coordinator snapshots, bounded relay peer exchange, or the bounded relay native-overlay DHT path." >&2
-  exit 1
-fi
-
-echo "Verifying Apple helper prefetch does not publish identity signing keys..."
-if grep -R "identitySigningKey" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchStore.swift" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchRunner.swift"; then
-  echo "Closed-app helper prefetch must not carry the long-term identity signing key." >&2
-  exit 1
-fi
-if grep -R "identityFingerprint\|displayName" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchRunner.swift"; then
-  echo "Closed-app helper runner must not depend on identity names or fingerprints." >&2
-  exit 1
-fi
-if grep -R "var identityFingerprint\|var displayName" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchStore.swift"; then
-  echo "Closed-app helper profile config must not publish identity names or fingerprints." >&2
-  exit 1
-fi
-if grep -R "var lastFetchedEnvelopeCount\|var pendingEnvelopeCount" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchStore.swift" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchRunner.swift"; then
-  echo "Closed-app helper persisted status must not store message or pending-envelope counts." >&2
-  exit 1
-fi
-if grep -R "failures.count\|profile(s) failed\|Fetched .*encrypted envelope" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchRunner.swift"; then
-  echo "Closed-app helper persisted status must not store failed-profile or fetched-envelope counts." >&2
-  exit 1
-fi
-
-echo "Verifying Apple helper prefetch does not publish group routing metadata..."
-if grep -R "NoctyraPrefetchGroup\|FetchGroupMessagesRequest\|fetchGroupMessages" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchStore.swift" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchRunner.swift"; then
-  echo "Closed-app helper group fetch needs a delegated group credential before group routing metadata is published." >&2
-  exit 1
-fi
-
-echo "Verifying Apple helper prefetch sanitizes stale helper config fields..."
-if ! grep -q "prefetchConfigPayloadNeedsSanitization" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchStore.swift"; then
-  echo "Closed-app helper config must scrub stale sensitive fields after successful decode." >&2
-  exit 1
-fi
-if ! grep -q "prefetchStatusPayloadNeedsSanitization" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchStore.swift"; then
-  echo "Closed-app helper status must scrub stale count-bearing fields after successful decode." >&2
-  exit 1
-fi
-
-echo "Verifying Apple helper prefetch has bounded local work queues..."
-if ! grep -q "maxPrefetchProfiles" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchStore.swift"; then
-  echo "Closed-app helper prefetch must cap profile count before helper execution." >&2
-  exit 1
-fi
-if ! grep -q "maxPrefetchedRecords" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchStore.swift"; then
-  echo "Closed-app helper prefetch must cap staged ciphertext records." >&2
-  exit 1
-fi
-if ! grep -q "maximumEnvelopeCountPerProfile" \
-  "$ROOT_DIR/Noctyra Messaging Client/Noctyra Messaging Client/CiphertextPrefetchRunner.swift"; then
-  echo "Closed-app helper prefetch must clamp per-profile fetch response counts locally." >&2
   exit 1
 fi
 

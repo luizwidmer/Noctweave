@@ -2,9 +2,7 @@
 
 Noctweave is a post-quantum secure messaging protocol for pairwise identity continuity, relay-backed delivery, federation, and metadata reduction.
 
-This GitHub repository is the public home for the Noctweave protocol and open tooling. It is focused on the protocol core, Linux relay, Docker/operator tooling, `NoctyraCLI`, test coverage, and public technical documentation.
-
-The Noctyra Apple clients and macOS GUI relay app are proprietary products built on the protocol. They are not distributed from this repository.
+This GitHub repository is the public home for the Noctweave protocol and open tooling. It is focused on the protocol core, Linux relay, Docker/operator tooling, `NoctyraCLI`, JavaScript relay integrations, test coverage, and public technical documentation.
 
 ## What This Repository Contains
 
@@ -15,19 +13,13 @@ The Noctyra Apple clients and macOS GUI relay app are proprietary products built
 - `NoctyraCLI`, an open command-line tool for relay diagnostics, API scripting, and headless messaging.
 - Public documentation for wire formats, relay APIs, security posture, federation behavior, and release verification.
 
-## What This Repository Does Not Contain
-
-- The closed-source Noctyra iOS, iPadOS, or macOS messaging client.
-- The closed-source macOS GUI relay application.
-- Hosted relays, account services, notification infrastructure, or managed federation services.
-
 ## Public Components
 
 - `NoctweaveCore/` - Swift package for Noctweave protocol models, post-quantum crypto bindings, relay client/server primitives, message ratchets, federation logic, and tests.
 - `NoctweaveCore/Sources/NoctyraCLI/` - open command-line client for relay diagnostics, API scripting, and headless messaging.
 - `NoctweaveJS/` - JavaScript ESM package for browser/Node relay access, request helpers, and memory, browser, IndexedDB, or database-backed state storage.
 - `Noctweave Relay Server/` - open Linux relay implementation with TCP, HTTP, WebSocket, Docker, SQLite persistence, federation, and relay tests.
-- `Noctweave Documentation/` - public protocol specs, OpenAPI schema, security notes, whitepaper alignment, and relay operator guidance.
+- `Noctweave Documentation/` - public protocol specs, OpenAPI schema, security notes, roadmap, and relay operator guidance.
 - `agent-guides/` - reusable `AGENTS.md` examples for downstream AI coding agents integrating Noctweave.
 - `agent-skills/` - Codex skill packages for agents that need to use Noctweave messaging or operate relays.
 - `scripts/` - local test, SBOM, release verification, and relay helper scripts.
@@ -35,8 +27,9 @@ The Noctyra Apple clients and macOS GUI relay app are proprietary products built
 ## Requirements
 
 - Swift 5.9 or newer
-- macOS for local core development with the vendored `liboqs.xcframework`
+- macOS or Linux for Swift package development
 - Linux or Docker for relay deployment
+- Node.js 20 or newer for `NoctweaveJS`
 - Docker is optional for local verification, but required to build the relay container image
 
 ## Quick Start
@@ -55,12 +48,6 @@ Run the combined public test suite:
 
 ```sh
 scripts/run-tests.sh
-```
-
-For Apple app development, open the root workspace so Xcode loads the client, relay app, and shared package together:
-
-```sh
-open Noctweave.xcworkspace
 ```
 
 ## Run The Open Linux Relay
@@ -113,7 +100,7 @@ await relay.health();
 await state.save({ selectedRelay: "https://relay.example" });
 ```
 
-`NoctweaveJS` supports HTTP/HTTPS and WebSocket/WSS relays plus memory, browser `localStorage`, IndexedDB, and generic database adapters. It is a relay/storage integration package; full post-quantum message encryption still requires the protocol crypto layer or an audited WASM adapter. See [`NoctweaveJS/README.md`](NoctweaveJS/README.md).
+`NoctweaveJS` supports HTTP/HTTPS and WebSocket/WSS relays plus memory, browser `localStorage`, IndexedDB, and generic database adapters. The package includes a WASM-backed liboqs adapter for the Noctweave ML-KEM/ML-DSA profile and keeps WebCrypto for symmetric primitives where appropriate. See [`NoctweaveJS/README.md`](NoctweaveJS/README.md).
 
 ## Agent Integration Resources
 
@@ -123,14 +110,14 @@ Install or copy [`agent-skills/noctweave-messaging-relay/`](agent-skills/noctwea
 
 ## Documentation Map
 
-- Relay API: [`noctyra_relay_openapi.yaml`](Noctweave%20Documentation/noctyra_relay_openapi.yaml)
+- Relay API: [`noctweave_relay_openapi.yaml`](Noctweave%20Documentation/noctweave_relay_openapi.yaml)
 - Protocol spec: [`noctweave_protocol_spec_v1.md`](Noctweave%20Documentation/noctweave_protocol_spec_v1.md)
 - Core public API notes: [`noctweave_core_public_api.md`](Noctweave%20Documentation/noctweave_core_public_api.md)
 - Core stability policy: [`noctweave_core_stability_policy.md`](Noctweave%20Documentation/noctweave_core_stability_policy.md)
 - Wire format and test vectors: [`wire_format_and_test_vectors.md`](Noctweave%20Documentation/wire_format_and_test_vectors.md)
 - Relay hardening guide: [`relay_ops_hardening_guide.md`](Noctweave%20Documentation/relay_ops_hardening_guide.md)
 - Security requirements: [`security_requirements.md`](Noctweave%20Documentation/security_requirements.md)
-- Whitepaper alignment: [`app_vs_whitepaper.md`](Noctweave%20Documentation/app_vs_whitepaper.md)
+- Roadmap: [`noctweave_roadmap.md`](Noctweave%20Documentation/noctweave_roadmap.md)
 - Release/SBOM policy: [`dependency_sbom_and_release_policy.md`](Noctweave%20Documentation/dependency_sbom_and_release_policy.md)
 
 ## Release Verification

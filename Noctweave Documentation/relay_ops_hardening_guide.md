@@ -1,8 +1,8 @@
-# Noctyra Relay Operator Hardening Guide
+# Noctweave Relay Operator Hardening Guide
 
 Last updated: June 24, 2026
 
-This guide is for operators running a Noctyra Relay on Linux/Docker or macOS. It focuses on reducing operational metadata, limiting abuse paths, and avoiding configuration drift. It does not make the relay anonymous: relays still observe source IPs, request timing, chosen inboxes, ciphertext sizes, and federation topology hints.
+This guide is for operators running a Noctweave relay on Linux or Docker. It focuses on reducing operational metadata, limiting abuse paths, and avoiding configuration drift. It does not make the relay anonymous: relays still observe source IPs, request timing, chosen inboxes, ciphertext sizes, and federation topology hints.
 
 ## Baseline Deployment
 
