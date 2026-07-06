@@ -116,7 +116,8 @@ private struct CommandRunner {
     private func exportContact(options: ParsedOptions) async throws {
         let client = try headlessClient(from: options)
         if let password = options.value(for: "--password") {
-            let data = try await client.exportContactPackage(password: password)
+            var data = try await client.exportContactPackage(password: password)
+            defer { data.secureWipe() }
             guard let out = options.value(for: "--out") else {
                 throw CLIError("Password-protected exports require `--out <path>` to avoid binary data in the terminal.")
             }
@@ -138,7 +139,8 @@ private struct CommandRunner {
         guard let password = options.value(for: "--password") else {
             throw CLIError("Password-protected contact files require `--password <password>`.")
         }
-        let data = try Data(contentsOf: URL(fileURLWithPath: file))
+        var data = try Data(contentsOf: URL(fileURLWithPath: file))
+        defer { data.secureWipe() }
         return try await client.importContactPackage(data, password: password)
     }
 
@@ -603,5 +605,21 @@ private struct CLIError: Error {
 private extension FileHandle {
     func writeLine(_ line: String) {
         write(Data((line + "\n").utf8))
+    }
+}
+
+private extension Data {
+    mutating func secureWipe() {
+        guard !isEmpty else { return }
+        let byteCount = count
+        withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            #if os(Linux)
+            _ = memset(baseAddress, 0, byteCount)
+            #else
+            _ = memset_s(baseAddress, byteCount, 0, byteCount)
+            #endif
+        }
+        removeAll(keepingCapacity: false)
     }
 }

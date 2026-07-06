@@ -39,7 +39,8 @@ public enum ContactShare {
         let salt = try randomSalt()
         let boundedRounds = boundedRounds(kdfRounds)
         let key = derivePBKDF2Key(password: password, salt: salt, rounds: boundedRounds)
-        let offerData = try NoctweaveCoder.encode(offer)
+        var offerData = try NoctweaveCoder.encode(offer)
+        defer { offerData.secureWipe() }
         let payload = try CryptoBox.encrypt(
             offerData,
             key: key,
@@ -68,7 +69,8 @@ public enum ContactShare {
         default:
             throw ContactShareError.unsupportedVersion
         }
-        let plaintext = try CryptoBox.decrypt(package.payload, key: key, authenticatedData: aad)
+        var plaintext = try CryptoBox.decrypt(package.payload, key: key, authenticatedData: aad)
+        defer { plaintext.secureWipe() }
         let offer = try NoctweaveCoder.decode(ContactOffer.self, from: plaintext)
         return try offer.verified()
     }
@@ -86,8 +88,12 @@ public enum ContactShare {
         guard bounded > 0 else {
             return SymmetricKey(size: .bits256)
         }
-        let passwordData = Data(password.utf8)
+        var passwordData = Data(password.utf8)
         var derived = Data()
+        defer {
+            passwordData.secureWipe()
+            derived.secureWipe()
+        }
         var blockIndex: UInt32 = 1
         while derived.count < keyLength {
             var blockInput = salt
@@ -105,9 +111,14 @@ public enum ContactShare {
                 }
             }
             derived.append(t)
+            blockInput.secureWipe()
+            u.secureWipe()
+            t.secureWipe()
             blockIndex &+= 1
         }
-        return SymmetricKey(data: derived.prefix(keyLength))
+        var keyMaterial = Data(derived.prefix(keyLength))
+        defer { keyMaterial.secureWipe() }
+        return SymmetricKey(data: keyMaterial)
     }
 
     private static func hmacSHA256(keyData: Data, message: Data) -> Data {
@@ -131,6 +142,20 @@ public enum ContactShare {
 }
 
 private extension Data {
+    mutating func secureWipe() {
+        guard !isEmpty else { return }
+        let byteCount = count
+        withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            #if canImport(Darwin)
+            _ = memset_s(baseAddress, byteCount, 0, byteCount)
+            #else
+            _ = memset(baseAddress, 0, byteCount)
+            #endif
+        }
+        removeAll(keepingCapacity: false)
+    }
+
     mutating func xorInPlace(with other: Data) {
         let count = Swift.min(self.count, other.count)
         guard count > 0 else { return }
