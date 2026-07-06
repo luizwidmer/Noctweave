@@ -4,6 +4,39 @@ import XCTest
 @testable import NoctweaveRelayServer
 
 final class RelayStoreParityTests: XCTestCase {
+    func testActorProofReplayCachePersistsAcrossStoreReload() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: tempDirectory)
+        }
+        let storeURL = tempDirectory.appendingPathComponent("relay-store.sqlite")
+        let fingerprint = "actor-fingerprint"
+        let nonce = UUID()
+        let now = Date()
+
+        let firstStore = RelayStore(fileURL: storeURL, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        XCTAssertTrue(
+            firstStore.consumeActorProofNonce(
+                fingerprint: fingerprint,
+                nonce: nonce,
+                now: now,
+                maxAgeSeconds: 300
+            )
+        )
+
+        let reloadedStore = RelayStore(fileURL: storeURL, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        reloadedStore.load()
+        XCTAssertFalse(
+            reloadedStore.consumeActorProofNonce(
+                fingerprint: fingerprint,
+                nonce: nonce,
+                now: now.addingTimeInterval(30),
+                maxAgeSeconds: 300
+            )
+        )
+    }
+
     func testStoreRejectsInvalidAttachmentPayload() throws {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
         let payload = EncryptedPayload(

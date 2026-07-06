@@ -724,6 +724,7 @@ final class RelayStore {
                 actorProofReplayCache.removeValue(forKey: oldest)
             }
             actorProofReplayCache[key] = now
+            saveActorProofReplayCacheLocked()
             return true
         }
     }
@@ -1300,6 +1301,20 @@ final class RelayStore {
         }
     }
 
+    private func saveActorProofReplayCacheLocked() {
+        guard let fileURL else {
+            return
+        }
+        do {
+            try SQLiteRelayStateStore.saveActorProofReplayCache(
+                actorProofReplayCache,
+                at: sqliteStoreURL(for: fileURL)
+            )
+        } catch {
+            print("[relay] Failed to save replay cache")
+        }
+    }
+
     private func applySnapshot(_ snapshot: RelayStoreSnapshot) {
         mailboxes = snapshot.mailboxes
         inboxRegistrations = snapshot.inboxRegistrations
@@ -1309,6 +1324,9 @@ final class RelayStore {
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
         groups = snapshot.groups
         groupJoinRequests = snapshot.groupJoinRequests
+        actorProofReplayCache = snapshot.actorProofReplayCache.filter {
+            $0.value > Date().addingTimeInterval(-300)
+        }
         enforceLimitsLocked()
         pruneAttachmentsLocked(now: Date())
         prunePrekeysLocked(now: Date())
@@ -1324,7 +1342,8 @@ final class RelayStore {
             federationNodes: federationNodes,
             coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys,
             groups: groups,
-            groupJoinRequests: groupJoinRequests
+            groupJoinRequests: groupJoinRequests,
+            actorProofReplayCache: actorProofReplayCache
         )
     }
 
@@ -1486,6 +1505,7 @@ private struct RelayStoreSnapshot: Codable {
     let coordinatorPinnedPublicKeys: [String: Data]
     let groups: [UUID: RelayGroupDescriptor]
     let groupJoinRequests: [UUID: [RelayGroupJoinRequest]]
+    let actorProofReplayCache: [String: Date]
 
     init(
         mailboxes: [String: [StoredEnvelope]],
@@ -1495,7 +1515,8 @@ private struct RelayStoreSnapshot: Codable {
         federationNodes: [String: FederationNodeRecord] = [:],
         coordinatorPinnedPublicKeys: [String: Data] = [:],
         groups: [UUID: RelayGroupDescriptor] = [:],
-        groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:]
+        groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:],
+        actorProofReplayCache: [String: Date] = [:]
     ) {
         self.mailboxes = mailboxes
         self.inboxRegistrations = inboxRegistrations
@@ -1505,6 +1526,7 @@ private struct RelayStoreSnapshot: Codable {
         self.coordinatorPinnedPublicKeys = coordinatorPinnedPublicKeys
         self.groups = groups
         self.groupJoinRequests = groupJoinRequests
+        self.actorProofReplayCache = actorProofReplayCache
     }
 
     init(from decoder: Decoder) throws {
@@ -1517,6 +1539,7 @@ private struct RelayStoreSnapshot: Codable {
         coordinatorPinnedPublicKeys = try container.decodeIfPresent([String: Data].self, forKey: .coordinatorPinnedPublicKeys) ?? [:]
         groups = try container.decodeIfPresent([UUID: RelayGroupDescriptor].self, forKey: .groups) ?? [:]
         groupJoinRequests = try container.decodeIfPresent([UUID: [RelayGroupJoinRequest]].self, forKey: .groupJoinRequests) ?? [:]
+        actorProofReplayCache = try container.decodeIfPresent([String: Date].self, forKey: .actorProofReplayCache) ?? [:]
     }
 }
 
@@ -1610,7 +1633,8 @@ private enum SQLiteRelayStateStore {
             federationNodes: try loadFederationNodes(in: db),
             coordinatorPinnedPublicKeys: try loadCoordinatorPinnedPublicKeys(in: db),
             groups: try loadGroups(in: db),
-            groupJoinRequests: try loadGroupJoinRequests(in: db)
+            groupJoinRequests: try loadGroupJoinRequests(in: db),
+            actorProofReplayCache: try loadActorProofReplayCache(in: db)
         )
     }
 
@@ -1653,6 +1677,30 @@ private enum SQLiteRelayStateStore {
                 for (position, request) in requests.enumerated() {
                     try insertGroupJoinRequest(groupId: groupId, position: position, request: request, in: db)
                 }
+            }
+            for (cacheKey, consumedAt) in snapshot.actorProofReplayCache {
+                try insertActorProofReplayCacheEntry(cacheKey: cacheKey, consumedAt: consumedAt, in: db)
+            }
+            try insertMeta(key: normalizedSchemaKey, value: Data("1".utf8), in: db)
+            try execute("COMMIT;", in: db)
+        } catch {
+            _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            throw error
+        }
+    }
+
+    static func saveActorProofReplayCache(_ cache: [String: Date], at url: URL) throws {
+        var db: OpaquePointer?
+        try openDatabase(at: url, handle: &db)
+        defer { sqlite3_close(db) }
+        guard let db else { return }
+
+        try ensureSchema(in: db)
+        try execute("BEGIN IMMEDIATE TRANSACTION;", in: db)
+        do {
+            try execute("DELETE FROM relay_actor_proof_replay_cache;", in: db)
+            for (cacheKey, consumedAt) in cache {
+                try insertActorProofReplayCacheEntry(cacheKey: cacheKey, consumedAt: consumedAt, in: db)
             }
             try insertMeta(key: normalizedSchemaKey, value: Data("1".utf8), in: db)
             try execute("COMMIT;", in: db)
@@ -1742,6 +1790,16 @@ private enum SQLiteRelayStateStore {
             requests[groupId, default: []].append(request)
         }
         return requests
+    }
+
+    private static func loadActorProofReplayCache(in db: OpaquePointer) throws -> [String: Date] {
+        var cache: [String: Date] = [:]
+        try queryRows("SELECT cache_key, consumed_at FROM relay_actor_proof_replay_cache;", in: db) { statement in
+            let cacheKey = try readText(statement, column: 0, in: db)
+            let consumedAt = Date(timeIntervalSince1970: sqlite3_column_double(statement, 1))
+            cache[cacheKey] = consumedAt
+        }
+        return cache
     }
 
     private static func insertMailboxRecord(inboxId: String, position: Int, record: StoredEnvelope, in db: OpaquePointer) throws {
@@ -1836,6 +1894,16 @@ private enum SQLiteRelayStateStore {
         }
     }
 
+    private static func insertActorProofReplayCacheEntry(cacheKey: String, consumedAt: Date, in db: OpaquePointer) throws {
+        try executePrepared(
+            "INSERT INTO relay_actor_proof_replay_cache (cache_key, consumed_at) VALUES (?1, ?2);",
+            in: db
+        ) { statement in
+            try bindText(cacheKey, to: 1, in: statement, db: db)
+            try bindDouble(consumedAt.timeIntervalSince1970, to: 2, in: statement, db: db)
+        }
+    }
+
     private static func insertMeta(key: String, value: Data, in db: OpaquePointer) throws {
         try executePrepared(
             "INSERT INTO \(metaTableName) (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
@@ -1874,7 +1942,8 @@ private enum SQLiteRelayStateStore {
             "relay_federation_nodes",
             "relay_coordinator_pinned_keys",
             "relay_groups",
-            "relay_group_join_requests"
+            "relay_group_join_requests",
+            "relay_actor_proof_replay_cache"
         ] {
             try execute("DELETE FROM \(table);", in: db)
         }
@@ -1951,6 +2020,11 @@ private enum SQLiteRelayStateStore {
             PRIMARY KEY (group_id, position)
         );
         CREATE INDEX IF NOT EXISTS relay_group_join_requests_group_idx ON relay_group_join_requests(group_id);
+        CREATE TABLE IF NOT EXISTS relay_actor_proof_replay_cache (
+            cache_key TEXT PRIMARY KEY,
+            consumed_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS relay_actor_proof_replay_cache_consumed_at_idx ON relay_actor_proof_replay_cache(consumed_at);
         """
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw SQLiteRelayStateStoreError.execute(lastError(in: db))

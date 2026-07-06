@@ -29,12 +29,13 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Prefetch status/error metadata leakage**: closed-app ciphertext prefetch no longer returns profile UUID prefixes or raw localized relay errors to the app UI. Relay-side prefetch failures are reduced to stable transport/status categories, and relay-provided error bodies are not propagated.
 - **Headless relay-client rejection leakage**: the public headless/CLI client no longer propagates raw relay rejection strings through `HeadlessMessagingClientError`. Direct, group, attachment, fetch, and acknowledgement paths now expose stable categories such as authorization failure, proof failure, not found, rate limit, policy rejection, invalid request, or generic relay rejection.
 - **Session recovery relay rejection leakage**: automatic session reset and resend recovery no longer propagates raw relay rejection strings when recovery delivery fails. Rejections are reduced to the same stable categories used by the headless relay client.
+- **Relay actor-proof replay persistence gap**: Linux relay actor-proof nonce replay protection is now persisted in the SQLite relay store. A relay restart no longer clears still-fresh actor proof nonces and allows the same signed mutation/fetch proof to be replayed within its validity window.
 
 ## Verification
 
 - `npm test` in `NoctweaveJS`: 16 passing tests.
 - `swift test` in `NoctweaveCore`: 220 passing tests after the state/prefetch wiping, relay endpoint parser, relay response redaction, relay attachment TTL boundary changes, headless relay-client rejection redaction, and session recovery rejection redaction.
-- `swift test` in `Noctweave Relay Server`: 58 passing tests.
+- `swift test` in `Noctweave Relay Server`: 59 passing tests after actor-proof replay cache persistence.
 - macOS Noctyra client Debug build succeeded.
 - iOS Noctyra generic Debug build succeeded.
 - macOS Noctyra Relay Debug build succeeded.
