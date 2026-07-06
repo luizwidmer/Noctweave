@@ -25,6 +25,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Relay diagnostic metadata leakage**: relay pairing, announcement, forwarding, store, bridge, heartbeat, and protocol error paths no longer print or return request-specific operational details. Remote clients receive fixed error categories such as `Forwarding failed` instead of lower-layer timeout or storage details.
 - **Client diagnostic metadata leakage**: client storage privacy-attribute failures and attachment load failures no longer print raw OS errors. Relay health and pairing status paths now redact transport errors into stable categories such as timeout, network failure, or TLS validation failure before storing or displaying them.
 - **Attachment store plaintext lifetime gaps**: Apple client attachment storage now wipes encrypted-at-rest payload buffers, loaded encrypted payloads, AES-GCM combined ciphertext buffers, and temporary keychain key `Data` copies. Outbound attachment chunk buffers are wiped even when chunk encryption throws.
+- **Best-effort local file deletion**: Apple client attachment, encrypted thread history, and ciphertext prefetch deletion paths now overwrite regular files with zero bytes before removing them. This reduces recoverable deleted-content residue from normal file paths; APFS copy-on-write behavior, snapshots, and SSD wear leveling still prevent a physical erasure guarantee.
 
 ## Verification
 
@@ -38,6 +39,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - macOS Noctyra client, macOS Noctyra Relay, and generic iOS Noctyra builds succeeded after relay diagnostic redaction.
 - macOS and generic iOS Noctyra client Debug builds succeeded after client diagnostic redaction.
 - macOS and generic iOS Noctyra client Debug builds succeeded after attachment store wiping hardening.
+- macOS and generic iOS Noctyra client Debug builds succeeded after best-effort local deletion hardening.
 
 ## Residual Risks
 
