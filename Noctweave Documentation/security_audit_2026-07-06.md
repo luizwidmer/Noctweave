@@ -38,6 +38,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Browser WebCrypto primitive buffer lifetime**: NoctweaveJS WebCrypto wrappers now import HMAC keys, HKDF input keying material, AES-GCM keys, and AES-GCM plaintext through local copies that are wiped after the WebCrypto call, avoiding mutation of caller-owned arrays while bounding wrapper-owned plaintext/key bytes.
 - **Browser WASM PQC adapter self-test cleanup**: NoctweaveJS ML-KEM/ML-DSA WASM adapter self-tests now wipe generated secret keys, shared secrets, message bytes, and signatures after producing the boolean result. Regression tests also assert that adapter-owned WASM heap allocations are zeroed before free.
 - **Apple client destructive-delete residue**: app reset, action-pin attachment/thread purge, and local `.noctweave` document wipe paths now overwrite regular files before deletion instead of removing directories or files directly. This aligns bulk destructive operations with the per-attachment and per-thread secure deletion behavior.
+- **Apple client voice-recording temp residue**: voice-message `.m4a` temporary files are now overwritten before removal when a recording is sent, cancelled, or the sheet closes. The voice recorder privacy text now reflects the overwrite-before-delete behavior.
 
 ## Verification
 
@@ -64,6 +65,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - `npm test` in `NoctweaveJS`: 18 passing tests after WebCrypto primitive buffer wiping.
 - `npm test` in `NoctweaveJS`: 19 passing tests after WASM PQC self-test cleanup and heap-zeroing regression coverage.
 - macOS and generic iOS Noctyra client Debug builds succeeded after destructive-delete hardening.
+- macOS and generic iOS Noctyra client Debug builds succeeded after voice-recording temporary-file hardening.
 
 ## Residual Risks
 
