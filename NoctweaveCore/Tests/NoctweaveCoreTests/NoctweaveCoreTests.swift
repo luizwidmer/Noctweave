@@ -91,6 +91,27 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(status.conversationCount, 1)
     }
 
+    func testRelayClientDoesNotFallbackAcrossConfiguredTransports() async throws {
+        let port = UInt16.random(in: 42_000...44_999)
+        let rawTCPEndpoint = RelayEndpoint(host: "127.0.0.1", port: port, transport: .tcp)
+        let httpEndpoint = RelayEndpoint(host: "127.0.0.1", port: port, transport: .http)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let tcpResponse = try await RelayClient(endpoint: rawTCPEndpoint).send(.health(), timeout: 2)
+        XCTAssertEqual(tcpResponse.type, .ok)
+
+        do {
+            _ = try await RelayClient(endpoint: httpEndpoint).send(.health(), timeout: 2)
+            XCTFail("HTTP-configured clients must not silently retry raw TCP.")
+        } catch {
+            // Expected: the server is raw TCP only, so the HTTP request must fail
+            // instead of being retried over a different transport.
+        }
+    }
+
     func testHeadlessMessagingClientRotatesAndBurnsIdentityWithContactReset() async throws {
         let port = UInt16.random(in: 49_001...53_000)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)

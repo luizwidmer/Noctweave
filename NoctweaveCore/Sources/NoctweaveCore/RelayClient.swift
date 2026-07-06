@@ -25,21 +25,9 @@ public struct RelayClient {
         case .tcp:
             return try await sendTCP(authenticatedRequest, timeout: timeout)
         case .http:
-            do {
-                return try await sendHTTP(authenticatedRequest, timeout: timeout)
-            } catch {
-                return try await sendTCP(authenticatedRequest, timeout: timeout)
-            }
+            return try await sendHTTP(authenticatedRequest, timeout: timeout)
         case .websocket:
-            do {
-                return try await sendWebSocket(authenticatedRequest, timeout: timeout)
-            } catch {
-                do {
-                    return try await sendHTTP(authenticatedRequest, timeout: timeout)
-                } catch {
-                    return try await sendTCP(authenticatedRequest, timeout: timeout)
-                }
-            }
+            return try await sendWebSocket(authenticatedRequest, timeout: timeout)
         }
     }
 
@@ -183,7 +171,7 @@ public struct RelayClient {
             return .ok()
         }
         throw RelayClientResponseError.invalidPayload(
-            details: "Relay returned unexpected response payload: \(responsePreview(data))"
+            details: "Relay returned an unexpected response payload (\(data.count) bytes)."
         )
     }
 
@@ -215,8 +203,15 @@ public struct RelayClient {
         guard !data.isEmpty else {
             return "<empty>"
         }
+        if data.count > 256 {
+            return "<redacted \(data.count) bytes>"
+        }
         let text = String(data: data, encoding: .utf8) ?? "<binary \(data.count) bytes>"
         let compact = text.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
+        let lowercased = compact.lowercased()
+        guard lowercased.contains("cloudflare") || lowercased.contains("error code:") else {
+            return "<redacted \(data.count) bytes>"
+        }
         if compact.count <= 160 {
             return compact
         }
