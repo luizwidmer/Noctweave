@@ -24,6 +24,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - **Relay attachment retention bypass**: shared and Linux relay stores now clamp attachment TTLs at the persistence layer, not only in request handlers. Direct store callers cannot retain attachment chunks below the minimum or beyond the six-hour maximum retention boundary.
 - **Relay diagnostic metadata leakage**: relay pairing, announcement, forwarding, store, bridge, heartbeat, and protocol error paths no longer print or return request-specific operational details. Remote clients receive fixed error categories such as `Forwarding failed` instead of lower-layer timeout or storage details.
 - **Client diagnostic metadata leakage**: client storage privacy-attribute failures and attachment load failures no longer print raw OS errors. Relay health and pairing status paths now redact transport errors into stable categories such as timeout, network failure, or TLS validation failure before storing or displaying them.
+- **Attachment store plaintext lifetime gaps**: Apple client attachment storage now wipes encrypted-at-rest payload buffers, loaded encrypted payloads, AES-GCM combined ciphertext buffers, and temporary keychain key `Data` copies. Outbound attachment chunk buffers are wiped even when chunk encryption throws.
 
 ## Verification
 
@@ -36,6 +37,7 @@ Scope: client storage boundaries, relay client transport behavior, browser stora
 - macOS and generic iOS Noctyra client Debug builds succeeded after serialized state persistence.
 - macOS Noctyra client, macOS Noctyra Relay, and generic iOS Noctyra builds succeeded after relay diagnostic redaction.
 - macOS and generic iOS Noctyra client Debug builds succeeded after client diagnostic redaction.
+- macOS and generic iOS Noctyra client Debug builds succeeded after attachment store wiping hardening.
 
 ## Residual Risks
 
