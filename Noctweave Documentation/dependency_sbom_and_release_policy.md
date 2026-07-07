@@ -58,11 +58,11 @@ scripts/verify-release.sh
 
 It refreshes the SBOM, verifies the checked-in snapshot is current, checks package resolution, runs the Linux relay test suite, and runs optional Docker/Trivy checks when those tools are installed.
 
-The GitHub release-verification workflow runs the same verifier on pull requests,
-`main` pushes, and manual dispatches. The workflow uploads the native and CycloneDX
-SBOM snapshots as artifacts for inspection. A separate Linux CI job builds the
-relay container image with the pinned `LIBOQS_VERSION` value and scans the image
-with a commit-pinned Trivy action, failing the run on high or critical findings.
+The public repository does not currently ship GitHub Actions workflows. Until CI
+is added, maintainers should run this verifier locally before tagging release
+candidates and attach the generated native and CycloneDX SBOM snapshots to any
+manual release notes. CI for Ubuntu relay tests, container builds, and scanner
+evidence remains a roadmap item.
 
 Manual equivalent:
 
@@ -113,7 +113,6 @@ docker image inspect noctyra-relay:<version> --format '{{.Id}}'
    - Swift Crypto
    - Open Quantum Safe `liboqs`
    - Docker base image packages
-   - Apple SDK release notes for CryptoKit/security fixes
 
 8. Review `noctweave_core_stability_policy.md` and record any source, CLI,
    wire-format, persisted-state, Docker-flag, or relay API compatibility changes

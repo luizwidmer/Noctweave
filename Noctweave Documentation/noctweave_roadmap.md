@@ -194,7 +194,7 @@ These are intentionally not release blockers unless a future release claims them
 
 ## Operational Notes
 
-- Noctyra does not rely on centralized push notifications in the public protocol.
+- Noctweave does not rely on centralized push notifications in the public protocol.
 - IPFS attachment offload is a storage feature, not an anonymity layer.
 - Open federation remains bounded by signed records, endpoint policy, cache limits, and poisoning/flood controls.
 - Manual, curated, and open federation modes remain separate network models.

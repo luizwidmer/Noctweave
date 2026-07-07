@@ -1,6 +1,6 @@
-# Noctyra Relay Server (Linux)
+# Noctweave Relay Server (Linux)
 
-A Linux relay server for the Noctweave Protocol, used by Noctyra clients and compatible tooling. It supports line-delimited TCP plus optional HTTP/WebSocket bridge support.
+A Linux relay server for the Noctweave Protocol, used by compatible clients and tooling. It supports line-delimited TCP plus optional HTTP/WebSocket bridge support.
 
 ## What it does
 

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="440" viewBox="0 0 1100 440" role="img" aria-labelledby="title desc">
+  <title id="title">Noctweave relay-backed encrypted messaging architecture</title>
+  <desc id="desc">Alice client sends a post-quantum encrypted envelope through a Noctweave relay. The relay may federate with another relay, and Bob fetches ciphertext from his relay.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#071b24"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" x2="1">
+      <stop offset="0" stop-color="#17233a"/>
+      <stop offset="1" stop-color="#142b2d"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#7dd3fc"/>
+    </marker>
+  </defs>
+  <rect width="1100" height="440" rx="28" fill="url(#bg)"/>
+  <g fill="none" stroke="#7dd3fc" stroke-width="4" marker-end="url(#arrow)" opacity="0.9">
+    <path d="M250 190 H415"/>
+    <path d="M685 190 H850"/>
+    <path d="M550 245 C550 315 690 315 690 245"/>
+  </g>
+  <g fill="none" stroke="#a78bfa" stroke-width="3" stroke-dasharray="8 8" marker-end="url(#arrow)" opacity="0.75">
+    <path d="M550 120 C620 55 760 55 830 120"/>
+  </g>
+  <g filter="url(#glow)">
+    <rect x="70" y="105" width="190" height="170" rx="22" fill="url(#card)" stroke="#334155"/>
+    <rect x="455" y="105" width="190" height="170" rx="22" fill="url(#card)" stroke="#334155"/>
+    <rect x="840" y="105" width="190" height="170" rx="22" fill="url(#card)" stroke="#334155"/>
+  </g>
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <text x="165" y="154" fill="#f8fafc" font-size="28" font-weight="700" text-anchor="middle">Alice Client</text>
+    <text x="165" y="196" fill="#cbd5e1" font-size="18" text-anchor="middle">ML-DSA identity</text>
+    <text x="165" y="224" fill="#cbd5e1" font-size="18" text-anchor="middle">ML-KEM prekeys</text>
+    <text x="165" y="252" fill="#cbd5e1" font-size="18" text-anchor="middle">AEAD envelope</text>
+    <text x="550" y="154" fill="#f8fafc" font-size="28" font-weight="700" text-anchor="middle">Noctweave Relay</text>
+    <text x="550" y="196" fill="#cbd5e1" font-size="18" text-anchor="middle">stores ciphertext</text>
+    <text x="550" y="224" fill="#cbd5e1" font-size="18" text-anchor="middle">routes inboxes</text>
+    <text x="550" y="252" fill="#cbd5e1" font-size="18" text-anchor="middle">no plaintext trust</text>
+    <text x="935" y="154" fill="#f8fafc" font-size="28" font-weight="700" text-anchor="middle">Bob Client</text>
+    <text x="935" y="196" fill="#cbd5e1" font-size="18" text-anchor="middle">fetches mailbox</text>
+    <text x="935" y="224" fill="#cbd5e1" font-size="18" text-anchor="middle">verifies sender</text>
+    <text x="935" y="252" fill="#cbd5e1" font-size="18" text-anchor="middle">decrypts locally</text>
+    <text x="550" y="86" fill="#ddd6fe" font-size="17" font-weight="700" text-anchor="middle">optional federation to other relays</text>
+    <text x="550" y="345" fill="#bae6fd" font-size="22" font-weight="700" text-anchor="middle">Clients encrypt. Relays deliver. Recipients decrypt.</text>
+    <text x="550" y="378" fill="#94a3b8" font-size="17" text-anchor="middle">Direct messages, groups, attachments, voice payloads, and relay federation share the same ciphertext-only trust boundary.</text>
+  </g>
+</svg>
