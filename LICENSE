@@ -13,7 +13,7 @@ Primary component licenses:
 - `NoctweaveJS/`: `Apache-2.0`
 - `NoctweaveJS/examples/`: `MIT`
 - `Noctweave_Documentation/`: `CC-BY-SA-4.0`
-- `docs/`: `CC-BY-SA-4.0`
+- `docs/assets/`: documentation assets under `Noctweave_Documentation/LICENSE`
 
 Unlisted repository files are licensed under `AGPL-3.0-or-later` unless a
 nearer license file or explicit notice says otherwise.

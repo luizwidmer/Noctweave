@@ -242,7 +242,7 @@ explicit SPDX/header to determine the license for a file.
 | `Noctweave_Relay_Server/` | `AGPL-3.0-or-later` |
 | `NoctweaveJS/` | `Apache-2.0` |
 | `NoctweaveJS/examples/` | `MIT` |
-| `Noctweave_Documentation/`, `docs/` | `CC-BY-SA-4.0` |
+| `Noctweave_Documentation/`, `docs/assets/` | `CC-BY-SA-4.0`; see `Noctweave_Documentation/LICENSE` |
 | Unlisted repository files | `AGPL-3.0-or-later` unless otherwise noted |
 
 See [`NOTICE`](NOTICE), [`LICENSE`](LICENSE), and

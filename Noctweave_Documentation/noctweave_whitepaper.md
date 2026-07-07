@@ -7,7 +7,7 @@ geometry: margin=1in
 fontsize: 11pt
 ---
 
-License: `CC-BY-SA-4.0`. See [`../LICENSE-DOCS.md`](../LICENSE-DOCS.md).
+License: `CC-BY-SA-4.0`. See [`LICENSE`](LICENSE).
 
 # Abstract
 
