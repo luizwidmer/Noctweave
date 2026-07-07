@@ -1,6 +1,6 @@
 # Noctweave
 
-![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-blue)
+![License: multi-license](https://img.shields.io/badge/license-multi--license-blue)
 ![Swift 5.9](https://img.shields.io/badge/Swift-5.9-orange)
 ![Node >=20](https://img.shields.io/badge/Node-%3E%3D20-green)
 ![Status: pre-1.0](https://img.shields.io/badge/status-pre--1.0-yellow)
@@ -231,10 +231,20 @@ verification commands above.
 
 ## License
 
-Noctweave public source code is licensed under `AGPL-3.0-or-later`. Commercial
-licenses are available for proprietary products, hosted commercial deployments,
-private forks, and integrations that cannot comply with AGPL terms. See
-[`COMMERCIAL-LICENSE.md`](COMMERCIAL-LICENSE.md).
+Noctweave is a multi-license repository. Use the nearest license file or an
+explicit SPDX/header to determine the license for a file.
 
-Noctweave documentation and whitepaper materials are licensed under
-`CC-BY-NC-SA-4.0` unless otherwise noted. See [`LICENSE-DOCS.md`](LICENSE-DOCS.md).
+| Path | License |
+| --- | --- |
+| `NoctweaveCore/` | `AGPL-3.0-or-later` |
+| `NoctweaveCore/COMMERCIAL-LICENSE.md` | Optional commercial terms for NoctweaveCore only |
+| `NoctweaveCore/Sources/NoctyraCLI/` | `AGPL-3.0-or-later` |
+| `Noctweave_Relay_Server/` | `AGPL-3.0-or-later` |
+| `NoctweaveJS/` | `Apache-2.0` |
+| `NoctweaveJS/examples/` | `MIT` |
+| `Noctweave_Documentation/`, `docs/` | `CC-BY-SA-4.0` |
+| Unlisted repository files | `AGPL-3.0-or-later` unless otherwise noted |
+
+See [`NOTICE`](NOTICE), [`LICENSE`](LICENSE), and
+[`COMMERCIAL-LICENSE.md`](COMMERCIAL-LICENSE.md) for the repository-level
+summary.

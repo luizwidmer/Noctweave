@@ -2,9 +2,11 @@
 
 Unless a file states otherwise, public Noctweave documentation in `Noctweave_Documentation/` is licensed under:
 
-**Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International**  
-SPDX: `CC-BY-NC-SA-4.0`  
-Canonical license: https://creativecommons.org/licenses/by-nc-sa/4.0/
+**Creative Commons Attribution-ShareAlike 4.0 International**
+
+SPDX: `CC-BY-SA-4.0`
+
+Canonical license: https://creativecommons.org/licenses/by-sa/4.0/
 
 This applies to the Noctweave whitepaper, protocol documentation, operator guides, security notes, and roadmap materials.
 
@@ -13,7 +15,4 @@ It does not apply to generated SBOM files, machine-readable API schemas, or lega
 ## Practical Meaning
 
 - **BY**: credit Noctweave and the copyright holder.
-- **NC**: do not use the documentation for commercial purposes without separate permission.
 - **SA**: adaptations must be shared under the same license.
-
-No commercial documentation license is granted by this file. Commercial use requires separate written permission.
