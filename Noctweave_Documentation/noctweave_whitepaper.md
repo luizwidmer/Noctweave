@@ -41,7 +41,7 @@ The public system has four primary components:
 - `NoctweaveCore`, the Swift protocol core
 - `NoctyraCLI`, the headless command-line client
 - `NoctweaveJS`, the JavaScript relay integration package
-- `Noctweave Relay Server`, the Linux relay with Docker deployment support
+- `Noctweave_Relay_Server`, the Linux relay with Docker deployment support
 
 The client manages identities, contacts, conversations, groups, attachments, and local security controls. The relay stores encrypted envelopes and encrypted attachment chunks, exposes transport endpoints, and optionally participates in curated or open federations.
 

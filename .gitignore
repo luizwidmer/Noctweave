@@ -40,6 +40,6 @@ NoctweaveCore/liboqs/
 # Private/proprietary app assets and local product artifacts
 OtherResources/
 TODO.md
-Noctweave Documentation/Legal/
-Noctweave Documentation/*.pdf
-Noctweave Documentation/noctyra_x_article.md
+Noctweave_Documentation/Legal/
+Noctweave_Documentation/*.pdf
+Noctweave_Documentation/noctyra_x_article.md

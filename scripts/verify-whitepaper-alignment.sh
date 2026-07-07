@@ -12,7 +12,7 @@ swift test \
 
 echo "Verifying Linux relay open-federation parity coverage..."
 swift test \
-  --package-path "$ROOT_DIR/Noctweave Relay Server" \
+  --package-path "$ROOT_DIR/Noctweave_Relay_Server" \
   --filter 'RelayStoreParityTests/test(GroupDescriptorCarriesMLSEpochState|RelayStoreBucketsVisiblePair|RelayStoreRejectsOversizedEnvelopePayloads|StoreCanOffloadAttachmentChunksToExternalBlobStore|ExternalAttachmentBlobDigestMismatchIsRejected|RelayStoreRejectsStructurallyInvalidRatchetSecretDistribution|HiddenRetrievalSupport|RelayInfoSuppressesWeakReplicatedPIRAdvertisement|RelayInfoCarriesOptionalOnionTransportSupport|RelayInfoSuppressesUnusableOnionTransportSupport|RelayInfoCarriesOptionalMixnetTransportSupport|RelayInfoSuppressesMisleadingMixnetAdvertisement|MixnetRoutePolicyValidator|RelayInfoAdvertisesOpenFederationDHTAndPEXSupport|OpenFederationDHTHTTPGatewayRefresh|OpenFederationDHTNativeOverlay)'
 
 echo "Verifying public repository boundary..."
@@ -24,7 +24,7 @@ fi
 echo "Verifying release sources do not ship autonomous public-DHT adapters..."
 if grep -R -E "BEP5|libp2p|Kademlia|PublicDHT|AutonomousPublicDHT" \
   "$ROOT_DIR/NoctweaveCore/Sources" \
-  "$ROOT_DIR/Noctweave Relay Server/Sources"; then
+  "$ROOT_DIR/Noctweave_Relay_Server/Sources"; then
   echo "Autonomous public-DHT adapters are out of release scope; use coordinator snapshots, bounded relay peer exchange, or the bounded relay native-overlay DHT path." >&2
   exit 1
 fi

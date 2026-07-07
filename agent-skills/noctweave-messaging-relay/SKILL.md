@@ -10,9 +10,9 @@ description: "Use this skill when an agent needs to operate Noctweave open tooli
 Use only the public Noctweave surface:
 
 - `NoctweaveCore/` and `NoctweaveCore/Sources/NoctyraCLI/`
-- `Noctweave Relay Server/`
+- `Noctweave_Relay_Server/`
 - `NoctweaveJS/`
-- `Noctweave Documentation/`
+- `Noctweave_Documentation/`
 - `scripts/`
 
 Do not rely on the proprietary Apple clients or macOS GUI relay app.
@@ -55,8 +55,8 @@ Use the narrowest verification that proves the task:
 ```sh
 swift build --package-path NoctweaveCore
 swift test --package-path NoctweaveCore
-swift build --package-path "Noctweave Relay Server"
-swift test --package-path "Noctweave Relay Server"
+swift build --package-path "Noctweave_Relay_Server"
+swift test --package-path "Noctweave_Relay_Server"
 scripts/run-tests.sh
 ```
 

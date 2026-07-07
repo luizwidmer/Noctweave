@@ -1,4 +1,4 @@
-# Noctweave Relay Server (Linux)
+# Noctweave_Relay_Server (Linux)
 
 A Linux relay server for the Noctweave Protocol, used by compatible clients and tooling. It supports line-delimited TCP plus optional HTTP/WebSocket bridge support.
 
@@ -14,7 +14,7 @@ A Linux relay server for the Noctweave Protocol, used by compatible clients and 
 ## Build (local)
 
 ```bash
-cd "Noctweave Relay Server"
+cd "Noctweave_Relay_Server"
 swift build
 ```
 
@@ -130,7 +130,7 @@ Use `--wake-mode pullOnly` or `--wake-mode longPoll` to advertise a decentralize
 Use `--open-federation-dht-node true` with `--federation-mode open` to make the relay act as a bounded open-federation DHT node. The relay then accepts and serves signed short-lived relay records through the relay protocol. Keep `--allow-private-federation-endpoints false` for public networks so records and forwarding do not target loopback or LAN addresses. PEX is separate: `--relay-peer-exchange-limit <count>` controls how many known open relays are advertised in `/info`; set it to `0` to disable peer hints.
 
 ```bash
-docker build -t noctyra-relay ./"Noctweave Relay Server"
+docker build -t noctyra-relay ./"Noctweave_Relay_Server"
 docker run --rm -p 9339:9339 -v noctyra-data:/data noctyra-relay
 ```
 
@@ -141,7 +141,7 @@ Use the bundled Caddy stack when you want public TLS certs without manual PKCS#1
 1. Copy env template and set your domain/email:
 
 ```bash
-cd "Noctweave Relay Server"
+cd "Noctweave_Relay_Server"
 cp .env.letsencrypt.example .env
 ```
 
@@ -315,8 +315,8 @@ the advertised endpoint for policy checks and coordinator registration.
 Security note:
 - Linux relay verifies actor-proof signatures when `liboqs` is available at runtime (included in the Docker image).
 - If `liboqs` is not available, actor-proof mutations are fail-closed.
-- See `Noctweave Documentation/relay_ops_hardening_guide.md` for TLS proxying, firewall, secrets, storage, federation, DHT, and log hygiene guidance.
-- See `Noctweave Documentation/federation_protocol_and_operations.md` for the full federation protocol, endpoint syntax, coordinator recipes, open-federation DHT/PEX behavior, and failure semantics.
+- See `Noctweave_Documentation/relay_ops_hardening_guide.md` for TLS proxying, firewall, secrets, storage, federation, DHT, and log hygiene guidance.
+- See `Noctweave_Documentation/federation_protocol_and_operations.md` for the full federation protocol, endpoint syntax, coordinator recipes, open-federation DHT/PEX behavior, and failure semantics.
 
 ### Manual federation
 

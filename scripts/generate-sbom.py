@@ -22,7 +22,7 @@ def read_text(path):
 
 
 def package_resolved_components():
-    path = ROOT / "Noctweave Relay Server" / "Package.resolved"
+    path = ROOT / "Noctweave_Relay_Server" / "Package.resolved"
     payload = json.loads(read_text(path))
     components = []
     for pin in payload.get("pins", []):
@@ -41,7 +41,7 @@ def package_resolved_components():
 
 
 def docker_components():
-    path = ROOT / "Noctweave Relay Server" / "Dockerfile"
+    path = ROOT / "Noctweave_Relay_Server" / "Dockerfile"
     text = read_text(path)
     components = []
 
@@ -119,8 +119,8 @@ def workspace_components():
         },
         {
             "type": "local-source",
-            "name": "Noctweave Relay Server",
-            "source": "Noctweave Relay Server",
+            "name": "Noctweave_Relay_Server",
+            "source": "Noctweave_Relay_Server",
         },
     ]
 
@@ -136,8 +136,8 @@ def make_sbom():
         "name": "Noctweave",
         "generatedBy": "scripts/generate-sbom.py",
         "inputs": [
-            "Noctweave Relay Server/Package.resolved",
-            "Noctweave Relay Server/Dockerfile",
+            "Noctweave_Relay_Server/Package.resolved",
+            "Noctweave_Relay_Server/Dockerfile",
             "NoctweaveCore/Vendor/liboqs.xcframework",
         ],
         "components": components,
@@ -222,12 +222,12 @@ def main():
     parser = argparse.ArgumentParser(description="Generate the Noctweave machine-readable SBOM snapshot.")
     parser.add_argument(
         "--output",
-        default="Noctweave Documentation/noctweave_sbom.json",
+        default="Noctweave_Documentation/noctweave_sbom.json",
         help="Output path relative to the repository root.",
     )
     parser.add_argument(
         "--cyclonedx-output",
-        default="Noctweave Documentation/noctweave_cyclonedx_sbom.json",
+        default="Noctweave_Documentation/noctweave_cyclonedx_sbom.json",
         help="CycloneDX JSON output path relative to the repository root.",
     )
     args = parser.parse_args()

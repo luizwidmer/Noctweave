@@ -9,8 +9,8 @@ You are helping integrate Noctweave into another project. Treat Noctweave as a p
 Use only the public components:
 
 - `NoctweaveCore/`: Swift package with protocol models, relay client/server primitives, cryptographic flows, message ratchets, federation logic, and `NoctyraCLI`.
-- `Noctweave Relay Server/`: Linux/Docker relay implementation with TCP, HTTP, WebSocket, SQLite persistence, federation, IPFS attachment offload, and operator configuration.
-- `Noctweave Documentation/`: protocol specs, OpenAPI schema, relay hardening, security requirements, and whitepaper alignment notes.
+- `Noctweave_Relay_Server/`: Linux/Docker relay implementation with TCP, HTTP, WebSocket, SQLite persistence, federation, IPFS attachment offload, and operator configuration.
+- `Noctweave_Documentation/`: protocol specs, OpenAPI schema, relay hardening, security requirements, and whitepaper alignment notes.
 
 Do not depend on proprietary Apple client or macOS GUI relay app sources. They are outside the public integration boundary.
 
@@ -18,10 +18,10 @@ Do not depend on proprietary Apple client or macOS GUI relay app sources. They a
 Start by reading:
 
 - `README.md`
-- `Noctweave Documentation/noctweave_protocol_spec_v1.md`
-- `Noctweave Documentation/noctweave_core_public_api.md`
-- `Noctweave Relay Server/README.md`
-- `Noctweave Documentation/relay_ops_hardening_guide.md`
+- `Noctweave_Documentation/noctweave_protocol_spec_v1.md`
+- `Noctweave_Documentation/noctweave_core_public_api.md`
+- `Noctweave_Relay_Server/README.md`
+- `Noctweave_Documentation/relay_ops_hardening_guide.md`
 
 For Swift projects, integrate `NoctweaveCore` as a package dependency or local package path. For non-Swift services, use the relay wire/API documentation and the Linux relay as the interoperability reference.
 
@@ -31,8 +31,8 @@ Run these before claiming compatibility:
 ```sh
 swift build --package-path NoctweaveCore
 swift test --package-path NoctweaveCore
-swift build --package-path "Noctweave Relay Server"
-swift test --package-path "Noctweave Relay Server"
+swift build --package-path "Noctweave_Relay_Server"
+swift test --package-path "Noctweave_Relay_Server"
 scripts/run-tests.sh
 ```
 

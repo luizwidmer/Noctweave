@@ -7,7 +7,7 @@ This document records the current software bill of materials and the minimum rel
 ## Scope
 
 - `NoctweaveCore`
-- `Noctweave Relay Server`
+- `Noctweave_Relay_Server`
 - `NoctyraCLI`
 - `NoctweaveJS`
 - Docker relay image
@@ -24,7 +24,7 @@ This document records the current software bill of materials and the minimum rel
 
 `NoctweaveCore` has no remote SwiftPM dependency besides its local `liboqs` binary target.
 
-`Noctweave Relay Server` pins these packages in `Package.resolved`:
+`Noctweave_Relay_Server` pins these packages in `Package.resolved`:
 
 | Package | Version | Revision | Purpose |
 | --- | --- | --- | --- |
@@ -70,14 +70,14 @@ Manual equivalent:
 
 ```bash
 scripts/generate-sbom.py
-git diff --exit-code "Noctweave Documentation/noctweave_sbom.json"
-git diff --exit-code "Noctweave Documentation/noctweave_cyclonedx_sbom.json"
+git diff --exit-code "Noctweave_Documentation/noctweave_sbom.json"
+git diff --exit-code "Noctweave_Documentation/noctweave_cyclonedx_sbom.json"
 ```
 
 2. Run package resolution from a clean checkout:
 
 ```bash
-cd "Noctweave Relay Server"
+cd "Noctweave_Relay_Server"
 swift package resolve
 git diff --exit-code Package.resolved
 ```
@@ -98,7 +98,7 @@ swift build -c release
 5. Build the Docker image with an explicit `liboqs` version:
 
 ```bash
-docker build --build-arg LIBOQS_VERSION=0.15.0 -t noctyra-relay:<version> "Noctweave Relay Server"
+docker build --build-arg LIBOQS_VERSION=0.15.0 -t noctyra-relay:<version> "Noctweave_Relay_Server"
 ```
 
 6. Record final artifact hashes:

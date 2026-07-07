@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RELAY_DIR="$ROOT_DIR/Noctweave Relay Server"
+RELAY_DIR="$ROOT_DIR/Noctweave_Relay_Server"
 CORE_DIR="$ROOT_DIR/NoctweaveCore"
 
 source "$ROOT_DIR/scripts/liboqs-runtime.sh"

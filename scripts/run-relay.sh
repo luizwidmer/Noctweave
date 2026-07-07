@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SERVER_DIR="$ROOT_DIR/Noctweave Relay Server"
+SERVER_DIR="$ROOT_DIR/Noctweave_Relay_Server"
 BUILD_MODE="${BUILD_MODE:-release}"
 HOST="${NOCTWEAVE_RELAY_HOST:-0.0.0.0}"
 PORT="${NOCTWEAVE_RELAY_PORT:-9339}"
