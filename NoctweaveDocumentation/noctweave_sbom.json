@@ -11,13 +11,13 @@
       "type": "local-source"
     },
     {
-      "name": "Noctweave_Relay_Server",
-      "source": "Noctweave_Relay_Server",
+      "name": "NoctweaveRelayServer",
+      "source": "NoctweaveRelayServer",
       "type": "local-source"
     },
     {
       "name": "swift-asn1",
-      "pinFile": "Noctweave_Relay_Server/Package.resolved",
+      "pinFile": "NoctweaveRelayServer/Package.resolved",
       "revision": "810496cf121e525d660cd0ea89a758740476b85f",
       "source": "https://github.com/apple/swift-asn1.git",
       "type": "swift-package",
@@ -25,7 +25,7 @@
     },
     {
       "name": "swift-atomics",
-      "pinFile": "Noctweave_Relay_Server/Package.resolved",
+      "pinFile": "NoctweaveRelayServer/Package.resolved",
       "revision": "b601256eab081c0f92f059e12818ac1d4f178ff7",
       "source": "https://github.com/apple/swift-atomics.git",
       "type": "swift-package",
@@ -33,7 +33,7 @@
     },
     {
       "name": "swift-collections",
-      "pinFile": "Noctweave_Relay_Server/Package.resolved",
+      "pinFile": "NoctweaveRelayServer/Package.resolved",
       "revision": "7b847a3b7008b2dc2f47ca3110d8c782fb2e5c7e",
       "source": "https://github.com/apple/swift-collections.git",
       "type": "swift-package",
@@ -41,7 +41,7 @@
     },
     {
       "name": "swift-crypto",
-      "pinFile": "Noctweave_Relay_Server/Package.resolved",
+      "pinFile": "NoctweaveRelayServer/Package.resolved",
       "revision": "95ba0316a9b733e92bb6b071255ff46263bbe7dc",
       "source": "https://github.com/apple/swift-crypto.git",
       "type": "swift-package",
@@ -49,7 +49,7 @@
     },
     {
       "name": "swift-nio",
-      "pinFile": "Noctweave_Relay_Server/Package.resolved",
+      "pinFile": "NoctweaveRelayServer/Package.resolved",
       "revision": "a1605a3303a28e14d822dec8aaa53da8a9490461",
       "source": "https://github.com/apple/swift-nio.git",
       "type": "swift-package",
@@ -57,7 +57,7 @@
     },
     {
       "name": "swift-system",
-      "pinFile": "Noctweave_Relay_Server/Package.resolved",
+      "pinFile": "NoctweaveRelayServer/Package.resolved",
       "revision": "395a77f0aa927f0ff73941d7ac35f2b46d47c9db",
       "source": "https://github.com/apple/swift-system.git",
       "type": "swift-package",
@@ -65,7 +65,7 @@
     },
     {
       "name": "swift:5.9-jammy",
-      "pinFile": "Noctweave_Relay_Server/Dockerfile",
+      "pinFile": "NoctweaveRelayServer/Dockerfile",
       "revision": null,
       "source": "Dockerfile FROM",
       "stage": "builder",
@@ -74,7 +74,7 @@
     },
     {
       "name": "swift:5.9-jammy",
-      "pinFile": "Noctweave_Relay_Server/Dockerfile",
+      "pinFile": "NoctweaveRelayServer/Dockerfile",
       "revision": null,
       "source": "Dockerfile FROM",
       "stage": "stage-2",
@@ -83,7 +83,7 @@
     },
     {
       "name": "liboqs",
-      "pinFile": "Noctweave_Relay_Server/Dockerfile",
+      "pinFile": "NoctweaveRelayServer/Dockerfile",
       "revision": "0.15.0",
       "source": "https://github.com/open-quantum-safe/liboqs.git",
       "type": "source-build",
@@ -100,8 +100,8 @@
   ],
   "generatedBy": "scripts/generate-sbom.py",
   "inputs": [
-    "Noctweave_Relay_Server/Package.resolved",
-    "Noctweave_Relay_Server/Dockerfile",
+    "NoctweaveRelayServer/Package.resolved",
+    "NoctweaveRelayServer/Dockerfile",
     "NoctweaveCore/Vendor/liboqs.xcframework"
   ],
   "name": "Noctweave",

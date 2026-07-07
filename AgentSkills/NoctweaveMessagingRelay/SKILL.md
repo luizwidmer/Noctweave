@@ -1,5 +1,5 @@
 ---
-name: noctweave-messaging-relay
+name: NoctweaveMessagingRelay
 description: "Use this skill when an agent needs to operate Noctweave open tooling: run NoctyraCLI headless messaging workflows, diagnose relay endpoints, configure or verify Linux/Docker relays, inspect federation mode, or perform relay/client smoke tests without using proprietary Noctyra app code."
 ---
 
@@ -10,9 +10,9 @@ description: "Use this skill when an agent needs to operate Noctweave open tooli
 Use only the public Noctweave surface:
 
 - `NoctweaveCore/` and `NoctweaveCore/Sources/NoctyraCLI/`
-- `Noctweave_Relay_Server/`
+- `NoctweaveRelayServer/`
 - `NoctweaveJS/`
-- `Noctweave_Documentation/`
+- `NoctweaveDocumentation/`
 - `scripts/`
 
 Do not rely on the proprietary Apple clients or macOS GUI relay app.
@@ -55,8 +55,8 @@ Use the narrowest verification that proves the task:
 ```sh
 swift build --package-path NoctweaveCore
 swift test --package-path NoctweaveCore
-swift build --package-path "Noctweave_Relay_Server"
-swift test --package-path "Noctweave_Relay_Server"
+swift build --package-path "NoctweaveRelayServer"
+swift test --package-path "NoctweaveRelayServer"
 scripts/run-tests.sh
 ```
 

@@ -5,8 +5,8 @@ Use this reference when an agent must run, configure, verify, or troubleshoot a 
 ## Build + Run
 
 ```sh
-swift build --package-path "Noctweave_Relay_Server"
-"Noctweave_Relay_Server/.build/debug/NoctweaveRelayServer" \
+swift build --package-path "NoctweaveRelayServer"
+"NoctweaveRelayServer/.build/debug/NoctweaveRelayServer" \
   --host 0.0.0.0 \
   --port 9339 \
   --http-port 9340 \
@@ -16,7 +16,7 @@ swift build --package-path "Noctweave_Relay_Server"
 Docker:
 
 ```sh
-docker build -t noctyra-relay "Noctweave_Relay_Server"
+docker build -t noctyra-relay "NoctweaveRelayServer"
 docker run --rm -p 9339:9339 -p 9340:9340 -v noctyra-data:/data noctyra-relay
 ```
 

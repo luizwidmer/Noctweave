@@ -22,7 +22,7 @@ Use the Docker image as the default Linux deployment path. It runs as an unprivi
 
 Use one of these patterns:
 
-- Caddy/Let's Encrypt stack from `Noctweave_Relay_Server/docker-compose.letsencrypt.yml`.
+- Caddy/Let's Encrypt stack from `NoctweaveRelayServer/docker-compose.letsencrypt.yml`.
 - Nginx Proxy Manager or Cloudflare Tunnel terminating TLS and forwarding to `POST /relay`.
 - Internal-only TCP for development only.
 

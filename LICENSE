@@ -9,11 +9,11 @@ Primary component licenses:
 - `NoctweaveCore/`: `AGPL-3.0-or-later`
 - `NoctweaveCore/Sources/NoctyraCLI/`: `AGPL-3.0-or-later`
 - `NoctweaveCore/COMMERCIAL-LICENSE.md`: optional commercial license terms for NoctweaveCore only
-- `Noctweave_Relay_Server/`: `AGPL-3.0-or-later`
+- `NoctweaveRelayServer/`: `AGPL-3.0-or-later`
 - `NoctweaveJS/`: `Apache-2.0`
 - `NoctweaveJS/examples/`: `MIT`
-- `Noctweave_Documentation/`: `CC-BY-SA-4.0`
-- `docs/assets/`: documentation assets under `Noctweave_Documentation/LICENSE`
+- `NoctweaveDocumentation/`: `CC-BY-SA-4.0`
+- `docs/assets/`: documentation assets under `NoctweaveDocumentation/LICENSE`
 
 Unlisted repository files are licensed under `AGPL-3.0-or-later` unless a
 nearer license file or explicit notice says otherwise.
