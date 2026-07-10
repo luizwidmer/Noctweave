@@ -44,6 +44,12 @@ final class RelayEndpointParserTests: XCTestCase {
         XCTAssertEqual(hostOnly.transport, .tcp)
     }
 
+    func testParsesLocalhostAndValidIPAddresses() throws {
+        XCTAssertEqual(try RelayEndpointParser.parse("localhost:9339").host, "localhost")
+        XCTAssertEqual(try RelayEndpointParser.parse("192.168.1.20:9339").host, "192.168.1.20")
+        XCTAssertEqual(try RelayEndpointParser.parse("[2001:db8::10]:9339").host, "2001:db8::10")
+    }
+
     func testParsesBracketedIPv6() throws {
         let endpoint = try RelayEndpointParser.parse("[::1]:9339")
 
@@ -86,5 +92,10 @@ final class RelayEndpointParserTests: XCTestCase {
         XCTAssertThrowsError(try RelayEndpointParser.parse("relay host"))
         XCTAssertThrowsError(try RelayEndpointParser.parse("relay.example/path"))
         XCTAssertThrowsError(try RelayEndpointParser.parse("::1"))
+        XCTAssertThrowsError(try RelayEndpointParser.parse("anything"))
+        XCTAssertThrowsError(try RelayEndpointParser.parse("-relay.example"))
+        XCTAssertThrowsError(try RelayEndpointParser.parse("relay_.example"))
+        XCTAssertThrowsError(try RelayEndpointParser.parse("999.999.999.999"))
+        XCTAssertThrowsError(try RelayEndpointParser.parse("relay..example"))
     }
 }

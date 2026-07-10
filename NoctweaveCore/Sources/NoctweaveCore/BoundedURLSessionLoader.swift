@@ -34,6 +34,7 @@ final class BoundedURLSessionLoader: NSObject, URLSessionDataDelegate, @unchecke
 
     private let maximumBytes: Int
     private let expectedLeafCertificateSHA256: Data?
+    private let observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
     private let lock = NSLock()
     private var buffer = Data()
     private var receivedResponse: URLResponse?
@@ -41,23 +42,30 @@ final class BoundedURLSessionLoader: NSObject, URLSessionDataDelegate, @unchecke
     private var session: URLSession?
     private var isComplete = false
 
-    private init(maximumBytes: Int, expectedLeafCertificateSHA256: Data?) {
+    private init(
+        maximumBytes: Int,
+        expectedLeafCertificateSHA256: Data?,
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
+    ) {
         self.maximumBytes = max(1, maximumBytes)
         self.expectedLeafCertificateSHA256 = expectedLeafCertificateSHA256
+        self.observedLeafCertificateSHA256 = observedLeafCertificateSHA256
     }
 
     static func load(
         _ request: URLRequest,
         configuration: URLSessionConfiguration = .ephemeral,
         maximumBytes: Int,
-        expectedLeafCertificateSHA256: Data? = nil
+        expectedLeafCertificateSHA256: Data? = nil,
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)? = nil
     ) async throws -> Output {
         guard (1...absoluteMaximumBytes).contains(maximumBytes) else {
             throw BoundedURLSessionLoaderError.invalidLimit
         }
         let loader = BoundedURLSessionLoader(
             maximumBytes: maximumBytes,
-            expectedLeafCertificateSHA256: expectedLeafCertificateSHA256
+            expectedLeafCertificateSHA256: expectedLeafCertificateSHA256,
+            observedLeafCertificateSHA256: observedLeafCertificateSHA256
         )
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -166,7 +174,7 @@ final class BoundedURLSessionLoader: NSObject, URLSessionDataDelegate, @unchecke
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
-        guard let expectedLeafCertificateSHA256 else {
+        guard expectedLeafCertificateSHA256 != nil || observedLeafCertificateSHA256 != nil else {
             completionHandler(.performDefaultHandling, nil)
             return
         }
@@ -178,13 +186,12 @@ final class BoundedURLSessionLoader: NSObject, URLSessionDataDelegate, @unchecke
         }
         var error: CFError?
         guard SecTrustEvaluateWithError(trust, &error),
-              RelayTLSVerifier.trustMatchesLeafCertificateSHA256(
-                trust,
-                expectedFingerprint: expectedLeafCertificateSHA256
-              ) else {
+              let observedFingerprint = RelayTLSVerifier.leafCertificateSHA256(trust),
+              expectedLeafCertificateSHA256.map({ $0 == observedFingerprint }) ?? true else {
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
+        observedLeafCertificateSHA256?(observedFingerprint)
         completionHandler(.useCredential, URLCredential(trust: trust))
         #else
         completionHandler(.cancelAuthenticationChallenge, nil)

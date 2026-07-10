@@ -1,8 +1,14 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 public enum RelayEndpointParserError: Error, Equatable, LocalizedError {
     case empty
     case missingHost
+    case invalidHost(String)
     case invalidPort(String)
     case unsupportedScheme(String)
     case unsupportedURLComponent(String)
@@ -13,6 +19,8 @@ public enum RelayEndpointParserError: Error, Equatable, LocalizedError {
             return "Relay endpoint is empty."
         case .missingHost:
             return "Relay endpoint is missing a host."
+        case .invalidHost(let value):
+            return "Relay endpoint has an invalid host: \(value)."
         case .invalidPort(let value):
             return "Relay endpoint has an invalid port: \(value)."
         case .unsupportedScheme(let value):
@@ -147,7 +155,68 @@ public enum RelayEndpointParser {
               !trimmed.contains("?"),
               !trimmed.contains("#"),
               !trimmed.contains("@") else {
-            throw RelayEndpointParserError.missingHost
+            throw RelayEndpointParserError.invalidHost(host)
         }
+
+        if isIPv4Address(trimmed) || isIPv6Address(trimmed) {
+            return
+        }
+
+        let dnsName = trimmed.hasSuffix(".") ? String(trimmed.dropLast()) : trimmed
+        if dnsName.caseInsensitiveCompare("localhost") == .orderedSame {
+            return
+        }
+        guard dnsName.utf8.count <= 253,
+              dnsName.contains("."),
+              !dnsName.isEmpty else {
+            throw RelayEndpointParserError.invalidHost(host)
+        }
+        let labels = dnsName.split(separator: ".", omittingEmptySubsequences: false)
+        guard !labels.isEmpty,
+              labels.allSatisfy({ label in
+                  guard !label.isEmpty,
+                        label.utf8.count <= 63,
+                        let first = label.utf8.first,
+                        let last = label.utf8.last,
+                        isASCIIAlphaNumeric(first),
+                        isASCIIAlphaNumeric(last) else {
+                      return false
+                  }
+                  return label.utf8.allSatisfy { isASCIIAlphaNumeric($0) || $0 == 45 }
+              }) else {
+            throw RelayEndpointParserError.invalidHost(host)
+        }
+
+        // A dotted all-numeric value is intended to be IPv4 and must not fall through as DNS.
+        if dnsName.utf8.allSatisfy({ ($0 >= 48 && $0 <= 57) || $0 == 46 }) {
+            throw RelayEndpointParserError.invalidHost(host)
+        }
+    }
+
+    private static func isASCIIAlphaNumeric(_ value: UInt8) -> Bool {
+        (value >= 48 && value <= 57)
+            || (value >= 65 && value <= 90)
+            || (value >= 97 && value <= 122)
+    }
+
+    private static func isIPv4Address(_ host: String) -> Bool {
+        var address = in_addr()
+        return host.withCString { inet_pton(AF_INET, $0, &address) == 1 }
+    }
+
+    private static func isIPv6Address(_ host: String) -> Bool {
+        let addressPart: String
+        if let percent = host.firstIndex(of: "%") {
+            let zone = host[host.index(after: percent)...]
+            guard !zone.isEmpty,
+                  zone.utf8.allSatisfy({ isASCIIAlphaNumeric($0) || $0 == 45 || $0 == 46 || $0 == 95 }) else {
+                return false
+            }
+            addressPart = String(host[..<percent])
+        } else {
+            addressPart = host
+        }
+        var address = in6_addr()
+        return addressPart.withCString { inet_pton(AF_INET6, $0, &address) == 1 }
     }
 }

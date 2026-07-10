@@ -24,6 +24,12 @@ This document defines the repository-owned security requirements for the current
 | SR-18 | Release claims must distinguish internal verification from external assurance. | Roadmap keeps external audit, formal proof, side-channel analysis, and load reports unchecked. | `noctweave_roadmap.md` and release policy. |
 | SR-19 | Remote and persisted inputs must not control unbounded allocation or arithmetic. | Request/response, state, attachment, resend, DHT, PIR, onion, mixnet, URL-loader, and operator-configuration limits are checked before allocation or conversion. | resource-bound and malformed-input regression tests. |
 | SR-20 | OS notification surfaces must not receive decrypted message or contact content. | Native local notifications use a generic encrypted-message signal. | `NotificationManager.swift` and client build verification. |
+| SR-21 | A previously trusted TLS relay certificate change must fail closed. | The reference client records the system-trusted leaf-certificate SHA-256 fingerprint after the first successful relay request and enforces it on subsequent TCP-TLS, HTTPS, and WSS connections; operators may supply a manual pin. | relay TLS observation tests, persisted pin-record tests, and native onboarding/relay-editor tests. |
+
+Trust-on-first-use does not authenticate the first connection beyond normal platform
+certificate validation. Automatic leaf-certificate pins also require operator review when
+the relay legitimately renews or replaces its certificate. A manually verified pin should
+be used when the first connection is within the threat model.
 
 ## Non-Goals
 

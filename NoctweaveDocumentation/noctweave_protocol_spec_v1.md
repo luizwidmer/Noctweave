@@ -48,7 +48,7 @@ Supported relay transports are:
 - HTTP: `POST /relay` with a JSON `RelayRequest`; `GET /health` for simple health probes.
 - WebSocket: binary or text JSON messages on `/relay`.
 
-TLS may be terminated by the relay or by an upstream reverse proxy. Clients record TLS mode in relay endpoint configuration and relay metadata.
+TLS may be terminated by the relay or by an upstream reverse proxy. Clients record TLS mode in relay endpoint configuration and relay metadata. The reference client additionally supports SHA-256 leaf-certificate pinning for TCP-TLS, HTTPS, and WSS. When no manual pin is supplied, it records the certificate only after a system-trusted TLS handshake and a successful Noctweave relay response, then fails closed on later certificate changes. This trust-on-first-use step does not protect the first connection from an attacker able to present a platform-trusted certificate, and legitimate certificate renewal requires explicit re-pinning.
 
 ## Federation
 

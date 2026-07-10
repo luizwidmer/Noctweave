@@ -125,7 +125,10 @@ extension NWConnection {
 }
 
 enum RelayNetworkTransport {
-    static func clientParameters(for endpoint: RelayEndpoint) -> NWParameters {
+    static func clientParameters(
+        for endpoint: RelayEndpoint,
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)? = nil
+    ) -> NWParameters {
         guard endpoint.useTLS else {
             return .tcp
         }
@@ -134,14 +137,15 @@ enum RelayNetworkTransport {
             tls.securityProtocolOptions,
             .TLSv12
         )
-        if let expectedFingerprint = endpoint.tlsCertificateFingerprintSHA256 {
+        if endpoint.tlsCertificateFingerprintSHA256 != nil || observedLeafCertificateSHA256 != nil {
             #if canImport(Security) && canImport(CryptoKit)
             sec_protocol_options_set_verify_block(
                 tls.securityProtocolOptions,
                 { _, trust, completion in
                     let isValid = RelayTLSVerifier.evaluateTrust(
                         trust: trust,
-                        expectedLeafCertificateSHA256: expectedFingerprint
+                        expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256,
+                        observedLeafCertificateSHA256: observedLeafCertificateSHA256
                     )
                     completion(isValid)
                 },
@@ -230,24 +234,32 @@ enum RelayNetworkTransport {
 enum RelayTLSVerifier {
     static func evaluateTrust(
         trust: sec_trust_t,
-        expectedLeafCertificateSHA256: Data
+        expectedLeafCertificateSHA256: Data?,
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)? = nil
     ) -> Bool {
         let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
         var error: CFError?
-        guard SecTrustEvaluateWithError(secTrust, &error) else {
+        guard SecTrustEvaluateWithError(secTrust, &error),
+              let observedFingerprint = leafCertificateSHA256(secTrust),
+              expectedLeafCertificateSHA256.map({ $0 == observedFingerprint }) ?? true else {
             return false
         }
-        return trustMatchesLeafCertificateSHA256(secTrust, expectedFingerprint: expectedLeafCertificateSHA256)
+        observedLeafCertificateSHA256?(observedFingerprint)
+        return true
     }
 
     static func trustMatchesLeafCertificateSHA256(_ trust: SecTrust, expectedFingerprint: Data) -> Bool {
+        leafCertificateSHA256(trust) == expectedFingerprint
+    }
+
+    static func leafCertificateSHA256(_ trust: SecTrust) -> Data? {
         guard let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
               let leaf = chain.first else {
-            return false
+            return nil
         }
         let data = SecCertificateCopyData(leaf) as Data
         let digest = SHA256.hash(data: data)
-        return Data(digest) == expectedFingerprint
+        return Data(digest)
     }
 }
 #endif

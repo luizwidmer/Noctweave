@@ -7,6 +7,16 @@ import CryptoKit
 import Security
 #endif
 
+public struct RelayTLSObservation {
+    public let response: RelayResponse
+    public let leafCertificateSHA256: Data?
+
+    public init(response: RelayResponse, leafCertificateSHA256: Data?) {
+        self.response = response
+        self.leafCertificateSHA256 = leafCertificateSHA256
+    }
+}
+
 public struct RelayClient {
     public let endpoint: RelayEndpoint
     public let authToken: String?
@@ -21,6 +31,36 @@ public struct RelayClient {
     }
 
     public func send(_ request: RelayRequest, timeout: TimeInterval = defaultTimeout) async throws -> RelayResponse {
+        try await sendInternal(request, timeout: timeout, observedLeafCertificateSHA256: nil)
+    }
+
+    /// Sends a normal relay request while returning the system-trusted TLS leaf fingerprint.
+    /// The observation is produced only when the full relay request succeeds; plaintext
+    /// transports return `nil`.
+    public func sendObservingTLS(
+        _ request: RelayRequest,
+        timeout: TimeInterval = defaultTimeout
+    ) async throws -> RelayTLSObservation {
+        let observation = RelayTLSObservationBox()
+        let observer: @Sendable (Data) -> Void = { fingerprint in
+            observation.record(fingerprint)
+        }
+        let response = try await sendInternal(
+            request,
+            timeout: timeout,
+            observedLeafCertificateSHA256: endpoint.useTLS ? observer : nil
+        )
+        return RelayTLSObservation(
+            response: response,
+            leafCertificateSHA256: observation.value
+        )
+    }
+
+    private func sendInternal(
+        _ request: RelayRequest,
+        timeout: TimeInterval,
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
+    ) async throws -> RelayResponse {
         guard timeout.isFinite, timeout >= 0.1, timeout <= 300 else {
             throw RelayNetworkError.invalidTimeout
         }
@@ -40,19 +80,42 @@ public struct RelayClient {
         }
         switch endpoint.transport {
         case .tcp:
-            return try await sendTCP(authenticatedRequest, encodedRequest: encodedRequest, timeout: timeout)
+            return try await sendTCP(
+                authenticatedRequest,
+                encodedRequest: encodedRequest,
+                timeout: timeout,
+                observedLeafCertificateSHA256: observedLeafCertificateSHA256
+            )
         case .http:
-            return try await sendHTTP(authenticatedRequest, encodedRequest: encodedRequest, timeout: timeout)
+            return try await sendHTTP(
+                authenticatedRequest,
+                encodedRequest: encodedRequest,
+                timeout: timeout,
+                observedLeafCertificateSHA256: observedLeafCertificateSHA256
+            )
         case .websocket:
-            return try await sendWebSocket(authenticatedRequest, encodedRequest: encodedRequest, timeout: timeout)
+            return try await sendWebSocket(
+                authenticatedRequest,
+                encodedRequest: encodedRequest,
+                timeout: timeout,
+                observedLeafCertificateSHA256: observedLeafCertificateSHA256
+            )
         }
     }
 
-    private func sendTCP(_ request: RelayRequest, encodedRequest: Data, timeout: TimeInterval) async throws -> RelayResponse {
+    private func sendTCP(
+        _ request: RelayRequest,
+        encodedRequest: Data,
+        timeout: TimeInterval,
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
+    ) async throws -> RelayResponse {
         guard let port = NWEndpoint.Port(rawValue: endpoint.port) else {
             throw RelayNetworkError.connectionFailed
         }
-        let parameters = RelayNetworkTransport.clientParameters(for: endpoint)
+        let parameters = RelayNetworkTransport.clientParameters(
+            for: endpoint,
+            observedLeafCertificateSHA256: observedLeafCertificateSHA256
+        )
         let connection = NWConnection(host: NWEndpoint.Host(endpoint.host), port: port, using: parameters)
         defer { connection.cancel() }
         return try await withTimeout(seconds: timeout) {
@@ -63,7 +126,12 @@ public struct RelayClient {
         }
     }
 
-    private func sendHTTP(_ request: RelayRequest, encodedRequest: Data, timeout: TimeInterval) async throws -> RelayResponse {
+    private func sendHTTP(
+        _ request: RelayRequest,
+        encodedRequest: Data,
+        timeout: TimeInterval,
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
+    ) async throws -> RelayResponse {
         guard var components = URLComponents(string: "/") else {
             throw RelayNetworkError.invalidResponse
         }
@@ -89,7 +157,8 @@ public struct RelayClient {
                 let (data, response) = try await BoundedURLSessionLoader.load(
                     httpRequest,
                     maximumBytes: Self.maxResponseBytes,
-                    expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256
+                    expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256,
+                    observedLeafCertificateSHA256: observedLeafCertificateSHA256
                 )
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw RelayClientResponseError.invalidHTTPResponse
@@ -101,14 +170,21 @@ public struct RelayClient {
             } catch {
                 // Compatibility path for HTTP reverse-proxied relays exposing only GET /health.
                 if request.type == .health {
-                    return try await sendHTTPHealthProbe()
+                    return try await sendHTTPHealthProbe(
+                        observedLeafCertificateSHA256: observedLeafCertificateSHA256
+                    )
                 }
                 throw error
             }
         }
     }
 
-    private func sendWebSocket(_ request: RelayRequest, encodedRequest: Data, timeout: TimeInterval) async throws -> RelayResponse {
+    private func sendWebSocket(
+        _ request: RelayRequest,
+        encodedRequest: Data,
+        timeout: TimeInterval,
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
+    ) async throws -> RelayResponse {
         guard var components = URLComponents(string: "/") else {
             throw RelayNetworkError.invalidResponse
         }
@@ -121,7 +197,7 @@ public struct RelayClient {
             throw RelayNetworkError.invalidResponse
         }
 
-        let session = makeURLSession()
+        let session = makeURLSession(observedLeafCertificateSHA256: observedLeafCertificateSHA256)
         let task = session.webSocketTask(with: url)
         task.resume()
         defer {
@@ -148,7 +224,9 @@ public struct RelayClient {
         }
     }
 
-    private func sendHTTPHealthProbe() async throws -> RelayResponse {
+    private func sendHTTPHealthProbe(
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
+    ) async throws -> RelayResponse {
         guard var components = URLComponents(string: "/") else {
             throw RelayNetworkError.invalidResponse
         }
@@ -166,7 +244,8 @@ public struct RelayClient {
         let (data, response) = try await BoundedURLSessionLoader.load(
             request,
             maximumBytes: Self.maxResponseBytes,
-            expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256
+            expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256,
+            observedLeafCertificateSHA256: observedLeafCertificateSHA256
         )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RelayClientResponseError.invalidHTTPResponse
@@ -241,10 +320,18 @@ public struct RelayClient {
         return .badHTTPStatus(code: response.statusCode, bodySummary: summary)
     }
 
-    private func makeURLSession() -> URLSession {
-        let delegate = endpoint.tlsCertificateFingerprintSHA256.map {
-            RelayPinnedSessionDelegate(expectedLeafCertificateSHA256: $0)
-        }
+    private func makeURLSession(
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
+    ) -> URLSession {
+        let delegate: RelayTLSSessionDelegate? = {
+            guard endpoint.tlsCertificateFingerprintSHA256 != nil || observedLeafCertificateSHA256 != nil else {
+                return nil
+            }
+            return RelayTLSSessionDelegate(
+                expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256,
+                observedLeafCertificateSHA256: observedLeafCertificateSHA256
+            )
+        }()
         return URLSession(
             configuration: .ephemeral,
             delegate: delegate,
@@ -255,6 +342,26 @@ public struct RelayClient {
 
 private struct RelayTimeoutError: LocalizedError {
     var errorDescription: String? { "Relay request timed out." }
+}
+
+private final class RelayTLSObservationBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fingerprint: Data?
+
+    func record(_ value: Data) {
+        guard value.count == 32 else { return }
+        lock.lock()
+        if fingerprint == nil {
+            fingerprint = value
+        }
+        lock.unlock()
+    }
+
+    var value: Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return fingerprint
+    }
 }
 
 private enum RelayClientResponseError: LocalizedError {
@@ -298,11 +405,16 @@ private func withTimeout<T>(
 }
 
 #if canImport(Security) && canImport(CryptoKit)
-private final class RelayPinnedSessionDelegate: NSObject, URLSessionDelegate {
-    private let expectedLeafCertificateSHA256: Data
+private final class RelayTLSSessionDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+    private let expectedLeafCertificateSHA256: Data?
+    private let observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
 
-    init(expectedLeafCertificateSHA256: Data) {
+    init(
+        expectedLeafCertificateSHA256: Data?,
+        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
+    ) {
         self.expectedLeafCertificateSHA256 = expectedLeafCertificateSHA256
+        self.observedLeafCertificateSHA256 = observedLeafCertificateSHA256
     }
 
     func urlSession(
@@ -317,10 +429,12 @@ private final class RelayPinnedSessionDelegate: NSObject, URLSessionDelegate {
         }
         var error: CFError?
         guard SecTrustEvaluateWithError(trust, &error),
-              RelayTLSVerifier.trustMatchesLeafCertificateSHA256(trust, expectedFingerprint: expectedLeafCertificateSHA256) else {
+              let observedFingerprint = RelayTLSVerifier.leafCertificateSHA256(trust),
+              expectedLeafCertificateSHA256.map({ $0 == observedFingerprint }) ?? true else {
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
+        observedLeafCertificateSHA256?(observedFingerprint)
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }

@@ -24,7 +24,8 @@
 ## Relay APIs
 
 - `RelayEndpoint` and `RelayEndpointParser`: normalized TCP, HTTP, HTTPS, WebSocket, WSS, and TLS relay endpoints.
-- `RelayClient`: transport-aware relay request client with timeout and response-size bounds.
+- `RelayClient`: transport-aware relay request client with timeout and response-size bounds. `sendObservingTLS(...)` returns the system-trusted TLS leaf-certificate SHA-256 fingerprint only after a complete relay request succeeds, allowing clients to implement explicit or trust-on-first-use pinning.
+- `RelayCertificatePinRecord`: bounded persisted relay trust record. Automatic first-use pins and manual pins are distinguished so a client can explain its trust decision.
 - `RelayRequest` and `RelayResponse`: canonical relay protocol request/response envelopes.
 - `RelayServer` and `RelayStore`: in-process relay implementation used by tests and local tools.
 - `NoctweaveJS/NoctweaveRelayClient`: browser/Node HTTP and WebSocket relay access for applications that need relay diagnostics, inbox polling, or custom protocol integration.

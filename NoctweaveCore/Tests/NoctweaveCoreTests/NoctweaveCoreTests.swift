@@ -112,6 +112,48 @@ final class NoctweaveCoreTests: XCTestCase {
         }
     }
 
+    func testRelayClientTLSObservationIsNilForPlaintextTransport() async throws {
+        let port = UInt16.random(in: 42_000...44_999)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port, transport: .tcp)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let observation = try await RelayClient(endpoint: endpoint).sendObservingTLS(.health(), timeout: 2)
+        XCTAssertEqual(observation.response.type, .ok)
+        XCTAssertNil(observation.leafCertificateSHA256)
+    }
+
+    func testLiveTLSObservationAndPinEnforcementWhenConfigured() async throws {
+        guard let value = ProcessInfo.processInfo.environment["NOCTWEAVE_LIVE_TLS_RELAY"],
+              !value.isEmpty else {
+            throw XCTSkip("Set NOCTWEAVE_LIVE_TLS_RELAY to run the live TLS pin test.")
+        }
+        var endpoint = try RelayEndpointParser.parse(value)
+        guard endpoint.useTLS else {
+            XCTFail("NOCTWEAVE_LIVE_TLS_RELAY must use TLS.")
+            return
+        }
+
+        let observation = try await RelayClient(endpoint: endpoint).sendObservingTLS(.info(), timeout: 8)
+        XCTAssertEqual(observation.response.type, .info)
+        let fingerprint = try XCTUnwrap(observation.leafCertificateSHA256)
+        XCTAssertEqual(fingerprint.count, 32)
+
+        endpoint.tlsCertificateFingerprintSHA256 = fingerprint
+        let pinnedResponse = try await RelayClient(endpoint: endpoint).send(.info(), timeout: 8)
+        XCTAssertEqual(pinnedResponse.type, .info)
+
+        endpoint.tlsCertificateFingerprintSHA256 = Data(repeating: 0xFF, count: 32)
+        do {
+            _ = try await RelayClient(endpoint: endpoint).send(.info(), timeout: 8)
+            XCTFail("A mismatched TLS certificate pin must fail closed.")
+        } catch {
+            // Expected.
+        }
+    }
+
     func testRelayClientRejectsUnsafeConfigurationBeforeNetworking() async throws {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 9)
 
@@ -5237,6 +5279,40 @@ final class NoctweaveCoreTests: XCTestCase {
         let decoded = try NoctweaveCoder.decode(ClientState.self, from: data)
         XCTAssertFalse(decoded.privacy.secureTypingEnabled)
         XCTAssertTrue(decoded.privacy.useSecureCameraCapture)
+    }
+
+    func testRelayCertificatePinsPersistAndRejectMalformedRecords() throws {
+        let valid = RelayCertificatePinRecord(
+            host: "relay.example",
+            port: 443,
+            useTLS: true,
+            transport: .http,
+            fingerprintSHA256: Data(repeating: 0xA5, count: 32),
+            pinnedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            origin: .automaticFirstUse
+        )
+        let invalid = RelayCertificatePinRecord(
+            host: "relay.invalid",
+            port: 443,
+            useTLS: true,
+            transport: .http,
+            fingerprintSHA256: Data(repeating: 0xB6, count: 31),
+            pinnedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            origin: .manual
+        )
+        let state = ClientState(
+            identity: Identity(displayName: "Alice"),
+            relay: RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http),
+            inboxId: "inbox",
+            relayCertificatePins: [invalid, valid]
+        )
+
+        XCTAssertEqual(state.relayCertificatePins, [valid])
+        let decoded = try NoctweaveCoder.decode(
+            ClientState.self,
+            from: NoctweaveCoder.encode(state)
+        )
+        XCTAssertEqual(decoded.relayCertificatePins, [valid])
     }
 
     func testRelayRequestEncoding() throws {

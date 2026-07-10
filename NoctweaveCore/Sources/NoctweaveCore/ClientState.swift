@@ -1,5 +1,42 @@
 import Foundation
 
+public enum RelayCertificatePinOrigin: String, Codable, Equatable {
+    case automaticFirstUse
+    case manual
+}
+
+public struct RelayCertificatePinRecord: Codable, Equatable, Identifiable {
+    public var host: String
+    public var port: UInt16
+    public var useTLS: Bool
+    public var transport: RelayEndpointTransport
+    public var fingerprintSHA256: Data
+    public var pinnedAt: Date
+    public var origin: RelayCertificatePinOrigin
+
+    public var id: String {
+        "\(transport.rawValue):\(useTLS ? "tls" : "plain"):\(host.lowercased()):\(port)"
+    }
+
+    public init(
+        host: String,
+        port: UInt16,
+        useTLS: Bool,
+        transport: RelayEndpointTransport,
+        fingerprintSHA256: Data,
+        pinnedAt: Date = Date(),
+        origin: RelayCertificatePinOrigin
+    ) {
+        self.host = host
+        self.port = port
+        self.useTLS = useTLS
+        self.transport = transport
+        self.fingerprintSHA256 = fingerprintSHA256
+        self.pinnedAt = pinnedAt
+        self.origin = origin
+    }
+}
+
 public struct ClientState: Codable {
     public var identityProfiles: [IdentityProfile]
     public var activeIdentityId: UUID
@@ -10,6 +47,7 @@ public struct ClientState: Codable {
     public var privacy: PrivacySettings
     public var appLock: AppLockSettings
     public var chatList: ChatListSettings
+    public var relayCertificatePins: [RelayCertificatePinRecord]
     public var hasCompletedOnboarding: Bool
     public var hasAcceptedPrivacyPolicy: Bool
     public var hasAcceptedTermsOfUse: Bool
@@ -73,6 +111,7 @@ public struct ClientState: Codable {
         case privacy
         case appLock
         case chatList
+        case relayCertificatePins
         case hasCompletedOnboarding
         case hasAcceptedPrivacyPolicy
         case hasAcceptedTermsOfUse
@@ -93,6 +132,7 @@ public struct ClientState: Codable {
         privacy: PrivacySettings = PrivacySettings(),
         appLock: AppLockSettings = AppLockSettings(),
         chatList: ChatListSettings = ChatListSettings(),
+        relayCertificatePins: [RelayCertificatePinRecord] = [],
         hasCompletedOnboarding: Bool = true,
         hasAcceptedPrivacyPolicy: Bool = true,
         hasAcceptedTermsOfUse: Bool = true,
@@ -107,6 +147,7 @@ public struct ClientState: Codable {
         self.privacy = privacy
         self.appLock = appLock
         self.chatList = chatList
+        self.relayCertificatePins = Self.sanitizedRelayCertificatePins(relayCertificatePins)
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.hasAcceptedPrivacyPolicy = hasAcceptedPrivacyPolicy
         self.hasAcceptedTermsOfUse = hasAcceptedTermsOfUse
@@ -146,6 +187,9 @@ public struct ClientState: Codable {
         privacy = try container.decodeIfPresent(PrivacySettings.self, forKey: .privacy) ?? PrivacySettings()
         appLock = try container.decodeIfPresent(AppLockSettings.self, forKey: .appLock) ?? AppLockSettings()
         chatList = try container.decodeIfPresent(ChatListSettings.self, forKey: .chatList) ?? ChatListSettings()
+        relayCertificatePins = Self.sanitizedRelayCertificatePins(
+            try container.decodeIfPresent([RelayCertificatePinRecord].self, forKey: .relayCertificatePins) ?? []
+        )
         hasCompletedOnboarding = try container.decode(Bool.self, forKey: .hasCompletedOnboarding)
         hasAcceptedPrivacyPolicy = try container.decode(Bool.self, forKey: .hasAcceptedPrivacyPolicy)
         hasAcceptedTermsOfUse = try container.decode(Bool.self, forKey: .hasAcceptedTermsOfUse)
@@ -172,9 +216,26 @@ public struct ClientState: Codable {
         try container.encode(privacy, forKey: .privacy)
         try container.encode(appLock, forKey: .appLock)
         try container.encode(chatList, forKey: .chatList)
+        try container.encode(relayCertificatePins, forKey: .relayCertificatePins)
         try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
         try container.encode(hasAcceptedPrivacyPolicy, forKey: .hasAcceptedPrivacyPolicy)
         try container.encode(hasAcceptedTermsOfUse, forKey: .hasAcceptedTermsOfUse)
+    }
+
+    private static func sanitizedRelayCertificatePins(
+        _ records: [RelayCertificatePinRecord]
+    ) -> [RelayCertificatePinRecord] {
+        var byID: [String: RelayCertificatePinRecord] = [:]
+        for record in records.prefix(256) where
+            record.useTLS
+                && record.port > 0
+                && !record.host.isEmpty
+                && record.host.utf8.count <= 253
+                && record.fingerprintSHA256.count == 32
+                && record.pinnedAt.timeIntervalSince1970.isFinite {
+            byID[record.id] = record
+        }
+        return byID.values.sorted { $0.id < $1.id }
     }
 
     public mutating func upsert(contact: Contact) {
