@@ -80,6 +80,8 @@ plaintext.
 
 ## JavaScript Client
 
+![NoctweaveJS encrypted browser client](docs/assets/NoctweaveJSClient.png)
+
 NoctweaveJS includes two browser surfaces:
 
 - `client/` is the production-oriented shell with encrypted profile setup,
