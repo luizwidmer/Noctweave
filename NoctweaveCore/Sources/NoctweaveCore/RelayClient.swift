@@ -17,21 +17,87 @@ public struct RelayTLSObservation {
     }
 }
 
+public enum RelayClientPolicyError: Error, Equatable, Sendable {
+    case invalidMaximumResponseBytes
+    case invalidMaximumRequestBytes
+    case invalidTimeout
+}
+
+/// Deployment-tunable relay client resource policy. The public absolute limits
+/// remain fixed safety ceilings so an operator cannot accidentally configure
+/// unbounded allocations or request durations.
+public struct RelayClientPolicy: Equatable, Sendable {
+    public static let defaultMaximumResponseBytes = 1_000_000
+    public static let defaultMaximumRequestBytes = 512 * 1_024
+    public static let defaultTimeout: TimeInterval = 8
+
+    public static let absoluteMaximumResponseBytes = 16 * 1_024 * 1_024
+    public static let absoluteMaximumRequestBytes = 8 * 1_024 * 1_024
+    public static let absoluteMaximumTimeout: TimeInterval = 300
+
+    public static let `default` = RelayClientPolicy(
+        validatedMaximumResponseBytes: defaultMaximumResponseBytes,
+        validatedMaximumRequestBytes: defaultMaximumRequestBytes,
+        validatedTimeout: defaultTimeout
+    )
+
+    public let maximumResponseBytes: Int
+    public let maximumRequestBytes: Int
+    public let timeout: TimeInterval
+
+    public init(
+        maximumResponseBytes: Int = defaultMaximumResponseBytes,
+        maximumRequestBytes: Int = defaultMaximumRequestBytes,
+        timeout: TimeInterval = defaultTimeout
+    ) throws {
+        guard (1_024...Self.absoluteMaximumResponseBytes).contains(maximumResponseBytes) else {
+            throw RelayClientPolicyError.invalidMaximumResponseBytes
+        }
+        guard (1_024...Self.absoluteMaximumRequestBytes).contains(maximumRequestBytes) else {
+            throw RelayClientPolicyError.invalidMaximumRequestBytes
+        }
+        guard timeout.isFinite, timeout >= 0.1, timeout <= Self.absoluteMaximumTimeout else {
+            throw RelayClientPolicyError.invalidTimeout
+        }
+        self.init(
+            validatedMaximumResponseBytes: maximumResponseBytes,
+            validatedMaximumRequestBytes: maximumRequestBytes,
+            validatedTimeout: timeout
+        )
+    }
+
+    private init(
+        validatedMaximumResponseBytes: Int,
+        validatedMaximumRequestBytes: Int,
+        validatedTimeout: TimeInterval
+    ) {
+        maximumResponseBytes = validatedMaximumResponseBytes
+        maximumRequestBytes = validatedMaximumRequestBytes
+        timeout = validatedTimeout
+    }
+}
+
 public struct RelayClient {
     public let endpoint: RelayEndpoint
     public let authToken: String?
-    public static let maxResponseBytes = 1_000_000
-    public static let maxRequestBytes = 512 * 1024
+    public let policy: RelayClientPolicy
+    public static let maxResponseBytes = RelayClientPolicy.defaultMaximumResponseBytes
+    public static let maxRequestBytes = RelayClientPolicy.defaultMaximumRequestBytes
     public static let maxAuthenticationBytes = 4_096
-    public static let defaultTimeout: TimeInterval = 8
+    public static let defaultTimeout = RelayClientPolicy.defaultTimeout
 
-    public init(endpoint: RelayEndpoint, authToken: String? = nil) {
+    public init(
+        endpoint: RelayEndpoint,
+        authToken: String? = nil,
+        policy: RelayClientPolicy = .default
+    ) {
         self.endpoint = endpoint
         self.authToken = authToken
+        self.policy = policy
     }
 
-    public func send(_ request: RelayRequest, timeout: TimeInterval = defaultTimeout) async throws -> RelayResponse {
-        try await sendInternal(request, timeout: timeout, observedLeafCertificateSHA256: nil)
+    public func send(_ request: RelayRequest, timeout: TimeInterval? = nil) async throws -> RelayResponse {
+        try await sendInternal(request, timeout: timeout ?? policy.timeout, observedLeafCertificateSHA256: nil)
     }
 
     /// Sends a normal relay request while returning the system-trusted TLS leaf fingerprint.
@@ -39,7 +105,7 @@ public struct RelayClient {
     /// transports return `nil`.
     public func sendObservingTLS(
         _ request: RelayRequest,
-        timeout: TimeInterval = defaultTimeout
+        timeout: TimeInterval? = nil
     ) async throws -> RelayTLSObservation {
         let observation = RelayTLSObservationBox()
         let observer: @Sendable (Data) -> Void = { fingerprint in
@@ -47,7 +113,7 @@ public struct RelayClient {
         }
         let response = try await sendInternal(
             request,
-            timeout: timeout,
+            timeout: timeout ?? policy.timeout,
             observedLeafCertificateSHA256: endpoint.useTLS ? observer : nil
         )
         return RelayTLSObservation(
@@ -75,7 +141,7 @@ public struct RelayClient {
         }
         let authenticatedRequest = request.withAuthToken(effectiveAuthToken)
         let encodedRequest = try NoctweaveCoder.encode(authenticatedRequest)
-        guard encodedRequest.count <= Self.maxRequestBytes else {
+        guard encodedRequest.count <= policy.maximumRequestBytes else {
             throw RelayNetworkError.requestTooLarge
         }
         switch endpoint.transport {
@@ -121,7 +187,7 @@ public struct RelayClient {
         return try await withTimeout(seconds: timeout) {
             try await connection.awaitReady()
             try await connection.sendLine(encodedRequest)
-            let responseData = try await connection.receiveLine(maxLength: Self.maxResponseBytes)
+            let responseData = try await connection.receiveLine(maxLength: policy.maximumResponseBytes)
             return try NoctweaveCoder.decode(RelayResponse.self, from: responseData)
         }
     }
@@ -156,7 +222,7 @@ public struct RelayClient {
             do {
                 let (data, response) = try await BoundedURLSessionLoader.load(
                     httpRequest,
-                    maximumBytes: Self.maxResponseBytes,
+                    maximumBytes: policy.maximumResponseBytes,
                     expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256,
                     observedLeafCertificateSHA256: observedLeafCertificateSHA256
                 )
@@ -217,7 +283,7 @@ public struct RelayClient {
             @unknown default:
                 throw RelayNetworkError.invalidResponse
             }
-            guard responseData.count <= Self.maxResponseBytes else {
+            guard responseData.count <= policy.maximumResponseBytes else {
                 throw RelayNetworkError.invalidResponse
             }
             return try Self.decodeRelayResponse(responseData, for: request.type)
@@ -243,7 +309,7 @@ public struct RelayClient {
         request.setValue("application/json, text/plain;q=0.9", forHTTPHeaderField: "Accept")
         let (data, response) = try await BoundedURLSessionLoader.load(
             request,
-            maximumBytes: Self.maxResponseBytes,
+            maximumBytes: policy.maximumResponseBytes,
             expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256,
             observedLeafCertificateSHA256: observedLeafCertificateSHA256
         )

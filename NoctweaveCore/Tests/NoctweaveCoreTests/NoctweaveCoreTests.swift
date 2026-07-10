@@ -179,6 +179,44 @@ final class NoctweaveCoreTests: XCTestCase {
         }
     }
 
+    func testRelayClientAcceptsBoundedDeploymentPolicy() throws {
+        let policy = try RelayClientPolicy(
+            maximumResponseBytes: 2 * 1_024 * 1_024,
+            maximumRequestBytes: 1 * 1_024 * 1_024,
+            timeout: 30
+        )
+        let client = RelayClient(
+            endpoint: RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http),
+            policy: policy
+        )
+
+        XCTAssertEqual(client.policy.maximumResponseBytes, 2 * 1_024 * 1_024)
+        XCTAssertEqual(client.policy.maximumRequestBytes, 1 * 1_024 * 1_024)
+        XCTAssertEqual(client.policy.timeout, 30)
+    }
+
+    func testRelayClientPolicyRejectsValuesAboveSafetyCeilings() {
+        XCTAssertThrowsError(
+            try RelayClientPolicy(
+                maximumResponseBytes: RelayClientPolicy.absoluteMaximumResponseBytes + 1
+            )
+        ) { error in
+            XCTAssertEqual(error as? RelayClientPolicyError, .invalidMaximumResponseBytes)
+        }
+        XCTAssertThrowsError(
+            try RelayClientPolicy(
+                maximumRequestBytes: RelayClientPolicy.absoluteMaximumRequestBytes + 1
+            )
+        ) { error in
+            XCTAssertEqual(error as? RelayClientPolicyError, .invalidMaximumRequestBytes)
+        }
+        XCTAssertThrowsError(
+            try RelayClientPolicy(timeout: RelayClientPolicy.absoluteMaximumTimeout + 1)
+        ) { error in
+            XCTAssertEqual(error as? RelayClientPolicyError, .invalidTimeout)
+        }
+    }
+
     func testHeadlessMessagingClientRedactsRelayRejectionDetails() async throws {
         let port = UInt16.random(in: 42_000...44_999)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)

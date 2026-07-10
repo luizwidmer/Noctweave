@@ -24,7 +24,7 @@
 ## Relay APIs
 
 - `RelayEndpoint` and `RelayEndpointParser`: normalized TCP, HTTP, HTTPS, WebSocket, WSS, and TLS relay endpoints.
-- `RelayClient`: transport-aware relay request client with timeout and response-size bounds. `sendObservingTLS(...)` returns the system-trusted TLS leaf-certificate SHA-256 fingerprint only after a complete relay request succeeds, allowing clients to implement explicit or trust-on-first-use pinning.
+- `RelayClient`: transport-aware relay request client with a deployment-specific `RelayClientPolicy` for request size, response size, and timeout budgets. Policy values are validated against fixed safety ceilings; cryptographic dimensions and wire-validation limits are not deployment overrides. `sendObservingTLS(...)` returns the system-trusted TLS leaf-certificate SHA-256 fingerprint only after a complete relay request succeeds, allowing clients to implement explicit or trust-on-first-use pinning.
 - `RelayCertificatePinRecord`: bounded persisted relay trust record. Automatic first-use pins and manual pins are distinguished so a client can explain its trust decision.
 - `RelayRequest` and `RelayResponse`: canonical relay protocol request/response envelopes.
 - `RelayServer` and `RelayStore`: in-process relay implementation used by tests and local tools.
@@ -39,6 +39,9 @@ ML-KEM keys, exchange signed contact offers, establish sessions, and send or
 decrypt interoperable envelopes. It is still pre-1.0 and unaudited. Raw
 `localStorage`, IndexedDB, and database adapters do not encrypt by themselves;
 applications must wrap sensitive state and manage the wrapping key separately.
+`NoctweaveRelayClient` accepts a bounded `policy` object for production timeout,
+default raw-TCP port, request-size, and response-size configuration. Explicit
+HTTP(S)/WebSocket URLs retain their standard or specified port.
 
 ## Operator And Federation APIs
 
