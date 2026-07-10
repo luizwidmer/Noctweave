@@ -7,11 +7,13 @@
 ![Security: unaudited](https://img.shields.io/badge/security-unaudited-red)
 ![Protocol: ML-KEM / ML-DSA](https://img.shields.io/badge/PQ-ML--KEM--768%20%2B%20ML--DSA--65-purple)
 
-Post-quantum encrypted messaging infrastructure.
-
-Noctweave gives developers a Swift core, Linux relay, JavaScript relay client,
-and CLI for building encrypted direct and group messaging without trusting the
+Post-quantum messaging infrastructure for applications that should not trust a
 relay with plaintext.
+
+Noctweave provides a Swift protocol core, a Linux/Docker relay, a JavaScript
+client library, and a headless CLI. You bring the application and choose the
+relay infrastructure; Noctweave handles identities, encrypted envelopes,
+mailbox delivery, and federation primitives.
 
 - Post-quantum identity and session setup: ML-DSA-65 + ML-KEM-768
 - Relay-backed delivery for offline clients
@@ -19,15 +21,36 @@ relay with plaintext.
 - Federation modes for solo relays, private meshes, curated networks, and open relay discovery
 - Metadata-reduction primitives with clearly documented limits
 
+[Quick start](#try-it-locally) · [Components](#repository-components) ·
+[Security status](#security-status) · [Documentation](#documentation-map) ·
+[Licensing](#license)
+
 ![Noctweave architecture](docs/assets/NoctweaveArchitecture.svg)
+
+## Why Noctweave?
+
+Most encrypted-messaging projects need more than cryptographic primitives. They
+also need offline delivery, key continuity, bounded parsing, recovery from
+out-of-order messages, relay operations, and a clear trust model. Noctweave
+packages those concerns into interoperable components while keeping plaintext
+and private identity keys on client devices.
+
+| Concern | Noctweave approach |
+| --- | --- |
+| Long-lived identity | ML-DSA-65 signatures and signed continuity events |
+| Session setup | ML-KEM-768 prekeys and periodic post-quantum root ratchets |
+| Message protection | Padded AES-256-GCM envelopes with symmetric ratcheting |
+| Offline delivery | Authenticated relay mailboxes that store ciphertext |
+| Independent operation | Self-hosted relays and explicit federation modes |
+| Resource safety | Bounded wire inputs, storage, discovery, and client policy |
 
 ## Try It Locally
 
-Terminal 1: run an in-memory HTTP relay.
+Run an in-memory HTTP relay:
 
 ```sh
-swift build --package-path "NoctweaveRelayServer"
-"NoctweaveRelayServer/.build/debug/NoctweaveRelayServer" \
+swift build --package-path NoctweaveRelayServer
+NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
   --host 127.0.0.1 \
   --port 9341 \
   --http-port 9339 \
@@ -35,7 +58,7 @@ swift build --package-path "NoctweaveRelayServer"
   --memory-only
 ```
 
-Terminal 2: run the browser messenger demo.
+In another terminal, run the browser messenger demo:
 
 ```sh
 cd NoctweaveJS
@@ -48,29 +71,58 @@ Open two profiles:
 - [http://127.0.0.1:5173/examples/browser-client/?profile=alice](http://127.0.0.1:5173/examples/browser-client/?profile=alice)
 - [http://127.0.0.1:5173/examples/browser-client/?profile=bob](http://127.0.0.1:5173/examples/browser-client/?profile=bob)
 
-Create an inbox in both profiles, exchange contact codes, send a message, then
-fetch it from the other profile. The demo creates in-browser ML-DSA/ML-KEM key
-material through the Noctweave JS crypto adapter, signs relay requests, sends
-encrypted envelopes, and verifies/decrypts received messages.
+Create an inbox in both profiles, exchange contact codes, send a message, and
+fetch it from the other profile. All identity and session keys are generated in
+the browser. The relay receives signed requests and sealed envelopes—not chat
+plaintext.
 
-## What You Get
+![Noctweave message lifecycle](docs/assets/NoctweaveMessageFlow.svg)
+
+## JavaScript Client
+
+NoctweaveJS includes two browser surfaces:
+
+- `client/` is the production-oriented shell with encrypted profile setup,
+  relay verification, post-quantum identity creation, contact-code export,
+  locking, and local reset.
+- `examples/browser-client/` is the interoperability demo used to exercise
+  pairing and encrypted message exchange between two browser profiles.
+
+Run the production-oriented client with:
+
+```sh
+cd NoctweaveJS
+npm run dev:client
+```
+
+Then open [http://127.0.0.1:5173/client/](http://127.0.0.1:5173/client/).
+NoctweaveJS supports application-managed memory, localStorage, IndexedDB, and
+database adapters; sensitive records should use the encrypted store wrapper.
+
+## Repository Components
 
 ![Noctweave feature map](docs/assets/NoctweaveFeatureMap.svg)
 
-- `NoctweaveCore/` - Swift package for protocol models, post-quantum crypto bindings, relay client/server primitives, message ratchets, federation logic, and tests.
-- `NoctweaveCore/Sources/NoctyraCLI/` - headless command-line client for relay diagnostics, API scripting, direct messaging, groups, attachments, voice payloads, identity rotation, and identity burn.
-- `NoctweaveJS/` - JavaScript ESM package for browser/Node relay access, request helpers, WASM-backed liboqs integration, and memory, browser, IndexedDB, or database-backed storage.
-- `NoctweaveRelayServer/` - Linux relay implementation with TCP, HTTP, WebSocket, Docker, SQLite persistence, attachment TTLs, IPFS-compatible attachment offload, federation, DHT/PEX, and relay tests.
-- `NoctweaveDocumentation/` - protocol specs, OpenAPI schema, security requirements, roadmap, release policy, and relay operator guidance.
-- `AgentGuides/` and `AgentSkills/` - reusable AI-agent guidance for operating Noctweave messaging and relay flows.
+- [`NoctweaveCore/`](NoctweaveCore/) — Swift protocol models, post-quantum
+  bindings, ratchets, relay primitives, federation logic, and tests.
+- [`NoctweaveCore/Sources/NoctyraCLI/`](NoctweaveCore/Sources/NoctyraCLI/) —
+  headless identity, messaging, group, attachment, and relay workflows.
+- [`NoctweaveJS/`](NoctweaveJS/) — browser/Node relay client, encrypted storage
+  wrappers, WebCrypto helpers, and WASM-backed liboqs integration.
+- [`NoctweaveRelayServer/`](NoctweaveRelayServer/) — Linux relay with TCP,
+  HTTP/WebSocket, Docker, SQLite, federation, and optional IPFS offload.
+- [`NoctweaveDocumentation/`](NoctweaveDocumentation/) — protocol, API,
+  security, federation, deployment, and release documentation.
+- [`AgentGuides/`](AgentGuides/) and [`AgentSkills/`](AgentSkills/) — reference
+  guidance for agents that integrate or operate Noctweave.
 
-## Who Should Care?
+## Intended Users
 
-- Privacy app developers who want relay-backed encrypted messaging
-- Swift developers building secure messaging clients
-- Relay operators who want to run independent infrastructure
-- Researchers reviewing post-quantum messaging and metadata-reduction designs
-- AI-agent and automation developers who need headless secure messaging flows
+- Application developers adding relay-backed encrypted messaging
+- Swift and JavaScript teams integrating the protocol into clients
+- Operators running independent or federated relay infrastructure
+- Researchers evaluating post-quantum messaging and metadata reduction
+- Automation developers using the headless CLI and agent integrations
 
 ## Security Status
 
@@ -114,8 +166,8 @@ for compatibility with the existing relay and CLI tooling.
 ```sh
 swift build --package-path NoctweaveCore
 swift test --package-path NoctweaveCore
-swift build --package-path "NoctweaveRelayServer"
-swift test --package-path "NoctweaveRelayServer"
+swift build --package-path NoctweaveRelayServer
+swift test --package-path NoctweaveRelayServer
 cd NoctweaveJS && npm test
 ```
 
@@ -138,8 +190,8 @@ are installed locally.
 ## Run The Linux Relay
 
 ```sh
-swift build --package-path "NoctweaveRelayServer"
-"NoctweaveRelayServer/.build/debug/NoctweaveRelayServer" \
+swift build --package-path NoctweaveRelayServer
+NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
   --host 0.0.0.0 \
   --port 9339 \
   --http-port 9340 \
@@ -149,7 +201,7 @@ swift build --package-path "NoctweaveRelayServer"
 Docker:
 
 ```sh
-docker build -t noctyra-relay "NoctweaveRelayServer"
+docker build -t noctyra-relay NoctweaveRelayServer
 docker run --rm -p 9339:9339 -p 9340:9340 -v noctyra-data:/data noctyra-relay
 ```
 
@@ -227,7 +279,6 @@ WebCrypto for symmetric primitives where appropriate. See
 - Add an operator quickstart for common reverse-proxy deployments.
 - Add benchmark scripts for relay latency and core encrypt/decrypt costs.
 - Add coverage reporting for `NoctweaveCore` and the Linux relay package.
-- Add GitHub Actions for Linux relay tests and container scanning.
 - Prepare signed release artifact instructions for relay binaries and Docker images.
 
 ## Release Artifacts
