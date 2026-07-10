@@ -20,7 +20,9 @@ Identity rotation preserves continuity only for contacts selected by the user. I
 
 1. A client obtains or imports a contact offer containing identity material, inbox routing data, and prekey material.
 2. The sender derives a session using the PQ prekey flow.
-3. The message body is padded, encrypted with AEAD, and wrapped in an `Envelope`.
+3. The message body is encoded into a supported fixed-size padding bucket,
+   encrypted with AEAD, and wrapped in an `Envelope`. Decoders reject malformed,
+   non-canonical, or legacy unpadded plaintext.
 4. The sender submits `RelayRequest.type = deliver`.
 5. The recipient fetches sealed envelopes with an inbox-bound actor proof, decrypts locally, and acknowledges only after successful local processing.
 
@@ -63,7 +65,12 @@ Client relay passwords are not forwarded. When a relay requires relay-to-relay a
 
 Coordinator nodes organize relay directories and health state. They do not need to carry user messages. Relays register with coordinators using `registerFederationNode`; consumers query healthy directory state with `listFederationNodes`. Signed directory snapshots use ML-DSA-65.
 
-Open federation may advertise relay-native DHT node support and capped peer exchange hints. DHT records are signed short-lived relay advertisements validated by namespace, federation name, relay identity digest, signature, lifetime, endpoint transport, public endpoint policy, total-record limits, per-host limits, and query-size limits. Peer exchange is only a discovery hint; consumers must still validate the destination relay through `info` before forwarding.
+Open federation may advertise relay-native DHT node support and capped peer exchange hints. DHT records use the `noctweave-open-v1` namespace and are signed short-lived relay advertisements validated by protocol version, namespace, federation name, relay identity digest, signature, lifetime, endpoint transport, public endpoint policy, total-record limits, per-host limits, and query-size limits. Peer exchange is only a discovery hint; consumers must still validate the destination relay through `info` before forwarding.
+
+Reference relays bound request bodies, response bodies, mailboxes, groups,
+prekeys, attachment records, DHT caches, and operator-supplied timing/count
+configuration before allocation or arithmetic. Values outside a supported
+range are rejected or normalized at the documented configuration boundary.
 
 Runtime federation updates are allowed for future requests. Implementations must synchronize mutable relay configuration, coordinator heartbeat tasks, and coordinator directory caches so UI or operator changes do not race with active request handling. In-flight requests keep the routing decision already taken for that request.
 

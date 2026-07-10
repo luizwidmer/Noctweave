@@ -73,22 +73,27 @@ enum PublicRelayEndpointPolicy {
                bytes[10] == 0xff, bytes[11] == 0xff {
                 return isPublicIPv4(Array(bytes[12...15]))
             }
-            if bytes.allSatisfy({ $0 == 0 }) { return false }
-            if bytes.dropLast().allSatisfy({ $0 == 0 }), bytes.last == 1 { return false }
-            if bytes[0] & 0xfe == 0xfc { return false } // Unique local.
-            if bytes[0] == 0xfe, bytes[1] & 0xc0 == 0x80 { return false } // Link local.
-            if bytes[0] == 0xff { return false } // Multicast.
+            if bytes.prefix(12).elementsEqual([0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0]) {
+                return isPublicIPv4(Array(bytes[12...15])) // NAT64 well-known prefix.
+            }
+            // IANA currently assigns globally routable unicast addresses from 2000::/3.
+            // Restricting to that range also rejects deprecated site-local, discard-only,
+            // unique-local, link-local, multicast, and IPv4-compatible bypass forms.
+            guard bytes[0] & 0xe0 == 0x20 else { return false }
             if bytes[0] == 0x20, bytes[1] == 0x01, bytes[2] == 0x0d, bytes[3] == 0xb8 {
                 return false // Documentation prefix.
             }
             if bytes[0] == 0x20, bytes[1] == 0x01, bytes[2] == 0x00, bytes[3] == 0x00 {
                 return false // Teredo.
             }
+            if bytes[0] == 0x20, bytes[1] == 0x01, bytes[2] == 0x00, bytes[3] == 0x02 {
+                return false // Benchmarking.
+            }
             if bytes[0] == 0x20, bytes[1] == 0x02 {
                 return isPublicIPv4(Array(bytes[2...5])) // 6to4 embeds IPv4.
             }
-            if bytes.prefix(12).elementsEqual([0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0]) {
-                return isPublicIPv4(Array(bytes[12...15])) // NAT64 well-known prefix.
+            if bytes[0] == 0x3f, bytes[1] & 0xf0 == 0xf0 {
+                return false // 3fff::/20 documentation prefix.
             }
             return true
         }
@@ -103,7 +108,7 @@ enum PublicRelayEndpointPolicy {
         if a == 172, (16...31).contains(b) { return false }
         if a == 192, b == 168 { return false }
         if a == 192, b == 0 { return false }
-        if a == 192, b == 0, c == 2 { return false }
+        if a == 192, b == 88, c == 99 { return false }
         if a == 198, b == 18 || b == 19 { return false }
         if a == 198, b == 51, c == 100 { return false }
         if a == 203, b == 0, c == 113 { return false }

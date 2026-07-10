@@ -12,9 +12,9 @@ This document defines the repository-owned security requirements for the current
 | SR-06 | Inbox access must be bound to an access key, not just an address string. | Inbox registration and fetch routes require signed actor proofs for protected paths. | inbox registration/fetch proof tests. |
 | SR-07 | Key rotation must preserve continuity only when explicitly disclosed. | Signed rotation payloads and contact continuity controls. | identity rotation verification and post-rotation session tests. |
 | SR-08 | Identity burn must sever continuity for unselected contacts. | Burn/reset flow creates new identity state and omits unselected disclosure. | identity reset and continuity tests. |
-| SR-09 | Local state must be encrypted at rest. | Public storage primitives support encrypted client state and attachment metadata. | `ClientStateStore` and attachment store tests. |
+| SR-09 | Sensitive local state must be encrypted at rest. | Native state stores encrypt by default; JavaScript raw storage adapters must be wrapped by `EncryptedNoctweaveStore`. | `ClientStateStore`, native attachment/thread store, and JavaScript encrypted-store tests. |
 | SR-10 | Decrypted attachment material must be scoped to active use. | Implementations must decrypt only for active inspection and clear temporary plaintext buffers after use. | attachment handling requirements and store tests. |
-| SR-11 | Relay storage must tolerate row-level corruption. | SQLite persistence skips damaged records instead of dropping the whole store. | core and Linux relay SQLite corruption tests. |
+| SR-11 | Relay storage must fail closed on persisted corruption. | Normalized SQLite rows are decoded under strict bounds; corrupt security-relevant rows prevent startup instead of being silently discarded. | core and Linux relay corrupt-row rejection tests. |
 | SR-12 | Relays must bound storage and payload growth. | Inbox caps, mailbox caps, attachment chunk caps, group caps, and max payload checks. | relay capacity, oversized envelope, prekey, and attachment tests. |
 | SR-13 | Federation must not silently cross manual, curated, and open trust domains. | Federation mode policy, manual node-list checks, allow-list checks, coordinator quorum, and signed directory snapshots. | manual forwarding, curated forwarding, strict policy, and coordinator tests. |
 | SR-14 | Open federation discovery must be bounded and signed. | Signed short-lived DHT records, host caps, total caps, TTL checks, and feature gates. | DHT record validation, poisoning, flood, and native overlay tests. |
@@ -22,6 +22,8 @@ This document defines the repository-owned security requirements for the current
 | SR-16 | Pull-only helper paths must not expose identity signing keys or message counts. | Prefetch profiles use delegated inbox keys and metadata-blind status where implemented by a client. | decentralized wake plan and whitepaper caveats. |
 | SR-17 | UI capture protections must be best-effort and not overclaimed. | Client implementations may add capture redaction and secure input, but the protocol does not claim to defeat a hostile OS. | whitepaper caveats. |
 | SR-18 | Release claims must distinguish internal verification from external assurance. | Roadmap keeps external audit, formal proof, side-channel analysis, and load reports unchecked. | `noctweave_roadmap.md` and release policy. |
+| SR-19 | Remote and persisted inputs must not control unbounded allocation or arithmetic. | Request/response, state, attachment, resend, DHT, PIR, onion, mixnet, URL-loader, and operator-configuration limits are checked before allocation or conversion. | resource-bound and malformed-input regression tests. |
+| SR-20 | OS notification surfaces must not receive decrypted message or contact content. | Native local notifications use a generic encrypted-message signal. | `NotificationManager.swift` and client build verification. |
 
 ## Non-Goals
 

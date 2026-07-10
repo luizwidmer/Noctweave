@@ -56,6 +56,9 @@ final class RelayEndpointParserTests: XCTestCase {
         XCTAssertThrowsError(try RelayEndpointParser.parse("relay.local:notaport")) { error in
             XCTAssertEqual(error as? RelayEndpointParserError, .invalidPort("notaport"))
         }
+        XCTAssertThrowsError(try RelayEndpointParser.parse("relay.local:0")) { error in
+            XCTAssertEqual(error as? RelayEndpointParserError, .invalidPort("0"))
+        }
     }
 
     func testRejectsUnknownURLSchemeInsteadOfDowngradingToTCP() {
@@ -74,5 +77,14 @@ final class RelayEndpointParserTests: XCTestCase {
         XCTAssertThrowsError(try RelayEndpointParser.parse("https://relay.example#secret")) { error in
             XCTAssertEqual(error as? RelayEndpointParserError, .unsupportedURLComponent("fragments"))
         }
+        XCTAssertThrowsError(try RelayEndpointParser.parse("https://relay.example/custom/relay")) { error in
+            XCTAssertEqual(error as? RelayEndpointParserError, .unsupportedURLComponent("paths"))
+        }
+    }
+
+    func testRejectsMalformedBareHosts() {
+        XCTAssertThrowsError(try RelayEndpointParser.parse("relay host"))
+        XCTAssertThrowsError(try RelayEndpointParser.parse("relay.example/path"))
+        XCTAssertThrowsError(try RelayEndpointParser.parse("::1"))
     }
 }

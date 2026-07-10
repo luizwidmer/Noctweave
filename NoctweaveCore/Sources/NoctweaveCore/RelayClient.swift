@@ -11,6 +11,8 @@ public struct RelayClient {
     public let endpoint: RelayEndpoint
     public let authToken: String?
     public static let maxResponseBytes = 1_000_000
+    public static let maxRequestBytes = 512 * 1024
+    public static let maxAuthenticationBytes = 4_096
     public static let defaultTimeout: TimeInterval = 8
 
     public init(endpoint: RelayEndpoint, authToken: String? = nil) {
@@ -19,19 +21,34 @@ public struct RelayClient {
     }
 
     public func send(_ request: RelayRequest, timeout: TimeInterval = defaultTimeout) async throws -> RelayResponse {
+        guard timeout.isFinite, timeout >= 0.1, timeout <= 300 else {
+            throw RelayNetworkError.invalidTimeout
+        }
+        guard endpoint.port > 0,
+              !endpoint.host.isEmpty,
+              endpoint.tlsCertificateFingerprintSHA256.map({ $0.count == 32 }) ?? true else {
+            throw RelayNetworkError.invalidResponse
+        }
         let effectiveAuthToken = authToken ?? request.authToken
+        guard effectiveAuthToken.map({ $0.utf8.count <= Self.maxAuthenticationBytes }) ?? true else {
+            throw RelayNetworkError.invalidAuthentication
+        }
         let authenticatedRequest = request.withAuthToken(effectiveAuthToken)
+        let encodedRequest = try NoctweaveCoder.encode(authenticatedRequest)
+        guard encodedRequest.count <= Self.maxRequestBytes else {
+            throw RelayNetworkError.requestTooLarge
+        }
         switch endpoint.transport {
         case .tcp:
-            return try await sendTCP(authenticatedRequest, timeout: timeout)
+            return try await sendTCP(authenticatedRequest, encodedRequest: encodedRequest, timeout: timeout)
         case .http:
-            return try await sendHTTP(authenticatedRequest, timeout: timeout)
+            return try await sendHTTP(authenticatedRequest, encodedRequest: encodedRequest, timeout: timeout)
         case .websocket:
-            return try await sendWebSocket(authenticatedRequest, timeout: timeout)
+            return try await sendWebSocket(authenticatedRequest, encodedRequest: encodedRequest, timeout: timeout)
         }
     }
 
-    private func sendTCP(_ request: RelayRequest, timeout: TimeInterval) async throws -> RelayResponse {
+    private func sendTCP(_ request: RelayRequest, encodedRequest: Data, timeout: TimeInterval) async throws -> RelayResponse {
         guard let port = NWEndpoint.Port(rawValue: endpoint.port) else {
             throw RelayNetworkError.connectionFailed
         }
@@ -40,14 +57,13 @@ public struct RelayClient {
         defer { connection.cancel() }
         return try await withTimeout(seconds: timeout) {
             try await connection.awaitReady()
-            let data = try NoctweaveCoder.encode(request)
-            try await connection.sendLine(data)
+            try await connection.sendLine(encodedRequest)
             let responseData = try await connection.receiveLine(maxLength: Self.maxResponseBytes)
             return try NoctweaveCoder.decode(RelayResponse.self, from: responseData)
         }
     }
 
-    private func sendHTTP(_ request: RelayRequest, timeout: TimeInterval) async throws -> RelayResponse {
+    private func sendHTTP(_ request: RelayRequest, encodedRequest: Data, timeout: TimeInterval) async throws -> RelayResponse {
         guard var components = URLComponents(string: "/") else {
             throw RelayNetworkError.invalidResponse
         }
@@ -64,17 +80,17 @@ public struct RelayClient {
         mutableRequest.httpMethod = "POST"
         mutableRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         mutableRequest.setValue("application/json", forHTTPHeaderField: "Accept")
-        mutableRequest.httpBody = try NoctweaveCoder.encode(request)
+        mutableRequest.httpBody = encodedRequest
+        mutableRequest.timeoutInterval = timeout
         let httpRequest = mutableRequest
 
         return try await withTimeout(seconds: timeout) {
             do {
-                let session = makeURLSession()
-                defer { session.invalidateAndCancel() }
-                let (data, response) = try await session.data(for: httpRequest)
-                guard data.count <= Self.maxResponseBytes else {
-                    throw RelayNetworkError.invalidResponse
-                }
+                let (data, response) = try await BoundedURLSessionLoader.load(
+                    httpRequest,
+                    maximumBytes: Self.maxResponseBytes,
+                    expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256
+                )
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw RelayClientResponseError.invalidHTTPResponse
                 }
@@ -92,7 +108,7 @@ public struct RelayClient {
         }
     }
 
-    private func sendWebSocket(_ request: RelayRequest, timeout: TimeInterval) async throws -> RelayResponse {
+    private func sendWebSocket(_ request: RelayRequest, encodedRequest: Data, timeout: TimeInterval) async throws -> RelayResponse {
         guard var components = URLComponents(string: "/") else {
             throw RelayNetworkError.invalidResponse
         }
@@ -114,8 +130,7 @@ public struct RelayClient {
         }
 
         return try await withTimeout(seconds: timeout) {
-            let data = try NoctweaveCoder.encode(request)
-            try await task.send(URLSessionWebSocketTask.Message.data(data))
+            try await task.send(URLSessionWebSocketTask.Message.data(encodedRequest))
             let message = try await task.receive()
             let responseData: Data
             switch message {
@@ -148,12 +163,11 @@ public struct RelayClient {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json, text/plain;q=0.9", forHTTPHeaderField: "Accept")
-        let session = makeURLSession()
-        defer { session.invalidateAndCancel() }
-        let (data, response) = try await session.data(for: request)
-        guard data.count <= Self.maxResponseBytes else {
-            throw RelayNetworkError.invalidResponse
-        }
+        let (data, response) = try await BoundedURLSessionLoader.load(
+            request,
+            maximumBytes: Self.maxResponseBytes,
+            expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256
+        )
         guard let httpResponse = response as? HTTPURLResponse else {
             throw RelayClientResponseError.invalidHTTPResponse
         }

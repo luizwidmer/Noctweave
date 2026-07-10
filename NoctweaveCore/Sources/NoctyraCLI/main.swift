@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import NoctweaveCore
 
 #if os(Linux)
@@ -23,6 +24,10 @@ struct NoctyraCLI {
 }
 
 private struct CommandRunner {
+    private static let maximumContactPackageBytes = 512 * 1024
+    private static let maximumRawRequestBytes = 512 * 1024
+    private static let maximumAttachmentBytes = AttachmentDescriptor.maximumTransportBytes
+
     let arguments: [String]
 
     func run() async throws {
@@ -115,13 +120,17 @@ private struct CommandRunner {
 
     private func exportContact(options: ParsedOptions) async throws {
         let client = try headlessClient(from: options)
-        if let password = options.value(for: "--password") {
+        if let password = try contactPassword(from: options) {
             var data = try await client.exportContactPackage(password: password)
             defer { data.secureWipe() }
             guard let out = options.value(for: "--out") else {
                 throw CLIError("Password-protected exports require `--out <path>` to avoid binary data in the terminal.")
             }
             try data.write(to: URL(fileURLWithPath: out), options: [.atomic])
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: URL(fileURLWithPath: out).path
+            )
             FileHandle.standardOutput.writeLine(out)
             return
         }
@@ -134,12 +143,16 @@ private struct CommandRunner {
             return try await client.importContactCode(code)
         }
         guard let file = options.value(for: "--file") else {
-            throw CLIError("Missing contact input. Use `--code <base64>` or `--file <path> --password <password>`.")
+            throw CLIError("Missing contact input. Use `--code <contact-code>` or `--file <path> --password-file <path>`.")
         }
-        guard let password = options.value(for: "--password") else {
-            throw CLIError("Password-protected contact files require `--password <password>`.")
+        guard let password = try contactPassword(from: options) else {
+            throw CLIError("Password-protected contact files require `--password-file <path>` or `--password <password>`.")
         }
-        var data = try Data(contentsOf: URL(fileURLWithPath: file))
+        var data = try readBoundedFile(
+            at: URL(fileURLWithPath: file),
+            maximumBytes: Self.maximumContactPackageBytes,
+            label: "Contact package"
+        )
         defer { data.secureWipe() }
         return try await client.importContactPackage(data, password: password)
     }
@@ -159,7 +172,8 @@ private struct CommandRunner {
         guard let selector = options.value(for: "--to") else {
             throw CLIError("Missing recipient. Use `--to <contact-name|fingerprint|uuid>`.")
         }
-        let input = try attachmentInput(from: options, voice: voice)
+        var input = try attachmentInput(from: options, voice: voice)
+        defer { input.data.secureWipe() }
         let client = try headlessClient(from: options)
         let sent: HeadlessSentAttachment
         if voice {
@@ -218,7 +232,8 @@ private struct CommandRunner {
         guard let selector = options.value(for: "--group") else {
             throw CLIError("Missing group. Use `--group <title|uuid>`.")
         }
-        let input = try attachmentInput(from: options, voice: voice)
+        var input = try attachmentInput(from: options, voice: voice)
+        defer { input.data.secureWipe() }
         let client = try headlessClient(from: options)
         let sent: HeadlessSentAttachment
         if voice {
@@ -277,6 +292,9 @@ private struct CommandRunner {
             throw CLIError("Missing output path. Use `--out <path-or-directory>`.")
         }
         let fetched = try await headlessClient(from: options).fetchAttachment(id: attachmentId)
+        guard fetched.descriptor.isStructurallyValid() else {
+            throw CLIError("Attachment metadata is malformed or exceeds transport limits.")
+        }
         let outputURL = try resolvedAttachmentOutputURL(
             rawPath: out,
             descriptor: fetched.descriptor,
@@ -286,13 +304,20 @@ private struct CommandRunner {
             at: outputURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try fetched.data.write(to: outputURL, options: [.atomic])
+        if FileManager.default.fileExists(atPath: outputURL.path),
+           !(try options.boolValue(for: "--overwrite") ?? false) {
+            throw CLIError("Output file already exists. Use `--overwrite true` to replace it.")
+        }
+        var outputData = fetched.data
+        defer { outputData.secureWipe() }
+        try outputData.write(to: outputURL, options: [.atomic])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: outputURL.path)
         try writeJSON(
             CLIDownloadedAttachment(
                 attachmentId: attachmentId,
                 outputPath: outputURL.path,
-                byteCount: fetched.data.count,
-                sha256Base64: AttachmentCrypto.sha256(fetched.data).base64EncodedString(),
+                byteCount: outputData.count,
+                sha256Base64: AttachmentCrypto.sha256(outputData).base64EncodedString(),
                 descriptor: fetched.descriptor
             )
         )
@@ -327,7 +352,7 @@ private struct CommandRunner {
 
     private func send(_ request: RelayRequest, options: ParsedOptions) async throws {
         let endpoint = try endpoint(from: options)
-        let authToken = options.value(for: "--auth")
+        let authToken = try relayAuthToken(from: options)
         let timeout = try options.doubleValue(for: "--timeout") ?? RelayClient.defaultTimeout
         let client = RelayClient(endpoint: endpoint, authToken: authToken)
         let response = try await client.send(request, timeout: timeout)
@@ -347,26 +372,144 @@ private struct CommandRunner {
         }
         let data: Data
         if raw == "-" {
-            data = FileHandle.standardInput.readDataToEndOfFile()
+            data = try readBoundedStandardInput(maximumBytes: Self.maximumRawRequestBytes)
         } else if raw.hasPrefix("@") {
             let path = String(raw.dropFirst())
             guard !path.isEmpty else {
                 throw CLIError("Request file path is empty.")
             }
-            data = try Data(contentsOf: URL(fileURLWithPath: path))
+            data = try readBoundedFile(
+                at: URL(fileURLWithPath: path),
+                maximumBytes: Self.maximumRawRequestBytes,
+                label: "Relay request"
+            )
         } else {
             data = Data(raw.utf8)
+        }
+        guard data.count <= Self.maximumRawRequestBytes else {
+            throw CLIError("Relay request exceeds the 512 KB limit.")
         }
         return try NoctweaveCoder.decode(RelayRequest.self, from: data)
     }
 
     private func headlessClient(from options: ParsedOptions) throws -> HeadlessMessagingClient {
-        HeadlessMessagingClient(
-            stateURL: stateURL(from: options),
-            useEncryptedStore: try options.boolValue(for: "--encrypted-state") ?? false,
-            authToken: options.value(for: "--auth"),
+        let stateURL = stateURL(from: options)
+        let encrypted = try options.boolValue(for: "--encrypted-state") ?? true
+        let stateKey = try stateEncryptionKey(
+            from: options,
+            stateURL: stateURL,
+            encrypted: encrypted
+        )
+        return HeadlessMessagingClient(
+            stateURL: stateURL,
+            useEncryptedStore: encrypted,
+            stateEncryptionKey: stateKey,
+            authToken: try relayAuthToken(from: options),
             timeout: try options.doubleValue(for: "--timeout") ?? RelayClient.defaultTimeout
         )
+    }
+
+    private func stateEncryptionKey(
+        from options: ParsedOptions,
+        stateURL: URL,
+        encrypted: Bool
+    ) throws -> SymmetricKey? {
+        guard encrypted else { return nil }
+        let configuredPath = (
+            options.value(for: "--state-key-file")
+                ?? ProcessInfo.processInfo.environment["NOCTYRA_CLI_STATE_KEY_FILE"]
+        ).flatMap { $0.isEmpty ? nil : $0 }
+        #if os(Linux)
+        let keyURL = configuredPath.map(URL.init(fileURLWithPath:)) ?? defaultStateKeyURL(for: stateURL)
+        return try loadOrCreateStateKey(
+            at: keyURL,
+            allowCreate: arguments.first == "init"
+        )
+        #else
+        guard let configuredPath, !configuredPath.isEmpty else {
+            return nil
+        }
+        return try loadOrCreateStateKey(
+            at: URL(fileURLWithPath: configuredPath),
+            allowCreate: arguments.first == "init"
+        )
+        #endif
+    }
+
+    private func defaultStateKeyURL(for stateURL: URL) -> URL {
+        stateURL.deletingPathExtension().appendingPathExtension("key")
+    }
+
+    private func loadOrCreateStateKey(at keyURL: URL, allowCreate: Bool) throws -> SymmetricKey {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: keyURL.path) {
+            let attributes = try fileManager.attributesOfItem(atPath: keyURL.path)
+            if let mode = (attributes[.posixPermissions] as? NSNumber)?.intValue,
+               mode & 0o077 != 0 {
+                throw CLIError("State key file must not be readable by group or other users (chmod 600).")
+            }
+            var encoded = try readBoundedFile(at: keyURL, maximumBytes: 256, label: "State key file")
+            defer { encoded.secureWipe() }
+            var keyData: Data
+            if encoded.count == 32 {
+                keyData = encoded
+            } else {
+                guard let text = String(data: encoded, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      let decoded = Data(base64Encoded: text),
+                      decoded.count == 32,
+                      decoded.base64EncodedString() == text else {
+                    throw CLIError("State key file must contain exactly 32 raw bytes or canonical base64 for 32 bytes.")
+                }
+                keyData = decoded
+            }
+            defer { keyData.secureWipe() }
+            return SymmetricKey(data: keyData)
+        }
+        guard allowCreate else {
+            throw CLIError("Encrypted state key is missing. Restore the key file or run `init` with a new state path.")
+        }
+        let directory = keyURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let key = SymmetricKey(size: .bits256)
+        var keyData = key.withUnsafeBytes { Data($0) }
+        defer { keyData.secureWipe() }
+        var encoded = Data((keyData.base64EncodedString() + "\n").utf8)
+        defer { encoded.secureWipe() }
+        try encoded.write(to: keyURL, options: [.atomic])
+        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyURL.path)
+        return key
+    }
+
+    private func contactPassword(from options: ParsedOptions) throws -> String? {
+        if let path = options.value(for: "--password-file") {
+            return try readSecret(at: URL(fileURLWithPath: path), label: "Contact password")
+        }
+        if let password = ProcessInfo.processInfo.environment["NOCTYRA_CONTACT_PASSWORD"], !password.isEmpty {
+            return password
+        }
+        return options.value(for: "--password")
+    }
+
+    private func relayAuthToken(from options: ParsedOptions) throws -> String? {
+        if let path = options.value(for: "--auth-file") {
+            return try readSecret(at: URL(fileURLWithPath: path), label: "Relay auth token")
+        }
+        if let token = ProcessInfo.processInfo.environment["NOCTYRA_RELAY_AUTH_TOKEN"], !token.isEmpty {
+            return token
+        }
+        return options.value(for: "--auth")
+    }
+
+    private func readSecret(at url: URL, label: String) throws -> String {
+        var data = try readBoundedFile(at: url, maximumBytes: 4_096, label: label)
+        defer { data.secureWipe() }
+        guard let value = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .newlines),
+              !value.isEmpty,
+              !value.unicodeScalars.contains(where: { $0.value == 0 }) else {
+            throw CLIError("\(label) file is empty or malformed.")
+        }
+        return value
     }
 
     private func stateURL(from options: ParsedOptions) -> URL {
@@ -409,14 +552,17 @@ private struct CommandRunner {
             throw CLIError("Missing file. Use `--file <path>`.")
         }
         let fileURL = URL(fileURLWithPath: file)
-        let data = try Data(contentsOf: fileURL)
-        let fileName = options.value(for: "--name") ?? fileURL.lastPathComponent
+        let data = try readBoundedFile(
+            at: fileURL,
+            maximumBytes: Self.maximumAttachmentBytes,
+            label: "Attachment"
+        )
         let mimeType = options.value(for: "--mime") ?? defaultMIMEType(for: fileURL, voice: voice)
         let chunkSize = try options.intValue(for: "--chunk-size") ?? 64 * 1024
         let ttlSeconds = try options.intValue(for: "--ttl")
         return CLIAttachmentInput(
             data: data,
-            fileName: fileName.isEmpty ? nil : fileName,
+            fileName: nil,
             mimeType: mimeType,
             chunkSize: chunkSize,
             ttlSeconds: ttlSeconds
@@ -432,11 +578,39 @@ private struct CommandRunner {
         var isDirectory: ObjCBool = false
         if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
            isDirectory.boolValue {
-            return url.appendingPathComponent(
-                descriptor.fileName?.isEmpty == false ? descriptor.fileName! : "\(attachmentId.uuidString).bin"
-            )
+            return url.appendingPathComponent("\(attachmentId.uuidString).bin", isDirectory: false)
         }
         return url
+    }
+
+    private func readBoundedFile(at url: URL, maximumBytes: Int, label: String) throws -> Data {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              let size = attributes[.size] as? NSNumber,
+              size.intValue >= 0,
+              size.intValue <= maximumBytes else {
+            throw CLIError("\(label) exceeds the \(maximumBytes) byte limit.")
+        }
+        let data = try Data(contentsOf: url, options: [.uncached])
+        guard data.count <= maximumBytes else {
+            throw CLIError("\(label) exceeds the \(maximumBytes) byte limit.")
+        }
+        return data
+    }
+
+    private func readBoundedStandardInput(maximumBytes: Int) throws -> Data {
+        var data = Data()
+        while true {
+            let remaining = maximumBytes + 1 - data.count
+            if remaining <= 0 {
+                throw CLIError("Relay request exceeds the 512 KB limit.")
+            }
+            guard let chunk = try FileHandle.standardInput.read(upToCount: min(64 * 1024, remaining)),
+                  !chunk.isEmpty else {
+                return data
+            }
+            data.append(chunk)
+        }
     }
 
     private func defaultMIMEType(for url: URL, voice: Bool) -> String {
@@ -475,12 +649,12 @@ private struct CommandRunner {
 
         Usage:
           NoctyraCLI init --display-name <name> --relay <url|host:port> [--state path]
-          NoctyraCLI register [--state path] [--auth token]
+          NoctyraCLI register [--state path] [--auth-file path]
           NoctyraCLI status [--state path]
           NoctyraCLI export-contact [--state path]
-          NoctyraCLI export-contact --password <password> --out contact.noctweave [--state path]
+          NoctyraCLI export-contact --password-file <path> --out contact.noctweave [--state path]
           NoctyraCLI import-contact --code <contact-code> [--state path]
-          NoctyraCLI import-contact --file contact.noctweave --password <password> [--state path]
+          NoctyraCLI import-contact --file contact.noctweave --password-file <path> [--state path]
           NoctyraCLI contacts [--state path]
           NoctyraCLI group-create --title <name> --members <contact-a,contact-b> [--state path]
           NoctyraCLI groups [--refresh true] [--limit count] [--state path]
@@ -494,13 +668,13 @@ private struct CommandRunner {
           NoctyraCLI send-attachment --to <contact> --file <path> [--mime type] [--ttl seconds] [--state path]
           NoctyraCLI send-voice --to <contact> --file <path> [--mime audio/m4a] [--ttl seconds] [--state path]
           NoctyraCLI receive [--max count] [--long-poll seconds] [--state path]
-          NoctyraCLI download-attachment --id <uuid> --out <path-or-directory> [--state path]
+          NoctyraCLI download-attachment --id <uuid> --out <path-or-directory> [--overwrite true] [--state path]
           NoctyraCLI allow-identity-reset --contact <contact> --allow true [--state path]
           NoctyraCLI rotate-identity --confirm ROTATE [--state path]
           NoctyraCLI burn-identity --confirm BURN [--state path]
           NoctyraCLI endpoint --relay <url|host:port>
-          NoctyraCLI health --relay <url|host:port> [--auth token] [--timeout seconds]
-          NoctyraCLI info --relay <url|host:port> [--auth token] [--timeout seconds]
+          NoctyraCLI health --relay <url|host:port> [--auth-file path] [--timeout seconds]
+          NoctyraCLI info --relay <url|host:port> [--auth-file path] [--timeout seconds]
           NoctyraCLI raw --relay <url|host:port> --request '<relay-request-json>'
           NoctyraCLI raw --relay <url|host:port> --request @request.json
 
@@ -515,13 +689,19 @@ private struct CommandRunner {
 
         Headless client state:
           --state defaults to ~/.noctyra/headless-state.json or NOCTYRA_CLI_STATE.
-          State contains private identity keys. Protect it with filesystem permissions.
+          State is encrypted by default. Apple platforms use Keychain; Linux uses a 0600 key file.
+          Override the Linux key path with --state-key-file or NOCTYRA_CLI_STATE_KEY_FILE.
+          Use --encrypted-state false only for explicitly accepted plaintext development state.
+
+        Secret input:
+          Prefer --password-file and --auth-file so secrets do not appear in process arguments.
+          NOCTYRA_CONTACT_PASSWORD and NOCTYRA_RELAY_AUTH_TOKEN are also supported.
         """)
     }
 }
 
 private struct CLIAttachmentInput {
-    let data: Data
+    var data: Data
     let fileName: String?
     let mimeType: String
     let chunkSize: Int
@@ -563,7 +743,7 @@ private struct ParsedOptions {
 
     func doubleValue(for key: String) throws -> Double? {
         guard let value = values[key] else { return nil }
-        guard let parsed = Double(value), parsed > 0 else {
+        guard let parsed = Double(value), parsed.isFinite, parsed > 0 else {
             throw CLIError("Invalid numeric value for \(key): \(value).")
         }
         return parsed

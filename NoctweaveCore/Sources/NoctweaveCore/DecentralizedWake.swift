@@ -107,6 +107,7 @@ public enum DecentralizedPrefetchError: Error, Equatable {
     case invalidBatch
     case invalidProtectionKey
     case invalidStoredBatch
+    case batchTooLarge
 }
 
 public struct DecentralizedPrefetchRecord: Codable, Equatable, Identifiable {
@@ -222,16 +223,25 @@ public struct DecentralizedPrefetchExecutionPlan: Equatable {
 }
 
 public enum DecentralizedPrefetchStager {
+    public static let maximumRecordsPerBatch = 128
+    public static let maximumSealedEnvelopeBytes = 512 * 1024
+
     public static func stageDirectMessages(
         _ envelopes: [Envelope],
         inboxId: String,
         relayIdentifier: String,
         stagedAt: Date = Date()
     ) throws -> DecentralizedPrefetchBatch {
+        guard !envelopes.isEmpty else { throw DecentralizedPrefetchError.emptyBatch }
+        guard envelopes.count <= maximumRecordsPerBatch else { throw DecentralizedPrefetchError.batchTooLarge }
         let relayIdentifier = try normalizedRelayIdentifier(relayIdentifier)
         let inboxId = try normalizedInboxId(inboxId)
         let records = try envelopes.map { envelope in
             guard !envelope.payload.ciphertext.isEmpty else {
+                throw DecentralizedPrefetchError.invalidEnvelope
+            }
+            let sealedEnvelope = try NoctweaveCoder.encode(envelope)
+            guard sealedEnvelope.count <= maximumSealedEnvelopeBytes else {
                 throw DecentralizedPrefetchError.invalidEnvelope
             }
             return DecentralizedPrefetchRecord(
@@ -241,7 +251,7 @@ public enum DecentralizedPrefetchStager {
                 inboxId: inboxId,
                 groupId: nil,
                 stagedAt: stagedAt,
-                sealedEnvelope: try NoctweaveCoder.encode(envelope),
+                sealedEnvelope: sealedEnvelope,
                 acknowledgementDeferred: true
             )
         }
@@ -254,10 +264,16 @@ public enum DecentralizedPrefetchStager {
         relayIdentifier: String,
         stagedAt: Date = Date()
     ) throws -> DecentralizedPrefetchBatch {
+        guard !envelopes.isEmpty else { throw DecentralizedPrefetchError.emptyBatch }
+        guard envelopes.count <= maximumRecordsPerBatch else { throw DecentralizedPrefetchError.batchTooLarge }
         let relayIdentifier = try normalizedRelayIdentifier(relayIdentifier)
         let inboxId = try normalizedInboxId(groupInboxId)
         let records = try envelopes.map { envelope in
             guard !envelope.payload.ciphertext.isEmpty else {
+                throw DecentralizedPrefetchError.invalidEnvelope
+            }
+            let sealedEnvelope = try NoctweaveCoder.encode(envelope)
+            guard sealedEnvelope.count <= maximumSealedEnvelopeBytes else {
                 throw DecentralizedPrefetchError.invalidEnvelope
             }
             return DecentralizedPrefetchRecord(
@@ -267,7 +283,7 @@ public enum DecentralizedPrefetchStager {
                 inboxId: inboxId,
                 groupId: envelope.groupId,
                 stagedAt: stagedAt,
-                sealedEnvelope: try NoctweaveCoder.encode(envelope),
+                sealedEnvelope: sealedEnvelope,
                 acknowledgementDeferred: true
             )
         }
@@ -276,7 +292,7 @@ public enum DecentralizedPrefetchStager {
 
     private static func normalizedRelayIdentifier(_ relayIdentifier: String) throws -> String {
         let trimmed = relayIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        guard !trimmed.isEmpty, trimmed.utf8.count <= 512 else {
             throw DecentralizedPrefetchError.invalidRelayIdentifier
         }
         return trimmed
@@ -284,7 +300,7 @@ public enum DecentralizedPrefetchStager {
 
     private static func normalizedInboxId(_ inboxId: String) throws -> String {
         let trimmed = inboxId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
+        guard !trimmed.isEmpty, trimmed.utf8.count <= 256 else {
             throw DecentralizedPrefetchError.invalidInboxId
         }
         return trimmed
@@ -292,6 +308,7 @@ public enum DecentralizedPrefetchStager {
 }
 
 public actor DecentralizedPrefetchBatchStore {
+    public static let maximumStoredBytes = 96 * 1024 * 1024
     private let fileURL: URL
     private let protectionKey: SymmetricKey
 
@@ -307,7 +324,7 @@ public actor DecentralizedPrefetchBatchStore {
         guard !batch.records.isEmpty else {
             throw DecentralizedPrefetchError.emptyBatch
         }
-        guard batch.isCiphertextOnly else {
+        guard Self.isValid(batch) else {
             throw DecentralizedPrefetchError.invalidBatch
         }
 
@@ -321,25 +338,48 @@ public actor DecentralizedPrefetchBatchStore {
         let stored = DecentralizedPrefetchStoredBatch(version: 1, payload: payload)
         var encodedStored = try NoctweaveCoder.encode(stored)
         defer { encodedStored.secureWipe() }
+        guard encodedStored.count <= Self.maximumStoredBytes else {
+            throw DecentralizedPrefetchError.batchTooLarge
+        }
 
         let directory = fileURL.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
         }
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         #if os(iOS)
         try encodedStored.write(to: fileURL, options: [.atomic, .completeFileProtection])
         #else
         try encodedStored.write(to: fileURL, options: [.atomic])
         #endif
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        do {
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        } catch {
+            try? FileManager.default.removeItem(at: fileURL)
+            throw error
+        }
     }
 
     public func load() throws -> DecentralizedPrefetchBatch? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return nil
         }
+        let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true,
+              let fileSize = values.fileSize,
+              fileSize >= 0,
+              fileSize <= Self.maximumStoredBytes else {
+            throw DecentralizedPrefetchError.invalidStoredBatch
+        }
         var encodedStored = try Data(contentsOf: fileURL)
         defer { encodedStored.secureWipe() }
+        guard encodedStored.count <= Self.maximumStoredBytes else {
+            throw DecentralizedPrefetchError.invalidStoredBatch
+        }
         guard let stored = try? NoctweaveCoder.decode(DecentralizedPrefetchStoredBatch.self, from: encodedStored) else {
             throw DecentralizedPrefetchError.invalidStoredBatch
         }
@@ -357,7 +397,7 @@ public actor DecentralizedPrefetchBatchStore {
         guard let batch = try? NoctweaveCoder.decode(DecentralizedPrefetchBatch.self, from: encodedBatch) else {
             throw DecentralizedPrefetchError.invalidStoredBatch
         }
-        guard !batch.records.isEmpty, batch.isCiphertextOnly else {
+        guard Self.isValid(batch) else {
             throw DecentralizedPrefetchError.invalidStoredBatch
         }
         return batch
@@ -372,6 +412,23 @@ public actor DecentralizedPrefetchBatchStore {
     }
 
     private static let authenticatedData = Data("NOCTYRA-DECENTRALIZED-PREFETCH-BATCH-V1".utf8)
+
+    private static func isValid(_ batch: DecentralizedPrefetchBatch) -> Bool {
+        guard !batch.records.isEmpty,
+              batch.records.count <= DecentralizedPrefetchStager.maximumRecordsPerBatch,
+              batch.isCiphertextOnly,
+              Set(batch.records.map(\.id)).count == batch.records.count else {
+            return false
+        }
+        return batch.records.allSatisfy { record in
+            !record.relayIdentifier.isEmpty
+                && record.relayIdentifier.utf8.count <= 512
+                && !record.inboxId.isEmpty
+                && record.inboxId.utf8.count <= 256
+                && record.sealedEnvelope.count <= DecentralizedPrefetchStager.maximumSealedEnvelopeBytes
+                && ((record.kind == .groupMessage) == (record.groupId != nil))
+        }
+    }
 
     private static func bestEffortOverwriteFile(at url: URL) {
         guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
@@ -406,22 +463,6 @@ public actor DecentralizedPrefetchBatchStore {
 private struct DecentralizedPrefetchStoredBatch: Codable, Equatable {
     let version: Int
     let payload: EncryptedPayload
-}
-
-private extension Data {
-    mutating func secureWipe() {
-        guard !isEmpty else { return }
-        let byteCount = count
-        withUnsafeMutableBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else { return }
-            #if canImport(Darwin)
-            _ = memset_s(baseAddress, byteCount, 0, byteCount)
-            #else
-            _ = memset(baseAddress, 0, byteCount)
-            #endif
-        }
-        removeAll(keepingCapacity: false)
-    }
 }
 
 public enum DecentralizedPrefetchExecutionPlanner {
@@ -611,7 +652,15 @@ public enum DecentralizedWakePlanner {
         now: Date,
         failureCount: Int
     ) -> Int {
-        let epochMinute = Int(now.timeIntervalSince1970 / 60)
+        let minuteValue = now.timeIntervalSince1970 / 60
+        let epochMinute: Int64
+        if minuteValue.isFinite,
+           minuteValue >= Double(Int64.min),
+           minuteValue <= Double(Int64.max) {
+            epochMinute = Int64(minuteValue.rounded(.towardZero))
+        } else {
+            epochMinute = 0
+        }
         var data = Data("noctyra-decentralized-wake-v1".utf8)
         data.append(identitySeed)
         data.append(0)

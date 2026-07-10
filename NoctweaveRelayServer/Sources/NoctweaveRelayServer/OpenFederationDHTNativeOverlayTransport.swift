@@ -46,8 +46,15 @@ final class OpenFederationDHTHTTPRelayQueryClient: OpenFederationDHTRelayQueryCl
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("Noctyra-Relay-Native-DHT/1", forHTTPHeaderField: "User-Agent")
 
-        let (data, response) = try await session.data(for: urlRequest)
-        guard data.count <= maxResponseBytes else {
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await BoundedURLSessionLoader.load(
+                urlRequest,
+                configuration: session.configuration,
+                maximumBytes: maxResponseBytes
+            )
+        } catch BoundedURLSessionLoaderError.responseTooLarge {
             throw OpenFederationDHTNativeOverlayTransportError.responseTooLarge
         }
         guard let http = response as? HTTPURLResponse else {

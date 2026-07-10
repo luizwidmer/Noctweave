@@ -15,25 +15,58 @@ public struct Identity: Codable {
         self.createdAt = Date()
     }
 
+    public static func generate(displayName: String) throws -> Identity {
+        try Identity(
+            displayName: displayName,
+            signingKey: SigningKeyPair.generate(),
+            agreementKey: AgreementKeyPair.generate()
+        )
+    }
+
+    public init(
+        displayName: String,
+        signingKey: SigningKeyPair,
+        agreementKey: AgreementKeyPair,
+        rotationCounter: UInt64 = 0,
+        createdAt: Date = Date()
+    ) throws {
+        guard SigningKeyPair.isValidPublicKey(signingKey.publicKeyData),
+              AgreementKeyPair.isValidPublicKey(agreementKey.publicKeyData) else {
+            throw CryptoError.invalidPublicKey
+        }
+        self.displayName = displayName
+        self.signingKey = signingKey
+        self.agreementKey = agreementKey
+        self.rotationCounter = rotationCounter
+        self.createdAt = createdAt
+    }
+
     public var fingerprint: String {
         CryptoBox.fingerprint(for: signingKey.publicKeyData)
     }
 
     public mutating func rotateKeys() throws -> IdentityRotationContext {
+        guard rotationCounter < UInt64.max else {
+            throw CryptoError.counterOutOfOrder
+        }
         let oldSigningKey = signingKey
         let oldAgreementKey = agreementKey
         let oldFingerprint = fingerprint
 
-        signingKey = SigningKeyPair()
-        agreementKey = AgreementKeyPair()
-        rotationCounter += 1
+        let newSigningKey = try SigningKeyPair.generate()
+        let newAgreementKey = try AgreementKeyPair.generate()
+        let nextCounter = rotationCounter + 1
 
         let rotation = try IdentityRotation.create(
-            newSigningPublicKey: signingKey.publicKeyData,
-            newAgreementPublicKey: agreementKey.publicKeyData,
-            counter: rotationCounter,
+            newSigningPublicKey: newSigningKey.publicKeyData,
+            newAgreementPublicKey: newAgreementKey.publicKeyData,
+            counter: nextCounter,
             signingKey: oldSigningKey
         )
+
+        signingKey = newSigningKey
+        agreementKey = newAgreementKey
+        rotationCounter = nextCounter
 
         return IdentityRotationContext(
             rotation: rotation,

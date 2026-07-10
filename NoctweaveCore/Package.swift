@@ -15,7 +15,11 @@ let package = Package(
     targets: [
         .binaryTarget(name: "liboqs", path: "Vendor/liboqs.xcframework"),
         .target(name: "NoctweaveCore", dependencies: ["liboqs"]),
-        .executableTarget(name: "NoctyraCLI", dependencies: ["NoctweaveCore"]),
+        .executableTarget(
+            name: "NoctyraCLI",
+            dependencies: ["NoctweaveCore"],
+            exclude: ["LICENSE"]
+        ),
         .executableTarget(name: "NoctweaveCoreTestHarness", dependencies: ["NoctweaveCore"]),
         .testTarget(name: "NoctweaveCoreTests", dependencies: ["NoctweaveCore"])
     ]

@@ -46,6 +46,8 @@ public actor RelayStore {
     private let maxGroupTitleCharacters = 128
     private let maxGroupEpochHistory = 64
     private let coordinatorDefaultNodeTTL: TimeInterval = 180
+    private let coordinatorMaximumNodeTTL: TimeInterval = 900
+    private let maxFederationNodes = 10_000
     private let federationRateWindowSeconds: TimeInterval = 60
     private let federationRegistrationMaxPerWindow = 24
     private let federationListMaxPerWindow = 120
@@ -475,7 +477,8 @@ public actor RelayStore {
     ) throws {
         guard !fingerprint.isEmpty,
               fingerprint == bundle.identityFingerprint,
-              bundle.oneTimePrekeys.count <= maxOneTimePrekeysPerBundle else {
+              bundle.oneTimePrekeys.count <= maxOneTimePrekeysPerBundle,
+              bundle.isStructurallyValid() else {
             throw RelayStoreError.invalidPrekeyBundle
         }
         let requestedTTL = TimeInterval(ttlSeconds ?? Int(prekeyTTL))
@@ -498,6 +501,11 @@ public actor RelayStore {
         prunePrekeys(now: Date())
         guard var record = prekeyBundles[fingerprint] else {
             return nil
+        }
+        guard record.bundle.isStructurallyValid() else {
+            prekeyBundles.removeValue(forKey: fingerprint)
+            try saveToDisk()
+            throw RelayStoreError.invalidPrekeyBundle
         }
         var bundle = record.bundle
         if !bundle.oneTimePrekeys.isEmpty {
@@ -525,10 +533,14 @@ public actor RelayStore {
 
     public func registerFederationNode(_ request: FederationNodeRegistrationRequest) throws -> FederationNodeRecord {
         let now = Date()
+        pruneFederationNodes(now: now)
         let ttl = TimeInterval(request.ttlSeconds ?? Int(coordinatorDefaultNodeTTL))
-        let expiresAt = now.addingTimeInterval(max(30, ttl))
+        let expiresAt = now.addingTimeInterval(min(coordinatorMaximumNodeTTL, max(30, ttl)))
         let endpoint = request.endpoint
         let key = federationNodeKey(for: endpoint)
+        guard federationNodes[key] != nil || federationNodes.count < maxFederationNodes else {
+            throw RelayStoreError.relayCapacityExceeded
+        }
         let record = FederationNodeRecord(
             endpoint: endpoint,
             relayInfo: request.relayInfo,
@@ -917,18 +929,22 @@ public actor RelayStore {
 
         if changed {
             let now = Date()
-            group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
-            group.epoch += 1
-            group.updatedAt = now
-            group.mlsEpochState = group.mlsEpochState.advancing(
+            guard group.epoch < UInt64.max else {
+                throw RelayStoreError.invalidGroupCommit
+            }
+            let nextEpochState = try group.mlsEpochState.advancing(
                 title: group.title,
                 inboxId: group.inboxId,
                 actorFingerprint: actor,
-                members: group.members,
+                members: memberMap.values.sorted { $0.fingerprint < $1.fingerprint },
                 operation: operation,
                 committedAt: now,
                 ratchetSecretDistribution: request.groupCommit?.ratchetSecretDistribution
             )
+            group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
+            group.epoch = nextEpochState.epoch
+            group.updatedAt = now
+            group.mlsEpochState = nextEpochState
             group.mlsEpochHistory = boundedGroupEpochHistory(
                 group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
             )
@@ -985,6 +1001,9 @@ public actor RelayStore {
               Set(commit.addMemberFingerprints) == Set(request.normalizedAddMemberFingerprints),
               (commit.addMemberProfiles ?? []).sorted(by: { $0.fingerprint < $1.fingerprint }) == request.normalizedAddMemberProfiles,
               Set(commit.removeMemberFingerprints) == Set(request.normalizedRemoveMemberFingerprints) else {
+            throw RelayStoreError.invalidGroupCommit
+        }
+        guard group.epoch < UInt64.max else {
             throw RelayStoreError.invalidGroupCommit
         }
         try validateRatchetSecretDistribution(
@@ -1163,6 +1182,9 @@ public actor RelayStore {
             currentMembers: group.members,
             addProfiles: [requester]
         )
+        guard group.epoch < UInt64.max else {
+            throw RelayStoreError.invalidGroupCommit
+        }
         try validateRatchetSecretDistribution(
             commit.ratchetSecretDistribution,
             groupId: group.id,
@@ -1183,18 +1205,19 @@ public actor RelayStore {
         }
 
         let now = Date()
-        group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
-        group.epoch += 1
-        group.updatedAt = now
-        group.mlsEpochState = group.mlsEpochState.advancing(
+        let nextEpochState = try group.mlsEpochState.advancing(
             title: group.title,
             inboxId: group.inboxId,
             actorFingerprint: requester.fingerprint,
-            members: group.members,
+            members: memberMap.values.sorted { $0.fingerprint < $1.fingerprint },
             operation: .joinApprove,
             committedAt: now,
             ratchetSecretDistribution: commit.ratchetSecretDistribution
         )
+        group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
+        group.epoch = nextEpochState.epoch
+        group.updatedAt = now
+        group.mlsEpochState = nextEpochState
         group.mlsEpochHistory = boundedGroupEpochHistory(
             group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
         )
@@ -1442,6 +1465,12 @@ public actor RelayStore {
 
     private func pruneFederationNodes(now: Date) {
         federationNodes = federationNodes.filter { $0.value.expiresAt > now }
+        if federationNodes.count > maxFederationNodes {
+            let retained = federationNodes
+                .sorted { lhs, rhs in lhs.value.lastHeartbeatAt > rhs.value.lastHeartbeatAt }
+                .prefix(maxFederationNodes)
+            federationNodes = Dictionary(uniqueKeysWithValues: retained.map { ($0.key, $0.value) })
+        }
     }
 
     private func federationNodeKey(for endpoint: RelayEndpoint) -> String {
@@ -1662,6 +1691,7 @@ private enum SQLiteRelayStateStoreError: Error, CustomStringConvertible {
     case prepare(String)
     case bind(String)
     case step(String)
+    case corrupt(String)
 
     var description: String {
         switch self {
@@ -1675,6 +1705,8 @@ private enum SQLiteRelayStateStoreError: Error, CustomStringConvertible {
             return "SQLite bind failed: \(message)"
         case .step(let message):
             return "SQLite step failed: \(message)"
+        case .corrupt(let message):
+            return "SQLite state is corrupt: \(message)"
         }
     }
 }
@@ -1769,9 +1801,8 @@ private enum SQLiteRelayStateStore {
         var mailboxes: [String: [StoredEnvelope]] = [:]
         try queryRows("SELECT inbox_id, value FROM relay_mailbox_envelopes ORDER BY inbox_id, position;", in: db) { statement in
             let inboxId = try readText(statement, column: 0, in: db)
-            if let record = try? decode(StoredEnvelope.self, from: readBlob(statement, column: 1)) {
-                mailboxes[inboxId, default: []].append(record)
-            }
+            let record = try decode(StoredEnvelope.self, from: readBlob(statement, column: 1))
+            mailboxes[inboxId, default: []].append(record)
         }
         return mailboxes
     }
@@ -1780,7 +1811,7 @@ private enum SQLiteRelayStateStore {
         var registrations: [String: InboxRegistrationRecord] = [:]
         try queryRows("SELECT inbox_id, value FROM relay_inbox_registrations;", in: db) { statement in
             let inboxId = try readText(statement, column: 0, in: db)
-            registrations[inboxId] = try? decode(InboxRegistrationRecord.self, from: readBlob(statement, column: 1))
+            registrations[inboxId] = try decode(InboxRegistrationRecord.self, from: readBlob(statement, column: 1))
         }
         return registrations
     }
@@ -1789,9 +1820,8 @@ private enum SQLiteRelayStateStore {
         var attachments: [String: [AttachmentRecord]] = [:]
         try queryRows("SELECT attachment_id, value FROM relay_attachment_chunks ORDER BY attachment_id, chunk_index;", in: db) { statement in
             let attachmentId = try readText(statement, column: 0, in: db)
-            if let record = try? decode(AttachmentRecord.self, from: readBlob(statement, column: 1)) {
-                attachments[attachmentId, default: []].append(record)
-            }
+            let record = try decode(AttachmentRecord.self, from: readBlob(statement, column: 1))
+            attachments[attachmentId, default: []].append(record)
         }
         return attachments
     }
@@ -1800,7 +1830,7 @@ private enum SQLiteRelayStateStore {
         var bundles: [String: PrekeyBundleRecord] = [:]
         try queryRows("SELECT fingerprint, value FROM relay_prekey_bundles;", in: db) { statement in
             let fingerprint = try readText(statement, column: 0, in: db)
-            bundles[fingerprint] = try? decode(PrekeyBundleRecord.self, from: readBlob(statement, column: 1))
+            bundles[fingerprint] = try decode(PrekeyBundleRecord.self, from: readBlob(statement, column: 1))
         }
         return bundles
     }
@@ -1809,7 +1839,7 @@ private enum SQLiteRelayStateStore {
         var nodes: [String: FederationNodeRecord] = [:]
         try queryRows("SELECT node_key, value FROM relay_federation_nodes;", in: db) { statement in
             let nodeKey = try readText(statement, column: 0, in: db)
-            nodes[nodeKey] = try? decode(FederationNodeRecord.self, from: readBlob(statement, column: 1))
+            nodes[nodeKey] = try decode(FederationNodeRecord.self, from: readBlob(statement, column: 1))
         }
         return nodes
     }
@@ -1818,7 +1848,11 @@ private enum SQLiteRelayStateStore {
         var keys: [String: Data] = [:]
         try queryRows("SELECT coordinator_key, public_key FROM relay_coordinator_pinned_keys;", in: db) { statement in
             let coordinatorKey = try readText(statement, column: 0, in: db)
-            keys[coordinatorKey] = readBlob(statement, column: 1)
+            let publicKey = try readBlob(statement, column: 1)
+            guard SigningKeyPair.isValidPublicKey(publicKey) else {
+                throw SQLiteRelayStateStoreError.corrupt("invalid pinned coordinator public key")
+            }
+            keys[coordinatorKey] = publicKey
         }
         return keys
     }
@@ -1826,10 +1860,10 @@ private enum SQLiteRelayStateStore {
     private static func loadGroups(in db: OpaquePointer) throws -> [UUID: RelayGroupDescriptor] {
         var groups: [UUID: RelayGroupDescriptor] = [:]
         try queryRows("SELECT group_id, value FROM relay_groups;", in: db) { statement in
-            guard let groupId = try UUID(uuidString: readText(statement, column: 0, in: db)),
-                  let group = try? decode(RelayGroupDescriptor.self, from: readBlob(statement, column: 1)) else {
-                return
+            guard let groupId = try UUID(uuidString: readText(statement, column: 0, in: db)) else {
+                throw SQLiteRelayStateStoreError.corrupt("invalid group identifier")
             }
+            let group = try decode(RelayGroupDescriptor.self, from: readBlob(statement, column: 1))
             groups[groupId] = group
         }
         return groups
@@ -1838,10 +1872,10 @@ private enum SQLiteRelayStateStore {
     private static func loadGroupJoinRequests(in db: OpaquePointer) throws -> [UUID: [RelayGroupJoinRequest]] {
         var requests: [UUID: [RelayGroupJoinRequest]] = [:]
         try queryRows("SELECT group_id, value FROM relay_group_join_requests ORDER BY group_id, position;", in: db) { statement in
-            guard let groupId = try UUID(uuidString: readText(statement, column: 0, in: db)),
-                  let request = try? decode(RelayGroupJoinRequest.self, from: readBlob(statement, column: 1)) else {
-                return
+            guard let groupId = try UUID(uuidString: readText(statement, column: 0, in: db)) else {
+                throw SQLiteRelayStateStoreError.corrupt("invalid group join-request identifier")
             }
+            let request = try decode(RelayGroupJoinRequest.self, from: readBlob(statement, column: 1))
             requests[groupId, default: []].append(request)
         }
         return requests
@@ -1854,9 +1888,7 @@ private enum SQLiteRelayStateStore {
             in: db
         ) { statement in
             let fingerprint = try readText(statement, column: 0, in: db)
-            guard let invitation = try? decode(RelayGroupInvitation.self, from: readBlob(statement, column: 1)) else {
-                return
-            }
+            let invitation = try decode(RelayGroupInvitation.self, from: readBlob(statement, column: 1))
             invitations[fingerprint, default: []].append(invitation)
         }
         return invitations
@@ -2180,10 +2212,12 @@ private enum SQLiteRelayStateStore {
         return String(cString: cString)
     }
 
-    private static func readBlob(_ statement: OpaquePointer, column: Int32) -> Data {
+    private static func readBlob(_ statement: OpaquePointer, column: Int32) throws -> Data {
         let byteCount = Int(sqlite3_column_bytes(statement, column))
-        guard byteCount > 0, let bytes = sqlite3_column_blob(statement, column) else {
-            return Data()
+        guard byteCount > 0,
+              byteCount <= 32 * 1024 * 1024,
+              let bytes = sqlite3_column_blob(statement, column) else {
+            throw SQLiteRelayStateStoreError.corrupt("empty or oversized blob")
         }
         return Data(bytes: bytes, count: byteCount)
     }

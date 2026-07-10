@@ -7,6 +7,8 @@ public struct ChainKeyState: Codable, Equatable {
     public var skippedMessageKeys: [UInt64: Data]
 
     public static let defaultMaxSkip: UInt64 = 64
+    public static let absoluteMaxSkip: UInt64 = 1_024
+    private static let keyByteCount = 32
 
     public init(keyData: Data, counter: UInt64 = 0, skippedMessageKeys: [UInt64: Data] = [:]) {
         self.keyData = keyData
@@ -25,6 +27,13 @@ public struct ChainKeyState: Codable, Equatable {
         keyData = try container.decode(Data.self, forKey: .keyData)
         counter = try container.decodeIfPresent(UInt64.self, forKey: .counter) ?? 0
         skippedMessageKeys = try container.decodeIfPresent([UInt64: Data].self, forKey: .skippedMessageKeys) ?? [:]
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .keyData,
+                in: container,
+                debugDescription: "Invalid or oversized ratchet chain state."
+            )
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -37,8 +46,12 @@ public struct ChainKeyState: Codable, Equatable {
     }
 
     public mutating func nextMessageKey() throws -> (counter: UInt64, key: SymmetricKey) {
+        guard isStructurallyValid, counter < UInt64.max else {
+            throw CryptoError.counterOutOfOrder
+        }
         let current = counter
         let (messageKey, nextChain) = try deriveKeys(for: counter)
+        keyData.secureWipe()
         keyData = nextChain
         counter += 1
         return (current, SymmetricKey(data: messageKey))
@@ -48,8 +61,13 @@ public struct ChainKeyState: Codable, Equatable {
         for targetCounter: UInt64,
         maxSkip: UInt64 = ChainKeyState.defaultMaxSkip
     ) throws -> SymmetricKey {
-        if let cached = skippedMessageKeys.removeValue(forKey: targetCounter) {
-            return SymmetricKey(data: cached)
+        guard isStructurallyValid, maxSkip <= Self.absoluteMaxSkip else {
+            throw CryptoError.invalidPayload
+        }
+        if var cached = skippedMessageKeys.removeValue(forKey: targetCounter) {
+            let key = SymmetricKey(data: cached)
+            cached.secureWipe()
+            return key
         }
         if targetCounter < counter {
             throw CryptoError.counterReplay
@@ -59,15 +77,39 @@ public struct ChainKeyState: Codable, Equatable {
             throw CryptoError.counterWindowExceeded
         }
         while counter < targetCounter {
+            guard counter < UInt64.max else {
+                throw CryptoError.counterOutOfOrder
+            }
             let (messageKey, nextChain) = try deriveKeys(for: counter)
             cacheSkippedKey(counter, messageKey, max: maxSkip)
+            keyData.secureWipe()
             keyData = nextChain
             counter += 1
         }
+        guard counter < UInt64.max else {
+            throw CryptoError.counterOutOfOrder
+        }
         let (messageKey, nextChain) = try deriveKeys(for: counter)
+        keyData.secureWipe()
         keyData = nextChain
         counter += 1
         return SymmetricKey(data: messageKey)
+    }
+
+    public var isStructurallyValid: Bool {
+        keyData.count == Self.keyByteCount
+            && skippedMessageKeys.count <= Int(Self.absoluteMaxSkip)
+            && skippedMessageKeys.values.allSatisfy { $0.count == Self.keyByteCount }
+            && skippedMessageKeys.keys.allSatisfy { $0 < counter }
+    }
+
+    mutating func secureWipe() {
+        keyData.secureWipe()
+        for key in skippedMessageKeys.keys {
+            var skipped = skippedMessageKeys.removeValue(forKey: key)
+            skipped?.secureWipe()
+        }
+        counter = 0
     }
 
     private func deriveKeys(for counter: UInt64) throws -> (messageKey: Data, nextChain: Data) {
@@ -83,12 +125,13 @@ public struct ChainKeyState: Codable, Equatable {
 
     private mutating func cacheSkippedKey(_ counter: UInt64, _ messageKey: Data, max: UInt64) {
         skippedMessageKeys[counter] = messageKey
-        let limit = Int(max)
+        let limit = Int(min(max, Self.absoluteMaxSkip))
         if skippedMessageKeys.count > limit {
             let overflow = skippedMessageKeys.count - limit
             let keysToRemove = skippedMessageKeys.keys.sorted().prefix(overflow)
             for key in keysToRemove {
-                skippedMessageKeys.removeValue(forKey: key)
+                var removed = skippedMessageKeys.removeValue(forKey: key)
+                removed?.secureWipe()
             }
         }
     }

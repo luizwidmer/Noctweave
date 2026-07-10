@@ -4,10 +4,12 @@ import Foundation
 import Security
 #endif
 
-public enum ContactShareError: Error {
+public enum ContactShareError: Error, Equatable {
     case emptyPassword
+    case invalidPassword
     case unsupportedVersion
     case invalidKdfRounds
+    case invalidPackage
     case entropyUnavailable
 }
 
@@ -27,20 +29,29 @@ public struct ContactSharePackage: Codable, Equatable {
 
 public enum ContactShare {
     public static let currentVersion = 2
-    public static let defaultKdfRounds = 120_000
-    public static let minimumKdfRounds = 60_000
+    public static let defaultKdfRounds = 310_000
+    public static let minimumKdfRounds = 120_000
     public static let maximumKdfRounds = 600_000
+    public static let maximumPackageBytes = 512 * 1024
+    public static let minimumPasswordBytes = 12
+    public static let maximumPasswordBytes = 1_024
     private static let keyLength = 32
+    private static let saltLength = 16
+    private static let maximumCiphertextBytes = 256 * 1024
 
     public static func encode(_ offer: ContactOffer, password: String, kdfRounds: Int = defaultKdfRounds) throws -> Data {
-        guard !password.isEmpty else {
-            throw ContactShareError.emptyPassword
+        try validatePassword(password)
+        guard (minimumKdfRounds...maximumKdfRounds).contains(kdfRounds) else {
+            throw ContactShareError.invalidKdfRounds
         }
+        _ = try offer.verified()
         let salt = try randomSalt()
-        let boundedRounds = boundedRounds(kdfRounds)
-        let key = derivePBKDF2Key(password: password, salt: salt, rounds: boundedRounds)
+        let key = derivePBKDF2Key(password: password, salt: salt, rounds: kdfRounds)
         var offerData = try NoctweaveCoder.encode(offer)
         defer { offerData.secureWipe() }
+        guard !offerData.isEmpty, offerData.count <= maximumCiphertextBytes else {
+            throw ContactShareError.invalidPackage
+        }
         let payload = try CryptoBox.encrypt(
             offerData,
             key: key,
@@ -49,22 +60,35 @@ public enum ContactShare {
         let package = ContactSharePackage(
             version: currentVersion,
             salt: salt,
-            kdfRounds: boundedRounds,
+            kdfRounds: kdfRounds,
             payload: payload
         )
-        return try NoctweaveCoder.encode(package)
+        let encoded = try NoctweaveCoder.encode(package)
+        guard encoded.count <= maximumPackageBytes else {
+            throw ContactShareError.invalidPackage
+        }
+        return encoded
     }
 
     public static func decode(_ data: Data, password: String) throws -> ContactOffer {
-        guard !password.isEmpty else {
-            throw ContactShareError.emptyPassword
+        try validatePassword(password)
+        guard !data.isEmpty, data.count <= maximumPackageBytes else {
+            throw ContactShareError.invalidPackage
         }
         let package = try NoctweaveCoder.decode(ContactSharePackage.self, from: data)
+        guard package.salt.count == saltLength,
+              (minimumKdfRounds...maximumKdfRounds).contains(package.kdfRounds),
+              package.payload.nonce.count == 12,
+              package.payload.tag.count == 16,
+              !package.payload.ciphertext.isEmpty,
+              package.payload.ciphertext.count <= maximumCiphertextBytes else {
+            throw ContactShareError.invalidPackage
+        }
         let key: SymmetricKey
         let aad: Data
         switch package.version {
         case 2:
-            key = derivePBKDF2Key(password: password, salt: package.salt, rounds: boundedRounds(package.kdfRounds))
+            key = derivePBKDF2Key(password: password, salt: package.salt, rounds: package.kdfRounds)
             aad = authenticatedData(for: 2)
         default:
             throw ContactShareError.unsupportedVersion
@@ -81,6 +105,15 @@ public enum ContactShare {
 
     private static func boundedRounds(_ rounds: Int) -> Int {
         min(maximumKdfRounds, max(minimumKdfRounds, rounds))
+    }
+
+    private static func validatePassword(_ password: String) throws {
+        guard !password.isEmpty else {
+            throw ContactShareError.emptyPassword
+        }
+        guard (minimumPasswordBytes...maximumPasswordBytes).contains(password.utf8.count) else {
+            throw ContactShareError.invalidPassword
+        }
     }
 
     private static func derivePBKDF2Key(password: String, salt: Data, rounds: Int) -> SymmetricKey {
@@ -127,7 +160,7 @@ public enum ContactShare {
     }
 
     private static func randomSalt() throws -> Data {
-        var bytes = [UInt8](repeating: 0, count: 16)
+        var bytes = [UInt8](repeating: 0, count: saltLength)
         #if canImport(Security)
         guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
             throw ContactShareError.entropyUnavailable
@@ -142,20 +175,6 @@ public enum ContactShare {
 }
 
 private extension Data {
-    mutating func secureWipe() {
-        guard !isEmpty else { return }
-        let byteCount = count
-        withUnsafeMutableBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else { return }
-            #if canImport(Darwin)
-            _ = memset_s(baseAddress, byteCount, 0, byteCount)
-            #else
-            _ = memset(baseAddress, 0, byteCount)
-            #endif
-        }
-        removeAll(keepingCapacity: false)
-    }
-
     mutating func xorInPlace(with other: Data) {
         let count = Swift.min(self.count, other.count)
         guard count > 0 else { return }

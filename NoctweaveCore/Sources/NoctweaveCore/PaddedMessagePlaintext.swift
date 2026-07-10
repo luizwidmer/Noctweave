@@ -7,7 +7,8 @@ enum PaddedMessagePlaintext {
     private static let headerBytes = 9
 
     static func encode(_ body: MessageBody) throws -> Data {
-        let bodyData = try NoctweaveCoder.encode(body, sortedKeys: true)
+        var bodyData = try NoctweaveCoder.encode(body, sortedKeys: true)
+        defer { bodyData.secureWipe() }
         let paddedSize = paddedSize(for: bodyData.count)
         guard paddedSize <= maximumPaddedBytes,
               bodyData.count <= UInt32.max,
@@ -21,25 +22,37 @@ enum PaddedMessagePlaintext {
         data.append(contentsOf: UInt32(bodyData.count).bigEndianBytes)
         data.append(bodyData)
         if paddingCount > 0 {
-            data.append(contentsOf: (0..<paddingCount).map { _ in UInt8.random(in: 0...255) })
+            var generator = SystemRandomNumberGenerator()
+            var padding = [UInt8](repeating: 0, count: paddingCount)
+            for index in padding.indices {
+                padding[index] = UInt8.random(in: .min ... .max, using: &generator)
+            }
+            data.append(contentsOf: padding)
         }
         return data
     }
 
     static func decode(_ data: Data) throws -> MessageBody {
-        if data.count >= headerBytes,
-           data.prefix(magic.count) == magic {
-            let lengthStart = magic.count
-            let lengthEnd = lengthStart + 4
-            let bodyLength = Int(UInt32(bigEndianBytes: data[lengthStart..<lengthEnd]))
-            let bodyStart = lengthEnd
-            let bodyEnd = bodyStart + bodyLength
-            guard bodyLength >= 0, bodyEnd <= data.count else {
-                throw CryptoError.invalidPayload
-            }
-            return try NoctweaveCoder.decode(MessageBody.self, from: Data(data[bodyStart..<bodyEnd]))
+        guard data.count >= headerBytes,
+              data.count <= maximumPaddedBytes,
+              data.count >= minimumPaddedBytes,
+              data.count.isPowerOfTwo,
+              data.prefix(magic.count) == magic else {
+            throw CryptoError.invalidPayload
         }
-        return try NoctweaveCoder.decode(MessageBody.self, from: data)
+        let lengthStart = magic.count
+        let lengthEnd = lengthStart + 4
+        let bodyLength = Int(UInt32(bigEndianBytes: data[lengthStart..<lengthEnd]))
+        let bodyStart = lengthEnd
+        let bodyEnd = bodyStart + bodyLength
+        guard bodyLength > 0,
+              bodyEnd <= data.count,
+              paddedSize(for: bodyLength) == data.count else {
+            throw CryptoError.invalidPayload
+        }
+        var bodyData = Data(data[bodyStart..<bodyEnd])
+        defer { bodyData.secureWipe() }
+        return try NoctweaveCoder.decode(MessageBody.self, from: bodyData)
     }
 
     private static func paddedSize(for bodyBytes: Int) -> Int {
@@ -49,6 +62,12 @@ enum PaddedMessagePlaintext {
             size *= 2
         }
         return size
+    }
+}
+
+private extension Int {
+    var isPowerOfTwo: Bool {
+        self > 0 && (self & (self - 1)) == 0
     }
 }
 

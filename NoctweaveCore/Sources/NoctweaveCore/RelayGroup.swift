@@ -88,7 +88,7 @@ public enum MLSGroupEpochHistoryValidator {
         }
 
         for (previous, current) in zip(sorted, sorted.dropFirst()) {
-            if current.epoch != previous.epoch + 1 {
+            if previous.epoch == UInt64.max || current.epoch != previous.epoch + 1 {
                 issues.insert(.nonContiguousEpoch)
             }
             if current.previousTranscriptHash != previous.transcriptHash {
@@ -192,8 +192,11 @@ public struct MLSGroupEpochState: Codable, Equatable {
         operation: MLSGroupCommitOperation,
         committedAt: Date,
         ratchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil
-    ) -> MLSGroupEpochState {
-        MLSGroupEpochState.make(
+    ) throws -> MLSGroupEpochState {
+        guard epoch < UInt64.max else {
+            throw CryptoError.counterOutOfOrder
+        }
+        return MLSGroupEpochState.make(
             groupId: groupId,
             title: title,
             inboxId: inboxId,

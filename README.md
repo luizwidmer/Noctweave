@@ -74,7 +74,9 @@ encrypted envelopes, and verifies/decrypts received messages.
 
 ## Security Status
 
-Noctweave is pre-1.0 and unaudited.
+Noctweave is pre-1.0 and has not received an independent external audit. A
+repository-wide internal security review was completed on July 10, 2026; see
+[`security_audit_2026-07-10.md`](NoctweaveDocumentation/security_audit_2026-07-10.md).
 
 Implemented:
 
@@ -83,6 +85,7 @@ Implemented:
 - Signed identity continuity events
 - Replay rejection and actor-proof checks
 - Bounded federation discovery and peer-exchange controls
+- Bounded parsers, cryptographic inputs, state stores, retrieval plans, and relay configuration
 - Test vectors, XCTest coverage, and bounded model-checking for selected group-state invariants
 
 Not claimed:
@@ -181,12 +184,17 @@ or burn identities, and issue raw relay requests for diagnostics. See
 ```js
 import {
   BrowserLocalStorageStore,
+  EncryptedNoctweaveStore,
   NoctweaveRelayClient,
   NoctweaveStateRepository
 } from "@noctweave/js-client";
 
 const relay = new NoctweaveRelayClient("https://relay.example");
-const store = new BrowserLocalStorageStore({ namespace: "my-app:noctweave" });
+const backend = new BrowserLocalStorageStore({ namespace: "my-app:noctweave" });
+const applicationManagedKeyBytes = await loadApplicationKey(); // exactly 32 bytes
+const store = new EncryptedNoctweaveStore(backend, {
+  keyBytes: applicationManagedKeyBytes
+});
 const state = new NoctweaveStateRepository(store);
 
 await relay.health();
@@ -209,6 +217,7 @@ WebCrypto for symmetric primitives where appropriate. See
 - Wire format and test vectors: [`wire_format_and_test_vectors.md`](NoctweaveDocumentation/wire_format_and_test_vectors.md)
 - Relay hardening guide: [`relay_ops_hardening_guide.md`](NoctweaveDocumentation/relay_ops_hardening_guide.md)
 - Security requirements: [`security_requirements.md`](NoctweaveDocumentation/security_requirements.md)
+- Internal security audit: [`security_audit_2026-07-10.md`](NoctweaveDocumentation/security_audit_2026-07-10.md)
 - Roadmap: [`noctweave_roadmap.md`](NoctweaveDocumentation/noctweave_roadmap.md)
 - Release/SBOM policy: [`dependency_sbom_and_release_policy.md`](NoctweaveDocumentation/dependency_sbom_and_release_policy.md)
 

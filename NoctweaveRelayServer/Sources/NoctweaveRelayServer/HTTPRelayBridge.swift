@@ -6,16 +6,23 @@ import NIOPosix
 @preconcurrency import NIOFoundationCompat
 @preconcurrency import NIOConcurrencyHelpers
 
+private let defaultRelayRequestLimit = 512 * 1024
+private let absoluteRelayRequestLimit = 8 * 1024 * 1024
+
+private func boundedRelayRequestLimit(_ configured: Int?) -> Int {
+    min(max(1_024, configured ?? defaultRelayRequestLimit), absoluteRelayRequestLimit)
+}
+
 func makeHTTPRelayBridgeBootstrap(
     group: EventLoopGroup,
     forwarder: LocalRelayForwarder,
+    store: RelayStore,
     maxMessageBytes: Int?
 ) -> ServerBootstrap {
     ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.backlog, value: 256)
         .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
         .childChannelInitializer { channel in
-            let webSocketHandler = WebSocketRelayHandler(forwarder: forwarder, maxMessageBytes: maxMessageBytes)
             let upgrader = NIOWebSocketServerUpgrader(
                 shouldUpgrade: { channel, head in
                     guard head.method == .GET else {
@@ -27,12 +34,23 @@ func makeHTTPRelayBridgeBootstrap(
                     }
                     return channel.eventLoop.makeSucceededFuture([:])
                 },
-                upgradePipelineHandler: { channel, _ in
-                    channel.pipeline.addHandler(webSocketHandler)
+                upgradePipelineHandler: { channel, head in
+                    channel.pipeline.addHandler(
+                        WebSocketRelayHandler(
+                            forwarder: forwarder,
+                            store: store,
+                            sourceKey: relayHTTPSourceKey(address: channel.remoteAddress, headers: head.headers),
+                            maxMessageBytes: maxMessageBytes
+                        )
+                    )
                 }
             )
 
-            let httpHandler = HTTPRelayHandler(forwarder: forwarder, maxMessageBytes: maxMessageBytes)
+            let httpHandler = HTTPRelayHandler(
+                forwarder: forwarder,
+                store: store,
+                maxMessageBytes: maxMessageBytes
+            )
             let upgradeConfig = NIOHTTPServerUpgradeConfiguration(
                 upgraders: [upgrader],
                 completionHandler: { context in
@@ -84,8 +102,15 @@ final class LocalRelayForwarder {
                     )
                 }
             }
-        bootstrap.connect(host: relayHost, port: relayPort).whenFailure { error in
-            completion.resolve(promise, .failure(error))
+        bootstrap.connect(host: relayHost, port: relayPort).whenComplete { result in
+            switch result {
+            case .success(let channel):
+                promise.futureResult.whenComplete { _ in
+                    channel.close(promise: nil)
+                }
+            case .failure(let error):
+                completion.resolve(promise, .failure(error))
+            }
         }
         return promise.futureResult
     }
@@ -100,14 +125,16 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
     typealias OutboundOut = HTTPServerResponsePart
 
     private let forwarder: LocalRelayForwarder
-    private let maxMessageBytes: Int?
+    private let store: RelayStore
+    private let maxMessageBytes: Int
     private var requestHead: HTTPRequestHead?
     private var requestBody = ByteBuffer()
     private var isRejected = false
 
-    init(forwarder: LocalRelayForwarder, maxMessageBytes: Int?) {
+    init(forwarder: LocalRelayForwarder, store: RelayStore, maxMessageBytes: Int?) {
         self.forwarder = forwarder
-        self.maxMessageBytes = maxMessageBytes
+        self.store = store
+        self.maxMessageBytes = boundedRelayRequestLimit(maxMessageBytes)
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -116,10 +143,22 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
             requestHead = head
             requestBody.clear()
             isRejected = false
+            let declaredLengths = head.headers["Content-Length"]
+            if declaredLengths.count > 1 || declaredLengths.contains(where: { value in
+                guard let parsed = Int(value), parsed >= 0 else { return true }
+                return parsed > maxMessageBytes
+            }) {
+                isRejected = true
+                sendHTTPResponse(
+                    status: declaredLengths.count > 1 ? .badRequest : .payloadTooLarge,
+                    body: Data(#"{"type":"error","error":"Invalid or oversized payload"}"#.utf8),
+                    context: context
+                )
+            }
         case .body(var body):
             guard !isRejected else { return }
             requestBody.writeBuffer(&body)
-            if let maxMessageBytes, requestBody.readableBytes > maxMessageBytes {
+            if requestBody.readableBytes > maxMessageBytes {
                 isRejected = true
                 sendHTTPResponse(
                     status: .payloadTooLarge,
@@ -138,6 +177,15 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
     }
 
     private func handleRequest(head: HTTPRequestHead, context: ChannelHandlerContext) {
+        let sourceKey = relayHTTPSourceKey(address: context.channel.remoteAddress, headers: head.headers)
+        guard store.allowRelayRequest(sourceKey: sourceKey) else {
+            sendHTTPResponse(
+                status: .tooManyRequests,
+                body: Data(#"{"type":"error","error":"Rate limit exceeded"}"#.utf8),
+                context: context
+            )
+            return
+        }
         let path = head.uri.split(separator: "?", maxSplits: 1).first.map(String.init) ?? head.uri
         if head.method == .GET, path == "/health" {
             sendHTTPResponse(status: .ok, body: Data(#"{"status":"ok"}"#.utf8), context: context)
@@ -208,11 +256,16 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
     typealias OutboundOut = WebSocketFrame
 
     private let forwarder: LocalRelayForwarder
-    private let maxMessageBytes: Int?
+    private let store: RelayStore
+    private let sourceKey: String
+    private let maxMessageBytes: Int
+    private var isForwarding = false
 
-    init(forwarder: LocalRelayForwarder, maxMessageBytes: Int?) {
+    init(forwarder: LocalRelayForwarder, store: RelayStore, sourceKey: String, maxMessageBytes: Int?) {
         self.forwarder = forwarder
-        self.maxMessageBytes = maxMessageBytes
+        self.store = store
+        self.sourceKey = sourceKey
+        self.maxMessageBytes = boundedRelayRequestLimit(maxMessageBytes)
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -225,8 +278,24 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
             let pong = WebSocketFrame(fin: true, opcode: .pong, data: pongData)
             context.writeAndFlush(wrapOutboundOut(pong), promise: nil)
         case .text, .binary:
+            guard store.allowRelayRequest(sourceKey: sourceKey) else {
+                send(
+                    frameType: .text,
+                    payload: Data(#"{"type":"error","error":"Rate limit exceeded"}"#.utf8),
+                    context: context
+                )
+                return
+            }
             guard frame.fin else {
                 context.close(promise: nil)
+                return
+            }
+            guard !isForwarding else {
+                send(
+                    frameType: .text,
+                    payload: Data(#"{"type":"error","error":"Request already in progress"}"#.utf8),
+                    context: context
+                )
                 return
             }
             var payloadBuffer = frame.unmaskedData
@@ -234,12 +303,14 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
                 context.close(promise: nil)
                 return
             }
-            if let maxMessageBytes, payload.count > maxMessageBytes {
+            if payload.count > maxMessageBytes {
                 send(frameType: .text, payload: Data(#"{"type":"error","error":"Payload too large"}"#.utf8), context: context)
                 return
             }
+            isForwarding = true
             let responseContext = NIOContextBox(context)
             forwarder.forward(payload, on: context.eventLoop).whenComplete { result in
+                self.isForwarding = false
                 switch result {
                 case .success(let responseData):
                     self.send(frameType: frame.opcode, payload: responseData, context: responseContext.context)
@@ -276,6 +347,40 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         context.close(promise: nil)
     }
+}
+
+func relayHTTPSourceKey(address: SocketAddress?, headers: HTTPHeaders) -> String {
+    let direct = address?.ipAddress?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    if isLoopbackRelaySource(direct) {
+        if let connectingIP = normalizedForwardedAddress(headers.first(name: "CF-Connecting-IP")) {
+            return connectingIP
+        }
+        if let forwarded = headers.first(name: "X-Forwarded-For")?.split(separator: ",").first,
+           let forwardedIP = normalizedForwardedAddress(String(forwarded)) {
+            return forwardedIP
+        }
+    }
+    if !direct.isEmpty {
+        return direct
+    }
+    let fallback = address?.description.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return fallback.isEmpty ? "unknown" : fallback
+}
+
+private func normalizedForwardedAddress(_ value: String?) -> String? {
+    guard let value else { return nil }
+    let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    guard !candidate.isEmpty,
+          candidate.count <= 64,
+          !candidate.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) }),
+          (try? SocketAddress(ipAddress: candidate, port: 0)) != nil else {
+        return nil
+    }
+    return candidate
+}
+
+private func isLoopbackRelaySource(_ source: String) -> Bool {
+    source == "127.0.0.1" || source == "::1" || source == "0:0:0:0:0:0:0:1"
 }
 
 private final class RelayBridgeForwardingHandler: ChannelInboundHandler {

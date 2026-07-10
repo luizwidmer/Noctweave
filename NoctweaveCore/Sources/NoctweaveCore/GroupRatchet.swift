@@ -2,6 +2,8 @@ import CryptoKit
 import Foundation
 
 public struct GroupRatchetState: Codable, Equatable {
+    private static let digestByteCount = 32
+    private static let maximumReceiveChains = 256
     public let groupId: UUID
     public var epoch: UInt64
     public var transcriptHash: Data
@@ -63,12 +65,14 @@ public struct GroupRatchetState: Codable, Equatable {
         transcriptHash: Data,
         commitSecret: Data
     ) throws {
-        guard epoch == self.epoch + 1,
-              !transcriptHash.isEmpty,
-              !commitSecret.isEmpty else {
+        guard isStructurallyValid,
+              self.epoch < UInt64.max,
+              epoch == self.epoch + 1,
+              transcriptHash.count == Self.digestByteCount,
+              commitSecret.count == Self.digestByteCount else {
             throw CryptoError.invalidPayload
         }
-        rootKey = Self.deriveRootKey(
+        let nextRootKey = Self.deriveRootKey(
             groupId: groupId,
             epoch: epoch,
             transcriptHash: transcriptHash,
@@ -78,8 +82,14 @@ public struct GroupRatchetState: Codable, Equatable {
             // recoverable from the commit secret alone.
             priorRootKey: nil
         )
+        rootKey.secureWipe()
+        rootKey = nextRootKey
         self.epoch = epoch
         self.transcriptHash = transcriptHash
+        sendChain?.secureWipe()
+        for fingerprint in receiveChains.keys {
+            receiveChains[fingerprint]?.secureWipe()
+        }
         receiveChains.removeAll()
         if let localSenderFingerprint {
             sendChain = Self.senderChain(
@@ -93,6 +103,10 @@ public struct GroupRatchetState: Codable, Equatable {
     }
 
     mutating func nextSendKey(senderFingerprint: String) throws -> (counter: UInt64, key: SymmetricKey) {
+        guard isStructurallyValid,
+              Self.isCanonicalFingerprint(senderFingerprint) else {
+            throw CryptoError.invalidPayload
+        }
         if localSenderFingerprint == nil {
             localSenderFingerprint = senderFingerprint
         }
@@ -106,10 +120,20 @@ public struct GroupRatchetState: Codable, Equatable {
                 senderFingerprint: senderFingerprint
             )
         }
-        return try sendChain!.nextMessageKey()
+        guard var chain = sendChain else {
+            throw CryptoError.invalidPayload
+        }
+        let result = try chain.nextMessageKey()
+        sendChain = chain
+        return result
     }
 
     mutating func receiveKey(senderFingerprint: String, counter: UInt64) throws -> SymmetricKey {
+        guard isStructurallyValid,
+              Self.isCanonicalFingerprint(senderFingerprint),
+              receiveChains[senderFingerprint] != nil || receiveChains.count < Self.maximumReceiveChains else {
+            throw CryptoError.invalidPayload
+        }
         var chain = receiveChains[senderFingerprint] ?? Self.senderChain(
             rootKey: rootKey,
             transcriptHash: transcriptHash,
@@ -118,6 +142,24 @@ public struct GroupRatchetState: Codable, Equatable {
         let key = try chain.messageKey(for: counter, maxSkip: ChainKeyState.defaultMaxSkip)
         receiveChains[senderFingerprint] = chain
         return key
+    }
+
+    public var isStructurallyValid: Bool {
+        transcriptHash.count == Self.digestByteCount
+            && rootKey.count == Self.digestByteCount
+            && localSenderFingerprint.map(Self.isCanonicalFingerprint) ?? true
+            && (sendChain?.isStructurallyValid ?? true)
+            && receiveChains.count <= Self.maximumReceiveChains
+            && receiveChains.allSatisfy { fingerprint, chain in
+                Self.isCanonicalFingerprint(fingerprint) && chain.isStructurallyValid
+            }
+    }
+
+    private static func isCanonicalFingerprint(_ value: String) -> Bool {
+        guard let decoded = Data(base64Encoded: value), decoded.count == digestByteCount else {
+            return false
+        }
+        return decoded.base64EncodedString() == value
     }
 
     private static func deriveRootKey(
@@ -265,7 +307,7 @@ public enum GroupRatchetRecovery {
         transcriptHash: Data,
         secret: Data
     ) -> Bool {
-        guard epoch == state.epoch + 1 else {
+        guard state.epoch < UInt64.max, epoch == state.epoch + 1 else {
             return false
         }
         return (try? state.advanceEpoch(
@@ -310,7 +352,9 @@ public struct GroupRatchetEnvelope: Codable, Identifiable, Equatable {
     }
 
     public func verifySignature(publicSigningKey: Data) -> Bool {
-        guard senderFingerprint == CryptoBox.fingerprint(for: publicSigningKey),
+        guard isStructurallyValid,
+              SigningKeyPair.isValidPublicKey(publicSigningKey),
+              senderFingerprint == CryptoBox.fingerprint(for: publicSigningKey),
               let data = try? GroupRatchet.signableData(
                 groupId: groupId,
                 epoch: epoch,
@@ -323,6 +367,25 @@ public struct GroupRatchetEnvelope: Codable, Identifiable, Equatable {
             return false
         }
         return SigningKeyPair.verify(signature: signature, data: data, publicKeyData: publicSigningKey)
+    }
+
+    public var isStructurallyValid: Bool {
+        let ciphertextBytes = payload.ciphertext.count
+        return transcriptHash.count == 32
+            && Self.isCanonicalFingerprint(senderFingerprint)
+            && sentAt.timeIntervalSince1970.isFinite
+            && payload.nonce.count == 12
+            && payload.tag.count == 16
+            && (PaddedMessagePlaintext.minimumPaddedBytes...PaddedMessagePlaintext.maximumPaddedBytes)
+                .contains(ciphertextBytes)
+            && ciphertextBytes > 0
+            && (ciphertextBytes & (ciphertextBytes - 1)) == 0
+            && signature.count == 3_309
+    }
+
+    private static func isCanonicalFingerprint(_ value: String) -> Bool {
+        guard let decoded = Data(base64Encoded: value), decoded.count == 32 else { return false }
+        return decoded.base64EncodedString() == value
     }
 }
 
@@ -343,6 +406,7 @@ public struct GroupRatchetSecretShare: Codable, Equatable {
 }
 
 public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
+    public static let maximumMembers = 256
     public let version: Int
     public let groupId: UUID
     public let epoch: UInt64
@@ -375,14 +439,15 @@ public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
         }
         return version == 1
             && !normalizedMembers.isEmpty
-            && !normalizedMembers.contains(where: { $0.isEmpty })
+            && normalizedMembers.count <= Self.maximumMembers
+            && normalizedMembers.allSatisfy(Self.isCanonicalFingerprint)
             && Set(normalizedMembers).count == normalizedMembers.count
-            && !shareRecipients.contains(where: { $0.isEmpty })
+            && shareRecipients.allSatisfy(Self.isCanonicalFingerprint)
             && Set(shareRecipients).count == shareRecipients.count
             && Set(shareRecipients) == Set(normalizedMembers)
             && shares.allSatisfy { share in
-                !share.kemCiphertext.isEmpty
-                    && !share.encryptedSecret.ciphertext.isEmpty
+                share.kemCiphertext.count == 1_088
+                    && share.encryptedSecret.ciphertext.count == 32
                     && share.encryptedSecret.nonce.count == 12
                     && share.encryptedSecret.tag.count == 16
             }
@@ -395,12 +460,14 @@ public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
         operation: MLSGroupCommitOperation,
         recipients: [RelayGroupMemberProfile]
     ) throws -> GroupRatchetEpochSecretDistribution {
-        guard !secret.isEmpty else {
+        guard secret.count == 32,
+              recipients.count <= Self.maximumMembers else {
             throw CryptoError.invalidPayload
         }
-        let normalizedRecipients = recipients
-            .filter { !$0.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .sorted { $0.fingerprint < $1.fingerprint }
+        guard recipients.allSatisfy({ Self.isCanonicalFingerprint($0.fingerprint) }) else {
+            throw CryptoError.invalidPayload
+        }
+        let normalizedRecipients = recipients.sorted { $0.fingerprint < $1.fingerprint }
         let recipientFingerprints = normalizedRecipients.map(\.fingerprint)
         guard !recipientFingerprints.isEmpty,
               Set(recipientFingerprints).count == recipientFingerprints.count else {
@@ -412,7 +479,8 @@ public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
                   AgreementKeyPair.isValidPublicKey(publicKey) else {
                 throw CryptoError.invalidPublicKey
             }
-            let kem = try AgreementKeyPair.encapsulate(to: publicKey)
+            var kem = try AgreementKeyPair.encapsulate(to: publicKey)
+            defer { kem.sharedSecret.secureWipe() }
             let key = SymmetricKey(data: CryptoBox.deriveChainKey(
                 sharedSecret: kem.sharedSecret,
                 salt: Data(groupId.uuidString.utf8),
@@ -458,7 +526,8 @@ public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
               memberFingerprints.contains(recipientFingerprint) else {
             throw CryptoError.invalidPayload
         }
-        let sharedSecret = try agreementKey.decapsulate(ciphertext: share.kemCiphertext)
+        var sharedSecret = try agreementKey.decapsulate(ciphertext: share.kemCiphertext)
+        defer { sharedSecret.secureWipe() }
         let key = SymmetricKey(data: CryptoBox.deriveChainKey(
             sharedSecret: sharedSecret,
             salt: Data(groupId.uuidString.utf8),
@@ -480,6 +549,11 @@ public struct GroupRatchetEpochSecretDistribution: Codable, Equatable {
                 recipientFingerprint: recipientFingerprint
             )
         )
+    }
+
+    private static func isCanonicalFingerprint(_ value: String) -> Bool {
+        guard let decoded = Data(base64Encoded: value), decoded.count == 32 else { return false }
+        return decoded.base64EncodedString() == value
     }
 
     private static func shareInfo(
@@ -536,17 +610,20 @@ public enum GroupRatchet {
         sentAt: Date = Date(),
         metadataBucketSeconds: Int? = nil
     ) throws -> GroupRatchetEnvelope {
-        let prepared = try state.nextSendKey(senderFingerprint: senderFingerprint)
-        return try encrypt(
+        var candidateState = state
+        let prepared = try candidateState.nextSendKey(senderFingerprint: senderFingerprint)
+        let envelope = try encrypt(
             body: body,
             senderSigningKey: senderSigningKey,
             senderFingerprint: senderFingerprint,
             messageCounter: prepared.counter,
             messageKey: prepared.key,
-            state: state,
+            state: candidateState,
             sentAt: sentAt,
             metadataBucketSeconds: metadataBucketSeconds
         )
+        state = candidateState
+        return envelope
     }
 
     public static func prepareMessageKey(
@@ -567,7 +644,12 @@ public enum GroupRatchet {
         sentAt: Date = Date(),
         metadataBucketSeconds: Int? = nil
     ) throws -> GroupRatchetEnvelope {
-        let plaintext = try PaddedMessagePlaintext.encode(body)
+        guard state.isStructurallyValid,
+              senderFingerprint == CryptoBox.fingerprint(for: senderSigningKey.publicKeyData) else {
+            throw CryptoError.invalidPayload
+        }
+        var plaintext = try PaddedMessagePlaintext.encode(body)
+        defer { plaintext.secureWipe() }
         let sentAt = MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
         let aad = try authenticatedData(
             groupId: state.groupId,
@@ -621,7 +703,8 @@ public enum GroupRatchet {
               envelope.verifySignature(publicSigningKey: senderPublicSigningKey) else {
             throw CryptoError.invalidPayload
         }
-        let key = try state.receiveKey(
+        var candidateState = state
+        let key = try candidateState.receiveKey(
             senderFingerprint: envelope.senderFingerprint,
             counter: envelope.messageCounter
         )
@@ -632,8 +715,11 @@ public enum GroupRatchet {
             senderFingerprint: envelope.senderFingerprint,
             messageCounter: envelope.messageCounter
         )
-        let plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: aad)
-        return (try PaddedMessagePlaintext.decode(plaintext), key)
+        var plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: aad)
+        defer { plaintext.secureWipe() }
+        let body = try PaddedMessagePlaintext.decode(plaintext)
+        state = candidateState
+        return (body, key)
     }
 
     static func signableData(

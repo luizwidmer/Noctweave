@@ -3,6 +3,44 @@ import Foundation
 @preconcurrency import NIOPosix
 
 struct ServerConfig {
+    static let advertisedSoftwareVersion = "NoctweaveRelayServer/0.1.0"
+    static let maximumTemporalBucketSeconds = 24 * 60 * 60
+    static let maximumAttachmentTTLSeconds = 30 * 24 * 60 * 60
+    static let usage = """
+    NoctweaveRelayServer — ciphertext relay and federation node
+
+    Usage:
+      NoctweaveRelayServer [options]
+
+    Common options:
+      --host <address>                 Bind address (default: 0.0.0.0)
+      --port <port>                    Raw TCP port (default: 9339)
+      --http-port <port>               Optional HTTP/WebSocket bridge port
+      --memory-only                    Keep relay state in memory
+      --data-dir <path>                SQLite state directory (default: /data)
+      --relay-name <name>              Operator-visible relay name
+      --federation-mode <mode>         solo, manual, curated, or open
+      --advertised-endpoint <endpoint> Public tcp/tls/http/https/ws/wss endpoint
+      --access-password <password>     Require relay client authentication
+      --attachments-enabled <bool>     Enable or disable attachment chunks
+      --attachment-storage <mode>      inline or ipfs
+      --temporal-bucket-seconds <n>    Metadata timing bucket; 0 disables it
+      --help, -h                       Show this help without starting a relay
+      --version                        Print the relay software version
+
+    Environment variables and the complete option reference are documented in
+    NoctweaveRelayServer/README.md. Prefer environment variables over command-line
+    arguments for passwords and federation tokens.
+    """
+
+    static func shouldShowHelp(arguments: [String]) -> Bool {
+        arguments.contains("--help") || arguments.contains("-h")
+    }
+
+    static func shouldShowVersion(arguments: [String]) -> Bool {
+        arguments.contains("--version")
+    }
+
     var host: String
     var port: Int
     var httpPort: Int?
@@ -33,7 +71,6 @@ struct ServerConfig {
     var wakeSupport: DecentralizedWakeSupport?
     var relayName: String?
     var operatorNote: String?
-    var softwareVersion: String?
     var groupCreationMode: GroupCreationMode
     var groupSecurityModel: GroupSecurityModel
     var accessPassword: String?
@@ -55,8 +92,10 @@ struct ServerConfig {
     var federationAllowList: [RelayEndpoint]
     var allowPrivateFederationEndpoints: Bool
 
-    static func parse() -> ServerConfig {
-        let environment = ProcessInfo.processInfo.environment
+    static func parse(
+        arguments: [String] = Array(CommandLine.arguments.dropFirst()),
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> ServerConfig {
         var host = "0.0.0.0"
         var port = 9339
         var httpPort: Int?
@@ -114,9 +153,8 @@ struct ServerConfig {
         var wakeLongPollTimeoutSeconds: Int?
         var relayName: String?
         var operatorNote: String?
-        var softwareVersion: String?
         var groupCreationMode: GroupCreationMode = .allowed
-        var groupSecurityModel: GroupSecurityModel = .relayBackedPairwise
+        var groupSecurityModel: GroupSecurityModel = .mlsDerivedTree
         var accessPassword: String? = environment["NOCTYRA_RELAY_PASSWORD"]
         var coordinatorRegistrationToken: String? = environment["NOCTYRA_COORDINATOR_REGISTRATION_TOKEN"]
         var federationForwardingAuthToken: String? = environment["NOCTYRA_FEDERATION_FORWARDING_TOKEN"]
@@ -140,7 +178,7 @@ struct ServerConfig {
         var federationAllowList: [RelayEndpoint] = []
         var allowPrivateFederationEndpoints = false
 
-        var iterator = CommandLine.arguments.dropFirst().makeIterator()
+        var iterator = arguments.makeIterator()
         while let arg = iterator.next() {
             switch arg {
             case "--host":
@@ -165,11 +203,11 @@ struct ServerConfig {
                 }
             case "--max-message-bytes":
                 if let value = iterator.next(), let parsed = Int(value) {
-                    maxMessageBytes = parsed > 0 ? parsed : nil
+                    maxMessageBytes = parsed > 0 ? parsed : 512 * 1024
                 }
             case "--max-line-bytes":
                 if let value = iterator.next(), let parsed = Int(value) {
-                    maxLineBytes = parsed > 0 ? parsed : nil
+                    maxLineBytes = parsed > 0 ? parsed : 640 * 1024
                 }
             case "--forwarding-timeout-seconds":
                 if let value = iterator.next(), let parsed = Int(value) {
@@ -203,7 +241,7 @@ struct ServerConfig {
                 }
             case "--temporal-bucket-minutes":
                 if let value = iterator.next(), let parsed = Int(value) {
-                    temporalBucketSeconds = max(0, parsed * 60)
+                    temporalBucketSeconds = min(max(0, parsed), 24 * 60) * 60
                 }
             case "--temporal-bucket-schedule-seconds":
                 if let value = iterator.next() {
@@ -217,7 +255,7 @@ struct ServerConfig {
                     temporalBucketScheduleSeconds = value
                         .split(separator: ",")
                         .compactMap { Int(String($0).trimmingCharacters(in: .whitespacesAndNewlines)) }
-                        .map { max(0, $0) * 60 }
+                        .map { min(max(0, $0), 24 * 60) * 60 }
                 }
             case "--attachment-default-ttl-seconds":
                 if let value = iterator.next(), let parsed = Int(value) {
@@ -225,7 +263,7 @@ struct ServerConfig {
                 }
             case "--attachment-default-ttl-minutes":
                 if let value = iterator.next(), let parsed = Int(value) {
-                    attachmentDefaultTTLSeconds = max(1, parsed) * 60
+                    attachmentDefaultTTLSeconds = min(max(1, parsed), 30 * 24 * 60) * 60
                 }
             case "--attachment-max-ttl-seconds":
                 if let value = iterator.next(), let parsed = Int(value) {
@@ -343,14 +381,12 @@ struct ServerConfig {
                 }
             case "--attachment-max-ttl-minutes":
                 if let value = iterator.next(), let parsed = Int(value) {
-                    attachmentMaxTTLSeconds = max(1, parsed) * 60
+                    attachmentMaxTTLSeconds = min(max(1, parsed), 30 * 24 * 60) * 60
                 }
             case "--relay-name":
                 relayName = iterator.next()
             case "--operator-note":
                 operatorNote = iterator.next()
-            case "--software-version":
-                softwareVersion = iterator.next()
             case "--group-creation-mode":
                 if let value = iterator.next(),
                    let parsed = GroupCreationMode(rawValue: value) {
@@ -455,6 +491,59 @@ struct ServerConfig {
             dataDir = nil
         }
 
+        port = min(max(port, 1), Int(UInt16.max))
+        httpPort = httpPort.map { min(max($0, 1), Int(UInt16.max)) }
+        maxInboxMessages = maxInboxMessages.map { min(max($0, 1), 1_000_000) }
+        forwardingRequestTimeoutSeconds = min(max(forwardingRequestTimeoutSeconds, 1), 300)
+        temporalBucketSeconds = min(max(temporalBucketSeconds, 0), maximumTemporalBucketSeconds)
+        temporalBucketScheduleSeconds = Array(
+            Set(temporalBucketScheduleSeconds.filter { (1...maximumTemporalBucketSeconds).contains($0) })
+        ).sorted().prefix(16).map { $0 }
+        attachmentMaxTTLSeconds = min(
+            max(attachmentMaxTTLSeconds, 60),
+            maximumAttachmentTTLSeconds
+        )
+        attachmentDefaultTTLSeconds = min(
+            max(attachmentDefaultTTLSeconds, 60),
+            attachmentMaxTTLSeconds
+        )
+        ipfsTimeoutSeconds = min(max(ipfsTimeoutSeconds, 1), 300)
+        hiddenRetrievalMaxCoverSetSize = min(max(hiddenRetrievalMaxCoverSetSize, 1), 512)
+        hiddenRetrievalDefaultCoverSetSize = min(
+            max(hiddenRetrievalDefaultCoverSetSize, 1),
+            hiddenRetrievalMaxCoverSetSize
+        )
+        hiddenRetrievalReplicas = Array(hiddenRetrievalReplicas.prefix(16))
+        onionTransportMaxHops = min(max(onionTransportMaxHops, 1), 8)
+        mixnetBatchIntervalSeconds = min(max(mixnetBatchIntervalSeconds, 5), 3_600)
+        mixnetMinBatchSize = min(max(mixnetMinBatchSize, 1), 256)
+        mixnetCoverPacketsPerBatch = min(max(mixnetCoverPacketsPerBatch, 0), 256)
+        mixnetMaxDelaySeconds = min(max(mixnetMaxDelaySeconds, 0), 3_600)
+        wakeMinPollSeconds = min(max(wakeMinPollSeconds, 5), 86_400)
+        wakeMaxPollSeconds = min(max(wakeMaxPollSeconds, wakeMinPollSeconds), 86_400)
+        wakeLongPollTimeoutSeconds = wakeLongPollTimeoutSeconds.map { min(max($0, 5), 300) }
+        coordinatorHeartbeatSeconds = min(max(coordinatorHeartbeatSeconds, 15), 3_600)
+        coordinatorDirectoryMaxStalenessSeconds = min(
+            max(coordinatorDirectoryMaxStalenessSeconds, coordinatorHeartbeatSeconds),
+            86_400
+        )
+        relayPeerExchangeLimit = min(max(relayPeerExchangeLimit, 0), 128)
+        openFederationDHTMaxRecords = min(max(openFederationDHTMaxRecords, 1), 256)
+        openFederationDHTMaxRecordsPerHost = min(
+            max(openFederationDHTMaxRecordsPerHost, 1),
+            min(16, openFederationDHTMaxRecords)
+        )
+        openFederationDHTMaxQueryRecords = min(
+            max(openFederationDHTMaxQueryRecords, 1),
+            min(512, openFederationDHTMaxRecords)
+        )
+        curatedCoordinatorQuorum = min(max(curatedCoordinatorQuorum, 1), 16)
+        federationCoordinatorEndpoints = Array(federationCoordinatorEndpoints.prefix(16))
+        federationAllowList = Array(federationAllowList.prefix(256))
+        if let key = coordinatorDirectorySigningPrivateKey, key.count > 16_384 {
+            coordinatorDirectorySigningPrivateKey = nil
+        }
+
         let hiddenRetrieval = hiddenRetrievalEnabled
             ? HiddenRetrievalSupport(
                 mode: hiddenRetrievalMode,
@@ -489,6 +578,12 @@ struct ServerConfig {
             )
         }
 
+        let normalizedMaxMessageBytes = min(max(1_024, maxMessageBytes ?? (512 * 1024)), 8 * 1024 * 1024)
+        let normalizedMaxLineBytes = min(
+            max(maxLineBytes ?? (640 * 1024), normalizedMaxMessageBytes + (128 * 1024)),
+            10 * 1024 * 1024
+        )
+
         return ServerConfig(
             host: host,
             port: port,
@@ -496,8 +591,8 @@ struct ServerConfig {
             dataDir: dataDir,
             memoryOnly: memoryOnly,
             maxInboxMessages: maxInboxMessages,
-            maxMessageBytes: maxMessageBytes,
-            maxLineBytes: maxLineBytes,
+            maxMessageBytes: normalizedMaxMessageBytes,
+            maxLineBytes: normalizedMaxLineBytes,
             forwardingRequestTimeoutSeconds: forwardingRequestTimeoutSeconds,
             relayKind: relayKind,
             relayTransport: relayTransport,
@@ -520,7 +615,6 @@ struct ServerConfig {
             wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,
-            softwareVersion: softwareVersion,
             groupCreationMode: groupCreationMode,
             groupSecurityModel: groupSecurityModel,
             accessPassword: accessPassword,
@@ -560,7 +654,15 @@ private func parseRelayEndpoint(_ value: String) -> RelayEndpoint? {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
     if let components = URLComponents(string: trimmed), let scheme = components.scheme, !scheme.isEmpty {
-        guard let host = components.host else { return nil }
+        guard let host = components.host,
+              isValidRelayHost(host),
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.percentEncodedPath.isEmpty || components.percentEncodedPath == "/" else {
+            return nil
+        }
         let loweredScheme = scheme.lowercased()
         let defaultPort: Int
         switch loweredScheme {
@@ -571,7 +673,7 @@ private func parseRelayEndpoint(_ value: String) -> RelayEndpoint? {
         default:
             defaultPort = 9339
         }
-        guard let port = UInt16(exactly: components.port ?? defaultPort) else { return nil }
+        guard let port = UInt16(exactly: components.port ?? defaultPort), port > 0 else { return nil }
         switch loweredScheme {
         case "http":
             return RelayEndpoint(host: host, port: port, useTLS: false, transport: .http)
@@ -589,11 +691,34 @@ private func parseRelayEndpoint(_ value: String) -> RelayEndpoint? {
             return nil
         }
     }
-    let parts = trimmed.split(separator: ":")
-    guard parts.count >= 2 else { return nil }
-    let host = parts.dropLast().joined(separator: ":")
-    guard let port = UInt16(parts.last ?? "") else { return nil }
-    return RelayEndpoint(host: host, port: port)
+    if trimmed.hasPrefix("["), let close = trimmed.firstIndex(of: "]") {
+        let host = String(trimmed[trimmed.index(after: trimmed.startIndex)..<close])
+        let remainder = String(trimmed[trimmed.index(after: close)...])
+        guard isValidRelayHost(host), remainder.hasPrefix(":"),
+              let port = UInt16(remainder.dropFirst()), port > 0 else {
+            return nil
+        }
+        return RelayEndpoint(host: host, port: port)
+    }
+    guard trimmed.filter({ $0 == ":" }).count == 1 else { return nil }
+    let parts = trimmed.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+    guard parts.count == 2,
+          isValidRelayHost(String(parts[0])),
+          let port = UInt16(parts[1]), port > 0 else {
+        return nil
+    }
+    return RelayEndpoint(host: String(parts[0]), port: port)
+}
+
+private func isValidRelayHost(_ host: String) -> Bool {
+    let trimmed = host.trimmingCharacters(in: .whitespacesAndNewlines)
+    return !trimmed.isEmpty
+        && trimmed == host
+        && !trimmed.unicodeScalars.contains(where: { CharacterSet.whitespacesAndNewlines.contains($0) })
+        && !trimmed.contains("/")
+        && !trimmed.contains("?")
+        && !trimmed.contains("#")
+        && !trimmed.contains("@")
 }
 
 private func parseHiddenRetrievalReplicas(_ value: String) -> [HiddenRetrievalPIRReplica] {
@@ -617,20 +742,49 @@ private func parseHiddenRetrievalReplicas(_ value: String) -> [HiddenRetrievalPI
         }
 }
 
-let config = ServerConfig.parse()
+let startupArguments = Array(CommandLine.arguments.dropFirst())
+if ServerConfig.shouldShowHelp(arguments: startupArguments) {
+    print(ServerConfig.usage)
+    exit(0)
+}
+if ServerConfig.shouldShowVersion(arguments: startupArguments) {
+    print(ServerConfig.advertisedSoftwareVersion)
+    exit(0)
+}
+let config = ServerConfig.parse(arguments: startupArguments)
 if config.federationMode == .manual {
     guard config.relayKind == .standard else {
         print("[relay] manual federation requires --relay-kind standard")
         exit(2)
     }
 }
+if config.federationMode == .curated,
+   config.coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+    print("[relay] curated federation requires --coordinator-registration-token or NOCTYRA_COORDINATOR_REGISTRATION_TOKEN")
+    exit(2)
+}
+for (label, secret, minimum) in [
+    ("relay password", config.accessPassword, 12),
+    ("coordinator registration token", config.coordinatorRegistrationToken, 16),
+    ("federation forwarding token", config.federationForwardingAuthToken, 16)
+] {
+    if let secret, !secret.isEmpty, !(minimum...4_096).contains(secret.utf8.count) {
+        print("[relay] \(label) must contain between \(minimum) and 4096 UTF-8 bytes")
+        exit(2)
+    }
+}
 let fileURL: URL?
 if let dataDir = config.dataDir {
-    try FileManager.default.createDirectory(
-        at: dataDir,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
-    )
+    do {
+        try FileManager.default.createDirectory(
+            at: dataDir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+    } catch {
+        print("[relay] Unable to prepare the configured data directory.")
+        exit(2)
+    }
     fileURL = dataDir.appendingPathComponent("relay_store.sqlite")
 } else {
     fileURL = nil
@@ -640,8 +794,11 @@ switch config.attachmentStorageMode {
 case .inline:
     attachmentBlobStore = nil
 case .ipfs:
-    guard let apiEndpoint = config.ipfsAPIEndpoint else {
-        print("[relay] --attachment-storage ipfs requires --ipfs-api-endpoint")
+    guard let apiEndpoint = config.ipfsAPIEndpoint,
+          IPFSAttachmentBlobStore.isValidEndpoint(apiEndpoint),
+          config.ipfsGatewayEndpoint.map(IPFSAttachmentBlobStore.isValidEndpoint) ?? true,
+          (1...300).contains(config.ipfsTimeoutSeconds) else {
+        print("[relay] IPFS endpoints must be root HTTP(S) URLs without credentials/query data, and timeout must be 1...300 seconds")
         exit(2)
     }
     attachmentBlobStore = IPFSAttachmentBlobStore(
@@ -658,7 +815,12 @@ let store = RelayStore(
     temporalBucketSeconds: config.temporalBucketSeconds,
     temporalBucketScheduleSeconds: config.temporalBucketScheduleSeconds
 )
-store.load()
+do {
+    try store.load()
+} catch {
+    print("[relay] Refusing to start because the persisted store could not be opened.")
+    exit(2)
+}
 
 let advertisedEndpointTLS = config.advertisedEndpoint?.useTLS ?? false
 if config.advertiseTLS == true && !advertisedEndpointTLS {
@@ -687,7 +849,7 @@ var relayConfiguration = RelayConfiguration(
     wakeSupport: config.wakeSupport,
     relayName: config.relayName,
     operatorNote: config.operatorNote,
-    softwareVersion: config.softwareVersion,
+    softwareVersion: ServerConfig.advertisedSoftwareVersion,
     groupCreationMode: config.groupCreationMode,
     groupSecurityModel: config.groupSecurityModel,
     accessPassword: config.accessPassword,
@@ -713,18 +875,43 @@ if relayConfiguration.kind == .coordinator {
     if relayConfiguration.coordinatorDirectorySigningPrivateKey == nil,
        let dataDir = config.dataDir {
         let keyURL = dataDir.appendingPathComponent("coordinator_directory_signing_key")
-        let existing = try? Data(contentsOf: keyURL)
+        let existing: Data?
+        if FileManager.default.fileExists(atPath: keyURL.path) {
+            do {
+                let attributes = try FileManager.default.attributesOfItem(atPath: keyURL.path)
+                guard attributes[.type] as? FileAttributeType == .typeRegular,
+                      let byteCount = (attributes[.size] as? NSNumber)?.intValue,
+                      (1...16_384).contains(byteCount) else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                let data = try Data(contentsOf: keyURL)
+                guard data.count <= 16_384 else {
+                    throw CocoaError(.fileReadTooLarge)
+                }
+                existing = data
+            } catch {
+                print("[relay] Refusing to replace an unreadable coordinator signing key file.")
+                exit(2)
+            }
+        } else {
+            existing = nil
+        }
         let normalized = FederationDirectorySignature.privateKeyData(from: existing)
         guard !normalized.isEmpty else {
             print("[relay] Coordinator mode requires runtime liboqs support for ML-DSA-65 directory signing.")
             exit(2)
         }
         if existing != normalized {
-            try normalized.write(to: keyURL, options: [.atomic])
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: keyURL.path
-            )
+            do {
+                try normalized.write(to: keyURL, options: [.atomic])
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: keyURL.path
+                )
+            } catch {
+                print("[relay] Unable to persist the coordinator signing key securely.")
+                exit(2)
+            }
         }
         relayConfiguration.coordinatorDirectorySigningPrivateKey = normalized
     }
@@ -793,6 +980,7 @@ do {
         let bridgeBootstrap = makeHTTPRelayBridgeBootstrap(
             group: group,
             forwarder: forwarder,
+            store: store,
             maxMessageBytes: config.maxMessageBytes
         )
         let httpChannel = try bridgeBootstrap.bind(host: config.host, port: httpPort).wait()
@@ -804,4 +992,5 @@ do {
     try EventLoopFuture.andAllSucceed(closeFutures, on: group.next()).wait()
 } catch {
     print("[relay] Server error: \(error)")
+    exit(1)
 }

@@ -66,12 +66,14 @@ def docker_components():
     liboqs_match = re.search(r"^ARG\s+LIBOQS_VERSION=([^\s]+)", text, flags=re.MULTILINE)
     if liboqs_match:
         version = liboqs_match.group(1)
+        commit_match = re.search(r"^ARG\s+LIBOQS_COMMIT=([0-9a-f]{40})", text, flags=re.MULTILINE)
+        revision = commit_match.group(1) if commit_match else None
         components.append(
             {
                 "type": "source-build",
                 "name": "liboqs",
                 "version": version,
-                "revision": version,
+                "revision": revision,
                 "source": "https://github.com/open-quantum-safe/liboqs.git",
                 "pinFile": str(path.relative_to(ROOT)),
             }

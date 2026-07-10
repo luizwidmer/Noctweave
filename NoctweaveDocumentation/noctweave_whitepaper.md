@@ -1,7 +1,7 @@
 ---
 title: "Noctweave Protocol: A Post-Quantum Secure Messaging System with Pairwise Identity Continuity"
 author: "Luiz Widmer - Independent Researcher"
-date: "Version 0.8 - June 2026"
+date: "Version 0.9 - July 2026"
 papersize: a4
 geometry: margin=1in
 fontsize: 11pt
@@ -11,7 +11,7 @@ License: `CC-BY-SA-4.0`. See [`LICENSE`](LICENSE).
 
 # Abstract
 
-The Noctweave Protocol is a post-quantum secure messaging protocol centered on selective identity continuity rather than permanent global identity. Its public implementation includes a Swift protocol core, a headless CLI client, a JavaScript relay integration package, and a Linux relay implementation. Together they define pure post-quantum identity and session establishment with ML-DSA-65 and ML-KEM-768, symmetric ratcheting for forward secrecy, selective identity rotation and identity burn, encrypted attachment transfer, relay-backed group coordination, coordinator-assisted federation, and pull-only message delivery without centralized push infrastructure.
+The Noctweave Protocol is a post-quantum secure messaging protocol centered on selective identity continuity rather than permanent global identity. Its public implementation includes a Swift protocol core, a headless CLI client, a JavaScript/WASM interoperable direct-message client, and a Linux relay implementation. Together they define pure post-quantum identity and session establishment with ML-DSA-65 and ML-KEM-768, symmetric ratcheting for forward secrecy, selective identity rotation and identity burn, encrypted attachment transfer, relay-backed group coordination, coordinator-assisted federation, and pull-only message delivery without centralized push infrastructure.
 
 Noctweave is intentionally pragmatic. It provides end-to-end confidentiality and pairwise continuity while remaining explicit about unresolved network-anonymity problems. The protocol minimizes metadata rather than claiming to eliminate it, and it is structured so stronger anonymity layers, such as mixnet or PIR-assisted retrieval, can be added without discarding the identity, relay, and continuity model.
 
@@ -93,7 +93,7 @@ Noctweave does not claim:
 - strong global anonymity against a nation-state-grade traffic analyst
 - protection against a fully compromised operating system
 - protection against a malicious device vendor or kernel
-- PIR-grade hidden retrieval
+- single-server cryptographic PIR hidden retrieval
 - mixnet-grade timing resistance
 - MLS-equivalent formal group security proofs
 - guaranteed closed-app delivery without a client polling window
@@ -203,7 +203,7 @@ Relay fetch and state-mutation operations are not unauthenticated mailbox reads.
 
 ## 6.2 Storage
 
-Relay state persists through a normalized SQLite-backed store. The relay writes structured domain tables for inbox registrations, envelopes, attachment chunk records, prekey bundles, federation nodes, coordinator pins, groups, and join requests. Corrupt persisted rows are skipped at row scope where possible instead of reviving obsolete snapshot formats. This provides durability, structured persistence, and avoids the fragility of large flat-file state.
+Relay state persists through a normalized SQLite-backed store. The relay writes structured domain tables for inbox registrations, envelopes, attachment chunk records, prekey bundles, federation nodes, coordinator pins, groups, and join requests. Security-relevant persisted rows are decoded under explicit limits; corruption prevents startup instead of being silently skipped or replaced. This provides durability, structured persistence, and avoids both large flat-file state and partial startup with an untrustworthy database.
 
 Attachment chunk records can either store the encrypted chunk inline or reference an external blob backend. The Linux relay supports an IPFS-compatible attachment backend for storage offload: encrypted chunks are pinned as separate objects, while SQLite stores the CID, size, digest, and expiry metadata needed to verify and reconstruct the relay response. This is a storage scalability feature, not an anonymity layer; clients still interact with the relay API by default.
 
@@ -298,7 +298,7 @@ This creates a managed universe where forwarding can be restricted to approved r
 
 ## 7.4 Open federation
 
-Open federation operates in a coordinator-assisted form with optional signed-record discovery. Nodes register, advertise health, and exchange directory information through coordinator infrastructure. Open relays can also explicitly enable relay-native DHT node mode: they accept and serve signed short-lived relay endpoint records over the Noctyra relay protocol, enforce namespace, signature, lifetime, public-endpoint, total-record, per-host, and query-size limits, and advertise bounded peer exchange hints through relay info. Reachability checks, throttling, public-endpoint restrictions, signed directory validation, and freshness filtering are part of the design. A production-grade autonomous public-network adapter such as BEP5 or libp2p remains out of release scope, and release verification rejects shipped source paths that introduce BEP5/libp2p/Kademlia adapter code.
+Open federation operates in a coordinator-assisted form with optional signed-record discovery. Nodes register, advertise health, and exchange directory information through coordinator infrastructure. Open relays can also explicitly enable relay-native DHT node mode: they accept and serve signed short-lived relay endpoint records under the `noctweave-open-v1` namespace over the Noctweave relay protocol, enforce protocol version, federation-name binding, signature, lifetime, public-endpoint, total-record, per-host, and query-size limits, and advertise bounded peer exchange hints through relay info. Reachability checks, throttling, public-endpoint restrictions, signed directory validation, and freshness filtering are part of the design. A production-grade autonomous public-network adapter such as BEP5 or libp2p remains out of release scope, and release verification rejects shipped source paths that introduce BEP5/libp2p/Kademlia adapter code.
 
 In other words, open federation is implemented for coordinator snapshots, bounded peer exchange, explicit relay-native DHT nodes, and HTTP sidecar integration, but it is not an unbounded autonomous public DHT network in the release profile.
 
@@ -363,6 +363,10 @@ Action PIN plans can combine operations such as app reset, identity burn, identi
 
 Compatible clients may include UI-level protections against screenshots, screen recording, and external display exposure on supported surfaces. Sensitive panes can be redacted behind secure containers and reveal gates. These mechanisms reduce casual capture and improve user awareness, but they are not equivalent to defeating a hostile OS.
 
+Local notifications are metadata-minimized: the reference client emits a
+generic encrypted-message signal and does not hand decrypted message text,
+contact names, or group names to the operating-system notification database.
+
 ## 9.4 Secure typing and local input
 
 Secure typing is client-selectable. Implementations may use native secure text entry where appropriate or an app-owned secure keyboard to keep message composition inside the client input view. This is a local hardening measure, not a protocol guarantee against a hostile operating system.
@@ -385,7 +389,7 @@ The reference implementation delivers:
 - TCP, HTTP, HTTPS, WebSocket, and WSS relay transports
 - relay-managed TLS and reverse-proxy TLS deployment patterns
 - Linux relay and Docker deployment support
-- relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and software version
+- relay metadata advertisement for relay name, kind, transport, TLS posture, federation state, temporal bucket policy, attachment TTL, group-creation policy, operator note, and binary-defined software version
 - Linux relay IPFS-compatible attachment offload with pinned encrypted chunks, CID metadata in SQLite, digest-verified fetch, and best-effort unpin on TTL cleanup
 - optional relay-advertised hidden-retrieval cover queries
 - optional relay-advertised replicated XOR-PIR for non-colluding replicated buckets, with padded query shares, fixed-size response shares, PIR plan-integrity validation, replica-set metadata validation, operational profile validation, and promotion evidence gating
@@ -397,6 +401,7 @@ The reference implementation delivers:
 - relay-native open-federation DHT node mode with signed short-lived relay records, bounded cache/query limits, and bounded PEX hints
 - relay-advertised decentralized wake policy for jittered pull or bounded long-poll clients, bounded wake-to-prefetch execution planning, plus encrypted ciphertext-only prefetch persistence for OS-permitted helper fetch paths
 - ciphertext-only direct prefetch staging for app-intent or widget-triggered Apple sync paths using delegated inbox-access keys; helper config omits identity names, identity fingerprints, and group routing metadata, helper status omits message and failure counts, caps helper work queues, and group helper fetch remains deferred until a non-identity delegated group credential exists
+- bounded parsing and allocation across envelopes, local state, contact packages, attachments, prekeys, resend requests, federation directories, DHT gateways, PIR plans, onion layers, mixnet schedules, JavaScript storage, and relay operator configuration
 
 ## 10.2 Deferred work
 

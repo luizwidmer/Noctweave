@@ -4,6 +4,7 @@ public enum ContactOfferError: Error, Equatable {
     case invalidSignature
     case invalidFingerprint
     case invalidKeyMaterial
+    case invalidStructure
 }
 
 public struct ContactOffer: Codable, Equatable {
@@ -73,6 +74,9 @@ public struct ContactOffer: Codable, Equatable {
     }
 
     public func verified() throws -> ContactOffer {
+        guard isStructurallyValid else {
+            throw ContactOfferError.invalidStructure
+        }
         guard isConsistentFingerprint() else {
             throw ContactOfferError.invalidFingerprint
         }
@@ -92,10 +96,36 @@ public struct ContactOffer: Codable, Equatable {
     }
 
     public func verifySignature() -> Bool {
-        guard let data = try? unsignedRepresentation.signableData() else {
+        guard isStructurallyValid,
+              let data = try? unsignedRepresentation.signableData() else {
             return false
         }
         return SigningKeyPair.verify(signature: signature, data: data, publicKeyData: signingPublicKey)
+    }
+
+    public var isStructurallyValid: Bool {
+        let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedHost = relay.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (version == 2 && inboxAccessPublicKey == nil) || (version == 3 && inboxAccessPublicKey != nil),
+              !normalizedDisplayName.isEmpty,
+              normalizedDisplayName.utf8.count <= 512,
+              !inboxId.isEmpty,
+              inboxId.utf8.count <= 128,
+              !normalizedHost.isEmpty,
+              normalizedHost == relay.host,
+              normalizedHost.utf8.count <= 253,
+              relay.port > 0,
+              fingerprint.utf8.count <= 128,
+              signature.count <= 8 * 1024 else {
+            return false
+        }
+        if let inboxAccessPublicKey {
+            guard InboxAddress.isValid(inboxId),
+                  InboxAddress.isBound(inboxId, to: inboxAccessPublicKey) else {
+                return false
+            }
+        }
+        return true
     }
 
     private var unsignedRepresentation: UnsignedContactOffer {
@@ -113,13 +143,23 @@ public struct ContactOffer: Codable, Equatable {
 }
 
 public enum ContactOfferCode {
+    public static let maximumCodeCharacters = 64 * 1024
+
     public static func encode(_ offer: ContactOffer) throws -> String {
+        _ = try offer.verified()
         let data = try NoctweaveCoder.encode(offer)
-        return data.base64EncodedString()
+        let code = data.base64EncodedString()
+        guard code.count <= maximumCodeCharacters else {
+            throw CryptoError.invalidPayload
+        }
+        return code
     }
 
     public static func decode(_ code: String) throws -> ContactOffer {
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= maximumCodeCharacters else {
+            throw CryptoError.invalidPayload
+        }
         guard let data = Data(base64Encoded: trimmed) else {
             throw CryptoError.invalidPayload
         }

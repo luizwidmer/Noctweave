@@ -17,7 +17,7 @@ final class RelayStoreParityTests: XCTestCase {
 
         let firstStore = RelayStore(fileURL: storeURL, maxInboxMessages: nil, temporalBucketSeconds: 300)
         XCTAssertTrue(
-            firstStore.consumeActorProofNonce(
+            try firstStore.consumeActorProofNonce(
                 fingerprint: fingerprint,
                 nonce: nonce,
                 now: now,
@@ -26,9 +26,9 @@ final class RelayStoreParityTests: XCTestCase {
         )
 
         let reloadedStore = RelayStore(fileURL: storeURL, maxInboxMessages: nil, temporalBucketSeconds: 300)
-        reloadedStore.load()
+        try reloadedStore.load()
         XCTAssertFalse(
-            reloadedStore.consumeActorProofNonce(
+            try reloadedStore.consumeActorProofNonce(
                 fingerprint: fingerprint,
                 nonce: nonce,
                 now: now.addingTimeInterval(30),
@@ -242,7 +242,7 @@ final class RelayStoreParityTests: XCTestCase {
             [envelope.id]
         )
 
-        _ = store.acknowledgeGroupEnvelopes(
+        _ = try store.acknowledgeGroupEnvelopes(
             inboxId: inboxId,
             messageIds: [envelope.id],
             recipientFingerprint: "member-a"
@@ -257,7 +257,7 @@ final class RelayStoreParityTests: XCTestCase {
             [envelope.id]
         )
 
-        _ = store.acknowledgeGroupEnvelopes(
+        _ = try store.acknowledgeGroupEnvelopes(
             inboxId: inboxId,
             messageIds: [envelope.id],
             recipientFingerprint: "member-b"
@@ -438,6 +438,21 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(store.coordinatorDirectoryCacheSnapshot(), [node])
     }
 
+    func testCoordinatorRegistrationTTLIsBounded() throws {
+        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        let federation = FederationDescriptor(mode: .open, name: "bounded-ttl")
+        let record = try store.registerFederationNode(
+            FederationNodeRegistrationRequest(
+                endpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true),
+                relayInfo: RelayConfiguration(kind: .standard, federation: federation).makeInfo(),
+                ttlSeconds: Int.max
+            )
+        )
+
+        XCTAssertGreaterThanOrEqual(record.expiresAt.timeIntervalSince(record.lastHeartbeatAt), 899)
+        XCTAssertLessThanOrEqual(record.expiresAt.timeIntervalSince(record.lastHeartbeatAt), 901)
+    }
+
     func testRelayInfoAdvertisesOpenFederationDHTAndPEXSupport() {
         let info = RelayConfiguration(
             federation: FederationDescriptor(mode: .open, name: "open-mesh"),
@@ -526,6 +541,11 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertFalse(FederationDirectorySignature.verify(snapshot: tampered, trustedPublicKey: publicKey))
     }
 
+    func testFederationDirectoryKeyLoaderDoesNotReplaceCorruptExistingKey() {
+        XCTAssertTrue(FederationDirectorySignature.privateKeyData(from: Data([0xDE, 0xAD])).isEmpty)
+        XCTAssertNil(FederationDirectorySignature.publicKeyData(from: Data([0xDE, 0xAD])))
+    }
+
     func testOpenFederationDHTRecordUsesMLDSAAndRejectsTampering() throws {
         guard OQSSignatureVerifier.shared.isAvailable,
               let keyPair = OQSSignatureVerifier.shared.generateKeyPair() else {
@@ -555,6 +575,35 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertThrowsError(try tampered.validate(expectedFederationName: "open-mesh", now: now, requirePublicEndpoint: false)) { error in
             XCTAssertEqual(error as? OpenFederationDHTRecordError, .invalidSignature)
         }
+
+        let wrongVersion = OpenFederationDHTRecord(
+            version: 99,
+            namespace: record.namespace,
+            relayIdentityDigest: record.relayIdentityDigest,
+            endpoint: record.endpoint,
+            federationName: record.federationName,
+            issuedAt: record.issuedAt,
+            expiresAt: record.expiresAt,
+            relaySigningPublicKey: record.relaySigningPublicKey,
+            signature: record.signature
+        )
+        XCTAssertThrowsError(try wrongVersion.validate(expectedFederationName: "open-mesh", now: now, requirePublicEndpoint: false)) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .unsupportedVersion)
+        }
+
+        let mislabeled = OpenFederationDHTRecord(
+            namespace: record.namespace,
+            relayIdentityDigest: record.relayIdentityDigest,
+            endpoint: record.endpoint,
+            federationName: "other-mesh",
+            issuedAt: record.issuedAt,
+            expiresAt: record.expiresAt,
+            relaySigningPublicKey: record.relaySigningPublicKey,
+            signature: record.signature
+        )
+        XCTAssertThrowsError(try mislabeled.validate(expectedFederationName: "open-mesh", now: now, requirePublicEndpoint: false)) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .federationNameMismatch)
+        }
     }
 
     func testOpenFederationDHTHTTPGatewayTransportPublishesWithAuthHeader() async throws {
@@ -571,7 +620,7 @@ final class RelayStoreParityTests: XCTestCase {
             XCTAssertEqual(decoded.record, record)
             return (200, Data())
         }
-        let transport = OpenFederationDHTHTTPGatewayTransport(
+        let transport = try OpenFederationDHTHTTPGatewayTransport(
             baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org/mesh")),
             session: protocolHarness.makeSession(),
             authToken: " gateway-token "
@@ -599,7 +648,7 @@ final class RelayStoreParityTests: XCTestCase {
             XCTAssertEqual(query["limit"], "2")
             return (200, response)
         }
-        let transport = OpenFederationDHTHTTPGatewayTransport(
+        let transport = try OpenFederationDHTHTTPGatewayTransport(
             baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
             session: protocolHarness.makeSession()
         )
@@ -654,7 +703,7 @@ final class RelayStoreParityTests: XCTestCase {
             XCTAssertEqual(query["limit"], "12")
             return (200, response)
         }
-        let transport = OpenFederationDHTHTTPGatewayTransport(
+        let transport = try OpenFederationDHTHTTPGatewayTransport(
             baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
             session: protocolHarness.makeSession()
         )
@@ -917,7 +966,7 @@ final class RelayStoreParityTests: XCTestCase {
         protocolHarness.handler = { _ in
             (200, Data(repeating: 0x41, count: 2_048))
         }
-        let transport = OpenFederationDHTHTTPGatewayTransport(
+        let transport = try OpenFederationDHTHTTPGatewayTransport(
             baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
             session: protocolHarness.makeSession(),
             maxResponseBytes: 1_024
@@ -928,6 +977,23 @@ final class RelayStoreParityTests: XCTestCase {
             XCTFail("Expected oversized DHT gateway response to be rejected")
         } catch {
             XCTAssertEqual(error as? OpenFederationDHTGatewayTransportError, .responseTooLarge)
+        }
+    }
+
+    func testOpenFederationDHTHTTPGatewayTransportRejectsURLCredentialsAndAmbientQuery() async throws {
+        for rawURL in [
+            "https://user:password@gateway.example.org",
+            "https://gateway.example.org?redirect=https://attacker.example"
+        ] {
+            let transport = try OpenFederationDHTHTTPGatewayTransport(
+                baseURL: try XCTUnwrap(URL(string: rawURL))
+            )
+            do {
+                _ = try await transport.query(namespace: "bounded", limit: 1)
+                XCTFail("Expected unsafe gateway URL to be rejected")
+            } catch {
+                XCTAssertEqual(error as? OpenFederationDHTGatewayTransportError, .invalidURL)
+            }
         }
     }
 
@@ -1107,10 +1173,47 @@ final class RelayStoreParityTests: XCTestCase {
 
     func testRelayInfoCarriesGroupSecurityModel() {
         let defaultInfo = RelayConfiguration().makeInfo()
-        XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)
+        XCTAssertEqual(defaultInfo.groupSecurityModel, .mlsDerivedTree)
 
         let mlsInfo = RelayConfiguration(groupSecurityModel: .mlsDerivedTree).makeInfo()
         XCTAssertEqual(mlsInfo.groupSecurityModel, .mlsDerivedTree)
+    }
+
+    func testRelayConfigurationBoundsAdvertisedOperatorValues() {
+        let endpoints = (0..<300).map { index in
+            RelayEndpoint(host: "relay-\(index).example.org", port: 443, useTLS: true, transport: .http)
+        }
+        let configuration = RelayConfiguration(
+            temporalBucketSeconds: Int.max,
+            temporalBucketScheduleSeconds: Array(1...100),
+            attachmentDefaultTTLSeconds: Int.max,
+            attachmentMaxTTLSeconds: Int.max,
+            federationCoordinatorEndpoints: endpoints,
+            coordinatorHeartbeatSeconds: Int.max,
+            coordinatorDirectoryMaxStalenessSeconds: Int.max,
+            relayPeerExchangeLimit: Int.max,
+            openFederationDHTMaxRecords: Int.max,
+            openFederationDHTMaxRecordsPerHost: Int.max,
+            openFederationDHTMaxQueryRecords: Int.max,
+            coordinatorDirectorySigningPrivateKey: Data(repeating: 1, count: 16_385),
+            curatedCoordinatorQuorum: Int.max,
+            federationAllowList: endpoints
+        )
+
+        XCTAssertEqual(configuration.temporalBucketSeconds, 86_400)
+        XCTAssertEqual(configuration.temporalBucketScheduleSeconds?.count, 16)
+        XCTAssertEqual(configuration.attachmentDefaultTTLSeconds, 2_592_000)
+        XCTAssertEqual(configuration.attachmentMaxTTLSeconds, 2_592_000)
+        XCTAssertEqual(configuration.federationCoordinatorEndpoints?.count, 16)
+        XCTAssertEqual(configuration.coordinatorHeartbeatSeconds, 3_600)
+        XCTAssertEqual(configuration.coordinatorDirectoryMaxStalenessSeconds, 86_400)
+        XCTAssertEqual(configuration.relayPeerExchangeLimit, 128)
+        XCTAssertEqual(configuration.openFederationDHTMaxRecords, 256)
+        XCTAssertEqual(configuration.openFederationDHTMaxRecordsPerHost, 16)
+        XCTAssertEqual(configuration.openFederationDHTMaxQueryRecords, 512)
+        XCTAssertNil(configuration.coordinatorDirectorySigningPrivateKey)
+        XCTAssertEqual(configuration.curatedCoordinatorQuorum, 16)
+        XCTAssertEqual(configuration.federationAllowList.count, 256)
     }
 
     func testRelayInfoCarriesDecentralizedWakeSupport() {
@@ -1161,7 +1264,7 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(Data("SQLite format 3\0".utf8), Data(sqliteHeader))
 
         let reader = RelayStore(fileURL: requestedURL, maxInboxMessages: nil, temporalBucketSeconds: 300)
-        reader.load()
+        try reader.load()
         let fetched = reader.fetch(inboxId: inboxId, maxCount: nil)
         XCTAssertEqual(fetched.count, 1)
         XCTAssertEqual(fetched.first?.id, envelope.id)
@@ -1174,7 +1277,7 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(fetched.first?.signature, envelope.signature)
     }
 
-    func testDiskPersistenceSkipsCorruptNormalizedMessageRow() throws {
+    func testDiskPersistenceRejectsCorruptNormalizedMessageRow() throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
         defer {
@@ -1192,9 +1295,7 @@ final class RelayStoreParityTests: XCTestCase {
         try overwriteMailboxEnvelope(at: sqliteURL, envelopeId: second.id, with: Data([0xDE, 0xAD, 0xBE, 0xEF]))
 
         let reader = RelayStore(fileURL: requestedURL, maxInboxMessages: nil, temporalBucketSeconds: 300)
-        reader.load()
-        let fetched = reader.fetch(inboxId: inboxId, maxCount: nil)
-        XCTAssertEqual(fetched.map(\.id), [first.id])
+        XCTAssertThrowsError(try reader.load())
     }
 
     private func makeEnvelope(
@@ -1323,6 +1424,91 @@ final class RelayStoreParityTests: XCTestCase {
             knownOpenPeers: knownOpenPeers,
             advertisedAt: Date(timeIntervalSince1970: 1_000)
         )
+    }
+
+    func testMLSEpochAdvancementRejectsCounterExhaustion() {
+        let groupId = UUID()
+        let transcript = Data(repeating: 7, count: 32)
+        let commit = MLSGroupCommitSummary(
+            operation: .update,
+            actorFingerprint: String(repeating: "a", count: 64),
+            epoch: UInt64.max,
+            committedAt: Date(),
+            memberFingerprints: [String(repeating: "a", count: 64), String(repeating: "b", count: 64)],
+            previousTranscriptHash: transcript,
+            transcriptHash: transcript,
+            ratchetSecretDistribution: nil
+        )
+        let terminal = MLSGroupEpochState(
+            protocolVersion: MLSGroupEpochState.currentProtocolVersion,
+            cipherSuite: MLSGroupEpochState.currentCipherSuite,
+            groupId: groupId,
+            epoch: UInt64.max,
+            treeHash: transcript,
+            confirmedTranscriptHash: transcript,
+            lastCommit: commit
+        )
+
+        XCTAssertThrowsError(
+            try terminal.advancing(
+                title: "Terminal",
+                inboxId: "nw1terminal",
+                actorFingerprint: commit.actorFingerprint,
+                members: [],
+                operation: .update,
+                committedAt: Date()
+            )
+        )
+    }
+
+    func testServerConfigurationBoundsPotentiallyDangerousOperatorValues() {
+        let maximumInteger = String(Int.max)
+        let config = ServerConfig.parse(
+            arguments: [
+                "--port", "-1",
+                "--http-port", "70000",
+                "--temporal-bucket-minutes", maximumInteger,
+                "--temporal-bucket-schedule-minutes", "0,1,\(maximumInteger)",
+                "--attachment-default-ttl-minutes", maximumInteger,
+                "--attachment-max-ttl-minutes", maximumInteger,
+                "--forwarding-timeout-seconds", maximumInteger,
+                "--hidden-retrieval", "true",
+                "--hidden-retrieval-cover-size", maximumInteger,
+                "--hidden-retrieval-max-cover-size", maximumInteger,
+                "--onion-max-hops", maximumInteger,
+                "--mixnet-min-batch-size", maximumInteger,
+                "--wake-mode", "pullOnly",
+                "--wake-min-poll-seconds", maximumInteger,
+                "--wake-max-poll-seconds", "5",
+                "--relay-peer-exchange-limit", maximumInteger,
+                "--open-federation-dht-max-records", maximumInteger
+            ],
+            environment: [:]
+        )
+
+        XCTAssertEqual(config.port, 1)
+        XCTAssertEqual(config.httpPort, Int(UInt16.max))
+        XCTAssertEqual(config.temporalBucketSeconds, ServerConfig.maximumTemporalBucketSeconds)
+        XCTAssertEqual(config.temporalBucketScheduleSeconds, [60, ServerConfig.maximumTemporalBucketSeconds])
+        XCTAssertEqual(config.attachmentDefaultTTLSeconds, ServerConfig.maximumAttachmentTTLSeconds)
+        XCTAssertEqual(config.attachmentMaxTTLSeconds, ServerConfig.maximumAttachmentTTLSeconds)
+        XCTAssertEqual(config.forwardingRequestTimeoutSeconds, 300)
+        XCTAssertEqual(config.hiddenRetrieval?.defaultCoverSetSize, 512)
+        XCTAssertEqual(config.hiddenRetrieval?.maxCoverSetSize, 512)
+        XCTAssertEqual(config.onionTransport?.maxHops, 8)
+        XCTAssertEqual(config.mixnetTransport?.minBatchSize, 256)
+        XCTAssertEqual(config.wakeSupport?.minPollIntervalSeconds, 86_400)
+        XCTAssertEqual(config.wakeSupport?.maxPollIntervalSeconds, 86_400)
+        XCTAssertEqual(config.relayPeerExchangeLimit, 128)
+        XCTAssertEqual(config.openFederationDHTMaxRecords, 256)
+    }
+
+    func testServerHelpAndVersionFlagsAreRecognizedWithoutParsingAConfiguration() {
+        XCTAssertTrue(ServerConfig.shouldShowHelp(arguments: ["--help"]))
+        XCTAssertTrue(ServerConfig.shouldShowHelp(arguments: ["-h"]))
+        XCTAssertFalse(ServerConfig.shouldShowHelp(arguments: ["--host", "127.0.0.1"]))
+        XCTAssertTrue(ServerConfig.shouldShowVersion(arguments: ["--version"]))
+        XCTAssertFalse(ServerConfig.shouldShowVersion(arguments: []))
     }
 }
 

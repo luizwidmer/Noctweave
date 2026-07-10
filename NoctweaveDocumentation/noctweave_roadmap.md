@@ -1,6 +1,6 @@
 # Noctweave Roadmap
 
-**Last updated:** June 2026
+**Last updated:** July 10, 2026
 **Scope:** public core protocol, `NoctyraCLI`, Linux relay, Docker/ops tooling, and public protocol documentation.
 
 This roadmap reflects repository evidence rather than early planning estimates. Items are marked complete only when code, tests, documentation, or release tooling exist in this repository.
@@ -20,6 +20,7 @@ Noctweave has moved past the initial prototype phase. The public repository now 
 - [x] Relay operator hardening guide: `relay_ops_hardening_guide.md`
 - [x] Machine-readable SBOM snapshots and generator
 - [x] Release verification script for SBOM freshness, package pins, dependency graph checks, and relay tests
+- [x] Repository-wide internal security review with fixed findings and explicit residual-risk record
 
 ## Core Protocol
 
@@ -56,7 +57,7 @@ Noctweave has moved past the initial prototype phase. The public repository now 
 - [x] Health and info routes
 - [x] Normalized SQLite persistence
 - [x] In-memory mode
-- [x] Corrupt-row skip behavior for persisted data
+- [x] Fail-closed startup on corrupt security-relevant normalized SQLite rows
 - [x] Inbox, message, group, prekey, attachment, and replay-cache bounds
 - [x] Relay password authentication with constant-time token comparison
 - [x] Basic rate limiting and request-size limits
@@ -88,6 +89,7 @@ Noctweave has moved past the initial prototype phase. The public repository now 
 - [x] Bounded relay-native DHT node mode
 - [x] Bounded peer exchange hints
 - [x] Public-endpoint policy and private-address rejection for public open-federation paths
+- [x] DHT protocol-version and federation-name binding, bounded gateway responses, and no-redirect gateway fetches
 - [x] HTTP gateway transport for DHT record publish/query
 - [x] Native overlay transport bounded by peer hints
 
@@ -142,6 +144,16 @@ Noctweave has moved past the initial prototype phase. The public repository now 
 - [x] Headless CLI group messaging commands
 - [x] Headless CLI attachment and voice-message commands
 
+## JavaScript Client
+
+- [x] Bounded HTTP/HTTPS and WebSocket/WSS relay client
+- [x] Redirect rejection, omitted ambient credentials, response-size limits, and redacted transport errors
+- [x] ML-KEM-768 and ML-DSA-65 liboqs WASM adapter with fixed-profile checks
+- [x] Native Noctweave direct-message/contact-offer interoperability profile
+- [x] Bounded memory, localStorage, IndexedDB, and database adapters
+- [x] AES-GCM encrypted storage wrapper and password-protected portable profile vault
+- [x] Localhost-only browser demo server with Host-header validation and DOM-safe rendering
+
 ## Test And Verification Coverage
 
 - [x] Core XCTest suite
@@ -176,7 +188,7 @@ These are finite release gates. They should stay bounded to a concrete artifact,
 - [ ] Add coverage reporting for `NoctweaveCore` and the Linux relay package.
 - [ ] Add CI jobs for Linux relay tests on Ubuntu.
 - [ ] Add CI container build and vulnerability scan evidence.
-- [ ] Add a minimal public operator quickstart for common reverse-proxy deployments.
+- [x] Add a minimal public operator quickstart for common reverse-proxy deployments.
 - [ ] Add signed release artifact instructions for relay binaries and Docker images.
 - [x] Add semantic-versioning and source-stability policy for public `NoctweaveCore` releases.
 

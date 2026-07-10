@@ -37,59 +37,87 @@ private enum PQCLibrary {
 }
 
 public struct SigningKeyPair: Codable {
+    private static let maximumSignedMessageBytes = 512 * 1024
     public let privateKeyData: Data
     public let publicKeyData: Data
 
+    private enum CodingKeys: String, CodingKey {
+        case privateKeyData
+        case publicKeyData
+    }
+
     public init() {
         do {
-            let sig = try PQCLibrary.signature()
-            defer { OQS_SIG_free(sig) }
-            var publicKey = Data(count: Int(sig.pointee.length_public_key))
-            var privateKey = Data(count: Int(sig.pointee.length_secret_key))
-            let result = publicKey.withUnsafeMutableBytes { publicPtr in
-                privateKey.withUnsafeMutableBytes { privatePtr in
-                    OQS_SIG_keypair(
-                        sig,
-                        publicPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                        privatePtr.baseAddress?.assumingMemoryBound(to: UInt8.self)
-                    )
-                }
-            }
-            guard result == OQS_SUCCESS else {
-                self.privateKeyData = Data()
-                self.publicKeyData = Data()
-                return
-            }
-            self.privateKeyData = privateKey
-            self.publicKeyData = publicKey
+            self = try Self.generate()
         } catch {
-            self.privateKeyData = Data()
-            self.publicKeyData = Data()
+            fatalError("Noctweave could not generate an ML-DSA-65 signing key: \(error)")
         }
+    }
+
+    public static func generate() throws -> SigningKeyPair {
+        let sig = try PQCLibrary.signature()
+        defer { OQS_SIG_free(sig) }
+        var publicKey = Data(count: Int(sig.pointee.length_public_key))
+        var privateKey = Data(count: Int(sig.pointee.length_secret_key))
+        let result = publicKey.withUnsafeMutableBytes { publicPtr in
+            privateKey.withUnsafeMutableBytes { privatePtr in
+                OQS_SIG_keypair(
+                    sig,
+                    publicPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    privatePtr.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                )
+            }
+        }
+        guard result == OQS_SUCCESS else {
+            privateKey.secureWipe()
+            throw CryptoError.operationFailed
+        }
+        return SigningKeyPair(uncheckedPrivateKeyData: privateKey, publicKeyData: publicKey)
     }
 
     public init(privateKeyData: Data, publicKeyData: Data) throws {
         let sig = try PQCLibrary.signature()
         defer { OQS_SIG_free(sig) }
         guard privateKeyData.count == Int(sig.pointee.length_secret_key),
-              publicKeyData.count == Int(sig.pointee.length_public_key) else {
+              publicKeyData.count == Int(sig.pointee.length_public_key),
+              Self.keysMatch(privateKeyData: privateKeyData, publicKeyData: publicKeyData, signature: sig) else {
             throw CryptoError.invalidPrivateKey
         }
         self.privateKeyData = privateKeyData
         self.publicKeyData = publicKeyData
     }
 
+    private init(uncheckedPrivateKeyData: Data, publicKeyData: Data) {
+        self.privateKeyData = uncheckedPrivateKeyData
+        self.publicKeyData = publicKeyData
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let privateKeyData = try container.decode(Data.self, forKey: .privateKeyData)
+        let publicKeyData = try container.decode(Data.self, forKey: .publicKeyData)
+        try self.init(privateKeyData: privateKeyData, publicKeyData: publicKeyData)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(privateKeyData, forKey: .privateKeyData)
+        try container.encode(publicKeyData, forKey: .publicKeyData)
+    }
+
     public func sign(_ data: Data) throws -> Data {
         let sig = try PQCLibrary.signature()
         defer { OQS_SIG_free(sig) }
-        guard privateKeyData.count == Int(sig.pointee.length_secret_key),
+        guard data.count <= Self.maximumSignedMessageBytes,
+              privateKeyData.count == Int(sig.pointee.length_secret_key),
               publicKeyData.count == Int(sig.pointee.length_public_key) else {
-            throw CryptoError.invalidPrivateKey
+            throw data.count > Self.maximumSignedMessageBytes ? CryptoError.invalidPayload : CryptoError.invalidPrivateKey
         }
         var signature = Data(count: Int(sig.pointee.length_signature))
         var signatureLen: size_t = 0
+        let messageStorage = data.isEmpty ? Data([0]) : data
         let result = signature.withUnsafeMutableBytes { sigPtr in
-            data.withUnsafeBytes { msgPtr in
+            messageStorage.withUnsafeBytes { msgPtr in
                 privateKeyData.withUnsafeBytes { privatePtr in
                     OQS_SIG_sign(
                         sig,
@@ -102,7 +130,9 @@ public struct SigningKeyPair: Codable {
                 }
             }
         }
-        guard result == OQS_SUCCESS else {
+        guard result == OQS_SUCCESS,
+              signatureLen == sig.pointee.length_signature else {
+            signature.secureWipe()
             throw CryptoError.invalidSignature
         }
         signature.count = signatureLen
@@ -113,12 +143,14 @@ public struct SigningKeyPair: Codable {
         do {
             let sig = try PQCLibrary.signature()
             defer { OQS_SIG_free(sig) }
-            guard publicKeyData.count == Int(sig.pointee.length_public_key),
+            guard data.count <= maximumSignedMessageBytes,
+                  publicKeyData.count == Int(sig.pointee.length_public_key),
                   signature.count == Int(sig.pointee.length_signature) else {
                 return false
             }
+            let messageStorage = data.isEmpty ? Data([0]) : data
             let result = signature.withUnsafeBytes { sigPtr in
-                data.withUnsafeBytes { msgPtr in
+                messageStorage.withUnsafeBytes { msgPtr in
                     publicKeyData.withUnsafeBytes { publicPtr in
                         OQS_SIG_verify(
                             sig,
@@ -146,11 +178,54 @@ public struct SigningKeyPair: Codable {
             return false
         }
     }
+
+    private static func keysMatch(
+        privateKeyData: Data,
+        publicKeyData: Data,
+        signature sig: UnsafeMutablePointer<OQS_SIG>
+    ) -> Bool {
+        let challenge = Data("Noctweave/ML-DSA-65/keypair-validation/v1".utf8)
+        var signature = Data(count: Int(sig.pointee.length_signature))
+        defer { signature.secureWipe() }
+        var signatureLength: size_t = 0
+        let signResult = signature.withUnsafeMutableBytes { signaturePointer in
+            challenge.withUnsafeBytes { challengePointer in
+                privateKeyData.withUnsafeBytes { privatePointer in
+                    OQS_SIG_sign(
+                        sig,
+                        signaturePointer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        &signatureLength,
+                        challengePointer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        challenge.count,
+                        privatePointer.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                    )
+                }
+            }
+        }
+        guard signResult == OQS_SUCCESS,
+              signatureLength == sig.pointee.length_signature else {
+            return false
+        }
+        return signature.withUnsafeBytes { signaturePointer in
+            challenge.withUnsafeBytes { challengePointer in
+                publicKeyData.withUnsafeBytes { publicPointer in
+                    OQS_SIG_verify(
+                        sig,
+                        challengePointer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        challenge.count,
+                        signaturePointer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        signatureLength,
+                        publicPointer.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                    )
+                }
+            }
+        } == OQS_SUCCESS
+    }
 }
 
 public struct KEMOutput: Codable, Equatable {
     public let ciphertext: Data
-    public let sharedSecret: Data
+    public var sharedSecret: Data
 
     public init(ciphertext: Data, sharedSecret: Data) {
         self.ciphertext = ciphertext
@@ -162,43 +237,68 @@ public struct AgreementKeyPair: Codable {
     public let privateKeyData: Data
     public let publicKeyData: Data
 
+    private enum CodingKeys: String, CodingKey {
+        case privateKeyData
+        case publicKeyData
+    }
+
     public init() {
         do {
-            let kem = try PQCLibrary.kem()
-            defer { OQS_KEM_free(kem) }
-            var publicKey = Data(count: Int(kem.pointee.length_public_key))
-            var privateKey = Data(count: Int(kem.pointee.length_secret_key))
-            let result = publicKey.withUnsafeMutableBytes { publicPtr in
-                privateKey.withUnsafeMutableBytes { privatePtr in
-                    OQS_KEM_keypair(
-                        kem,
-                        publicPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                        privatePtr.baseAddress?.assumingMemoryBound(to: UInt8.self)
-                    )
-                }
-            }
-            guard result == OQS_SUCCESS else {
-                self.privateKeyData = Data()
-                self.publicKeyData = Data()
-                return
-            }
-            self.privateKeyData = privateKey
-            self.publicKeyData = publicKey
+            self = try Self.generate()
         } catch {
-            self.privateKeyData = Data()
-            self.publicKeyData = Data()
+            fatalError("Noctweave could not generate an ML-KEM-768 agreement key: \(error)")
         }
+    }
+
+    public static func generate() throws -> AgreementKeyPair {
+        let kem = try PQCLibrary.kem()
+        defer { OQS_KEM_free(kem) }
+        var publicKey = Data(count: Int(kem.pointee.length_public_key))
+        var privateKey = Data(count: Int(kem.pointee.length_secret_key))
+        let result = publicKey.withUnsafeMutableBytes { publicPtr in
+            privateKey.withUnsafeMutableBytes { privatePtr in
+                OQS_KEM_keypair(
+                    kem,
+                    publicPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    privatePtr.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                )
+            }
+        }
+        guard result == OQS_SUCCESS else {
+            privateKey.secureWipe()
+            throw CryptoError.operationFailed
+        }
+        return AgreementKeyPair(uncheckedPrivateKeyData: privateKey, publicKeyData: publicKey)
     }
 
     public init(privateKeyData: Data, publicKeyData: Data) throws {
         let kem = try PQCLibrary.kem()
         defer { OQS_KEM_free(kem) }
         guard privateKeyData.count == Int(kem.pointee.length_secret_key),
-              publicKeyData.count == Int(kem.pointee.length_public_key) else {
+              publicKeyData.count == Int(kem.pointee.length_public_key),
+              Self.keysMatch(privateKeyData: privateKeyData, publicKeyData: publicKeyData, kem: kem) else {
             throw CryptoError.invalidPrivateKey
         }
         self.privateKeyData = privateKeyData
         self.publicKeyData = publicKeyData
+    }
+
+    private init(uncheckedPrivateKeyData: Data, publicKeyData: Data) {
+        self.privateKeyData = uncheckedPrivateKeyData
+        self.publicKeyData = publicKeyData
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let privateKeyData = try container.decode(Data.self, forKey: .privateKeyData)
+        let publicKeyData = try container.decode(Data.self, forKey: .publicKeyData)
+        try self.init(privateKeyData: privateKeyData, publicKeyData: publicKeyData)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(privateKeyData, forKey: .privateKeyData)
+        try container.encode(publicKeyData, forKey: .publicKeyData)
     }
 
     public static func encapsulate(to publicKeyData: Data) throws -> KEMOutput {
@@ -222,6 +322,7 @@ public struct AgreementKeyPair: Codable {
             }
         }
         guard result == OQS_SUCCESS else {
+            sharedSecret.secureWipe()
             throw CryptoError.operationFailed
         }
         return KEMOutput(ciphertext: ciphertext, sharedSecret: sharedSecret)
@@ -259,9 +360,52 @@ public struct AgreementKeyPair: Codable {
             }
         }
         guard result == OQS_SUCCESS else {
+            sharedSecret.secureWipe()
             throw CryptoError.operationFailed
         }
         return sharedSecret
+    }
+
+    private static func keysMatch(
+        privateKeyData: Data,
+        publicKeyData: Data,
+        kem: UnsafeMutablePointer<OQS_KEM>
+    ) -> Bool {
+        var ciphertext = Data(count: Int(kem.pointee.length_ciphertext))
+        var encapsulatedSecret = Data(count: Int(kem.pointee.length_shared_secret))
+        var decapsulatedSecret = Data(count: Int(kem.pointee.length_shared_secret))
+        defer {
+            ciphertext.secureWipe()
+            encapsulatedSecret.secureWipe()
+            decapsulatedSecret.secureWipe()
+        }
+        let encapsulationResult = ciphertext.withUnsafeMutableBytes { ciphertextPointer in
+            encapsulatedSecret.withUnsafeMutableBytes { secretPointer in
+                publicKeyData.withUnsafeBytes { publicPointer in
+                    OQS_KEM_encaps(
+                        kem,
+                        ciphertextPointer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        secretPointer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        publicPointer.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                    )
+                }
+            }
+        }
+        guard encapsulationResult == OQS_SUCCESS else { return false }
+        let decapsulationResult = decapsulatedSecret.withUnsafeMutableBytes { secretPointer in
+            ciphertext.withUnsafeBytes { ciphertextPointer in
+                privateKeyData.withUnsafeBytes { privatePointer in
+                    OQS_KEM_decaps(
+                        kem,
+                        secretPointer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        ciphertextPointer.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        privatePointer.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                    )
+                }
+            }
+        }
+        return decapsulationResult == OQS_SUCCESS
+            && timingSafeEqual(encapsulatedSecret, decapsulatedSecret)
     }
 }
 
@@ -300,4 +444,14 @@ public struct EncryptedPayload: Codable, Equatable {
         self.ciphertext = ciphertext
         self.tag = tag
     }
+}
+
+private func timingSafeEqual(_ lhs: Data, _ rhs: Data) -> Bool {
+    var difference = lhs.count ^ rhs.count
+    for index in 0..<max(lhs.count, rhs.count) {
+        let left = index < lhs.count ? lhs[index] : 0
+        let right = index < rhs.count ? rhs[index] : 0
+        difference |= Int(left ^ right)
+    }
+    return difference == 0
 }

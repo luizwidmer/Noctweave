@@ -6,6 +6,8 @@ public enum MixnetSchedulerError: Error, Equatable {
     case blankPacketId
     case emptyBatch
     case invalidHorizon
+    case resourceLimitExceeded
+    case invalidTimestamp
 }
 
 public enum MixnetPacketPaddingError: Error, Equatable {
@@ -14,6 +16,7 @@ public enum MixnetPacketPaddingError: Error, Equatable {
     case invalidFixedSize
     case payloadTooLarge
     case malformedPacket
+    case resourceLimitExceeded
 }
 
 public enum MixnetInterRelayCoverError: Error, Equatable {
@@ -23,6 +26,8 @@ public enum MixnetInterRelayCoverError: Error, Equatable {
     case invalidCoverPacketCount
     case invalidEndpoint
     case insufficientDiversity
+    case resourceLimitExceeded
+    case invalidTimestamp
 }
 
 public enum MixnetRouteSelectionError: Error, Equatable {
@@ -34,6 +39,7 @@ public enum MixnetRouteSelectionError: Error, Equatable {
     case invalidEndpoint
     case invalidOnionHop
     case insufficientDiversity
+    case resourceLimitExceeded
 }
 
 public enum MixnetRoutePolicyIssue: String, Codable, Equatable, CaseIterable {
@@ -47,6 +53,7 @@ public enum MixnetRoutePolicyIssue: String, Codable, Equatable, CaseIterable {
     case coverTrafficDisabled
     case batchIntervalTooShort
     case releaseDelayDisabled
+    case invalidBounds
 }
 
 public enum MixnetPacketKind: String, Codable, Equatable {
@@ -91,6 +98,8 @@ public struct MixnetTransportSupport: Codable, Equatable {
 }
 
 public enum MixnetPacketPadder {
+    public static let maximumFixedPayloadSize = 1 * 1024 * 1024
+
     public static func pad(
         packetId: String,
         payload: Data,
@@ -106,6 +115,10 @@ public enum MixnetPacketPadder {
         guard fixedPayloadSize > 0 else {
             throw MixnetPacketPaddingError.invalidFixedSize
         }
+        guard fixedPayloadSize <= maximumFixedPayloadSize,
+              trimmedPacketId.utf8.count <= MixnetBounds.maximumIdentifierBytes else {
+            throw MixnetPacketPaddingError.resourceLimitExceeded
+        }
         guard payload.count <= fixedPayloadSize else {
             throw MixnetPacketPaddingError.payloadTooLarge
         }
@@ -113,7 +126,10 @@ public enum MixnetPacketPadder {
         var paddedPayload = payload
         let paddingCount = fixedPayloadSize - payload.count
         if paddingCount > 0 {
-            paddedPayload.append(contentsOf: (0..<paddingCount).map { _ in UInt8.random(in: UInt8.min...UInt8.max) })
+            var generator = SystemRandomNumberGenerator()
+            for _ in 0..<paddingCount {
+                paddedPayload.append(UInt8.random(in: UInt8.min...UInt8.max, using: &generator))
+            }
         }
 
         return MixnetFixedSizePacket(
@@ -131,6 +147,10 @@ public enum MixnetPacketPadder {
         }
         guard packet.fixedPayloadSize > 0 else {
             throw MixnetPacketPaddingError.invalidFixedSize
+        }
+        guard packet.fixedPayloadSize <= maximumFixedPayloadSize,
+              trimmedPacketId.utf8.count <= MixnetBounds.maximumIdentifierBytes else {
+            throw MixnetPacketPaddingError.resourceLimitExceeded
         }
         guard packet.originalPayloadSize > 0,
               packet.originalPayloadSize <= packet.fixedPayloadSize,
@@ -195,8 +215,13 @@ public struct MixnetCoverCyclePlan: Codable, Equatable {
             return false
         }
 
-        let interval = TimeInterval(max(1, batchIntervalSeconds))
-        let expectedCount = max(1, Int(ceil(cycleEnd.timeIntervalSince(cycleStart) / interval)))
+        guard let expectedCount = MixnetBounds.expectedBatchCount(
+            start: cycleStart,
+            end: cycleEnd,
+            intervalSeconds: batchIntervalSeconds
+        ) else {
+            return false
+        }
         return batches.count == expectedCount && batches.allSatisfy { !$0.packets.isEmpty }
     }
 
@@ -299,11 +324,20 @@ public struct MixnetInterRelayCoverPlan: Codable, Equatable {
     public let batches: [MixnetInterRelayCoverBatchPlan]
 
     public var coversEveryRelayLinkEachInterval: Bool {
-        guard relayIds.count >= 2, coverPacketsPerLink > 0, !batches.isEmpty else {
+        guard relayIds.count >= 2,
+              relayIds.count <= MixnetBounds.maximumRelays,
+              coverPacketsPerLink > 0,
+              coverPacketsPerLink <= MixnetBounds.maximumCoverPacketsPerLink,
+              !batches.isEmpty else {
             return false
         }
-        let interval = TimeInterval(max(1, batchIntervalSeconds))
-        let expectedBatchCount = max(1, Int(ceil(cycleEnd.timeIntervalSince(cycleStart) / interval)))
+        guard let expectedBatchCount = MixnetBounds.expectedBatchCount(
+            start: cycleStart,
+            end: cycleEnd,
+            intervalSeconds: batchIntervalSeconds
+        ) else {
+            return false
+        }
         let expectedLinkCount = relayIds.count * (relayIds.count - 1)
         return batches.count == expectedBatchCount && batches.allSatisfy { batch in
             batch.packets.count == expectedLinkCount * coverPacketsPerLink &&
@@ -357,6 +391,12 @@ public enum MixnetRoutePolicyValidator {
         if mixnetSupport.maxDelaySeconds <= 0 {
             issues.append(.releaseDelayDisabled)
         }
+        if !(5...3_600).contains(mixnetSupport.batchIntervalSeconds) ||
+            !(1...256).contains(mixnetSupport.minBatchSize) ||
+            !(0...256).contains(mixnetSupport.coverPacketsPerBatch) ||
+            !(0...3_600).contains(mixnetSupport.maxDelaySeconds) {
+            issues.append(.invalidBounds)
+        }
 
         guard let onionSupport else {
             issues.append(.missingOnionTransport)
@@ -404,8 +444,13 @@ public enum MixnetRouteSelector {
         guard !secret.isEmpty else {
             throw MixnetRouteSelectionError.emptySecret
         }
-        guard hopCount >= 2 else {
+        guard hopCount >= 2, hopCount <= MixnetBounds.maximumRouteHops else {
             throw MixnetRouteSelectionError.invalidRouteLength
+        }
+        guard secret.count <= MixnetBounds.maximumSecretBytes,
+              routeContext.utf8.count <= MixnetBounds.maximumContextBytes,
+              candidates.count <= MixnetBounds.maximumRouteCandidates else {
+            throw MixnetRouteSelectionError.resourceLimitExceeded
         }
 
         let normalized = try normalizedCandidates(candidates, requireTLS: requireTLS)
@@ -452,6 +497,12 @@ public enum MixnetRouteSelector {
             let onionHopId = candidate.onionHop.hopId.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !hopId.isEmpty, !onionHopId.isEmpty else {
                 throw MixnetRouteSelectionError.blankHopId
+            }
+            guard hopId.utf8.count <= MixnetBounds.maximumIdentifierBytes,
+                  onionHopId.utf8.count <= MixnetBounds.maximumIdentifierBytes,
+                  candidate.operatorId.utf8.count <= MixnetBounds.maximumIdentifierBytes,
+                  candidate.onionHop.routingInstruction.utf8.count <= MixnetBounds.maximumContextBytes else {
+                throw MixnetRouteSelectionError.resourceLimitExceeded
             }
             guard hopId.caseInsensitiveCompare(onionHopId) == .orderedSame,
                   !candidate.onionHop.publicKeyData.isEmpty,
@@ -520,16 +571,30 @@ public enum MixnetInterRelayCoverCoordinator {
         guard !secret.isEmpty else {
             throw MixnetInterRelayCoverError.emptySecret
         }
-        guard horizonSeconds > 0 else {
+        guard horizonSeconds > 0, horizonSeconds <= MixnetBounds.maximumHorizonSeconds else {
             throw MixnetInterRelayCoverError.invalidHorizon
         }
-        guard coverPacketsPerLink > 0, coverPacketsPerLink <= 32 else {
+        guard coverPacketsPerLink > 0,
+              coverPacketsPerLink <= MixnetBounds.maximumCoverPacketsPerLink else {
             throw MixnetInterRelayCoverError.invalidCoverPacketCount
+        }
+        guard secret.count <= MixnetBounds.maximumSecretBytes else {
+            throw MixnetInterRelayCoverError.resourceLimitExceeded
+        }
+        guard MixnetBounds.isSafeDate(now) else {
+            throw MixnetInterRelayCoverError.invalidTimestamp
         }
 
         let peers = try normalizedRelays(relays, requireTLS: requireTLS)
-        let interval = max(1, policy.batchIntervalSeconds)
-        let batchCount = max(1, Int(ceil(Double(horizonSeconds) / Double(interval))))
+        let policy = MixnetBounds.normalizedPolicy(policy)
+        let interval = policy.batchIntervalSeconds
+        let batchCount = MixnetBounds.batchCount(horizonSeconds: horizonSeconds, intervalSeconds: interval)
+        let packetsPerBatch = peers.count * (peers.count - 1) * coverPacketsPerLink
+        guard batchCount <= MixnetBounds.maximumPlanBatches,
+              packetsPerBatch <= MixnetBounds.maximumPacketsPerBatch,
+              batchCount * packetsPerBatch <= MixnetBounds.maximumPacketsPerPlan else {
+            throw MixnetInterRelayCoverError.resourceLimitExceeded
+        }
         let cycleStart = batchBoundary(after: now, intervalSeconds: interval)
         var batches: [MixnetInterRelayCoverBatchPlan] = []
         batches.reserveCapacity(batchCount)
@@ -589,12 +654,19 @@ public enum MixnetInterRelayCoverCoordinator {
     ) throws -> [MixnetRelayPeer] {
         var seenRelayIds = Set<String>()
         var peers: [MixnetRelayPeer] = []
+        guard relays.count <= MixnetBounds.maximumRelays else {
+            throw MixnetInterRelayCoverError.resourceLimitExceeded
+        }
         for relay in relays {
             let relayId = relay.relayId.trimmingCharacters(in: .whitespacesAndNewlines)
             let operatorId = relay.operatorId.trimmingCharacters(in: .whitespacesAndNewlines)
             let host = relay.endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !relayId.isEmpty, !operatorId.isEmpty else {
                 throw MixnetInterRelayCoverError.invalidRelaySet
+            }
+            guard relayId.utf8.count <= MixnetBounds.maximumIdentifierBytes,
+                  operatorId.utf8.count <= MixnetBounds.maximumIdentifierBytes else {
+                throw MixnetInterRelayCoverError.resourceLimitExceeded
             }
             guard !host.isEmpty, !requireTLS || relay.endpoint.useTLS else {
                 throw MixnetInterRelayCoverError.invalidEndpoint
@@ -675,12 +747,29 @@ public enum MixnetScheduler {
         secret: Data,
         horizonSeconds: Int
     ) throws -> MixnetCoverCyclePlan {
-        guard horizonSeconds > 0 else {
+        guard horizonSeconds > 0, horizonSeconds <= MixnetBounds.maximumHorizonSeconds else {
             throw MixnetSchedulerError.invalidHorizon
         }
+        guard !secret.isEmpty, secret.count <= MixnetBounds.maximumSecretBytes else {
+            throw secret.isEmpty ? MixnetSchedulerError.emptySecret : MixnetSchedulerError.resourceLimitExceeded
+        }
+        guard MixnetBounds.isSafeDate(now) else {
+            throw MixnetSchedulerError.invalidTimestamp
+        }
 
-        let interval = max(1, policy.batchIntervalSeconds)
-        let batchCount = max(1, Int(ceil(Double(horizonSeconds) / Double(interval))))
+        let policy = MixnetBounds.normalizedPolicy(policy)
+        let interval = policy.batchIntervalSeconds
+        let batchCount = MixnetBounds.batchCount(horizonSeconds: horizonSeconds, intervalSeconds: interval)
+        guard batchCount <= MixnetBounds.maximumPlanBatches,
+              pendingPacketIdsByBatch.count <= MixnetBounds.maximumPlanBatches else {
+            throw MixnetSchedulerError.resourceLimitExceeded
+        }
+        let candidateCount = pendingPacketIdsByBatch.prefix(batchCount).reduce(0) { partial, ids in
+            min(MixnetBounds.maximumPacketsPerPlan + 1, partial + min(ids.count, MixnetBounds.maximumPacketsPerPlan + 1))
+        }
+        guard candidateCount <= MixnetBounds.maximumPacketsPerPlan else {
+            throw MixnetSchedulerError.resourceLimitExceeded
+        }
         let cycleStart = batchBoundary(after: now, intervalSeconds: interval)
         var batches: [MixnetBatchPlan] = []
         batches.reserveCapacity(batchCount)
@@ -731,6 +820,14 @@ public enum MixnetScheduler {
         guard !secret.isEmpty else {
             throw MixnetSchedulerError.emptySecret
         }
+        guard secret.count <= MixnetBounds.maximumSecretBytes,
+              pendingPacketIds.count <= MixnetBounds.maximumPacketsPerBatch else {
+            throw MixnetSchedulerError.resourceLimitExceeded
+        }
+        guard MixnetBounds.isSafeDate(now) else {
+            throw MixnetSchedulerError.invalidTimestamp
+        }
+        let policy = MixnetBounds.normalizedPolicy(policy)
         let realIds = try canonicalPacketIds(pendingPacketIds)
         let batchBase = batchBoundary(after: now, intervalSeconds: policy.batchIntervalSeconds)
         let batchId = makeBatchId(batchBase: batchBase, policy: policy, secret: secret)
@@ -779,6 +876,9 @@ public enum MixnetScheduler {
             guard !trimmed.isEmpty else {
                 throw MixnetSchedulerError.blankPacketId
             }
+            guard trimmed.utf8.count <= MixnetBounds.maximumIdentifierBytes else {
+                throw MixnetSchedulerError.resourceLimitExceeded
+            }
             if seen.insert(trimmed).inserted {
                 result.append(trimmed)
             }
@@ -823,5 +923,54 @@ public enum MixnetScheduler {
 
     private static func rank(packetId: String, batchId: String, secret: Data) -> Data {
         Data(SHA256.hash(data: secret + Data("rank:\(batchId):\(packetId)".utf8)))
+    }
+}
+
+private enum MixnetBounds {
+    static let maximumHorizonSeconds = 86_400
+    static let maximumPlanBatches = 2_048
+    static let maximumPacketsPerBatch = 4_096
+    static let maximumPacketsPerPlan = 262_144
+    static let maximumRelays = 32
+    static let maximumCoverPacketsPerLink = 8
+    static let maximumRouteCandidates = 256
+    static let maximumRouteHops = 8
+    static let maximumIdentifierBytes = 256
+    static let maximumContextBytes = 1_024
+    static let maximumSecretBytes = 1_024
+    static let maximumAbsoluteTimestamp: TimeInterval = 253_402_300_799
+
+    static func normalizedPolicy(_ policy: MixnetTransportSupport) -> MixnetTransportSupport {
+        MixnetTransportSupport(
+            enabled: policy.enabled,
+            batchIntervalSeconds: policy.batchIntervalSeconds,
+            minBatchSize: policy.minBatchSize,
+            coverPacketsPerBatch: policy.coverPacketsPerBatch,
+            maxDelaySeconds: policy.maxDelaySeconds
+        )
+    }
+
+    static func batchCount(horizonSeconds: Int, intervalSeconds: Int) -> Int {
+        max(1, (horizonSeconds + intervalSeconds - 1) / intervalSeconds)
+    }
+
+    static func isSafeDate(_ date: Date) -> Bool {
+        let timestamp = date.timeIntervalSince1970
+        return timestamp.isFinite && abs(timestamp) <= maximumAbsoluteTimestamp
+    }
+
+    static func expectedBatchCount(start: Date, end: Date, intervalSeconds: Int) -> Int? {
+        guard isSafeDate(start), isSafeDate(end),
+              intervalSeconds > 0, intervalSeconds <= 3_600 else {
+            return nil
+        }
+        let duration = end.timeIntervalSince(start)
+        guard duration.isFinite,
+              duration > 0,
+              duration <= TimeInterval(maximumHorizonSeconds) else {
+            return nil
+        }
+        let count = Int(ceil(duration / TimeInterval(intervalSeconds)))
+        return (1...maximumPlanBatches).contains(count) ? count : nil
     }
 }

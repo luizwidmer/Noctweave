@@ -11,6 +11,9 @@ import Security
 enum RelayNetworkError: Error {
     case connectionFailed
     case responseTooLarge
+    case requestTooLarge
+    case invalidAuthentication
+    case invalidTimeout
     case invalidResponse
     case tlsConfigurationFailed(String)
 }
@@ -79,13 +82,20 @@ extension NWConnection {
     }
 
     func receiveLine(maxLength: Int = 65_536) async throws -> Data {
+        guard maxLength > 0 else { throw RelayNetworkError.responseTooLarge }
         var buffer = Data()
         while buffer.count < maxLength {
             let chunk = try await receiveChunk()
             buffer.append(chunk)
             if let newlineIndex = buffer.firstIndex(of: 0x0A) {
+                guard buffer.distance(from: buffer.startIndex, to: newlineIndex) <= maxLength else {
+                    throw RelayNetworkError.responseTooLarge
+                }
                 let line = buffer.prefix(upTo: newlineIndex)
                 return Data(line)
+            }
+            guard buffer.count < maxLength else {
+                throw RelayNetworkError.responseTooLarge
             }
         }
         throw RelayNetworkError.responseTooLarge
@@ -173,6 +183,9 @@ enum RelayNetworkTransport {
             throw RelayNetworkError.tlsConfigurationFailed("TLS is enabled but certificate path is missing.")
         }
         let password = configuration.tlsIdentityPassword ?? ""
+        guard password.utf8.count <= 4_096 else {
+            throw RelayNetworkError.tlsConfigurationFailed("PKCS#12 password exceeds the 4096-byte limit.")
+        }
         let expandedPath = (trimmedPath as NSString).expandingTildeInPath
         let url = URL(fileURLWithPath: expandedPath)
         let resourceValues = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
@@ -183,6 +196,9 @@ enum RelayNetworkTransport {
             throw RelayNetworkError.tlsConfigurationFailed("PKCS#12 identity must be a regular file no larger than 10 MB.")
         }
         let data = try Data(contentsOf: url)
+        guard data.count <= 10 * 1024 * 1024 else {
+            throw RelayNetworkError.tlsConfigurationFailed("PKCS#12 identity exceeds the 10 MB limit.")
+        }
         var items: CFArray?
         let importOptions: [String: Any] = [
             kSecImportExportPassphrase as String: password

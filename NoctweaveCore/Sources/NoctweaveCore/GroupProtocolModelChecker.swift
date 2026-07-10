@@ -5,6 +5,7 @@ public enum GroupProtocolModelCommitRejection: String, Codable, Equatable {
     case invalidActor
     case unauthorizedActor
     case staleEpoch
+    case epochExhausted
     case transcriptMismatch
     case createCommitAfterInitialization
     case invalidOperation
@@ -167,7 +168,8 @@ public struct GroupProtocolModelState: Equatable {
         let nextMembersForHash = nextMemberFingerprints.map {
             RelayGroupMember(fingerprint: $0, joinedAt: Date(timeIntervalSince1970: 0))
         }
-        let nextEpochState = epochState.advancing(
+        guard epoch < UInt64.max,
+              let nextEpochState = try? epochState.advancing(
             title: nextTitle,
             inboxId: inboxId,
             actorFingerprint: actor,
@@ -175,7 +177,9 @@ public struct GroupProtocolModelState: Equatable {
             operation: commit.operation,
             committedAt: Date(timeIntervalSince1970: TimeInterval(epoch + 1)),
             ratchetSecretDistribution: nil
-        )
+              ) else {
+            return .rejected(.epochExhausted)
+        }
 
         return .accepted(
             GroupProtocolModelState(
@@ -190,7 +194,7 @@ public struct GroupProtocolModelState: Equatable {
     }
 
     fileprivate var stateKey: String {
-        [
+        return [
             String(epoch),
             title,
             confirmedTranscriptHash.base64EncodedString(),
@@ -315,6 +319,9 @@ public enum GroupProtocolModelChecker {
         from state: GroupProtocolModelState,
         candidates: [String]
     ) -> [SignedGroupCommit] {
+        guard state.epoch < UInt64.max else {
+            return []
+        }
         var commits: [SignedGroupCommit] = []
         let creator = state.createdByFingerprint
         let outsiders = candidates.filter { !state.memberFingerprints.contains($0) }
@@ -379,12 +386,13 @@ public enum GroupProtocolModelChecker {
         of commit: SignedGroupCommit,
         from state: GroupProtocolModelState
     ) -> [SignedGroupCommit] {
-        [
+        let mismatchedEpoch = state.epoch == UInt64.max ? state.epoch - 1 : state.epoch + 1
+        return [
             SignedGroupCommit(
                 operation: commit.operation,
                 groupId: commit.groupId,
                 actorFingerprint: commit.actorFingerprint,
-                baseEpoch: state.epoch + 1,
+                baseEpoch: mismatchedEpoch,
                 previousTranscriptHash: commit.previousTranscriptHash,
                 title: commit.title,
                 addMemberFingerprints: commit.addMemberFingerprints,
@@ -474,7 +482,7 @@ public enum GroupProtocolModelChecker {
         after: GroupProtocolModelState
     ) -> [String] {
         var violations: [String] = []
-        if after.epoch != before.epoch + 1 {
+        if before.epoch == UInt64.max || after.epoch != before.epoch + 1 {
             violations.append("Accepted commit did not advance epoch by one.")
         }
         if after.epochState.lastCommit.previousTranscriptHash != before.confirmedTranscriptHash {

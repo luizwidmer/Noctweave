@@ -4,19 +4,22 @@ enum FederationDirectorySignature {
     static let algorithm = "ML-DSA-65"
 
     static func privateKeyData(from raw: Data?) -> Data {
-        if let raw,
-           let bundle = try? RelayCodec.decoder().decode(DirectorySigningKeyBundle.self, from: raw),
-           bundle.algorithm == algorithm,
-           let probeSignature = OQSSignatureVerifier.shared.sign(
+        if let raw {
+            guard raw.count <= 16_384,
+                  let bundle = try? RelayCodec.decoder().decode(DirectorySigningKeyBundle.self, from: raw),
+                  bundle.algorithm == algorithm,
+                  let probeSignature = OQSSignatureVerifier.shared.sign(
                 data: Self.probePayload,
                 privateKey: bundle.privateKeyData,
                 publicKey: bundle.publicKeyData
-           ),
-           OQSSignatureVerifier.shared.verify(
+                  ),
+                  OQSSignatureVerifier.shared.verify(
                 signature: probeSignature,
                 data: Self.probePayload,
                 publicKey: bundle.publicKeyData
-           ) {
+                  ) else {
+                return Data()
+            }
             return raw
         }
         guard let keyPair = OQSSignatureVerifier.shared.generateKeyPair() else {
@@ -31,8 +34,19 @@ enum FederationDirectorySignature {
     }
 
     static func publicKeyData(from privateKeyData: Data) -> Data? {
-        guard let bundle = try? RelayCodec.decoder().decode(DirectorySigningKeyBundle.self, from: privateKeyData),
-              bundle.algorithm == algorithm else {
+        guard privateKeyData.count <= 16_384,
+              let bundle = try? RelayCodec.decoder().decode(DirectorySigningKeyBundle.self, from: privateKeyData),
+              bundle.algorithm == algorithm,
+              let probeSignature = OQSSignatureVerifier.shared.sign(
+                data: Self.probePayload,
+                privateKey: bundle.privateKeyData,
+                publicKey: bundle.publicKeyData
+              ),
+              OQSSignatureVerifier.shared.verify(
+                signature: probeSignature,
+                data: Self.probePayload,
+                publicKey: bundle.publicKeyData
+              ) else {
             return nil
         }
         return bundle.publicKeyData

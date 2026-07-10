@@ -7,6 +7,7 @@ public enum OpenFederationDHTGatewayTransportError: Error, Equatable {
     case badStatus(Int)
     case responseTooLarge
     case invalidResponse
+    case invalidConfiguration
 }
 
 public final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTransport {
@@ -23,16 +24,25 @@ public final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTrans
         authToken: String? = nil,
         timeout: TimeInterval = 8,
         maxResponseBytes: Int = 256 * 1024
-    ) {
+    ) throws {
+        let normalizedToken = authToken?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard timeout.isFinite,
+              (1...60).contains(timeout),
+              (1_024...(1_024 * 1_024)).contains(maxResponseBytes),
+              normalizedToken.map({ $0.utf8.count <= 4_096 }) ?? true else {
+            throw OpenFederationDHTGatewayTransportError.invalidConfiguration
+        }
         self.baseURL = baseURL
         self.session = session ?? URLSession(configuration: .ephemeral)
-        let normalizedToken = authToken?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.authToken = normalizedToken?.isEmpty == false ? normalizedToken : nil
-        self.timeout = max(1, timeout)
-        self.maxResponseBytes = max(1024, maxResponseBytes)
+        self.timeout = timeout
+        self.maxResponseBytes = maxResponseBytes
     }
 
     public func publish(_ record: OpenFederationDHTRecord, namespace: String) async throws {
+        guard isValidNamespace(namespace) else {
+            throw OpenFederationDHTGatewayTransportError.invalidURL
+        }
         guard let url = makeRecordsURL() else {
             throw OpenFederationDHTGatewayTransportError.invalidURL
         }
@@ -44,18 +54,22 @@ public final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTrans
         request.httpMethod = "POST"
         request.httpBody = body
         applyCommonHeaders(to: &request)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await boundedLoad(request)
         try validate(response: response, data: data)
     }
 
     public func query(namespace: String, limit: Int) async throws -> [OpenFederationDHTRecord] {
+        guard isValidNamespace(namespace),
+              (1...OpenFederationDHTDiscoveryConfiguration.maximumQueryRecords).contains(limit) else {
+            throw OpenFederationDHTGatewayTransportError.invalidURL
+        }
         guard let url = makeRecordsURL(namespace: namespace, limit: limit) else {
             throw OpenFederationDHTGatewayTransportError.invalidURL
         }
         var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = "GET"
         applyCommonHeaders(to: &request)
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await boundedLoad(request)
         try validate(response: response, data: data)
         guard !data.isEmpty else {
             return []
@@ -73,11 +87,19 @@ public final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTrans
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
               let scheme = components.scheme?.lowercased(),
               scheme == "https" || scheme == "http",
-              components.host?.isEmpty == false else {
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.port.map({ $0 > 0 && $0 <= 65_535 }) ?? true else {
             return nil
         }
 
         let basePath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard basePath.utf8.count <= 1_024 else {
+            return nil
+        }
         components.path = "/" + ([basePath, "v1", "open-federation", "dht", "records"]
             .filter { !$0.isEmpty }
             .joined(separator: "/"))
@@ -112,6 +134,24 @@ public final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTrans
         guard (200..<300).contains(http.statusCode) else {
             throw OpenFederationDHTGatewayTransportError.badStatus(http.statusCode)
         }
+    }
+
+    private func boundedLoad(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await BoundedURLSessionLoader.load(
+                request,
+                configuration: session.configuration,
+                maximumBytes: maxResponseBytes
+            )
+        } catch BoundedURLSessionLoaderError.responseTooLarge {
+            throw OpenFederationDHTGatewayTransportError.responseTooLarge
+        }
+    }
+
+    private func isValidNamespace(_ namespace: String) -> Bool {
+        !namespace.isEmpty
+            && namespace.utf8.count <= 128
+            && namespace.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
     }
 
     private struct GatewayPublishRequest: Codable {

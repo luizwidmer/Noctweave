@@ -232,24 +232,34 @@ public final class RelayServer {
                 guard let requestLine = lines.first, !requestLine.isEmpty else {
                     throw RelayNetworkError.invalidResponse
                 }
-                let requestParts = requestLine.split(separator: " ")
-                guard requestParts.count >= 2 else {
+                let requestParts = requestLine.split(separator: " ", omittingEmptySubsequences: true)
+                guard requestParts.count == 3,
+                      requestParts[2] == "HTTP/1.1" || requestParts[2] == "HTTP/1.0" else {
                     throw RelayNetworkError.invalidResponse
                 }
                 method = String(requestParts[0]).uppercased()
                 path = String(requestParts[1])
+                guard path.hasPrefix("/"),
+                      !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+                    throw RelayNetworkError.invalidResponse
+                }
                 if let queryStart = path.firstIndex(of: "?") {
                     path = String(path[..<queryStart])
                 }
                 var headers: [String: String] = [:]
                 for line in lines.dropFirst() where !line.isEmpty {
-                    guard let separator = line.firstIndex(of: ":") else { continue }
+                    guard !line.hasPrefix(" "), !line.hasPrefix("\t"),
+                          let separator = line.firstIndex(of: ":") else {
+                        throw RelayNetworkError.invalidResponse
+                    }
                     let key = line[..<separator].trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                     let value = line[line.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !key.isEmpty, headers[key] == nil else {
+                        throw RelayNetworkError.invalidResponse
+                    }
                     headers[key] = value
                 }
-                if let transferEncoding = headers["transfer-encoding"]?.lowercased(),
-                   transferEncoding.contains("chunked") {
+                if headers["transfer-encoding"] != nil {
                     throw RelayNetworkError.invalidResponse
                 }
                 let lengthHeader = headers["content-length"] ?? "0"
@@ -651,6 +661,9 @@ public final class RelayServer {
             guard let pair = request.sendPairRequest else {
                 return .error("Missing pair request payload")
             }
+            guard isValidIdentityFingerprint(pair.targetFingerprint) else {
+                return .error("Invalid target fingerprint.")
+            }
             do {
                 _ = try pair.offer.verified()
             } catch {
@@ -671,6 +684,9 @@ public final class RelayServer {
                 return .error("Missing fetch pair payload")
             }
             let fingerprint = fetch.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isValidIdentityFingerprint(fingerprint) else {
+                return .error("Invalid fingerprint.")
+            }
             if let proofFailure = await validateActorProof(
                 fetch.actorProof,
                 expectedFingerprint: fingerprint,
@@ -741,6 +757,7 @@ public final class RelayServer {
                 return proofFailure
             }
             guard let publicSigningKey = upload.actorProof?.publicSigningKey,
+                  upload.bundle.isStructurallyValid(),
                   upload.bundle.signedPrekey.verify(using: publicSigningKey),
                   upload.bundle.oneTimePrekeys.allSatisfy({ $0.verify(using: publicSigningKey) }) else {
                 return .error("Invalid authenticated prekey bundle.")
@@ -1437,7 +1454,12 @@ public final class RelayServer {
         guard !expected.isEmpty else {
             return nil
         }
-        let provided = token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard expected.utf8.count <= 4_096,
+              let token,
+              token.utf8.count <= 4_096 else {
+            return .error("Unauthorized: relay password is required.")
+        }
+        let provided = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard secureCompare(provided, expected) else {
             return .error("Unauthorized: relay password is required.")
         }
@@ -1446,10 +1468,18 @@ public final class RelayServer {
 
     private func validateCoordinatorRegistrationAuthentication(token: String?) -> RelayResponse? {
         let expected = configuration.coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if expected.isEmpty, configuration.federation.mode == .curated {
+            return .error("Coordinator configuration error: curated registration requires a token.")
+        }
         guard !expected.isEmpty else {
             return nil
         }
-        let provided = token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard expected.utf8.count <= 4_096,
+              let token,
+              token.utf8.count <= 4_096 else {
+            return .error("Unauthorized: coordinator registration token is required.")
+        }
+        let provided = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard secureCompare(provided, expected) else {
             return .error("Unauthorized: coordinator registration token is required.")
         }
@@ -1463,12 +1493,29 @@ public final class RelayServer {
 
     private func endpointSourceKey(_ endpoint: NWEndpoint?) -> String? {
         guard let endpoint else { return nil }
-        return String(describing: endpoint)
+        switch endpoint {
+        case .hostPort(let host, _):
+            return String(describing: host).lowercased()
+        case .service(let name, let type, let domain, _):
+            return "service:\(name.lowercased()):\(type.lowercased()):\(domain.lowercased())"
+        case .unix(let path):
+            return "unix:\(path)"
+        default:
+            return String(describing: endpoint).lowercased()
+        }
     }
 
     private func validateFederationRegistrationReachability(
         _ registration: FederationNodeRegistrationRequest
     ) async throws -> RelayResponse? {
+        guard registration.relayInfo.federation.mode == configuration.federation.mode else {
+            return .error("Coordinator registration rejected: node federation mode differs from coordinator policy.")
+        }
+        if let coordinatorName = configuration.federation.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !coordinatorName.isEmpty,
+           registration.relayInfo.federation.name != coordinatorName {
+            return .error("Coordinator registration rejected: node federation name differs from coordinator policy.")
+        }
         if configuration.federation.mode == .open,
            !configuration.allowPrivateFederationEndpoints,
            (!registration.endpoint.useTLS || !PublicRelayEndpointPolicy.permits(registration.endpoint)) {
@@ -1489,16 +1536,22 @@ public final class RelayServer {
     }
 
     private func secureCompare(_ lhs: String, _ rhs: String) -> Bool {
-        let lhsData = Data(lhs.utf8)
-        let rhsData = Data(rhs.utf8)
-        guard lhsData.count == rhsData.count else {
-            return false
-        }
-        var difference: UInt8 = 0
-        for index in lhsData.indices {
-            difference |= lhsData[index] ^ rhsData[index]
+        let lhsBytes = Array(lhs.utf8)
+        let rhsBytes = Array(rhs.utf8)
+        var difference = lhsBytes.count ^ rhsBytes.count
+        for index in 0..<max(lhsBytes.count, rhsBytes.count) {
+            let left = index < lhsBytes.count ? lhsBytes[index] : 0
+            let right = index < rhsBytes.count ? rhsBytes[index] : 0
+            difference |= Int(left ^ right)
         }
         return difference == 0
+    }
+
+    private func isValidIdentityFingerprint(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed == value
+            && trimmed.count <= 64
+            && Data(base64Encoded: trimmed)?.count == 32
     }
 
     private func federationGate(forwardingTo destination: RelayEndpoint) async throws -> RelayResponse? {

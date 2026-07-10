@@ -58,8 +58,8 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let aliceURL = root.appendingPathComponent("alice.json")
         let bobURL = root.appendingPathComponent("bob.json")
-        let alice = HeadlessMessagingClient(stateURL: aliceURL, timeout: 3)
-        let bob = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        let alice = HeadlessMessagingClient(stateURL: aliceURL, useEncryptedStore: false, timeout: 3)
+        let bob = HeadlessMessagingClient(stateURL: bobURL, useEncryptedStore: false, timeout: 3)
 
         let aliceStatus = try await alice.createState(displayName: "Alice CLI", relay: endpoint)
         let bobStatus = try await bob.createState(displayName: "Bob CLI", relay: endpoint)
@@ -84,7 +84,7 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(received[0].contact.displayName, "Alice CLI")
         XCTAssertEqual(received[0].body, .text("hello from headless"))
 
-        let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, useEncryptedStore: false, timeout: 3)
         let contacts = try await bobReloaded.contacts()
         let status = try await bobReloaded.status()
         XCTAssertEqual(contacts.count, 1)
@@ -112,6 +112,31 @@ final class NoctweaveCoreTests: XCTestCase {
         }
     }
 
+    func testRelayClientRejectsUnsafeConfigurationBeforeNetworking() async throws {
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: 9)
+
+        for timeout in [TimeInterval.nan, .infinity, 0, 301] {
+            do {
+                _ = try await RelayClient(endpoint: endpoint).send(.health(), timeout: timeout)
+                XCTFail("Expected invalid timeout to be rejected")
+            } catch RelayNetworkError.invalidTimeout {
+                // Expected.
+            } catch {
+                XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        do {
+            _ = try await RelayClient(
+                endpoint: endpoint,
+                authToken: String(repeating: "x", count: RelayClient.maxAuthenticationBytes + 1)
+            ).send(.health())
+            XCTFail("Expected oversized authentication material to be rejected")
+        } catch RelayNetworkError.invalidAuthentication {
+            // Expected.
+        }
+    }
+
     func testHeadlessMessagingClientRedactsRelayRejectionDetails() async throws {
         let port = UInt16.random(in: 42_000...44_999)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
@@ -127,6 +152,7 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let client = HeadlessMessagingClient(
             stateURL: root.appendingPathComponent("client.json"),
+            useEncryptedStore: false,
             timeout: 3
         )
         _ = try await client.createState(displayName: "Unregistered CLI", relay: endpoint)
@@ -208,8 +234,8 @@ final class NoctweaveCoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), timeout: 3)
-        let bob = HeadlessMessagingClient(stateURL: root.appendingPathComponent("bob.json"), timeout: 3)
+        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), useEncryptedStore: false, timeout: 3)
+        let bob = HeadlessMessagingClient(stateURL: root.appendingPathComponent("bob.json"), useEncryptedStore: false, timeout: 3)
         let initialAliceStatus = try await alice.createState(displayName: "Alice CLI", relay: endpoint)
         _ = try await bob.createState(displayName: "Bob CLI", relay: endpoint)
         try await alice.registerInbox()
@@ -291,8 +317,8 @@ final class NoctweaveCoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), timeout: 3)
-        let bob = HeadlessMessagingClient(stateURL: root.appendingPathComponent("bob.json"), timeout: 3)
+        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), useEncryptedStore: false, timeout: 3)
+        let bob = HeadlessMessagingClient(stateURL: root.appendingPathComponent("bob.json"), useEncryptedStore: false, timeout: 3)
         _ = try await alice.createState(displayName: "Alice CLI", relay: endpoint)
         _ = try await bob.createState(displayName: "Bob CLI", relay: endpoint)
         try await alice.registerInbox()
@@ -340,9 +366,9 @@ final class NoctweaveCoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), timeout: 3)
+        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), useEncryptedStore: false, timeout: 3)
         let bobURL = root.appendingPathComponent("bob.json")
-        let bob = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        let bob = HeadlessMessagingClient(stateURL: bobURL, useEncryptedStore: false, timeout: 3)
         _ = try await alice.createState(displayName: "Alice CLI", relay: endpoint)
         _ = try await bob.createState(displayName: "Bob CLI", relay: endpoint)
         try await alice.registerInbox()
@@ -381,7 +407,7 @@ final class NoctweaveCoreTests: XCTestCase {
         }
         XCTAssertEqual(descriptor.id, sent.descriptor.id)
 
-        let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, useEncryptedStore: false, timeout: 3)
         let fetched = try await bobReloaded.fetchAttachment(id: descriptor.id)
         XCTAssertNil(fetched.descriptor.fileName)
         XCTAssertEqual(fetched.data, payload)
@@ -400,9 +426,9 @@ final class NoctweaveCoreTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), timeout: 3)
+        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), useEncryptedStore: false, timeout: 3)
         let bobURL = root.appendingPathComponent("bob.json")
-        let bob = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        let bob = HeadlessMessagingClient(stateURL: bobURL, useEncryptedStore: false, timeout: 3)
         _ = try await alice.createState(displayName: "Alice CLI", relay: endpoint)
         _ = try await bob.createState(displayName: "Bob CLI", relay: endpoint)
         try await alice.registerInbox()
@@ -434,7 +460,7 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertNil(descriptor.fileName)
         XCTAssertEqual(descriptor.mimeType, "audio/m4a")
 
-        let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, timeout: 3)
+        let bobReloaded = HeadlessMessagingClient(stateURL: bobURL, useEncryptedStore: false, timeout: 3)
         let fetched = try await bobReloaded.fetchAttachment(id: descriptor.id)
         XCTAssertEqual(fetched.data, voice)
     }
@@ -1334,7 +1360,7 @@ final class NoctweaveCoreTests: XCTestCase {
 
     func testRelayInfoAdvertisesGroupSecurityModel() throws {
         let defaultInfo = RelayConfiguration().makeInfo(now: Date(timeIntervalSince1970: 1_000))
-        XCTAssertEqual(defaultInfo.groupSecurityModel, .relayBackedPairwise)
+        XCTAssertEqual(defaultInfo.groupSecurityModel, .mlsDerivedTree)
 
         let mlsInfo = RelayConfiguration(
             groupSecurityModel: .mlsDerivedTree
@@ -1346,6 +1372,43 @@ final class NoctweaveCoreTests: XCTestCase {
         let decoded = try NoctweaveCoder.decode(RelayInfo.self, from: encoded)
 
         XCTAssertEqual(decoded.groupSecurityModel, .mlsDerivedTree)
+    }
+
+    func testRelayConfigurationBoundsOperatorControlledCollectionsAndCounts() {
+        let endpoints = (0..<300).map { index in
+            RelayEndpoint(host: "relay-\(index).example.org", port: 443, useTLS: true, transport: .http)
+        }
+        let configuration = RelayConfiguration(
+            temporalBucketSeconds: Int.max,
+            temporalBucketScheduleSeconds: Array(1...100),
+            attachmentDefaultTTLSeconds: Int.max,
+            attachmentMaxTTLSeconds: Int.max,
+            federationCoordinatorEndpoints: endpoints,
+            coordinatorHeartbeatSeconds: Int.max,
+            coordinatorDirectoryMaxStalenessSeconds: Int.max,
+            relayPeerExchangeLimit: Int.max,
+            openFederationDHTMaxRecords: Int.max,
+            openFederationDHTMaxRecordsPerHost: Int.max,
+            openFederationDHTMaxQueryRecords: Int.max,
+            coordinatorDirectorySigningPrivateKey: Data(repeating: 1, count: 16_385),
+            curatedCoordinatorQuorum: Int.max,
+            federationAllowList: endpoints
+        )
+
+        XCTAssertEqual(configuration.temporalBucketSeconds, 86_400)
+        XCTAssertEqual(configuration.temporalBucketScheduleSeconds?.count, 16)
+        XCTAssertEqual(configuration.attachmentDefaultTTLSeconds, 2_592_000)
+        XCTAssertEqual(configuration.attachmentMaxTTLSeconds, 2_592_000)
+        XCTAssertEqual(configuration.federationCoordinatorEndpoints?.count, 16)
+        XCTAssertEqual(configuration.coordinatorHeartbeatSeconds, 3_600)
+        XCTAssertEqual(configuration.coordinatorDirectoryMaxStalenessSeconds, 86_400)
+        XCTAssertEqual(configuration.relayPeerExchangeLimit, 128)
+        XCTAssertEqual(configuration.openFederationDHTMaxRecords, 256)
+        XCTAssertEqual(configuration.openFederationDHTMaxRecordsPerHost, 16)
+        XCTAssertEqual(configuration.openFederationDHTMaxQueryRecords, 512)
+        XCTAssertNil(configuration.coordinatorDirectorySigningPrivateKey)
+        XCTAssertEqual(configuration.curatedCoordinatorQuorum, 16)
+        XCTAssertEqual(configuration.federationAllowList.count, 256)
     }
 
     func testDecentralizedWakeSupportNormalizesPolicy() {
@@ -1415,6 +1478,22 @@ final class NoctweaveCoreTests: XCTestCase {
         )
         XCTAssertEqual(capped.failureBackoffStep, 6)
         XCTAssertLessThanOrEqual(capped.nextPollDelaySeconds, 120)
+    }
+
+    func testDecentralizedWakePlannerHandlesNonFiniteDatesWithoutTrapping() {
+        let plan = DecentralizedWakePlanner.makePlan(
+            support: DecentralizedWakeSupport(
+                minPollIntervalSeconds: 10,
+                maxPollIntervalSeconds: 30,
+                jitterPermille: 500
+            ),
+            identitySeed: Data("identity-seed".utf8),
+            relayIdentifier: "relay.example.org",
+            now: Date(timeIntervalSince1970: .infinity)
+        )
+
+        XCTAssertGreaterThanOrEqual(plan.nextPollDelaySeconds, 10)
+        XCTAssertLessThanOrEqual(plan.nextPollDelaySeconds, 30)
     }
 
     func testDecentralizedWakePlannerCapsLongPollTimeoutToNextDelay() {
@@ -1989,6 +2068,34 @@ final class NoctweaveCoreTests: XCTestCase {
         }
     }
 
+    func testDecentralizedPrefetchBatchStoreRejectsOversizedAndAmbiguousRecords() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathComponent("prefetch.batch")
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+        let store = try DecentralizedPrefetchBatchStore(
+            fileURL: fileURL,
+            protectionKey: Data(repeating: 0xA1, count: 32)
+        )
+        let record = DecentralizedPrefetchRecord(
+            id: UUID(),
+            kind: .directMessage,
+            relayIdentifier: "relay",
+            inboxId: "inbox",
+            groupId: UUID(),
+            stagedAt: Date(),
+            sealedEnvelope: Data(repeating: 0x44, count: DecentralizedPrefetchStager.maximumSealedEnvelopeBytes + 1),
+            acknowledgementDeferred: true
+        )
+
+        do {
+            try await store.save(DecentralizedPrefetchBatch(records: [record], stagedAt: Date()))
+            XCTFail("Expected an oversized, kind-ambiguous prefetch record to be rejected")
+        } catch {
+            XCTAssertEqual(error as? DecentralizedPrefetchError, .invalidBatch)
+        }
+    }
+
     func testRatchetRecoveryPolicyClassifiesRecoverableFailures() throws {
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.invalidPayload), .recover)
         XCTAssertEqual(RatchetRecoveryPolicy.decision(for: CryptoError.counterOutOfOrder), .recover)
@@ -2010,7 +2117,11 @@ final class NoctweaveCoreTests: XCTestCase {
             RelayEndpoint(host: "64:ff9b::7f00:1", port: 443, useTLS: true),
             RelayEndpoint(host: "64:ff9b::0a00:1", port: 443, useTLS: true),
             RelayEndpoint(host: "2002:0a00:0001::1", port: 443, useTLS: true),
-            RelayEndpoint(host: "2001:0000:4136:e378:8000:63bf:3fff:fdd2", port: 443, useTLS: true)
+            RelayEndpoint(host: "2001:0000:4136:e378:8000:63bf:3fff:fdd2", port: 443, useTLS: true),
+            RelayEndpoint(host: "::7f00:1", port: 443, useTLS: true),
+            RelayEndpoint(host: "100::1", port: 443, useTLS: true),
+            RelayEndpoint(host: "fec0::1", port: 443, useTLS: true),
+            RelayEndpoint(host: "3fff::1", port: 443, useTLS: true)
         ]
 
         for endpoint in endpoints {
@@ -2070,6 +2181,39 @@ final class NoctweaveCoreTests: XCTestCase {
             try tampered.validate(expectedFederationName: "poison-test", requirePublicEndpoint: false)
         ) { error in
             XCTAssertEqual(error as? OpenFederationDHTRecordError, .invalidSignature)
+        }
+
+        let wrongVersion = OpenFederationDHTRecord(
+            version: 99,
+            namespace: record.namespace,
+            relayIdentityDigest: record.relayIdentityDigest,
+            endpoint: record.endpoint,
+            federationName: record.federationName,
+            issuedAt: record.issuedAt,
+            expiresAt: record.expiresAt,
+            relaySigningPublicKey: record.relaySigningPublicKey,
+            signature: record.signature
+        )
+        XCTAssertThrowsError(
+            try wrongVersion.validate(expectedFederationName: "poison-test", requirePublicEndpoint: false)
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .unsupportedVersion)
+        }
+
+        let mislabeled = OpenFederationDHTRecord(
+            namespace: record.namespace,
+            relayIdentityDigest: record.relayIdentityDigest,
+            endpoint: record.endpoint,
+            federationName: "other-federation",
+            issuedAt: record.issuedAt,
+            expiresAt: record.expiresAt,
+            relaySigningPublicKey: record.relaySigningPublicKey,
+            signature: record.signature
+        )
+        XCTAssertThrowsError(
+            try mislabeled.validate(expectedFederationName: "poison-test", requirePublicEndpoint: false)
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTRecordError, .federationNameMismatch)
         }
     }
 
@@ -2682,7 +2826,7 @@ final class NoctweaveCoreTests: XCTestCase {
             XCTAssertEqual(decoded.record, record)
             return (200, Data())
         }
-        let transport = OpenFederationDHTHTTPGatewayTransport(
+        let transport = try OpenFederationDHTHTTPGatewayTransport(
             baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org/mesh")),
             session: protocolHarness.makeSession(),
             authToken: " gateway-token "
@@ -2715,7 +2859,7 @@ final class NoctweaveCoreTests: XCTestCase {
             XCTAssertEqual(query["limit"], "2")
             return (200, response)
         }
-        let transport = OpenFederationDHTHTTPGatewayTransport(
+        let transport = try OpenFederationDHTHTTPGatewayTransport(
             baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
             session: protocolHarness.makeSession()
         )
@@ -2761,7 +2905,7 @@ final class NoctweaveCoreTests: XCTestCase {
             XCTAssertEqual(query["limit"], "12")
             return (200, response)
         }
-        let transport = OpenFederationDHTHTTPGatewayTransport(
+        let transport = try OpenFederationDHTHTTPGatewayTransport(
             baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
             session: protocolHarness.makeSession()
         )
@@ -2801,7 +2945,7 @@ final class NoctweaveCoreTests: XCTestCase {
         protocolHarness.handler = { _ in
             (200, Data(repeating: 0x41, count: 2_048))
         }
-        let transport = OpenFederationDHTHTTPGatewayTransport(
+        let transport = try OpenFederationDHTHTTPGatewayTransport(
             baseURL: try XCTUnwrap(URL(string: "https://gateway.example.org")),
             session: protocolHarness.makeSession(),
             maxResponseBytes: 1_024
@@ -2812,6 +2956,23 @@ final class NoctweaveCoreTests: XCTestCase {
             XCTFail("Expected oversized DHT gateway response to be rejected")
         } catch {
             XCTAssertEqual(error as? OpenFederationDHTGatewayTransportError, .responseTooLarge)
+        }
+    }
+
+    func testOpenFederationDHTHTTPGatewayTransportRejectsURLCredentialsAndAmbientQuery() async throws {
+        for rawURL in [
+            "https://user:password@gateway.example.org",
+            "https://gateway.example.org?redirect=https://attacker.example"
+        ] {
+            let transport = try OpenFederationDHTHTTPGatewayTransport(
+                baseURL: try XCTUnwrap(URL(string: rawURL))
+            )
+            do {
+                _ = try await transport.query(namespace: "bounded", limit: 1)
+                XCTFail("Expected unsafe gateway URL to be rejected")
+            } catch {
+                XCTAssertEqual(error as? OpenFederationDHTGatewayTransportError, .invalidURL)
+            }
         }
     }
 
@@ -2830,7 +2991,7 @@ final class NoctweaveCoreTests: XCTestCase {
         let relay = RelayEndpoint(host: "localhost", port: 9339)
         let offer = try MessageEngine.makeContactOffer(
             identity: identity,
-            inboxId: "inbox-1",
+            inboxId: InboxAddress.derived(from: accessKey.publicKeyData),
             relay: relay,
             inboxAccessPublicKey: accessKey.publicKeyData
         )
@@ -2862,8 +3023,47 @@ final class NoctweaveCoreTests: XCTestCase {
         let identity = Identity(displayName: "Alice")
         let relay = RelayEndpoint(host: "localhost", port: 9339)
         let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "inbox-1", relay: relay)
-        let data = try ContactShare.encode(offer, password: "secret")
+        let data = try ContactShare.encode(offer, password: "a strong passphrase")
         XCTAssertThrowsError(try ContactShare.decode(data, password: "wrong password"))
+    }
+
+    func testContactShareRejectsUnsafeKDFConfiguration() throws {
+        let identity = Identity(displayName: "Alice")
+        let relay = RelayEndpoint(host: "localhost", port: 9339)
+        let offer = try MessageEngine.makeContactOffer(identity: identity, inboxId: "inbox-1", relay: relay)
+
+        XCTAssertThrowsError(try ContactShare.encode(offer, password: "a strong passphrase", kdfRounds: 1)) { error in
+            XCTAssertEqual(error as? ContactShareError, .invalidKdfRounds)
+        }
+        XCTAssertThrowsError(try ContactShare.encode(offer, password: "too short")) { error in
+            XCTAssertEqual(error as? ContactShareError, .invalidPassword)
+        }
+        XCTAssertThrowsError(
+            try ContactShare.encode(
+                offer,
+                password: String(repeating: "x", count: ContactShare.maximumPasswordBytes + 1)
+            )
+        ) { error in
+            XCTAssertEqual(error as? ContactShareError, .invalidPassword)
+        }
+    }
+
+    func testContactShareRejectsMalformedPackageBeforeKDFWork() throws {
+        let package = ContactSharePackage(
+            version: ContactShare.currentVersion,
+            salt: Data(repeating: 0, count: 1),
+            kdfRounds: ContactShare.defaultKdfRounds,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0, count: 12),
+                ciphertext: Data([1]),
+                tag: Data(repeating: 0, count: 16)
+            )
+        )
+        let encoded = try NoctweaveCoder.encode(package)
+
+        XCTAssertThrowsError(try ContactShare.decode(encoded, password: "a strong passphrase")) { error in
+            XCTAssertEqual(error as? ContactShareError, .invalidPackage)
+        }
     }
 
     func testContactOfferCodeRejectsTamperedPayload() throws {
@@ -3144,6 +3344,19 @@ final class NoctweaveCoreTests: XCTestCase {
             try MessageEngine.decrypt(envelope: longer, contact: aliceContact, conversation: &bobConversation),
             .text("this is longer but should stay in the same padding bucket")
         )
+    }
+
+    func testPaddedMessagePlaintextRejectsUnpaddedAndIrregularFrames() throws {
+        let unpadded = try NoctweaveCoder.encode(MessageBody.text("metadata leak"), sortedKeys: true)
+        XCTAssertThrowsError(try PaddedMessagePlaintext.decode(unpadded)) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
+
+        var valid = try PaddedMessagePlaintext.encode(.text("bounded"))
+        valid.append(0x00)
+        XCTAssertThrowsError(try PaddedMessagePlaintext.decode(valid)) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
     }
 
     func testReplayIsRejected() throws {
@@ -3972,12 +4185,13 @@ final class NoctweaveCoreTests: XCTestCase {
         let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
         let commitSecret1 = Data(SHA256.hash(data: Data("commit secret 1".utf8)))
         let commitSecret2 = Data(SHA256.hash(data: Data("commit secret 2".utf8)))
+        let alice = Identity(displayName: "Alice")
         var state = GroupRatchetState.initialize(
             groupId: groupId,
             epoch: 0,
             transcriptHash: transcript0,
             groupSecret: groupSecret,
-            localSenderFingerprint: "alice"
+            localSenderFingerprint: alice.fingerprint
         )
 
         XCTAssertThrowsError(
@@ -4104,6 +4318,47 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertThrowsError(
             try validAgreementKey.decapsulate(ciphertext: Data([0x01]))
         )
+    }
+
+    func testPostQuantumKeyPairsRejectMismatchedAndMalformedDecodedKeys() throws {
+        let signingA = try SigningKeyPair.generate()
+        let signingB = try SigningKeyPair.generate()
+        XCTAssertThrowsError(
+            try SigningKeyPair(
+                privateKeyData: signingA.privateKeyData,
+                publicKeyData: signingB.publicKeyData
+            )
+        )
+
+        let agreementA = try AgreementKeyPair.generate()
+        let agreementB = try AgreementKeyPair.generate()
+        XCTAssertThrowsError(
+            try AgreementKeyPair(
+                privateKeyData: agreementA.privateKeyData,
+                publicKeyData: agreementB.publicKeyData
+            )
+        )
+
+        let malformedSigning = try JSONSerialization.data(withJSONObject: [
+            "privateKeyData": Data([0x01]).base64EncodedString(),
+            "publicKeyData": signingA.publicKeyData.base64EncodedString()
+        ])
+        XCTAssertThrowsError(try NoctweaveCoder.decode(SigningKeyPair.self, from: malformedSigning))
+    }
+
+    func testPostQuantumSigningSupportsEmptyMessagesAndBoundsWork() throws {
+        let signing = try SigningKeyPair.generate()
+        let signature = try signing.sign(Data())
+        XCTAssertTrue(
+            SigningKeyPair.verify(
+                signature: signature,
+                data: Data(),
+                publicKeyData: signing.publicKeyData
+            )
+        )
+        XCTAssertThrowsError(try signing.sign(Data(repeating: 0x41, count: 512 * 1024 + 1))) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
     }
 
     func testIdentityRotationVerification() throws {
@@ -4746,7 +5001,7 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(fetched.first?.signature, envelope.signature)
     }
 
-    func testRelayStoreDiskPersistenceSkipsCorruptNormalizedMessageRow() async throws {
+    func testRelayStoreDiskPersistenceRejectsCorruptNormalizedMessageRow() async throws {
         let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
         defer {
@@ -4777,9 +5032,17 @@ final class NoctweaveCoreTests: XCTestCase {
         try overwriteMailboxEnvelope(at: sqliteURL, envelopeId: second.id, with: Data([0xDE, 0xAD, 0xBE, 0xEF]))
 
         let reloaded = RelayStore(storeURL: requestedURL)
-        try await reloaded.loadFromDisk()
-        let fetched = try await reloaded.fetch(inboxId: "sqlite-inbox")
-        XCTAssertEqual(fetched.map(\.id), [first.id])
+        do {
+            try await reloaded.loadFromDisk()
+            XCTFail("Expected corrupt relay state to fail closed")
+        } catch {
+            XCTAssertFalse(String(describing: error).isEmpty)
+        }
+    }
+
+    func testFederationDirectoryKeyLoaderDoesNotReplaceCorruptExistingKey() {
+        XCTAssertTrue(FederationDirectorySignature.privateKeyData(from: Data([0xDE, 0xAD])).isEmpty)
+        XCTAssertNil(FederationDirectorySignature.publicKeyData(from: Data([0xDE, 0xAD])))
     }
 
     func testRelayStoreRejectsInvalidAttachmentPayload() async throws {
@@ -4900,6 +5163,56 @@ final class NoctweaveCoreTests: XCTestCase {
         #else
         throw XCTSkip("Keychain unavailable on this platform.")
         #endif
+    }
+
+    func testClientStateStoreSupportsPortableSuppliedEncryptionKey() async throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        let fileURL = temp.appendingPathComponent("state.json")
+        let key = SymmetricKey(data: Data(repeating: 0xA7, count: 32))
+        let store = ClientStateStore(fileURL: fileURL, useEncryption: true, encryptionKey: key)
+        let state = ClientState(
+            identity: Identity(displayName: "Portable Key"),
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            inboxId: "portable-inbox"
+        )
+
+        try await store.save(state)
+        let raw = try Data(contentsOf: fileURL)
+        XCTAssertNil(raw.range(of: Data("Portable Key".utf8)))
+        let reloaded = try await store.load()
+        XCTAssertEqual(reloaded?.inboxId, "portable-inbox")
+
+        let wrongKeyStore = ClientStateStore(
+            fileURL: fileURL,
+            useEncryption: true,
+            encryptionKey: SymmetricKey(data: Data(repeating: 0xB8, count: 32))
+        )
+        do {
+            _ = try await wrongKeyStore.load()
+            XCTFail("Expected a mismatched portable state key to fail closed.")
+        } catch {
+            // Expected: encrypted state cannot be opened under a different key.
+        }
+    }
+
+    func testClientStateStoreRejectsOversizedStateBeforeReadingIt() async throws {
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: temp) }
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        let fileURL = temp.appendingPathComponent("oversized-state.json")
+        XCTAssertTrue(FileManager.default.createFile(atPath: fileURL.path, contents: Data([0x00])))
+        let handle = try FileHandle(forWritingTo: fileURL)
+        try handle.truncate(atOffset: UInt64(ClientStateStore.maximumStoredBytes + 1))
+        try handle.close()
+
+        let store = ClientStateStore(fileURL: fileURL, useEncryption: false)
+        do {
+            _ = try await store.load()
+            XCTFail("Expected oversized state to be rejected before decoding")
+        } catch {
+            // Expected: the sparse file exceeds the hard storage bound.
+        }
     }
 
     func testPrivacyDefaultsToSecureTyping() throws {
@@ -5952,7 +6265,7 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let scopedInviteeProfile = relayGroupMemberProfile(identity: scopedInvitee, relay: endpoint)
         let acceptDistribution = try GroupRatchetEpochSecretDistribution.seal(
-            secret: Data("accepted-invitation-secret".utf8),
+            secret: Data(SHA256.hash(data: Data("accepted-invitation-secret".utf8))),
             groupId: group.id,
             epoch: group.epoch + 1,
             operation: .joinApprove,
@@ -7961,7 +8274,8 @@ final class NoctweaveCoreTests: XCTestCase {
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
             configuration: RelayConfiguration(
                 kind: .coordinator,
-                federation: federation
+                federation: federation,
+                coordinatorRegistrationToken: "test-coordinator-registration-token"
             )
         )
         let nodeRelay = RelayServer(
@@ -7990,7 +8304,10 @@ final class NoctweaveCoreTests: XCTestCase {
         defer { nodeRelay.stop() }
         await fulfillment(of: [started, startedNode], timeout: 5.0)
 
-        let client = RelayClient(endpoint: coordinatorEndpoint)
+        let client = RelayClient(
+            endpoint: coordinatorEndpoint,
+            authToken: "test-coordinator-registration-token"
+        )
         let nodeInfo = RelayConfiguration(
             kind: .standard,
             federation: federation,
@@ -8096,6 +8413,40 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(authorized.federationNodes?.count, 1)
     }
 
+    func testCuratedCoordinatorFailsClosedWithoutRegistrationToken() async throws {
+        let coordinatorEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39488)
+        let federation = FederationDescriptor(mode: .curated, name: "mesh-token-required")
+        let coordinator = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
+            configuration: RelayConfiguration(kind: .coordinator, federation: federation)
+        )
+        let started = expectation(description: "curated coordinator without token started")
+        coordinator.onEvent = { event in
+            if case .started = event {
+                started.fulfill()
+            }
+        }
+        try coordinator.start(host: "127.0.0.1", port: coordinatorEndpoint.port)
+        defer { coordinator.stop() }
+        await fulfillment(of: [started], timeout: 2.0)
+
+        let response = try await RelayClient(endpoint: coordinatorEndpoint).send(
+            .registerFederationNode(
+                FederationNodeRegistrationRequest(
+                    endpoint: RelayEndpoint(host: "127.0.0.1", port: 39999),
+                    relayInfo: RelayConfiguration(kind: .standard, federation: federation).makeInfo(),
+                    ttlSeconds: 120
+                )
+            )
+        )
+
+        XCTAssertEqual(response.type, .error)
+        XCTAssertEqual(
+            response.error,
+            "Coordinator configuration error: curated registration requires a token."
+        )
+    }
+
     func testFederationNodeListingRespectsMaxStaleness() async throws {
         let store = RelayStore(storeURL: nil, temporalBucketSeconds: 300)
         let federation = FederationDescriptor(mode: .open, name: "mesh-stale")
@@ -8120,6 +8471,21 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertTrue(staleFiltered.isEmpty)
     }
 
+    func testCoordinatorRegistrationTTLIsBounded() async throws {
+        let store = RelayStore(storeURL: nil, temporalBucketSeconds: 300)
+        let federation = FederationDescriptor(mode: .open, name: "bounded-ttl")
+        let record = try await store.registerFederationNode(
+            FederationNodeRegistrationRequest(
+                endpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true),
+                relayInfo: RelayConfiguration(kind: .standard, federation: federation).makeInfo(),
+                ttlSeconds: Int.max
+            )
+        )
+
+        XCTAssertGreaterThanOrEqual(record.expiresAt.timeIntervalSince(record.lastHeartbeatAt), 899)
+        XCTAssertLessThanOrEqual(record.expiresAt.timeIntervalSince(record.lastHeartbeatAt), 901)
+    }
+
     func testCuratedRelayForwardsUsingCoordinatorDirectory() async throws {
         let federation = FederationDescriptor(mode: .curated, name: "mesh-b")
         let coordinatorPrivateKey = FederationDirectorySignature.privateKeyData(from: nil)
@@ -8137,6 +8503,7 @@ final class NoctweaveCoreTests: XCTestCase {
             configuration: RelayConfiguration(
                 kind: .coordinator,
                 federation: federation,
+                coordinatorRegistrationToken: "test-coordinator-registration-token",
                 coordinatorDirectorySigningPrivateKey: coordinatorPrivateKey
             )
         )
@@ -8189,7 +8556,10 @@ final class NoctweaveCoreTests: XCTestCase {
         }
         await fulfillment(of: [startedCoordinator, startedX, startedY], timeout: 2.0)
 
-        let coordinatorClient = RelayClient(endpoint: coordinatorEndpoint)
+        let coordinatorClient = RelayClient(
+            endpoint: coordinatorEndpoint,
+            authToken: "test-coordinator-registration-token"
+        )
         _ = try await coordinatorClient.send(
             .registerFederationNode(
                 FederationNodeRegistrationRequest(
@@ -8419,6 +8789,7 @@ final class NoctweaveCoreTests: XCTestCase {
             configuration: RelayConfiguration(
                 kind: .coordinator,
                 federation: federation,
+                coordinatorRegistrationToken: "test-coordinator-registration-token",
                 coordinatorDirectorySigningPrivateKey: coordinatorPrivateKey
             )
         )
@@ -8471,7 +8842,10 @@ final class NoctweaveCoreTests: XCTestCase {
         }
         await fulfillment(of: [startedCoordinator, startedX, startedY], timeout: 2.0)
 
-        let coordinatorClient = RelayClient(endpoint: coordinatorEndpoint)
+        let coordinatorClient = RelayClient(
+            endpoint: coordinatorEndpoint,
+            authToken: "test-coordinator-registration-token"
+        )
         _ = try await coordinatorClient.send(
             .registerFederationNode(
                 FederationNodeRegistrationRequest(
@@ -8947,6 +9321,7 @@ final class NoctweaveCoreTests: XCTestCase {
             configuration: RelayConfiguration(
                 kind: .coordinator,
                 federation: federation,
+                coordinatorRegistrationToken: "test-coordinator-registration-token",
                 coordinatorDirectorySigningPrivateKey: coordinatorAPrivateKey
             )
         )
@@ -8955,6 +9330,7 @@ final class NoctweaveCoreTests: XCTestCase {
             configuration: RelayConfiguration(
                 kind: .coordinator,
                 federation: federation,
+                coordinatorRegistrationToken: "test-coordinator-registration-token",
                 coordinatorDirectorySigningPrivateKey: coordinatorBPrivateKey
             )
         )
@@ -9015,7 +9391,10 @@ final class NoctweaveCoreTests: XCTestCase {
         }
         await fulfillment(of: [startedCoordinatorA, startedCoordinatorB, startedX, startedY], timeout: 2.0)
 
-        let coordinatorClient = RelayClient(endpoint: coordinatorA)
+        let coordinatorClient = RelayClient(
+            endpoint: coordinatorA,
+            authToken: "test-coordinator-registration-token"
+        )
         _ = try await coordinatorClient.send(
             .registerFederationNode(
                 FederationNodeRegistrationRequest(
@@ -9124,6 +9503,49 @@ final class NoctweaveCoreTests: XCTestCase {
         let data = try NoctweaveCoder.encode(body)
         let decoded = try NoctweaveCoder.decode(MessageBody.self, from: data)
         XCTAssertEqual(decoded, body)
+    }
+
+    func testAttachmentDescriptorStructuralValidationEnforcesPrivacyAndResourceBounds() {
+        let valid = AttachmentDescriptor(
+            fileName: nil,
+            mimeType: "image/jpeg",
+            byteCount: 65_537,
+            sha256: Data(repeating: 0x42, count: 32),
+            chunkCount: 2,
+            chunkSize: 65_536,
+            relayTTLSeconds: 1_800
+        )
+        XCTAssertTrue(valid.isStructurallyValid())
+
+        let leakedName = AttachmentDescriptor(
+            fileName: "../../private.jpg",
+            mimeType: valid.mimeType,
+            byteCount: valid.byteCount,
+            sha256: valid.sha256,
+            chunkCount: valid.chunkCount,
+            chunkSize: valid.chunkSize
+        )
+        XCTAssertFalse(leakedName.isStructurallyValid())
+
+        let excessiveChunks = AttachmentDescriptor(
+            fileName: nil,
+            mimeType: valid.mimeType,
+            byteCount: 129 * 1_024,
+            sha256: valid.sha256,
+            chunkCount: 129,
+            chunkSize: 1_024
+        )
+        XCTAssertFalse(excessiveChunks.isStructurallyValid())
+
+        let injectedMIME = AttachmentDescriptor(
+            fileName: nil,
+            mimeType: "image/jpeg\r\nX-Injected: true",
+            byteCount: 1,
+            sha256: valid.sha256,
+            chunkCount: 1,
+            chunkSize: 1
+        )
+        XCTAssertFalse(injectedMIME.isStructurallyValid())
     }
 
     func testFuzzedDeliveryOrderingAndReplays() throws {
@@ -9492,7 +9914,7 @@ final class NoctweaveCoreTests: XCTestCase {
             operation: .update,
             recipients: recipients
         )
-        let epoch1State = epoch0State.advancing(
+        let epoch1State = try epoch0State.advancing(
             title: "Recovery 1",
             inboxId: inboxId,
             actorFingerprint: creator.fingerprint,
@@ -9515,7 +9937,7 @@ final class NoctweaveCoreTests: XCTestCase {
             operation: .update,
             recipients: recipients
         )
-        let epoch2State = epoch1State.advancing(
+        let epoch2State = try epoch1State.advancing(
             title: "Recovery 2",
             inboxId: inboxId,
             actorFingerprint: creator.fingerprint,
@@ -9648,7 +10070,7 @@ final class NoctweaveCoreTests: XCTestCase {
             operation: .update,
             recipients: recipients
         )
-        let epoch1State = epoch0State.advancing(
+        let epoch1State = try epoch0State.advancing(
             title: "Missing History 1",
             inboxId: inboxId,
             actorFingerprint: creator.fingerprint,
@@ -9665,7 +10087,7 @@ final class NoctweaveCoreTests: XCTestCase {
             operation: .update,
             recipients: recipients
         )
-        let epoch2State = epoch1State.advancing(
+        let epoch2State = try epoch1State.advancing(
             title: "Missing History 2",
             inboxId: inboxId,
             actorFingerprint: creator.fingerprint,
@@ -9763,7 +10185,7 @@ final class NoctweaveCoreTests: XCTestCase {
             localSenderFingerprint: member.fingerprint
         )
 
-        let epoch1State = epoch0State.advancing(
+        let epoch1State = try epoch0State.advancing(
             title: "Mismatched History 1",
             inboxId: inboxId,
             actorFingerprint: creator.fingerprint,
@@ -9869,7 +10291,7 @@ final class NoctweaveCoreTests: XCTestCase {
             operation: .update,
             recipients: recipients
         )
-        let epoch1State = epoch0State.advancing(
+        let epoch1State = try epoch0State.advancing(
             title: "Fault Injection 1",
             inboxId: inboxId,
             actorFingerprint: creator.fingerprint,
@@ -9886,7 +10308,7 @@ final class NoctweaveCoreTests: XCTestCase {
             operation: .update,
             recipients: recipients
         )
-        let epoch2State = epoch1State.advancing(
+        let epoch2State = try epoch1State.advancing(
             title: "Fault Injection 2",
             inboxId: inboxId,
             actorFingerprint: creator.fingerprint,
@@ -10756,6 +11178,46 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertTrue(
             MixnetRoutePolicyValidator.issues(for: missingOnion, onionSupport: nil).contains(.missingOnionTransport)
         )
+    }
+
+    func testMLSEpochAdvancementRejectsCounterExhaustion() {
+        let groupId = UUID()
+        let transcript = Data(repeating: 7, count: 32)
+        let commit = MLSGroupCommitSummary(
+            operation: .update,
+            actorFingerprint: String(repeating: "a", count: 64),
+            epoch: UInt64.max,
+            committedAt: Date(),
+            memberFingerprints: [String(repeating: "a", count: 64), String(repeating: "b", count: 64)],
+            previousTranscriptHash: transcript,
+            transcriptHash: transcript
+        )
+        let terminal = MLSGroupEpochState(
+            groupId: groupId,
+            epoch: UInt64.max,
+            treeHash: transcript,
+            confirmedTranscriptHash: transcript,
+            lastCommit: commit
+        )
+
+        XCTAssertThrowsError(
+            try terminal.advancing(
+                title: "Terminal",
+                inboxId: "nw1terminal",
+                actorFingerprint: commit.actorFingerprint,
+                members: [],
+                operation: .update,
+                committedAt: Date()
+            )
+        )
+    }
+
+    func testResendRequestRejectsUnboundedWireCounts() throws {
+        XCTAssertEqual(ResendRequest(count: Int.max).count, ResendRequest.maximumCount)
+        let oversized = Data("{\"count\":9223372036854775807}".utf8)
+        XCTAssertThrowsError(try NoctweaveCoder.decode(ResendRequest.self, from: oversized))
+        let valid = try NoctweaveCoder.decode(ResendRequest.self, from: Data("{\"count\":32}".utf8))
+        XCTAssertEqual(valid.count, 32)
     }
 }
 

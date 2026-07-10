@@ -10,47 +10,79 @@ import Security
 #endif
 
 public actor ClientStateStore {
+    public static let maximumPlaintextBytes = 64 * 1024 * 1024
+    public static let maximumStoredBytes = 96 * 1024 * 1024
     private let fileURL: URL
     private let useEncryption: Bool
+    private let suppliedEncryptionKey: SymmetricKey?
 
-    public init(fileURL: URL, useEncryption: Bool = true) {
+    public init(
+        fileURL: URL,
+        useEncryption: Bool = true,
+        encryptionKey: SymmetricKey? = nil
+    ) {
         self.fileURL = fileURL
         self.useEncryption = useEncryption
+        self.suppliedEncryptionKey = encryptionKey
     }
 
     public func load() throws -> ClientState? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return nil
         }
+        let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true,
+              let fileSize = values.fileSize,
+              fileSize >= 0,
+              fileSize <= Self.maximumStoredBytes else {
+            throw ClientStateStoreError.stateTooLarge
+        }
         var data = try Data(contentsOf: fileURL)
         defer { data.secureWipe() }
+        guard data.count <= Self.maximumStoredBytes else {
+            throw ClientStateStoreError.stateTooLarge
+        }
         var payload = try decryptIfNeeded(data)
         defer { payload.secureWipe() }
+        guard payload.count <= Self.maximumPlaintextBytes else {
+            throw ClientStateStoreError.stateTooLarge
+        }
         return try NoctweaveCoder.decode(ClientState.self, from: payload)
     }
 
     public func save(_ state: ClientState) throws {
         let directory = fileURL.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
         }
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         var payload = try NoctweaveCoder.encode(state)
         defer { payload.secureWipe() }
+        guard payload.count <= Self.maximumPlaintextBytes else {
+            throw ClientStateStoreError.stateTooLarge
+        }
         var data = try encryptIfNeeded(payload)
         defer { data.secureWipe() }
+        guard data.count <= Self.maximumStoredBytes else {
+            throw ClientStateStoreError.stateTooLarge
+        }
         try writeData(data)
     }
 
     public func warmUpKeychain() throws {
         guard useEncryption else { return }
-        _ = try ClientStateKeychain.loadOrCreateKey()
+        _ = try encryptionKey()
     }
 
     private func encryptIfNeeded(_ payload: Data) throws -> Data {
         guard useEncryption else {
             return payload
         }
-        let key = try ClientStateKeychain.loadOrCreateKey()
+        let key = try encryptionKey()
         let sealed = try AES.GCM.seal(payload, using: key)
         guard var combined = sealed.combined else {
             throw ClientStateStoreError.encryptionFailed
@@ -69,7 +101,7 @@ public actor ClientStateStore {
             throw ClientStateStoreError.unexpectedPlaintextInEncryptedMode
         }
         let sealed = try AES.GCM.SealedBox(combined: envelope.sealed)
-        let key = try ClientStateKeychain.loadOrCreateKey()
+        let key = try encryptionKey()
         guard let opened = try? AES.GCM.open(sealed, using: key) else {
             throw ClientStateStoreError.encryptionFailed
         }
@@ -82,19 +114,29 @@ public actor ClientStateStore {
         #else
         try data.write(to: fileURL, options: [.atomic])
         #endif
-        applyPrivacyAttributes()
+        do {
+            try applyPrivacyAttributes()
+        } catch {
+            try? FileManager.default.removeItem(at: fileURL)
+            throw error
+        }
     }
 
-    private func applyPrivacyAttributes() {
-        do {
-            var values = URLResourceValues()
-            values.isExcludedFromBackup = true
-            var mutableURL = fileURL
-            try mutableURL.setResourceValues(values)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        } catch {
-            print("[client] Failed to apply privacy attributes")
+    private func encryptionKey() throws -> SymmetricKey {
+        if let suppliedEncryptionKey {
+            return suppliedEncryptionKey
         }
+        return try ClientStateKeychain.loadOrCreateKey()
+    }
+
+    private func applyPrivacyAttributes() throws {
+        #if canImport(Darwin)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        var mutableURL = fileURL
+        try mutableURL.setResourceValues(values)
+        #endif
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     }
 }
 
@@ -103,25 +145,10 @@ private struct EncryptedStateEnvelope: Codable {
     let sealed: Data
 }
 
-private extension Data {
-    mutating func secureWipe() {
-        guard !isEmpty else { return }
-        let byteCount = count
-        withUnsafeMutableBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else { return }
-            #if canImport(Darwin)
-            _ = memset_s(baseAddress, byteCount, 0, byteCount)
-            #else
-            _ = memset(baseAddress, 0, byteCount)
-            #endif
-        }
-        removeAll(keepingCapacity: false)
-    }
-}
-
 private enum ClientStateStoreError: Error {
     case encryptionFailed
     case unexpectedPlaintextInEncryptedMode
+    case stateTooLarge
 }
 
 #if canImport(Security)

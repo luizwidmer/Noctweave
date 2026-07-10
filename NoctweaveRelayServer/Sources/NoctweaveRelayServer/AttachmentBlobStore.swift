@@ -8,6 +8,7 @@ enum AttachmentStorageMode: String {
 
 enum AttachmentBlobStoreError: Error {
     case invalidEndpoint
+    case invalidLocator
     case uploadFailed(String)
     case fetchFailed(String)
     case digestMismatch
@@ -41,14 +42,19 @@ final class IPFSAttachmentBlobStore: AttachmentBlobStore {
     private let apiEndpoint: URL
     private let gatewayEndpoint: URL
     private let timeoutSeconds: TimeInterval
+    private let maximumBlobBytes = 256 * 1024
+    private let maximumControlResponseBytes = 64 * 1024
 
     init(apiEndpoint: URL, gatewayEndpoint: URL? = nil, timeoutSeconds: TimeInterval = 10) {
         self.apiEndpoint = apiEndpoint
         self.gatewayEndpoint = gatewayEndpoint ?? apiEndpoint
-        self.timeoutSeconds = max(1, timeoutSeconds)
+        self.timeoutSeconds = min(300, max(1, timeoutSeconds))
     }
 
     func put(_ data: Data, attachmentId: UUID, chunkIndex: Int, expiresAt: Date) throws -> AttachmentExternalRecord {
+        guard !data.isEmpty, data.count <= maximumBlobBytes else {
+            throw AttachmentBlobStoreError.uploadFailed("Attachment chunk size is invalid")
+        }
         let boundary = "noctyra-\(UUID().uuidString)"
         var body = Data()
         body.append(Data("--\(boundary)\r\n".utf8))
@@ -69,8 +75,8 @@ final class IPFSAttachmentBlobStore: AttachmentBlobStore {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
 
-        let responseData = try send(request)
-        guard let cid = decodeCID(from: responseData), !cid.isEmpty else {
+        let responseData = try send(request, maximumResponseBytes: maximumControlResponseBytes)
+        guard let cid = decodeCID(from: responseData), isValidCID(cid) else {
             throw AttachmentBlobStoreError.uploadFailed("IPFS add response did not contain a CID")
         }
         return AttachmentExternalRecord(
@@ -83,7 +89,12 @@ final class IPFSAttachmentBlobStore: AttachmentBlobStore {
     }
 
     func get(_ record: AttachmentExternalRecord) throws -> Data {
-        let data = try fetch(locator: record.locator)
+        guard record.byteCount > 0,
+              record.byteCount <= maximumBlobBytes,
+              isValidCID(record.locator) else {
+            throw AttachmentBlobStoreError.invalidLocator
+        }
+        let data = try fetch(locator: record.locator, maximumBytes: record.byteCount)
         guard data.count == record.byteCount,
               AttachmentBlobDigest.sha256Hex(data) == record.sha256Hex else {
             throw AttachmentBlobStoreError.digestMismatch
@@ -92,22 +103,23 @@ final class IPFSAttachmentBlobStore: AttachmentBlobStore {
     }
 
     func delete(_ record: AttachmentExternalRecord) {
+        guard isValidCID(record.locator) else { return }
         let requestURL = apiURL(path: "/api/v0/pin/rm", queryItems: [
             URLQueryItem(name: "arg", value: record.locator)
         ])
         var request = URLRequest(url: requestURL)
         request.httpMethod = "POST"
         request.timeoutInterval = timeoutSeconds
-        _ = try? send(request)
+        _ = try? send(request, maximumResponseBytes: maximumControlResponseBytes)
     }
 
-    private func fetch(locator: String) throws -> Data {
+    private func fetch(locator: String, maximumBytes: Int) throws -> Data {
         var catRequest = URLRequest(url: apiURL(path: "/api/v0/cat", queryItems: [
             URLQueryItem(name: "arg", value: locator)
         ]))
         catRequest.httpMethod = "POST"
         catRequest.timeoutInterval = timeoutSeconds
-        if let data = try? send(catRequest) {
+        if let data = try? send(catRequest, maximumResponseBytes: maximumBytes) {
             return data
         }
 
@@ -116,7 +128,7 @@ final class IPFSAttachmentBlobStore: AttachmentBlobStore {
         gatewayURL.appendPathComponent(locator)
         var gatewayRequest = URLRequest(url: gatewayURL)
         gatewayRequest.timeoutInterval = timeoutSeconds
-        return try send(gatewayRequest)
+        return try send(gatewayRequest, maximumResponseBytes: maximumBytes)
     }
 
     private func apiURL(path: String, queryItems: [URLQueryItem]) -> URL {
@@ -126,31 +138,17 @@ final class IPFSAttachmentBlobStore: AttachmentBlobStore {
         return components?.url ?? apiEndpoint
     }
 
-    private func send(_ request: URLRequest) throws -> Data {
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<Data, Error>?
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            defer { semaphore.signal() }
-            if let error {
-                result = .failure(error)
-                return
-            }
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 200
-            guard (200..<300).contains(status) else {
-                result = .failure(AttachmentBlobStoreError.fetchFailed("HTTP \(status)"))
-                return
-            }
-            result = .success(data ?? Data())
-        }.resume()
-        semaphore.wait()
-        switch result {
-        case .success(let data):
-            return data
-        case .failure(let error):
-            throw error
-        case .none:
-            throw AttachmentBlobStoreError.fetchFailed("No response")
+    private func send(_ request: URLRequest, maximumResponseBytes: Int) throws -> Data {
+        let (data, response) = try BoundedURLSessionLoader.loadSynchronously(
+            request,
+            maximumBytes: max(1, min(maximumBlobBytes, maximumResponseBytes)),
+            timeout: timeoutSeconds + 1
+        )
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+        guard (200..<300).contains(status) else {
+            throw AttachmentBlobStoreError.fetchFailed("HTTP \(status)")
         }
+        return data
     }
 
     private func decodeCID(from data: Data) -> String? {
@@ -171,5 +169,31 @@ final class IPFSAttachmentBlobStore: AttachmentBlobStore {
             }
         }
         return nil
+    }
+
+    private func isValidCID(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed == value, (20...128).contains(trimmed.count) else {
+            return false
+        }
+        return trimmed.unicodeScalars.allSatisfy { scalar in
+            CharacterSet.alphanumerics.contains(scalar)
+        }
+    }
+
+    static func isValidEndpoint(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil,
+              components.query == nil,
+              components.fragment == nil,
+              components.percentEncodedPath.isEmpty || components.percentEncodedPath == "/",
+              components.port != 0 else {
+            return false
+        }
+        return true
     }
 }

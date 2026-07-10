@@ -1,7 +1,9 @@
 ARG LIBOQS_VERSION=0.15.0
+ARG LIBOQS_COMMIT=97f6b86b1b6d109cfd43cf276ae39c2e776aed80
 
 FROM swift:5.9-jammy AS builder
 ARG LIBOQS_VERSION
+ARG LIBOQS_COMMIT
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     cmake \
@@ -9,7 +11,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ninja-build \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
-RUN git clone --branch "${LIBOQS_VERSION}" --depth 1 https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs \
+RUN git init /tmp/liboqs \
+    && git -C /tmp/liboqs remote add origin https://github.com/open-quantum-safe/liboqs.git \
+    && git -C /tmp/liboqs fetch --depth 1 origin "${LIBOQS_COMMIT}" \
+    && git -C /tmp/liboqs checkout --detach FETCH_HEAD \
+    && test "$(git -C /tmp/liboqs rev-parse HEAD)" = "${LIBOQS_COMMIT}" \
     && cmake -S /tmp/liboqs -B /tmp/liboqs/build \
         -DOQS_BUILD_ONLY_LIB=ON \
         -DBUILD_SHARED_LIBS=ON \

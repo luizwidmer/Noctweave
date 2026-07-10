@@ -38,7 +38,10 @@ For attachment tests, verify both automatic and manual download behavior when th
 
 ## Groups
 
-Use group commands only after checking relay `info` for group creation support. Relay-backed groups are the current compatibility mode; MLS-derived tree mode is reserved for compatible clients.
+Use group commands only after checking relay `info` for group creation support.
+The reference path uses the MLS-derived epoch/transcript-bound group ratchet and
+must not silently downgrade to pairwise fan-out. This is not a claim of a
+formally proven MLS implementation.
 
 ## Identity Management
 
@@ -50,3 +53,4 @@ Key rotation preserves identity continuity and should be received by paired cont
 - Do not export private keys unless the user explicitly asks for a backup/export workflow.
 - Do not downgrade endpoint security silently.
 - Do not claim delivery unless the recipient fetch/decrypt step succeeds.
+- Prefer `--password-file` and `--auth-file`; literal command-line secrets may be visible in shell history or process listings.

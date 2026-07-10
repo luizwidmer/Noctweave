@@ -10,6 +10,7 @@ Use only the public components:
 
 - `NoctweaveCore/`: Swift package with protocol models, relay client/server primitives, cryptographic flows, message ratchets, federation logic, and `NoctyraCLI`.
 - `NoctweaveRelayServer/`: Linux/Docker relay implementation with TCP, HTTP, WebSocket, SQLite persistence, federation, IPFS attachment offload, and operator configuration.
+- `NoctweaveJS/`: bounded browser/Node relay client, liboqs WASM profile, encrypted storage wrapper, and interoperable direct-message helpers.
 - `NoctweaveDocumentation/`: protocol specs, OpenAPI schema, relay hardening, security requirements, and whitepaper alignment notes.
 
 Do not depend on proprietary Apple client or macOS GUI relay app sources. They are outside the public integration boundary.
@@ -31,8 +32,8 @@ Run these before claiming compatibility:
 ```sh
 swift build --package-path NoctweaveCore
 swift test --package-path NoctweaveCore
-swift build --package-path "NoctweaveRelayServer"
-swift test --package-path "NoctweaveRelayServer"
+swift build --package-path NoctweaveRelayServer
+swift test --package-path NoctweaveRelayServer
 scripts/run-tests.sh
 ```
 
@@ -53,6 +54,8 @@ Preserve Noctweave’s security boundaries:
 - Federation modes are explicit trust domains: `solo`, `manual`, `curated`, and `open` must not be silently mixed.
 - TLS/reverse proxying protects transport metadata in transit but does not replace message encryption.
 - IPFS attachment offload is for relay storage pressure, not anonymity.
+- Raw JavaScript storage adapters are plaintext; wrap sensitive state with `EncryptedNoctweaveStore` and manage its key separately.
+- Use throwing PQ identity/key generation APIs in production so algorithm or entropy failures can be handled without terminating the host process.
 
 Never add plaintext message logging, server-side decryption, implicit key escrow, silent downgrade paths, or cross-mode federation shortcuts.
 

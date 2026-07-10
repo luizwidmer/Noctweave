@@ -13,6 +13,27 @@ public struct GroupScopedIdentity: Codable, Equatable {
         self.createdAt = createdAt
     }
 
+    public static func generate(displayName: String, createdAt: Date = Date()) throws -> GroupScopedIdentity {
+        GroupScopedIdentity(
+            displayName: displayName,
+            signingKey: try SigningKeyPair.generate(),
+            agreementKey: try AgreementKeyPair.generate(),
+            createdAt: createdAt
+        )
+    }
+
+    public init(
+        displayName: String,
+        signingKey: SigningKeyPair,
+        agreementKey: AgreementKeyPair,
+        createdAt: Date = Date()
+    ) {
+        self.displayName = displayName
+        self.signingKey = signingKey
+        self.agreementKey = agreementKey
+        self.createdAt = createdAt
+    }
+
     public var fingerprint: String {
         CryptoBox.fingerprint(for: signingKey.publicKeyData)
     }

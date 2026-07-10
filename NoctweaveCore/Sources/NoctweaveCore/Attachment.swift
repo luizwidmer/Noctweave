@@ -2,6 +2,9 @@ import CryptoKit
 import Foundation
 
 public struct AttachmentDescriptor: Codable, Equatable, Identifiable {
+    public static let maximumTransportBytes = 8 * 1024 * 1024
+    public static let maximumTransportChunks = 128
+    public static let maximumTransportChunkBytes = 64 * 1024
     public let id: UUID
     public let fileName: String?
     public let mimeType: String
@@ -52,6 +55,35 @@ public struct AttachmentDescriptor: Codable, Equatable, Identifiable {
         chunkCount = try container.decode(Int.self, forKey: .chunkCount)
         chunkSize = try container.decode(Int.self, forKey: .chunkSize)
         relayTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .relayTTLSeconds)
+    }
+
+    public func isStructurallyValid(
+        maximumBytes: Int = AttachmentDescriptor.maximumTransportBytes,
+        maximumChunks: Int = AttachmentDescriptor.maximumTransportChunks,
+        maximumChunkBytes: Int = AttachmentDescriptor.maximumTransportChunkBytes
+    ) -> Bool {
+        guard fileName == nil,
+              byteCount > 0,
+              byteCount <= maximumBytes,
+              chunkSize > 0,
+              chunkSize <= maximumChunkBytes,
+              chunkCount > 0,
+              chunkCount <= maximumChunks,
+              sha256.count == 32 else {
+            return false
+        }
+        let expectedChunkCount = (byteCount / chunkSize) + (byteCount % chunkSize == 0 ? 0 : 1)
+        guard expectedChunkCount == chunkCount else { return false }
+        let normalizedMIME = mimeType.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedMIME.isEmpty,
+              normalizedMIME.utf8.count <= 128,
+              normalizedMIME.utf8.allSatisfy({ $0 >= 0x20 && $0 <= 0x7e && $0 != 0x3b }) else {
+            return false
+        }
+        if let relayTTLSeconds, relayTTLSeconds <= 0 {
+            return false
+        }
+        return true
     }
 }
 

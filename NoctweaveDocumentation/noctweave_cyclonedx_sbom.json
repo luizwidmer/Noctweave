@@ -225,7 +225,7 @@
       "properties": [
         {
           "name": "noctweave:revision",
-          "value": "0.15.0"
+          "value": "97f6b86b1b6d109cfd43cf276ae39c2e776aed80"
         }
       ],
       "purl": "pkg:github/open-quantum-safe/liboqs@0.15.0",

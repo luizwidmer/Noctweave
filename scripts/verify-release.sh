@@ -14,6 +14,22 @@ echo "Resolving Swift package pins..."
 (cd "$RELAY_DIR" && swift package resolve)
 git diff --exit-code -- "$RELAY_DIR/Package.resolved"
 
+echo "Checking immutable liboqs Docker source pin..."
+python3 - <<'PY' "$RELAY_DIR/Dockerfile"
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+match = re.search(r"^ARG LIBOQS_COMMIT=([0-9a-f]{40})$", text, flags=re.MULTILINE)
+if not match:
+    raise SystemExit("Dockerfile must pin LIBOQS_COMMIT to a 40-character commit")
+if 'git -C /tmp/liboqs fetch --depth 1 origin "${LIBOQS_COMMIT}"' not in text:
+    raise SystemExit("Dockerfile must fetch liboqs by LIBOQS_COMMIT")
+if 'test "$(git -C /tmp/liboqs rev-parse HEAD)" = "${LIBOQS_COMMIT}"' not in text:
+    raise SystemExit("Dockerfile must verify the fetched liboqs commit")
+PY
+
 echo "Refreshing machine-readable SBOM..."
 scripts/generate-sbom.py >/dev/null
 git diff --exit-code -- "$SBOM_PATH"

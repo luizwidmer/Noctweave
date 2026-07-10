@@ -1,6 +1,6 @@
 # Open Federation Discovery Research (Tor/IPFS/BitTorrent)
 
-Last updated: June 24, 2026
+Last updated: July 10, 2026
 
 ## Goal
 Design a practical way for open-federation relays to discover each other quickly, maintain healthy node lists, and avoid unsafe trust assumptions.
@@ -49,7 +49,7 @@ Main issues:
 - **Curated federation cannot use it as authority.** Curated universes require operator-selected trust roots, signed directories, and quorum rules. A public DHT can only be a bootstrap hint, not an allow-list replacement.
 
 Feasible uses:
-1. **Open federation bootstrap hints:** derive an infohash-like namespace from `noctyra-open-v1 || federationName`, query peers, then accept only ML-DSA-signed Noctyra relay records after HTTPS/WSS reachability checks.
+1. **Open federation bootstrap hints:** derive an infohash-like namespace from `noctweave-open-v1 || federationName`, query peers, then accept only ML-DSA-signed Noctweave relay records after HTTPS/WSS reachability checks.
 2. **Operator-only discovery:** relays may query DHT; ordinary clients should prefer signed coordinator snapshots or trusted relay-provided directories to reduce client-side metadata exposure.
 3. **PEX-style acceleration:** once a relay is connected to known healthy open peers, it can exchange a capped list of live peers, using BitTorrent PEX constraints as a model.
 
@@ -120,7 +120,7 @@ Status: the signed-record primitive is implemented as `OpenFederationDHTRecord` 
 ```json
 {
   "version": 1,
-  "namespace": "noctyra-open-v1:<federation-name-hash>",
+  "namespace": "noctweave-open-v1:<federation-name-hash>",
   "relayIdentity": "<ml-dsa-public-key-hash>",
   "endpoint": "wss://relay.example.org",
   "federationMode": "open",

@@ -96,10 +96,48 @@ public struct Envelope: Codable, Identifiable, Equatable {
     }
 
     public func verifySignature(publicSigningKey: Data) -> Bool {
-        guard let data = try? NoctweaveCoder.encode(signaturePayload, sortedKeys: true) else {
+        guard isStructurallyValid,
+              SigningKeyPair.isValidPublicKey(publicSigningKey),
+              senderFingerprint == CryptoBox.fingerprint(for: publicSigningKey),
+              let data = try? NoctweaveCoder.encode(signaturePayload, sortedKeys: true) else {
             return false
         }
         return SigningKeyPair.verify(signature: signature, data: data, publicKeyData: publicSigningKey)
+    }
+
+    public var isStructurallyValid: Bool {
+        let ciphertextBytes = payload.ciphertext.count
+        guard !conversationId.isEmpty,
+              conversationId.utf8.count <= 256,
+              sessionId?.utf8.count ?? 0 <= 128,
+              Self.isCanonicalFingerprint(senderFingerprint),
+              sentAt.timeIntervalSince1970.isFinite,
+              payload.nonce.count == 12,
+              payload.tag.count == 16,
+              (PaddedMessagePlaintext.minimumPaddedBytes...PaddedMessagePlaintext.maximumPaddedBytes)
+                .contains(ciphertextBytes),
+              ciphertextBytes > 0,
+              (ciphertextBytes & (ciphertextBytes - 1)) == 0,
+              signature.count == 3_309,
+              kemCiphertext?.count ?? 1_088 == 1_088,
+              rootRatchet?.kemCiphertext.count ?? 1_088 == 1_088,
+              rootRatchet?.sentAt.timeIntervalSince1970.isFinite ?? true else {
+            return false
+        }
+        if let context = authenticatedContext {
+            guard context.purpose == .group,
+                  let group = context.group,
+                  group.senderFingerprint == senderFingerprint,
+                  group.transcriptHash.count == 32 else {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func isCanonicalFingerprint(_ value: String) -> Bool {
+        guard let decoded = Data(base64Encoded: value), decoded.count == 32 else { return false }
+        return decoded.base64EncodedString() == value
     }
 
     public static func signableData(

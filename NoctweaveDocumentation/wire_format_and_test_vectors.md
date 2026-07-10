@@ -109,7 +109,9 @@ JSON:
 }
 ```
 
-Unsigned fetches are valid only for unprotected development paths. Production inbox fetches require an inbox-bound `accessProof`.
+Registered inbox fetches require an inbox-bound `accessProof`. The reference
+relay fails closed when an inbox is unregistered, the access key is not bound to
+the inbox address, the proof is missing or malformed, or its nonce is replayed.
 
 ## Cryptographic Test Coverage
 

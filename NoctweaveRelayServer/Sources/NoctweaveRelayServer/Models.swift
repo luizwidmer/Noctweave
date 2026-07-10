@@ -84,7 +84,7 @@ enum MLSGroupEpochHistoryValidator {
         }
 
         for (previous, current) in zip(sorted, sorted.dropFirst()) {
-            if current.epoch != previous.epoch + 1 {
+            if previous.epoch == UInt64.max || current.epoch != previous.epoch + 1 {
                 issues.insert(.nonContiguousEpoch)
             }
             if current.previousTranscriptHash != previous.transcriptHash {
@@ -170,8 +170,11 @@ struct MLSGroupEpochState: Codable, Equatable {
         operation: MLSGroupCommitOperation,
         committedAt: Date,
         ratchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil
-    ) -> MLSGroupEpochState {
-        MLSGroupEpochState.make(
+    ) throws -> MLSGroupEpochState {
+        guard epoch < UInt64.max else {
+            throw MLSGroupEpochError.exhausted
+        }
+        return MLSGroupEpochState.make(
             groupId: groupId,
             title: title,
             inboxId: inboxId,
@@ -249,6 +252,10 @@ struct MLSGroupEpochState: Codable, Equatable {
         }
         return Data(SHA256.hash(data: data))
     }
+}
+
+private enum MLSGroupEpochError: Error {
+    case exhausted
 }
 
 private struct MLSGroupTreeHashPayload: Codable {
@@ -669,7 +676,7 @@ struct RelayInfo: Codable, Equatable {
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         groupCreationMode: GroupCreationMode = .allowed,
-        groupSecurityModel: GroupSecurityModel = .relayBackedPairwise,
+        groupSecurityModel: GroupSecurityModel = .mlsDerivedTree,
         requiresPassword: Bool? = nil,
         federationCoordinatorEndpoints: [RelayEndpoint]? = nil,
         coordinatorReportedRelayCount: Int? = nil,
@@ -686,9 +693,11 @@ struct RelayInfo: Codable, Equatable {
         self.federation = federation
         self.tlsEnabled = tlsEnabled
         self.transport = transport
-        self.temporalBucketSeconds = temporalBucketSeconds
+        self.temporalBucketSeconds = min(max(temporalBucketSeconds, 0), 86_400)
         if let temporalBucketScheduleSeconds {
-            let normalized = Array(Set(temporalBucketScheduleSeconds.map { max(0, $0) }.filter { $0 > 0 })).sorted()
+            let normalized = Array(
+                Set(temporalBucketScheduleSeconds.filter { (1...86_400).contains($0) })
+            ).sorted().prefix(16).map { $0 }
             self.temporalBucketScheduleSeconds = normalized.isEmpty ? nil : normalized
         } else {
             self.temporalBucketScheduleSeconds = nil
@@ -779,7 +788,7 @@ struct RelayConfiguration: Codable, Equatable {
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         groupCreationMode: GroupCreationMode = .allowed,
-        groupSecurityModel: GroupSecurityModel = .relayBackedPairwise,
+        groupSecurityModel: GroupSecurityModel = .mlsDerivedTree,
         accessPassword: String? = nil,
         coordinatorRegistrationToken: String? = nil,
         federationForwardingAuthToken: String? = nil,
@@ -804,16 +813,24 @@ struct RelayConfiguration: Codable, Equatable {
         self.federation = federation
         self.tlsEnabled = tlsEnabled
         self.transport = transport
-        self.temporalBucketSeconds = temporalBucketSeconds
+        self.temporalBucketSeconds = min(max(0, temporalBucketSeconds), 86_400)
         if let temporalBucketScheduleSeconds {
-            let normalized = Array(Set(temporalBucketScheduleSeconds.map { max(0, $0) }.filter { $0 > 0 })).sorted()
+            let normalized = Array(
+                Set(temporalBucketScheduleSeconds.map { min(max(0, $0), 86_400) }.filter { $0 > 0 })
+                    .sorted()
+                    .prefix(16)
+            )
             self.temporalBucketScheduleSeconds = normalized.isEmpty ? nil : normalized
         } else {
             self.temporalBucketScheduleSeconds = nil
         }
-        let normalizedAttachmentDefaultTTL = max(60, attachmentDefaultTTLSeconds)
+        let maximumAttachmentTTL = 30 * 24 * 60 * 60
+        let normalizedAttachmentDefaultTTL = min(max(60, attachmentDefaultTTLSeconds), maximumAttachmentTTL)
         self.attachmentDefaultTTLSeconds = normalizedAttachmentDefaultTTL
-        self.attachmentMaxTTLSeconds = max(normalizedAttachmentDefaultTTL, attachmentMaxTTLSeconds)
+        self.attachmentMaxTTLSeconds = min(
+            max(normalizedAttachmentDefaultTTL, attachmentMaxTTLSeconds),
+            maximumAttachmentTTL
+        )
         self.attachmentsEnabled = attachmentsEnabled
         let normalizedAttachmentStorageBackend = attachmentStorageBackend?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.attachmentStorageBackend = normalizedAttachmentStorageBackend?.isEmpty == false ? normalizedAttachmentStorageBackend : nil
@@ -832,20 +849,22 @@ struct RelayConfiguration: Codable, Equatable {
         self.coordinatorRegistrationToken = normalizedRegistrationToken?.isEmpty == false ? normalizedRegistrationToken : nil
         let normalizedForwardingToken = federationForwardingAuthToken?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.federationForwardingAuthToken = normalizedForwardingToken?.isEmpty == false ? normalizedForwardingToken : nil
-        self.federationCoordinatorEndpoints = federationCoordinatorEndpoints
-        self.coordinatorHeartbeatSeconds = coordinatorHeartbeatSeconds
-        self.coordinatorDirectoryMaxStalenessSeconds = coordinatorDirectoryMaxStalenessSeconds
-        self.relayPeerExchangeLimit = relayPeerExchangeLimit
+        self.federationCoordinatorEndpoints = federationCoordinatorEndpoints.map { Array($0.prefix(16)) }
+        self.coordinatorHeartbeatSeconds = coordinatorHeartbeatSeconds.map { min(max($0, 15), 3_600) }
+        self.coordinatorDirectoryMaxStalenessSeconds = coordinatorDirectoryMaxStalenessSeconds.map { min(max($0, 30), 86_400) }
+        self.relayPeerExchangeLimit = relayPeerExchangeLimit.map { min(max($0, 0), 128) }
         self.openFederationDHTEnabled = openFederationDHTEnabled
-        self.openFederationDHTMaxRecords = max(1, openFederationDHTMaxRecords)
-        self.openFederationDHTMaxRecordsPerHost = max(1, openFederationDHTMaxRecordsPerHost)
-        self.openFederationDHTMaxQueryRecords = max(1, openFederationDHTMaxQueryRecords)
-        self.coordinatorDirectorySigningPrivateKey = coordinatorDirectorySigningPrivateKey
+        self.openFederationDHTMaxRecords = min(max(1, openFederationDHTMaxRecords), 256)
+        self.openFederationDHTMaxRecordsPerHost = min(max(1, openFederationDHTMaxRecordsPerHost), 16)
+        self.openFederationDHTMaxQueryRecords = min(max(1, openFederationDHTMaxQueryRecords), 512)
+        self.coordinatorDirectorySigningPrivateKey = coordinatorDirectorySigningPrivateKey.flatMap {
+            $0.count <= 16_384 ? $0 : nil
+        }
         self.curatedStrictPolicyEnabled = curatedStrictPolicyEnabled
-        self.curatedCoordinatorQuorum = max(1, curatedCoordinatorQuorum)
+        self.curatedCoordinatorQuorum = min(max(1, curatedCoordinatorQuorum), 16)
         self.curatedRequireSignedDirectory = curatedRequireSignedDirectory
         self.advertisedEndpoint = advertisedEndpoint
-        self.federationAllowList = federationAllowList
+        self.federationAllowList = Array(federationAllowList.prefix(256))
         self.allowPrivateFederationEndpoints = allowPrivateFederationEndpoints
         self.requireInboxAccessControl = requireInboxAccessControl
     }
@@ -1069,6 +1088,10 @@ struct SignedPrekey: Codable, Equatable {
 }
 
 struct PrekeyBundle: Codable, Equatable {
+    static let currentVersion = 2
+    static let maximumOneTimePrekeys = 64
+    static let maximumAge: TimeInterval = 8 * 86_400
+    static let maximumFutureClockSkew: TimeInterval = 5 * 60
     let version: Int
     let identityFingerprint: String
     let signedPrekey: SignedPrekey
@@ -1076,7 +1099,7 @@ struct PrekeyBundle: Codable, Equatable {
     let createdAt: Date
 
     init(
-        version: Int = 1,
+        version: Int = PrekeyBundle.currentVersion,
         identityFingerprint: String,
         signedPrekey: SignedPrekey,
         oneTimePrekeys: [OneTimePrekey],
@@ -1087,6 +1110,27 @@ struct PrekeyBundle: Codable, Equatable {
         self.signedPrekey = signedPrekey
         self.oneTimePrekeys = oneTimePrekeys
         self.createdAt = createdAt
+    }
+
+    func isStructurallyValid(now: Date = Date()) -> Bool {
+        guard version == Self.currentVersion,
+              let fingerprintData = Data(base64Encoded: identityFingerprint),
+              fingerprintData.count == 32,
+              fingerprintData.base64EncodedString() == identityFingerprint,
+              signedPrekey.publicKey.count == 1_184,
+              signedPrekey.signature.count == 3_309,
+              signedPrekey.issuedAt.timeIntervalSince1970.isFinite,
+              oneTimePrekeys.count <= Self.maximumOneTimePrekeys,
+              oneTimePrekeys.allSatisfy({ $0.publicKey.count == 1_184 && $0.signature.count == 3_309 }),
+              Set(oneTimePrekeys.map(\.id)).count == oneTimePrekeys.count,
+              !oneTimePrekeys.contains(where: { $0.id == signedPrekey.id }),
+              createdAt.timeIntervalSince1970.isFinite else {
+            return false
+        }
+        let oldestAllowed = now.addingTimeInterval(-Self.maximumAge)
+        let newestAllowed = now.addingTimeInterval(Self.maximumFutureClockSkew)
+        return (oldestAllowed...newestAllowed).contains(signedPrekey.issuedAt)
+            && (oldestAllowed...newestAllowed).contains(createdAt)
     }
 }
 
@@ -2876,6 +2920,9 @@ struct PairingRequest: Codable, Equatable {
 }
 
 struct ContactOffer: Codable, Equatable {
+    private static let mlDSA65PublicKeyBytes = 1_952
+    private static let mlKEM768PublicKeyBytes = 1_184
+    private static let mlDSA65SignatureBytes = 3_309
     let version: Int
     let displayName: String
     let inboxId: String
@@ -2892,7 +2939,8 @@ struct ContactOffer: Codable, Equatable {
     }
 
     func verifySignature() -> Bool {
-        guard isConsistentFingerprint(),
+        guard isStructurallyValid(),
+              isConsistentFingerprint(),
               let signableData = try? RelayCodec.encoder(sortedKeys: true).encode(
                 UnsignedContactOffer(
                     version: version,
@@ -2912,6 +2960,34 @@ struct ContactOffer: Codable, Equatable {
             data: signableData,
             publicKey: signingPublicKey
         )
+    }
+
+    func isStructurallyValid() -> Bool {
+        let normalizedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedHost = relay.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (version == 2 && inboxAccessPublicKey == nil) || (version == 3 && inboxAccessPublicKey != nil),
+              !normalizedDisplayName.isEmpty,
+              normalizedDisplayName.utf8.count <= 512,
+              !inboxId.isEmpty,
+              inboxId.utf8.count <= 128,
+              !normalizedHost.isEmpty,
+              normalizedHost == relay.host,
+              normalizedHost.utf8.count <= 253,
+              relay.port > 0,
+              signingPublicKey.count == Self.mlDSA65PublicKeyBytes,
+              agreementPublicKey.count == Self.mlKEM768PublicKeyBytes,
+              fingerprint.utf8.count <= 128,
+              signature.count == Self.mlDSA65SignatureBytes else {
+            return false
+        }
+        if let inboxAccessPublicKey {
+            guard inboxAccessPublicKey.count == Self.mlDSA65PublicKeyBytes,
+                  InboxAddress.isValid(inboxId),
+                  InboxAddress.isBound(inboxId, to: inboxAccessPublicKey) else {
+                return false
+            }
+        }
+        return true
     }
 }
 

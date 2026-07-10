@@ -189,7 +189,11 @@ Coordinator nodes organize relay membership and health. They do not need to carr
 
 ## Federation Source Files
 
-Relay operators can fetch federation configuration from HTTPS JSON. Source files are useful when an operator wants a reviewable artifact.
+The proprietary macOS relay control plane can fetch federation configuration
+from bounded HTTPS JSON. The public Linux relay does not fetch this file; Linux
+operators express the same values through flags, environment variables, or
+deployment configuration. Source files are useful when an operator wants a
+reviewable artifact for the macOS control plane.
 
 ```json
 {
@@ -254,7 +258,7 @@ Relay-native DHT routes:
 {
   "type": "publishOpenFederationDHTRecord",
   "publishOpenFederationDHTRecord": {
-    "namespace": "noctyra-open-v1:<sha256-federation-name>",
+    "namespace": "noctweave-open-v1:<sha256-federation-name>",
     "record": { "..." : "signed OpenFederationDHTRecord" }
   }
 }
@@ -264,7 +268,7 @@ Relay-native DHT routes:
 {
   "type": "listOpenFederationDHTRecords",
   "listOpenFederationDHTRecords": {
-    "namespace": "noctyra-open-v1:<sha256-federation-name>",
+    "namespace": "noctweave-open-v1:<sha256-federation-name>",
     "limit": 50
   }
 }

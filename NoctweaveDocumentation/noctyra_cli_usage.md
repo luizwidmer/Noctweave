@@ -31,7 +31,7 @@ NoctyraCLI endpoint --relay tls://relay.example:9339
 
 ```sh
 NoctyraCLI health --relay http://127.0.0.1:9339
-NoctyraCLI info --relay https://relay.example --auth "$NOCTYRA_RELAY_TOKEN"
+NoctyraCLI info --relay https://relay.example --auth-file ./relay-token
 ```
 
 Both commands print JSON `RelayResponse` values, which makes them suitable for shell scripts and monitoring probes.
@@ -46,7 +46,12 @@ Initialize an identity and register its inbox:
 NoctyraCLI init --display-name Alice --relay https://relay.example
 ```
 
-By default, state is stored at `~/.noctyra/headless-state.json`. Override it per command with `--state /path/to/state.json` or set `NOCTYRA_CLI_STATE`. The state file contains private identity and inbox-access keys; protect it with filesystem permissions and backups appropriate for secret material.
+By default, state is stored at `~/.noctyra/headless-state.json` and encrypted.
+Apple platforms keep the wrapping key in Keychain. Linux stores a separate key
+file with mode `0600`; override its location with `--state-key-file` or
+`NOCTYRA_CLI_STATE_KEY_FILE`. Override the state path with `--state` or
+`NOCTYRA_CLI_STATE`. `--encrypted-state false` is an explicit development-only
+opt-out and must not be used for real identities.
 
 Inspect local status:
 
@@ -63,15 +68,20 @@ NoctyraCLI export-contact
 Export a password-protected contact package:
 
 ```sh
-NoctyraCLI export-contact --password "$CONTACT_PASSWORD" --out alice.noctweave
+NoctyraCLI export-contact --password-file ./contact-password --out alice.noctweave
 ```
 
 Import a contact:
 
 ```sh
 NoctyraCLI import-contact --code "$CONTACT_CODE"
-NoctyraCLI import-contact --file bob.noctweave --password "$CONTACT_PASSWORD"
+NoctyraCLI import-contact --file bob.noctweave --password-file ./contact-password
 ```
+
+Contact-package passphrases must contain at least 12 UTF-8 bytes. Prefer the
+file or environment forms because literal `--password` and `--auth` values can
+appear in shell history and process listings. Secret files should be regular,
+small, and readable only by the invoking account.
 
 List contacts:
 

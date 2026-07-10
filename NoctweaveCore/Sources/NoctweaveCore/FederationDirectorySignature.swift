@@ -4,14 +4,19 @@ public enum FederationDirectorySignature {
     public static let algorithm = "ML-DSA-65"
 
     public static func privateKeyData(from raw: Data?) -> Data {
-        if let raw,
-           let bundle = try? NoctweaveCoder.decode(DirectorySigningKeyBundle.self, from: raw),
-           bundle.algorithm == algorithm,
-           SigningKeyPair.isValidPublicKey(bundle.publicKeyData),
-           (try? SigningKeyPair(privateKeyData: bundle.privateKeyData, publicKeyData: bundle.publicKeyData)) != nil {
+        if let raw {
+            guard raw.count <= 16_384,
+                  let bundle = try? NoctweaveCoder.decode(DirectorySigningKeyBundle.self, from: raw),
+                  bundle.algorithm == algorithm,
+                  (try? SigningKeyPair(
+                    privateKeyData: bundle.privateKeyData,
+                    publicKeyData: bundle.publicKeyData
+                  )) != nil else {
+                return Data()
+            }
             return raw
         }
-        let keyPair = SigningKeyPair()
+        guard let keyPair = try? SigningKeyPair.generate() else { return Data() }
         let bundle = DirectorySigningKeyBundle(
             algorithm: algorithm,
             privateKeyData: keyPair.privateKeyData,
@@ -21,9 +26,13 @@ public enum FederationDirectorySignature {
     }
 
     public static func publicKeyData(from privateKeyData: Data) -> Data? {
-        guard let bundle = try? NoctweaveCoder.decode(DirectorySigningKeyBundle.self, from: privateKeyData),
+        guard privateKeyData.count <= 16_384,
+              let bundle = try? NoctweaveCoder.decode(DirectorySigningKeyBundle.self, from: privateKeyData),
               bundle.algorithm == algorithm,
-              SigningKeyPair.isValidPublicKey(bundle.publicKeyData) else {
+              (try? SigningKeyPair(
+                privateKeyData: bundle.privateKeyData,
+                publicKeyData: bundle.publicKeyData
+              )) != nil else {
             return nil
         }
         return bundle.publicKeyData

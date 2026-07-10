@@ -39,6 +39,9 @@ swift run --package-path NoctweaveCore NoctyraCLI info --relay http://127.0.0.1:
 
 Relay `info` should advertise relay name, software version, transport, TLS status, federation mode, temporal bucket policy, attachment TTLs, attachment storage backend, group creation policy, wake policy, and optional federation capabilities.
 
+The software version is binary-defined rather than operator-defined. Use the
+relay name and operator note fields for local branding or contact information.
+
 ## Storage + Attachments
 
 Default persistent relay storage is SQLite under the configured data directory. `--memory-only` is for ephemeral testing. Attachment chunks are encrypted by clients before upload and may expire by relay TTL. IPFS offload is for relay storage pressure, not anonymity or cryptographic deletion.

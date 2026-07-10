@@ -17,7 +17,7 @@
 - `HeadlessGroupSummary`, `HeadlessSentGroupMessage`, and `HeadlessReceivedGroupMessage`: sanitized headless group messaging results that do not expose serialized ratchet keys.
 - `HeadlessSentAttachment` and `HeadlessFetchedAttachment`: headless direct/group attachment and voice-message transfer results.
 - `ClientState` and `ClientStateStore`: codable local state and optional platform encryption wrapper.
-- `Identity`, `IdentityProfile`, `Contact`, `Conversation`, and `Message`: core client state models.
+- `Identity`, `IdentityProfile`, `Contact`, `Conversation`, and `Message`: core client state models. Production identity and key creation should use the throwing `generate(...)` APIs so unavailable PQ algorithms or entropy failures can be handled without terminating a process.
 - `MessageEngine`: direct-message session creation, encryption, decryption, root ratchet, and message appending.
 - `ContactOffer`, `ContactOfferCode`, and `ContactShare`: signed contact offers and password-protected contact packages.
 
@@ -31,7 +31,13 @@
 
 ## JavaScript Web Integration
 
-`NoctweaveJS` is intentionally scoped to relay transport and persistence. It provides `MemoryNoctweaveStore`, `BrowserLocalStorageStore`, `IndexedDBNoctweaveStore`, `DatabaseNoctweaveStore`, and `NoctweaveStateRepository` so simple web applications can store state in browser storage or in an application database. It does not claim to replace the Swift/liboqs post-quantum message engine; encrypted messaging from JavaScript must use a compatible audited crypto/WASM adapter.
+`NoctweaveJS` provides relay transport, bounded raw storage adapters,
+`EncryptedNoctweaveStore`, a narrow liboqs WASM adapter, and the native
+Noctweave direct-message wire profile. The browser demo can generate ML-DSA and
+ML-KEM keys, exchange signed contact offers, establish sessions, and send or
+decrypt interoperable envelopes. It is still pre-1.0 and unaudited. Raw
+`localStorage`, IndexedDB, and database adapters do not encrypt by themselves;
+applications must wrap sensitive state and manage the wrapping key separately.
 
 ## Operator And Federation APIs
 

@@ -17,6 +17,10 @@ private enum RelayForwardHTTPError: Error {
     case badStatus(Int)
 }
 
+private enum RelayForwardTransportError: Error {
+    case rawTLSUnavailable
+}
+
 private struct RelayForwardTimeoutError: LocalizedError {
     var errorDescription: String? { "Relay forwarding request timed out." }
 }
@@ -26,8 +30,8 @@ final class RelayHandler: ChannelInboundHandler {
     typealias OutboundOut = ByteBuffer
 
     private let store: RelayStore
-    private let maxMessageBytes: Int?
-    private let maxLineBytes: Int?
+    private let maxMessageBytes: Int
+    private let maxLineBytes: Int
     private let localEndpoint: RelayEndpoint?
     private let relayConfiguration: RelayConfiguration
     private let forwardingRequestTimeoutSeconds: Int
@@ -45,8 +49,11 @@ final class RelayHandler: ChannelInboundHandler {
         forwardingRequestTimeoutSeconds: Int
     ) {
         self.store = store
-        self.maxMessageBytes = maxMessageBytes
-        self.maxLineBytes = maxLineBytes
+        self.maxMessageBytes = min(max(1_024, maxMessageBytes ?? (512 * 1024)), 8 * 1024 * 1024)
+        self.maxLineBytes = min(
+            max(maxLineBytes ?? (640 * 1024), self.maxMessageBytes + (128 * 1024)),
+            10 * 1024 * 1024
+        )
         self.localEndpoint = localEndpoint
         self.relayConfiguration = relayConfiguration
         self.forwardingRequestTimeoutSeconds = max(1, forwardingRequestTimeoutSeconds)
@@ -68,7 +75,7 @@ final class RelayHandler: ChannelInboundHandler {
             respond(.error("Invalid payload"), context: context)
             return
         }
-        if let maxMessageBytes, payload.count > maxMessageBytes {
+        if payload.count > maxMessageBytes {
             respond(.error("Payload too large"), context: context)
             return
         }
@@ -90,9 +97,11 @@ final class RelayHandler: ChannelInboundHandler {
 
     private func handle(_ request: RelayRequest, context: ChannelHandlerContext) -> EventLoopFuture<RelayResponse> {
         scheduleCoordinatorHeartbeatIfNeeded(on: context.eventLoop)
-        let requestSourceKey = normalizedFederationSourceKey(context.channel.remoteAddress?.description)
-        guard store.allowRelayRequest(sourceKey: requestSourceKey) else {
-            return context.eventLoop.makeSucceededFuture(.error("Rate limit exceeded"))
+        let requestSourceKey = sourceKey(for: context.channel.remoteAddress)
+        if !isLoopbackRequestSource(requestSourceKey) {
+            guard store.allowRelayRequest(sourceKey: requestSourceKey) else {
+                return context.eventLoop.makeSucceededFuture(.error("Rate limit exceeded"))
+            }
         }
         if requiresAuthentication(for: request.type),
            let authFailure = validateAuthentication(token: request.authToken) {
@@ -233,10 +242,14 @@ final class RelayHandler: ChannelInboundHandler {
             ) {
                 return context.eventLoop.makeSucceededFuture(proofFailure)
             }
-            _ = store.acknowledge(
-                inboxId: acknowledgement.inboxId,
-                messageIds: acknowledgement.messageIds
-            )
+            do {
+                _ = try store.acknowledge(
+                    inboxId: acknowledgement.inboxId,
+                    messageIds: acknowledgement.messageIds
+                )
+            } catch {
+                return context.eventLoop.makeSucceededFuture(.error("Relay storage is unavailable"))
+            }
             return context.eventLoop.makeSucceededFuture(.ok())
         case .deliverGroupMessage:
             guard let deliver = request.deliverGroupMessage else {
@@ -346,11 +359,15 @@ final class RelayHandler: ChannelInboundHandler {
             ) {
                 return context.eventLoop.makeSucceededFuture(proofFailure)
             }
-            _ = store.acknowledgeGroupEnvelopes(
-                inboxId: acknowledgement.groupInboxId,
-                messageIds: acknowledgement.messageIds,
-                recipientFingerprint: acknowledgement.actorFingerprint
-            )
+            do {
+                _ = try store.acknowledgeGroupEnvelopes(
+                    inboxId: acknowledgement.groupInboxId,
+                    messageIds: acknowledgement.messageIds,
+                    recipientFingerprint: acknowledgement.actorFingerprint
+                )
+            } catch {
+                return context.eventLoop.makeSucceededFuture(.error("Relay storage is unavailable"))
+            }
             return context.eventLoop.makeSucceededFuture(.ok())
         case .health:
             return context.eventLoop.makeSucceededFuture(.ok())
@@ -445,6 +462,9 @@ final class RelayHandler: ChannelInboundHandler {
             guard let request = request.sendPairRequest else {
                 return context.eventLoop.makeSucceededFuture(.error("Missing pair request payload"))
             }
+            guard isValidIdentityFingerprint(request.targetFingerprint) else {
+                return context.eventLoop.makeSucceededFuture(.error("Invalid target fingerprint."))
+            }
             guard OQSSignatureVerifier.shared.isAvailable,
                   request.offer.verifySignature() else {
                 return context.eventLoop.makeSucceededFuture(.error("Invalid contact offer."))
@@ -464,6 +484,9 @@ final class RelayHandler: ChannelInboundHandler {
                 return context.eventLoop.makeSucceededFuture(.error("Missing fetch pair payload"))
             }
             let expectedFingerprint = fetch.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isValidIdentityFingerprint(expectedFingerprint) else {
+                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint."))
+            }
             if let proofFailure = validateActorProof(
                 fetch.actorProof,
                 expectedFingerprint: expectedFingerprint,
@@ -542,6 +565,7 @@ final class RelayHandler: ChannelInboundHandler {
                 return context.eventLoop.makeSucceededFuture(proofFailure)
             }
             guard let publicSigningKey = upload.actorProof?.publicSigningKey,
+                  upload.bundle.isStructurallyValid(),
                   verifySignedPrekey(upload.bundle.signedPrekey, using: publicSigningKey),
                   upload.bundle.oneTimePrekeys.allSatisfy({
                       verifyOneTimePrekey($0, using: publicSigningKey)
@@ -838,7 +862,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard let registration = request.registerFederationNode else {
                 return context.eventLoop.makeSucceededFuture(.error("Missing federation registration payload"))
             }
-            let sourceKey = normalizedFederationSourceKey(context.channel.remoteAddress?.description)
+            let sourceKey = sourceKey(for: context.channel.remoteAddress)
             let allowed = store.allowFederationRegistration(sourceKey: sourceKey, endpoint: registration.endpoint)
             guard allowed else {
                 return context.eventLoop.makeSucceededFuture(.error("Coordinator registration throttled. Retry later."))
@@ -858,7 +882,7 @@ final class RelayHandler: ChannelInboundHandler {
         case .listFederationNodes:
             let listRequest = request.listFederationNodes ?? ListFederationNodesRequest()
             if relayConfiguration.kind == .coordinator {
-                let sourceKey = normalizedFederationSourceKey(context.channel.remoteAddress?.description)
+                let sourceKey = sourceKey(for: context.channel.remoteAddress)
                 let allowed = store.allowFederationDirectoryList(sourceKey: sourceKey)
                 guard allowed else {
                     return context.eventLoop.makeSucceededFuture(.error("Coordinator directory listing throttled. Retry later."))
@@ -1131,6 +1155,18 @@ final class RelayHandler: ChannelInboundHandler {
         _ registration: FederationNodeRegistrationRequest,
         on eventLoop: EventLoop
     ) -> EventLoopFuture<RelayResponse?> {
+        guard registration.relayInfo.federation.mode == relayConfiguration.federation.mode else {
+            return eventLoop.makeSucceededFuture(
+                .error("Coordinator registration rejected: node federation mode differs from coordinator policy.")
+            )
+        }
+        if let coordinatorName = relayConfiguration.federation.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !coordinatorName.isEmpty,
+           registration.relayInfo.federation.name != coordinatorName {
+            return eventLoop.makeSucceededFuture(
+                .error("Coordinator registration rejected: node federation name differs from coordinator policy.")
+            )
+        }
         if relayConfiguration.federation.mode == .open,
            !relayConfiguration.allowPrivateFederationEndpoints,
            (!registration.endpoint.useTLS || !PublicRelayEndpointPolicy.permits(registration.endpoint)) {
@@ -1289,7 +1325,11 @@ final class RelayHandler: ChannelInboundHandler {
                     return eventLoop.makeFailedFuture(FederationDirectoryValidationError.invalidSnapshot)
                 }
                 if pinnedPublicKey == nil {
-                    self.store.pinCoordinatorPublicKey(advertisedPublicKey, for: coordinator)
+                    do {
+                        try self.store.pinCoordinatorPublicKey(advertisedPublicKey, for: coordinator)
+                    } catch {
+                        return eventLoop.makeFailedFuture(error)
+                    }
                 }
             }
             let trustedPublicKey = pinnedPublicKey ?? advertisedPublicKey
@@ -1474,13 +1514,9 @@ final class RelayHandler: ChannelInboundHandler {
         case .tcp:
             return sendRequestTCP(request, to: endpoint, on: eventLoop)
         case .http:
-            return sendRequestHTTP(request, to: endpoint, on: eventLoop).flatMapError { _ in
-                self.sendRequestTCP(request, to: endpoint, on: eventLoop)
-            }
+            return sendRequestHTTP(request, to: endpoint, on: eventLoop)
         case .websocket:
-            return sendRequestHTTP(request, to: endpoint, on: eventLoop).flatMapError { _ in
-                self.sendRequestTCP(request, to: endpoint, on: eventLoop)
-            }
+            return sendRequestHTTP(request, to: endpoint, on: eventLoop)
         }
     }
 
@@ -1489,13 +1525,19 @@ final class RelayHandler: ChannelInboundHandler {
         to endpoint: RelayEndpoint,
         on eventLoop: EventLoop
     ) -> EventLoopFuture<RelayResponse> {
+        guard !endpoint.useTLS else {
+            return eventLoop.makeFailedFuture(RelayForwardTransportError.rawTLSUnavailable)
+        }
         let promise = eventLoop.makePromise(of: RelayResponse.self)
         let completion = ForwardingCompletion()
+        let channelCloser = ForwardingChannelCloser()
         let timeoutTask = eventLoop.scheduleTask(in: .seconds(Int64(forwardingRequestTimeoutSeconds))) {
+            channelCloser.close()
             completion.resolve(promise, .failure(RelayForwardTimeoutError()))
         }
         promise.futureResult.whenComplete { _ in
             timeoutTask.cancel()
+            channelCloser.close()
         }
         do {
             let data = try RelayCodec.encoder().encode(request)
@@ -1506,8 +1548,13 @@ final class RelayHandler: ChannelInboundHandler {
                         channel.pipeline.addHandler(ForwardingHandler(requestData: data, promise: promise, completion: completion))
                     }
                 }
-            bootstrap.connect(host: endpoint.host, port: Int(endpoint.port)).whenFailure { error in
-                completion.resolve(promise, .failure(error))
+            bootstrap.connect(host: endpoint.host, port: Int(endpoint.port)).whenComplete { result in
+                switch result {
+                case .success(let channel):
+                    channelCloser.attach(channel)
+                case .failure(let error):
+                    completion.resolve(promise, .failure(error))
+                }
             }
         } catch {
             completion.resolve(promise, .failure(error))
@@ -1522,13 +1569,7 @@ final class RelayHandler: ChannelInboundHandler {
     ) -> EventLoopFuture<RelayResponse> {
         let promise = eventLoop.makePromise(of: RelayResponse.self)
         let completion = ForwardingCompletion()
-        let timeoutTask = eventLoop.scheduleTask(in: .seconds(Int64(forwardingRequestTimeoutSeconds))) {
-            completion.resolve(promise, .failure(RelayForwardTimeoutError()))
-        }
-        promise.futureResult.whenComplete { _ in
-            timeoutTask.cancel()
-        }
-        Task.detached {
+        let forwardingTask = Task.detached {
             do {
                 var components = URLComponents()
                 components.scheme = endpoint.useTLS ? "https" : "http"
@@ -1544,12 +1585,11 @@ final class RelayHandler: ChannelInboundHandler {
                 urlRequest.httpBody = try RelayCodec.encoder().encode(request)
                 urlRequest.timeoutInterval = TimeInterval(self.forwardingRequestTimeoutSeconds)
                 urlRequest.cachePolicy = .reloadIgnoringLocalCacheData
-                let session = URLSession(configuration: .ephemeral)
-                defer { session.invalidateAndCancel() }
-                let (data, response) = try await session.data(for: urlRequest)
-                guard self.maxMessageBytes.map({ data.count <= $0 }) ?? true else {
-                    throw RelayForwardHTTPError.badStatus(413)
-                }
+                let (data, response) = try await BoundedURLSessionLoader.load(
+                    urlRequest,
+                    maximumBytes: self.maxMessageBytes
+                )
+                try Task.checkCancellation()
                 guard let status = (response as? HTTPURLResponse)?.statusCode,
                       (200...299).contains(status) else {
                     let status = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -1560,6 +1600,13 @@ final class RelayHandler: ChannelInboundHandler {
             } catch {
                 eventLoop.execute { completion.resolve(promise, .failure(error)) }
             }
+        }
+        let timeoutTask = eventLoop.scheduleTask(in: .seconds(Int64(forwardingRequestTimeoutSeconds))) {
+            forwardingTask.cancel()
+            completion.resolve(promise, .failure(RelayForwardTimeoutError()))
+        }
+        promise.futureResult.whenComplete { _ in
+            timeoutTask.cancel()
         }
         return promise.futureResult
     }
@@ -1615,12 +1662,18 @@ final class RelayHandler: ChannelInboundHandler {
         } else {
             return .error("Actor proof signature verification is unavailable on this relay build.")
         }
-        guard store.consumeActorProofNonce(
-            fingerprint: proof.fingerprint,
-            nonce: proof.nonce,
-            now: Date(),
-            maxAgeSeconds: maxAgeSeconds
-        ) else {
+        let consumed: Bool
+        do {
+            consumed = try store.consumeActorProofNonce(
+                fingerprint: proof.fingerprint,
+                nonce: proof.nonce,
+                now: Date(),
+                maxAgeSeconds: maxAgeSeconds
+            )
+        } catch {
+            return .error("Relay storage is unavailable.")
+        }
+        guard consumed else {
             return .error("Actor proof replay detected.")
         }
         return nil
@@ -1823,7 +1876,12 @@ final class RelayHandler: ChannelInboundHandler {
         guard !expected.isEmpty else {
             return nil
         }
-        let provided = token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard expected.utf8.count <= 4_096,
+              let token,
+              token.utf8.count <= 4_096 else {
+            return .error("Unauthorized: relay password is required.")
+        }
+        let provided = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard secureCompare(provided, expected) else {
             return .error("Unauthorized: relay password is required.")
         }
@@ -1832,10 +1890,18 @@ final class RelayHandler: ChannelInboundHandler {
 
     private func validateCoordinatorRegistrationAuthentication(token: String?) -> RelayResponse? {
         let expected = relayConfiguration.coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if expected.isEmpty, relayConfiguration.federation.mode == .curated {
+            return .error("Coordinator configuration error: curated registration requires a token.")
+        }
         guard !expected.isEmpty else {
             return nil
         }
-        let provided = token?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard expected.utf8.count <= 4_096,
+              let token,
+              token.utf8.count <= 4_096 else {
+            return .error("Unauthorized: coordinator registration token is required.")
+        }
+        let provided = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard secureCompare(provided, expected) else {
             return .error("Unauthorized: coordinator registration token is required.")
         }
@@ -1847,17 +1913,35 @@ final class RelayHandler: ChannelInboundHandler {
         return trimmed.isEmpty ? "unknown" : trimmed
     }
 
-    private func secureCompare(_ lhs: String, _ rhs: String) -> Bool {
-        let lhsData = Data(lhs.utf8)
-        let rhsData = Data(rhs.utf8)
-        guard lhsData.count == rhsData.count else {
-            return false
+    private func sourceKey(for address: SocketAddress?) -> String {
+        if let ipAddress = address?.ipAddress?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !ipAddress.isEmpty {
+            return ipAddress.lowercased()
         }
-        var difference: UInt8 = 0
-        for index in lhsData.indices {
-            difference |= lhsData[index] ^ rhsData[index]
+        return normalizedFederationSourceKey(address?.description)
+    }
+
+    private func isLoopbackRequestSource(_ source: String) -> Bool {
+        source == "127.0.0.1" || source == "::1" || source == "0:0:0:0:0:0:0:1"
+    }
+
+    private func secureCompare(_ lhs: String, _ rhs: String) -> Bool {
+        let lhsBytes = Array(lhs.utf8)
+        let rhsBytes = Array(rhs.utf8)
+        var difference = lhsBytes.count ^ rhsBytes.count
+        for index in 0..<max(lhsBytes.count, rhsBytes.count) {
+            let left = index < lhsBytes.count ? lhsBytes[index] : 0
+            let right = index < rhsBytes.count ? rhsBytes[index] : 0
+            difference |= Int(left ^ right)
         }
         return difference == 0
+    }
+
+    private func isValidIdentityFingerprint(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed == value
+            && trimmed.count <= 64
+            && Data(base64Encoded: trimmed)?.count == 32
     }
 
     private func isCoordinatorDirectoryRequestType(_ type: RelayRequestType) -> Bool {
@@ -1938,5 +2022,31 @@ private final class ForwardingCompletion: @unchecked Sendable {
         case .failure(let error):
             promise.fail(error)
         }
+    }
+}
+
+private final class ForwardingChannelCloser: @unchecked Sendable {
+    private let lock = NIOLock()
+    private var channel: Channel?
+    private var shouldClose = false
+
+    func attach(_ channel: Channel) {
+        lock.lock()
+        if shouldClose {
+            lock.unlock()
+            channel.close(promise: nil)
+            return
+        }
+        self.channel = channel
+        lock.unlock()
+    }
+
+    func close() {
+        lock.lock()
+        shouldClose = true
+        let channel = self.channel
+        self.channel = nil
+        lock.unlock()
+        channel?.close(promise: nil)
     }
 }

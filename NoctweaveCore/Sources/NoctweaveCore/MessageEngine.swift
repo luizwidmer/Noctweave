@@ -45,7 +45,8 @@ public enum MessageEngine {
         recipientAgreementPublicKey: Data? = nil
     ) throws -> (conversation: Conversation, kemCiphertext: Data) {
         let publicKey = recipientAgreementPublicKey ?? contact.agreementPublicKey
-        let kemOutput = try AgreementKeyPair.encapsulate(to: publicKey)
+        var kemOutput = try AgreementKeyPair.encapsulate(to: publicKey)
+        defer { kemOutput.sharedSecret.secureWipe() }
         let conversation = conversationFromSharedSecret(sharedSecret: kemOutput.sharedSecret, identity: identity, contact: contact)
         return (conversation, kemOutput.ciphertext)
     }
@@ -57,7 +58,8 @@ public enum MessageEngine {
         agreementKey: AgreementKeyPair? = nil
     ) throws -> Conversation {
         let key = agreementKey ?? identity.agreementKey
-        let sharedSecret = try key.decapsulate(ciphertext: kemCiphertext)
+        var sharedSecret = try key.decapsulate(ciphertext: kemCiphertext)
+        defer { sharedSecret.secureWipe() }
         return conversationFromSharedSecret(sharedSecret: sharedSecret, identity: identity, contact: contact)
     }
 
@@ -79,10 +81,15 @@ public enum MessageEngine {
     }
 
     public static func createRootRatchet(contact: Contact, conversation: Conversation) throws -> RootRatchetContext {
+        guard conversation.rootCounter < UInt64.max else {
+            throw CryptoError.counterOutOfOrder
+        }
         let nextCounter = conversation.rootCounter + 1
-        let kemOutput = try AgreementKeyPair.encapsulate(to: contact.agreementPublicKey)
+        var kemOutput = try AgreementKeyPair.encapsulate(to: contact.agreementPublicKey)
         let ratchet = RootRatchet(counter: nextCounter, kemCiphertext: kemOutput.ciphertext)
-        return RootRatchetContext(ratchet: ratchet, sharedSecret: kemOutput.sharedSecret)
+        let sharedSecret = kemOutput.sharedSecret
+        kemOutput.sharedSecret.secureWipe()
+        return RootRatchetContext(ratchet: ratchet, sharedSecret: sharedSecret)
     }
 
     public static func applyRootRatchet(
@@ -92,7 +99,8 @@ public enum MessageEngine {
         contact: Contact,
         conversation: inout Conversation
     ) {
-        guard counter > conversation.rootCounter else {
+        guard sharedSecret.count == 32,
+              counter > conversation.rootCounter else {
             return
         }
         let rootKey = deriveRootKey(sharedSecret: sharedSecret, priorRootKey: conversation.rootKey)
@@ -101,6 +109,9 @@ public enum MessageEngine {
             theirKey: contact.agreementPublicKey
         )
         let (sendKey, receiveKey) = deriveChains(rootKey: rootKey, sendLabel: sendLabel, receiveLabel: receiveLabel)
+        conversation.rootKey.secureWipe()
+        conversation.sendChain.secureWipe()
+        conversation.receiveChain.secureWipe()
         conversation.rootKey = rootKey
         conversation.rootCounter = counter
         conversation.sessionId = sessionIdForSharedSecret(sharedSecret)
@@ -120,44 +131,24 @@ public enum MessageEngine {
         sentAt: Date = Date(),
         metadataBucketSeconds: Int? = nil
     ) throws -> Envelope {
-        let payloadData = try PaddedMessagePlaintext.encode(body)
-        let prepared = try prepareMessageKey(conversation: &conversation)
-        let encrypted = try encryptPayload(
-            payloadData,
-            conversationId: conversation.id,
-            sessionId: conversation.sessionId,
-            authenticatedContext: authenticatedContext,
-            messageCounter: prepared.counter,
-            messageKey: prepared.key
-        )
-        let sentAt = MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
-        let visibleRootRatchet = rootRatchet?.bucketed(metadataBucketSeconds: metadataBucketSeconds)
-        let signable = try Envelope.signableData(
-            conversationId: conversation.id,
-            sessionId: conversation.sessionId,
+        var candidateConversation = conversation
+        let prepared = try prepareMessageKey(conversation: &candidateConversation)
+        let envelope = try encrypt(
+            body: body,
+            senderSigningKey: senderSigningKey,
             senderFingerprint: senderFingerprint,
-            sentAt: sentAt,
+            conversation: candidateConversation,
             messageCounter: prepared.counter,
+            messageKey: prepared.key,
             kemCiphertext: kemCiphertext,
             prekey: prekey,
-            rootRatchet: visibleRootRatchet,
+            rootRatchet: rootRatchet,
             authenticatedContext: authenticatedContext,
-            payload: encrypted
-        )
-        let signature = try senderSigningKey.sign(signable)
-        return Envelope(
-            conversationId: conversation.id,
-            sessionId: conversation.sessionId,
-            senderFingerprint: senderFingerprint,
             sentAt: sentAt,
-            messageCounter: prepared.counter,
-            kemCiphertext: kemCiphertext,
-            prekey: prekey,
-            rootRatchet: visibleRootRatchet,
-            authenticatedContext: authenticatedContext,
-            payload: encrypted,
-            signature: signature
+            metadataBucketSeconds: metadataBucketSeconds
         )
+        conversation.sendChain = candidateConversation.sendChain
+        return envelope
     }
 
     public static func prepareMessageKey(
@@ -180,7 +171,8 @@ public enum MessageEngine {
         sentAt: Date = Date(),
         metadataBucketSeconds: Int? = nil
     ) throws -> Envelope {
-        let payloadData = try PaddedMessagePlaintext.encode(body)
+        var payloadData = try PaddedMessagePlaintext.encode(body)
+        defer { payloadData.secureWipe() }
         let encrypted = try encryptPayload(
             payloadData,
             conversationId: conversation.id,
@@ -247,7 +239,8 @@ public enum MessageEngine {
             throw CryptoError.invalidSignature
         }
         let sessionId = envelope.sessionId ?? conversation.sessionId
-        let key = try conversation.receiveChain.messageKey(
+        var candidateReceiveChain = conversation.receiveChain
+        let key = try candidateReceiveChain.messageKey(
             for: envelope.messageCounter,
             maxSkip: ChainKeyState.defaultMaxSkip
         )
@@ -256,11 +249,13 @@ public enum MessageEngine {
             sessionId: sessionId,
             context: envelope.authenticatedContext
         )
-        let plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: authenticatedData)
+        var plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: authenticatedData)
+        defer { plaintext.secureWipe() }
+        let body = try PaddedMessagePlaintext.decode(plaintext)
+        conversation.receiveChain = candidateReceiveChain
         if conversation.sessionId.isEmpty, let sessionId = envelope.sessionId {
             conversation.sessionId = sessionId
         }
-        let body = try PaddedMessagePlaintext.decode(plaintext)
         return (body, key)
     }
 

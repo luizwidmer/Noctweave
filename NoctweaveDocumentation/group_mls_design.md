@@ -23,10 +23,14 @@ Noctweave groups use an MLS-derived tree model as the group protocol direction, 
 - Relays validate group membership and group-envelope signatures before accepting group-inbox ciphertexts, but they do not receive group plaintext or epoch secrets.
 - Relays still coordinate group registry state and join requests, but do not receive plaintext group messages.
 
-## Required Next Work
+## Validation Boundary
 
-1. Continue hardening against missed commits, stale epochs, replay, and long offline windows without claiming a complete MLS proof.
-2. Expand real-device fault-injection coverage around retained epoch histories.
+Repository-owned deterministic tests cover missed commits, stale epochs,
+replay, retained-history faults, counter exhaustion, and bounded state-space
+exploration. Two finite external validation items remain: an independent review
+of the MLS-derived construction and a device-lab report exercising retained
+epoch recovery across process termination. Neither is implied by the current
+implementation.
 
 ## Non-Goals
 

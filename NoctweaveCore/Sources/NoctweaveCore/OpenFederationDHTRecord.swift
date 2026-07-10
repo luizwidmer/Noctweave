@@ -11,12 +11,15 @@ public enum OpenFederationDHTRecordError: Error, Equatable {
     case invalidSignature
     case insecureEndpoint
     case nonPublicEndpoint
+    case unsupportedVersion
+    case federationNameMismatch
+    case invalidStructure
 }
 
 public struct OpenFederationDHTRecord: Codable, Equatable {
     public static let version = 1
     public static let signatureAlgorithm = "ML-DSA-65"
-    public static let namespacePrefix = "noctyra-open-v1"
+    public static let namespacePrefix = "noctweave-open-v1"
     public static let maxLifetimeSeconds: TimeInterval = 600
     public static let maxClockSkewSeconds: TimeInterval = 120
 
@@ -76,6 +79,12 @@ public struct OpenFederationDHTRecord: Codable, Equatable {
         issuedAt: Date = Date(),
         lifetimeSeconds: TimeInterval = maxLifetimeSeconds
     ) throws -> OpenFederationDHTRecord {
+        guard lifetimeSeconds.isFinite,
+              issuedAt.timeIntervalSince1970.isFinite,
+              isStructurallyValidEndpoint(endpoint),
+              normalizedFederationName(federationName).utf8.count <= 128 else {
+            throw OpenFederationDHTRecordError.invalidStructure
+        }
         let boundedLifetime = max(60, min(lifetimeSeconds, maxLifetimeSeconds))
         let unsigned = OpenFederationDHTRecord(
             namespace: namespace(federationName: federationName),
@@ -105,8 +114,23 @@ public struct OpenFederationDHTRecord: Codable, Equatable {
         now: Date = Date(),
         requirePublicEndpoint: Bool = true
     ) throws {
+        guard version == Self.version else {
+            throw OpenFederationDHTRecordError.unsupportedVersion
+        }
+        guard Self.isStructurallyValidEndpoint(endpoint),
+              namespace.utf8.count <= 128,
+              relayIdentityDigest.utf8.count == 64,
+              relaySigningPublicKey.count == 1_952,
+              signature.count == 3_309,
+              issuedAt.timeIntervalSince1970.isFinite,
+              expiresAt.timeIntervalSince1970.isFinite else {
+            throw OpenFederationDHTRecordError.invalidStructure
+        }
         guard namespace == Self.namespace(federationName: expectedFederationName) else {
             throw OpenFederationDHTRecordError.namespaceMismatch
+        }
+        guard federationName == Self.normalizedFederationName(expectedFederationName) else {
+            throw OpenFederationDHTRecordError.federationNameMismatch
         }
         guard relayIdentityDigest == Self.relayIdentityDigest(publicKey: relaySigningPublicKey) else {
             throw OpenFederationDHTRecordError.relayIdentityMismatch
@@ -172,5 +196,14 @@ public struct OpenFederationDHTRecord: Codable, Equatable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
             ?? ""
+    }
+
+    private static func isStructurallyValidEndpoint(_ endpoint: RelayEndpoint) -> Bool {
+        let host = endpoint.host
+        return !host.isEmpty
+            && host == host.trimmingCharacters(in: .whitespacesAndNewlines)
+            && host.utf8.count <= 253
+            && host.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+            && host.rangeOfCharacter(from: CharacterSet(charactersIn: "/?#@")) == nil
     }
 }

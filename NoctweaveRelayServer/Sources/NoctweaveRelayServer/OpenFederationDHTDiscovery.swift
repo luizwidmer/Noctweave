@@ -1,6 +1,9 @@
 import Foundation
 
 struct OpenFederationDHTDiscoveryConfiguration: Codable, Equatable {
+    static let maximumRecords = 256
+    static let maximumRecordsPerHost = 16
+    static let maximumQueryRecords = 512
     var isEnabled: Bool
     var federationName: String?
     var requirePublicEndpoint: Bool
@@ -19,9 +22,9 @@ struct OpenFederationDHTDiscoveryConfiguration: Codable, Equatable {
         self.isEnabled = isEnabled
         self.federationName = federationName
         self.requirePublicEndpoint = requirePublicEndpoint
-        self.maxRecords = max(1, maxRecords)
-        self.maxRecordsPerHost = max(1, maxRecordsPerHost)
-        self.maxQueryRecords = max(1, maxQueryRecords)
+        self.maxRecords = min(Self.maximumRecords, max(1, maxRecords))
+        self.maxRecordsPerHost = min(Self.maximumRecordsPerHost, max(1, maxRecordsPerHost))
+        self.maxQueryRecords = min(Self.maximumQueryRecords, max(1, maxQueryRecords))
     }
 }
 
@@ -144,7 +147,14 @@ struct OpenFederationDHTCandidateCache: Equatable {
         records: [OpenFederationDHTRecord] = [],
         now: Date = Date()
     ) {
-        self.configuration = configuration
+        self.configuration = OpenFederationDHTDiscoveryConfiguration(
+            isEnabled: configuration.isEnabled,
+            federationName: configuration.federationName,
+            requirePublicEndpoint: configuration.requirePublicEndpoint,
+            maxRecords: configuration.maxRecords,
+            maxRecordsPerHost: configuration.maxRecordsPerHost,
+            maxQueryRecords: configuration.maxQueryRecords
+        )
         self.recordsByRelayIdentity = [:]
         _ = ingest(records, now: now)
     }
@@ -171,7 +181,7 @@ struct OpenFederationDHTCandidateCache: Equatable {
         var accepted: [OpenFederationDHTRecord] = []
         var rejected: [OpenFederationDHTRecordRejection] = []
 
-        for record in records {
+        for record in records.prefix(configuration.maxQueryRecords) {
             do {
                 try record.validate(
                     expectedFederationName: configuration.federationName,

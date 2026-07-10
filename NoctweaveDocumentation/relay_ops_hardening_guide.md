@@ -1,6 +1,6 @@
 # Noctweave Relay Operator Hardening Guide
 
-Last updated: June 24, 2026
+Last updated: July 10, 2026
 
 This guide is for operators running a Noctweave relay on Linux or Docker. It focuses on reducing operational metadata, limiting abuse paths, and avoiding configuration drift. It does not make the relay anonymous: relays still observe source IPs, request timing, chosen inboxes, ciphertext sizes, and federation topology hints.
 
@@ -153,6 +153,12 @@ Keep default bounds unless you have measured need:
 --max-line-bytes 655360 \
 --forwarding-timeout-seconds 8
 ```
+
+The Linux relay normalizes ports, timeouts, TTLs, bucket schedules, retrieval
+set sizes, DHT cache/query counts, and mixnet/onion/wake parameters into finite
+supported ranges before startup. Treat a normalization warning or unexpected
+advertised value as a configuration error; do not rely on extreme values being
+accepted literally.
 
 Lower `--relay-peer-exchange-limit` if open-federation peer churn is high. Set it to `0` to disable peer hints.
 

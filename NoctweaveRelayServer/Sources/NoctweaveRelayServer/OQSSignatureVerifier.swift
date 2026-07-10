@@ -8,9 +8,9 @@ import Glibc
 
 final class OQSSignatureVerifier: @unchecked Sendable {
     static let shared = OQSSignatureVerifier()
-    private static let mlDSA65PublicKeyBytes = 1_952
-    private static let mlDSA65PrivateKeyBytes = 4_032
-    private static let mlDSA65SignatureBytes = 3_309
+    static let mlDSA65PublicKeyBytes = 1_952
+    static let mlDSA65PrivateKeyBytes = 4_032
+    static let mlDSA65SignatureBytes = 3_309
 
     private let lock = NSLock()
     private var didResolveRuntime = false

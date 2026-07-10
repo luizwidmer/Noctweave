@@ -13,7 +13,11 @@ final class RelayTCPIntegrationTests: XCTestCase {
             RelayEndpoint(host: "64:ff9b::7f00:1", port: 443, useTLS: true),
             RelayEndpoint(host: "64:ff9b::0a00:1", port: 443, useTLS: true),
             RelayEndpoint(host: "2002:0a00:0001::1", port: 443, useTLS: true),
-            RelayEndpoint(host: "2001:0000:4136:e378:8000:63bf:3fff:fdd2", port: 443, useTLS: true)
+            RelayEndpoint(host: "2001:0000:4136:e378:8000:63bf:3fff:fdd2", port: 443, useTLS: true),
+            RelayEndpoint(host: "::7f00:1", port: 443, useTLS: true),
+            RelayEndpoint(host: "100::1", port: 443, useTLS: true),
+            RelayEndpoint(host: "fec0::1", port: 443, useTLS: true),
+            RelayEndpoint(host: "3fff::1", port: 443, useTLS: true)
         ]
 
         for endpoint in endpoints {
@@ -44,6 +48,17 @@ final class RelayTCPIntegrationTests: XCTestCase {
         XCTAssertEqual(headers.first(name: "Cross-Origin-Resource-Policy"), "same-origin")
         XCTAssertEqual(headers.first(name: "Content-Security-Policy"), "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
         XCTAssertEqual(headers.first(name: "Permissions-Policy"), "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+    }
+
+    func testHTTPBridgeUsesForwardedAddressOnlyFromLoopbackProxy() throws {
+        var headers = HTTPHeaders()
+        headers.add(name: "X-Forwarded-For", value: "198.51.100.22, 127.0.0.1")
+
+        let loopback = try SocketAddress(ipAddress: "127.0.0.1", port: 443)
+        XCTAssertEqual(relayHTTPSourceKey(address: loopback, headers: headers), "198.51.100.22")
+
+        let remote = try SocketAddress(ipAddress: "203.0.113.9", port: 443)
+        XCTAssertEqual(relayHTTPSourceKey(address: remote, headers: headers), "203.0.113.9")
     }
 
     func testDeliverThenFetchRoundTripOverTCP() throws {
@@ -276,6 +291,27 @@ final class RelayTCPIntegrationTests: XCTestCase {
         let authorized = try harness.send(request.withAuthToken(token))
         XCTAssertEqual(authorized.type, .federationNodes)
         XCTAssertEqual(authorized.federationNodes?.count, 1)
+    }
+
+    func testCuratedCoordinatorFailsClosedWithoutRegistrationToken() throws {
+        let federation = FederationDescriptor(mode: .curated, name: "mesh-token-required")
+        let harness = try RelayTCPHarness(kind: .coordinator, federation: federation)
+        defer { try? harness.shutdown() }
+
+        let request = RelayRequest.registerFederationNode(
+            FederationNodeRegistrationRequest(
+                endpoint: RelayEndpoint(host: "127.0.0.1", port: 39999),
+                relayInfo: RelayConfiguration(kind: .standard, federation: federation).makeInfo(),
+                ttlSeconds: 120
+            )
+        )
+        let response = try harness.send(request)
+
+        XCTAssertEqual(response.type, .error)
+        XCTAssertEqual(
+            response.error,
+            "Coordinator configuration error: curated registration requires a token."
+        )
     }
 
     func testForwardingDoesNotReuseInboundClientAuthToken() throws {

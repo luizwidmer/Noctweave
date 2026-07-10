@@ -7,6 +7,7 @@ public enum OnionTransportError: Error, Equatable {
     case invalidPacket
     case invalidPayload
     case malformedLayer
+    case resourceLimitExceeded
 }
 
 public struct OnionTransportSupport: Codable, Equatable {
@@ -25,6 +26,8 @@ public enum OnionTransportPolicyIssue: String, Codable, Equatable, CaseIterable 
     case notAdvertised
     case disabled
     case insufficientHops
+    case excessiveHops
+    case fixedSizePacketsNotRequired
 }
 
 public enum OnionTransportPolicyValidator {
@@ -42,6 +45,12 @@ public enum OnionTransportPolicyValidator {
         }
         if support.maxHops < max(2, minimumHops) {
             issues.append(.insufficientHops)
+        }
+        if support.maxHops > OnionTransport.maximumHops {
+            issues.append(.excessiveHops)
+        }
+        if !support.requiresFixedSizePackets {
+            issues.append(.fixedSizePacketsNotRequired)
         }
         return issues
     }
@@ -122,6 +131,12 @@ private struct OnionAAD: Codable {
 
 public enum OnionTransport {
     public static let currentVersion = 1
+    public static let maximumHops = 8
+    public static let maximumFinalPayloadBytes = 256 * 1024
+    public static let maximumLayerBytes = 2 * 1024 * 1024
+    public static let maximumHopIdBytes = 256
+    public static let maximumRoutingInstructionBytes = 4 * 1024
+    public static let maximumDelayBucketSeconds = 3_600
 
     public static func seal(
         finalPayload: Data,
@@ -133,9 +148,14 @@ public enum OnionTransport {
         guard !finalPayload.isEmpty else {
             throw OnionTransportError.invalidPayload
         }
+        guard hops.count <= maximumHops,
+              finalPayload.count <= maximumFinalPayloadBytes else {
+            throw OnionTransportError.resourceLimitExceeded
+        }
 
         var nextLayer: OnionLayer?
         var nextHopId: String?
+        var seenHopIds = Set<String>()
 
         for hop in hops.reversed() {
             let trimmedHopId = hop.hopId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -145,20 +165,38 @@ public enum OnionTransport {
                   AgreementKeyPair.isValidPublicKey(hop.publicKeyData) else {
                 throw OnionTransportError.invalidHop
             }
+            guard trimmedHopId.utf8.count <= maximumHopIdBytes,
+                  trimmedInstruction.utf8.count <= maximumRoutingInstructionBytes,
+                  hop.delayBucketSeconds.map({ (0...maximumDelayBucketSeconds).contains($0) }) ?? true,
+                  seenHopIds.insert(trimmedHopId.lowercased()).inserted else {
+                throw OnionTransportError.resourceLimitExceeded
+            }
 
             let plaintext = OnionLayerPlaintext(
                 hopId: trimmedHopId,
                 routingInstruction: trimmedInstruction,
-                delayBucketSeconds: hop.delayBucketSeconds.map { max(0, $0) },
+                delayBucketSeconds: hop.delayBucketSeconds,
                 nextHopId: nextHopId,
                 nextLayer: nextLayer,
                 finalPayload: nextLayer == nil ? finalPayload : nil
             )
-            let encodedPlaintext = try NoctweaveCoder.encode(plaintext, sortedKeys: true)
-            let kem = try AgreementKeyPair.encapsulate(to: hop.publicKeyData)
-            let key = SymmetricKey(data: deriveLayerKey(sharedSecret: kem.sharedSecret, hopId: trimmedHopId))
+            var encodedPlaintext = try NoctweaveCoder.encode(plaintext, sortedKeys: true)
+            defer { encodedPlaintext.secureWipe() }
+            guard encodedPlaintext.count <= maximumLayerBytes else {
+                throw OnionTransportError.resourceLimitExceeded
+            }
+            var kem = try AgreementKeyPair.encapsulate(to: hop.publicKeyData)
+            var derivedKey = deriveLayerKey(sharedSecret: kem.sharedSecret, hopId: trimmedHopId)
+            kem.sharedSecret.secureWipe()
+            let key = SymmetricKey(data: derivedKey)
+            derivedKey.secureWipe()
             let aad = try authenticatedData(hopId: trimmedHopId)
             let encryptedPayload = try CryptoBox.encrypt(encodedPlaintext, key: key, authenticatedData: aad)
+            guard encryptedPayload.nonce.count == 12,
+                  encryptedPayload.tag.count == 16,
+                  encryptedPayload.ciphertext.count <= maximumLayerBytes else {
+                throw OnionTransportError.resourceLimitExceeded
+            }
             nextLayer = OnionLayer(hopId: trimmedHopId, kemCiphertext: kem.ciphertext, payload: encryptedPayload)
             nextHopId = trimmedHopId
         }
@@ -170,16 +208,36 @@ public enum OnionTransport {
     }
 
     public static func peel(layer: OnionLayer, using keyPair: AgreementKeyPair) throws -> OnionPeeledLayer {
-        guard !layer.hopId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let canonicalHopId = layer.hopId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !canonicalHopId.isEmpty,
+              canonicalHopId == layer.hopId,
+              canonicalHopId.utf8.count <= maximumHopIdBytes,
+              layer.kemCiphertext.count == 1_088,
+              layer.payload.nonce.count == 12,
+              layer.payload.tag.count == 16,
+              !layer.payload.ciphertext.isEmpty,
+              layer.payload.ciphertext.count <= maximumLayerBytes else {
             throw OnionTransportError.malformedLayer
         }
-        let sharedSecret = try keyPair.decapsulate(ciphertext: layer.kemCiphertext)
-        let key = SymmetricKey(data: deriveLayerKey(sharedSecret: sharedSecret, hopId: layer.hopId))
+        var sharedSecret = try keyPair.decapsulate(ciphertext: layer.kemCiphertext)
+        var derivedKey = deriveLayerKey(sharedSecret: sharedSecret, hopId: layer.hopId)
+        sharedSecret.secureWipe()
+        let key = SymmetricKey(data: derivedKey)
+        derivedKey.secureWipe()
 
         let aad = try authenticatedData(hopId: layer.hopId)
-        guard let opened = try? CryptoBox.decrypt(layer.payload, key: key, authenticatedData: aad),
+        guard var opened = try? CryptoBox.decrypt(layer.payload, key: key, authenticatedData: aad) else {
+            throw OnionTransportError.malformedLayer
+        }
+        defer { opened.secureWipe() }
+        guard opened.count <= maximumLayerBytes,
               let plaintext = try? NoctweaveCoder.decode(OnionLayerPlaintext.self, from: opened),
               plaintext.hopId == layer.hopId,
+              plaintext.routingInstruction.utf8.count <= maximumRoutingInstructionBytes,
+              plaintext.delayBucketSeconds.map({ (0...maximumDelayBucketSeconds).contains($0) }) ?? true,
+              plaintext.nextHopId.map({ !$0.isEmpty && $0.utf8.count <= maximumHopIdBytes }) ?? true,
+              plaintext.finalPayload.map({ !$0.isEmpty && $0.count <= maximumFinalPayloadBytes }) ?? true,
+              plaintext.nextLayer.map(isStructurallyBoundedLayer) ?? true,
               (plaintext.nextLayer == nil) == (plaintext.finalPayload != nil) else {
             throw OnionTransportError.malformedLayer
         }
@@ -206,5 +264,15 @@ public enum OnionTransport {
             OnionAAD(version: currentVersion, hopId: hopId),
             sortedKeys: true
         )
+    }
+
+    private static func isStructurallyBoundedLayer(_ layer: OnionLayer) -> Bool {
+        !layer.hopId.isEmpty
+            && layer.hopId.utf8.count <= maximumHopIdBytes
+            && layer.kemCiphertext.count == 1_088
+            && layer.payload.nonce.count == 12
+            && layer.payload.tag.count == 16
+            && !layer.payload.ciphertext.isEmpty
+            && layer.payload.ciphertext.count <= maximumLayerBytes
     }
 }

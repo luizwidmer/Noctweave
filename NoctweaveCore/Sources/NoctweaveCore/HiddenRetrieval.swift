@@ -20,6 +20,7 @@ public enum HiddenRetrievalError: Error, Equatable {
     case malformedPIRShare
     case malformedPIRResponse
     case invalidReplicaSet
+    case resourceLimitExceeded
 }
 
 public enum HiddenRetrievalPIRReplicaSetIssue: String, Codable, Equatable, Hashable {
@@ -33,6 +34,8 @@ public enum HiddenRetrievalPIRReplicaSetIssue: String, Codable, Equatable, Hasha
     case duplicateHost
     case duplicateEndpoint
     case insecureEndpoint
+    case tooManyReplicas
+    case oversizedIdentifier
 }
 
 public enum HiddenRetrievalPIROperationalIssue: String, Codable, Equatable, Hashable {
@@ -43,6 +46,8 @@ public enum HiddenRetrievalPIROperationalIssue: String, Codable, Equatable, Hash
     case paddedRecordCountTooSmall
     case missingFixedResponseSize
     case fixedResponseSizeTooSmall
+    case paddedRecordCountTooLarge
+    case fixedResponseSizeTooLarge
 }
 
 public enum HiddenRetrievalPIRDeploymentEvidenceIssue: String, Codable, Equatable, Hashable {
@@ -56,6 +61,8 @@ public enum HiddenRetrievalPIRDeploymentEvidenceIssue: String, Codable, Equatabl
     case unavailableReplicaEvidence
     case missingNonCollusionAttestation
     case duplicateNonCollusionAttestation
+    case excessiveReplicaEvidence
+    case invalidEvidenceTimestamp
 }
 
 public struct HiddenRetrievalPIROperationalProfile: Codable, Equatable {
@@ -130,6 +137,9 @@ public enum HiddenRetrievalPIRReplicaSetValidator {
         if replicas.count < max(2, minimumReplicaCount) {
             issues.append(.insufficientReplicas)
         }
+        if replicas.count > HiddenRetrievalBounds.maximumReplicas {
+            issues.append(.tooManyReplicas)
+        }
 
         let replicaIds = replicas.map { $0.replicaId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
         let operatorIds = replicas.map { $0.operatorId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
@@ -156,6 +166,12 @@ public enum HiddenRetrievalPIRReplicaSetValidator {
         }
         if requireTLS, replicas.contains(where: { !$0.endpoint.useTLS }) {
             issues.append(.insecureEndpoint)
+        }
+        if replicas.contains(where: {
+            $0.replicaId.utf8.count > HiddenRetrievalBounds.maximumIdentifierBytes ||
+            $0.operatorId.utf8.count > HiddenRetrievalBounds.maximumIdentifierBytes
+        }) {
+            issues.append(.oversizedIdentifier)
         }
 
         return Array(Set(issues)).sorted { $0.rawValue < $1.rawValue }
@@ -228,6 +244,9 @@ public enum HiddenRetrievalPIROperationalValidator {
             if paddedRecordCount < max(2, minimumPaddedRecordCount) {
                 issues.insert(.paddedRecordCountTooSmall)
             }
+            if paddedRecordCount > HiddenRetrievalBounds.maximumRecords {
+                issues.insert(.paddedRecordCountTooLarge)
+            }
         } else {
             issues.insert(.missingPaddedRecordCount)
         }
@@ -235,6 +254,9 @@ public enum HiddenRetrievalPIROperationalValidator {
         if let fixedResponseSize = profile.fixedResponseSize {
             if fixedResponseSize < max(1, minimumFixedResponseSize) {
                 issues.insert(.fixedResponseSizeTooSmall)
+            }
+            if fixedResponseSize > HiddenRetrievalBounds.maximumResponseBytes {
+                issues.insert(.fixedResponseSizeTooLarge)
             }
         } else {
             issues.insert(.missingFixedResponseSize)
@@ -313,6 +335,14 @@ public enum HiddenRetrievalPIRPromotionValidator {
         }
 
         let replicas = profile.support?.replicatedXorPIRReplicas ?? []
+        if evidence.replicaEvidence.count > HiddenRetrievalBounds.maximumReplicas {
+            issues.insert(.excessiveReplicaEvidence)
+        }
+        if !now.timeIntervalSince1970.isFinite ||
+            !maximumEvidenceAge.isFinite || maximumEvidenceAge <= 0 ||
+            !evidence.collectedAt.timeIntervalSince1970.isFinite {
+            issues.insert(.invalidEvidenceTimestamp)
+        }
         var expectedByReplicaId: [String: HiddenRetrievalPIRReplica] = [:]
         for replica in replicas {
             let replicaId = replica.replicaId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -350,7 +380,7 @@ public enum HiddenRetrievalPIRPromotionValidator {
                 || normalizedEndpointKey(item.endpoint) != normalizedEndpointKey(expected.endpoint) {
                 issues.insert(.operatorEvidenceMismatch)
             }
-            if age < 0 || age > maximumEvidenceAge {
+            if !age.isFinite || age < 0 || age > maximumEvidenceAge {
                 issues.insert(.staleReplicaEvidence)
             }
             if !item.isAvailable {
@@ -512,17 +542,29 @@ public enum HiddenRetrievalPlanner {
         guard !secret.isEmpty else {
             throw HiddenRetrievalError.invalidSecret
         }
+        guard canonicalBucketId.utf8.count <= HiddenRetrievalBounds.maximumIdentifierBytes,
+              canonicalTargetId.utf8.count <= HiddenRetrievalBounds.maximumIdentifierBytes,
+              secret.count <= HiddenRetrievalBounds.maximumSecretBytes,
+              availableRecordIds.count <= HiddenRetrievalBounds.maximumRecords else {
+            throw HiddenRetrievalError.resourceLimitExceeded
+        }
         guard coverSetSize >= 2 else {
             throw HiddenRetrievalError.invalidCoverSetSize
         }
-        guard coverSetSize <= max(2, maximumCoverSetSize) else {
+        let effectiveMaximumCoverSetSize = min(
+            HiddenRetrievalBounds.maximumCoverSetSize,
+            max(2, maximumCoverSetSize)
+        )
+        guard coverSetSize <= effectiveMaximumCoverSetSize else {
             throw HiddenRetrievalError.coverSetTooLarge
         }
 
         let normalizedIds = availableRecordIds.map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        guard !normalizedIds.contains(where: { $0.isEmpty }) else {
+        guard !normalizedIds.contains(where: {
+            $0.isEmpty || $0.utf8.count > HiddenRetrievalBounds.maximumIdentifierBytes
+        }) else {
             throw HiddenRetrievalError.invalidRecordId
         }
         let canonicalIds = Array(Set(normalizedIds)).sorted()
@@ -562,7 +604,10 @@ public enum HiddenRetrievalPlanner {
         using plan: HiddenRetrievalQueryPlan
     ) throws -> T {
         try validateResponse(records: records, using: plan)
-        return records[plan.targetRecordId]!
+        guard let target = records[plan.targetRecordId] else {
+            throw HiddenRetrievalError.targetMissing
+        }
+        return target
     }
 
     public static func targetIfValid<T>(
@@ -579,8 +624,14 @@ public enum HiddenRetrievalPlanner {
         guard !plan.bucketId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !plan.targetRecordId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               plan.requestedRecordIds.count >= 2,
+              plan.requestedRecordIds.count <= HiddenRetrievalBounds.maximumCoverSetSize,
+              plan.bucketId.utf8.count <= HiddenRetrievalBounds.maximumIdentifierBytes,
+              plan.targetRecordId.utf8.count <= HiddenRetrievalBounds.maximumIdentifierBytes,
               Set(plan.requestedRecordIds).count == plan.requestedRecordIds.count,
-              !plan.requestedRecordIds.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+              !plan.requestedRecordIds.contains(where: {
+                  $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                  $0.utf8.count > HiddenRetrievalBounds.maximumIdentifierBytes
+              }),
               plan.requestedRecordIds.filter({ $0 == plan.targetRecordId }).count == 1 else {
             throw HiddenRetrievalError.malformedPublicPlan
         }
@@ -612,17 +663,28 @@ public enum HiddenRetrievalPlanner {
         guard !secret.isEmpty else {
             throw HiddenRetrievalError.invalidSecret
         }
-        guard replicaCount >= 2 else {
+        guard canonicalBucketId.utf8.count <= HiddenRetrievalBounds.maximumIdentifierBytes,
+              canonicalTargetId.utf8.count <= HiddenRetrievalBounds.maximumIdentifierBytes,
+              secret.count <= HiddenRetrievalBounds.maximumSecretBytes else {
+            throw HiddenRetrievalError.resourceLimitExceeded
+        }
+        guard replicaCount >= 2, replicaCount <= HiddenRetrievalBounds.maximumReplicas else {
             throw HiddenRetrievalError.invalidReplicaCount
         }
         let normalizedIds = orderedRecordIds.map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        guard !normalizedIds.contains(where: { $0.isEmpty }) else {
+        guard !normalizedIds.contains(where: {
+            $0.isEmpty || $0.utf8.count > HiddenRetrievalBounds.maximumIdentifierBytes
+        }) else {
             throw HiddenRetrievalError.invalidRecordId
         }
+        let effectiveMaximumRecordCount = min(
+            HiddenRetrievalBounds.maximumRecords,
+            max(1, maximumRecordCount)
+        )
         guard !normalizedIds.isEmpty,
-              normalizedIds.count <= maximumRecordCount,
+              normalizedIds.count <= effectiveMaximumRecordCount,
               Set(normalizedIds).count == normalizedIds.count else {
             throw HiddenRetrievalError.invalidRecordCount
         }
@@ -631,7 +693,7 @@ public enum HiddenRetrievalPlanner {
         }
         let queryRecordCount = paddedRecordCount ?? normalizedIds.count
         guard queryRecordCount >= normalizedIds.count,
-              queryRecordCount <= maximumRecordCount else {
+              queryRecordCount <= effectiveMaximumRecordCount else {
             throw HiddenRetrievalError.invalidRecordCount
         }
 
@@ -673,6 +735,10 @@ public enum HiddenRetrievalPlanner {
         maximumResponseSize: Int = 1_048_576
     ) throws -> HiddenRetrievalPIRResponseShare {
         guard share.replicaIndex >= 0,
+              share.replicaIndex < HiddenRetrievalBounds.maximumReplicas,
+              share.recordCount > 0,
+              share.recordCount <= HiddenRetrievalBounds.maximumRecords,
+              records.count <= HiddenRetrievalBounds.maximumRecords,
               share.recordCount >= records.count,
               share.selectionBits.count == bitsetByteCount(for: share.recordCount) else {
             throw HiddenRetrievalError.malformedPIRShare
@@ -685,10 +751,14 @@ public enum HiddenRetrievalPlanner {
               records.allSatisfy({ $0.count == recordSize }) else {
             throw HiddenRetrievalError.invalidRecordSize
         }
+        let effectiveMaximumResponseSize = min(
+            HiddenRetrievalBounds.maximumResponseBytes,
+            max(1, maximumResponseSize)
+        )
         let responseSize = fixedResponseSize ?? recordSize
         guard responseSize >= recordSize,
               responseSize > 0,
-              responseSize <= maximumResponseSize else {
+              responseSize <= effectiveMaximumResponseSize else {
             throw HiddenRetrievalError.invalidRecordSize
         }
         var accumulator = Data(repeating: 0, count: responseSize)
@@ -708,6 +778,7 @@ public enum HiddenRetrievalPlanner {
     ) throws -> Data {
         try validateReplicatedXORPIRPlan(plan)
         guard plan.shares.count >= 2,
+              plan.shares.count <= HiddenRetrievalBounds.maximumReplicas,
               responses.count == plan.shares.count,
               Set(responses.map(\.replicaIndex)) == Set(plan.shares.map(\.replicaIndex)),
               !responses.isEmpty else {
@@ -715,6 +786,7 @@ public enum HiddenRetrievalPlanner {
         }
         let payloadSize = responses[0].payload.count
         guard payloadSize > 0,
+              payloadSize <= HiddenRetrievalBounds.maximumResponseBytes,
               responses.allSatisfy({ $0.payload.count == payloadSize }) else {
             throw HiddenRetrievalError.invalidRecordSize
         }
@@ -740,10 +812,15 @@ public enum HiddenRetrievalPlanner {
         let normalizedIds = plan.orderedRecordIds.map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        guard !normalizedIds.contains(where: { $0.isEmpty }) else {
+        guard plan.bucketId.utf8.count <= HiddenRetrievalBounds.maximumIdentifierBytes,
+              plan.targetRecordId.utf8.count <= HiddenRetrievalBounds.maximumIdentifierBytes,
+              !normalizedIds.contains(where: {
+                  $0.isEmpty || $0.utf8.count > HiddenRetrievalBounds.maximumIdentifierBytes
+              }) else {
             throw HiddenRetrievalError.invalidRecordId
         }
         guard !normalizedIds.isEmpty,
+              normalizedIds.count <= HiddenRetrievalBounds.maximumRecords,
               Set(normalizedIds).count == normalizedIds.count,
               normalizedIds == plan.orderedRecordIds else {
             throw HiddenRetrievalError.invalidRecordCount
@@ -754,6 +831,7 @@ public enum HiddenRetrievalPlanner {
             throw HiddenRetrievalError.targetMissing
         }
         guard plan.shares.count >= 2,
+              plan.shares.count <= HiddenRetrievalBounds.maximumReplicas,
               Set(plan.shares.map(\.replicaIndex)).count == plan.shares.count,
               Set(plan.shares.map(\.replicaIndex)) == Set(0..<plan.shares.count) else {
             throw HiddenRetrievalError.malformedPIRShare
@@ -762,6 +840,7 @@ public enum HiddenRetrievalPlanner {
         guard recordCounts.count == 1,
               let recordCount = recordCounts.first,
               recordCount >= normalizedIds.count,
+              recordCount <= HiddenRetrievalBounds.maximumRecords,
               recordCount > plan.targetIndex else {
             throw HiddenRetrievalError.invalidRecordCount
         }
@@ -830,7 +909,10 @@ public enum HiddenRetrievalPlanner {
     }
 
     private static func bitsetByteCount(for bitCount: Int) -> Int {
-        max(0, (bitCount + 7) / 8)
+        guard bitCount > 0, bitCount <= HiddenRetrievalBounds.maximumRecords else {
+            return 0
+        }
+        return (bitCount / 8) + (bitCount % 8 == 0 ? 0 : 1)
     }
 
     private static func bit(at index: Int, in bitset: Data) -> Bool {
@@ -873,4 +955,13 @@ public enum HiddenRetrievalPlanner {
         padded.append(Data(repeating: 0, count: count - record.count))
         return padded
     }
+}
+
+private enum HiddenRetrievalBounds {
+    static let maximumRecords = 4_096
+    static let maximumCoverSetSize = 512
+    static let maximumReplicas = 16
+    static let maximumResponseBytes = 1_048_576
+    static let maximumIdentifierBytes = 256
+    static let maximumSecretBytes = 1_024
 }

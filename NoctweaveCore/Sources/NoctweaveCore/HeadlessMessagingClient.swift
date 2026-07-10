@@ -228,6 +228,7 @@ public enum HeadlessMessagingClientError: Error, Equatable {
     case missingGroupSenderKey(String)
     case attachmentNotFound(String)
     case missingAttachmentKey(String)
+    case invalidAttachmentDescriptor
     case attachmentDigestMismatch(String)
     case relayRejected(String)
     case unsupportedInboundSession
@@ -258,6 +259,8 @@ extension HeadlessMessagingClientError: LocalizedError {
             return "No attachment matched `\(selector)` in local state."
         case .missingAttachmentKey(let selector):
             return "Attachment `\(selector)` is missing local recovery metadata."
+        case .invalidAttachmentDescriptor:
+            return "Attachment metadata is malformed or exceeds Noctweave transport limits."
         case .attachmentDigestMismatch(let selector):
             return "Attachment `\(selector)` failed digest verification."
         case .relayRejected(let message):
@@ -275,11 +278,16 @@ public actor HeadlessMessagingClient {
 
     public init(
         stateURL: URL,
-        useEncryptedStore: Bool = false,
+        useEncryptedStore: Bool,
+        stateEncryptionKey: SymmetricKey? = nil,
         authToken: String? = nil,
         timeout: TimeInterval = RelayClient.defaultTimeout
     ) {
-        self.store = ClientStateStore(fileURL: stateURL, useEncryption: useEncryptedStore)
+        self.store = ClientStateStore(
+            fileURL: stateURL,
+            useEncryption: useEncryptedStore,
+            encryptionKey: stateEncryptionKey
+        )
         self.authToken = authToken
         self.timeout = timeout
     }
@@ -292,8 +300,8 @@ public actor HeadlessMessagingClient {
         if !overwrite, try await store.load() != nil {
             throw HeadlessMessagingClientError.stateAlreadyExists
         }
-        let identity = Identity(displayName: displayName)
-        let inboxAccessKey = SigningKeyPair()
+        let identity = try Identity.generate(displayName: displayName)
+        let inboxAccessKey = try SigningKeyPair.generate()
         let inboxId = InboxAddress.derived(from: inboxAccessKey.publicKeyData)
         var state = ClientState(identity: identity, relay: relay, inboxId: inboxId)
         state.inboxAccessKey = inboxAccessKey
@@ -467,9 +475,7 @@ public actor HeadlessMessagingClient {
                 newFingerprint: newFingerprint
             )
         )
-        if let regenerated = try? PrekeyState.generate(identity: state.identity) {
-            state.prekeys = regenerated
-        }
+        state.prekeys = try PrekeyState.generate(identity: state.identity)
 
         var rebuiltByContact: [UUID: Conversation] = [:]
         var notified: [String] = []
@@ -520,14 +526,15 @@ public actor HeadlessMessagingClient {
         let oldSigningKey = oldIdentity.signingKey
         let oldFingerprint = oldIdentity.fingerprint
 
-        state.identity = Identity(displayName: oldIdentity.displayName)
-        let newInboxAccessKey = SigningKeyPair()
+        let replacementIdentity = try Identity.generate(displayName: oldIdentity.displayName)
+        let newInboxAccessKey = try SigningKeyPair.generate()
+        let replacementPrekeys = try PrekeyState.generate(identity: replacementIdentity)
+
+        state.identity = replacementIdentity
         state.inboxAccessKey = newInboxAccessKey
         state.inboxId = InboxAddress.derived(from: newInboxAccessKey.publicKeyData)
         let newFingerprint = state.identity.fingerprint
-        if let regenerated = try? PrekeyState.generate(identity: state.identity) {
-            state.prekeys = regenerated
-        }
+        state.prekeys = replacementPrekeys
         state.appendContinuityEvent(
             ContinuityEvent(
                 kind: .identityBurned,
@@ -847,43 +854,53 @@ public actor HeadlessMessagingClient {
               let context = info.cryptoContext else {
             throw HeadlessMessagingClientError.missingAttachmentKey(id.uuidString)
         }
+        guard info.descriptor.isStructurallyValid() else {
+            throw HeadlessMessagingClientError.invalidAttachmentDescriptor
+        }
         let relay = info.relay ?? state.relay
         let messageKey = AttachmentCrypto.key(from: messageKeyData)
         var recovered = Data()
-        for chunkIndex in 0..<info.descriptor.chunkCount {
-            let response = try await relayClient(for: relay).send(
-                .fetchAttachment(FetchAttachmentRequest(attachmentId: id, chunkIndex: chunkIndex)),
-                timeout: timeout
-            )
-            guard response.type == .attachment, let chunk = response.attachment else {
-                throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
+        recovered.reserveCapacity(info.descriptor.byteCount)
+        do {
+            for chunkIndex in 0..<info.descriptor.chunkCount {
+                let response = try await relayClient(for: relay).send(
+                    .fetchAttachment(FetchAttachmentRequest(attachmentId: id, chunkIndex: chunkIndex)),
+                    timeout: timeout
+                )
+                guard response.type == .attachment, let chunk = response.attachment else {
+                    throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
+                }
+                let byteCount = Self.attachmentChunkPlaintextSize(
+                    descriptor: info.descriptor,
+                    chunkIndex: chunkIndex
+                )
+                let aad = AttachmentCrypto.authenticatedData(
+                    conversationId: context.conversationId,
+                    sessionId: context.sessionId,
+                    messageCounter: context.messageCounter,
+                    attachmentId: id,
+                    chunkIndex: chunkIndex,
+                    byteCount: byteCount
+                )
+                var plaintext = try AttachmentCrypto.decryptChunk(
+                    payload: chunk.payload,
+                    messageKey: messageKey,
+                    attachmentId: id,
+                    chunkIndex: chunkIndex,
+                    authenticatedData: aad
+                )
+                recovered.append(plaintext)
+                plaintext.secureWipe()
             }
-            let byteCount = Self.attachmentChunkPlaintextSize(
-                descriptor: info.descriptor,
-                chunkIndex: chunkIndex
-            )
-            let aad = AttachmentCrypto.authenticatedData(
-                conversationId: context.conversationId,
-                sessionId: context.sessionId,
-                messageCounter: context.messageCounter,
-                attachmentId: id,
-                chunkIndex: chunkIndex,
-                byteCount: byteCount
-            )
-            let plaintext = try AttachmentCrypto.decryptChunk(
-                payload: chunk.payload,
-                messageKey: messageKey,
-                attachmentId: id,
-                chunkIndex: chunkIndex,
-                authenticatedData: aad
-            )
-            recovered.append(plaintext)
+            guard recovered.count == info.descriptor.byteCount,
+                  AttachmentCrypto.sha256(recovered) == info.descriptor.sha256 else {
+                throw HeadlessMessagingClientError.attachmentDigestMismatch(id.uuidString)
+            }
+            return HeadlessFetchedAttachment(descriptor: info.descriptor, data: recovered)
+        } catch {
+            recovered.secureWipe()
+            throw error
         }
-        guard recovered.count == info.descriptor.byteCount,
-              AttachmentCrypto.sha256(recovered) == info.descriptor.sha256 else {
-            throw HeadlessMessagingClientError.attachmentDigestMismatch(id.uuidString)
-        }
-        return HeadlessFetchedAttachment(descriptor: info.descriptor, data: recovered)
     }
 
     public func receiveGroupMessages(
@@ -1569,22 +1586,33 @@ public actor HeadlessMessagingClient {
         context: AttachmentCryptoContext,
         relayTTLSeconds: Int?
     ) throws -> (AttachmentDescriptor, [AttachmentChunk]) {
-        let safeChunkSize = max(1, min(chunkSize, 64 * 1024))
+        guard !data.isEmpty, data.count <= AttachmentDescriptor.maximumTransportBytes else {
+            throw HeadlessMessagingClientError.invalidAttachmentDescriptor
+        }
+        let safeChunkSize = max(1, min(chunkSize, AttachmentDescriptor.maximumTransportChunkBytes))
         let attachmentId = UUID()
-        let chunkCount = data.isEmpty ? 0 : Int(ceil(Double(data.count) / Double(safeChunkSize)))
+        let chunkCount = (data.count / safeChunkSize) + (data.count % safeChunkSize == 0 ? 0 : 1)
+        guard chunkCount <= AttachmentDescriptor.maximumTransportChunks else {
+            throw HeadlessMessagingClientError.invalidAttachmentDescriptor
+        }
+        let normalizedMIME = mimeType.trimmingCharacters(in: .whitespacesAndNewlines)
         let descriptor = AttachmentDescriptor(
             id: attachmentId,
             fileName: nil,
-            mimeType: mimeType.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            mimeType: normalizedMIME.isEmpty
                 ? "application/octet-stream"
-                : mimeType,
+                : normalizedMIME,
             byteCount: data.count,
             sha256: AttachmentCrypto.sha256(data),
             chunkCount: chunkCount,
             chunkSize: safeChunkSize,
             relayTTLSeconds: relayTTLSeconds
         )
+        guard descriptor.isStructurallyValid() else {
+            throw HeadlessMessagingClientError.invalidAttachmentDescriptor
+        }
         var chunks: [AttachmentChunk] = []
+        chunks.reserveCapacity(chunkCount)
         for chunkIndex in 0..<chunkCount {
             let start = data.index(data.startIndex, offsetBy: chunkIndex * safeChunkSize)
             let endOffset = min(data.count, (chunkIndex + 1) * safeChunkSize)
@@ -1598,13 +1626,18 @@ public actor HeadlessMessagingClient {
                 chunkIndex: chunkIndex,
                 byteCount: plaintext.count
             )
-            let payload = try AttachmentCrypto.encryptChunk(
-                plaintext: Data(plaintext),
-                messageKey: messageKey,
-                attachmentId: attachmentId,
-                chunkIndex: chunkIndex,
-                authenticatedData: aad
-            )
+            var plaintextCopy = Data(plaintext)
+            let payload: EncryptedPayload
+            do {
+                defer { plaintextCopy.secureWipe() }
+                payload = try AttachmentCrypto.encryptChunk(
+                    plaintext: plaintextCopy,
+                    messageKey: messageKey,
+                    attachmentId: attachmentId,
+                    chunkIndex: chunkIndex,
+                    authenticatedData: aad
+                )
+            }
             chunks.append(AttachmentChunk(attachmentId: attachmentId, chunkIndex: chunkIndex, payload: payload))
         }
         return (descriptor, chunks)

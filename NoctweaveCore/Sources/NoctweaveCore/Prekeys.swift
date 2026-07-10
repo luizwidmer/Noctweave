@@ -1,5 +1,10 @@
 import Foundation
 
+public enum PrekeyError: Error, Equatable {
+    case invalidCount
+    case invalidState
+}
+
 public struct OneTimePrekey: Codable, Equatable {
     public let id: UUID
     public let publicKey: Data
@@ -26,6 +31,7 @@ public struct OneTimePrekey: Codable, Equatable {
     }
 
     public func verify(using publicSigningKey: Data) -> Bool {
+        guard isStructurallyValid else { return false }
         let payload = OneTimePrekeyPayload(id: id, publicKey: publicKey)
         guard let data = try? NoctweaveCoder.encode(payload, sortedKeys: true) else {
             return false
@@ -35,6 +41,10 @@ public struct OneTimePrekey: Codable, Equatable {
             data: data,
             publicKeyData: publicSigningKey
         )
+    }
+
+    public var isStructurallyValid: Bool {
+        AgreementKeyPair.isValidPublicKey(publicKey) && signature.count == 3_309
     }
 }
 
@@ -79,15 +89,26 @@ public struct SignedPrekey: Codable, Equatable {
     }
 
     public func verify(using publicSigningKey: Data) -> Bool {
+        guard isStructurallyValid else { return false }
         let payload = SignedPrekeyPayload(id: id, publicKey: publicKey, issuedAt: issuedAt)
         guard let data = try? NoctweaveCoder.encode(payload, sortedKeys: true) else {
             return false
         }
         return SigningKeyPair.verify(signature: signature, data: data, publicKeyData: publicSigningKey)
     }
+
+    public var isStructurallyValid: Bool {
+        issuedAt.timeIntervalSince1970.isFinite
+            && AgreementKeyPair.isValidPublicKey(publicKey)
+            && signature.count == 3_309
+    }
 }
 
 public struct PrekeyBundle: Codable, Equatable {
+    public static let currentVersion = 2
+    public static let maximumOneTimePrekeys = 64
+    public static let maximumAge: TimeInterval = 8 * 86_400
+    public static let maximumFutureClockSkew: TimeInterval = 5 * 60
     public let version: Int
     public let identityFingerprint: String
     public let signedPrekey: SignedPrekey
@@ -95,7 +116,7 @@ public struct PrekeyBundle: Codable, Equatable {
     public let createdAt: Date
 
     public init(
-        version: Int = 1,
+        version: Int = PrekeyBundle.currentVersion,
         identityFingerprint: String,
         signedPrekey: SignedPrekey,
         oneTimePrekeys: [OneTimePrekey],
@@ -106,6 +127,25 @@ public struct PrekeyBundle: Codable, Equatable {
         self.signedPrekey = signedPrekey
         self.oneTimePrekeys = oneTimePrekeys
         self.createdAt = createdAt
+    }
+
+    public func isStructurallyValid(now: Date = Date()) -> Bool {
+        guard version == Self.currentVersion,
+              let fingerprintData = Data(base64Encoded: identityFingerprint),
+              fingerprintData.count == 32,
+              fingerprintData.base64EncodedString() == identityFingerprint,
+              signedPrekey.isStructurallyValid,
+              oneTimePrekeys.count <= Self.maximumOneTimePrekeys,
+              oneTimePrekeys.allSatisfy(\.isStructurallyValid),
+              Set(oneTimePrekeys.map(\.id)).count == oneTimePrekeys.count,
+              !oneTimePrekeys.contains(where: { $0.id == signedPrekey.id }),
+              createdAt.timeIntervalSince1970.isFinite else {
+            return false
+        }
+        let oldestAllowed = now.addingTimeInterval(-Self.maximumAge)
+        let newestAllowed = now.addingTimeInterval(Self.maximumFutureClockSkew)
+        return (oldestAllowed...newestAllowed).contains(signedPrekey.issuedAt)
+            && (oldestAllowed...newestAllowed).contains(createdAt)
     }
 }
 
@@ -150,14 +190,17 @@ public struct PrekeyState: Codable, Equatable {
     }
 
     public static func generate(identity: Identity, oneTimeCount: Int = defaultOneTimeCount) throws -> PrekeyState {
-        let signedKeyPair = AgreementKeyPair()
+        guard (0...PrekeyBundle.maximumOneTimePrekeys).contains(oneTimeCount) else {
+            throw PrekeyError.invalidCount
+        }
+        let signedKeyPair = try AgreementKeyPair.generate()
         let signedPrekey = try SignedPrekey.create(
             agreementPublicKey: signedKeyPair.publicKeyData,
             signingKey: identity.signingKey
         )
         var oneTime: [PrekeyPrivateRecord] = []
-        for _ in 0..<max(0, oneTimeCount) {
-            let keyPair = AgreementKeyPair()
+        for _ in 0..<oneTimeCount {
+            let keyPair = try AgreementKeyPair.generate()
             let id = UUID()
             oneTime.append(
                 PrekeyPrivateRecord(
@@ -178,6 +221,20 @@ public struct PrekeyState: Codable, Equatable {
     }
 
     public func bundle(identity: Identity) throws -> PrekeyBundle {
+        guard oneTimePrekeys.count <= PrekeyBundle.maximumOneTimePrekeys,
+              (try? AgreementKeyPair(
+                  privateKeyData: signedPrekeyPrivateKey,
+                  publicKeyData: signedPrekeyPublicKey
+              )) != nil,
+              signedPrekeySignature.count == 3_309,
+              oneTimePrekeys.allSatisfy({
+                  (try? AgreementKeyPair(
+                      privateKeyData: $0.privateKey,
+                      publicKeyData: $0.publicKey
+                  )) != nil
+              }) else {
+            throw PrekeyError.invalidState
+        }
         let signed = SignedPrekey(
             id: signedPrekeyId,
             publicKey: signedPrekeyPublicKey,
@@ -192,7 +249,7 @@ public struct PrekeyState: Codable, Equatable {
             )
         }
         return PrekeyBundle(
-            version: 2,
+            version: PrekeyBundle.currentVersion,
             identityFingerprint: identity.fingerprint,
             signedPrekey: signed,
             oneTimePrekeys: oneTime
