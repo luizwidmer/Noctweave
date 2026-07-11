@@ -35,16 +35,43 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var attachmentsEnabled: Bool
     var attachmentDefaultTTLSeconds: Int
     var attachmentMaxTTLSeconds: Int
+    var attachmentStorageMode: String?
+    var ipfsAPIEndpoint: String?
+    var ipfsGatewayEndpoint: String?
+    var ipfsTimeoutSeconds: Int?
     var groupCreationMode: String
+    var groupSecurityModel: String?
+    var hiddenRetrievalEnabled: Bool?
+    var hiddenRetrievalMode: String?
+    var hiddenRetrievalCoverSize: Int?
+    var hiddenRetrievalMaxCoverSize: Int?
+    var hiddenRetrievalReplicas: [String]?
+    var onionTransportEnabled: Bool?
+    var onionTransportMaxHops: Int?
+    var onionTransportRequiresFixedSizePackets: Bool?
+    var mixnetTransportEnabled: Bool?
+    var mixnetBatchIntervalSeconds: Int?
+    var mixnetMinBatchSize: Int?
+    var mixnetCoverPacketsPerBatch: Int?
+    var mixnetMaxDelaySeconds: Int?
     var relayPeerExchangeLimit: Int
     var openFederationDHTEnabled: Bool
+    var openFederationDHTMaxRecords: Int?
+    var openFederationDHTMaxRecordsPerHost: Int?
+    var openFederationDHTMaxQueryRecords: Int?
+    var coordinatorHeartbeatSeconds: Int?
+    var coordinatorDirectoryMaxStalenessSeconds: Int?
+    var curatedStrictPolicyEnabled: Bool?
+    var curatedCoordinatorQuorum: Int?
+    var curatedRequireSignedDirectory: Bool?
+    var allowPrivateFederationEndpoints: Bool?
     var wakeMode: String
     var wakeMinPollSeconds: Int
     var wakeMaxPollSeconds: Int
     var wakeJitterPermille: Int
     var wakeLongPollTimeoutSeconds: Int
 
-    init(configuration: RelayConfiguration) {
+    init(configuration: RelayConfiguration, serverConfiguration: ServerConfig? = nil) {
         relayName = configuration.relayName ?? ""
         operatorNote = configuration.operatorNote ?? ""
         advertisedEndpoint = configuration.advertisedEndpoint.map(operatorRelayEndpointString) ?? ""
@@ -58,12 +85,43 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         attachmentsEnabled = configuration.attachmentsEnabled != false
         attachmentDefaultTTLSeconds = configuration.attachmentDefaultTTLSeconds
         attachmentMaxTTLSeconds = configuration.attachmentMaxTTLSeconds
+        attachmentStorageMode = serverConfiguration?.attachmentStorageMode.rawValue
+            ?? configuration.attachmentStorageBackend
+            ?? AttachmentStorageMode.inline.rawValue
+        ipfsAPIEndpoint = serverConfiguration?.ipfsAPIEndpoint?.absoluteString ?? "http://127.0.0.1:5001"
+        ipfsGatewayEndpoint = serverConfiguration?.ipfsGatewayEndpoint?.absoluteString ?? ""
+        ipfsTimeoutSeconds = serverConfiguration?.ipfsTimeoutSeconds ?? 10
         groupCreationMode = configuration.groupCreationMode.rawValue
+        groupSecurityModel = configuration.groupSecurityModel.rawValue
+        hiddenRetrievalEnabled = configuration.hiddenRetrieval != nil
+        hiddenRetrievalMode = configuration.hiddenRetrieval?.mode.rawValue ?? HiddenRetrievalMode.coverQuery.rawValue
+        hiddenRetrievalCoverSize = configuration.hiddenRetrieval?.defaultCoverSetSize ?? 8
+        hiddenRetrievalMaxCoverSize = configuration.hiddenRetrieval?.maxCoverSetSize ?? 32
+        hiddenRetrievalReplicas = (configuration.hiddenRetrieval?.replicatedXorPIRReplicas ?? []).map {
+            "\($0.replicaId),\($0.operatorId),\(operatorRelayEndpointString($0.endpoint))"
+        }
+        onionTransportEnabled = configuration.onionTransport?.enabled ?? false
+        onionTransportMaxHops = configuration.onionTransport?.maxHops ?? 3
+        onionTransportRequiresFixedSizePackets = configuration.onionTransport?.requiresFixedSizePackets ?? true
+        mixnetTransportEnabled = configuration.mixnetTransport?.enabled ?? false
+        mixnetBatchIntervalSeconds = configuration.mixnetTransport?.batchIntervalSeconds ?? 30
+        mixnetMinBatchSize = configuration.mixnetTransport?.minBatchSize ?? 8
+        mixnetCoverPacketsPerBatch = configuration.mixnetTransport?.coverPacketsPerBatch ?? 2
+        mixnetMaxDelaySeconds = configuration.mixnetTransport?.maxDelaySeconds ?? 120
         relayPeerExchangeLimit = configuration.federation.mode == .open
             ? (configuration.relayPeerExchangeLimit ?? 0)
             : 0
         openFederationDHTEnabled = configuration.federation.mode == .open
             && configuration.openFederationDHTEnabled
+        openFederationDHTMaxRecords = configuration.openFederationDHTMaxRecords
+        openFederationDHTMaxRecordsPerHost = configuration.openFederationDHTMaxRecordsPerHost
+        openFederationDHTMaxQueryRecords = configuration.openFederationDHTMaxQueryRecords
+        coordinatorHeartbeatSeconds = configuration.coordinatorHeartbeatSeconds ?? 45
+        coordinatorDirectoryMaxStalenessSeconds = configuration.coordinatorDirectoryMaxStalenessSeconds ?? 300
+        curatedStrictPolicyEnabled = configuration.curatedStrictPolicyEnabled
+        curatedCoordinatorQuorum = configuration.curatedCoordinatorQuorum
+        curatedRequireSignedDirectory = configuration.curatedRequireSignedDirectory
+        allowPrivateFederationEndpoints = configuration.allowPrivateFederationEndpoints
         wakeMode = configuration.wakeSupport?.mode.rawValue ?? "disabled"
         wakeMinPollSeconds = configuration.wakeSupport?.minPollIntervalSeconds ?? 60
         wakeMaxPollSeconds = configuration.wakeSupport?.maxPollIntervalSeconds ?? 300
@@ -85,6 +143,9 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         }
         guard let groupMode = GroupCreationMode(rawValue: groupCreationMode) else {
             throw OperatorConfigurationError.invalidField("groupCreationMode")
+        }
+        guard let groupSecurity = GroupSecurityModel(rawValue: groupSecurityModel ?? current.groupSecurityModel.rawValue) else {
+            throw OperatorConfigurationError.invalidField("groupSecurityModel")
         }
         if mode == .manual, current.kind != .standard {
             throw OperatorConfigurationError.unsupportedTransition(
@@ -139,6 +200,27 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             )
         }
 
+        let hiddenRetrieval = try validatedHiddenRetrieval(current: current)
+        let onionTransport = try validatedOnionTransport(current: current)
+        let mixnetTransport = try validatedMixnetTransport(current: current, onionTransport: onionTransport)
+        let dhtMaxRecords = openFederationDHTMaxRecords ?? current.openFederationDHTMaxRecords
+        let dhtMaxPerHost = openFederationDHTMaxRecordsPerHost ?? current.openFederationDHTMaxRecordsPerHost
+        let dhtMaxQuery = openFederationDHTMaxQueryRecords ?? current.openFederationDHTMaxQueryRecords
+        guard (1...256).contains(dhtMaxRecords),
+              (1...16).contains(dhtMaxPerHost),
+              (1...512).contains(dhtMaxQuery) else {
+            throw OperatorConfigurationError.invalidField("open federation DHT bounds")
+        }
+        let heartbeat = coordinatorHeartbeatSeconds ?? current.coordinatorHeartbeatSeconds ?? 45
+        let staleness = coordinatorDirectoryMaxStalenessSeconds ?? current.coordinatorDirectoryMaxStalenessSeconds ?? 300
+        let quorum = curatedCoordinatorQuorum ?? current.curatedCoordinatorQuorum
+        guard (15...3_600).contains(heartbeat),
+              (30...86_400).contains(staleness),
+              (1...16).contains(quorum) else {
+            throw OperatorConfigurationError.invalidField("federation timing or quorum")
+        }
+        try validateRestartControlledSettings()
+
         let wakeSupport: DecentralizedWakeSupport?
         if wakeMode == "disabled" {
             wakeSupport = nil
@@ -174,33 +256,33 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
             attachmentsEnabled: attachmentsEnabled,
             attachmentStorageBackend: current.attachmentStorageBackend,
-            hiddenRetrieval: current.hiddenRetrieval,
-            onionTransport: current.onionTransport,
-            mixnetTransport: current.mixnetTransport,
+            hiddenRetrieval: hiddenRetrieval,
+            onionTransport: onionTransport,
+            mixnetTransport: mixnetTransport,
             wakeSupport: wakeSupport,
             relayName: normalizedName.nilIfEmpty,
             operatorNote: normalizedNote.nilIfEmpty,
             softwareVersion: current.softwareVersion,
             groupCreationMode: groupMode,
-            groupSecurityModel: current.groupSecurityModel,
+            groupSecurityModel: groupSecurity,
             accessPassword: current.accessPassword,
             coordinatorRegistrationToken: current.coordinatorRegistrationToken,
             federationForwardingAuthToken: current.federationForwardingAuthToken,
             federationCoordinatorEndpoints: coordinators,
-            coordinatorHeartbeatSeconds: current.coordinatorHeartbeatSeconds,
-            coordinatorDirectoryMaxStalenessSeconds: current.coordinatorDirectoryMaxStalenessSeconds,
+            coordinatorHeartbeatSeconds: heartbeat,
+            coordinatorDirectoryMaxStalenessSeconds: staleness,
             relayPeerExchangeLimit: mode == .open ? relayPeerExchangeLimit : 0,
             openFederationDHTEnabled: mode == .open && openFederationDHTEnabled,
-            openFederationDHTMaxRecords: current.openFederationDHTMaxRecords,
-            openFederationDHTMaxRecordsPerHost: current.openFederationDHTMaxRecordsPerHost,
-            openFederationDHTMaxQueryRecords: current.openFederationDHTMaxQueryRecords,
+            openFederationDHTMaxRecords: dhtMaxRecords,
+            openFederationDHTMaxRecordsPerHost: dhtMaxPerHost,
+            openFederationDHTMaxQueryRecords: dhtMaxQuery,
             coordinatorDirectorySigningPrivateKey: current.coordinatorDirectorySigningPrivateKey,
-            curatedStrictPolicyEnabled: current.curatedStrictPolicyEnabled,
-            curatedCoordinatorQuorum: current.curatedCoordinatorQuorum,
-            curatedRequireSignedDirectory: current.curatedRequireSignedDirectory,
+            curatedStrictPolicyEnabled: curatedStrictPolicyEnabled ?? current.curatedStrictPolicyEnabled,
+            curatedCoordinatorQuorum: quorum,
+            curatedRequireSignedDirectory: curatedRequireSignedDirectory ?? current.curatedRequireSignedDirectory,
             advertisedEndpoint: endpoint,
             federationAllowList: mode == .solo ? [] : allowList,
-            allowPrivateFederationEndpoints: current.allowPrivateFederationEndpoints,
+            allowPrivateFederationEndpoints: allowPrivateFederationEndpoints ?? current.allowPrivateFederationEndpoints,
             requireInboxAccessControl: current.requireInboxAccessControl ?? true
         )
     }
@@ -258,15 +340,126 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.attachmentDefaultTTLSeconds = updated.attachmentDefaultTTLSeconds
         config.attachmentMaxTTLSeconds = updated.attachmentMaxTTLSeconds
         config.attachmentsEnabled = updated.attachmentsEnabled != false
+        config.attachmentStorageMode = AttachmentStorageMode(rawValue: attachmentStorageMode ?? "") ?? config.attachmentStorageMode
+        config.ipfsAPIEndpoint = URL(string: ipfsAPIEndpoint ?? "") ?? config.ipfsAPIEndpoint
+        let gateway = (ipfsGatewayEndpoint ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        config.ipfsGatewayEndpoint = gateway.isEmpty ? nil : URL(string: gateway)
+        config.ipfsTimeoutSeconds = ipfsTimeoutSeconds ?? config.ipfsTimeoutSeconds
+        config.hiddenRetrieval = updated.hiddenRetrieval
+        config.onionTransport = updated.onionTransport
+        config.mixnetTransport = updated.mixnetTransport
         config.wakeSupport = updated.wakeSupport
         config.relayName = updated.relayName
         config.operatorNote = updated.operatorNote
         config.groupCreationMode = updated.groupCreationMode
+        config.groupSecurityModel = updated.groupSecurityModel
         config.federationCoordinatorEndpoints = updated.federationCoordinatorEndpoints ?? []
+        config.coordinatorHeartbeatSeconds = updated.coordinatorHeartbeatSeconds ?? config.coordinatorHeartbeatSeconds
+        config.coordinatorDirectoryMaxStalenessSeconds = updated.coordinatorDirectoryMaxStalenessSeconds ?? config.coordinatorDirectoryMaxStalenessSeconds
         config.relayPeerExchangeLimit = updated.relayPeerExchangeLimit ?? 0
         config.openFederationDHTEnabled = updated.openFederationDHTEnabled
+        config.openFederationDHTMaxRecords = updated.openFederationDHTMaxRecords
+        config.openFederationDHTMaxRecordsPerHost = updated.openFederationDHTMaxRecordsPerHost
+        config.openFederationDHTMaxQueryRecords = updated.openFederationDHTMaxQueryRecords
+        config.curatedStrictPolicyEnabled = updated.curatedStrictPolicyEnabled
+        config.curatedCoordinatorQuorum = updated.curatedCoordinatorQuorum
+        config.curatedRequireSignedDirectory = updated.curatedRequireSignedDirectory
         config.advertisedEndpoint = updated.advertisedEndpoint
         config.federationAllowList = updated.federationAllowList
+        config.allowPrivateFederationEndpoints = updated.allowPrivateFederationEndpoints
+    }
+
+    var restartControlledSignature: String {
+        [
+            attachmentStorageMode ?? AttachmentStorageMode.inline.rawValue,
+            ipfsAPIEndpoint ?? "",
+            ipfsGatewayEndpoint ?? "",
+            String(ipfsTimeoutSeconds ?? 10)
+        ].joined(separator: "|")
+    }
+
+    private func validateRestartControlledSettings() throws {
+        guard let storageMode = AttachmentStorageMode(rawValue: attachmentStorageMode ?? AttachmentStorageMode.inline.rawValue) else {
+            throw OperatorConfigurationError.invalidField("attachmentStorageMode")
+        }
+        guard (1...300).contains(ipfsTimeoutSeconds ?? 10) else {
+            throw OperatorConfigurationError.invalidField("ipfsTimeoutSeconds")
+        }
+        if storageMode == .ipfs {
+            guard let api = URL(string: ipfsAPIEndpoint ?? ""), IPFSAttachmentBlobStore.isValidEndpoint(api) else {
+                throw OperatorConfigurationError.invalidField("ipfsAPIEndpoint")
+            }
+            let gateway = (ipfsGatewayEndpoint ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !gateway.isEmpty {
+                guard let url = URL(string: gateway), IPFSAttachmentBlobStore.isValidEndpoint(url) else {
+                    throw OperatorConfigurationError.invalidField("ipfsGatewayEndpoint")
+                }
+            }
+        }
+    }
+
+    private func validatedHiddenRetrieval(current: RelayConfiguration) throws -> HiddenRetrievalSupport? {
+        guard hiddenRetrievalEnabled ?? (current.hiddenRetrieval != nil) else { return nil }
+        guard let mode = HiddenRetrievalMode(rawValue: hiddenRetrievalMode ?? HiddenRetrievalMode.coverQuery.rawValue) else {
+            throw OperatorConfigurationError.invalidField("hiddenRetrievalMode")
+        }
+        let cover = hiddenRetrievalCoverSize ?? current.hiddenRetrieval?.defaultCoverSetSize ?? 8
+        let maximum = hiddenRetrievalMaxCoverSize ?? current.hiddenRetrieval?.maxCoverSetSize ?? 32
+        guard (2...4_096).contains(cover), (cover...4_096).contains(maximum) else {
+            throw OperatorConfigurationError.invalidField("hidden retrieval cover sizes")
+        }
+        let replicas = try (hiddenRetrievalReplicas ?? []).map { value -> HiddenRetrievalPIRReplica in
+            let fields = value.split(separator: ",", maxSplits: 2).map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard fields.count == 3, !fields[0].isEmpty, !fields[1].isEmpty,
+                  let endpoint = parseOperatorRelayEndpoint(fields[2]) else {
+                throw OperatorConfigurationError.invalidField("hiddenRetrievalReplicas")
+            }
+            return HiddenRetrievalPIRReplica(replicaId: fields[0], operatorId: fields[1], endpoint: endpoint)
+        }
+        let support = HiddenRetrievalSupport(
+            mode: mode,
+            defaultCoverSetSize: cover,
+            maxCoverSetSize: maximum,
+            replicatedXorPIRReplicas: replicas.isEmpty ? nil : replicas
+        )
+        if mode == .replicatedXorPIR, !HiddenRetrievalPIRReplicaSetValidator.isUsable(support) {
+            throw OperatorConfigurationError.invalidField("replicated XOR-PIR replicas")
+        }
+        return support
+    }
+
+    private func validatedOnionTransport(current: RelayConfiguration) throws -> OnionTransportSupport? {
+        guard onionTransportEnabled ?? (current.onionTransport?.enabled == true) else { return nil }
+        let hops = onionTransportMaxHops ?? current.onionTransport?.maxHops ?? 3
+        guard (2...8).contains(hops) else {
+            throw OperatorConfigurationError.invalidField("onionTransportMaxHops")
+        }
+        return OnionTransportSupport(
+            enabled: true,
+            maxHops: hops,
+            requiresFixedSizePackets: onionTransportRequiresFixedSizePackets ?? true
+        )
+    }
+
+    private func validatedMixnetTransport(
+        current: RelayConfiguration,
+        onionTransport: OnionTransportSupport?
+    ) throws -> MixnetTransportSupport? {
+        guard mixnetTransportEnabled ?? (current.mixnetTransport?.enabled == true) else { return nil }
+        let support = MixnetTransportSupport(
+            enabled: true,
+            batchIntervalSeconds: mixnetBatchIntervalSeconds ?? 30,
+            minBatchSize: mixnetMinBatchSize ?? 8,
+            coverPacketsPerBatch: mixnetCoverPacketsPerBatch ?? 2,
+            maxDelaySeconds: mixnetMaxDelaySeconds ?? 120
+        )
+        guard MixnetRoutePolicyValidator.isUsable(
+            mixnetSupport: support,
+            onionSupport: onionTransport
+        ) else {
+            throw OperatorConfigurationError.invalidField("mixnet policy requires usable onion routing, fixed packets, batching, cover traffic, and delay")
+        }
+        return support
     }
 
     private func boundedText(_ value: String, field: String, allowEmpty: Bool) throws -> String {

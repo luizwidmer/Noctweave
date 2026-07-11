@@ -12,6 +12,9 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.css.contains("--accent:#8274ff"))
         XCTAssertTrue(OperatorWebUI.javascript.contains("Authorization"))
         XCTAssertTrue(OperatorWebUI.html.contains("Secrets stay outside the browser"))
+        XCTAssertTrue(OperatorWebUI.html.contains("IPFS API endpoint"))
+        XCTAssertTrue(OperatorWebUI.html.contains("Hidden retrieval"))
+        XCTAssertTrue(OperatorWebUI.html.contains("Onion and mixnet capabilities"))
     }
 
     func testOperatorTokenAuthenticatorRequiresSingleBearerToken() {
@@ -97,6 +100,91 @@ final class OperatorWebUITests: XCTestCase {
 
         let attributes = try FileManager.default.attributesOfItem(atPath: persistence.fileURL!.path)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
+    func testIPFSSettingsPersistAndRequireRestart() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = OperatorConfigurationPersistence(
+            fileURL: directory.appendingPathComponent("operator-config.json")
+        )
+        let base = makeBaseConfiguration()
+        let controlPlane = OperatorControlPlane(
+            configurationStore: RelayConfigurationStore(base),
+            persistence: persistence,
+            relayStore: RelayStore(fileURL: nil, maxInboxMessages: 10),
+            startedAt: Date(),
+            bootstrap: [:],
+            storageDescription: "SQLite",
+            transportDescription: "TCP"
+        )
+        var editable = controlPlane.state().configuration
+        editable.attachmentStorageMode = AttachmentStorageMode.ipfs.rawValue
+        editable.ipfsAPIEndpoint = "http://ipfs:5001"
+        editable.ipfsGatewayEndpoint = "https://gateway.example.org"
+        editable.ipfsTimeoutSeconds = 20
+
+        let updated = try controlPlane.update(editable)
+        XCTAssertTrue(updated.status.restartRequired)
+        XCTAssertEqual(updated.configuration.attachmentStorageMode, "ipfs")
+        XCTAssertEqual(try persistence.load()?.ipfsAPIEndpoint, "http://ipfs:5001")
+
+        var serverConfig = ServerConfig.parse(arguments: [], environment: [:])
+        try persistence.load()?.applyPersistedOverrides(to: &serverConfig)
+        XCTAssertEqual(serverConfig.attachmentStorageMode, .ipfs)
+        XCTAssertEqual(serverConfig.ipfsAPIEndpoint?.absoluteString, "http://ipfs:5001")
+        XCTAssertEqual(serverConfig.ipfsGatewayEndpoint?.absoluteString, "https://gateway.example.org")
+        XCTAssertEqual(serverConfig.ipfsTimeoutSeconds, 20)
+    }
+
+    func testAdvancedPrivacyAndFederationSettingsApplyLive() throws {
+        let base = makeBaseConfiguration()
+        var editable = OperatorEditableConfiguration(configuration: base)
+        editable.federationMode = FederationMode.open.rawValue
+        editable.relayPeerExchangeLimit = 8
+        editable.openFederationDHTEnabled = true
+        editable.openFederationDHTMaxRecords = 128
+        editable.openFederationDHTMaxRecordsPerHost = 3
+        editable.openFederationDHTMaxQueryRecords = 192
+        editable.hiddenRetrievalEnabled = true
+        editable.hiddenRetrievalMode = HiddenRetrievalMode.coverQuery.rawValue
+        editable.hiddenRetrievalCoverSize = 12
+        editable.hiddenRetrievalMaxCoverSize = 48
+        editable.onionTransportEnabled = true
+        editable.onionTransportMaxHops = 4
+        editable.onionTransportRequiresFixedSizePackets = true
+        editable.mixnetTransportEnabled = true
+        editable.mixnetBatchIntervalSeconds = 30
+        editable.mixnetMinBatchSize = 8
+        editable.mixnetCoverPacketsPerBatch = 2
+        editable.mixnetMaxDelaySeconds = 120
+        editable.groupSecurityModel = GroupSecurityModel.mlsDerivedTree.rawValue
+
+        let updated = try editable.validatedConfiguration(from: base)
+        XCTAssertEqual(updated.hiddenRetrieval?.defaultCoverSetSize, 12)
+        XCTAssertEqual(updated.onionTransport?.maxHops, 4)
+        XCTAssertEqual(updated.mixnetTransport?.minBatchSize, 8)
+        XCTAssertEqual(updated.openFederationDHTMaxRecords, 128)
+        XCTAssertEqual(updated.openFederationDHTMaxRecordsPerHost, 3)
+        XCTAssertEqual(updated.openFederationDHTMaxQueryRecords, 192)
+        XCTAssertEqual(updated.groupSecurityModel, .mlsDerivedTree)
+    }
+
+    func testLegacyOperatorConfigurationDecodesWithNewFieldsAbsent() throws {
+        let current = OperatorEditableConfiguration(configuration: makeBaseConfiguration())
+        let encoded = try JSONEncoder().encode(current)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        [
+            "attachmentStorageMode", "ipfsAPIEndpoint", "ipfsGatewayEndpoint", "ipfsTimeoutSeconds",
+            "hiddenRetrievalEnabled", "onionTransportEnabled", "mixnetTransportEnabled"
+        ].forEach { object.removeValue(forKey: $0) }
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(OperatorEditableConfiguration.self, from: legacyData)
+        XCTAssertNil(decoded.attachmentStorageMode)
+        XCTAssertNil(decoded.hiddenRetrievalEnabled)
+        XCTAssertNoThrow(try decoded.validatedConfiguration(from: makeBaseConfiguration()))
     }
 
     func testOperatorSecurityHeadersDisallowEmbeddingAndInlineCode() {

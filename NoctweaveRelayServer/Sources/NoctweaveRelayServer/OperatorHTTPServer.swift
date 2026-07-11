@@ -11,6 +11,7 @@ struct OperatorServerStatus: Codable, Equatable {
     let storage: String
     let transport: String
     let persistenceEnabled: Bool
+    let restartRequired: Bool
     let bootstrap: [String: String]
 }
 
@@ -28,6 +29,8 @@ final class OperatorControlPlane: @unchecked Sendable {
     private let bootstrap: [String: String]
     private let storageDescription: String
     private let transportDescription: String
+    private let activeRestartControlledSignature: String
+    private var editableConfiguration: OperatorEditableConfiguration
 
     init(
         configurationStore: RelayConfigurationStore,
@@ -36,7 +39,8 @@ final class OperatorControlPlane: @unchecked Sendable {
         startedAt: Date,
         bootstrap: [String: String],
         storageDescription: String,
-        transportDescription: String
+        transportDescription: String,
+        editableConfiguration: OperatorEditableConfiguration? = nil
     ) {
         self.configurationStore = configurationStore
         self.persistence = persistence
@@ -45,10 +49,16 @@ final class OperatorControlPlane: @unchecked Sendable {
         self.bootstrap = bootstrap
         self.storageDescription = storageDescription
         self.transportDescription = transportDescription
+        let editable = editableConfiguration ?? OperatorEditableConfiguration(configuration: configurationStore.snapshot())
+        self.editableConfiguration = editable
+        activeRestartControlledSignature = editable.restartControlledSignature
     }
 
     func state(now: Date = Date()) -> OperatorStateResponse {
-        let configuration = configurationStore.snapshot()
+        lock.withLock { makeState(now: now) }
+    }
+
+    private func makeState(now: Date) -> OperatorStateResponse {
         return OperatorStateResponse(
             status: OperatorServerStatus(
                 softwareVersion: ServerConfig.advertisedSoftwareVersion,
@@ -56,9 +66,10 @@ final class OperatorControlPlane: @unchecked Sendable {
                 storage: storageDescription,
                 transport: transportDescription,
                 persistenceEnabled: persistence.isAvailable,
+                restartRequired: editableConfiguration.restartControlledSignature != activeRestartControlledSignature,
                 bootstrap: bootstrap
             ),
-            configuration: OperatorEditableConfiguration(configuration: configuration)
+            configuration: editableConfiguration
         )
     }
 
@@ -66,14 +77,15 @@ final class OperatorControlPlane: @unchecked Sendable {
         try lock.withLock {
             let updated = try editable.validatedConfiguration(from: configurationStore.snapshot())
             if persistence.isAvailable {
-                try persistence.save(OperatorEditableConfiguration(configuration: updated))
+                try persistence.save(editable)
             }
             relayStore.updateTemporalBuckets(
                 primarySeconds: updated.temporalBucketSeconds,
                 scheduleSeconds: updated.temporalBucketScheduleSeconds
             )
             configurationStore.replace(with: updated)
-            return state()
+            editableConfiguration = editable
+            return makeState(now: Date())
         }
     }
 }

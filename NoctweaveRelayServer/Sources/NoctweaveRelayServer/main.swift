@@ -1057,7 +1057,11 @@ do {
             startedAt: relayStartedAt,
             bootstrap: bootstrapSummary,
             storageDescription: config.memoryOnly ? "Memory only" : "SQLite",
-            transportDescription: config.httpPort == nil ? "TCP" : "TCP + HTTP / WS"
+            transportDescription: config.httpPort == nil ? "TCP" : "TCP + HTTP / WS",
+            editableConfiguration: OperatorEditableConfiguration(
+                configuration: relayConfigurationStore.snapshot(),
+                serverConfiguration: config
+            )
         )
         let adminBootstrap = makeOperatorHTTPBootstrap(
             group: group,

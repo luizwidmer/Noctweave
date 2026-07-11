@@ -178,14 +178,18 @@ The console can update and persist:
 
 - relay name, operator message, and advertised public endpoint;
 - temporal bucket policy, attachment availability/retention, and group creation;
+- inline or IPFS attachment storage, including API/gateway endpoints and timeout;
+- group security model, hidden retrieval, onion routing, and mixnet advertisement;
 - solo, manual, curated, or open federation settings and peer lists;
-- open-federation DHT/PEX controls and decentralized wake advertisement.
+- open-federation DHT/PEX bounds, coordinator timing, curated policy, and decentralized wake advertisement.
 
-Changes are validated, written atomically to `/data/operator-config.json` with
-mode `0600`, and applied to new relay requests without restarting. Existing
-in-flight requests retain the configuration snapshot they started with. The
-file contains no relay password, admin token, coordinator token, forwarding
-token, or signing private key.
+Changes are validated and written atomically to `/data/operator-config.json`
+with mode `0600`. Routing, federation, metadata-reduction, group, and delivery
+policy changes apply to new relay requests immediately; existing in-flight
+requests retain their starting configuration snapshot. IPFS backend and
+endpoint changes display a **Restart required** badge and activate on the next
+container start. The file contains no relay password, admin token, coordinator
+token, forwarding token, or signing private key.
 
 Listener addresses, ports, SQLite/memory mode, request ceilings, attachment
 storage backend, IPFS endpoints, and all secrets remain bootstrap settings.
