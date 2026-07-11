@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="docs/assets/NoctweaveLogo.svg" alt="Noctweave" width="720">
+</p>
+
+<p align="center"><strong>Post-quantum messaging. Private by design. Future by default.</strong></p>
+
 # Noctweave
 
 ![License: multi-license](https://img.shields.io/badge/license-multi--license-blue)
@@ -290,6 +296,7 @@ WebCrypto for symmetric primitives where appropriate. See
 - Internal security audit: [`security_audit_2026-07-10.md`](NoctweaveDocumentation/security_audit_2026-07-10.md)
 - Roadmap: [`noctweave_roadmap.md`](NoctweaveDocumentation/noctweave_roadmap.md)
 - Release/SBOM policy: [`dependency_sbom_and_release_policy.md`](NoctweaveDocumentation/dependency_sbom_and_release_policy.md)
+- Visual identity: [`visual_identity.md`](NoctweaveDocumentation/visual_identity.md)
 
 ## Good First Issues
 

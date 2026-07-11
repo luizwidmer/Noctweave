@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Noctweave icon</title>
+  <desc id="desc">The violet, blue, and teal Noctweave N on a dark rounded square.</desc>
+  <defs>
+    <linearGradient id="icon-bg" x1="22" y1="14" x2="234" y2="242" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#171B31"/>
+      <stop offset="1" stop-color="#080B16"/>
+    </linearGradient>
+    <linearGradient id="nw-gradient" x1="48" y1="52" x2="208" y2="204" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7B61FF"/>
+      <stop offset="0.5" stop-color="#5B9CFA"/>
+      <stop offset="1" stop-color="#3DD5C5"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#icon-bg)" stroke="#343950" stroke-width="3"/>
+  <path d="M57 191V65L199 191V65" fill="none" stroke="url(#nw-gradient)" stroke-width="29" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+</svg>

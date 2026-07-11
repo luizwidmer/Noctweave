@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" role="img" aria-labelledby="title desc">
+  <title id="title">Noctweave</title>
+  <desc id="desc">Noctweave post-quantum messaging logo.</desc>
+  <defs>
+    <linearGradient id="nw-gradient" x1="36" y1="52" x2="228" y2="228" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7B61FF"/>
+      <stop offset="0.5" stop-color="#5B9CFA"/>
+      <stop offset="1" stop-color="#3DD5C5"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="1196" height="276" rx="34" fill="#080B16" stroke="#24293A" stroke-width="4"/>
+  <path d="M58 220V60L218 220V60" fill="none" stroke="url(#nw-gradient)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="308" y="173" fill="#F3F5FA" font-family="Geist, Inter, ui-sans-serif, Arial, sans-serif" font-size="94" font-weight="600" letter-spacing="24">NOCTWEAVE</text>
+</svg>

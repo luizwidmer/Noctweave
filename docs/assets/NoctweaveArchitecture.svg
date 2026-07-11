@@ -8,8 +8,8 @@
       <stop offset="1" stop-color="#071f26"/>
     </linearGradient>
     <linearGradient id="client" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#312e81"/>
-      <stop offset="1" stop-color="#1e1b4b"/>
+      <stop offset="0" stop-color="#44358F"/>
+      <stop offset="1" stop-color="#211947"/>
     </linearGradient>
     <linearGradient id="relay" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#164e63"/>
@@ -20,68 +20,68 @@
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <marker id="arrow" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto">
-      <path d="M1 1 10 5.5 1 10Z" fill="#67e8f9"/>
+      <path d="M1 1 10 5.5 1 10Z" fill="#72E5DA"/>
     </marker>
   </defs>
 
   <rect width="1200" height="620" rx="30" fill="url(#background)"/>
-  <circle cx="110" cy="80" r="180" fill="#4f46e5" opacity="0.07"/>
-  <circle cx="1090" cy="540" r="230" fill="#06b6d4" opacity="0.06"/>
+  <circle cx="110" cy="80" r="180" fill="#7B61FF" opacity="0.07"/>
+  <circle cx="1090" cy="540" r="230" fill="#3DD5C5" opacity="0.06"/>
 
-  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
-    <text x="60" y="65" fill="#f8fafc" font-size="30" font-weight="750">Encrypted end to end. Routed without plaintext trust.</text>
-    <text x="60" y="98" fill="#94a3b8" font-size="17">Federation changes the route—not the cryptographic boundary.</text>
+  <g font-family="Geist, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <text x="60" y="65" fill="#F3F5FA" font-size="30" font-weight="750">Encrypted end to end. Routed without plaintext trust.</text>
+    <text x="60" y="98" fill="#A8ADBD" font-size="17">Federation changes the route—not the cryptographic boundary.</text>
 
-    <g fill="none" stroke="#67e8f9" stroke-width="3" marker-end="url(#arrow)">
+    <g fill="none" stroke="#72E5DA" stroke-width="3" marker-end="url(#arrow)">
       <path d="M274 280H350"/>
       <path d="M570 280H630"/>
       <path d="M850 280H926"/>
     </g>
     <g filter="url(#softGlow)">
-      <rect x="55" y="165" width="220" height="230" rx="24" fill="url(#client)" stroke="#818cf8" stroke-opacity="0.7"/>
-      <rect x="350" y="165" width="220" height="230" rx="24" fill="url(#relay)" stroke="#22d3ee" stroke-opacity="0.6"/>
-      <rect x="630" y="165" width="220" height="230" rx="24" fill="url(#relay)" stroke="#22d3ee" stroke-opacity="0.6"/>
-      <rect x="925" y="165" width="220" height="230" rx="24" fill="url(#client)" stroke="#818cf8" stroke-opacity="0.7"/>
+      <rect x="55" y="165" width="220" height="230" rx="24" fill="url(#client)" stroke="#9B8CFF" stroke-opacity="0.7"/>
+      <rect x="350" y="165" width="220" height="230" rx="24" fill="url(#relay)" stroke="#3DD5C5" stroke-opacity="0.6"/>
+      <rect x="630" y="165" width="220" height="230" rx="24" fill="url(#relay)" stroke="#3DD5C5" stroke-opacity="0.6"/>
+      <rect x="925" y="165" width="220" height="230" rx="24" fill="url(#client)" stroke="#9B8CFF" stroke-opacity="0.7"/>
     </g>
 
     <rect x="280" y="242" width="64" height="24" rx="12" fill="#0c1828"/>
-    <text x="312" y="259" fill="#a5f3fc" font-size="12" font-weight="700" text-anchor="middle">SEALED</text>
+    <text x="312" y="259" fill="#B7F4EE" font-size="12" font-weight="700" text-anchor="middle">SEALED</text>
     <rect x="575" y="242" width="50" height="24" rx="12" fill="#0c1828"/>
-    <text x="600" y="259" fill="#a5f3fc" font-size="12" font-weight="700" text-anchor="middle">FED</text>
+    <text x="600" y="259" fill="#B7F4EE" font-size="12" font-weight="700" text-anchor="middle">FED</text>
     <rect x="861" y="242" width="54" height="24" rx="12" fill="#0c1828"/>
-    <text x="888" y="259" fill="#a5f3fc" font-size="12" font-weight="700" text-anchor="middle">FETCH</text>
+    <text x="888" y="259" fill="#B7F4EE" font-size="12" font-weight="700" text-anchor="middle">FETCH</text>
 
     <g text-anchor="middle">
-      <text x="165" y="215" fill="#c7d2fe" font-size="14" font-weight="700" letter-spacing="1.4">SENDER</text>
+      <text x="165" y="215" fill="#D5D0FF" font-size="14" font-weight="700" letter-spacing="1.4">SENDER</text>
       <text x="165" y="253" fill="#fff" font-size="25" font-weight="750">Alice</text>
-      <text x="165" y="292" fill="#cbd5e1" font-size="16">signs identity context</text>
-      <text x="165" y="321" fill="#cbd5e1" font-size="16">establishes PQ session</text>
-      <text x="165" y="350" fill="#cbd5e1" font-size="16">encrypts locally</text>
+      <text x="165" y="292" fill="#D1D5E0" font-size="16">signs identity context</text>
+      <text x="165" y="321" fill="#D1D5E0" font-size="16">establishes PQ session</text>
+      <text x="165" y="350" fill="#D1D5E0" font-size="16">encrypts locally</text>
 
-      <text x="460" y="215" fill="#a5f3fc" font-size="14" font-weight="700" letter-spacing="1.4">HOME RELAY</text>
+      <text x="460" y="215" fill="#B7F4EE" font-size="14" font-weight="700" letter-spacing="1.4">HOME RELAY</text>
       <text x="460" y="253" fill="#fff" font-size="25" font-weight="750">Relay A</text>
-      <text x="460" y="292" fill="#cbd5e1" font-size="16">validates routing proofs</text>
-      <text x="460" y="321" fill="#cbd5e1" font-size="16">stores ciphertext</text>
-      <text x="460" y="350" fill="#cbd5e1" font-size="16">forwards when permitted</text>
+      <text x="460" y="292" fill="#D1D5E0" font-size="16">validates routing proofs</text>
+      <text x="460" y="321" fill="#D1D5E0" font-size="16">stores ciphertext</text>
+      <text x="460" y="350" fill="#D1D5E0" font-size="16">forwards when permitted</text>
 
-      <text x="740" y="215" fill="#a5f3fc" font-size="14" font-weight="700" letter-spacing="1.4">DESTINATION RELAY</text>
+      <text x="740" y="215" fill="#B7F4EE" font-size="14" font-weight="700" letter-spacing="1.4">DESTINATION RELAY</text>
       <text x="740" y="253" fill="#fff" font-size="25" font-weight="750">Relay B</text>
-      <text x="740" y="292" fill="#cbd5e1" font-size="16">enforces federation policy</text>
-      <text x="740" y="321" fill="#cbd5e1" font-size="16">queues sealed envelopes</text>
-      <text x="740" y="350" fill="#cbd5e1" font-size="16">never decrypts payloads</text>
+      <text x="740" y="292" fill="#D1D5E0" font-size="16">enforces federation policy</text>
+      <text x="740" y="321" fill="#D1D5E0" font-size="16">queues sealed envelopes</text>
+      <text x="740" y="350" fill="#D1D5E0" font-size="16">never decrypts payloads</text>
 
-      <text x="1035" y="215" fill="#c7d2fe" font-size="14" font-weight="700" letter-spacing="1.4">RECIPIENT</text>
+      <text x="1035" y="215" fill="#D5D0FF" font-size="14" font-weight="700" letter-spacing="1.4">RECIPIENT</text>
       <text x="1035" y="253" fill="#fff" font-size="25" font-weight="750">Bob</text>
-      <text x="1035" y="292" fill="#cbd5e1" font-size="16">fetches from mailbox</text>
-      <text x="1035" y="321" fill="#cbd5e1" font-size="16">verifies sender</text>
-      <text x="1035" y="350" fill="#cbd5e1" font-size="16">decrypts locally</text>
+      <text x="1035" y="292" fill="#D1D5E0" font-size="16">fetches from mailbox</text>
+      <text x="1035" y="321" fill="#D1D5E0" font-size="16">verifies sender</text>
+      <text x="1035" y="350" fill="#D1D5E0" font-size="16">decrypts locally</text>
     </g>
 
     <rect x="55" y="450" width="1090" height="110" rx="20" fill="#0f172a" stroke="#334155"/>
-    <text x="85" y="489" fill="#f8fafc" font-size="17" font-weight="700">Relay-visible</text>
-    <text x="245" y="489" fill="#94a3b8" font-size="16">routing identifiers · bounded ciphertext · timing and transport metadata</text>
+    <text x="85" y="489" fill="#F3F5FA" font-size="17" font-weight="700">Relay-visible</text>
+    <text x="245" y="489" fill="#A8ADBD" font-size="16">routing identifiers · bounded ciphertext · timing and transport metadata</text>
     <line x1="85" y1="511" x2="1115" y2="511" stroke="#273449"/>
-    <text x="85" y="542" fill="#f8fafc" font-size="17" font-weight="700">Client-only</text>
-    <text x="245" y="542" fill="#94a3b8" font-size="16">message plaintext · private identity keys · session secrets · decrypted attachments</text>
+    <text x="85" y="542" fill="#F3F5FA" font-size="17" font-weight="700">Client-only</text>
+    <text x="245" y="542" fill="#A8ADBD" font-size="16">message plaintext · private identity keys · session secrets · decrypted attachments</text>
   </g>
 </svg>

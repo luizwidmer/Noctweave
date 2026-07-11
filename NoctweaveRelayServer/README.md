@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../docs/assets/NoctweaveLogo.svg" alt="Noctweave" width="620">
+</p>
+
 # NoctweaveRelayServer (Linux)
 
 A Linux relay server for the Noctweave Protocol, used by compatible clients and tooling. It supports line-delimited TCP plus optional HTTP/WebSocket bridge support.
