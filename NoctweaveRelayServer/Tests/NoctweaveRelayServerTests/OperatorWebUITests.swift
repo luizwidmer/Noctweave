@@ -15,6 +15,11 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.html.contains("IPFS API endpoint"))
         XCTAssertTrue(OperatorWebUI.html.contains("Hidden retrieval"))
         XCTAssertTrue(OperatorWebUI.html.contains("Onion and mixnet capabilities"))
+        XCTAssertTrue(OperatorWebUI.html.contains("Active backend:"))
+        XCTAssertTrue(OperatorWebUI.html.contains("aria-live=\"polite\""))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("restartSettingsChanged"))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("Configuration saved and applied"))
+        XCTAssertTrue(OperatorWebUI.css.contains("prefers-reduced-motion"))
     }
 
     func testOperatorTokenAuthenticatorRequiresSingleBearerToken() {
