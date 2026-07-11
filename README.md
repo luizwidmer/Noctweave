@@ -192,6 +192,11 @@ are installed locally.
 
 ## Run The Linux Relay
 
+![Noctweave Linux relay operator console](docs/assets/NoctweaveRelayConsole.png)
+
+The authenticated operator console provides a focused view of relay health,
+storage, delivery policy, federation, and privacy capabilities.
+
 ```sh
 swift build --package-path NoctweaveRelayServer
 NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
