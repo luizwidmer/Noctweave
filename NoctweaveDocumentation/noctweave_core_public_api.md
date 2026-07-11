@@ -7,7 +7,7 @@
 - `NoctweaveCore`: protocol models, cryptographic wrappers, relay client/server primitives, messaging state, groups, federation, and metadata-reduction helpers.
 - `NoctyraCLI`: command-line diagnostics and headless messaging client.
 - `NoctweaveCoreTestHarness`: local protocol harness for development verification.
-- `NoctweaveJS`: JavaScript ESM relay client, relay request helpers, and web/database storage adapters for simple web integrations.
+- `NoctweaveJS`: JavaScript ESM protocol library, working browser direct-message client, relay request helpers, and encrypted web/database storage adapters.
 
 ## Client-Facing APIs
 
@@ -33,10 +33,13 @@
 ## JavaScript Web Integration
 
 `NoctweaveJS` provides relay transport, bounded raw storage adapters,
-`EncryptedNoctweaveStore`, a narrow liboqs WASM adapter, and the native
+`EncryptedNoctweaveStore`, a narrow liboqs WASM adapter, the native
 Noctweave direct-message wire profile. The browser demo can generate ML-DSA and
 ML-KEM keys, exchange signed contact offers, establish sessions, and send or
-decrypt interoperable envelopes. It is still pre-1.0 and unaudited. Raw
+decrypt interoperable envelopes. It also includes an encrypted local-first
+browser client with identity setup, verified contacts, durable direct
+conversations, inbox synchronization, and profile portability. It is still
+pre-1.0 and unaudited. Raw
 `localStorage`, IndexedDB, and database adapters do not encrypt by themselves;
 applications must wrap sensitive state and manage the wrapping key separately.
 `NoctweaveRelayClient` accepts a bounded `policy` object for production timeout,

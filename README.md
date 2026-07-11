@@ -58,23 +58,24 @@ NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
   --memory-only
 ```
 
-In another terminal, run the browser messenger demo:
+In another terminal, run the NoctweaveJS client:
 
 ```sh
 cd NoctweaveJS
 npm install
-npm run dev:browser-client
+npm run dev:client
 ```
 
 Open two profiles:
 
-- [http://127.0.0.1:5173/examples/browser-client/?profile=alice](http://127.0.0.1:5173/examples/browser-client/?profile=alice)
-- [http://127.0.0.1:5173/examples/browser-client/?profile=bob](http://127.0.0.1:5173/examples/browser-client/?profile=bob)
+- [http://127.0.0.1:5173/client/?profile=alice](http://127.0.0.1:5173/client/?profile=alice)
+- [http://127.0.0.1:5173/client/?profile=bob](http://127.0.0.1:5173/client/?profile=bob)
 
-Create an inbox in both profiles, exchange contact codes, send a message, and
-fetch it from the other profile. All identity and session keys are generated in
-the browser. The relay receives signed requests and sealed envelopes—not chat
-plaintext.
+Complete setup in both profiles, exchange contact codes, and send a message.
+The client maintains a verified contact book, durable encrypted history,
+unread state, retryable sends, and automatic inbox sync while visible. All
+identity and session keys are generated in the browser. The relay receives
+signed requests and sealed envelopes—not chat plaintext.
 
 ![Noctweave message lifecycle](docs/assets/NoctweaveMessageFlow.svg)
 
@@ -84,9 +85,9 @@ plaintext.
 
 NoctweaveJS includes two browser surfaces:
 
-- `client/` is the production-oriented shell with encrypted profile setup,
-  relay verification, post-quantum identity creation, contact-code export,
-  locking, and local reset.
+- `client/` is the working minimal messaging application with encrypted profile
+  setup, relay management, post-quantum identity creation, verified contacts,
+  durable direct chats, unread state, sync, and encrypted backup/restore.
 - `examples/browser-client/` is the interoperability demo used to exercise
   pairing and encrypted message exchange between two browser profiles.
 
@@ -100,6 +101,13 @@ npm run dev:client
 Then open [http://127.0.0.1:5173/client/](http://127.0.0.1:5173/client/).
 NoctweaveJS supports application-managed memory, localStorage, IndexedDB, and
 database adapters; sensitive records should use the encrypted store wrapper.
+
+For a non-interactive bidirectional chat check against a running relay:
+
+```sh
+cd NoctweaveJS
+npm run smoke:client -- --relay http://127.0.0.1:9340
+```
 
 ## Repository Components
 
