@@ -10,6 +10,7 @@ A Linux relay server for the Noctweave Protocol, used by compatible clients and 
 - Supports federation coordinator directory APIs (`registerFederationNode`, `listFederationNodes`).
 - Supports explicit open-federation DHT node mode and bounded PEX peer hints when enabled by the operator.
 - Persists mailboxes + attachment chunks to `relay_store.sqlite` (unless `--memory-only`).
+- Includes an optional authenticated operator Web UI for safe runtime configuration.
 
 ## Build (local)
 
@@ -81,6 +82,9 @@ not appear in process listings:
 - `NOCTYRA_OPEN_FEDERATION_DHT_MAX_RECORDS_PER_HOST`
 - `NOCTYRA_OPEN_FEDERATION_DHT_MAX_QUERY_RECORDS`
 - `NOCTYRA_RELAY_PEER_EXCHANGE_LIMIT`
+- `NOCTYRA_ADMIN_TOKEN`
+- `NOCTYRA_ADMIN_HOST`
+- `NOCTYRA_ADMIN_PORT`
 
 Use `--attachments-enabled false` for a text-only relay. Attachment upload and
 download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
@@ -142,9 +146,53 @@ Use `--wake-mode pullOnly` or `--wake-mode longPoll` to advertise a decentralize
 Use `--open-federation-dht-node true` with `--federation-mode open` to make the relay act as a bounded open-federation DHT node. The relay then accepts and serves signed short-lived relay records through the relay protocol. Keep `--allow-private-federation-endpoints false` for public networks so records and forwarding do not target loopback or LAN addresses. PEX is separate: `--relay-peer-exchange-limit <count>` controls how many known open relays are advertised in `/info`; set it to `0` to disable peer hints.
 
 ```bash
-docker build -t noctyra-relay ./"NoctweaveRelayServer"
+docker build -t noctyra-relay .
 docker run --rm -p 9339:9339 -v noctyra-data:/data noctyra-relay
 ```
+
+### Operator Web UI
+
+The container includes a responsive operator console styled consistently with
+NoctweaveJS. It runs on a dedicated listener and is disabled unless an admin
+token is supplied. Generate a random token and bind the console to localhost:
+
+```bash
+export NOCTYRA_ADMIN_TOKEN="$(openssl rand -hex 32)"
+docker run --rm \
+  -p 9339:9339 \
+  -p 9340:9340 \
+  -p 127.0.0.1:9090:9090 \
+  -e NOCTYRA_ADMIN_TOKEN \
+  -v noctyra-data:/data \
+  noctyra-relay \
+  --host 0.0.0.0 --port 9339 --http-port 9340 --data-dir /data
+```
+
+Open [http://127.0.0.1:9090/admin/](http://127.0.0.1:9090/admin/) and enter the
+token. Supplying `NOCTYRA_ADMIN_TOKEN` automatically enables port `9090`; use
+`NOCTYRA_ADMIN_PORT` to choose another port. The Docker image sets the internal
+admin bind address to `0.0.0.0`, while the host mapping above keeps it available
+only from the relay host.
+
+The console can update and persist:
+
+- relay name, operator message, and advertised public endpoint;
+- temporal bucket policy, attachment availability/retention, and group creation;
+- solo, manual, curated, or open federation settings and peer lists;
+- open-federation DHT/PEX controls and decentralized wake advertisement.
+
+Changes are validated, written atomically to `/data/operator-config.json` with
+mode `0600`, and applied to new relay requests without restarting. Existing
+in-flight requests retain the configuration snapshot they started with. The
+file contains no relay password, admin token, coordinator token, forwarding
+token, or signing private key.
+
+Listener addresses, ports, SQLite/memory mode, request ceilings, attachment
+storage backend, IPFS endpoints, and all secrets remain bootstrap settings.
+Configure those through Docker arguments or environment variables and restart
+the container. Never publish the admin port directly to the internet. For
+remote administration, use an SSH tunnel, private VPN, or a separately
+authenticated HTTPS reverse proxy.
 
 ### Docker + Let's Encrypt (automatic TLS)
 
@@ -262,6 +310,9 @@ the advertised endpoint for policy checks and coordinator registration.
 - `--host <ip>`: listen interface (default: `0.0.0.0`)
 - `--port <port>`: listen port (default: `9339`)
 - `--http-port <port>`: optional HTTP/WebSocket bridge port (disabled by default). Serves `POST /relay` and WebSocket `/relay`.
+- `--admin-host <address>`: operator Web UI bind address (default: `127.0.0.1`; Docker image default: `0.0.0.0`)
+- `--admin-port <port>`: authenticated operator Web UI port (disabled unless configured; defaults to `9090` when an admin token is supplied)
+- `--admin-token <token>`: operator bearer token, 16-4096 UTF-8 bytes. Prefer `NOCTYRA_ADMIN_TOKEN` so it does not appear in process listings.
 - `--data-dir <path>`: store messages to `relay_store.sqlite` inside this directory (default: `/data`)
 - `--memory-only`: disable persistence
 - `--max-inbox <count>`: max messages stored per inbox (default: `1000`, `0` disables)

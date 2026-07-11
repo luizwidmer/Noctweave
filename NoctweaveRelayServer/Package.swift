@@ -11,9 +11,18 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-crypto.git", exact: "3.15.1")
     ],
     targets: [
+        .systemLibrary(
+            name: "CSQLite",
+            pkgConfig: "sqlite3",
+            providers: [
+                .apt(["libsqlite3-dev"]),
+                .brew(["sqlite3"])
+            ]
+        ),
         .executableTarget(
             name: "NoctweaveRelayServer",
             dependencies: [
+                "CSQLite",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -25,6 +34,7 @@ let package = Package(
             name: "NoctweaveRelayServerTests",
             dependencies: [
                 "NoctweaveRelayServer",
+                "CSQLite",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOFoundationCompat", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio")

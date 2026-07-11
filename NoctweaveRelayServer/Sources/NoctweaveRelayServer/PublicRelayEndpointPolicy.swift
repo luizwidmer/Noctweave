@@ -35,7 +35,7 @@ enum PublicRelayEndpointPolicy {
         #else
         hints.ai_socktype = SOCK_STREAM
         #endif
-        hints.ai_protocol = IPPROTO_TCP
+        hints.ai_protocol = Int32(IPPROTO_TCP)
         var result: UnsafeMutablePointer<addrinfo>?
         guard getaddrinfo(host, nil, &hints, &result) == 0 else {
             return nil

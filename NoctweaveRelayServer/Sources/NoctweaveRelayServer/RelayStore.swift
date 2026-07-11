@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(SQLite3)
 import SQLite3
+#else
+import CSQLite
+#endif
 
 enum RelayStoreError: Error {
     case inboxFull
@@ -40,7 +44,7 @@ final class RelayStore {
     private let fileURL: URL?
     private let maxInboxMessages: Int?
     private let attachmentBlobStore: AttachmentBlobStore?
-    private let temporalBuckets: [TimeInterval]
+    private var temporalBuckets: [TimeInterval]
     private let queueKey = DispatchSpecificKey<Void>()
     private let announcementTTL: TimeInterval = 300
     private let minimumAnnouncementTTL: TimeInterval = 30
@@ -113,6 +117,15 @@ final class RelayStore {
             if let snapshot = try SQLiteRelayStateStore.loadState(at: sqliteURL) {
                 applySnapshot(snapshot)
             }
+        }
+    }
+
+    func updateTemporalBuckets(primarySeconds: Int, scheduleSeconds: [Int]?) {
+        performSync {
+            temporalBuckets = RelayStore.normalizeBuckets(
+                primarySeconds: primarySeconds,
+                scheduleSeconds: scheduleSeconds
+            )
         }
     }
 

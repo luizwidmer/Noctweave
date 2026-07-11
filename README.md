@@ -112,7 +112,8 @@ database adapters; sensitive records should use the encrypted store wrapper.
 - [`NoctweaveJS/`](NoctweaveJS/) — browser/Node relay client, encrypted storage
   wrappers, WebCrypto helpers, and WASM-backed liboqs integration.
 - [`NoctweaveRelayServer/`](NoctweaveRelayServer/) — Linux relay with TCP,
-  HTTP/WebSocket, Docker, SQLite, federation, and optional IPFS offload.
+  HTTP/WebSocket, Docker, SQLite, an authenticated operator Web UI, federation,
+  and optional IPFS offload.
 - [`NoctweaveDocumentation/`](NoctweaveDocumentation/) — protocol, API,
   security, federation, deployment, and release documentation.
 - [`AgentGuides/`](AgentGuides/) and [`AgentSkills/`](AgentSkills/) — reference

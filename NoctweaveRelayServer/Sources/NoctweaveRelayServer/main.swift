@@ -16,6 +16,9 @@ struct ServerConfig {
       --host <address>                 Bind address (default: 0.0.0.0)
       --port <port>                    Raw TCP port (default: 9339)
       --http-port <port>               Optional HTTP/WebSocket bridge port
+      --admin-port <port>              Optional authenticated operator Web UI
+      --admin-host <address>           Admin bind address (default: 127.0.0.1)
+      --admin-token <token>            Admin bearer token (minimum 16 bytes)
       --memory-only                    Keep relay state in memory
       --data-dir <path>                SQLite state directory (default: /data)
       --relay-name <name>              Operator-visible relay name
@@ -44,6 +47,9 @@ struct ServerConfig {
     var host: String
     var port: Int
     var httpPort: Int?
+    var adminHost: String
+    var adminPort: Int?
+    var adminToken: String?
     var dataDir: URL?
     var memoryOnly: Bool
     var maxInboxMessages: Int?
@@ -99,6 +105,9 @@ struct ServerConfig {
         var host = "0.0.0.0"
         var port = 9339
         var httpPort: Int?
+        var adminHost = environment["NOCTYRA_ADMIN_HOST"] ?? "127.0.0.1"
+        var adminPort = Int(environment["NOCTYRA_ADMIN_PORT"] ?? "").flatMap { $0 > 0 ? $0 : nil }
+        var adminToken = environment["NOCTYRA_ADMIN_TOKEN"]
         var dataDir: URL? = URL(fileURLWithPath: "/data", isDirectory: true)
         var memoryOnly = false
         var maxInboxMessages: Int? = 1000
@@ -191,6 +200,14 @@ struct ServerConfig {
                 if let value = iterator.next(), let parsed = Int(value), parsed > 0 {
                     httpPort = parsed
                 }
+            case "--admin-host":
+                adminHost = iterator.next() ?? adminHost
+            case "--admin-port":
+                if let value = iterator.next(), let parsed = Int(value), parsed > 0 {
+                    adminPort = parsed
+                }
+            case "--admin-token":
+                adminToken = iterator.next()
             case "--data-dir":
                 if let value = iterator.next() {
                     dataDir = URL(fileURLWithPath: value, isDirectory: true)
@@ -490,9 +507,15 @@ struct ServerConfig {
         if memoryOnly {
             dataDir = nil
         }
+        if adminPort == nil,
+           adminToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            adminPort = 9090
+        }
+        adminToken = adminToken?.trimmingCharacters(in: .whitespacesAndNewlines)
 
         port = min(max(port, 1), Int(UInt16.max))
         httpPort = httpPort.map { min(max($0, 1), Int(UInt16.max)) }
+        adminPort = adminPort.map { min(max($0, 1), Int(UInt16.max)) }
         maxInboxMessages = maxInboxMessages.map { min(max($0, 1), 1_000_000) }
         forwardingRequestTimeoutSeconds = min(max(forwardingRequestTimeoutSeconds, 1), 300)
         temporalBucketSeconds = min(max(temporalBucketSeconds, 0), maximumTemporalBucketSeconds)
@@ -588,6 +611,9 @@ struct ServerConfig {
             host: host,
             port: port,
             httpPort: httpPort,
+            adminHost: adminHost,
+            adminPort: adminPort,
+            adminToken: adminToken,
             dataDir: dataDir,
             memoryOnly: memoryOnly,
             maxInboxMessages: maxInboxMessages,
@@ -751,7 +777,19 @@ if ServerConfig.shouldShowVersion(arguments: startupArguments) {
     print(ServerConfig.advertisedSoftwareVersion)
     exit(0)
 }
-let config = ServerConfig.parse(arguments: startupArguments)
+var config = ServerConfig.parse(arguments: startupArguments)
+let operatorConfigurationPersistence = OperatorConfigurationPersistence(
+    fileURL: config.dataDir?.appendingPathComponent("operator-config.json")
+)
+do {
+    if let persistedOperatorConfiguration = try operatorConfigurationPersistence.load() {
+        try persistedOperatorConfiguration.applyPersistedOverrides(to: &config)
+        print("[relay] Loaded persisted operator configuration")
+    }
+} catch {
+    print("[relay] Refusing to start because operator-config.json is invalid.")
+    exit(2)
+}
 if config.federationMode == .manual {
     guard config.relayKind == .standard else {
         print("[relay] manual federation requires --relay-kind standard")
@@ -766,12 +804,18 @@ if config.federationMode == .curated,
 for (label, secret, minimum) in [
     ("relay password", config.accessPassword, 12),
     ("coordinator registration token", config.coordinatorRegistrationToken, 16),
-    ("federation forwarding token", config.federationForwardingAuthToken, 16)
+    ("federation forwarding token", config.federationForwardingAuthToken, 16),
+    ("admin token", config.adminToken, 16)
 ] {
     if let secret, !secret.isEmpty, !(minimum...4_096).contains(secret.utf8.count) {
         print("[relay] \(label) must contain between \(minimum) and 4096 UTF-8 bytes")
         exit(2)
     }
+}
+if config.adminPort != nil,
+   config.adminToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+    print("[relay] --admin-port requires --admin-token or NOCTYRA_ADMIN_TOKEN")
+    exit(2)
 }
 let fileURL: URL?
 if let dataDir = config.dataDir {
@@ -928,6 +972,9 @@ if relayConfiguration.kind == .coordinator {
     }
 }
 
+let relayConfigurationStore = RelayConfigurationStore(relayConfiguration)
+let relayStartedAt = Date()
+
 let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
 defer { try? group.syncShutdownGracefully() }
 
@@ -941,7 +988,7 @@ let bootstrap = ServerBootstrap(group: group)
                     maxMessageBytes: config.maxMessageBytes,
                     maxLineBytes: config.maxLineBytes,
                     localEndpoint: RelayEndpoint(host: config.host, port: UInt16(config.port)),
-                    relayConfiguration: relayConfiguration,
+                    relayConfiguration: relayConfigurationStore.snapshot(),
                     forwardingRequestTimeoutSeconds: config.forwardingRequestTimeoutSeconds
                 ))
             }
@@ -987,6 +1034,40 @@ do {
         let httpAddress = httpChannel.localAddress?.description ?? "unknown"
         print("[relay] Listening (http/ws) on \(httpAddress) path=/relay")
         closeFutures.append(httpChannel.closeFuture)
+    }
+
+    if let adminPort = config.adminPort, let adminToken = config.adminToken {
+        if adminPort == config.port || adminPort == config.httpPort {
+            print("[relay] --admin-port must differ from relay listener ports")
+            exit(2)
+        }
+        let bootstrapSummary: [String: String] = [
+            "Raw TCP": "\(config.host):\(config.port)",
+            "HTTP / WebSocket": config.httpPort.map { "\(config.host):\($0)" } ?? "Disabled",
+            "Admin listener": "\(config.adminHost):\(adminPort)",
+            "Message ceiling": "\(config.maxMessageBytes ?? 0) bytes",
+            "Inbox ceiling": config.maxInboxMessages.map(String.init) ?? "Disabled",
+            "Attachment backend": config.attachmentStorageMode.rawValue,
+            "Secrets": "Environment / command line"
+        ]
+        let controlPlane = OperatorControlPlane(
+            configurationStore: relayConfigurationStore,
+            persistence: operatorConfigurationPersistence,
+            relayStore: store,
+            startedAt: relayStartedAt,
+            bootstrap: bootstrapSummary,
+            storageDescription: config.memoryOnly ? "Memory only" : "SQLite",
+            transportDescription: config.httpPort == nil ? "TCP" : "TCP + HTTP / WS"
+        )
+        let adminBootstrap = makeOperatorHTTPBootstrap(
+            group: group,
+            controlPlane: controlPlane,
+            authenticationToken: adminToken
+        )
+        let adminChannel = try adminBootstrap.bind(host: config.adminHost, port: adminPort).wait()
+        let adminAddress = adminChannel.localAddress?.description ?? "unknown"
+        print("[relay] Operator Web UI listening on \(adminAddress) path=/admin/")
+        closeFutures.append(adminChannel.closeFuture)
     }
 
     try EventLoopFuture.andAllSucceed(closeFutures, on: group.next()).wait()

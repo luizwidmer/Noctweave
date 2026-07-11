@@ -1,0 +1,8 @@
+.build
+.git
+.swiftpm
+.DS_Store
+docker-compose*.yml
+Dockerfile.caddy-l4
+Caddyfile.layer4
+.env*

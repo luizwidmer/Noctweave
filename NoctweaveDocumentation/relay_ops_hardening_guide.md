@@ -45,6 +45,7 @@ Minimum public exposure:
 - Allow inbound `80/tcp` only if ACME HTTP-01 challenges need it.
 - Block direct inbound access to relay raw TCP (`9339`) and bridge (`9340`) from the public internet.
 - Allow outbound HTTPS/WSS to federation peers and coordinators.
+- Bind the operator Web UI to localhost or a private management network. Never expose port `9090` as a public relay endpoint.
 
 For curated federation, restrict outbound relay-to-relay traffic to allow-listed relays where possible.
 
@@ -56,10 +57,18 @@ Prefer environment variables over command-line flags:
 - `NOCTYRA_COORDINATOR_REGISTRATION_TOKEN`
 - `NOCTYRA_FEDERATION_FORWARDING_TOKEN`
 - `NOCTYRA_COORDINATOR_SIGNING_KEY`
+- `NOCTYRA_ADMIN_TOKEN`
 
 Keep relay passwords and federation forwarding tokens distinct. The relay already avoids forwarding inbound client auth tokens to other relays; keep that isolation operationally true by not reusing the same secret everywhere.
 
 Coordinator signing keys are trust roots. Back them up offline. If a coordinator key is lost or rotated unexpectedly, clients and relays that pinned the previous public key should treat the directory as a new trust root.
+
+The operator Web UI uses a separate bearer token, never the relay client
+password. Generate at least 32 random bytes, keep the host port loopback-bound,
+and place any remote access behind SSH, a private VPN, or an authenticated TLS
+management proxy. The console stores its token only in browser session storage;
+closing the tab clears the browser-side session. The operator API does not
+return relay, federation, coordinator, or signing secrets.
 
 ## Storage
 
@@ -73,6 +82,11 @@ docker run --rm \
 ```
 
 Persist `/data` for normal operation. Use `--memory-only` only for throwaway relays or development because queued messages, attachments, and coordinator keys disappear on restart.
+
+Web UI changes are persisted separately as `/data/operator-config.json` with
+mode `0600`. Back it up with the relay database. The file deliberately contains
+only non-secret operator policy; bootstrap secrets remain environment or
+command-line inputs.
 
 Set attachment retention low enough for your budget and threat model:
 
