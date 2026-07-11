@@ -19,7 +19,11 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.html.contains("aria-live=\"polite\""))
         XCTAssertTrue(OperatorWebUI.javascript.contains("restartSettingsChanged"))
         XCTAssertTrue(OperatorWebUI.javascript.contains("Configuration saved and applied"))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("setConditional"))
+        XCTAssertFalse(OperatorWebUI.javascript.contains("ipfsTimeoutSeconds.disabled"))
         XCTAssertTrue(OperatorWebUI.css.contains("prefers-reduced-motion"))
+        XCTAssertTrue(OperatorWebUI.css.contains("input:not([type=\"checkbox\"]),select{height:46px"))
+        XCTAssertTrue(OperatorWebUI.css.contains("overflow-x:hidden"))
     }
 
     func testOperatorTokenAuthenticatorRequiresSingleBearerToken() {
