@@ -25,6 +25,7 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.css.contains("prefers-reduced-motion"))
         XCTAssertTrue(OperatorWebUI.css.contains("input:not([type=\"checkbox\"]),select{height:46px"))
         XCTAssertTrue(OperatorWebUI.css.contains("overflow-x:hidden"))
+        XCTAssertTrue(OperatorWebUI.css.contains("flex:1 1 0;min-width:0"))
     }
 
     func testOperatorTokenAuthenticatorRequiresSingleBearerToken() {
