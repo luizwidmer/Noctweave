@@ -60,6 +60,15 @@ tests and runtime builds.
 - Linux `--help` and `--version` are side-effect free. Data-directory, key-file,
   bind, and other startup failures now produce redacted diagnostics and a
   nonzero exit status instead of reaching Swift's top-level fatal-error path.
+- The Linux operator console uses a dedicated listener and independent bearer
+  token, rate-limits failed authentication by source, compares tokens in
+  constant time, returns no relay or federation secrets, and serves a strict
+  no-store/CSP/frame-denial browser policy. Its persisted configuration is
+  bounded, atomic, owner-only, and excludes credentials and signing keys.
+- Live console updates replace synchronized policy snapshots only for future
+  requests. IPFS backend changes remain staged until restart, avoiding a
+  mid-request blob-store swap; conditional browser controls retain their values
+  without bypassing server-side validation.
 
 ### Persistence And Local Privacy
 

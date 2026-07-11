@@ -254,6 +254,18 @@ Relay policy controls include:
 - federation mode and coordinator configuration
 - text-only mode for operators who do not want to host attachment chunks
 
+The Linux/Docker reference relay includes an authenticated operator console on
+a dedicated management listener. The browser surface exposes non-secret relay
+identity, delivery, temporal-bucket, group-security, federation, DHT/PEX,
+coordinator-policy, hidden-retrieval, onion, mixnet, wake, and attachment
+storage controls. Updates are validated, bounded, atomically persisted with
+owner-only permissions, and applied to future requests through configuration
+snapshots so in-flight requests retain a coherent policy. IPFS backend and
+endpoint changes are staged and explicitly marked as restart-required because
+the active blob store is not replaced while requests are in progress. Listener
+bindings, SQLite/RAM selection, request ceilings, passwords, admin and
+federation tokens, and signing keys remain outside the browser API.
+
 Temporal bucketing can be single-bucket or multi-bucket. The multi-bucket path intentionally adds timing ambiguity to reduce the ease of correlating users by strict fetch cadence.
 
 Relays may also advertise optional hidden-retrieval support. In cover-query mode, compatible clients request fixed-size cover sets from temporal buckets and extract the target record locally. In replicated XOR-PIR mode, a client splits a lookup across two or more non-colluding replicas with identical fixed-size buckets; each replica receives only a selection mask, and the client reconstructs the target by XORing the replica responses. Compatible clients can pad replicated-PIR selection masks to the operator's fixed bucket class instead of the current real record count; replicas evaluate padded slots as zero records. Compatible replicas can also return fixed-size padded response slots so a successful response does not expose the selected record length. Before reconstruction, clients validate the PIR query plan itself: record IDs must be canonical and unique, the target index must bind to the target record ID, replica indices must be unique and contiguous, padded record counts must be consistent, and the XOR of all selection masks must commit to exactly the target bit. Cover-query mode is metadata reduction. Replicated XOR-PIR is stronger PIR-assisted retrieval under a non-collusion assumption, but it is not single-server cryptographic PIR and should only be advertised by operators that can actually provide replicated fixed-bucket semantics. Replica metadata includes replica IDs, operator IDs, and TLS endpoints so clients and relays can reject mode-only claims, duplicated operators, duplicated hosts, duplicated endpoints, or non-TLS replicas before treating the advertisement as usable replicated PIR. A replicated-PIR deployment profile is considered operationally usable only when it combines that independent TLS replica set with an explicit padded record-count class and fixed response-slot size. A stronger promotion gate requires fresh deployment evidence for every advertised replica, positive availability, operator and endpoint matching, and unique non-collusion attestation digests.

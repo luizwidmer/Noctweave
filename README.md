@@ -195,7 +195,9 @@ are installed locally.
 ![Noctweave Linux relay operator console](docs/assets/NoctweaveRelayConsole.png)
 
 The authenticated operator console provides a focused view of relay health,
-storage, delivery policy, federation, and privacy capabilities.
+storage, delivery policy, federation, and privacy capabilities. Non-secret
+policy changes apply to future requests without dropping in-flight work; IPFS
+backend changes are staged explicitly for the next container restart.
 
 ```sh
 swift build --package-path NoctweaveRelayServer

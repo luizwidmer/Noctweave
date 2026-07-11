@@ -191,12 +191,13 @@ endpoint changes display a **Restart required** badge and activate on the next
 container start. The file contains no relay password, admin token, coordinator
 token, forwarding token, or signing private key.
 
-Listener addresses, ports, SQLite/memory mode, request ceilings, attachment
-storage backend, IPFS endpoints, and all secrets remain bootstrap settings.
-Configure those through Docker arguments or environment variables and restart
-the container. Never publish the admin port directly to the internet. For
-remote administration, use an SSH tunnel, private VPN, or a separately
-authenticated HTTPS reverse proxy.
+Listener addresses, ports, SQLite/memory mode, request ceilings, and all secrets
+remain bootstrap settings configured through Docker arguments or environment
+variables. Attachment backend and IPFS endpoint changes may be staged in the
+console, but the running blob store is not replaced until the container
+restarts. Never publish the admin port directly to the internet. For remote
+administration, use an SSH tunnel, private VPN, or a separately authenticated
+HTTPS reverse proxy.
 
 ### Docker + Let's Encrypt (automatic TLS)
 

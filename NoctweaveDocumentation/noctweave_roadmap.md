@@ -70,6 +70,12 @@ Noctweave has moved past the initial prototype phase. The public repository now 
 - [x] Docker image with runtime `liboqs`
 - [x] Non-root Docker runtime user
 - [x] Docker + Caddy/Let's Encrypt deployment path
+- [x] Authenticated Docker relay operator console with a dedicated listener
+- [x] Atomic non-secret operator configuration persistence with mode `0600`
+- [x] Live-safe relay policy and federation updates with per-request snapshots
+- [x] Restart-aware IPFS backend and endpoint staging
+- [x] Operator console controls for hidden retrieval, onion, mixnet, DHT/PEX,
+  coordinator policy, group security, temporal bucketing, and wake advertisement
 
 ## Federation And Discovery
 

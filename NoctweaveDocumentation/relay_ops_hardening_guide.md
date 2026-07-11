@@ -88,6 +88,25 @@ mode `0600`. Back it up with the relay database. The file deliberately contains
 only non-secret operator policy; bootstrap secrets remain environment or
 command-line inputs.
 
+The console applies relay identity, delivery, temporal-bucket, group-security,
+federation, DHT/PEX, coordinator-policy, hidden-retrieval, onion, mixnet, and
+wake-advertisement changes to future requests without interrupting in-flight
+requests. Attachment backend and IPFS endpoint changes are persisted as desired
+configuration and show **Restart required** until the process restarts with the
+new blob store. Listener ports, SQLite versus RAM mode, request ceilings, relay
+passwords, admin tokens, federation tokens, and signing keys are never editable
+or returned through the browser API.
+
+Treat the operator console as a privileged management surface:
+
+- keep its host port loopback-bound or on a private management network;
+- use an independent random admin token of at least 32 bytes;
+- close or lock the console after use so its session-storage token is removed;
+- review `/data/operator-config.json` before restarting into staged backend or
+  federation changes;
+- do not enable replicated XOR-PIR, onion, or mixnet advertisements unless the
+  surrounding deployment actually satisfies their operational assumptions.
+
 Set attachment retention low enough for your budget and threat model:
 
 ```bash
