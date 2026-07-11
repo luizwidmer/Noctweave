@@ -64,7 +64,7 @@
       "version": "1.6.3"
     },
     {
-      "name": "swift:5.9-jammy",
+      "name": "swift:6.1-jammy",
       "pinFile": "NoctweaveRelayServer/Dockerfile",
       "revision": null,
       "source": "Dockerfile FROM",
@@ -73,7 +73,7 @@
       "version": null
     },
     {
-      "name": "swift:5.9-jammy",
+      "name": "ubuntu:22.04",
       "pinFile": "NoctweaveRelayServer/Dockerfile",
       "revision": null,
       "source": "Dockerfile FROM",

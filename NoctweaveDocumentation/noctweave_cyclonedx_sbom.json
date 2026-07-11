@@ -176,7 +176,7 @@
       "version": "1.6.3"
     },
     {
-      "bom-ref": "container-base-image:swift:5.9-jammy:unknown:builder",
+      "bom-ref": "container-base-image:swift:6.1-jammy:unknown:builder",
       "externalReferences": [
         {
           "type": "distribution",
@@ -187,13 +187,13 @@
           "url": "file:NoctweaveRelayServer/Dockerfile"
         }
       ],
-      "name": "swift:5.9-jammy",
-      "purl": "pkg:docker/swift@5.9-jammy",
+      "name": "swift:6.1-jammy",
+      "purl": "pkg:docker/swift@6.1-jammy",
       "type": "container",
       "version": "unknown"
     },
     {
-      "bom-ref": "container-base-image:swift:5.9-jammy:unknown:stage-2",
+      "bom-ref": "container-base-image:ubuntu:22.04:unknown:stage-2",
       "externalReferences": [
         {
           "type": "distribution",
@@ -204,8 +204,8 @@
           "url": "file:NoctweaveRelayServer/Dockerfile"
         }
       ],
-      "name": "swift:5.9-jammy",
-      "purl": "pkg:docker/swift@5.9-jammy",
+      "name": "ubuntu:22.04",
+      "purl": "pkg:docker/ubuntu@22.04",
       "type": "container",
       "version": "unknown"
     },

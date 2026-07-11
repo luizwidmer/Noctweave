@@ -28,14 +28,19 @@ RUN git init /tmp/liboqs \
     && rm -rf /tmp/liboqs
 WORKDIR /app
 COPY . .
-RUN swift build -c release
+RUN swift build -c release \
+    && strip --strip-unneeded .build/release/NoctweaveRelayServer \
+    && strip --strip-unneeded /usr/local/lib/liboqs.so.0.15.0
 
-FROM swift:6.1-jammy
+FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libcurl4 \
     libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /usr/lib/swift/linux/*.so /usr/lib/swift/linux/
 COPY --from=builder /usr/local/lib/liboqs.so* /usr/local/lib/
-ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/swift/linux
 RUN groupadd --system --gid 10001 noctyra \
     && useradd --system --uid 10001 --gid noctyra --create-home noctyra \
     && mkdir -p /data \

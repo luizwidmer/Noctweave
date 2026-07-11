@@ -154,6 +154,12 @@ docker build -t noctyra-relay .
 docker run --rm -p 9339:9339 -v noctyra-data:/data noctyra-relay
 ```
 
+The Dockerfile uses the full Swift image only as a build stage. The published
+runtime stage is based on Ubuntu 22.04 and contains the stripped relay binary,
+the minimal liboqs profile, required Swift shared libraries, certificates,
+libcurl, and SQLite. Compiler tools, package caches, static Swift libraries,
+tests, and source files are not included in the final image.
+
 ### Operator Web UI
 
 The container includes a responsive operator console styled consistently with

@@ -28,6 +28,13 @@ if 'git -C /tmp/liboqs fetch --depth 1 origin "${LIBOQS_COMMIT}"' not in text:
     raise SystemExit("Dockerfile must fetch liboqs by LIBOQS_COMMIT")
 if 'test "$(git -C /tmp/liboqs rev-parse HEAD)" = "${LIBOQS_COMMIT}"' not in text:
     raise SystemExit("Dockerfile must verify the fetched liboqs commit")
+stages = re.findall(r"^FROM\s+([^\s]+)(?:\s+AS\s+[^\s]+)?$", text, flags=re.MULTILINE | re.IGNORECASE)
+if len(stages) < 2 or stages[-1] != "ubuntu:22.04":
+    raise SystemExit("Docker runtime stage must remain the slim Ubuntu 22.04 image")
+if 'COPY --from=builder /usr/lib/swift/linux/*.so /usr/lib/swift/linux/' not in text:
+    raise SystemExit("Docker runtime stage must copy only Swift shared libraries")
+if 'strip --strip-unneeded .build/release/NoctweaveRelayServer' not in text:
+    raise SystemExit("Docker relay binary must be stripped for release")
 PY
 
 echo "Refreshing machine-readable SBOM..."
