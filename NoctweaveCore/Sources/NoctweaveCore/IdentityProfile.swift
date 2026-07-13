@@ -9,6 +9,7 @@ public struct IdentityProfile: Codable, Identifiable {
     public var contacts: [Contact]
     public var conversations: [Conversation]
     public var groups: [GroupConversation]
+    public var pendingDirectDeliveries: [PendingDirectDelivery]
     public var selectedRelayId: UUID?
     public var prekeys: PrekeyState
     public var continuityEvents: [ContinuityEvent]
@@ -27,6 +28,7 @@ public struct IdentityProfile: Codable, Identifiable {
         contacts: [Contact] = [],
         conversations: [Conversation] = [],
         groups: [GroupConversation] = [],
+        pendingDirectDeliveries: [PendingDirectDelivery] = [],
         selectedRelayId: UUID? = nil,
         prekeys: PrekeyState,
         continuityEvents: [ContinuityEvent] = [],
@@ -44,6 +46,7 @@ public struct IdentityProfile: Codable, Identifiable {
         self.contacts = contacts
         self.conversations = conversations
         self.groups = groups
+        self.pendingDirectDeliveries = pendingDirectDeliveries
         self.selectedRelayId = selectedRelayId
         self.prekeys = prekeys
         self.continuityEvents = continuityEvents
@@ -63,6 +66,7 @@ public struct IdentityProfile: Codable, Identifiable {
         case contacts
         case conversations
         case groups
+        case pendingDirectDeliveries
         case selectedRelayId
         case prekeys
         case continuityEvents
@@ -83,6 +87,10 @@ public struct IdentityProfile: Codable, Identifiable {
         contacts = try container.decodeIfPresent([Contact].self, forKey: .contacts) ?? []
         conversations = try container.decodeIfPresent([Conversation].self, forKey: .conversations) ?? []
         groups = try container.decodeIfPresent([GroupConversation].self, forKey: .groups) ?? []
+        pendingDirectDeliveries = try container.decodeIfPresent(
+            [PendingDirectDelivery].self,
+            forKey: .pendingDirectDeliveries
+        ) ?? []
         selectedRelayId = try container.decodeIfPresent(UUID.self, forKey: .selectedRelayId)
         prekeys = try container.decode(PrekeyState.self, forKey: .prekeys)
         continuityEvents = try container.decodeIfPresent([ContinuityEvent].self, forKey: .continuityEvents) ?? []

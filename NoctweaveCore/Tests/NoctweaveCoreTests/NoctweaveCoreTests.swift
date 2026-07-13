@@ -91,6 +91,176 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(status.conversationCount, 1)
     }
 
+    func testHeadlessMessagingClientSerializesConcurrentMultiContactBursts() async throws {
+        let port = UInt16.random(in: 40_000...41_999)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noctweave-headless-concurrent-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let alice = HeadlessMessagingClient(
+            stateURL: root.appendingPathComponent("alice.json"),
+            useEncryptedStore: false,
+            timeout: 3
+        )
+        let bob = HeadlessMessagingClient(
+            stateURL: root.appendingPathComponent("bob.json"),
+            useEncryptedStore: false,
+            timeout: 3
+        )
+        let carol = HeadlessMessagingClient(
+            stateURL: root.appendingPathComponent("carol.json"),
+            useEncryptedStore: false,
+            timeout: 3
+        )
+
+        _ = try await alice.createState(displayName: "Alice Burst", relay: endpoint)
+        _ = try await bob.createState(displayName: "Bob Burst", relay: endpoint)
+        _ = try await carol.createState(displayName: "Carol Burst", relay: endpoint)
+        try await alice.registerInbox()
+        try await bob.registerInbox()
+        try await carol.registerInbox()
+
+        let aliceCode = try await alice.exportContactCode()
+        let bobCode = try await bob.exportContactCode()
+        let carolCode = try await carol.exportContactCode()
+        _ = try await alice.importContactCode(bobCode)
+        _ = try await alice.importContactCode(carolCode)
+        _ = try await bob.importContactCode(aliceCode)
+        _ = try await carol.importContactCode(aliceCode)
+
+        _ = try await alice.sendText(to: "Bob Burst", text: "bootstrap bob")
+        _ = try await bob.receive(maxCount: 10)
+        _ = try await bob.sendText(to: "Alice Burst", text: "bootstrap alice from bob")
+        _ = try await alice.receive(maxCount: 10)
+        _ = try await alice.sendText(to: "Carol Burst", text: "bootstrap carol")
+        _ = try await carol.receive(maxCount: 10)
+        _ = try await carol.sendText(to: "Alice Burst", text: "bootstrap alice from carol")
+        _ = try await alice.receive(maxCount: 10)
+
+        @Sendable func burst(
+            client: HeadlessMessagingClient,
+            selector: String,
+            prefix: String,
+            count: Int
+        ) async throws -> [HeadlessSentMessage] {
+            try await withThrowingTaskGroup(of: HeadlessSentMessage.self) { group in
+                for index in 0..<count {
+                    group.addTask {
+                        try await client.sendText(to: selector, text: "\(prefix)-\(index)")
+                    }
+                }
+                var sent: [HeadlessSentMessage] = []
+                for try await message in group {
+                    sent.append(message)
+                }
+                return sent
+            }
+        }
+
+        async let aliceToBob = burst(client: alice, selector: "Bob Burst", prefix: "a-b", count: 6)
+        async let aliceToCarol = burst(client: alice, selector: "Carol Burst", prefix: "a-c", count: 6)
+        async let bobToAlice = burst(client: bob, selector: "Alice Burst", prefix: "b-a", count: 6)
+        async let carolToAlice = burst(client: carol, selector: "Alice Burst", prefix: "c-a", count: 6)
+        let sent = try await (aliceToBob, aliceToCarol, bobToAlice, carolToAlice)
+
+        for messages in [sent.0, sent.1, sent.2, sent.3] {
+            XCTAssertEqual(messages.map(\.messageCounter).sorted(), Array(1...6).map(UInt64.init))
+        }
+
+        let bobReceived = try await bob.receive(maxCount: 100)
+        let carolReceived = try await carol.receive(maxCount: 100)
+        let aliceReceived = try await alice.receive(maxCount: 100)
+        XCTAssertEqual(bobReceived.count, 6)
+        XCTAssertEqual(carolReceived.count, 6)
+        XCTAssertEqual(aliceReceived.count, 12)
+        func textBodies(_ messages: [HeadlessReceivedMessage]) -> Set<String> {
+            Set(messages.compactMap { message in
+                guard case .text(let text) = message.body else { return nil }
+                return text
+            })
+        }
+        XCTAssertEqual(textBodies(bobReceived), Set((0..<6).map { "a-b-\($0)" }))
+        XCTAssertEqual(textBodies(carolReceived), Set((0..<6).map { "a-c-\($0)" }))
+        XCTAssertEqual(
+            textBodies(aliceReceived),
+            Set((0..<6).map { "b-a-\($0)" } + (0..<6).map { "c-a-\($0)" })
+        )
+    }
+
+    func testRelayStoreTreatsEnvelopeIDAsIdempotencyKey() async throws {
+        let alice = try Identity.generate(displayName: "Alice")
+        let bob = try Identity.generate(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: bob.displayName,
+            inboxId: "bob-idempotent-inbox",
+            relay: RelayEndpoint(host: "127.0.0.1", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var conversation = session.conversation
+        let envelope = try MessageEngine.encrypt(
+            body: .text("only once"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &conversation,
+            kemCiphertext: session.kemCiphertext
+        )
+        let store = RelayStore()
+        let pending = PendingDirectDelivery(
+            contactId: bobContact.id,
+            inboxId: bobContact.inboxId,
+            preferredRelay: bobContact.relay,
+            destinationRelay: bobContact.relay,
+            envelope: envelope,
+            queuedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let encodedPending = try NoctweaveCoder.encode(pending)
+        let decodedPending = try NoctweaveCoder.decode(PendingDirectDelivery.self, from: encodedPending)
+
+        XCTAssertEqual(decodedPending.contactId, pending.contactId)
+        XCTAssertEqual(decodedPending.inboxId, pending.inboxId)
+        XCTAssertEqual(decodedPending.preferredRelay, pending.preferredRelay)
+        XCTAssertEqual(decodedPending.destinationRelay, pending.destinationRelay)
+        XCTAssertEqual(decodedPending.envelope.id, pending.envelope.id)
+        XCTAssertEqual(decodedPending.envelope.payload, pending.envelope.payload)
+        XCTAssertEqual(decodedPending.attemptCount, pending.attemptCount)
+        let firstStoredCount = try await store.deliver(envelope, to: bobContact.inboxId)
+        let secondStoredCount = try await store.deliver(envelope, to: bobContact.inboxId)
+        let storedEnvelopeIds = try await store.fetch(inboxId: bobContact.inboxId).map(\.id)
+        XCTAssertEqual(firstStoredCount, 1)
+        XCTAssertEqual(secondStoredCount, 1)
+        XCTAssertEqual(storedEnvelopeIds, [envelope.id])
+
+        let conflictingEnvelope = Envelope(
+            id: envelope.id,
+            conversationId: envelope.conversationId,
+            sessionId: envelope.sessionId,
+            senderFingerprint: envelope.senderFingerprint,
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter + 1,
+            kemCiphertext: envelope.kemCiphertext,
+            prekey: envelope.prekey,
+            rootRatchet: envelope.rootRatchet,
+            authenticatedContext: envelope.authenticatedContext,
+            payload: envelope.payload,
+            signature: envelope.signature
+        )
+        do {
+            _ = try await store.deliver(conflictingEnvelope, to: bobContact.inboxId)
+            XCTFail("A reused envelope identifier with different content must fail closed.")
+        } catch RelayStoreError.invalidEnvelopePayload {
+            // Expected.
+        }
+    }
+
     func testRelayClientDoesNotFallbackAcrossConfiguredTransports() async throws {
         let port = UInt16.random(in: 42_000...44_999)
         let rawTCPEndpoint = RelayEndpoint(host: "127.0.0.1", port: port, transport: .tcp)
@@ -4710,8 +4880,17 @@ final class NoctweaveCoreTests: XCTestCase {
         )
 
         _ = try await store.deliver(envelope, to: "inbox")
+        let secondEnvelope = Envelope(
+            id: UUID(),
+            conversationId: envelope.conversationId,
+            senderFingerprint: envelope.senderFingerprint,
+            sentAt: envelope.sentAt,
+            messageCounter: 1,
+            payload: envelope.payload,
+            signature: envelope.signature
+        )
         do {
-            _ = try await store.deliver(envelope, to: "inbox")
+            _ = try await store.deliver(secondEnvelope, to: "inbox")
             XCTFail("Expected inbox capacity to be enforced.")
         } catch RelayStoreError.inboxFull {
             // Expected.

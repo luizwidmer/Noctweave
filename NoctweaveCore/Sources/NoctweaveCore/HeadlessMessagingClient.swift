@@ -275,6 +275,7 @@ public actor HeadlessMessagingClient {
     public let store: ClientStateStore
     public let authToken: String?
     public let timeout: TimeInterval
+    private let stateMutationGate = AsyncOperationGate()
 
     public init(
         stateURL: URL,
@@ -582,6 +583,12 @@ public actor HeadlessMessagingClient {
     }
 
     public func sendText(to selector: String, text: String) async throws -> HeadlessSentMessage {
+        await stateMutationGate.acquire()
+        defer { stateMutationGate.release() }
+        return try await sendTextUnlocked(to: selector, text: text)
+    }
+
+    private func sendTextUnlocked(to selector: String, text: String) async throws -> HeadlessSentMessage {
         var state = try await loadState()
         let contact = try resolveContact(selector, in: state.contacts)
         var conversation: Conversation
@@ -626,6 +633,26 @@ public actor HeadlessMessagingClient {
         mimeType: String = "application/octet-stream",
         chunkSize: Int = 64 * 1024,
         ttlSeconds: Int? = nil
+    ) async throws -> HeadlessSentAttachment {
+        await stateMutationGate.acquire()
+        defer { stateMutationGate.release() }
+        return try await sendAttachmentUnlocked(
+            to: selector,
+            data: data,
+            fileName: fileName,
+            mimeType: mimeType,
+            chunkSize: chunkSize,
+            ttlSeconds: ttlSeconds
+        )
+    }
+
+    private func sendAttachmentUnlocked(
+        to selector: String,
+        data: Data,
+        fileName: String?,
+        mimeType: String,
+        chunkSize: Int,
+        ttlSeconds: Int?
     ) async throws -> HeadlessSentAttachment {
         var state = try await loadState()
         let contact = try resolveContact(selector, in: state.contacts)
@@ -705,6 +732,12 @@ public actor HeadlessMessagingClient {
     }
 
     public func sendGroupText(to selector: String, text: String) async throws -> HeadlessSentGroupMessage {
+        await stateMutationGate.acquire()
+        defer { stateMutationGate.release() }
+        return try await sendGroupTextUnlocked(to: selector, text: text)
+    }
+
+    private func sendGroupTextUnlocked(to selector: String, text: String) async throws -> HeadlessSentGroupMessage {
         var state = try await loadState()
         try await refreshGroups(into: &state, limit: 100)
         var group = try resolveGroup(selector, in: state.groups)
@@ -756,6 +789,26 @@ public actor HeadlessMessagingClient {
         mimeType: String = "application/octet-stream",
         chunkSize: Int = 64 * 1024,
         ttlSeconds: Int? = nil
+    ) async throws -> HeadlessSentAttachment {
+        await stateMutationGate.acquire()
+        defer { stateMutationGate.release() }
+        return try await sendGroupAttachmentUnlocked(
+            to: selector,
+            data: data,
+            fileName: fileName,
+            mimeType: mimeType,
+            chunkSize: chunkSize,
+            ttlSeconds: ttlSeconds
+        )
+    }
+
+    private func sendGroupAttachmentUnlocked(
+        to selector: String,
+        data: Data,
+        fileName: String?,
+        mimeType: String,
+        chunkSize: Int,
+        ttlSeconds: Int?
     ) async throws -> HeadlessSentAttachment {
         var state = try await loadState()
         try await refreshGroups(into: &state, limit: 100)
@@ -909,6 +962,22 @@ public actor HeadlessMessagingClient {
         longPollTimeoutSeconds: Int? = nil,
         acknowledge: Bool = true
     ) async throws -> [HeadlessReceivedGroupMessage] {
+        await stateMutationGate.acquire()
+        defer { stateMutationGate.release() }
+        return try await receiveGroupMessagesUnlocked(
+            group: selector,
+            maxCount: maxCount,
+            longPollTimeoutSeconds: longPollTimeoutSeconds,
+            acknowledge: acknowledge
+        )
+    }
+
+    private func receiveGroupMessagesUnlocked(
+        group selector: String?,
+        maxCount: Int,
+        longPollTimeoutSeconds: Int?,
+        acknowledge: Bool
+    ) async throws -> [HeadlessReceivedGroupMessage] {
         var state = try await loadState()
         try await refreshGroups(into: &state, limit: 100)
         let targetGroups: [GroupConversation]
@@ -1006,6 +1075,20 @@ public actor HeadlessMessagingClient {
     }
 
     public func receive(maxCount: Int = 25, longPollTimeoutSeconds: Int? = nil, acknowledge: Bool = true) async throws -> [HeadlessReceivedMessage] {
+        await stateMutationGate.acquire()
+        defer { stateMutationGate.release() }
+        return try await receiveUnlocked(
+            maxCount: maxCount,
+            longPollTimeoutSeconds: longPollTimeoutSeconds,
+            acknowledge: acknowledge
+        )
+    }
+
+    private func receiveUnlocked(
+        maxCount: Int,
+        longPollTimeoutSeconds: Int?,
+        acknowledge: Bool
+    ) async throws -> [HeadlessReceivedMessage] {
         var state = try await loadState()
         let accessKey = try inboxAccessKey(from: state)
         var fetch = FetchRequest(

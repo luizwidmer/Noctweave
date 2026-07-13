@@ -153,11 +153,17 @@ public actor RelayStore {
         if mailboxes[inboxId] == nil, mailboxes.count >= maxMailboxes {
             throw RelayStoreError.relayCapacityExceeded
         }
+        var inbox = mailboxes[inboxId, default: []]
+        if let existing = inbox.first(where: { $0.envelope.id == envelope.id }) {
+            guard existing.envelope == envelope else {
+                throw RelayStoreError.invalidEnvelopePayload
+            }
+            return inbox.count
+        }
         let totalMessages = mailboxes.values.reduce(into: 0) { $0 += $1.count }
         guard totalMessages < maxStoredMessages else {
             throw RelayStoreError.relayCapacityExceeded
         }
-        var inbox = mailboxes[inboxId, default: []]
         guard inbox.count < maxInboxMessages else {
             throw RelayStoreError.inboxFull
         }

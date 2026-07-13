@@ -23,10 +23,13 @@ Identity rotation preserves continuity only for contacts selected by the user. I
 3. The message body is encoded into a supported fixed-size padding bucket,
    encrypted with AEAD, and wrapped in an `Envelope`. Decoders reject malformed,
    non-canonical, or legacy unpadded plaintext.
-4. The sender submits `RelayRequest.type = deliver`.
+4. The sender persists the sealed envelope in a local ciphertext outbox, then submits `RelayRequest.type = deliver`. Retries reuse the original envelope identifier and ratchet counter.
 5. The recipient fetches sealed envelopes with an inbox-bound actor proof, decrypts locally, and acknowledges only after successful local processing.
 
-Relays store ciphertext only. They may bucket visible timestamps and reject oversized payloads.
+Relays store ciphertext only. Direct mailbox delivery is idempotent for an
+`(inboxId, envelope.id)` pair so a client may safely retry after an ambiguous
+network failure. Relays may bucket visible timestamps and reject oversized
+payloads.
 
 ## Ratchet And Recovery
 

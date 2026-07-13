@@ -91,6 +91,11 @@ public struct ClientState: Codable {
         set { updateActiveProfile { $0.groups = newValue } }
     }
 
+    public var pendingDirectDeliveries: [PendingDirectDelivery] {
+        get { activeProfile.pendingDirectDeliveries }
+        set { updateActiveProfile { $0.pendingDirectDeliveries = newValue } }
+    }
+
     public var federationPolicy: FederationDescriptor? {
         get { activeProfile.federationPolicy }
         set { updateActiveProfile { $0.federationPolicy = newValue } }
