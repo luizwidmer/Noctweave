@@ -213,7 +213,7 @@ final class OperatorWebUITests: XCTestCase {
     func testAdminTokenEnvironmentEnablesDefaultDockerConsolePort() {
         let config = ServerConfig.parse(
             arguments: [],
-            environment: ["NOCTYRA_ADMIN_TOKEN": "environment-operator-token"]
+            environment: ["NOCTWEAVE_ADMIN_TOKEN": "environment-operator-token"]
         )
         XCTAssertEqual(config.adminHost, "127.0.0.1")
         XCTAssertEqual(config.adminPort, 9090)

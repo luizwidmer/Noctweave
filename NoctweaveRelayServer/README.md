@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="../docs/assets/NoctweaveLogo.svg" alt="Noctweave" width="620">
+  <img src="../docs/assets/NoctweaveRelayIcon.svg" alt="Noctweave Relay" width="160">
 </p>
 
-# NoctweaveRelayServer
+<h1 align="center">Noctweave Relay Server</h1>
 
 A Linux/Docker relay server for the Noctweave Protocol, used by compatible clients and tooling. It supports line-delimited TCP plus optional HTTP/WebSocket bridge support and includes a source-built desktop operator launcher.
 
@@ -32,7 +32,7 @@ swift build -c release
 ## Run (local)
 
 ```bash
-.build/debug/NoctweaveRelayServer --host 0.0.0.0 --port 9339 --data-dir /tmp/noctyra-relay
+.build/debug/NoctweaveRelayServer --host 0.0.0.0 --port 9339 --data-dir /tmp/noctweave-relay
 ```
 
 In-memory only (no disk writes):
@@ -56,7 +56,7 @@ storage, and bind failures print a redacted operator error and exit nonzero.
 
 The image pins liboqs 0.15.0 to immutable commit
 `97f6b86b1b6d109cfd43cf276ae39c2e776aed80` for reproducible cryptographic builds and runs the
-relay as an unprivileged `noctyra` user. Mount `/data` as a writable volume
+relay as an unprivileged `noctweave` user. Mount `/data` as a writable volume
 owned by UID/GID `10001`. Coordinator nodes persist their directory-signing key
 inside this volume; back it up with the relay database to preserve client trust
 across rebuilds.
@@ -64,31 +64,31 @@ across rebuilds.
 For secrets, prefer environment variables over command-line flags so values do
 not appear in process listings:
 
-- `NOCTYRA_RELAY_PASSWORD`
-- `NOCTYRA_COORDINATOR_REGISTRATION_TOKEN`
-- `NOCTYRA_FEDERATION_FORWARDING_TOKEN`
-- `NOCTYRA_COORDINATOR_SIGNING_KEY` (base64)
-- `NOCTYRA_ATTACHMENT_STORAGE`
-- `NOCTYRA_IPFS_API_ENDPOINT`
-- `NOCTYRA_IPFS_GATEWAY_ENDPOINT`
-- `NOCTYRA_IPFS_TIMEOUT_SECONDS`
-- `NOCTYRA_ONION_TRANSPORT`
-- `NOCTYRA_ONION_MAX_HOPS`
-- `NOCTYRA_ONION_FIXED_SIZE_PACKETS`
-- `NOCTYRA_MIXNET_TRANSPORT`
-- `NOCTYRA_MIXNET_BATCH_INTERVAL_SECONDS`
-- `NOCTYRA_MIXNET_MIN_BATCH_SIZE`
-- `NOCTYRA_MIXNET_COVER_PACKETS_PER_BATCH`
-- `NOCTYRA_MIXNET_MAX_DELAY_SECONDS`
-- `NOCTYRA_HIDDEN_RETRIEVAL_REPLICAS`
-- `NOCTYRA_OPEN_FEDERATION_DHT_NODE`
-- `NOCTYRA_OPEN_FEDERATION_DHT_MAX_RECORDS`
-- `NOCTYRA_OPEN_FEDERATION_DHT_MAX_RECORDS_PER_HOST`
-- `NOCTYRA_OPEN_FEDERATION_DHT_MAX_QUERY_RECORDS`
-- `NOCTYRA_RELAY_PEER_EXCHANGE_LIMIT`
-- `NOCTYRA_ADMIN_TOKEN`
-- `NOCTYRA_ADMIN_HOST`
-- `NOCTYRA_ADMIN_PORT`
+- `NOCTWEAVE_RELAY_PASSWORD`
+- `NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN`
+- `NOCTWEAVE_FEDERATION_FORWARDING_TOKEN`
+- `NOCTWEAVE_COORDINATOR_SIGNING_KEY` (base64)
+- `NOCTWEAVE_ATTACHMENT_STORAGE`
+- `NOCTWEAVE_IPFS_API_ENDPOINT`
+- `NOCTWEAVE_IPFS_GATEWAY_ENDPOINT`
+- `NOCTWEAVE_IPFS_TIMEOUT_SECONDS`
+- `NOCTWEAVE_ONION_TRANSPORT`
+- `NOCTWEAVE_ONION_MAX_HOPS`
+- `NOCTWEAVE_ONION_FIXED_SIZE_PACKETS`
+- `NOCTWEAVE_MIXNET_TRANSPORT`
+- `NOCTWEAVE_MIXNET_BATCH_INTERVAL_SECONDS`
+- `NOCTWEAVE_MIXNET_MIN_BATCH_SIZE`
+- `NOCTWEAVE_MIXNET_COVER_PACKETS_PER_BATCH`
+- `NOCTWEAVE_MIXNET_MAX_DELAY_SECONDS`
+- `NOCTWEAVE_HIDDEN_RETRIEVAL_REPLICAS`
+- `NOCTWEAVE_OPEN_FEDERATION_DHT_NODE`
+- `NOCTWEAVE_OPEN_FEDERATION_DHT_MAX_RECORDS`
+- `NOCTWEAVE_OPEN_FEDERATION_DHT_MAX_RECORDS_PER_HOST`
+- `NOCTWEAVE_OPEN_FEDERATION_DHT_MAX_QUERY_RECORDS`
+- `NOCTWEAVE_RELAY_PEER_EXCHANGE_LIMIT`
+- `NOCTWEAVE_ADMIN_TOKEN`
+- `NOCTWEAVE_ADMIN_HOST`
+- `NOCTWEAVE_ADMIN_PORT`
 
 Use `--attachments-enabled false` for a text-only relay. Attachment upload and
 download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
@@ -109,10 +109,10 @@ The relay can offload encrypted attachment chunks to an IPFS-compatible HTTP API
 Equivalent environment configuration:
 
 ```bash
-NOCTYRA_ATTACHMENT_STORAGE=ipfs
-NOCTYRA_IPFS_API_ENDPOINT=http://127.0.0.1:5001
-NOCTYRA_IPFS_GATEWAY_ENDPOINT=http://127.0.0.1:8080
-NOCTYRA_IPFS_TIMEOUT_SECONDS=10
+NOCTWEAVE_ATTACHMENT_STORAGE=ipfs
+NOCTWEAVE_IPFS_API_ENDPOINT=http://127.0.0.1:5001
+NOCTWEAVE_IPFS_GATEWAY_ENDPOINT=http://127.0.0.1:8080
+NOCTWEAVE_IPFS_TIMEOUT_SECONDS=10
 ```
 
 Upload uses `/api/v0/add` with pinning enabled. Fetch first tries `/api/v0/cat`, then falls back to `<gateway>/ipfs/<cid>`. Returned bytes must match the stored byte count and SHA-256 digest or the fetch fails closed. TTL cleanup removes relay metadata and performs best-effort IPFS unpinning; it is not cryptographic erasure because other IPFS peers or gateways may retain content. Use a relay-controlled IPFS node or private IPFS cluster.
@@ -124,12 +124,12 @@ clients, not full PIR and not a mandatory fetch path.
 For replicated XOR-PIR advertisement, use
 `--hidden-retrieval-mode replicatedXorPIR` and at least two independent TLS
 replicas. Add replicas with repeated `--hidden-retrieval-replica` flags or with
-`NOCTYRA_HIDDEN_RETRIEVAL_REPLICAS`. Each entry is
+`NOCTWEAVE_HIDDEN_RETRIEVAL_REPLICAS`. Each entry is
 `replicaId,operatorId,endpoint`; separate environment entries with `;`.
 Example:
 
 ```bash
-NOCTYRA_HIDDEN_RETRIEVAL_REPLICAS='a,operator-a,https://pir-a.example:443;b,operator-b,https://pir-b.example:443'
+NOCTWEAVE_HIDDEN_RETRIEVAL_REPLICAS='a,operator-a,https://pir-a.example:443;b,operator-b,https://pir-b.example:443'
 ```
 
 Clients can reject replicated-PIR metadata if replica IDs, operator IDs, or
@@ -150,8 +150,8 @@ Use `--wake-mode pullOnly` or `--wake-mode longPoll` to advertise a decentralize
 Use `--open-federation-dht-node true` with `--federation-mode open` to make the relay act as a bounded open-federation DHT node. The relay then accepts and serves signed short-lived relay records through the relay protocol. Keep `--allow-private-federation-endpoints false` for public networks so records and forwarding do not target loopback or LAN addresses. PEX is separate: `--relay-peer-exchange-limit <count>` controls how many known open relays are advertised in `/info`; set it to `0` to disable peer hints.
 
 ```bash
-docker build -t noctyra-relay .
-docker run --rm -p 9339:9339 -v noctyra-data:/data noctyra-relay
+docker build -t noctweave-relay .
+docker run --rm -p 9339:9339 -v noctweave-data:/data noctweave-relay
 ```
 
 The Dockerfile uses the full Swift image only as a build stage. The published
@@ -174,6 +174,7 @@ Build on the operating system and architecture where the launcher will run:
 ```bash
 cd NoctweaveRelayServer
 bun install --frozen-lockfile
+bun run desktop:icons
 bun run desktop:test
 bun run typecheck:desktop
 bun run desktop:build
@@ -207,20 +208,20 @@ NoctweaveJS. It runs on a dedicated listener and is disabled unless an admin
 token is supplied. Generate a random token and bind the console to localhost:
 
 ```bash
-export NOCTYRA_ADMIN_TOKEN="$(openssl rand -hex 32)"
+export NOCTWEAVE_ADMIN_TOKEN="$(openssl rand -hex 32)"
 docker run --rm \
   -p 9339:9339 \
   -p 9340:9340 \
   -p 127.0.0.1:9090:9090 \
-  -e NOCTYRA_ADMIN_TOKEN \
-  -v noctyra-data:/data \
-  noctyra-relay \
+  -e NOCTWEAVE_ADMIN_TOKEN \
+  -v noctweave-data:/data \
+  noctweave-relay \
   --host 0.0.0.0 --port 9339 --http-port 9340 --data-dir /data
 ```
 
 Open [http://127.0.0.1:9090/admin/](http://127.0.0.1:9090/admin/) and enter the
-token. Supplying `NOCTYRA_ADMIN_TOKEN` automatically enables port `9090`; use
-`NOCTYRA_ADMIN_PORT` to choose another port. The Docker image sets the internal
+token. Supplying `NOCTWEAVE_ADMIN_TOKEN` automatically enables port `9090`; use
+`NOCTWEAVE_ADMIN_PORT` to choose another port. The Docker image sets the internal
 admin bind address to `0.0.0.0`, while the host mapping above keeps it available
 only from the relay host.
 
@@ -367,7 +368,7 @@ the advertised endpoint for policy checks and coordinator registration.
 - `--http-port <port>`: optional HTTP/WebSocket bridge port (disabled by default). Serves `POST /relay` and WebSocket `/relay`.
 - `--admin-host <address>`: operator Web UI bind address (default: `127.0.0.1`; Docker image default: `0.0.0.0`)
 - `--admin-port <port>`: authenticated operator Web UI port (disabled unless configured; defaults to `9090` when an admin token is supplied)
-- `--admin-token <token>`: operator bearer token, 16-4096 UTF-8 bytes. Prefer `NOCTYRA_ADMIN_TOKEN` so it does not appear in process listings.
+- `--admin-token <token>`: operator bearer token, 16-4096 UTF-8 bytes. Prefer `NOCTWEAVE_ADMIN_TOKEN` so it does not appear in process listings.
 - `--data-dir <path>`: store messages to `relay_store.sqlite` inside this directory (default: `/data`)
 - `--memory-only`: disable persistence
 - `--max-inbox <count>`: max messages stored per inbox (default: `1000`, `0` disables)

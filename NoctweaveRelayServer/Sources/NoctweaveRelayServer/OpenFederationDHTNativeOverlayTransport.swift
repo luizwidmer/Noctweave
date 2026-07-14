@@ -44,7 +44,7 @@ final class OpenFederationDHTHTTPRelayQueryClient: OpenFederationDHTRelayQueryCl
         urlRequest.httpBody = body
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        urlRequest.setValue("Noctyra-Relay-Native-DHT/1", forHTTPHeaderField: "User-Agent")
+        urlRequest.setValue("Noctweave-Relay-Native-DHT/1", forHTTPHeaderField: "User-Agent")
 
         let data: Data
         let response: URLResponse

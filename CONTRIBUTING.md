@@ -1,25 +1,61 @@
-# Contributing
+# Contributing to Noctweave
 
-Contributions are welcome for the public Noctweave protocol, Linux relay, CLI, tests, and documentation.
+Contributions are welcome across the public protocol core, Linux/Docker relay,
+NoctweaveCLI, NoctweaveJS, tests, examples, agent guides, and documentation.
 
-## License Of Contributions
+## Start Here
 
-By submitting a contribution, you agree that your contribution is licensed to the project under `AGPL-3.0-or-later`.
+1. Open an issue or short design discussion for protocol, cryptographic,
+   federation, persistence, or wire-format changes.
+2. Keep each pull request focused on one behavior or closely related change.
+3. Add tests at the layer where the behavior is implemented.
+4. Update commands, configuration examples, API schemas, and security notes when
+   their public behavior changes.
 
-Because Noctweave uses a dual-license model, larger or strategically important contributions may require a separate contributor agreement before they can be merged. This keeps commercial licensing clean and prevents future ambiguity.
+Run the relevant package tests before submitting. For repository-wide changes:
 
-## Expectations
+```sh
+swift test --package-path NoctweaveCore
+swift test --package-path NoctweaveRelayServer
+(cd NoctweaveJS && npm test)
+scripts/run-tests.sh
+```
 
-- Keep changes scoped to the public repository components.
-- Include tests for protocol, relay, CLI, storage, federation, and security-sensitive behavior.
-- Update documentation when changing user-visible commands, APIs, wire formats, federation behavior, or deployment options.
-- Do not add proprietary Noctyra client code to this repository.
+## Repository Boundary
+
+Only public Noctweave protocol and tooling belongs here. Do not contribute
+proprietary application source, private product assets, credentials, production
+relay data, signing material, or user content.
+
+Security-sensitive changes must preserve fail-closed behavior, bounded inputs,
+relay ciphertext-only handling, explicit federation trust modes, and the
+documented post-quantum algorithm profile. Never add plaintext message logging,
+server-side decryption, implicit key escrow, or silent downgrade paths.
+
+## License of Contributions
+
+Contributions are licensed under the license governing their destination:
+
+| Destination | License |
+| --- | --- |
+| `NoctweaveCore/`, `NoctweaveCLI`, `NoctweaveRelayServer/` | `AGPL-3.0-or-later` |
+| `NoctweaveJS/` | `Apache-2.0` |
+| `NoctweaveJS/examples/` | `MIT` |
+| `NoctweaveDocumentation/`, `docs/assets/` | `CC-BY-SA-4.0` |
+
+Larger contributions to dual-licensed components may require a separate
+contributor agreement before merge. This keeps ownership and optional
+commercial licensing terms unambiguous.
 
 ## Pull Requests
 
-Pull requests should include:
+Include:
 
-- a concise summary;
-- testing performed;
-- security or compatibility notes, if relevant;
-- documentation updates for behavior changes.
+- a concise summary and motivation;
+- tests performed and their results;
+- security, compatibility, and migration notes when relevant;
+- screenshots for visible UI changes;
+- documentation updates for changed behavior.
+
+Avoid unrelated formatting, generated build products, local state, and broad
+renames in feature pull requests.

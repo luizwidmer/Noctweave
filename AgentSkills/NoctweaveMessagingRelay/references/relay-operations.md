@@ -10,14 +10,14 @@ swift build --package-path "NoctweaveRelayServer"
   --host 0.0.0.0 \
   --port 9339 \
   --http-port 9340 \
-  --data-dir /tmp/noctyra-relay
+  --data-dir /tmp/noctweave-relay
 ```
 
 Docker:
 
 ```sh
-docker build -t noctyra-relay "NoctweaveRelayServer"
-docker run --rm -p 9339:9339 -p 9340:9340 -v noctyra-data:/data noctyra-relay
+docker build -t noctweave-relay "NoctweaveRelayServer"
+docker run --rm -p 9339:9339 -p 9340:9340 -v noctweave-data:/data noctweave-relay
 ```
 
 ## Endpoint Modes

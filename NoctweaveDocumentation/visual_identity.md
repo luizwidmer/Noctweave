@@ -7,6 +7,7 @@ Noctweave uses a continuous geometric **N** to represent independent endpoints j
 - `docs/assets/NoctweaveLogo.svg` — horizontal wordmark for repository headers and wide layouts.
 - `docs/assets/NoctweaveMark.svg` — transparent scalable mark for interfaces and documentation.
 - `docs/assets/NoctweaveIcon.svg` — dark rounded application-style icon.
+- `docs/assets/NoctweaveRelayIcon.svg` — relay application icon with a subtle routing mesh.
 - `docs/assets/NoctweaveMarkMonochrome.svg` — single-color mark for constrained surfaces.
 
 Do not redraw the mark, alter its proportions, substitute the gradient, add text inside it, or place it on a visually noisy background. Keep clear space around the mark equal to at least half the width of one vertical stroke.

@@ -119,7 +119,7 @@ final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTransport {
     private func applyCommonHeaders(to request: inout URLRequest) {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Noctyra-Relay-DHT-Gateway/1", forHTTPHeaderField: "User-Agent")
+        request.setValue("Noctweave-Relay-DHT-Gateway/1", forHTTPHeaderField: "User-Agent")
         if let authToken {
             request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         }

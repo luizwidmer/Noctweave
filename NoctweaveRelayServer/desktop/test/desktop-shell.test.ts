@@ -9,11 +9,14 @@ test("relay desktop packages source and keeps Docker and admin boundaries explic
     readFile(new URL("../view/index.html", import.meta.url), "utf8")
   ]);
   expect(config).toMatch(/identifier:\s*"org\.noctweave\.relay-desktop"/);
+  expect(config).toMatch(/icon:\s*"desktop\/assets\/relay-icon\.png"/);
+  expect(config).toMatch(/icon:\s*"desktop\/assets\/relay-icon\.ico"/);
   expect((config.match(/bundleCEF:\s*false/g) ?? []).length).toBe(3);
   expect((config.match(/desktop\/scripts\/install-mac-icon\.ts/g) ?? []).length).toBe(1);
   expect(backend).toMatch(/DockerRelayManager/);
   expect(backend).toMatch(/PATHS\.RESOURCES_FOLDER, "relay-source"/);
   expect(wrapper).toMatch(/"Sources", "Tests"/);
+  expect(wrapper).toMatch(/relay-icon\.icns/);
   expect(backend).toMatch(/clipboardWriteText/);
   expect(html).toContain("Build from source");
   expect(html).toContain("Docker access is powerful");

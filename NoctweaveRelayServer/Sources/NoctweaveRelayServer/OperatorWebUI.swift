@@ -15,7 +15,7 @@ enum OperatorWebUI {
       <div class="ambient" aria-hidden="true"></div>
       <section class="login" id="login">
         <form class="loginCard" id="loginForm">
-          <div class="brandMark"><svg class="brandLogo" viewBox="0 0 256 256" aria-hidden="true"><defs><linearGradient id="nw-login" x1="36" y1="44" x2="220" y2="212" gradientUnits="userSpaceOnUse"><stop stop-color="#7B61FF"/><stop offset=".5" stop-color="#5B9CFA"/><stop offset="1" stop-color="#3DD5C5"/></linearGradient></defs><path d="M48 208V48L208 208V48" fill="none" stroke="url(#nw-login)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div class="brandMark"><svg class="brandLogo" viewBox="0 0 256 256" aria-hidden="true"><defs><linearGradient id="nw-login" x1="36" y1="44" x2="220" y2="212" gradientUnits="userSpaceOnUse"><stop stop-color="#7B61FF"/><stop offset=".5" stop-color="#5B9CFA"/><stop offset="1" stop-color="#3DD5C5"/></linearGradient></defs><g fill="none" stroke="url(#nw-login)" stroke-width="4" opacity=".58"><path d="M28 128 128 28l100 100-100 100Z"/><circle cx="28" cy="128" r="7"/><circle cx="128" cy="28" r="7"/><circle cx="228" cy="128" r="7"/><circle cx="128" cy="228" r="7"/></g><path d="M48 208V48L208 208V48" fill="none" stroke="url(#nw-login)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
           <span class="eyebrow">Noctweave Relay</span>
           <h1>Operator Console</h1>
           <p>Manage this relay without exposing its control plane to messaging clients.</p>
@@ -28,7 +28,7 @@ enum OperatorWebUI {
 
       <main class="app" id="app" hidden>
         <aside class="rail">
-          <div class="brand"><div class="brandMark small"><svg class="brandLogo" viewBox="0 0 256 256" aria-hidden="true"><defs><linearGradient id="nw-rail" x1="36" y1="44" x2="220" y2="212" gradientUnits="userSpaceOnUse"><stop stop-color="#7B61FF"/><stop offset=".5" stop-color="#5B9CFA"/><stop offset="1" stop-color="#3DD5C5"/></linearGradient></defs><path d="M48 208V48L208 208V48" fill="none" stroke="url(#nw-rail)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div><strong>Noctweave</strong><span>Relay Console</span></div></div>
+          <div class="brand"><div class="brandMark small"><svg class="brandLogo" viewBox="0 0 256 256" aria-hidden="true"><defs><linearGradient id="nw-rail" x1="36" y1="44" x2="220" y2="212" gradientUnits="userSpaceOnUse"><stop stop-color="#7B61FF"/><stop offset=".5" stop-color="#5B9CFA"/><stop offset="1" stop-color="#3DD5C5"/></linearGradient></defs><g fill="none" stroke="url(#nw-rail)" stroke-width="4" opacity=".58"><path d="M28 128 128 28l100 100-100 100Z"/><circle cx="28" cy="128" r="7"/><circle cx="128" cy="28" r="7"/><circle cx="228" cy="128" r="7"/><circle cx="128" cy="228" r="7"/></g><path d="M48 208V48L208 208V48" fill="none" stroke="url(#nw-rail)" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div><strong>Noctweave</strong><span>Relay Console</span></div></div>
           <nav id="navigation">
             <button type="button" data-view="overview" class="active"><span>◌</span> Overview</button>
             <button type="button" data-view="general"><span>◇</span> General</button>

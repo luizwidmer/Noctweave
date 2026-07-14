@@ -30,11 +30,11 @@ export default {
     },
     linux: {
       bundleCEF: false,
-      icon: "../NoctweaveJS/desktop/assets/app-icon.png"
+      icon: "desktop/assets/relay-icon.png"
     },
     win: {
       bundleCEF: false,
-      icon: "../NoctweaveJS/desktop/assets/app-icon.ico"
+      icon: "desktop/assets/relay-icon.ico"
     }
   },
   scripts: {

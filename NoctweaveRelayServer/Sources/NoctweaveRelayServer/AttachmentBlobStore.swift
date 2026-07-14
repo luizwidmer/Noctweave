@@ -58,7 +58,7 @@ final class IPFSAttachmentBlobStore: AttachmentBlobStore {
         guard !data.isEmpty, data.count <= maximumBlobBytes else {
             throw AttachmentBlobStoreError.uploadFailed("Attachment chunk size is invalid")
         }
-        let boundary = "noctyra-\(UUID().uuidString)"
+        let boundary = "noctweave-\(UUID().uuidString)"
         var body = Data()
         body.append(Data("--\(boundary)\r\n".utf8))
         body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"\(attachmentId.uuidString)-\(chunkIndex).bin\"\r\n".utf8))

@@ -35,13 +35,24 @@ This document records the current software bill of materials and the minimum rel
 | `swift-collections` | `1.3.0` | `7b847a3b7008b2dc2f47ca3110d8c782fb2e5c7e` | Transitive dependency. |
 | `swift-system` | `1.6.3` | `395a77f0aa927f0ff73941d7ac35f2b46d47c9db` | Transitive dependency. |
 
+## Desktop Packaging Dependencies
+
+The optional source-built desktop launchers use dependencies pinned in each
+application's `bun.lock`:
+
+| Package | Version | Purpose |
+| --- | --- | --- |
+| `electrobun` | `1.18.1` | Packages the client and relay launcher with system WebViews. |
+| `@resvg/resvg-js` | `2.6.2` | Renders the relay SVG icon to an alpha-preserving PNG. |
+| `png2icons` | `2.0.1` | Produces ICNS and ICO variants from the generated PNG. |
+
 ## Docker Base And Build Inputs
 
 | Item | Current value | Notes |
 | --- | --- | --- |
-| Build image | `swift:5.9-jammy` | Builder stage. |
-| Runtime image | `swift:5.9-jammy` | Runtime stage. |
-| Runtime user | `noctyra:noctyra`, UID/GID `10001` | Non-root runtime user. |
+| Build image | `swift:6.1-jammy` | Builder stage with compiler and package tooling. |
+| Runtime image | `ubuntu:22.04` | Minimal runtime stage with the relay binary and required shared libraries. |
+| Runtime user | `noctweave:noctweave`, UID/GID `10001` | Non-root runtime user. |
 | Data path | `/data` | Mount as a persistent volume with restrictive permissions. |
 | Exposed raw port | `9339` | Prefer keeping raw TCP behind a reverse proxy or firewall. |
 | Optional HTTP bridge | configured by `--http-port` | Usually proxied behind TLS. |
@@ -105,14 +116,14 @@ swift build -c release
 docker build \
   --build-arg LIBOQS_VERSION=0.15.0 \
   --build-arg LIBOQS_COMMIT=97f6b86b1b6d109cfd43cf276ae39c2e776aed80 \
-  -t noctyra-relay:<version> "NoctweaveRelayServer"
+  -t noctweave-relay:<version> "NoctweaveRelayServer"
 ```
 
 6. Record final artifact hashes:
 
 ```bash
 shasum -a 256 <artifact>
-docker image inspect noctyra-relay:<version> --format '{{.Id}}'
+docker image inspect noctweave-relay:<version> --format '{{.Id}}'
 ```
 
 7. Review upstream security advisories for:

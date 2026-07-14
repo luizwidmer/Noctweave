@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Noctweave Relay icon</title>
+  <desc id="desc">The Noctweave N over a subtle four-node routing mesh on a dark rounded square.</desc>
+  <defs>
+    <linearGradient id="surface" x1="120" y1="88" x2="904" y2="936" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#191D35"/>
+      <stop offset="1" stop-color="#070A14"/>
+    </linearGradient>
+    <linearGradient id="brand" x1="284" y1="286" x2="744" y2="748" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7B61FF"/>
+      <stop offset=".5" stop-color="#5B9CFA"/>
+      <stop offset="1" stop-color="#3DD5C5"/>
+    </linearGradient>
+    <linearGradient id="mesh" x1="190" y1="204" x2="842" y2="826" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7B61FF" stop-opacity=".72"/>
+      <stop offset=".52" stop-color="#5B9CFA" stop-opacity=".52"/>
+      <stop offset="1" stop-color="#3DD5C5" stop-opacity=".72"/>
+    </linearGradient>
+    <filter id="markGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="30"/>
+    </filter>
+    <filter id="nodeGlow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+  </defs>
+
+  <rect x="50" y="50" width="924" height="924" rx="218" fill="#03050B" opacity=".6"/>
+  <rect x="62" y="56" width="900" height="900" rx="210" fill="url(#surface)" stroke="#353A55" stroke-width="7"/>
+
+  <g fill="none" stroke="url(#mesh)" stroke-width="12" stroke-linecap="round" opacity=".5">
+    <path d="M208 512 512 208 816 512 512 816Z"/>
+    <path d="M208 512h608M512 208v608" opacity=".38"/>
+  </g>
+  <g fill="url(#mesh)" opacity=".38" filter="url(#nodeGlow)">
+    <circle cx="208" cy="512" r="35"/><circle cx="512" cy="208" r="35"/>
+    <circle cx="816" cy="512" r="35"/><circle cx="512" cy="816" r="35"/>
+  </g>
+  <g fill="#111629" stroke="url(#mesh)" stroke-width="12">
+    <circle cx="208" cy="512" r="27"/><circle cx="512" cy="208" r="27"/>
+    <circle cx="816" cy="512" r="27"/><circle cx="512" cy="816" r="27"/>
+  </g>
+
+  <path d="M286 734V290L738 734V290" fill="none" stroke="#6554D8" stroke-opacity=".42" stroke-width="132" stroke-linecap="round" stroke-linejoin="round" filter="url(#markGlow)"/>
+  <path d="M286 734V290L738 734V290" fill="none" stroke="url(#brand)" stroke-width="102" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

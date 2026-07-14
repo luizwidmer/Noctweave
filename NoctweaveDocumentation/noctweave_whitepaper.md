@@ -209,11 +209,11 @@ Attachment chunk records can either store the encrypted chunk inline or referenc
 
 ### 6.2.1 IPFS-backed attachment offload
 
-The IPFS path is implemented in the Linux relay as an operator-selected attachment storage mode. Operators enable it with `--attachment-storage ipfs` or `NOCTYRA_ATTACHMENT_STORAGE=ipfs`, then provide:
+The IPFS path is implemented in the Linux relay as an operator-selected attachment storage mode. Operators enable it with `--attachment-storage ipfs` or `NOCTWEAVE_ATTACHMENT_STORAGE=ipfs`, then provide:
 
-- `--ipfs-api-endpoint` / `NOCTYRA_IPFS_API_ENDPOINT`, defaulting to `http://127.0.0.1:5001`
-- `--ipfs-gateway-endpoint` / `NOCTYRA_IPFS_GATEWAY_ENDPOINT`, used as a fetch fallback
-- `--ipfs-timeout-seconds` / `NOCTYRA_IPFS_TIMEOUT_SECONDS`, defaulting to 10 seconds
+- `--ipfs-api-endpoint` / `NOCTWEAVE_IPFS_API_ENDPOINT`, defaulting to `http://127.0.0.1:5001`
+- `--ipfs-gateway-endpoint` / `NOCTWEAVE_IPFS_GATEWAY_ENDPOINT`, used as a fetch fallback
+- `--ipfs-timeout-seconds` / `NOCTWEAVE_IPFS_TIMEOUT_SECONDS`, defaulting to 10 seconds
 
 When a relay receives an encrypted attachment chunk, it posts the chunk to the configured IPFS HTTP API using `/api/v0/add` with `pin=true`, CIDv1, and raw leaves. The relay stores only an external attachment record in SQLite: backend name, CID locator, byte count, SHA-256 digest, and expiry time. Fetch reconstructs the normal relay attachment response by first trying `/api/v0/cat`; if that fails, the relay falls back to the configured gateway path `/ipfs/<cid>`. Returned bytes must match both the stored byte count and SHA-256 digest or the fetch fails closed.
 

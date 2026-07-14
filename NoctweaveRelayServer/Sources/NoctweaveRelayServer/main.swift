@@ -105,9 +105,9 @@ struct ServerConfig {
         var host = "0.0.0.0"
         var port = 9339
         var httpPort: Int?
-        var adminHost = environment["NOCTYRA_ADMIN_HOST"] ?? "127.0.0.1"
-        var adminPort = Int(environment["NOCTYRA_ADMIN_PORT"] ?? "").flatMap { $0 > 0 ? $0 : nil }
-        var adminToken = environment["NOCTYRA_ADMIN_TOKEN"]
+        var adminHost = environment["NOCTWEAVE_ADMIN_HOST"] ?? "127.0.0.1"
+        var adminPort = Int(environment["NOCTWEAVE_ADMIN_PORT"] ?? "").flatMap { $0 > 0 ? $0 : nil }
+        var adminToken = environment["NOCTWEAVE_ADMIN_TOKEN"]
         var dataDir: URL? = URL(fileURLWithPath: "/data", isDirectory: true)
         var memoryOnly = false
         var maxInboxMessages: Int? = 1000
@@ -125,36 +125,36 @@ struct ServerConfig {
         var attachmentDefaultTTLSeconds: Int = 3600
         var attachmentMaxTTLSeconds: Int = 21600
         var attachmentsEnabled = true
-        var attachmentStorageMode = AttachmentStorageMode(rawValue: environment["NOCTYRA_ATTACHMENT_STORAGE"] ?? "") ?? .inline
-        var ipfsAPIEndpoint = URL(string: environment["NOCTYRA_IPFS_API_ENDPOINT"] ?? "http://127.0.0.1:5001")
-        var ipfsGatewayEndpoint = URL(string: environment["NOCTYRA_IPFS_GATEWAY_ENDPOINT"] ?? "")
-        var ipfsTimeoutSeconds = Int(environment["NOCTYRA_IPFS_TIMEOUT_SECONDS"] ?? "") ?? 10
+        var attachmentStorageMode = AttachmentStorageMode(rawValue: environment["NOCTWEAVE_ATTACHMENT_STORAGE"] ?? "") ?? .inline
+        var ipfsAPIEndpoint = URL(string: environment["NOCTWEAVE_IPFS_API_ENDPOINT"] ?? "http://127.0.0.1:5001")
+        var ipfsGatewayEndpoint = URL(string: environment["NOCTWEAVE_IPFS_GATEWAY_ENDPOINT"] ?? "")
+        var ipfsTimeoutSeconds = Int(environment["NOCTWEAVE_IPFS_TIMEOUT_SECONDS"] ?? "") ?? 10
         var hiddenRetrievalEnabled = false
         var hiddenRetrievalMode = HiddenRetrievalMode(
-            rawValue: environment["NOCTYRA_HIDDEN_RETRIEVAL_MODE"] ?? ""
+            rawValue: environment["NOCTWEAVE_HIDDEN_RETRIEVAL_MODE"] ?? ""
         ) ?? .coverQuery
         var hiddenRetrievalDefaultCoverSetSize = 8
         var hiddenRetrievalMaxCoverSetSize = 32
         var hiddenRetrievalReplicas = parseHiddenRetrievalReplicas(
-            environment["NOCTYRA_HIDDEN_RETRIEVAL_REPLICAS"] ?? ""
+            environment["NOCTWEAVE_HIDDEN_RETRIEVAL_REPLICAS"] ?? ""
         )
         var onionTransportEnabled = parseBoolFlag(
-            environment["NOCTYRA_ONION_TRANSPORT"] ?? "false",
+            environment["NOCTWEAVE_ONION_TRANSPORT"] ?? "false",
             defaultValue: false
         )
-        var onionTransportMaxHops = Int(environment["NOCTYRA_ONION_MAX_HOPS"] ?? "") ?? 3
+        var onionTransportMaxHops = Int(environment["NOCTWEAVE_ONION_MAX_HOPS"] ?? "") ?? 3
         var onionTransportRequiresFixedSizePackets = parseBoolFlag(
-            environment["NOCTYRA_ONION_FIXED_SIZE_PACKETS"] ?? "true",
+            environment["NOCTWEAVE_ONION_FIXED_SIZE_PACKETS"] ?? "true",
             defaultValue: true
         )
         var mixnetTransportEnabled = parseBoolFlag(
-            environment["NOCTYRA_MIXNET_TRANSPORT"] ?? "false",
+            environment["NOCTWEAVE_MIXNET_TRANSPORT"] ?? "false",
             defaultValue: false
         )
-        var mixnetBatchIntervalSeconds = Int(environment["NOCTYRA_MIXNET_BATCH_INTERVAL_SECONDS"] ?? "") ?? 30
-        var mixnetMinBatchSize = Int(environment["NOCTYRA_MIXNET_MIN_BATCH_SIZE"] ?? "") ?? 8
-        var mixnetCoverPacketsPerBatch = Int(environment["NOCTYRA_MIXNET_COVER_PACKETS_PER_BATCH"] ?? "") ?? 2
-        var mixnetMaxDelaySeconds = Int(environment["NOCTYRA_MIXNET_MAX_DELAY_SECONDS"] ?? "") ?? 120
+        var mixnetBatchIntervalSeconds = Int(environment["NOCTWEAVE_MIXNET_BATCH_INTERVAL_SECONDS"] ?? "") ?? 30
+        var mixnetMinBatchSize = Int(environment["NOCTWEAVE_MIXNET_MIN_BATCH_SIZE"] ?? "") ?? 8
+        var mixnetCoverPacketsPerBatch = Int(environment["NOCTWEAVE_MIXNET_COVER_PACKETS_PER_BATCH"] ?? "") ?? 2
+        var mixnetMaxDelaySeconds = Int(environment["NOCTWEAVE_MIXNET_MAX_DELAY_SECONDS"] ?? "") ?? 120
         var wakeMode: DecentralizedWakeMode?
         var wakeMinPollSeconds = 60
         var wakeMaxPollSeconds = 300
@@ -164,21 +164,21 @@ struct ServerConfig {
         var operatorNote: String?
         var groupCreationMode: GroupCreationMode = .allowed
         var groupSecurityModel: GroupSecurityModel = .mlsDerivedTree
-        var accessPassword: String? = environment["NOCTYRA_RELAY_PASSWORD"]
-        var coordinatorRegistrationToken: String? = environment["NOCTYRA_COORDINATOR_REGISTRATION_TOKEN"]
-        var federationForwardingAuthToken: String? = environment["NOCTYRA_FEDERATION_FORWARDING_TOKEN"]
+        var accessPassword: String? = environment["NOCTWEAVE_RELAY_PASSWORD"]
+        var coordinatorRegistrationToken: String? = environment["NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN"]
+        var federationForwardingAuthToken: String? = environment["NOCTWEAVE_FEDERATION_FORWARDING_TOKEN"]
         var federationCoordinatorEndpoints: [RelayEndpoint] = []
         var coordinatorHeartbeatSeconds: Int = 45
         var coordinatorDirectoryMaxStalenessSeconds: Int = 300
-        var relayPeerExchangeLimit: Int = Int(environment["NOCTYRA_RELAY_PEER_EXCHANGE_LIMIT"] ?? "") ?? 12
+        var relayPeerExchangeLimit: Int = Int(environment["NOCTWEAVE_RELAY_PEER_EXCHANGE_LIMIT"] ?? "") ?? 12
         var openFederationDHTEnabled = parseBoolFlag(
-            environment["NOCTYRA_OPEN_FEDERATION_DHT_NODE"] ?? "false",
+            environment["NOCTWEAVE_OPEN_FEDERATION_DHT_NODE"] ?? "false",
             defaultValue: false
         )
-        var openFederationDHTMaxRecords = Int(environment["NOCTYRA_OPEN_FEDERATION_DHT_MAX_RECORDS"] ?? "") ?? 256
-        var openFederationDHTMaxRecordsPerHost = Int(environment["NOCTYRA_OPEN_FEDERATION_DHT_MAX_RECORDS_PER_HOST"] ?? "") ?? 4
-        var openFederationDHTMaxQueryRecords = Int(environment["NOCTYRA_OPEN_FEDERATION_DHT_MAX_QUERY_RECORDS"] ?? "") ?? 256
-        var coordinatorDirectorySigningPrivateKey: Data? = environment["NOCTYRA_COORDINATOR_SIGNING_KEY"]
+        var openFederationDHTMaxRecords = Int(environment["NOCTWEAVE_OPEN_FEDERATION_DHT_MAX_RECORDS"] ?? "") ?? 256
+        var openFederationDHTMaxRecordsPerHost = Int(environment["NOCTWEAVE_OPEN_FEDERATION_DHT_MAX_RECORDS_PER_HOST"] ?? "") ?? 4
+        var openFederationDHTMaxQueryRecords = Int(environment["NOCTWEAVE_OPEN_FEDERATION_DHT_MAX_QUERY_RECORDS"] ?? "") ?? 256
+        var coordinatorDirectorySigningPrivateKey: Data? = environment["NOCTWEAVE_COORDINATOR_SIGNING_KEY"]
             .flatMap { Data(base64Encoded: $0) }
         var curatedStrictPolicyEnabled = true
         var curatedCoordinatorQuorum = 1
@@ -798,7 +798,7 @@ if config.federationMode == .manual {
 }
 if config.federationMode == .curated,
    config.coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
-    print("[relay] curated federation requires --coordinator-registration-token or NOCTYRA_COORDINATOR_REGISTRATION_TOKEN")
+    print("[relay] curated federation requires --coordinator-registration-token or NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN")
     exit(2)
 }
 for (label, secret, minimum) in [
@@ -814,7 +814,7 @@ for (label, secret, minimum) in [
 }
 if config.adminPort != nil,
    config.adminToken?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
-    print("[relay] --admin-port requires --admin-token or NOCTYRA_ADMIN_TOKEN")
+    print("[relay] --admin-port requires --admin-token or NOCTWEAVE_ADMIN_TOKEN")
     exit(2)
 }
 let fileURL: URL?

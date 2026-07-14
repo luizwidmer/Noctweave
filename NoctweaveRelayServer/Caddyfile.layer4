@@ -9,5 +9,5 @@
 {$RELAY_DOMAIN}:443 {
     @relay path /relay
     reverse_proxy @relay {$RELAY_HTTP_UPSTREAM}
-    respond "Noctyra Relay is online. Use HTTPS or WSS on /relay." 200
+    respond "Noctweave Relay is online. Use HTTPS or WSS on /relay." 200
 }

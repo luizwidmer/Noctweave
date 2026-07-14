@@ -19,7 +19,7 @@ services:
     volumes:
       - relay-data:/data
     environment:
-      NOCTYRA_ADMIN_TOKEN: ${NOCTYRA_ADMIN_TOKEN:?set NOCTYRA_ADMIN_TOKEN in .env}
+      NOCTWEAVE_ADMIN_TOKEN: ${NOCTWEAVE_ADMIN_TOKEN:?set NOCTWEAVE_ADMIN_TOKEN in .env}
     ports:
       - "127.0.0.1:9090:9090"
     restart: unless-stopped

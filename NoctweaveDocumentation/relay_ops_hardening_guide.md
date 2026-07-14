@@ -53,11 +53,11 @@ For curated federation, restrict outbound relay-to-relay traffic to allow-listed
 
 Prefer environment variables over command-line flags:
 
-- `NOCTYRA_RELAY_PASSWORD`
-- `NOCTYRA_COORDINATOR_REGISTRATION_TOKEN`
-- `NOCTYRA_FEDERATION_FORWARDING_TOKEN`
-- `NOCTYRA_COORDINATOR_SIGNING_KEY`
-- `NOCTYRA_ADMIN_TOKEN`
+- `NOCTWEAVE_RELAY_PASSWORD`
+- `NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN`
+- `NOCTWEAVE_FEDERATION_FORWARDING_TOKEN`
+- `NOCTWEAVE_COORDINATOR_SIGNING_KEY`
+- `NOCTWEAVE_ADMIN_TOKEN`
 
 Keep relay passwords and federation forwarding tokens distinct. The relay already avoids forwarding inbound client auth tokens to other relays; keep that isolation operationally true by not reusing the same secret everywhere.
 
@@ -77,8 +77,8 @@ Use a dedicated data volume with restrictive permissions:
 ```bash
 docker run --rm \
   -p 127.0.0.1:9340:9340 \
-  -v noctyra-relay-data:/data \
-  noctyra-relay
+  -v noctweave-relay-data:/data \
+  noctweave-relay
 ```
 
 Persist `/data` for normal operation. Use `--memory-only` only for throwaway relays or development because queued messages, attachments, and coordinator keys disappear on restart.
@@ -212,8 +212,8 @@ For release dependency review, use `dependency_sbom_and_release_policy.md`.
 
 If a relay token leaks:
 
-1. Rotate `NOCTYRA_RELAY_PASSWORD`.
-2. Rotate `NOCTYRA_FEDERATION_FORWARDING_TOKEN`.
+1. Rotate `NOCTWEAVE_RELAY_PASSWORD`.
+2. Rotate `NOCTWEAVE_FEDERATION_FORWARDING_TOKEN`.
 3. Restart the relay and proxy.
 4. Review logs for unexpected forwarding attempts.
 5. Notify federation peers if a curated or coordinator token was involved.

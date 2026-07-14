@@ -19,6 +19,6 @@ for (const item of ["Dockerfile", "Package.swift", "Package.resolved", "Sources"
 }
 
 if (process.env.ELECTROBUN_OS === "macos") {
-  const source = new URL("../../../NoctweaveJS/desktop/assets/app-icon.icns", import.meta.url);
+  const source = new URL("../assets/relay-icon.icns", import.meta.url);
   copyFileSync(source, join(resources, "AppIcon.icns"));
 }

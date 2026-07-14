@@ -41,15 +41,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/lib/swift/linux/*.so /usr/lib/swift/linux/
 COPY --from=builder /usr/local/lib/liboqs.so* /usr/local/lib/
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/swift/linux
-RUN groupadd --system --gid 10001 noctyra \
-    && useradd --system --uid 10001 --gid noctyra --create-home noctyra \
+RUN groupadd --system --gid 10001 noctweave \
+    && useradd --system --uid 10001 --gid noctweave --create-home noctweave \
     && mkdir -p /data \
-    && chown noctyra:noctyra /data
+    && chown noctweave:noctweave /data
 WORKDIR /app
 COPY --from=builder /app/.build/release/NoctweaveRelayServer /usr/local/bin/noctweave-relay
-USER noctyra:noctyra
+USER noctweave:noctweave
 EXPOSE 9339 9340 9090
 ENV NOCTWEAVE_RELAY_PORT=9339
-ENV NOCTYRA_ADMIN_HOST=0.0.0.0
+ENV NOCTWEAVE_ADMIN_HOST=0.0.0.0
 ENTRYPOINT ["/usr/local/bin/noctweave-relay"]
 CMD ["--host", "0.0.0.0", "--port", "9339", "--data-dir", "/data"]
