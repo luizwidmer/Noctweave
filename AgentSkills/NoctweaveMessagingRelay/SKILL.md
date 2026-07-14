@@ -1,6 +1,6 @@
 ---
 name: NoctweaveMessagingRelay
-description: "Use this skill when an agent needs to operate Noctweave open tooling: run NoctyraCLI headless messaging workflows, diagnose relay endpoints, configure or verify Linux/Docker relays, inspect federation mode, or perform relay/client smoke tests without using proprietary Noctyra app code."
+description: "Use this skill when an agent needs to operate Noctweave open tooling: run NoctweaveCLI headless messaging workflows, diagnose relay endpoints, configure or verify Linux/Docker relays, inspect federation mode, or perform relay/client smoke tests without using proprietary Noctyra app code."
 ---
 
 # Noctweave Messaging + Relay
@@ -9,7 +9,7 @@ description: "Use this skill when an agent needs to operate Noctweave open tooli
 
 Use only the public Noctweave surface:
 
-- `NoctweaveCore/` and `NoctweaveCore/Sources/NoctyraCLI/`
+- `NoctweaveCore/` and `NoctweaveCore/Sources/NoctweaveCLI/`
 - `NoctweaveRelayServer/`
 - `NoctweaveJS/`
 - `NoctweaveDocumentation/`
@@ -23,8 +23,8 @@ Do not rely on the proprietary Apple clients or macOS GUI relay app.
 2. Run relay diagnostics before messaging:
 
 ```sh
-swift run --package-path NoctweaveCore NoctyraCLI health --relay http://127.0.0.1:9340
-swift run --package-path NoctweaveCore NoctyraCLI info --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI health --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI info --relay http://127.0.0.1:9340
 ```
 
 3. Preserve privacy boundaries: relays store and forward encrypted envelopes and attachment chunks; they must not decrypt payloads, log plaintext, or bypass federation policy.
@@ -33,7 +33,7 @@ swift run --package-path NoctweaveCore NoctyraCLI info --relay http://127.0.0.1:
 
 For identity creation, inbox registration, contact exchange, direct/group send, fetch/decrypt, attachments, continuity audit, key rotation, and burn workflows, read `references/messaging-cli.md`.
 
-Prefer `NoctyraCLI` for smoke tests because it exercises the same public protocol models and crypto paths used by compatible clients.
+Prefer `NoctweaveCLI` for smoke tests because it exercises the same public protocol models and crypto paths used by compatible clients.
 
 ## Relay Tasks
 

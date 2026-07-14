@@ -33,8 +33,8 @@ For reverse proxy deployments, point clients at the public URL, for example `htt
 
 ```sh
 curl -s http://127.0.0.1:9340/health
-swift run --package-path NoctweaveCore NoctyraCLI health --relay http://127.0.0.1:9340
-swift run --package-path NoctweaveCore NoctyraCLI info --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI health --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI info --relay http://127.0.0.1:9340
 ```
 
 Relay `info` should advertise relay name, software version, transport, TLS status, federation mode, temporal bucket policy, attachment TTLs, attachment storage backend, group creation policy, wake policy, and optional federation capabilities.

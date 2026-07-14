@@ -1,14 +1,14 @@
-# NoctyraCLI Messaging Reference
+# NoctweaveCLI Messaging Reference
 
 Use this reference when an agent must exercise Noctweave as a headless client.
 
 ## Baseline Commands
 
 ```sh
-swift run --package-path NoctweaveCore NoctyraCLI help
-swift run --package-path NoctweaveCore NoctyraCLI endpoint --relay https://relay.example
-swift run --package-path NoctweaveCore NoctyraCLI health --relay http://127.0.0.1:9340
-swift run --package-path NoctweaveCore NoctyraCLI info --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI help
+swift run --package-path NoctweaveCore NoctweaveCLI endpoint --relay https://relay.example
+swift run --package-path NoctweaveCore NoctweaveCLI health --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI info --relay http://127.0.0.1:9340
 ```
 
 Relay endpoints may be `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, or `tls`. Keep the user-supplied scheme intact.
@@ -18,8 +18,8 @@ Relay endpoints may be `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, or `tls
 Initialize a headless identity and register its inbox:
 
 ```sh
-swift run --package-path NoctweaveCore NoctyraCLI init --display-name Alice --relay http://127.0.0.1:9340
-swift run --package-path NoctweaveCore NoctyraCLI export-contact
+swift run --package-path NoctweaveCore NoctweaveCLI init --display-name Alice --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI export-contact
 ```
 
 Use separate state directories or environment-specific CLI flags when simulating two users. Never reuse the same identity state for both peers in a delivery test.

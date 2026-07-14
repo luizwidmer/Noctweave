@@ -131,7 +131,7 @@ npm run smoke:client -- --relay http://127.0.0.1:9340
 
 - [`NoctweaveCore/`](NoctweaveCore/) — Swift protocol models, post-quantum
   bindings, ratchets, relay primitives, federation logic, and tests.
-- [`NoctweaveCore/Sources/NoctyraCLI/`](NoctweaveCore/Sources/NoctyraCLI/) —
+- [`NoctweaveCore/Sources/NoctweaveCLI/`](NoctweaveCore/Sources/NoctweaveCLI/) —
   headless identity, messaging, group, attachment, and relay workflows.
 - [`NoctweaveJS/`](NoctweaveJS/) — browser/Node relay client, encrypted storage
   wrappers, WebCrypto helpers, and WASM-backed liboqs integration.
@@ -184,10 +184,10 @@ See [`security_requirements.md`](NoctweaveDocumentation/security_requirements.md
 
 Noctweave is the open protocol and public infrastructure.
 
-Noctyra is the reference tooling/client family built on top of Noctweave. The
-public repo currently includes `NoctyraCLI` as the headless command-line tool,
-so some command names and environment variables still use the `NOCTYRA_` prefix
-for compatibility with the existing relay and CLI tooling.
+Noctyra is the proprietary client family built on top of Noctweave. The public
+repo includes `NoctweaveCLI` as its headless command-line tool. Relay operator
+environment variables retain the `NOCTYRA_` prefix where they configure the
+Noctyra-branded reference relay application.
 
 ## Build And Test
 
@@ -248,15 +248,15 @@ setup. See
 for federation modes, protocol requests, coordinator setup, open-federation
 DHT/PEX behavior, and operator recipes.
 
-## Use NoctyraCLI
+## Use NoctweaveCLI
 
 ```sh
-swift run --package-path NoctweaveCore NoctyraCLI help
-swift run --package-path NoctweaveCore NoctyraCLI endpoint --relay https://relay.example
-swift run --package-path NoctweaveCore NoctyraCLI health --relay http://127.0.0.1:9340
-swift run --package-path NoctweaveCore NoctyraCLI info --relay http://127.0.0.1:9340
-swift run --package-path NoctweaveCore NoctyraCLI init --display-name Alice --relay http://127.0.0.1:9340
-swift run --package-path NoctweaveCore NoctyraCLI export-contact
+swift run --package-path NoctweaveCore NoctweaveCLI help
+swift run --package-path NoctweaveCore NoctweaveCLI endpoint --relay https://relay.example
+swift run --package-path NoctweaveCore NoctweaveCLI health --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI info --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI init --display-name Alice --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI export-contact
 ```
 
 The CLI accepts `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls`
@@ -264,7 +264,7 @@ relay endpoints. It can initialize a headless identity, register an inbox,
 exchange contact offers, send and fetch encrypted direct/group messages,
 transfer attachments and voice payloads, inspect continuity audit events, rotate
 or burn identities, and issue raw relay requests for diagnostics. See
-[`noctyra_cli_usage.md`](NoctweaveDocumentation/noctyra_cli_usage.md).
+[`noctweave_cli_usage.md`](NoctweaveDocumentation/noctweave_cli_usage.md).
 
 ## Use NoctweaveJS
 
@@ -335,7 +335,7 @@ explicit SPDX/header to determine the license for a file.
 | --- | --- |
 | `NoctweaveCore/` | `AGPL-3.0-or-later` |
 | `NoctweaveCore/COMMERCIAL-LICENSE.md` | Optional commercial terms for NoctweaveCore only |
-| `NoctweaveCore/Sources/NoctyraCLI/` | `AGPL-3.0-or-later` |
+| `NoctweaveCore/Sources/NoctweaveCLI/` | `AGPL-3.0-or-later` |
 | `NoctweaveRelayServer/` | `AGPL-3.0-or-later` |
 | `NoctweaveJS/` | `Apache-2.0` |
 | `NoctweaveJS/examples/` | `MIT` |

@@ -8,7 +8,7 @@ You are helping integrate Noctweave into another project. Treat Noctweave as a p
 ## Public Integration Surface
 Use only the public components:
 
-- `NoctweaveCore/`: Swift package with protocol models, relay client/server primitives, cryptographic flows, message ratchets, federation logic, and `NoctyraCLI`.
+- `NoctweaveCore/`: Swift package with protocol models, relay client/server primitives, cryptographic flows, message ratchets, federation logic, and `NoctweaveCLI`.
 - `NoctweaveRelayServer/`: Linux/Docker relay implementation with TCP, HTTP, WebSocket, SQLite persistence, federation, IPFS attachment offload, and operator configuration.
 - `NoctweaveJS/`: bounded browser/Node relay client, liboqs WASM profile, encrypted storage wrapper, and interoperable direct-message helpers.
 - `NoctweaveDocumentation/`: protocol specs, OpenAPI schema, relay hardening, security requirements, and whitepaper alignment notes.
@@ -40,8 +40,8 @@ scripts/run-tests.sh
 Use the CLI for smoke tests:
 
 ```sh
-swift run --package-path NoctweaveCore NoctyraCLI health --relay http://127.0.0.1:9340
-swift run --package-path NoctweaveCore NoctyraCLI info --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI health --relay http://127.0.0.1:9340
+swift run --package-path NoctweaveCore NoctweaveCLI info --relay http://127.0.0.1:9340
 ```
 
 ## Security Expectations

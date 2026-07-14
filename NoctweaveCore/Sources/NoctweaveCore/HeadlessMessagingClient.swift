@@ -240,7 +240,7 @@ extension HeadlessMessagingClientError: LocalizedError {
         case .stateAlreadyExists:
             return "Headless client state already exists. Use a different --state path or --overwrite true."
         case .missingState:
-            return "Headless client state was not found. Run `NoctyraCLI init` first."
+            return "Headless client state was not found. Run `NoctweaveCLI init` first."
         case .missingInboxAccessKey:
             return "Headless client state is missing its inbox access key."
         case .contactNotFound(let selector):

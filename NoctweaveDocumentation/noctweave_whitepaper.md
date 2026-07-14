@@ -39,7 +39,7 @@ Noctweave prioritizes deployable post-quantum confidentiality and selective cont
 The public system has four primary components:
 
 - `NoctweaveCore`, the Swift protocol core
-- `NoctyraCLI`, the headless command-line client
+- `NoctweaveCLI`, the headless command-line client
 - `NoctweaveJS`, the JavaScript relay integration package
 - `NoctweaveRelayServer`, the Linux relay with Docker deployment support
 

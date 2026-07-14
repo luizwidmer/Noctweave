@@ -9,14 +9,14 @@ let package = Package(
     ],
     products: [
         .library(name: "NoctweaveCore", targets: ["NoctweaveCore"]),
-        .executable(name: "NoctyraCLI", targets: ["NoctyraCLI"]),
+        .executable(name: "NoctweaveCLI", targets: ["NoctweaveCLI"]),
         .executable(name: "NoctweaveCoreTestHarness", targets: ["NoctweaveCoreTestHarness"])
     ],
     targets: [
         .binaryTarget(name: "liboqs", path: "Vendor/liboqs.xcframework"),
         .target(name: "NoctweaveCore", dependencies: ["liboqs"]),
         .executableTarget(
-            name: "NoctyraCLI",
+            name: "NoctweaveCLI",
             dependencies: ["NoctweaveCore"],
             exclude: ["LICENSE"]
         ),

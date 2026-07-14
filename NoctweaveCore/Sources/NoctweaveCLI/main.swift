@@ -9,7 +9,7 @@ import Darwin
 #endif
 
 @main
-struct NoctyraCLI {
+struct NoctweaveCLI {
     static func main() async {
         do {
             try await CommandRunner(arguments: Array(CommandLine.arguments.dropFirst())).run()
@@ -97,7 +97,7 @@ private struct CommandRunner {
             let request = try request(from: options)
             try await send(request, options: options)
         default:
-            throw CLIError("Unknown command: \(command). Run `NoctyraCLI help`.")
+            throw CLIError("Unknown command: \(command). Run `NoctweaveCLI help`.")
         }
     }
 
@@ -417,7 +417,7 @@ private struct CommandRunner {
         guard encrypted else { return nil }
         let configuredPath = (
             options.value(for: "--state-key-file")
-                ?? ProcessInfo.processInfo.environment["NOCTYRA_CLI_STATE_KEY_FILE"]
+                ?? ProcessInfo.processInfo.environment["NOCTWEAVE_CLI_STATE_KEY_FILE"]
         ).flatMap { $0.isEmpty ? nil : $0 }
         #if os(Linux)
         let keyURL = configuredPath.map(URL.init(fileURLWithPath:)) ?? defaultStateKeyURL(for: stateURL)
@@ -485,7 +485,7 @@ private struct CommandRunner {
         if let path = options.value(for: "--password-file") {
             return try readSecret(at: URL(fileURLWithPath: path), label: "Contact password")
         }
-        if let password = ProcessInfo.processInfo.environment["NOCTYRA_CONTACT_PASSWORD"], !password.isEmpty {
+        if let password = ProcessInfo.processInfo.environment["NOCTWEAVE_CONTACT_PASSWORD"], !password.isEmpty {
             return password
         }
         return options.value(for: "--password")
@@ -495,7 +495,7 @@ private struct CommandRunner {
         if let path = options.value(for: "--auth-file") {
             return try readSecret(at: URL(fileURLWithPath: path), label: "Relay auth token")
         }
-        if let token = ProcessInfo.processInfo.environment["NOCTYRA_RELAY_AUTH_TOKEN"], !token.isEmpty {
+        if let token = ProcessInfo.processInfo.environment["NOCTWEAVE_RELAY_AUTH_TOKEN"], !token.isEmpty {
             return token
         }
         return options.value(for: "--auth")
@@ -516,12 +516,12 @@ private struct CommandRunner {
         if let path = options.value(for: "--state") {
             return URL(fileURLWithPath: path)
         }
-        if let path = ProcessInfo.processInfo.environment["NOCTYRA_CLI_STATE"], !path.isEmpty {
+        if let path = ProcessInfo.processInfo.environment["NOCTWEAVE_CLI_STATE"], !path.isEmpty {
             return URL(fileURLWithPath: path)
         }
         let home = FileManager.default.homeDirectoryForCurrentUser
         return home
-            .appendingPathComponent(".noctyra", isDirectory: true)
+            .appendingPathComponent(".noctweave", isDirectory: true)
             .appendingPathComponent("headless-state.json")
     }
 
@@ -645,38 +645,38 @@ private struct CommandRunner {
 
     private func printHelp() {
         FileHandle.standardOutput.writeLine("""
-        NoctyraCLI
+        NoctweaveCLI
 
         Usage:
-          NoctyraCLI init --display-name <name> --relay <url|host:port> [--state path]
-          NoctyraCLI register [--state path] [--auth-file path]
-          NoctyraCLI status [--state path]
-          NoctyraCLI export-contact [--state path]
-          NoctyraCLI export-contact --password-file <path> --out contact.noctweave [--state path]
-          NoctyraCLI import-contact --code <contact-code> [--state path]
-          NoctyraCLI import-contact --file contact.noctweave --password-file <path> [--state path]
-          NoctyraCLI contacts [--state path]
-          NoctyraCLI group-create --title <name> --members <contact-a,contact-b> [--state path]
-          NoctyraCLI groups [--refresh true] [--limit count] [--state path]
-          NoctyraCLI group-send --group <title|uuid> --text <message> [--state path]
-          NoctyraCLI group-send-attachment --group <title|uuid> --file <path> [--mime type] [--ttl seconds] [--state path]
-          NoctyraCLI group-send-voice --group <title|uuid> --file <path> [--mime audio/m4a] [--ttl seconds] [--state path]
-          NoctyraCLI group-receive [--group <title|uuid>] [--max count] [--long-poll seconds] [--state path]
-          NoctyraCLI continuity-audit [--state path]
-          NoctyraCLI purge-continuity-audit --confirm PURGE [--state path]
-          NoctyraCLI send --to <contact-name|fingerprint|uuid> --text <message> [--state path]
-          NoctyraCLI send-attachment --to <contact> --file <path> [--mime type] [--ttl seconds] [--state path]
-          NoctyraCLI send-voice --to <contact> --file <path> [--mime audio/m4a] [--ttl seconds] [--state path]
-          NoctyraCLI receive [--max count] [--long-poll seconds] [--state path]
-          NoctyraCLI download-attachment --id <uuid> --out <path-or-directory> [--overwrite true] [--state path]
-          NoctyraCLI allow-identity-reset --contact <contact> --allow true [--state path]
-          NoctyraCLI rotate-identity --confirm ROTATE [--state path]
-          NoctyraCLI burn-identity --confirm BURN [--state path]
-          NoctyraCLI endpoint --relay <url|host:port>
-          NoctyraCLI health --relay <url|host:port> [--auth-file path] [--timeout seconds]
-          NoctyraCLI info --relay <url|host:port> [--auth-file path] [--timeout seconds]
-          NoctyraCLI raw --relay <url|host:port> --request '<relay-request-json>'
-          NoctyraCLI raw --relay <url|host:port> --request @request.json
+          NoctweaveCLI init --display-name <name> --relay <url|host:port> [--state path]
+          NoctweaveCLI register [--state path] [--auth-file path]
+          NoctweaveCLI status [--state path]
+          NoctweaveCLI export-contact [--state path]
+          NoctweaveCLI export-contact --password-file <path> --out contact.noctweave [--state path]
+          NoctweaveCLI import-contact --code <contact-code> [--state path]
+          NoctweaveCLI import-contact --file contact.noctweave --password-file <path> [--state path]
+          NoctweaveCLI contacts [--state path]
+          NoctweaveCLI group-create --title <name> --members <contact-a,contact-b> [--state path]
+          NoctweaveCLI groups [--refresh true] [--limit count] [--state path]
+          NoctweaveCLI group-send --group <title|uuid> --text <message> [--state path]
+          NoctweaveCLI group-send-attachment --group <title|uuid> --file <path> [--mime type] [--ttl seconds] [--state path]
+          NoctweaveCLI group-send-voice --group <title|uuid> --file <path> [--mime audio/m4a] [--ttl seconds] [--state path]
+          NoctweaveCLI group-receive [--group <title|uuid>] [--max count] [--long-poll seconds] [--state path]
+          NoctweaveCLI continuity-audit [--state path]
+          NoctweaveCLI purge-continuity-audit --confirm PURGE [--state path]
+          NoctweaveCLI send --to <contact-name|fingerprint|uuid> --text <message> [--state path]
+          NoctweaveCLI send-attachment --to <contact> --file <path> [--mime type] [--ttl seconds] [--state path]
+          NoctweaveCLI send-voice --to <contact> --file <path> [--mime audio/m4a] [--ttl seconds] [--state path]
+          NoctweaveCLI receive [--max count] [--long-poll seconds] [--state path]
+          NoctweaveCLI download-attachment --id <uuid> --out <path-or-directory> [--overwrite true] [--state path]
+          NoctweaveCLI allow-identity-reset --contact <contact> --allow true [--state path]
+          NoctweaveCLI rotate-identity --confirm ROTATE [--state path]
+          NoctweaveCLI burn-identity --confirm BURN [--state path]
+          NoctweaveCLI endpoint --relay <url|host:port>
+          NoctweaveCLI health --relay <url|host:port> [--auth-file path] [--timeout seconds]
+          NoctweaveCLI info --relay <url|host:port> [--auth-file path] [--timeout seconds]
+          NoctweaveCLI raw --relay <url|host:port> --request '<relay-request-json>'
+          NoctweaveCLI raw --relay <url|host:port> --request @request.json
 
         Relay endpoint examples:
           127.0.0.1:9339
@@ -688,14 +688,14 @@ private struct CommandRunner {
           tls://relay.example:9339
 
         Headless client state:
-          --state defaults to ~/.noctyra/headless-state.json or NOCTYRA_CLI_STATE.
+          --state defaults to ~/.noctweave/headless-state.json or NOCTWEAVE_CLI_STATE.
           State is encrypted by default. Apple platforms use Keychain; Linux uses a 0600 key file.
-          Override the Linux key path with --state-key-file or NOCTYRA_CLI_STATE_KEY_FILE.
+          Override the Linux key path with --state-key-file or NOCTWEAVE_CLI_STATE_KEY_FILE.
           Use --encrypted-state false only for explicitly accepted plaintext development state.
 
         Secret input:
           Prefer --password-file and --auth-file so secrets do not appear in process arguments.
-          NOCTYRA_CONTACT_PASSWORD and NOCTYRA_RELAY_AUTH_TOKEN are also supported.
+          NOCTWEAVE_CONTACT_PASSWORD and NOCTWEAVE_RELAY_AUTH_TOKEN are also supported.
         """)
     }
 }

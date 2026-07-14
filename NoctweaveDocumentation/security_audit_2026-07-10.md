@@ -3,7 +3,7 @@
 ## Status And Scope
 
 This is a repository-owned source review, not an independent security audit or
-formal proof. It covers `NoctweaveCore`, `NoctyraCLI`, `NoctweaveJS`, the Linux
+formal proof. It covers `NoctweaveCore`, `NoctweaveCLI`, `NoctweaveJS`, the Linux
 relay, the proprietary Apple reference client, the macOS relay control plane,
 public documentation, build scripts, and dependency manifests at the reviewed
 commit.

@@ -8,7 +8,7 @@ SPDX/header to determine the license for a file.
 - NoctweaveCore/ is licensed under AGPL-3.0-or-later.
 - NoctweaveCore/COMMERCIAL-LICENSE.md describes separate commercial licensing
   availability for NoctweaveCore only.
-- NoctweaveCore/Sources/NoctyraCLI/ is licensed under AGPL-3.0-or-later.
+- NoctweaveCore/Sources/NoctweaveCLI/ is licensed under AGPL-3.0-or-later.
 - NoctweaveRelayServer/ is licensed under AGPL-3.0-or-later.
 - NoctweaveJS/ is licensed under Apache-2.0.
 - NoctweaveJS/examples/ is licensed under MIT.

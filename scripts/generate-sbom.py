@@ -116,8 +116,8 @@ def workspace_components():
         },
         {
             "type": "local-source",
-            "name": "NoctyraCLI",
-            "source": "NoctweaveCore/Sources/NoctyraCLI",
+            "name": "NoctweaveCLI",
+            "source": "NoctweaveCore/Sources/NoctweaveCLI",
         },
         {
             "type": "local-source",

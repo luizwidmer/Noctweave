@@ -1,7 +1,7 @@
 # Noctweave Roadmap
 
 **Last updated:** July 10, 2026
-**Scope:** public core protocol, `NoctyraCLI`, Linux relay, Docker/ops tooling, and public protocol documentation.
+**Scope:** public core protocol, `NoctweaveCLI`, Linux relay, Docker/ops tooling, and public protocol documentation.
 
 This roadmap reflects repository evidence rather than early planning estimates. Items are marked complete only when code, tests, documentation, or release tooling exist in this repository.
 
@@ -129,7 +129,7 @@ Noctweave has moved past the initial prototype phase. The public repository now 
 
 ## CLI And Public Tooling
 
-- [x] `NoctyraCLI` executable target
+- [x] `NoctweaveCLI` executable target
 - [x] Endpoint normalization for `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls`
 - [x] Public `HeadlessMessagingClient` API in `NoctweaveCore`
 - [x] Headless direct-message client state backed by `NoctweaveCore`
@@ -143,7 +143,7 @@ Noctweave has moved past the initial prototype phase. The public repository now 
 - [x] Relay `health` command
 - [x] Relay `info` command
 - [x] Raw relay-request command from JSON string, file, or stdin
-- [x] CLI usage documentation: `noctyra_cli_usage.md`
+- [x] CLI usage documentation: `noctweave_cli_usage.md`
 - [x] Shared relay endpoint parser with tests
 - [x] Public combined test runner: `scripts/run-tests.sh`
 - [x] Public release verification script: `scripts/verify-release.sh`

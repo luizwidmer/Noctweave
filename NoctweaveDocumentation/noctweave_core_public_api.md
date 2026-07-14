@@ -5,7 +5,7 @@
 ## Package Products
 
 - `NoctweaveCore`: protocol models, cryptographic wrappers, relay client/server primitives, messaging state, groups, federation, and metadata-reduction helpers.
-- `NoctyraCLI`: command-line diagnostics and headless messaging client.
+- `NoctweaveCLI`: command-line diagnostics and headless messaging client.
 - `NoctweaveCoreTestHarness`: local protocol harness for development verification.
 - `NoctweaveJS`: JavaScript ESM protocol library, working browser direct-message client, relay request helpers, and encrypted web/database storage adapters.
 

@@ -14,14 +14,14 @@
       "version": "unknown"
     },
     {
-      "bom-ref": "local-source:NoctyraCLI:unknown",
+      "bom-ref": "local-source:NoctweaveCLI:unknown",
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "file:NoctweaveCore/Sources/NoctyraCLI"
+          "url": "file:NoctweaveCore/Sources/NoctweaveCLI"
         }
       ],
-      "name": "NoctyraCLI",
+      "name": "NoctweaveCLI",
       "type": "library",
       "version": "unknown"
     },

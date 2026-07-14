@@ -8,7 +8,7 @@ This document records the current software bill of materials and the minimum rel
 
 - `NoctweaveCore`
 - `NoctweaveRelayServer`
-- `NoctyraCLI`
+- `NoctweaveCLI`
 - `NoctweaveJS`
 - Docker relay image
 

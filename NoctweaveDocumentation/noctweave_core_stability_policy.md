@@ -23,7 +23,7 @@ Release candidates should use tags such as `0.9.0-rc.1` only when the release ar
 The following surfaces must be reviewed before every release:
 
 - Swift public API exported by `NoctweaveCore`
-- `NoctyraCLI` command names, required flags, and JSON output shapes
+- `NoctweaveCLI` command names, required flags, and JSON output shapes
 - relay request/response models and OpenAPI schema
 - encrypted message, contact-share, prekey, group, and attachment wire formats
 - `ClientState` and relay SQLite persistence formats
@@ -62,6 +62,6 @@ Before tagging a public release:
 1. Run `scripts/verify-release.sh`.
 2. Run `scripts/run-tests.sh`.
 3. Confirm `noctweave_relay_openapi.yaml` matches relay behavior.
-4. Confirm `noctyra_cli_usage.md` matches `NoctyraCLI help`.
+4. Confirm `noctweave_cli_usage.md` matches `NoctweaveCLI help`.
 5. Confirm `noctweave_core_public_api.md` lists newly exposed candidate APIs.
 6. Record breaking changes, reset requirements, cryptographic dependency changes, and Docker flag changes in release notes.

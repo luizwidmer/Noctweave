@@ -7,7 +7,7 @@ inside that file.
 Primary component licenses:
 
 - `NoctweaveCore/`: `AGPL-3.0-or-later`
-- `NoctweaveCore/Sources/NoctyraCLI/`: `AGPL-3.0-or-later`
+- `NoctweaveCore/Sources/NoctweaveCLI/`: `AGPL-3.0-or-later`
 - `NoctweaveCore/COMMERCIAL-LICENSE.md`: optional commercial license terms for NoctweaveCore only
 - `NoctweaveRelayServer/`: `AGPL-3.0-or-later`
 - `NoctweaveJS/`: `Apache-2.0`
