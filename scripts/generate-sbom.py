@@ -85,6 +85,15 @@ def vendored_components():
     components = []
     liboqs = ROOT / "NoctweaveCore" / "Vendor" / "liboqs.xcframework"
     if liboqs.exists():
+        version_header = liboqs / "macos-arm64" / "Headers" / "oqs" / "oqsconfig.h"
+        version = None
+        if version_header.exists():
+            match = re.search(
+                r'^#define OQS_VERSION_TEXT "([^"]+)"',
+                read_text(version_header),
+                flags=re.MULTILINE,
+            )
+            version = match.group(1) if match else None
         files = sorted(path for path in liboqs.rglob("*") if path.is_file())
         tree_digest = hashlib.sha256()
         for file_path in files:
@@ -98,7 +107,7 @@ def vendored_components():
             {
                 "type": "vendored-binary",
                 "name": "liboqs.xcframework",
-                "version": None,
+                "version": version,
                 "revision": tree_digest.hexdigest(),
                 "source": str(liboqs.relative_to(ROOT)),
                 "fileCount": len(files),
@@ -244,8 +253,11 @@ def main():
         json.dumps(make_cyclonedx_sbom(payload), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    print(output.relative_to(ROOT))
-    print(cyclonedx_output.relative_to(ROOT))
+    for path in (output, cyclonedx_output):
+        try:
+            print(path.relative_to(ROOT))
+        except ValueError:
+            print(path)
 
 
 if __name__ == "__main__":

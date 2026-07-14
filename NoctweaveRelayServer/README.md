@@ -54,8 +54,8 @@ storage, and bind failures print a redacted operator error and exit nonzero.
 
 ## Docker
 
-The image pins liboqs 0.15.0 to immutable commit
-`97f6b86b1b6d109cfd43cf276ae39c2e776aed80` for reproducible cryptographic builds and runs the
+The image pins liboqs 0.16.0 to immutable commit
+`5a1a854b0dc9f2141bdc771c555ee60c37950183` for reproducible cryptographic builds and runs the
 relay as an unprivileged `noctweave` user. Mount `/data` as a writable volume
 owned by UID/GID `10001`. Coordinator nodes persist their directory-signing key
 inside this volume; back it up with the relay database to preserve client trust

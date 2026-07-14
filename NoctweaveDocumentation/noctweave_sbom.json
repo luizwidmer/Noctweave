@@ -84,18 +84,18 @@
     {
       "name": "liboqs",
       "pinFile": "NoctweaveRelayServer/Dockerfile",
-      "revision": "97f6b86b1b6d109cfd43cf276ae39c2e776aed80",
+      "revision": "5a1a854b0dc9f2141bdc771c555ee60c37950183",
       "source": "https://github.com/open-quantum-safe/liboqs.git",
       "type": "source-build",
-      "version": "0.15.0"
+      "version": "0.16.0"
     },
     {
       "fileCount": 46,
       "name": "liboqs.xcframework",
-      "revision": "28469141cb441bb3af2bc5e203ba8227a99df2e64dfd8e76085d72de4fce6a8c",
+      "revision": "d573633dbe8a318a70a8b59c60a4a27d2c09d14afd2461bdad0322c24a33a59a",
       "source": "NoctweaveCore/Vendor/liboqs.xcframework",
       "type": "vendored-binary",
-      "version": null
+      "version": "0.16.0"
     }
   ],
   "generatedBy": "scripts/generate-sbom.py",

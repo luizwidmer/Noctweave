@@ -1,4 +1,4 @@
 module liboqs [system] {
-  header "oqs/oqs.h"
-  export *
+    header "oqs/oqs.h"
+    export *
 }

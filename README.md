@@ -208,7 +208,7 @@ Noctweave builds on established open-source components rather than maintaining
 custom cryptographic implementations or shipping a browser runtime:
 
 - [Open Quantum Safe liboqs](https://github.com/open-quantum-safe/liboqs) supplies
-  ML-KEM-768 and ML-DSA-65. The Docker build pins liboqs `0.15.0` to an immutable
+  ML-KEM-768 and ML-DSA-65. The Docker build pins liboqs `0.16.0` to an immutable
   commit; Swift uses the vendored XCFramework; JavaScript uses a bounded WASM
   profile.
 - [Electrobun](https://electrobun.dev/) packages the optional desktop client and

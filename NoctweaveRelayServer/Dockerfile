@@ -1,5 +1,5 @@
-ARG LIBOQS_VERSION=0.15.0
-ARG LIBOQS_COMMIT=97f6b86b1b6d109cfd43cf276ae39c2e776aed80
+ARG LIBOQS_VERSION=0.16.0
+ARG LIBOQS_COMMIT=5a1a854b0dc9f2141bdc771c555ee60c37950183
 
 FROM swift:6.1-jammy AS builder
 ARG LIBOQS_VERSION
@@ -30,7 +30,7 @@ WORKDIR /app
 COPY . .
 RUN swift build -c release \
     && strip --strip-unneeded .build/release/NoctweaveRelayServer \
-    && strip --strip-unneeded /usr/local/lib/liboqs.so.0.15.0
+    && strip --strip-unneeded "$(readlink -f /usr/local/lib/liboqs.so.9)"
 
 FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y --no-install-recommends \

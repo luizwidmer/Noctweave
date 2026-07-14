@@ -7,6 +7,7 @@ SBOM_PATH="$ROOT_DIR/NoctweaveDocumentation/noctweave_sbom.json"
 CYCLONEDX_SBOM_PATH="$ROOT_DIR/NoctweaveDocumentation/noctweave_cyclonedx_sbom.json"
 
 source "$ROOT_DIR/scripts/liboqs-runtime.sh"
+source "$ROOT_DIR/scripts/liboqs-version.sh"
 
 cd "$ROOT_DIR"
 
@@ -15,15 +16,22 @@ echo "Resolving Swift package pins..."
 git diff --exit-code -- "$RELAY_DIR/Package.resolved"
 
 echo "Checking immutable liboqs Docker source pin..."
-python3 - <<'PY' "$RELAY_DIR/Dockerfile"
+python3 - <<'PY' "$RELAY_DIR/Dockerfile" "$LIBOQS_VERSION" "$LIBOQS_COMMIT"
 import pathlib
 import re
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+expected_version = sys.argv[2]
+expected_commit = sys.argv[3]
+version_match = re.search(r"^ARG LIBOQS_VERSION=([^\s]+)$", text, flags=re.MULTILINE)
+if not version_match or version_match.group(1) != expected_version:
+    raise SystemExit("Dockerfile liboqs version does not match scripts/liboqs-version.sh")
 match = re.search(r"^ARG LIBOQS_COMMIT=([0-9a-f]{40})$", text, flags=re.MULTILINE)
 if not match:
     raise SystemExit("Dockerfile must pin LIBOQS_COMMIT to a 40-character commit")
+if match.group(1) != expected_commit:
+    raise SystemExit("Dockerfile liboqs commit does not match scripts/liboqs-version.sh")
 if 'git -C /tmp/liboqs fetch --depth 1 origin "${LIBOQS_COMMIT}"' not in text:
     raise SystemExit("Dockerfile must fetch liboqs by LIBOQS_COMMIT")
 if 'test "$(git -C /tmp/liboqs rev-parse HEAD)" = "${LIBOQS_COMMIT}"' not in text:
@@ -37,10 +45,25 @@ if 'strip --strip-unneeded .build/release/NoctweaveRelayServer' not in text:
     raise SystemExit("Docker relay binary must be stripped for release")
 PY
 
+echo "Checking vendored Apple liboqs version..."
+for config in "$ROOT_DIR"/NoctweaveCore/Vendor/liboqs.xcframework/*/Headers/oqs/oqsconfig.h; do
+  grep -q "OQS_VERSION_TEXT \"$LIBOQS_VERSION\"" "$config"
+done
+
+echo "Proving liboqs backward and forward interoperability..."
+scripts/test-liboqs-interop.sh
+
 echo "Refreshing machine-readable SBOM..."
-scripts/generate-sbom.py >/dev/null
-git diff --exit-code -- "$SBOM_PATH"
-git diff --exit-code -- "$CYCLONEDX_SBOM_PATH"
+SBOM_CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/noctweave-sbom-check.XXXXXX")"
+trap 'rm -rf "$SBOM_CHECK_DIR"' EXIT
+GENERATED_SBOM_PATH="$SBOM_CHECK_DIR/noctweave_sbom.json"
+GENERATED_CYCLONEDX_SBOM_PATH="$SBOM_CHECK_DIR/noctweave_cyclonedx_sbom.json"
+scripts/generate-sbom.py \
+  --output "$GENERATED_SBOM_PATH" \
+  --cyclonedx-output "$GENERATED_CYCLONEDX_SBOM_PATH" \
+  >/dev/null
+diff -u "$SBOM_PATH" "$GENERATED_SBOM_PATH"
+diff -u "$CYCLONEDX_SBOM_PATH" "$GENERATED_CYCLONEDX_SBOM_PATH"
 
 echo "Validating SBOM JSON..."
 python3 -m json.tool "$SBOM_PATH" >/dev/null
