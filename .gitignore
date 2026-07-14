@@ -21,6 +21,8 @@ Package.resolved
 .relay-data/
 .runtime/
 NoctweaveJS/wasm/build/
+NoctweaveJS/node_modules/
+NoctweaveJS/artifacts/
 AGENTS.md
 *.log
 *.tmp

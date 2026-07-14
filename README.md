@@ -89,13 +89,15 @@ signed requests and sealed envelopes—not chat plaintext.
 
 ![NoctweaveJS encrypted browser client](docs/assets/NoctweaveJSClient.png)
 
-NoctweaveJS includes two browser surfaces:
+NoctweaveJS includes two browser surfaces and an Electrobun desktop package:
 
 - `client/` is the working minimal messaging application with encrypted profile
   setup, relay management, post-quantum identity creation, verified contacts,
   durable direct chats, unread state, sync, and encrypted backup/restore.
 - `examples/browser-client/` is the interoperability demo used to exercise
   pairing and encrypted message exchange between two browser profiles.
+- `desktop/` packages the working client with the system WebView for macOS,
+  Windows, and Linux without bundling Chromium.
 
 Run the production-oriented client with:
 
@@ -107,6 +109,14 @@ npm run dev:client
 Then open [http://127.0.0.1:5173/client/](http://127.0.0.1:5173/client/).
 NoctweaveJS supports application-managed memory, localStorage, IndexedDB, and
 database adapters; sensitive records should use the encrypted store wrapper.
+
+Run the native desktop package on the current operating system with:
+
+```sh
+cd NoctweaveJS
+bun install
+bun run desktop:dev
+```
 
 For a non-interactive bidirectional chat check against a running relay:
 
