@@ -2,9 +2,9 @@
   <img src="../docs/assets/NoctweaveLogo.svg" alt="Noctweave" width="620">
 </p>
 
-# NoctweaveRelayServer (Linux)
+# NoctweaveRelayServer
 
-A Linux relay server for the Noctweave Protocol, used by compatible clients and tooling. It supports line-delimited TCP plus optional HTTP/WebSocket bridge support.
+A Linux/Docker relay server for the Noctweave Protocol, used by compatible clients and tooling. It supports line-delimited TCP plus optional HTTP/WebSocket bridge support and includes a source-built desktop operator launcher.
 
 ## What it does
 
@@ -159,6 +159,41 @@ runtime stage is based on Ubuntu 22.04 and contains the stripped relay binary,
 the minimal liboqs profile, required Swift shared libraries, certificates,
 libcurl, and SQLite. Compiler tools, package caches, static Swift libraries,
 tests, and source files are not included in the final image.
+
+### Desktop operator launcher
+
+Noctweave does not publish an official relay desktop binary. The Electrobun
+launcher is built locally and uses Docker to provide the same Linux relay on
+macOS, Windows, and Linux. It packages the relay source snapshot, builds the
+image on your machine, keeps relay data in a named volume, and opens the existing
+authenticated operator console. Chromium is not bundled.
+
+Requirements are Git, Bun 1.3.14, and a running Docker Desktop or Docker Engine.
+Build on the operating system and architecture where the launcher will run:
+
+```bash
+cd NoctweaveRelayServer
+bun install --frozen-lockfile
+bun run desktop:test
+bun run typecheck:desktop
+bun run desktop:build
+```
+
+The distributable is written to `NoctweaveRelayServer/artifacts/`. Local builds
+are unsigned; sign and notarize redistributed builds with your own platform
+identity. Run a development copy with `bun run desktop:dev`.
+
+Inside the launcher, select **Build from source** once, then start the relay.
+The operator console is always mapped to `127.0.0.1`; selecting network exposure
+publishes only the messaging ports. The launcher stores its generated operator
+token in a user-private local settings file (`0600` permissions on POSIX
+systems) and copies it only on explicit request. Closing the launcher does not
+stop the relay container.
+
+The launcher invokes the local Docker daemon, which is a privileged capability.
+Use only source you have reviewed. For unattended production deployments,
+compose files and explicit operator-managed secrets remain preferable to a
+desktop launcher.
 
 ### Operator Web UI
 

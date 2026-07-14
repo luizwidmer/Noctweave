@@ -136,8 +136,9 @@ npm run smoke:client -- --relay http://127.0.0.1:9340
 - [`NoctweaveJS/`](NoctweaveJS/) — browser/Node relay client, encrypted storage
   wrappers, WebCrypto helpers, and WASM-backed liboqs integration.
 - [`NoctweaveRelayServer/`](NoctweaveRelayServer/) — Linux relay with TCP,
-  HTTP/WebSocket, Docker, SQLite, an authenticated operator Web UI, federation,
-  and optional IPFS offload.
+  HTTP/WebSocket, Docker, SQLite, an authenticated operator Web UI, a
+  source-built cross-platform desktop launcher, federation, and optional IPFS
+  offload.
 - [`NoctweaveDocumentation/`](NoctweaveDocumentation/) — protocol, API,
   security, federation, deployment, and release documentation.
 - [`AgentGuides/`](AgentGuides/) and [`AgentSkills/`](AgentSkills/) — reference
@@ -318,9 +319,10 @@ WebCrypto for symmetric primitives where appropriate. See
 
 ## Release Artifacts
 
-The repository is pre-1.0 and does not publish official NoctweaveJS desktop
-binaries. Build the Electrobun client from source on its target operating system
-using the instructions in [`NoctweaveJS/README.md`](NoctweaveJS/README.md).
+The repository is pre-1.0 and does not publish official NoctweaveJS client or
+relay desktop binaries. Build each Electrobun application from source on its
+target operating system using [`NoctweaveJS/README.md`](NoctweaveJS/README.md)
+and [`NoctweaveRelayServer/README.md`](NoctweaveRelayServer/README.md).
 Public npm, GHCR, and GitHub Release artifacts remain gated by
 [`noctweave_roadmap.md`](NoctweaveDocumentation/noctweave_roadmap.md).
 

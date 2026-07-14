@@ -23,6 +23,8 @@ Package.resolved
 NoctweaveJS/wasm/build/
 NoctweaveJS/node_modules/
 NoctweaveJS/artifacts/
+NoctweaveRelayServer/node_modules/
+NoctweaveRelayServer/artifacts/
 AGENTS.md
 *.log
 *.tmp

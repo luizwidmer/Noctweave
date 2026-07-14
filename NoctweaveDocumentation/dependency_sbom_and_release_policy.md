@@ -59,8 +59,10 @@ scripts/verify-release.sh
 It refreshes the SBOM, verifies the checked-in snapshot is current, checks package resolution, runs the Linux relay test suite, and runs optional Docker/Trivy checks when those tools are installed.
 
 The public repository does not ship binary release automation or official
-prebuilt NoctweaveJS clients. Maintainers and downstream users build the desktop
-client from source on each target operating system. Before tagging a release
+prebuilt NoctweaveJS client or relay desktop applications. Maintainers and
+downstream users build both Electrobun applications from source on each target
+operating system. The relay launcher then builds its Linux relay image locally
+from the source snapshot packaged with that build. Before tagging a release
 candidate, maintainers must still run this verifier and attach the generated
 native and CycloneDX SBOM snapshots plus locally generated artifact checksums to
 the release notes. CI for relay tests, container builds, and scanner evidence
