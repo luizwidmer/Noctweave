@@ -1,16 +1,24 @@
-import { copyFileSync, existsSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+
+const wrapperBundle = process.env.ELECTROBUN_WRAPPER_BUNDLE_PATH;
+if (!wrapperBundle || !existsSync(wrapperBundle)) {
+  throw new Error("Electrobun did not provide a valid relay wrapper path.");
+}
+
+const resources = process.env.ELECTROBUN_OS === "macos"
+  ? join(wrapperBundle, "Contents", "Resources")
+  : join(wrapperBundle, "Resources");
+const projectRoot = fileURLToPath(new URL("../../", import.meta.url));
+const relaySource = join(resources, "relay-source");
+rmSync(relaySource, { recursive: true, force: true });
+mkdirSync(relaySource, { recursive: true });
+for (const item of ["Dockerfile", "Package.swift", "Package.resolved", "Sources", "Tests"]) {
+  cpSync(join(projectRoot, item), join(relaySource, item), { recursive: true });
+}
 
 if (process.env.ELECTROBUN_OS === "macos") {
   const source = new URL("../../../NoctweaveJS/desktop/assets/app-icon.icns", import.meta.url);
-  const wrapperBundle = process.env.ELECTROBUN_WRAPPER_BUNDLE_PATH;
-  const buildDirectory = process.env.ELECTROBUN_BUILD_DIR;
-  const appName = process.env.ELECTROBUN_APP_NAME;
-  const bundle = wrapperBundle ?? (buildDirectory && appName
-    ? join(buildDirectory, `${appName}.app`)
-    : null);
-  if (!bundle || !existsSync(bundle)) {
-    throw new Error("Electrobun did not provide a valid macOS relay bundle path.");
-  }
-  copyFileSync(source, join(bundle, "Contents", "Resources", "AppIcon.icns"));
+  copyFileSync(source, join(resources, "AppIcon.icns"));
 }

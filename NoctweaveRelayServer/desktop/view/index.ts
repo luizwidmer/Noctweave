@@ -26,6 +26,7 @@ const tokenButton = $("#copyToken") as HTMLButtonElement;
 const logsButton = $("#refreshLogs") as HTMLButtonElement;
 let currentStatus: RelayLauncherStatus | undefined;
 let busy = false;
+let activityMessage: { text: string; isError: boolean } | undefined;
 
 function settingsFromForm(): RelayLauncherSettings {
   const data = new FormData(form);
@@ -54,7 +55,8 @@ function render(status: RelayLauncherStatus, preserveForm = false): void {
   $("#imageState").textContent = status.imageReady ? "Built locally" : "Not built";
   $("#relayState").textContent = status.relayHealthy ? "Online" : running ? "Starting" : "Stopped";
   $("#relayEndpoint").textContent = status.relayEndpoint;
-  $("#statusDetail").textContent = status.detail;
+  $("#statusDetail").textContent = activityMessage?.text ?? status.detail;
+  $("#statusDetail").classList.toggle("errorText", activityMessage?.isError === true);
   $("#statusDot").className = `statusDot ${status.relayHealthy ? "online" : running ? "waiting" : ""}`;
   $("#statusLabel").textContent = status.relayHealthy ? "Relay online" : running ? "Starting relay" : "Relay stopped";
   startButton.disabled = busy || !status.dockerAvailable || !status.imageReady || running;
@@ -66,8 +68,8 @@ function render(status: RelayLauncherStatus, preserveForm = false): void {
 
 function setBusy(value: boolean, label?: string): void {
   busy = value;
+  if (label) activityMessage = { text: label, isError: false };
   document.body.classList.toggle("busy", value);
-  if (label) $("#statusDetail").textContent = label;
   if (currentStatus) render(currentStatus, true);
 }
 
@@ -82,9 +84,12 @@ function showToast(message: string, isError = false): void {
 async function perform(label: string, operation: () => Promise<RelayLauncherStatus>): Promise<void> {
   setBusy(true, label);
   try {
+    activityMessage = undefined;
     render(await operation());
   } catch (error) {
-    showToast(error instanceof Error ? error.message : "Operation failed.", true);
+    const message = error instanceof Error ? error.message : "Operation failed.";
+    activityMessage = { text: message, isError: true };
+    showToast(message, true);
   } finally {
     setBusy(false);
   }

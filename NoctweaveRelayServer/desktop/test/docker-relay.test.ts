@@ -49,7 +49,7 @@ test("manager uses argument arrays for build, start, stop, and status", async ()
     commands.push(command);
     if (command[1] === "version") return { exitCode: 0, stdout: "27.0", stderr: "" };
     if (command[1] === "inspect") return { exitCode: 0, stdout: "true", stderr: "" };
-    if (command[1] === "image") return { exitCode: 0, stdout: "[]", stderr: "" };
+    if (command[1] === "image") return { exitCode: 0, stdout: "36fe1685870e\n", stderr: "" };
     return { exitCode: 0, stdout: relayContainer, stderr: "" };
   };
   const manager = new DockerRelayManager(
@@ -62,7 +62,19 @@ test("manager uses argument arrays for build, start, stop, and status", async ()
   const status = await manager.status(settings);
   await manager.stop();
   expect(status.relayHealthy).toBe(true);
-  expect(commands.some((command) => command[1] === "run")).toBe(true);
+  expect(commands.some((command) => command[1] === "run" && command.includes("36fe1685870e"))).toBe(true);
   expect(commands.some((command) => command.join(" ").includes("rm -f"))).toBe(true);
   expect(commands.at(-1)).toEqual(["docker", "stop", "-t", "10", relayContainer]);
+});
+
+test("manager surfaces an immediate relay bind failure", async () => {
+  const runner = async (command: string[]): Promise<CommandResult> => {
+    if (command[1] === "image") return { exitCode: 0, stdout: "36fe1685870e\n", stderr: "" };
+    if (command[1] === "version") return { exitCode: 0, stdout: "27.0", stderr: "" };
+    if (command[1] === "inspect") return { exitCode: 0, stdout: "false", stderr: "" };
+    if (command[1] === "logs") return { exitCode: 0, stdout: "", stderr: "bind: address already in use" };
+    return { exitCode: 0, stdout: relayContainer, stderr: "" };
+  };
+  const manager = new DockerRelayManager("", token, runner, async () => false);
+  await expect(manager.start(settings)).rejects.toThrow("address already in use");
 });

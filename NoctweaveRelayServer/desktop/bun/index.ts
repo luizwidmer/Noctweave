@@ -5,7 +5,7 @@ import type { RelayDesktopRPC, RelayLauncherSettings } from "../rpc.js";
 import { DockerRelayManager, validateSettings } from "./docker-relay.js";
 import { LauncherStore } from "./launcher-store.js";
 
-const sourceDirectory = join(PATHS.RESOURCES_FOLDER, "app", "relay-source");
+const sourceDirectory = join(PATHS.RESOURCES_FOLDER, "relay-source");
 const store = new LauncherStore();
 let state = await store.load();
 let manager = new DockerRelayManager(sourceDirectory, state.adminToken);
@@ -27,11 +27,6 @@ const desktopRPC = BrowserView.defineRPC<RelayDesktopRPC>({
       startRelay: async (settings) => {
         await updateSettings(settings);
         await manager.start(state.settings);
-        for (let attempt = 0; attempt < 20; attempt++) {
-          const status = await manager.status(state.settings);
-          if (status.relayHealthy) return status;
-          await Bun.sleep(250);
-        }
         return manager.status(state.settings);
       },
       stopRelay: async () => {

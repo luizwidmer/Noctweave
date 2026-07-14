@@ -18,11 +18,7 @@ export default {
     },
     copy: {
       "desktop/view/index.html": "views/mainview/index.html",
-      "desktop/view/styles.css": "views/mainview/styles.css",
-      "Dockerfile": "relay-source/Dockerfile",
-      "Package.swift": "relay-source/Package.swift",
-      "Package.resolved": "relay-source/Package.resolved",
-      "Sources": "relay-source/Sources"
+      "desktop/view/styles.css": "views/mainview/styles.css"
     },
     targets: "current",
     useAsar: false,

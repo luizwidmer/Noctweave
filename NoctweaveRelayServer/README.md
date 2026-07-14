@@ -184,6 +184,11 @@ are unsigned; sign and notarize redistributed builds with your own platform
 identity. Run a development copy with `bun run desktop:dev`.
 
 Inside the launcher, select **Build from source** once, then start the relay.
+The first image build compiles Swift and liboqs and may take several minutes;
+the launcher keeps the build state visible and Docker caches later builds. If a
+native relay already owns port `9339`, choose different launcher ports or stop
+the other relay before starting. Startup failures remain visible with bounded
+container diagnostics.
 The operator console is always mapped to `127.0.0.1`; selecting network exposure
 publishes only the messaging ports. The launcher stores its generated operator
 token in a user-private local settings file (`0600` permissions on POSIX

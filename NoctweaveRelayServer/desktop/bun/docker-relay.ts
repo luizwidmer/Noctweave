@@ -50,11 +50,15 @@ export function validateSettings(input: RelayLauncherSettings): RelayLauncherSet
 
 export function dockerRunArguments(
   settingsInput: RelayLauncherSettings,
-  adminToken: string
+  adminToken: string,
+  imageReference = relayImage
 ): string[] {
   const settings = validateSettings(settingsInput);
   if (!/^[a-f0-9]{64}$/u.test(adminToken)) {
     throw new Error("The generated operator token is invalid.");
+  }
+  if (imageReference !== relayImage && !/^[a-f0-9]{12,64}$/u.test(imageReference)) {
+    throw new Error("The local relay image reference is invalid.");
   }
   const relayHost = settings.exposure === "network" ? "0.0.0.0" : "127.0.0.1";
   return [
@@ -67,7 +71,7 @@ export function dockerRunArguments(
     "-e", `NOCTYRA_ADMIN_TOKEN=${adminToken}`,
     "-e", "NOCTYRA_ADMIN_HOST=0.0.0.0",
     "-v", `${relayVolume}:/data`,
-    relayImage,
+    imageReference,
     "--host", "0.0.0.0",
     "--port", "9339",
     "--http-port", "9340",
@@ -95,14 +99,32 @@ export class DockerRelayManager {
   }
 
   async start(settings: RelayLauncherSettings): Promise<void> {
-    const image = await this.runner(["docker", "image", "inspect", relayImage]);
-    ensureSuccess(image, "Build the relay image from source before starting it");
+    const imageReference = await this.localImageReference();
+    if (!imageReference) {
+      throw new Error("Build the relay image from source before starting it.");
+    }
     const removed = await this.runner(["docker", "rm", "-f", relayContainer]);
     if (removed.exitCode !== 0 && !/No such container/iu.test(removed.stderr)) {
       ensureSuccess(removed, "Docker could not replace the previous managed relay");
     }
-    const result = await this.runner(["docker", ...dockerRunArguments(settings, this.adminToken)]);
+    const result = await this.runner([
+      "docker",
+      ...dockerRunArguments(settings, this.adminToken, imageReference)
+    ]);
     ensureSuccess(result, "Docker could not start the relay");
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const status = await this.status(settings);
+      if (status.relayHealthy) return;
+      if (status.containerState === "stopped") {
+        const logs = await this.logs();
+        const detail = logs.trim().split("\n").slice(-4).join(" ").slice(0, 700);
+        throw new Error(detail
+          ? `Relay stopped during startup: ${detail}`
+          : "Relay stopped during startup. Check whether its ports are already in use.");
+      }
+      await Bun.sleep(250);
+    }
+    throw new Error("Relay container did not become healthy within five seconds. Review its logs and port assignments.");
   }
 
   async stop(): Promise<void> {
@@ -129,7 +151,7 @@ export class DockerRelayManager {
     if (docker.exitCode !== 0) {
       return makeStatus(settings, false, false, "missing", false, "Docker Desktop or Docker Engine is not available.");
     }
-    const image = await this.runner(["docker", "image", "inspect", relayImage]);
+    const imageReference = await this.localImageReference();
     const inspected = await this.runner([
       "docker", "inspect", "--format", "{{.State.Running}}", relayContainer
     ]);
@@ -143,10 +165,21 @@ export class DockerRelayManager {
       ? "Relay is accepting local health checks."
       : containerState === "running"
         ? "Container is running; the relay is still starting or unhealthy."
-        : image.exitCode === 0
+        : imageReference
           ? "Local relay image is ready to start."
           : "Build the relay image from the bundled source snapshot.";
-    return makeStatus(settings, true, image.exitCode === 0, containerState, healthy, detail);
+    return makeStatus(settings, true, imageReference !== undefined, containerState, healthy, detail);
+  }
+
+  private async localImageReference(): Promise<string | undefined> {
+    const result = await this.runner([
+      "docker", "image", "ls",
+      "--filter", `reference=${relayImage}`,
+      "--format", "{{.ID}}"
+    ]);
+    if (result.exitCode !== 0) return undefined;
+    const imageID = result.stdout.trim().split("\n")[0] ?? "";
+    return /^[a-f0-9]{12,64}$/u.test(imageID) ? imageID : undefined;
   }
 }
 
