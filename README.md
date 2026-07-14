@@ -318,13 +318,11 @@ WebCrypto for symmetric primitives where appropriate. See
 
 ## Release Artifacts
 
-The repository is pre-1.0. The NoctweaveJS desktop workflow can produce
-unsigned macOS ARM64, Windows x64, and Ubuntu x64 testing artifacts. Manual runs
-retain workflow artifacts; `v*` tags create draft releases with checksums and
-provenance attestations. Drafts must not be published until the release gates in
-[`noctweave_roadmap.md`](NoctweaveDocumentation/noctweave_roadmap.md) are closed
-and platform signing requirements are satisfied. Other public npm, GHCR, and
-release artifacts remain gated.
+The repository is pre-1.0 and does not publish official NoctweaveJS desktop
+binaries. Build the Electrobun client from source on its target operating system
+using the instructions in [`NoctweaveJS/README.md`](NoctweaveJS/README.md).
+Public npm, GHCR, and GitHub Release artifacts remain gated by
+[`noctweave_roadmap.md`](NoctweaveDocumentation/noctweave_roadmap.md).
 
 ## License
 
