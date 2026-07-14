@@ -318,11 +318,13 @@ WebCrypto for symmetric primitives where appropriate. See
 
 ## Release Artifacts
 
-The repository is pre-1.0. Public npm, GHCR, and GitHub Release artifacts should
-be added once the release gates in
-[`noctweave_roadmap.md`](NoctweaveDocumentation/noctweave_roadmap.md) are
-closed. Until then, the supported path is local source checkout plus the
-verification commands above.
+The repository is pre-1.0. The NoctweaveJS desktop workflow can produce
+unsigned macOS ARM64, Windows x64, and Ubuntu x64 testing artifacts. Manual runs
+retain workflow artifacts; `v*` tags create draft releases with checksums and
+provenance attestations. Drafts must not be published until the release gates in
+[`noctweave_roadmap.md`](NoctweaveDocumentation/noctweave_roadmap.md) are closed
+and platform signing requirements are satisfied. Other public npm, GHCR, and
+release artifacts remain gated.
 
 ## License
 

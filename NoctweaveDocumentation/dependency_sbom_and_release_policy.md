@@ -58,11 +58,13 @@ scripts/verify-release.sh
 
 It refreshes the SBOM, verifies the checked-in snapshot is current, checks package resolution, runs the Linux relay test suite, and runs optional Docker/Trivy checks when those tools are installed.
 
-The public repository does not currently ship GitHub Actions workflows. Until CI
-is added, maintainers should run this verifier locally before tagging release
-candidates and attach the generated native and CycloneDX SBOM snapshots to any
-manual release notes. CI for Ubuntu relay tests, container builds, and scanner
-evidence remains a roadmap item.
+The public repository ships a narrowly scoped NoctweaveJS desktop release
+workflow. It runs on manual dispatch or `v*` tags and builds on native macOS,
+Windows, and Ubuntu runners. Tagged runs create draft releases with checksums and
+provenance attestations; they do not publish or sign applications. Maintainers
+must still run this verifier before tagging release candidates and attach the
+generated native and CycloneDX SBOM snapshots to release notes. CI for relay
+tests, container builds, and scanner evidence remains a separate roadmap item.
 
 Manual equivalent:
 
