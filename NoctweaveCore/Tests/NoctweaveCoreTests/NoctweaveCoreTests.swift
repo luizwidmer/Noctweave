@@ -5,6 +5,29 @@ import XCTest
 @testable import NoctweaveCore
 
 final class NoctweaveCoreTests: XCTestCase {
+    func testAppendMessagePreservesEnvelopeIdentifier() {
+        var conversation = Conversation(
+            id: "conversation",
+            contactId: UUID(),
+            sessionId: "session",
+            sendChain: ChainKeyState(keyData: Data(repeating: 1, count: 32)),
+            receiveChain: ChainKeyState(keyData: Data(repeating: 2, count: 32))
+        )
+        let envelopeId = UUID()
+
+        let message = MessageEngine.appendMessage(
+            id: envelopeId,
+            body: .text("deduplicated"),
+            direction: .received,
+            counter: 7,
+            timestamp: Date(timeIntervalSince1970: 1_700_000_000),
+            conversation: &conversation
+        )
+
+        XCTAssertEqual(message?.id, envelopeId)
+        XCTAssertEqual(conversation.messages.map(\.id), [envelopeId])
+    }
+
     func testMetadataMinimizerBucketsVisibleTimestamps() {
         let precise = Date(timeIntervalSince1970: 1_765_400_123)
 
@@ -661,6 +684,40 @@ final class NoctweaveCoreTests: XCTestCase {
         let fetched = try await bobReloaded.fetchAttachment(id: descriptor.id)
         XCTAssertNil(fetched.descriptor.fileName)
         XCTAssertEqual(fetched.data, payload)
+    }
+
+    func testHeadlessMessagingClientTreatsRedeliveryAsIdempotent() async throws {
+        let port = UInt16.random(in: 49_001...52_000)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noctweave-headless-redelivery-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let alice = HeadlessMessagingClient(stateURL: root.appendingPathComponent("alice.json"), useEncryptedStore: false, timeout: 3)
+        let bob = HeadlessMessagingClient(stateURL: root.appendingPathComponent("bob.json"), useEncryptedStore: false, timeout: 3)
+        _ = try await alice.createState(displayName: "Alice", relay: endpoint)
+        _ = try await bob.createState(displayName: "Bob", relay: endpoint)
+        try await alice.registerInbox()
+        try await bob.registerInbox()
+        _ = try await alice.importContactCode(try await bob.exportContactCode())
+        _ = try await bob.importContactCode(try await alice.exportContactCode())
+
+        _ = try await alice.sendText(to: "Bob", text: "once")
+        let first = try await bob.receive(maxCount: 10, acknowledge: false)
+        let replay = try await bob.receive(maxCount: 10, acknowledge: false)
+        let acknowledgementPass = try await bob.receive(maxCount: 10, acknowledge: true)
+        let drained = try await bob.receive(maxCount: 10)
+
+        XCTAssertEqual(first.map(\.body), [.text("once")])
+        XCTAssertTrue(replay.isEmpty)
+        XCTAssertTrue(acknowledgementPass.isEmpty)
+        XCTAssertTrue(drained.isEmpty)
     }
 
     func testHeadlessMessagingClientExchangesGroupVoiceThroughRelay() async throws {

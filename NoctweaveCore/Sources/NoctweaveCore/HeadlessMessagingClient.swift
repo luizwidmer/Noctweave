@@ -608,6 +608,7 @@ public actor HeadlessMessagingClient {
             kemCiphertext: kemCiphertext
         )
         _ = MessageEngine.appendMessage(
+            id: envelope.id,
             body: .text(text),
             direction: .sent,
             counter: envelope.messageCounter,
@@ -691,6 +692,7 @@ public actor HeadlessMessagingClient {
             kemCiphertext: kemCiphertext
         )
         _ = MessageEngine.appendMessage(
+            id: envelope.id,
             body: .attachment(descriptor),
             direction: .sent,
             counter: envelope.messageCounter,
@@ -1134,6 +1136,16 @@ public actor HeadlessMessagingClient {
             } else {
                 throw HeadlessMessagingClientError.unsupportedInboundSession
             }
+            if conversation.messages.contains(where: { message in
+                message.id == envelope.id || (
+                    message.direction == .received &&
+                    message.counter == envelope.messageCounter &&
+                    abs(message.timestamp.timeIntervalSince(envelope.sentAt)) < 0.001
+                )
+            }) {
+                acknowledgedIds.append(envelope.id)
+                continue
+            }
             let decrypted: (body: MessageBody, messageKey: SymmetricKey)
             do {
                 decrypted = try MessageEngine.decryptWithKey(envelope: envelope, contact: contact, conversation: &conversation)
@@ -1154,6 +1166,7 @@ public actor HeadlessMessagingClient {
             }
             let body = decrypted.body
             _ = MessageEngine.appendMessage(
+                id: envelope.id,
                 body: body,
                 direction: .received,
                 counter: envelope.messageCounter,

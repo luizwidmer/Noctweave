@@ -260,6 +260,7 @@ public enum MessageEngine {
     }
 
     public static func appendMessage(
+        id: UUID = UUID(),
         body: MessageBody,
         direction: MessageDirection,
         counter: UInt64,
@@ -270,12 +271,13 @@ public enum MessageEngine {
     ) -> Message? {
         switch body {
         case .text(let text):
-            let message = Message(direction: direction, body: text, timestamp: timestamp, counter: counter)
+            let message = Message(id: id, direction: direction, body: text, timestamp: timestamp, counter: counter)
             conversation.messages.append(message)
             return message
         case .attachment(let descriptor):
             let title = attachmentTitle(for: descriptor)
             let message = Message(
+                    id: id,
                     direction: direction,
                     body: title,
                     timestamp: timestamp,
