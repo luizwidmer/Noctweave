@@ -4,6 +4,22 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ProfileArchitectureV2StateTests: XCTestCase {
+    func testUnsignedLegacySelfSyncStateIsRejectedByCleanBaseline() throws {
+        let generationId = UUID()
+        let legacy = Data("""
+        {
+          "version": 2,
+          "identityGenerationId": "\(generationId.uuidString)",
+          "stream": {"rawValue": "\(Data(repeating: 1, count: 32).base64EncodedString())"},
+          "encryptionKeyData": "\(Data(repeating: 2, count: 32).base64EncodedString())",
+          "nextSourceSequence": 7,
+          "appliedCursors": []
+        }
+        """.utf8)
+
+        XCTAssertThrowsError(try NoctweaveCoder.decode(SelfSyncLocalStateV2.self, from: legacy))
+    }
+
     func testLegacyInboundReplayReceiptDecodesAsEnvelopeOnlyScope() throws {
         let receipt = InboundEnvelopeReceiptV2(
             sourceScopeId: UUID(),
@@ -191,23 +207,27 @@ final class ProfileArchitectureV2StateTests: XCTestCase {
         profile.relationshipsV2 = [relationship]
 
         var selfSync = try XCTUnwrap(profile.selfSyncV2)
+        let manifest = try XCTUnwrap(profile.installationManifest)
+        let selfSyncCreatedAt = manifest.issuedAt.addingTimeInterval(1)
         let record = try selfSync.sealEvent(
-            sourceInstallationId: installation.id,
-            kind: .outboundConversationEvent,
-            encodedPayload: try NoctweaveCoder.encode(event),
-            createdAt: now
+            sourceEndpointId: installation.id,
+            manifestEpoch: manifest.epoch,
+            payload: .conversationEvent(event),
+            sourceSigningKey: installation.signingKey,
+            createdAt: selfSyncCreatedAt
         )
-        XCTAssertTrue(selfSync.advanceAppliedCursor(installationId: installation.id, throughSequence: 1))
-        let opened = try record.open(
-            key: SymmetricKey(data: selfSync.encryptionKeyData),
-            expectedStream: selfSync.stream,
-            expectedIdentityGenerationId: try XCTUnwrap(profile.identityGenerationId)
+        let opened = try selfSync.openAndAdvance(
+            record,
+            manifest: manifest,
+            identityPublicKey: profile.identity.signingKey.publicKeyData
         )
-        guard case .event(let openedEvent) = opened else {
+        guard case .conversationEvent(let openedEvent) = opened.payload else {
             return XCTFail("Expected a self-sync event")
         }
-        XCTAssertEqual(openedEvent.sourceSequence, 1)
+        XCTAssertEqual(openedEvent, event)
+        XCTAssertEqual(opened.sourceResult, .applied)
         XCTAssertEqual(selfSync.nextSourceSequence, 2)
+        XCTAssertEqual(selfSync.appliedSourceChains.first?.throughSequence, 1)
         profile.selfSyncV2 = selfSync
 
         let decoded = try NoctweaveCoder.decode(

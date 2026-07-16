@@ -701,12 +701,16 @@ public struct IdentityProfile: Codable, Identifiable {
             return nil
         }
 
-        let replacementSelfSync = SelfSyncLocalStateV2.generate(
-            identityGenerationId: generationId
-        )
-        let selfSyncDigest = Data(SHA256.hash(
-            data: Data(replacementSelfSync.stream.rawValue.utf8)
-        ))
+        let replacementSelfSync: SelfSyncLocalStateV2
+        if let currentSelfSync = selfSyncV2,
+           currentSelfSync.identityGenerationId == generationId {
+            replacementSelfSync = try currentSelfSync.rotatingEpoch()
+        } else {
+            replacementSelfSync = SelfSyncLocalStateV2.generate(
+                identityGenerationId: generationId
+            )
+        }
+        let selfSyncDigest = replacementSelfSync.epochCommitmentDigest
         let remainingIds = updated.activeInstallations.map(\.id)
         let obligations = EndpointRemovalCleanupKindV2.allCases.map { kind in
             EndpointRemovalCleanupObligationV2(

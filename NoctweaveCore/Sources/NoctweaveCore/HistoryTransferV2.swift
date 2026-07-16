@@ -1,6 +1,10 @@
 import CryptoKit
 import Foundation
 
+public enum HistoryAccessScope: String, Codable, Equatable {
+    case readOnlyHistory
+}
+
 /// A peer-assisted, transport-neutral history handoff. This protocol transfers an inert local
 /// projection; it is deliberately separate from generation-scoped endpoint
 /// admission and live self-sync.

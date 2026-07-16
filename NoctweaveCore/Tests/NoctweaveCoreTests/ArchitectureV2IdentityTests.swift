@@ -598,8 +598,9 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             at: createdAt.addingTimeInterval(4)
         ))
         let replacement = try XCTUnwrap(profile.selfSyncV2)
-        XCTAssertNotEqual(replacement.stream, oldSelfSync.stream)
-        XCTAssertNotEqual(replacement.encryptionKeyData, oldSelfSync.encryptionKeyData)
+        XCTAssertEqual(replacement.selfSyncEpoch, oldSelfSync.selfSyncEpoch + 1)
+        XCTAssertEqual(replacement.previousEpochDigest, oldSelfSync.epochCommitmentDigest)
+        XCTAssertNotEqual(replacement.epochKeyData, oldSelfSync.epochKeyData)
         XCTAssertEqual(
             Set(result.cleanupObligations.map(\.kind)),
             Set(EndpointRemovalCleanupKindV2.allCases)
@@ -630,17 +631,16 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         XCTAssertTrue(reloaded.isArchitectureV2Ready)
 
         var mutableReplacement = replacement
+        let localEndpoint = try XCTUnwrap(profile.localInstallation)
+        let manifest = try XCTUnwrap(profile.installationManifest)
         let record = try mutableReplacement.sealEvent(
-            sourceInstallationId: try XCTUnwrap(profile.localInstallation?.id),
-            kind: .installationManifestChanged,
-            encodedPayload: Data("endpoint-set-updated".utf8),
+            sourceEndpointId: localEndpoint.id,
+            manifestEpoch: manifest.epoch,
+            payload: .endpointManifest(manifest),
+            sourceSigningKey: localEndpoint.signingKey,
             createdAt: createdAt.addingTimeInterval(5)
         )
-        XCTAssertThrowsError(try record.open(
-            key: SymmetricKey(data: oldSelfSync.encryptionKeyData),
-            expectedStream: replacement.stream,
-            expectedIdentityGenerationId: try XCTUnwrap(profile.identityGenerationId)
-        ))
+        XCTAssertThrowsError(try record.open(epochKeyData: oldSelfSync.epochKeyData))
     }
 
     func testArchitectureReadinessVerifiesIssuedEndpointAuthorityAndPossession() throws {

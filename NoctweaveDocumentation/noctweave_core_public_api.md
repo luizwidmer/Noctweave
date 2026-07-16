@@ -214,11 +214,18 @@ remain additive foundations rather than end-to-end active protocol paths:
   unlinkability, expiring rotation, realistic limits, abuse controls, and
   padding policy exist. Do not treat this foundation as a reusable public
   address.
-- `SelfSyncEvent`, `SelfSyncSnapshot`, `EncryptedSelfSyncRecord`, and
-  `RendezvousOffer`: hidden encrypted self-sync and purpose-bound pairing
-  primitives. Local seal/open state is persisted, but no default publication,
-  rendezvous transport, history storage adapter, or managed history service is
-  provided.
+- `SignedSelfSyncRecordV2`, `SealedSelfSyncRecordV2`,
+  `SelfSyncEpochWelcomeV2`, and `SelfSyncLocalStateV2`: endpoint-signed,
+  source-ordered hidden synchronization inside one disposable identity
+  generation. Shared encryption-key possession is not source authority. The
+  local state persists only the current epoch key, source chain progress, and
+  exact ordering evidence; endpoint removal rotates the epoch.
+- `RendezvousOfferV2`, `PendingRendezvousOfferV2`, and
+  `RendezvousSessionV2`: one-use, expiring, purpose-bound post-quantum contact
+  rendezvous. Public offers disclose no generation, endpoint, inbox, account,
+  provider, or recovery identifier. Only contact pairing is enabled; endpoint
+  admission, relay migration, group invitation, and history purposes fail
+  closed until each has its own complete state machine.
 - `GroupUser`, `GroupClientLeaf`, `GroupPermissionPolicy`,
   `GroupMembershipState`, and `GroupCryptoProvider`: endpoint-aware group
   state and crypto boundary. The current relay-backed group workflow still uses

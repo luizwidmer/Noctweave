@@ -246,106 +246,200 @@ public struct RelationshipStateV2: Codable, Equatable, Identifiable {
     }
 }
 
-/// Local secret and progress state for one identity generation's hidden self-sync stream.
-/// It belongs beside the profile's other private keys and must never be copied
-/// into a self-sync event or snapshot payload.
+public enum SelfSyncLocalStateV2Error: Error, Equatable {
+    case invalidState
+    case sequenceExhausted
+    case sourceCapacityReached
+    case wrongGeneration
+}
+
+public struct SelfSyncReceiveResultV2: Equatable {
+    public let sourceResult: SelfSyncSourceApplyResultV2
+    public let payload: TypedSelfSyncPayloadV2
+
+    public init(
+        sourceResult: SelfSyncSourceApplyResultV2,
+        payload: TypedSelfSyncPayloadV2
+    ) {
+        self.sourceResult = sourceResult
+        self.payload = payload
+    }
+}
+
+/// Local secret and progress state for one identity generation's signed hidden
+/// self-sync epoch. It contains no relay, account, provider, recovery, or
+/// cross-generation identifier. Each source endpoint still authenticates its
+/// own records; possession of the shared epoch key alone is never authority.
 public struct SelfSyncLocalStateV2: Codable, Equatable {
     public let version: Int
     public let identityGenerationId: UUID
-    public let stream: SelfSyncStreamHandle
-    public private(set) var encryptionKeyData: Data
+    public private(set) var selfSyncEpoch: UInt64
+    public private(set) var previousEpochDigest: Data?
+    public private(set) var epochKeyData: Data
     public private(set) var nextSourceSequence: UInt64
-    public private(set) var appliedCursors: [SelfSyncInstallationCursor]
+    public private(set) var lastSourceDigest: Data?
+    public private(set) var appliedSourceChains: [SelfSyncSourceChainV2]
 
     public init(
         version: Int = NoctweaveSelfSyncV2.version,
         identityGenerationId: UUID,
-        stream: SelfSyncStreamHandle,
-        encryptionKeyData: Data,
+        selfSyncEpoch: UInt64 = 1,
+        previousEpochDigest: Data? = nil,
+        epochKeyData: Data,
         nextSourceSequence: UInt64 = 1,
-        appliedCursors: [SelfSyncInstallationCursor] = []
+        lastSourceDigest: Data? = nil,
+        appliedSourceChains: [SelfSyncSourceChainV2] = []
     ) {
         self.version = version
         self.identityGenerationId = identityGenerationId
-        self.stream = stream
-        self.encryptionKeyData = encryptionKeyData
+        self.selfSyncEpoch = selfSyncEpoch
+        self.previousEpochDigest = previousEpochDigest
+        self.epochKeyData = epochKeyData
         self.nextSourceSequence = nextSourceSequence
-        self.appliedCursors = appliedCursors.sorted {
-            $0.installationId.uuidString < $1.installationId.uuidString
+        self.lastSourceDigest = lastSourceDigest
+        self.appliedSourceChains = appliedSourceChains.sorted {
+            $0.sourceEndpointId.uuidString < $1.sourceEndpointId.uuidString
         }
     }
 
-    public static func generate(identityGenerationId: UUID) -> SelfSyncLocalStateV2 {
-        let streamMaterial = SymmetricKey(size: .bits256).dataRepresentation
-        return SelfSyncLocalStateV2(
+    public static func generate(
+        identityGenerationId: UUID,
+        selfSyncEpoch: UInt64 = 1,
+        previousEpochDigest: Data? = nil
+    ) -> SelfSyncLocalStateV2 {
+        SelfSyncLocalStateV2(
             identityGenerationId: identityGenerationId,
-            stream: SelfSyncStreamHandle(rawValue: streamMaterial.base64EncodedString()),
-            encryptionKeyData: SymmetricKey(size: .bits256).dataRepresentation
+            selfSyncEpoch: selfSyncEpoch,
+            previousEpochDigest: previousEpochDigest,
+            epochKeyData: SymmetricKey(size: .bits256).dataRepresentation
         )
+    }
+
+    public var epochCommitmentDigest: Data {
+        var material = Data("Noctweave/self-sync-epoch-commitment/v2".utf8)
+        material.append(0)
+        material.append(Data(identityGenerationId.uuidString.lowercased().utf8))
+        var epoch = selfSyncEpoch.bigEndian
+        Swift.withUnsafeBytes(of: &epoch) { material.append(contentsOf: $0) }
+        material.append(Data(SHA256.hash(data: epochKeyData)))
+        return Data(SHA256.hash(data: material))
     }
 
     public var isStructurallyValid: Bool {
-        version == NoctweaveSelfSyncV2.version
-            && stream.isStructurallyValid
-            && encryptionKeyData.count == 32
+        let sourceIds = appliedSourceChains.map(\.sourceEndpointId)
+        return version == NoctweaveSelfSyncV2.version
+            && selfSyncEpoch > 0
+            && ((selfSyncEpoch == 1 && previousEpochDigest == nil)
+                || (selfSyncEpoch > 1 && previousEpochDigest?.count == 32))
+            && epochKeyData.count == 32
             && nextSourceSequence > 0
-            && appliedCursors.count <= NoctweaveArchitectureV2.maximumInstallations
-            && Set(appliedCursors.map(\.installationId)).count == appliedCursors.count
+            && ((nextSourceSequence == 1 && lastSourceDigest == nil)
+                || (nextSourceSequence > 1 && lastSourceDigest?.count == 32))
+            && appliedSourceChains.count <= NoctweaveArchitectureV2.maximumInstallations
+            && Set(sourceIds).count == sourceIds.count
+            && appliedSourceChains.allSatisfy {
+                $0.identityGenerationId == identityGenerationId && $0.isStructurallyValid
+            }
     }
 
-    /// Reserves and seals one source-ordered event. Persist the mutated state
-    /// and returned record atomically before publication.
-    public mutating func sealEvent(
-        sourceInstallationId: UUID,
-        kind: SelfSyncEventKind,
-        encodedPayload: Data,
-        createdAt: Date = Date()
-    ) throws -> EncryptedSelfSyncRecord {
-        guard isStructurallyValid,
-              nextSourceSequence < UInt64.max else {
-            throw SelfSyncV2Error.invalidPlaintext
+    /// Creates a fresh epoch after endpoint-set change. The old epoch key is
+    /// not retained and no membership or continuity crosses an identity burn.
+    public func rotatingEpoch() throws -> SelfSyncLocalStateV2 {
+        guard isStructurallyValid, selfSyncEpoch < UInt64.max else {
+            throw SelfSyncLocalStateV2Error.invalidState
         }
-        let event = SelfSyncEvent(
+        return Self.generate(
             identityGenerationId: identityGenerationId,
-            sourceInstallationId: sourceInstallationId,
-            sourceSequence: nextSourceSequence,
-            createdAt: createdAt,
-            kind: kind,
-            encodedPayload: encodedPayload
+            selfSyncEpoch: selfSyncEpoch + 1,
+            previousEpochDigest: epochCommitmentDigest
         )
-        let record = try EncryptedSelfSyncRecord.seal(
-            .event(event),
-            stream: stream,
-            key: SymmetricKey(data: encryptionKeyData),
+    }
+
+    /// Reserves, endpoint-signs, and seals one source-ordered record. Persist
+    /// the mutated state and exact returned ciphertext atomically before
+    /// publication; a retry must reuse the returned ciphertext.
+    public mutating func sealEvent(
+        sourceEndpointId: UUID,
+        manifestEpoch: UInt64,
+        payload: TypedSelfSyncPayloadV2,
+        sourceSigningKey: SigningKeyPair,
+        createdAt: Date = Date()
+    ) throws -> SealedSelfSyncRecordV2 {
+        guard isStructurallyValid else {
+            throw SelfSyncLocalStateV2Error.invalidState
+        }
+        guard nextSourceSequence < UInt64.max else {
+            throw SelfSyncLocalStateV2Error.sequenceExhausted
+        }
+        let record = try SignedSelfSyncRecordV2.create(
+            identityGenerationId: identityGenerationId,
+            sourceEndpointId: sourceEndpointId,
+            manifestEpoch: manifestEpoch,
+            sourceSequence: nextSourceSequence,
+            previousSourceDigest: lastSourceDigest,
+            createdAt: createdAt,
+            payload: payload,
+            sourceSigningKey: sourceSigningKey
+        )
+        guard let digest = record.digest else {
+            throw SelfSyncLocalStateV2Error.invalidState
+        }
+        let sealed = try SealedSelfSyncRecordV2.seal(
+            record,
+            epochKeyData: epochKeyData,
             storedAt: createdAt
         )
         nextSourceSequence += 1
-        return record
+        lastSourceDigest = digest
+        return sealed
     }
 
-    @discardableResult
-    public mutating func advanceAppliedCursor(
-        installationId: UUID,
-        throughSequence: UInt64
-    ) -> Bool {
-        if let index = appliedCursors.firstIndex(where: { $0.installationId == installationId }) {
-            guard throughSequence > appliedCursors[index].throughSequence else { return false }
-            appliedCursors[index] = SelfSyncInstallationCursor(
-                installationId: installationId,
-                throughSequence: throughSequence
-            )
-        } else {
-            guard appliedCursors.count < NoctweaveArchitectureV2.maximumInstallations else {
-                return false
-            }
-            appliedCursors.append(
-                SelfSyncInstallationCursor(
-                    installationId: installationId,
-                    throughSequence: throughSequence
-                )
-            )
+    /// Opens and source-verifies one record against an authenticated current
+    /// generation manifest, then advances exactly one source chain. Callers
+    /// should invoke this on a candidate copy and persist the returned payload,
+    /// candidate state, and any application projection in one transaction.
+    public mutating func openAndAdvance(
+        _ sealed: SealedSelfSyncRecordV2,
+        manifest: InstallationManifest,
+        identityPublicKey: Data
+    ) throws -> SelfSyncReceiveResultV2 {
+        guard isStructurallyValid else {
+            throw SelfSyncLocalStateV2Error.invalidState
         }
-        appliedCursors.sort { $0.installationId.uuidString < $1.installationId.uuidString }
-        return true
+        let record = try sealed.open(epochKeyData: epochKeyData)
+        guard record.identityGenerationId == identityGenerationId,
+              manifest.identityGenerationId == identityGenerationId else {
+            throw SelfSyncLocalStateV2Error.wrongGeneration
+        }
+
+        let index = appliedSourceChains.firstIndex {
+            $0.sourceEndpointId == record.sourceEndpointId
+        }
+        var candidate = index.map { appliedSourceChains[$0] }
+            ?? SelfSyncSourceChainV2(
+                identityGenerationId: identityGenerationId,
+                sourceEndpointId: record.sourceEndpointId
+            )
+        if index == nil,
+           appliedSourceChains.count >= NoctweaveArchitectureV2.maximumInstallations {
+            throw SelfSyncLocalStateV2Error.sourceCapacityReached
+        }
+        let result = try candidate.apply(
+            record,
+            manifest: manifest,
+            identityPublicKey: identityPublicKey
+        )
+        if result == .applied {
+            if let index {
+                appliedSourceChains[index] = candidate
+            } else {
+                appliedSourceChains.append(candidate)
+                appliedSourceChains.sort {
+                    $0.sourceEndpointId.uuidString < $1.sourceEndpointId.uuidString
+                }
+            }
+        }
+        return SelfSyncReceiveResultV2(sourceResult: result, payload: record.payload)
     }
+
 }
