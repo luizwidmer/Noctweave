@@ -65,7 +65,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
         }
     }
 
-    func testAddClientDerivesExactLeafFromSignedAuthenticatedPackage() throws {
+    func testAddClientDerivesExactLeafFromPrivacyProjection() throws {
         let fixture = try makeFixture(memberLeafCount: 1)
         let admission = try makeAdmission(
             groupId: fixture.state.groupId,
@@ -73,13 +73,20 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             addedEpoch: fixture.state.epoch + 1,
             issuedAt: fixture.state.signedAt
         )
+        let consent = try GroupSiblingClientConsentV2.create(
+            projection: admission.projection,
+            currentState: fixture.state,
+            consentingClientHandle: fixture.memberLeaves[0].clientHandle,
+            signingKey: fixture.memberKeys[0],
+            signedAt: fixture.state.signedAt.addingTimeInterval(0.5)
+        )
         let commit = try makeCommit(
             operation: .addClient,
             state: fixture.state,
             users: fixture.state.users,
             leaves: fixture.state.clientLeaves + [admission.leaf],
-            addedKeyPackage: admission.package,
-            admissionTrust: admission.trust,
+            admissionProjection: admission.projection,
+            siblingClientConsent: consent,
             permissions: fixture.state.permissions,
             metadata: fixture.state.metadataDigest,
             author: fixture.ownerLeaf.clientHandle,
@@ -87,18 +94,14 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             marker: 60
         )
 
-        XCTAssertNoThrow(try commit.verifiedTransition(
-            from: fixture.state,
-            admissionTrust: admission.trust
-        ))
+        XCTAssertNoThrow(try commit.verifiedTransition(from: fixture.state))
         let next = try SignedGroupStateV2.applying(
             commit,
             to: fixture.state,
-            signingKey: fixture.ownerKey,
-            admissionTrust: admission.trust
+            signingKey: fixture.ownerKey
         )
         XCTAssertEqual(
-            next.clientLeaves.first { $0.clientHandle == admission.package.clientHandle },
+            next.clientLeaves.first { $0.clientHandle == admission.projection.clientHandle },
             admission.leaf
         )
 
@@ -108,270 +111,13 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             addedEpoch: fixture.state.epoch + 1,
             issuedAt: fixture.state.signedAt
         )
-        let packageTamperedAfterSigning = copy(
+        let projectionTamperedAfterSigning = copy(
             commit,
-            addedKeyPackage: replacement.package
+            admissionProjection: replacement.projection
         )
-        XCTAssertThrowsError(try packageTamperedAfterSigning.verifiedTransition(
-            from: fixture.state,
-            admissionTrust: replacement.trust
-        )) { error in
+        XCTAssertThrowsError(try projectionTamperedAfterSigning
+            .verifiedTransition(from: fixture.state)) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .invalidCommitSignature)
-        }
-    }
-
-    func testAddClientRejectsFabricatedVictimLeafAndWrongBindings() throws {
-        let fixture = try makeFixture(memberLeafCount: 1)
-        let admission = try makeAdmission(
-            groupId: fixture.state.groupId,
-            userId: fixture.memberUser.id,
-            addedEpoch: fixture.state.epoch + 1,
-            issuedAt: fixture.state.signedAt
-        )
-        let fabricatedLeaf = try leaf(
-            userId: fixture.memberUser.id,
-            marker: 70,
-            signingKey: try SigningKeyPair.generate(),
-            epoch: fixture.state.epoch + 1
-        )
-        XCTAssertThrowsError(try makeCommit(
-            operation: .addClient,
-            state: fixture.state,
-            users: fixture.state.users,
-            leaves: fixture.state.clientLeaves + [admission.leaf],
-            permissions: fixture.state.permissions,
-            metadata: fixture.state.metadataDigest,
-            author: fixture.ownerLeaf.clientHandle,
-            key: fixture.ownerKey,
-            marker: 61
-        )) { error in
-            XCTAssertEqual(error as? SignedGroupV2Error, .keyPackageMismatch)
-        }
-        XCTAssertThrowsError(try makeCommit(
-            operation: .addClient,
-            state: fixture.state,
-            users: fixture.state.users,
-            leaves: fixture.state.clientLeaves + [fabricatedLeaf],
-            addedKeyPackage: admission.package,
-            admissionTrust: admission.trust,
-            permissions: fixture.state.permissions,
-            metadata: fixture.state.metadataDigest,
-            author: fixture.ownerLeaf.clientHandle,
-            key: fixture.ownerKey,
-            marker: 62
-        )) { error in
-            XCTAssertEqual(error as? SignedGroupV2Error, .invalidTransition)
-        }
-
-        let attacker = try makeAdmission(
-            groupId: fixture.state.groupId,
-            userId: fixture.memberUser.id,
-            addedEpoch: fixture.state.epoch + 1,
-            issuedAt: fixture.state.signedAt
-        )
-        XCTAssertThrowsError(try makeCommit(
-            operation: .addClient,
-            state: fixture.state,
-            users: fixture.state.users,
-            leaves: fixture.state.clientLeaves + [attacker.leaf],
-            addedKeyPackage: attacker.package,
-            admissionTrust: admission.trust,
-            permissions: fixture.state.permissions,
-            metadata: fixture.state.metadataDigest,
-            author: fixture.ownerLeaf.clientHandle,
-            key: fixture.ownerKey,
-            marker: 63
-        )) { error in
-            XCTAssertEqual(error as? SignedGroupV2Error, .invalidManifest)
-        }
-
-        let wrongGroupPackage = copy(admission.package, groupId: UUID())
-        let wrongGroupLeaf = try GroupClientLeafV2.fromVerifiedPackage(
-            wrongGroupPackage,
-            addedEpoch: fixture.state.epoch + 1
-        )
-        XCTAssertThrowsError(try makeCommit(
-            operation: .addClient,
-            state: fixture.state,
-            users: fixture.state.users,
-            leaves: fixture.state.clientLeaves + [wrongGroupLeaf],
-            addedKeyPackage: wrongGroupPackage,
-            admissionTrust: admission.trust,
-            permissions: fixture.state.permissions,
-            metadata: fixture.state.metadataDigest,
-            author: fixture.ownerLeaf.clientHandle,
-            key: fixture.ownerKey,
-            marker: 64
-        )) { error in
-            XCTAssertEqual(error as? SignedGroupV2Error, .invalidContext)
-        }
-
-        let wrongUserPackage = copy(admission.package, groupUserId: UUID())
-        let wrongUserLeaf = try GroupClientLeafV2.fromVerifiedPackage(
-            wrongUserPackage,
-            addedEpoch: fixture.state.epoch + 1
-        )
-        XCTAssertThrowsError(try makeCommit(
-            operation: .addClient,
-            state: fixture.state,
-            users: fixture.state.users,
-            leaves: fixture.state.clientLeaves + [wrongUserLeaf],
-            addedKeyPackage: wrongUserPackage,
-            admissionTrust: admission.trust,
-            permissions: fixture.state.permissions,
-            metadata: fixture.state.metadataDigest,
-            author: fixture.ownerLeaf.clientHandle,
-            key: fixture.ownerKey,
-            marker: 65
-        ))
-
-        let wrongHandleLeaf = GroupClientLeafV2(
-            userId: admission.leaf.userId,
-            clientHandle: GroupScopedClientHandleV2(
-                rawValue: Data(repeating: 0x71, count: 32).base64EncodedString()
-            ),
-            keyPackageDigest: admission.leaf.keyPackageDigest,
-            signingPublicKey: admission.leaf.signingPublicKey,
-            agreementPublicKey: admission.leaf.agreementPublicKey,
-            addedEpoch: admission.leaf.addedEpoch
-        )
-        XCTAssertThrowsError(try makeCommit(
-            operation: .addClient,
-            state: fixture.state,
-            users: fixture.state.users,
-            leaves: fixture.state.clientLeaves + [wrongHandleLeaf],
-            addedKeyPackage: admission.package,
-            admissionTrust: admission.trust,
-            permissions: fixture.state.permissions,
-            metadata: fixture.state.metadataDigest,
-            author: fixture.ownerLeaf.clientHandle,
-            key: fixture.ownerKey,
-            marker: 66
-        )) { error in
-            XCTAssertEqual(error as? SignedGroupV2Error, .invalidTransition)
-        }
-    }
-
-    func testAddClientRejectsExpiredRevokedAndTamperedPackages() throws {
-        let fixture = try makeFixture(memberLeafCount: 1)
-        let expired = try makeAdmission(
-            groupId: fixture.state.groupId,
-            userId: fixture.memberUser.id,
-            addedEpoch: fixture.state.epoch + 1,
-            issuedAt: fixture.state.signedAt,
-            expiresAt: fixture.state.signedAt.addingTimeInterval(0.5)
-        )
-        XCTAssertThrowsError(try makeCommit(
-            operation: .addClient,
-            state: fixture.state,
-            users: fixture.state.users,
-            leaves: fixture.state.clientLeaves + [expired.leaf],
-            addedKeyPackage: expired.package,
-            admissionTrust: expired.trust,
-            permissions: fixture.state.permissions,
-            metadata: fixture.state.metadataDigest,
-            author: fixture.ownerLeaf.clientHandle,
-            key: fixture.ownerKey,
-            marker: 65
-        )) { error in
-            XCTAssertEqual(error as? SignedGroupV2Error, .invalidStructure)
-        }
-
-        let admission = try makeAdmission(
-            groupId: fixture.state.groupId,
-            userId: fixture.memberUser.id,
-            addedEpoch: fixture.state.epoch + 1,
-            issuedAt: fixture.state.signedAt
-        )
-        let tamperedPackages = [
-            copy(admission.package, authoritySignature: flipped(admission.package.authoritySignature)),
-            copy(
-                admission.package,
-                installationSignature: flipped(admission.package.installationPossessionSignature)
-            ),
-            copy(
-                admission.package,
-                clientSignature: flipped(admission.package.groupClientPossessionSignature)
-            )
-        ]
-        for (index, package) in tamperedPackages.enumerated() {
-            let leaf = try GroupClientLeafV2.fromVerifiedPackage(
-                package,
-                addedEpoch: fixture.state.epoch + 1
-            )
-            XCTAssertThrowsError(try makeCommit(
-                operation: .addClient,
-                state: fixture.state,
-                users: fixture.state.users,
-                leaves: fixture.state.clientLeaves + [leaf],
-                addedKeyPackage: package,
-                admissionTrust: admission.trust,
-                permissions: fixture.state.permissions,
-                metadata: fixture.state.metadataDigest,
-                author: fixture.ownerLeaf.clientHandle,
-                key: fixture.ownerKey,
-                marker: UInt8(66 + index)
-            ))
-        }
-
-        let activeRecord = admission.installation.publicRecord(addedEpoch: 0)
-        let revokedRecord = try XCTUnwrap(activeRecord.revoked(
-            epoch: 1,
-            at: fixture.state.signedAt.addingTimeInterval(0.25)
-        ))
-        let currentManifest = try InstallationManifest.create(
-            identityGenerationId: admission.installation.identityGenerationId,
-            epoch: 1,
-            previousManifestDigest: try XCTUnwrap(admission.manifest.digest),
-            installations: [revokedRecord],
-            identity: admission.identity,
-            issuedAt: fixture.state.signedAt.addingTimeInterval(0.25)
-        )
-        let revokedTrust = GroupClientAdmissionTrustV2(
-            groupUserId: fixture.memberUser.id,
-            identityPublicKey: admission.identity.signingKey.publicKeyData,
-            currentManifest: currentManifest
-        )
-        XCTAssertThrowsError(try makeCommit(
-            operation: .addClient,
-            state: fixture.state,
-            users: fixture.state.users,
-            leaves: fixture.state.clientLeaves + [admission.leaf],
-            addedKeyPackage: admission.package,
-            admissionTrust: revokedTrust,
-            permissions: fixture.state.permissions,
-            metadata: fixture.state.metadataDigest,
-            author: fixture.ownerLeaf.clientHandle,
-            key: fixture.ownerKey,
-            marker: 69
-        )) { error in
-            XCTAssertEqual(error as? SignedGroupV2Error, .invalidManifest)
-        }
-    }
-
-    func testAddClientRejectsDuplicateExistingHandle() throws {
-        let fixture = try makeFixture(memberLeafCount: 1)
-        let admission = try makeAdmission(
-            groupId: fixture.state.groupId,
-            userId: fixture.memberUser.id,
-            addedEpoch: fixture.state.epoch + 1,
-            issuedAt: fixture.state.signedAt,
-            clientHandle: fixture.ownerLeaf.clientHandle
-        )
-        XCTAssertThrowsError(try makeCommit(
-            operation: .addClient,
-            state: fixture.state,
-            users: fixture.state.users,
-            leaves: fixture.state.clientLeaves + [admission.leaf],
-            addedKeyPackage: admission.package,
-            admissionTrust: admission.trust,
-            permissions: fixture.state.permissions,
-            metadata: fixture.state.metadataDigest,
-            author: fixture.ownerLeaf.clientHandle,
-            key: fixture.ownerKey,
-            marker: 70
-        )) { error in
-            XCTAssertEqual(error as? SignedGroupV2Error, .invalidStructure)
         }
     }
 
@@ -693,8 +439,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             state: fixture.state,
             users: fixture.state.users + [newcomer],
             leaves: fixture.state.clientLeaves + [newcomerLeaf],
-            addedKeyPackage: admission.package,
-            admissionTrust: admission.trust,
+            admissionProjection: admission.projection,
             permissions: fixture.state.permissions,
             metadata: fixture.state.metadataDigest,
             author: fixture.ownerLeaf.clientHandle,
@@ -704,8 +449,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
         let state2 = try SignedGroupStateV2.applying(
             add,
             to: fixture.state,
-            signingKey: fixture.ownerKey,
-            admissionTrust: admission.trust
+            signingKey: fixture.ownerKey
         )
 
         let promotedUsers = state2.users.map { user in
@@ -813,7 +557,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
 
         XCTAssertNoThrow(try state.verified(genesisTrust: trust))
         XCTAssertEqual(state.users, [owner])
-        XCTAssertEqual(state.clientLeaves, [genesis.leaf])
+        XCTAssertEqual(state.clientLeaves, [genesis.packageLeaf])
         XCTAssertEqual(state.authorClientHandle, genesis.package.clientHandle)
         XCTAssertThrowsError(try state.verified()) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .genesisTrustRequired)
@@ -916,6 +660,8 @@ private extension ArchitectureV2SignedGroupTests {
         let installation: LocalInstallationState
         let manifest: InstallationManifest
         let package: GroupClientKeyPackageV2
+        let projection: GroupClientAdmissionProjectionV2
+        let packageLeaf: GroupClientLeafV2
         let leaf: GroupClientLeafV2
         let trust: GroupClientAdmissionTrustV2
         let groupSigningKey: SigningKeyPair
@@ -954,7 +700,7 @@ private extension ArchitectureV2SignedGroupTests {
         )
         let ownerA = RoleParticipant(
             user: ownerAUser,
-            leaf: ownerAGenesis.leaf,
+            leaf: ownerAGenesis.packageLeaf,
             key: ownerAKey
         )
         var state = try SignedGroupStateV2.initial(
@@ -982,8 +728,7 @@ private extension ArchitectureV2SignedGroupTests {
                 state: state,
                 users: state.users + [user],
                 leaves: state.clientLeaves + [admission.leaf],
-                addedKeyPackage: admission.package,
-                admissionTrust: admission.trust,
+                admissionProjection: admission.projection,
                 permissions: state.permissions,
                 metadata: state.metadataDigest,
                 author: ownerA.leaf.clientHandle,
@@ -993,8 +738,7 @@ private extension ArchitectureV2SignedGroupTests {
             state = try SignedGroupStateV2.applying(
                 commit,
                 to: state,
-                signingKey: ownerA.key,
-                admissionTrust: admission.trust
+                signingKey: ownerA.key
             )
             marker &+= 1
             return RoleParticipant(
@@ -1046,7 +790,7 @@ private extension ArchitectureV2SignedGroupTests {
             issuedAt: signedAt,
             groupSigningKey: ownerKey
         )
-        let ownerLeaf = ownerGenesis.leaf
+        let ownerLeaf = ownerGenesis.packageLeaf
         var state = try SignedGroupStateV2.initial(
             groupId: groupId,
             creator: owner,
@@ -1083,13 +827,20 @@ private extension ArchitectureV2SignedGroupTests {
                 operation = .addClient
                 proposedUsers = state.users
             }
+            let siblingConsent = index == 0 ? nil : try GroupSiblingClientConsentV2.create(
+                projection: admission.projection,
+                currentState: state,
+                consentingClientHandle: memberLeaves[0].clientHandle,
+                signingKey: memberKeys[0],
+                signedAt: state.signedAt.addingTimeInterval(0.5)
+            )
             let commit = try makeCommit(
                 operation: operation,
                 state: state,
                 users: proposedUsers,
                 leaves: state.clientLeaves + [admission.leaf],
-                addedKeyPackage: admission.package,
-                admissionTrust: admission.trust,
+                admissionProjection: admission.projection,
+                siblingClientConsent: siblingConsent,
                 permissions: state.permissions,
                 metadata: state.metadataDigest,
                 author: ownerLeaf.clientHandle,
@@ -1099,8 +850,7 @@ private extension ArchitectureV2SignedGroupTests {
             state = try SignedGroupStateV2.applying(
                 commit,
                 to: state,
-                signingKey: ownerKey,
-                admissionTrust: admission.trust
+                signingKey: ownerKey
             )
             memberKeys.append(admission.groupSigningKey)
             memberLeaves.append(admission.leaf)
@@ -1157,18 +907,26 @@ private extension ArchitectureV2SignedGroupTests {
             issuedAt: issuedAt.addingTimeInterval(-10)
         )
         let groupSigningKey = try requestedGroupSigningKey ?? SigningKeyPair.generate()
+        let groupAgreementKey = try AgreementKeyPair.generate()
+        let resolvedClientHandle = clientHandle ?? .generate()
         let package = try GroupClientKeyPackageV2.create(
             groupId: groupId,
             groupUserId: userId,
-            clientHandle: clientHandle ?? .generate(
-                groupId: groupId,
-                installationId: installation.id
-            ),
+            clientHandle: resolvedClientHandle,
             identity: identity,
             installation: installation,
             manifest: manifest,
             groupSigningKey: groupSigningKey,
-            groupAgreementKey: try AgreementKeyPair.generate(),
+            groupAgreementKey: groupAgreementKey,
+            issuedAt: issuedAt,
+            expiresAt: expiresAt ?? issuedAt.addingTimeInterval(3_600)
+        )
+        let projection = try GroupClientAdmissionProjectionV2.create(
+            groupId: groupId,
+            groupUserId: userId,
+            clientHandle: resolvedClientHandle,
+            groupSigningKey: groupSigningKey,
+            groupAgreementKey: groupAgreementKey,
             issuedAt: issuedAt,
             expiresAt: expiresAt ?? issuedAt.addingTimeInterval(3_600)
         )
@@ -1177,7 +935,15 @@ private extension ArchitectureV2SignedGroupTests {
             installation: installation,
             manifest: manifest,
             package: package,
-            leaf: try GroupClientLeafV2.fromVerifiedPackage(package, addedEpoch: addedEpoch),
+            projection: projection,
+            packageLeaf: try GroupClientLeafV2.fromVerifiedPackage(
+                package,
+                addedEpoch: addedEpoch
+            ),
+            leaf: try GroupClientLeafV2.fromVerifiedProjection(
+                projection,
+                addedEpoch: addedEpoch
+            ),
             trust: GroupClientAdmissionTrustV2(
                 groupUserId: userId,
                 identityPublicKey: identity.signingKey.publicKeyData,
@@ -1192,21 +958,21 @@ private extension ArchitectureV2SignedGroupTests {
         state: SignedGroupStateV2,
         users: [GroupUser],
         leaves: [GroupClientLeafV2],
-        addedKeyPackage: GroupClientKeyPackageV2? = nil,
-        admissionTrust: GroupClientAdmissionTrustV2? = nil,
+        admissionProjection: GroupClientAdmissionProjectionV2? = nil,
+        siblingClientConsent: GroupSiblingClientConsentV2? = nil,
         permissions: GroupPermissionPolicy,
         metadata: Data?,
         author: GroupScopedClientHandleV2,
         key: SigningKeyPair,
         marker: UInt8
     ) throws -> SignedGroupCommitV2 {
-        try SignedGroupCommitV2.create(
+        return try SignedGroupCommitV2.create(
             operation: operation,
             currentState: state,
             proposedUsers: users,
             proposedClientLeaves: leaves,
-            addedKeyPackage: addedKeyPackage,
-            admissionTrust: admissionTrust,
+            admissionProjection: admissionProjection,
+            siblingClientConsent: siblingClientConsent,
             proposedPermissions: permissions,
             proposedMetadataDigest: metadata,
             authorClientHandle: author,
@@ -1307,7 +1073,8 @@ private extension ArchitectureV2SignedGroupTests {
             previousTranscriptHash: commit.previousTranscriptHash,
             proposedUsers: commit.proposedUsers,
             proposedClientLeaves: commit.proposedClientLeaves,
-            addedKeyPackage: commit.addedKeyPackage,
+            admissionProjection: commit.admissionProjection,
+            siblingClientConsent: commit.siblingClientConsent,
             proposedPermissions: commit.proposedPermissions,
             proposedMetadataDigest: metadata,
             authorClientHandle: commit.authorClientHandle,
@@ -1320,7 +1087,7 @@ private extension ArchitectureV2SignedGroupTests {
 
     func copy(
         _ commit: SignedGroupCommitV2,
-        addedKeyPackage: GroupClientKeyPackageV2?
+        admissionProjection: GroupClientAdmissionProjectionV2?
     ) -> SignedGroupCommitV2 {
         SignedGroupCommitV2(
             id: commit.id,
@@ -1333,7 +1100,8 @@ private extension ArchitectureV2SignedGroupTests {
             previousTranscriptHash: commit.previousTranscriptHash,
             proposedUsers: commit.proposedUsers,
             proposedClientLeaves: commit.proposedClientLeaves,
-            addedKeyPackage: addedKeyPackage,
+            admissionProjection: admissionProjection,
+            siblingClientConsent: commit.siblingClientConsent,
             proposedPermissions: commit.proposedPermissions,
             proposedMetadataDigest: commit.proposedMetadataDigest,
             authorClientHandle: commit.authorClientHandle,

@@ -54,7 +54,7 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
             projection,
             addedEpoch: fixture.state.epoch + 1
         )
-        let commit = try SignedGroupCommitV2.createPrivacyPreserving(
+        let commit = try SignedGroupCommitV2.create(
             operation: .addUser,
             currentState: fixture.state,
             proposedUsers: fixture.state.users + [newUser],
@@ -71,8 +71,11 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
 
         let encoded = try NoctweaveCoder.encode(commit, sortedKeys: true)
         let serialized = try XCTUnwrap(String(data: encoded, encoding: .utf8)).lowercased()
-        XCTAssertNil(commit.addedKeyPackage)
         XCTAssertNotNil(commit.admissionProjection)
+        XCTAssertFalse(serialized.contains("\"addedkeypackage\""))
+        XCTAssertFalse(serialized.contains("identitygenerationid"))
+        XCTAssertFalse(serialized.contains("installationid"))
+        XCTAssertFalse(serialized.contains("manifestdigest"))
         XCTAssertFalse(serialized.contains(localGenerationId.uuidString.lowercased()))
         XCTAssertFalse(serialized.contains(localEndpoint.id.uuidString.lowercased()))
         XCTAssertFalse(serialized.contains(
@@ -156,7 +159,7 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
         XCTAssertThrowsError(try deleted.rejectResurrection(fixture.state)) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .groupDeleted)
         }
-        let ordinaryCommit = try SignedGroupCommitV2.createPrivacyPreserving(
+        let ordinaryCommit = try SignedGroupCommitV2.create(
             operation: .updateMetadata,
             currentState: fixture.state,
             proposedUsers: fixture.state.users,
@@ -237,7 +240,7 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
             memberProjection,
             addedEpoch: fixture.state.epoch + 1
         )
-        let addMember = try SignedGroupCommitV2.createPrivacyPreserving(
+        let addMember = try SignedGroupCommitV2.create(
             operation: .addUser,
             currentState: fixture.state,
             proposedUsers: fixture.state.users + [memberUser],
@@ -272,7 +275,7 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
         )
         let proposedLeaves = stateWithMember.clientLeaves + [siblingLeaf]
 
-        XCTAssertThrowsError(try SignedGroupCommitV2.createPrivacyPreserving(
+        XCTAssertThrowsError(try SignedGroupCommitV2.create(
             operation: .addClient,
             currentState: stateWithMember,
             proposedUsers: stateWithMember.users,
@@ -296,7 +299,7 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
             signingKey: memberKey,
             signedAt: stateWithMember.signedAt.addingTimeInterval(1)
         )
-        let addSibling = try SignedGroupCommitV2.createPrivacyPreserving(
+        let addSibling = try SignedGroupCommitV2.create(
             operation: .addClient,
             currentState: stateWithMember,
             proposedUsers: stateWithMember.users,

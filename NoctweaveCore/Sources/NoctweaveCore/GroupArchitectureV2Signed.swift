@@ -843,13 +843,6 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
     public let previousTranscriptHash: Data
     public let proposedUsers: [GroupUser]
     public let proposedClientLeaves: [GroupClientLeafV2]
-    /// Present only for `addClient` and `addUser`. The commit signature covers
-    /// the complete package; transition verification derives the added leaf
-    /// from this package after all three possession signatures and the caller's
-    /// current trusted installation manifest verify.
-    /// Legacy admission payload. New commits use `admissionProjection`; this
-    /// remains decodable only for the pre-revision signed-group fixtures.
-    public let addedKeyPackage: GroupClientKeyPackageV2?
     public let admissionProjection: GroupClientAdmissionProjectionV2?
     public let siblingClientConsent: GroupSiblingClientConsentV2?
     public let proposedPermissions: GroupPermissionPolicy
@@ -872,7 +865,6 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         previousTranscriptHash: Data,
         proposedUsers: [GroupUser],
         proposedClientLeaves: [GroupClientLeafV2],
-        addedKeyPackage: GroupClientKeyPackageV2? = nil,
         admissionProjection: GroupClientAdmissionProjectionV2? = nil,
         siblingClientConsent: GroupSiblingClientConsentV2? = nil,
         proposedPermissions: GroupPermissionPolicy,
@@ -896,7 +888,6 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         self.proposedClientLeaves = proposedClientLeaves.sorted {
             $0.clientHandle.rawValue < $1.clientHandle.rawValue
         }
-        self.addedKeyPackage = addedKeyPackage
         self.admissionProjection = admissionProjection
         self.siblingClientConsent = siblingClientConsent
         self.proposedPermissions = proposedPermissions
@@ -908,94 +899,12 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         self.signature = signature
     }
 
-    public static func create(
-        id: UUID = UUID(),
-        operation: SignedGroupCommitOperationV2,
-        currentState: SignedGroupStateV2,
-        proposedUsers: [GroupUser],
-        proposedClientLeaves: [GroupClientLeafV2],
-        addedKeyPackage: GroupClientKeyPackageV2? = nil,
-        admissionTrust: GroupClientAdmissionTrustV2? = nil,
-        proposedPermissions: GroupPermissionPolicy,
-        proposedMetadataDigest: Data?,
-        authorClientHandle: GroupScopedClientHandleV2,
-        providerCommitDigest: Data,
-        idempotencyKey: Data,
-        signingKey: SigningKeyPair,
-        createdAt: Date = Date()
-    ) throws -> SignedGroupCommitV2 {
-        guard currentState.epoch < UInt64.max else { throw SignedGroupV2Error.staleEpoch }
-        var commit = SignedGroupCommitV2(
-            id: id,
-            profile: currentState.profile,
-            cipherSuite: currentState.cipherSuite,
-            groupId: currentState.groupId,
-            operation: operation,
-            baseEpoch: currentState.epoch,
-            nextEpoch: currentState.epoch + 1,
-            previousTranscriptHash: currentState.confirmedTranscriptHash,
-            proposedUsers: proposedUsers,
-            proposedClientLeaves: proposedClientLeaves,
-            addedKeyPackage: addedKeyPackage,
-            admissionProjection: nil,
-            siblingClientConsent: nil,
-            proposedPermissions: proposedPermissions,
-            proposedMetadataDigest: proposedMetadataDigest,
-            authorClientHandle: authorClientHandle,
-            providerCommitDigest: providerCommitDigest,
-            idempotencyKey: idempotencyKey,
-            createdAt: createdAt,
-            signature: Data()
-        )
-        try commit.validateTransition(
-            from: currentState,
-            admissionTrust: admissionTrust,
-            verifySignature: false
-        )
-        guard let author = currentState.activeClientLeaves.first(where: {
-            $0.clientHandle == authorClientHandle
-        }), author.signingPublicKey == signingKey.publicKeyData else {
-            throw SignedGroupV2Error.unknownAuthor
-        }
-        let digest = try commit.commitDigest()
-        commit = SignedGroupCommitV2(
-            id: commit.id,
-            profile: commit.profile,
-            cipherSuite: commit.cipherSuite,
-            groupId: commit.groupId,
-            operation: commit.operation,
-            baseEpoch: commit.baseEpoch,
-            nextEpoch: commit.nextEpoch,
-            previousTranscriptHash: commit.previousTranscriptHash,
-            proposedUsers: commit.proposedUsers,
-            proposedClientLeaves: commit.proposedClientLeaves,
-            addedKeyPackage: commit.addedKeyPackage,
-            admissionProjection: commit.admissionProjection,
-            siblingClientConsent: commit.siblingClientConsent,
-            proposedPermissions: commit.proposedPermissions,
-            proposedMetadataDigest: commit.proposedMetadataDigest,
-            authorClientHandle: commit.authorClientHandle,
-            providerCommitDigest: commit.providerCommitDigest,
-            idempotencyKey: commit.idempotencyKey,
-            createdAt: commit.createdAt,
-            signature: try signingKey.sign(
-                try GroupCommitSignatureContextV2(
-                    groupId: commit.groupId,
-                    profile: commit.profile,
-                    nextEpoch: commit.nextEpoch,
-                    commitDigest: digest
-                ).signableData()
-            )
-        )
-        return try commit.verifiedTransition(from: currentState, admissionTrust: admissionTrust)
-    }
-
-    /// Creates a group-only admission commit. Any endpoint authorization or
+    /// Creates a group-only commit. Any endpoint authorization or
     /// contact evidence is verified locally before this call and is not copied
     /// into the shared group transcript. Adding a sibling client for an
     /// existing group user additionally requires a signature from one of that
     /// user's currently active group clients.
-    public static func createPrivacyPreserving(
+    public static func create(
         id: UUID = UUID(),
         operation: SignedGroupCommitOperationV2,
         currentState: SignedGroupStateV2,
@@ -1023,7 +932,6 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             previousTranscriptHash: currentState.confirmedTranscriptHash,
             proposedUsers: proposedUsers,
             proposedClientLeaves: proposedClientLeaves,
-            addedKeyPackage: nil,
             admissionProjection: admissionProjection,
             siblingClientConsent: siblingClientConsent,
             proposedPermissions: proposedPermissions,
@@ -1036,7 +944,6 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         )
         try commit.validateTransition(
             from: currentState,
-            admissionTrust: nil,
             verifySignature: false
         )
         guard let author = currentState.activeClientLeaves.first(where: {
@@ -1056,7 +963,6 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             previousTranscriptHash: commit.previousTranscriptHash,
             proposedUsers: commit.proposedUsers,
             proposedClientLeaves: commit.proposedClientLeaves,
-            addedKeyPackage: nil,
             admissionProjection: commit.admissionProjection,
             siblingClientConsent: commit.siblingClientConsent,
             proposedPermissions: commit.proposedPermissions,
@@ -1089,7 +995,6 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
               providerCommitDigest.count == 32,
               idempotencyKey.count == 32,
               createdAt.timeIntervalSince1970.isFinite,
-              addedKeyPackage?.isStructurallyValid ?? true,
               admissionProjection?.isStructurallyValid ?? true,
               siblingClientConsent?.isStructurallyValid ?? true,
               signature.count == NoctweaveSignedGroupV2.signatureBytes,
@@ -1100,28 +1005,13 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         let admissionFieldsAreValid: Bool
         switch operation {
         case .addClient:
-            admissionFieldsAreValid = (
-                addedKeyPackage != nil
-                    && admissionProjection == nil
-                    && siblingClientConsent == nil
-            ) || (
-                addedKeyPackage == nil
-                    && admissionProjection != nil
-                    && siblingClientConsent != nil
-            )
+            admissionFieldsAreValid = admissionProjection != nil
+                && siblingClientConsent != nil
         case .addUser:
-            admissionFieldsAreValid = (
-                addedKeyPackage != nil
-                    && admissionProjection == nil
-                    && siblingClientConsent == nil
-            ) || (
-                addedKeyPackage == nil
-                    && admissionProjection != nil
-                    && siblingClientConsent == nil
-            )
+            admissionFieldsAreValid = admissionProjection != nil
+                && siblingClientConsent == nil
         case .removeClient, .removeUser, .changeRole, .changePolicy, .updateMetadata:
-            admissionFieldsAreValid = addedKeyPackage == nil
-                && admissionProjection == nil
+            admissionFieldsAreValid = admissionProjection == nil
                 && siblingClientConsent == nil
         case .deleteGroup:
             admissionFieldsAreValid = false
@@ -1143,12 +1033,10 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
     }
 
     public func verifiedTransition(
-        from currentState: SignedGroupStateV2,
-        admissionTrust: GroupClientAdmissionTrustV2? = nil
+        from currentState: SignedGroupStateV2
     ) throws -> SignedGroupCommitV2 {
         try validateTransition(
             from: currentState,
-            admissionTrust: admissionTrust,
             verifySignature: true
         )
         return self
@@ -1167,7 +1055,6 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             previousTranscriptHash: previousTranscriptHash,
             proposedUsers: proposedUsers,
             proposedClientLeaves: proposedClientLeaves,
-            addedKeyPackage: addedKeyPackage,
             admissionProjection: admissionProjection,
             siblingClientConsent: siblingClientConsent,
             proposedPermissions: proposedPermissions,
@@ -1185,7 +1072,6 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
 
     private func validateTransition(
         from currentState: SignedGroupStateV2,
-        admissionTrust: GroupClientAdmissionTrustV2?,
         verifySignature: Bool
     ) throws {
         guard currentState.isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
@@ -1241,68 +1127,44 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         let verifiedAddedLeaf: GroupClientLeafV2?
         switch operation {
         case .addClient, .addUser:
-            if let admissionProjection {
-                guard addedKeyPackage == nil, admissionTrust == nil else {
-                    throw SignedGroupV2Error.keyPackageMismatch
+            guard let admissionProjection else {
+                throw SignedGroupV2Error.keyPackageMismatch
+            }
+            let selection = GroupProtocolSelectionV2(
+                profile: currentState.profile,
+                cipherSuite: currentState.cipherSuite
+            )
+            let verifiedProjection = try admissionProjection.verified(
+                forGroupId: groupId,
+                groupUserId: admissionProjection.groupUserId,
+                selection: selection,
+                now: createdAt
+            )
+            switch operation {
+            case .addClient:
+                guard let siblingClientConsent,
+                      siblingClientConsent.signedAt <= createdAt.addingTimeInterval(
+                          NoctweaveSignedGroupV2.maximumClockSkewSeconds
+                      ) else {
+                    throw SignedGroupV2Error.unauthorized
                 }
-                let selection = GroupProtocolSelectionV2(
-                    profile: currentState.profile,
-                    cipherSuite: currentState.cipherSuite
+                _ = try siblingClientConsent.verified(
+                    projection: verifiedProjection,
+                    currentState: currentState
                 )
-                let verifiedProjection = try admissionProjection.verified(
-                    forGroupId: groupId,
-                    groupUserId: admissionProjection.groupUserId,
-                    selection: selection,
-                    now: createdAt
-                )
-                switch operation {
-                case .addClient:
-                    guard let siblingClientConsent,
-                          siblingClientConsent.signedAt <= createdAt.addingTimeInterval(
-                              NoctweaveSignedGroupV2.maximumClockSkewSeconds
-                          ) else {
-                        throw SignedGroupV2Error.unauthorized
-                    }
-                    _ = try siblingClientConsent.verified(
-                        projection: verifiedProjection,
-                        currentState: currentState
-                    )
-                case .addUser:
-                    guard siblingClientConsent == nil else {
-                        throw SignedGroupV2Error.invalidTransition
-                    }
-                default:
+            case .addUser:
+                guard siblingClientConsent == nil else {
                     throw SignedGroupV2Error.invalidTransition
                 }
-                verifiedAddedLeaf = try GroupClientLeafV2.fromVerifiedProjection(
-                    verifiedProjection,
-                    addedEpoch: nextEpoch
-                )
-            } else {
-                guard siblingClientConsent == nil,
-                      let addedKeyPackage,
-                      let admissionTrust else {
-                    throw SignedGroupV2Error.keyPackageMismatch
-                }
-                guard admissionTrust.isStructurallyValid,
-                      admissionTrust.groupUserId == addedKeyPackage.groupUserId else {
-                    throw SignedGroupV2Error.invalidManifest
-                }
-                let verifiedPackage = try addedKeyPackage.verified(
-                    forGroupId: groupId,
-                    groupUserId: admissionTrust.groupUserId,
-                    identityPublicKey: admissionTrust.identityPublicKey,
-                    manifest: admissionTrust.currentManifest,
-                    now: createdAt
-                )
-                verifiedAddedLeaf = try GroupClientLeafV2.fromVerifiedPackage(
-                    verifiedPackage,
-                    addedEpoch: nextEpoch
-                )
+            default:
+                throw SignedGroupV2Error.invalidTransition
             }
+            verifiedAddedLeaf = try GroupClientLeafV2.fromVerifiedProjection(
+                verifiedProjection,
+                addedEpoch: nextEpoch
+            )
         case .removeClient, .removeUser, .changeRole, .changePolicy, .updateMetadata:
-            guard addedKeyPackage == nil,
-                  admissionProjection == nil,
+            guard admissionProjection == nil,
                   siblingClientConsent == nil else {
                 throw SignedGroupV2Error.invalidTransition
             }
@@ -1739,13 +1601,9 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
     public static func applying(
         _ commit: SignedGroupCommitV2,
         to currentState: SignedGroupStateV2,
-        signingKey: SigningKeyPair,
-        admissionTrust: GroupClientAdmissionTrustV2? = nil
+        signingKey: SigningKeyPair
     ) throws -> SignedGroupStateV2 {
-        _ = try commit.verifiedTransition(
-            from: currentState,
-            admissionTrust: admissionTrust
-        )
+        _ = try commit.verifiedTransition(from: currentState)
         guard let author = currentState.activeClientLeaves.first(where: {
             $0.clientHandle == commit.authorClientHandle
         }), author.signingPublicKey == signingKey.publicKeyData,
@@ -1769,8 +1627,7 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
         )
         return try state.verified(
             previousState: currentState,
-            commit: commit,
-            admissionTrust: admissionTrust
+            commit: commit
         )
     }
 
@@ -1818,7 +1675,6 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
     public func verified(
         previousState: SignedGroupStateV2? = nil,
         commit: SignedGroupCommitV2? = nil,
-        admissionTrust: GroupClientAdmissionTrustV2? = nil,
         genesisTrust: GroupGenesisTrustV2? = nil
     ) throws -> SignedGroupStateV2 {
         guard isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
@@ -1834,10 +1690,7 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
                 throw SignedGroupV2Error.transcriptMismatch
             }
             guard let commit else { throw SignedGroupV2Error.invalidTransition }
-            _ = try commit.verifiedTransition(
-                from: previousState,
-                admissionTrust: admissionTrust
-            )
+            _ = try commit.verifiedTransition(from: previousState)
             guard commit.groupId == groupId,
                   commit.nextEpoch == epoch,
                   commit.proposedUsers == users,
@@ -2628,7 +2481,6 @@ fileprivate struct GroupCommitPayloadV2: Encodable {
     let previousTranscriptHash: Data
     let proposedUsers: [GroupUser]
     let proposedClientLeaves: [GroupClientLeafV2]
-    let addedKeyPackage: GroupClientKeyPackageV2?
     let admissionProjection: GroupClientAdmissionProjectionV2?
     let siblingClientConsent: GroupSiblingClientConsentV2?
     let proposedPermissions: GroupPermissionPolicy
