@@ -700,6 +700,81 @@ public final class RelayServer {
             } catch {
                 return .error("Relay storage is unavailable")
             }
+        case .registerRendezvousTransportV2:
+            guard configuration.isRendezvousTransportEnabled else {
+                return .error("Rendezvous transport is disabled")
+            }
+            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+                return .error("Rendezvous transport requires confidential transport")
+            }
+            guard let registration = request.registerRendezvousTransportV2,
+                  registration.isStructurallyValid() else {
+                return .error("Invalid rendezvous transport request")
+            }
+            do {
+                try await store.registerRendezvousTransportV2(registration)
+                return .ok()
+            } catch let error as RelayStoreError {
+                return relayStoreErrorResponse(error)
+            } catch {
+                return .error("Relay storage is unavailable")
+            }
+        case .appendRendezvousTransportV2:
+            guard configuration.isRendezvousTransportEnabled else {
+                return .error("Rendezvous transport is disabled")
+            }
+            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+                return .error("Rendezvous transport requires confidential transport")
+            }
+            guard let append = request.appendRendezvousTransportV2,
+                  append.isStructurallyValid else {
+                return .error("Invalid rendezvous transport request")
+            }
+            do {
+                _ = try await store.appendRendezvousTransportV2(append)
+                return .ok()
+            } catch let error as RelayStoreError {
+                return relayStoreErrorResponse(error)
+            } catch {
+                return .error("Relay storage is unavailable")
+            }
+        case .syncRendezvousTransportV2:
+            guard configuration.isRendezvousTransportEnabled else {
+                return .error("Rendezvous transport is disabled")
+            }
+            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+                return .error("Rendezvous transport requires confidential transport")
+            }
+            guard let sync = request.syncRendezvousTransportV2,
+                  sync.isStructurallyValid else {
+                return .error("Invalid rendezvous transport request")
+            }
+            do {
+                return .rendezvousSyncV2(try await store.syncRendezvousTransportV2(sync))
+            } catch let error as RelayStoreError {
+                return relayStoreErrorResponse(error)
+            } catch {
+                return .error("Relay storage is unavailable")
+            }
+        case .deleteRendezvousTransportV2:
+            guard configuration.isRendezvousTransportEnabled else {
+                return .error("Rendezvous transport is disabled")
+            }
+            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+                return .error("Rendezvous transport requires confidential transport")
+            }
+            guard let deletion = request.deleteRendezvousTransportV2,
+                  deletion.isStructurallyValid else {
+                return .error("Invalid rendezvous transport request")
+            }
+            do {
+                try await store.deleteRendezvousTransportV2(deletion)
+                return .ok()
+            } catch let error as RelayStoreError {
+                return relayStoreErrorResponse(error)
+            } catch {
+                return .error("Relay storage is unavailable")
+            }
         case .fetch:
             guard let fetch = request.fetch else {
                 return .error("Missing fetch payload")
@@ -1669,6 +1744,20 @@ public final class RelayServer {
             return .error("Inbox route capability mutation conflict")
         case .inboxRouteCapabilityMutationOutOfOrder:
             return .error("Inbox route capability mutation out of order")
+        case .invalidRendezvousRoute:
+            return .error("Invalid rendezvous transport request")
+        case .rendezvousRouteUnavailable:
+            return .error("Rendezvous route is unavailable")
+        case .rendezvousRegistrationConflict:
+            return .error("Rendezvous route registration conflicts with stored state")
+        case .rendezvousCapacityReached:
+            return .error("Rendezvous transport capacity reached")
+        case .rendezvousFrameConflict:
+            return .error("Rendezvous frame conflicts with stored state")
+        case .rendezvousSequenceGap:
+            return .error("Rendezvous lane sequence is not contiguous")
+        case .rendezvousQuotaReached:
+            return .error("Rendezvous lane quota reached")
         case .destinationInboxNotRegistered:
             return .error("Destination inbox is not registered")
         case .relayCapacityExceeded:
@@ -2064,6 +2153,10 @@ public final class RelayServer {
         default:
             return String(describing: endpoint).lowercased()
         }
+    }
+
+    private func isLiteralLoopbackSource(_ source: String?) -> Bool {
+        source == "127.0.0.1" || source == "::1" || source == "0:0:0:0:0:0:0:1"
     }
 
     private func validateFederationRegistrationReachability(

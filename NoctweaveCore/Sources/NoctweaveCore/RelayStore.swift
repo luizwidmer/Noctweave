@@ -9,6 +9,9 @@ public actor RelayStore {
     /// Keyed by the base64 form of the domain-separated capability digest.
     /// Raw bearer capabilities are never persisted.
     private var inboxRouteCapabilities: [String: InboxRouteCapabilityRecord] = [:]
+    /// Keyed by a domain-separated route-capability digest. Values contain
+    /// only digests of lane authorities; raw bearer material is never stored.
+    private var rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:]
     private var announcements: [String: PairingAnnouncement] = [:]
     private var pairRequests: [String: [PairingRequest]] = [:]
     private var attachments: [String: [AttachmentRecord]] = [:]
@@ -75,6 +78,8 @@ public actor RelayStore {
     private let maxActiveInboxRouteCapabilitiesPerInbox = 16
     private let maxRevokedInboxRouteCapabilitiesPerInbox = 64
     private let maxInboxRouteCapabilityRecords = 100_000
+    private let maxActiveRendezvousRoutesV2 = 2_048
+    private let maxLifetimeRendezvousRoutesV2 = 100_000
 
     public init(
         storeURL: URL? = nil,
@@ -564,6 +569,228 @@ public actor RelayStore {
 
     func inboxRouteCapabilityRecordCount() -> Int {
         inboxRouteCapabilities.count
+    }
+
+    /// Atomically creates two opaque directional lanes. The raw route and lane
+    /// bearers are authenticated at this boundary and immediately reduced to
+    /// domain-separated digests before durable state is assembled.
+    func registerRendezvousTransportV2(
+        _ request: RegisterRendezvousTransportV2Request,
+        now: Date = Date()
+    ) throws {
+        guard request.isStructurallyValid(at: now) else {
+            throw RelayStoreError.invalidRendezvousRoute
+        }
+        if retireExpiredRendezvousRoutesV2(now: now) {
+            try saveToDisk()
+        }
+        let routeKey = rendezvousRouteKeyV2(request.routeCapability)
+        let registrationDigest = rendezvousRegistrationDigestV2(request)
+        if let existing = rendezvousRoutesV2[routeKey] {
+            guard existing.retiredAt == nil else {
+                throw RelayStoreError.rendezvousRouteUnavailable
+            }
+            guard rendezvousDigestEqualV2(existing.registrationDigest, registrationDigest) else {
+                throw RelayStoreError.rendezvousRegistrationConflict
+            }
+            return
+        }
+        guard rendezvousRoutesV2.count < maxLifetimeRendezvousRoutesV2,
+              rendezvousRoutesV2.values.lazy.filter({ $0.retiredAt == nil }).count
+                < maxActiveRendezvousRoutesV2 else {
+            throw RelayStoreError.rendezvousCapacityReached
+        }
+        let registeredAt = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970))
+        var lanes: [String: RendezvousRelayLaneRecordV2] = [:]
+        for lane in request.lanes {
+            lanes[rendezvousLaneKeyV2(lane.laneId)] = RendezvousRelayLaneRecordV2(
+                publishCapabilityDigest: rendezvousBearerDigestV2(
+                    lane.publishCapability.rawValue,
+                    authority: "publish"
+                ),
+                readCapabilityDigest: rendezvousBearerDigestV2(
+                    lane.readCapability.rawValue,
+                    authority: "read"
+                ),
+                deleteCapabilityDigest: rendezvousBearerDigestV2(
+                    lane.deleteCapability.rawValue,
+                    authority: "delete"
+                ),
+                deletedAt: nil,
+                frames: []
+            )
+        }
+        let record = RendezvousRelayRouteRecordV2(
+            registrationDigest: registrationDigest,
+            registeredAt: registeredAt,
+            expiresAt: request.expiresAt,
+            retiredAt: nil,
+            lanes: lanes
+        )
+        guard record.isStructurallyValid else {
+            throw RelayStoreError.invalidRendezvousRoute
+        }
+        rendezvousRoutesV2[routeKey] = record
+        try saveToDisk()
+    }
+
+    /// Appends exactly one fixed-size ciphertext at the next lane sequence.
+    /// An exact frame-ID/digest retry is idempotent; every conflicting replay
+    /// and every sequence gap fails closed.
+    @discardableResult
+    func appendRendezvousTransportV2(
+        _ request: AppendRendezvousTransportV2Request,
+        now: Date = Date()
+    ) throws -> UInt64 {
+        guard request.isStructurallyValid else {
+            throw RelayStoreError.invalidRendezvousRoute
+        }
+        if retireExpiredRendezvousRoutesV2(now: now) {
+            try saveToDisk()
+        }
+        let routeKey = rendezvousRouteKeyV2(request.routeCapability)
+        guard var route = rendezvousRoutesV2[routeKey],
+              route.retiredAt == nil,
+              route.expiresAt > now else {
+            throw RelayStoreError.rendezvousRouteUnavailable
+        }
+        let laneKey = rendezvousLaneKeyV2(request.laneId)
+        guard var lane = route.lanes[laneKey],
+              lane.deletedAt == nil,
+              rendezvousDigestEqualV2(
+                lane.publishCapabilityDigest,
+                rendezvousBearerDigestV2(
+                    request.publishCapability.rawValue,
+                    authority: "publish"
+                )
+              ) else {
+            throw RelayStoreError.rendezvousRouteUnavailable
+        }
+
+        let frameDigest = request.frame.ciphertextDigest
+        if let existing = lane.frames.first(where: { $0.frame.frameId == request.frame.frameId }) {
+            guard existing.frame.sequence == request.frame.sequence,
+                  rendezvousDigestEqualV2(existing.ciphertextDigest, frameDigest) else {
+                throw RelayStoreError.rendezvousFrameConflict
+            }
+            return existing.frame.sequence
+        }
+        let expectedSequence = UInt64(lane.frames.count) + 1
+        guard request.frame.sequence == expectedSequence else {
+            if request.frame.sequence < expectedSequence {
+                throw RelayStoreError.rendezvousFrameConflict
+            }
+            throw RelayStoreError.rendezvousSequenceGap
+        }
+        guard lane.frames.count < Int(RendezvousRelayTransportV2.maximumFramesPerLane),
+              lane.frames.reduce(0, { $0 + $1.frame.ciphertext.count })
+                + request.frame.ciphertext.count
+                <= RendezvousRelayTransportV2.maximumCiphertextBytesPerLane else {
+            throw RelayStoreError.rendezvousQuotaReached
+        }
+        lane.frames.append(
+            RendezvousRelayStoredFrameV2(
+                frame: request.frame,
+                ciphertextDigest: frameDigest
+            )
+        )
+        route.lanes[laneKey] = lane
+        rendezvousRoutesV2[routeKey] = route
+        try saveToDisk()
+        return request.frame.sequence
+    }
+
+    func syncRendezvousTransportV2(
+        _ request: SyncRendezvousTransportV2Request,
+        now: Date = Date()
+    ) throws -> RendezvousRelaySyncBatchV2 {
+        guard request.isStructurallyValid else {
+            throw RelayStoreError.invalidRendezvousRoute
+        }
+        if retireExpiredRendezvousRoutesV2(now: now) {
+            try saveToDisk()
+        }
+        let routeKey = rendezvousRouteKeyV2(request.routeCapability)
+        guard let route = rendezvousRoutesV2[routeKey],
+              route.retiredAt == nil,
+              route.expiresAt > now,
+              let lane = route.lanes[rendezvousLaneKeyV2(request.laneId)],
+              lane.deletedAt == nil,
+              rendezvousDigestEqualV2(
+                lane.readCapabilityDigest,
+                rendezvousBearerDigestV2(
+                    request.readCapability.rawValue,
+                    authority: "read"
+                )
+              ) else {
+            throw RelayStoreError.rendezvousRouteUnavailable
+        }
+        let highWatermark = lane.frames.last?.frame.sequence ?? 0
+        guard request.afterSequence <= highWatermark else {
+            throw RelayStoreError.invalidRendezvousRoute
+        }
+        let limit = request.maxCount ?? RendezvousRelayTransportV2.maximumSyncFrames
+        let frames = lane.frames.lazy
+            .map(\.frame)
+            .filter { $0.sequence > request.afterSequence }
+        let selected = Array(frames.prefix(limit))
+        let nextSequence = selected.last?.sequence ?? request.afterSequence
+        return RendezvousRelaySyncBatchV2(
+            frames: selected,
+            highWatermark: highWatermark,
+            nextSequence: nextSequence,
+            hasMore: nextSequence < highWatermark
+        )
+    }
+
+    /// Erases one lane using its independent deletion authority. Once both
+    /// lanes are deleted the route becomes a permanent non-resurrection
+    /// tombstone. Exact deletion retries remain idempotent.
+    func deleteRendezvousTransportV2(
+        _ request: DeleteRendezvousTransportV2Request,
+        now: Date = Date()
+    ) throws {
+        guard request.isStructurallyValid,
+              now.timeIntervalSince1970.isFinite else {
+            throw RelayStoreError.invalidRendezvousRoute
+        }
+        if retireExpiredRendezvousRoutesV2(now: now) {
+            try saveToDisk()
+        }
+        let routeKey = rendezvousRouteKeyV2(request.routeCapability)
+        guard var route = rendezvousRoutesV2[routeKey],
+              let laneKey = route.lanes.keys.first(where: {
+                $0 == rendezvousLaneKeyV2(request.laneId)
+              }),
+              var lane = route.lanes[laneKey],
+              rendezvousDigestEqualV2(
+                lane.deleteCapabilityDigest,
+                rendezvousBearerDigestV2(
+                    request.deleteCapability.rawValue,
+                    authority: "delete"
+                )
+              ) else {
+            throw RelayStoreError.rendezvousRouteUnavailable
+        }
+        if lane.deletedAt != nil {
+            return
+        }
+        guard route.retiredAt == nil, route.expiresAt > now else {
+            throw RelayStoreError.rendezvousRouteUnavailable
+        }
+        let deletedAt = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970))
+        lane.deletedAt = deletedAt
+        lane.frames = []
+        route.lanes[laneKey] = lane
+        if route.lanes.values.allSatisfy({ $0.deletedAt != nil }) {
+            route.retiredAt = deletedAt
+        }
+        rendezvousRoutesV2[routeKey] = route
+        try saveToDisk()
+    }
+
+    func rendezvousRouteRecordCountV2() -> Int {
+        rendezvousRoutesV2.count
     }
 
     /// Atomically removes a live inbox generation and records an irreversible,
@@ -2547,6 +2774,7 @@ public actor RelayStore {
         inboxRegistrations = snapshot.inboxRegistrations
         inboxRetirements = snapshot.inboxRetirements
         inboxRouteCapabilities = snapshot.inboxRouteCapabilities
+        rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
         normalizeMailboxStreamsAfterLoad()
         attachments = snapshot.attachments
         prekeyBundles = snapshot.prekeyBundles
@@ -2564,6 +2792,7 @@ public actor RelayStore {
         pruneFederationNodes(now: Date())
         enforceLoadedInboxRetirements()
         normalizeInboxRouteCapabilitiesAfterLoad()
+        normalizeRendezvousRoutesV2AfterLoad()
     }
 
     private func restoreSnapshot(_ snapshot: RelayStoreSnapshot) {
@@ -2571,6 +2800,7 @@ public actor RelayStore {
         inboxRegistrations = snapshot.inboxRegistrations
         inboxRetirements = snapshot.inboxRetirements
         inboxRouteCapabilities = snapshot.inboxRouteCapabilities
+        rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
         attachments = snapshot.attachments
         prekeyBundles = snapshot.prekeyBundles
         federationNodes = snapshot.federationNodes
@@ -2588,6 +2818,7 @@ public actor RelayStore {
             inboxRegistrations: inboxRegistrations,
             inboxRetirements: inboxRetirements,
             inboxRouteCapabilities: inboxRouteCapabilities,
+            rendezvousRoutesV2: rendezvousRoutesV2,
             attachments: attachments,
             prekeyBundles: prekeyBundles,
             federationNodes: federationNodes,
@@ -2730,6 +2961,157 @@ public actor RelayStore {
         }
     }
 
+    private func rendezvousRouteKeyV2(
+        _ capability: RendezvousRelayRouteCapabilityV2
+    ) -> String {
+        rendezvousBearerDigestV2(capability.rawValue, authority: "route")
+            .base64EncodedString()
+    }
+
+    private func rendezvousLaneKeyV2(_ laneId: RendezvousRelayLaneIDV2) -> String {
+        laneId.rawValue.base64EncodedString()
+    }
+
+    private func rendezvousBearerDigestV2(_ value: Data, authority: String) -> Data {
+        var input = Data("org.noctweave.relay.rendezvous-transport-v2/\(authority)".utf8)
+        input.append(0)
+        input.append(value)
+        return Data(SHA256.hash(data: input))
+    }
+
+    private func rendezvousRegistrationDigestV2(
+        _ request: RegisterRendezvousTransportV2Request
+    ) -> Data {
+        var input = Data("org.noctweave.relay.rendezvous-transport-v2/registration".utf8)
+        input.append(0)
+        var version = UInt64(request.version).bigEndian
+        withUnsafeBytes(of: &version) { input.append(contentsOf: $0) }
+        var expiry = UInt64(request.expiresAt.timeIntervalSince1970).bigEndian
+        withUnsafeBytes(of: &expiry) { input.append(contentsOf: $0) }
+        input.append(request.routeCapability.rawValue)
+        for lane in request.lanes.sorted(by: {
+            $0.laneId.rawValue.lexicographicallyPrecedes($1.laneId.rawValue)
+        }) {
+            input.append(lane.laneId.rawValue)
+            input.append(lane.publishCapability.rawValue)
+            input.append(lane.readCapability.rawValue)
+            input.append(lane.deleteCapability.rawValue)
+        }
+        return Data(SHA256.hash(data: input))
+    }
+
+    private func rendezvousDigestEqualV2(_ lhs: Data, _ rhs: Data) -> Bool {
+        var difference = lhs.count ^ rhs.count
+        for index in 0..<max(lhs.count, rhs.count) {
+            let left = index < lhs.count ? lhs[index] : 0
+            let right = index < rhs.count ? rhs[index] : 0
+            difference |= Int(left ^ right)
+        }
+        return difference == 0
+    }
+
+    @discardableResult
+    private func retireExpiredRendezvousRoutesV2(now: Date) -> Bool {
+        guard now.timeIntervalSince1970.isFinite else { return false }
+        let retiredAt = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970))
+        var changed = false
+        for key in Array(rendezvousRoutesV2.keys) {
+            guard var record = rendezvousRoutesV2[key],
+                  record.retiredAt == nil,
+                  record.expiresAt <= now else {
+                continue
+            }
+            record.retiredAt = retiredAt
+            record.lanes = [:]
+            rendezvousRoutesV2[key] = record
+            changed = true
+        }
+        return changed
+    }
+
+    private func normalizeRendezvousRoutesV2AfterLoad(now: Date = Date()) {
+        rendezvousRoutesV2 = rendezvousRoutesV2.filter { key, record in
+            guard let digest = Data(base64Encoded: key),
+                  digest.count == SHA256.byteCount,
+                  record.isStructurallyValid else {
+                return false
+            }
+            return true
+        }
+        _ = retireExpiredRendezvousRoutesV2(now: now)
+    }
+
+}
+
+private struct RendezvousRelayStoredFrameV2: Codable {
+    let frame: RendezvousRelayCiphertextFrameV2
+    let ciphertextDigest: Data
+
+    var isStructurallyValid: Bool {
+        frame.isStructurallyValid
+            && ciphertextDigest.count == SHA256.byteCount
+            && ciphertextDigest == frame.ciphertextDigest
+    }
+}
+
+private struct RendezvousRelayLaneRecordV2: Codable {
+    let publishCapabilityDigest: Data
+    let readCapabilityDigest: Data
+    let deleteCapabilityDigest: Data
+    var deletedAt: Date?
+    var frames: [RendezvousRelayStoredFrameV2]
+
+    var isStructurallyValid: Bool {
+        let digests = [
+            publishCapabilityDigest,
+            readCapabilityDigest,
+            deleteCapabilityDigest
+        ]
+        guard digests.allSatisfy({ $0.count == SHA256.byteCount }),
+              Set(digests).count == digests.count,
+              frames.count <= Int(RendezvousRelayTransportV2.maximumFramesPerLane),
+              frames.reduce(0, { $0 + $1.frame.ciphertext.count })
+                <= RendezvousRelayTransportV2.maximumCiphertextBytesPerLane,
+              frames.allSatisfy(\.isStructurallyValid),
+              Set(frames.map(\.frame.frameId)).count == frames.count,
+              frames.enumerated().allSatisfy({ index, record in
+                record.frame.sequence == UInt64(index + 1)
+              }) else {
+            return false
+        }
+        if let deletedAt {
+            return RendezvousRelayTransportV2.isCanonicalTimestamp(deletedAt)
+                && frames.isEmpty
+        }
+        return true
+    }
+}
+
+private struct RendezvousRelayRouteRecordV2: Codable {
+    let registrationDigest: Data
+    let registeredAt: Date
+    let expiresAt: Date
+    var retiredAt: Date?
+    var lanes: [String: RendezvousRelayLaneRecordV2]
+
+    var isStructurallyValid: Bool {
+        let lifetime = expiresAt.timeIntervalSince(registeredAt)
+        guard registrationDigest.count == SHA256.byteCount,
+              RendezvousRelayTransportV2.isCanonicalTimestamp(registeredAt),
+              RendezvousRelayTransportV2.isCanonicalTimestamp(expiresAt),
+              lifetime > 0,
+              lifetime <= RendezvousRelayTransportV2.maximumLifetimeSeconds,
+              retiredAt.map(RendezvousRelayTransportV2.isCanonicalTimestamp) ?? true,
+              retiredAt.map({ $0 >= registeredAt }) ?? true,
+              lanes.count <= RendezvousRelayTransportV2.laneCount,
+              lanes.allSatisfy({ key, lane in
+                Data(base64Encoded: key)?.count == RendezvousRelayTransportV2.laneIDBytes
+                    && lane.isStructurallyValid
+              }) else {
+            return false
+        }
+        return retiredAt != nil || lanes.count == RendezvousRelayTransportV2.laneCount
+    }
 }
 
 private struct RelayStoreSnapshot: Codable {
@@ -2737,6 +3119,7 @@ private struct RelayStoreSnapshot: Codable {
     let inboxRegistrations: [String: InboxRegistrationRecord]
     let inboxRetirements: [String: InboxRetirementRecord]
     let inboxRouteCapabilities: [String: InboxRouteCapabilityRecord]
+    let rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2]
     let attachments: [String: [AttachmentRecord]]
     let prekeyBundles: [String: PrekeyBundleRecord]
     let federationNodes: [String: FederationNodeRecord]
@@ -2751,6 +3134,7 @@ private struct RelayStoreSnapshot: Codable {
         inboxRegistrations: [:],
         inboxRetirements: [:],
         inboxRouteCapabilities: [:],
+        rendezvousRoutesV2: [:],
         attachments: [:],
         prekeyBundles: [:],
         federationNodes: [:],
@@ -2766,6 +3150,7 @@ private struct RelayStoreSnapshot: Codable {
         inboxRegistrations: [String: InboxRegistrationRecord] = [:],
         inboxRetirements: [String: InboxRetirementRecord] = [:],
         inboxRouteCapabilities: [String: InboxRouteCapabilityRecord] = [:],
+        rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:],
         attachments: [String: [AttachmentRecord]],
         prekeyBundles: [String: PrekeyBundleRecord] = [:],
         federationNodes: [String: FederationNodeRecord] = [:],
@@ -2779,6 +3164,7 @@ private struct RelayStoreSnapshot: Codable {
         self.inboxRegistrations = inboxRegistrations
         self.inboxRetirements = inboxRetirements
         self.inboxRouteCapabilities = inboxRouteCapabilities
+        self.rendezvousRoutesV2 = rendezvousRoutesV2
         self.attachments = attachments
         self.prekeyBundles = prekeyBundles
         self.federationNodes = federationNodes
@@ -2800,6 +3186,10 @@ private struct RelayStoreSnapshot: Codable {
         inboxRouteCapabilities = try container.decodeIfPresent(
             [String: InboxRouteCapabilityRecord].self,
             forKey: .inboxRouteCapabilities
+        ) ?? [:]
+        rendezvousRoutesV2 = try container.decodeIfPresent(
+            [String: RendezvousRelayRouteRecordV2].self,
+            forKey: .rendezvousRoutesV2
         ) ?? [:]
         attachments = try container.decodeIfPresent([String: [AttachmentRecord]].self, forKey: .attachments) ?? [:]
         prekeyBundles = try container.decodeIfPresent([String: PrekeyBundleRecord].self, forKey: .prekeyBundles) ?? [:]
@@ -3160,6 +3550,7 @@ private enum SQLiteRelayStateStore {
             inboxRegistrations: try loadInboxRegistrations(in: db),
             inboxRetirements: try loadInboxRetirements(in: db),
             inboxRouteCapabilities: try loadInboxRouteCapabilities(in: db),
+            rendezvousRoutesV2: try loadRendezvousRoutesV2(in: db),
             attachments: try loadAttachments(in: db),
             prekeyBundles: try loadPrekeyBundles(in: db),
             federationNodes: try loadFederationNodes(in: db),
@@ -3195,6 +3586,13 @@ private enum SQLiteRelayStateStore {
             for (capabilityDigest, record) in snapshot.inboxRouteCapabilities {
                 try insertInboxRouteCapability(
                     capabilityDigest: capabilityDigest,
+                    record: record,
+                    in: db
+                )
+            }
+            for (routeDigest, record) in snapshot.rendezvousRoutesV2 {
+                try insertRendezvousRouteV2(
+                    routeDigest: routeDigest,
                     record: record,
                     in: db
                 )
@@ -3290,6 +3688,26 @@ private enum SQLiteRelayStateStore {
                 InboxRouteCapabilityRecord.self,
                 from: readBlob(statement, column: 1)
             )
+        }
+        return records
+    }
+
+    private static func loadRendezvousRoutesV2(
+        in db: OpaquePointer
+    ) throws -> [String: RendezvousRelayRouteRecordV2] {
+        var records: [String: RendezvousRelayRouteRecordV2] = [:]
+        try queryRows(
+            "SELECT route_digest, value FROM relay_rendezvous_routes_v2;",
+            in: db
+        ) { statement in
+            let digest = try readText(statement, column: 0, in: db)
+            records[digest] = try decode(
+                RendezvousRelayRouteRecordV2.self,
+                from: readBlob(statement, column: 1)
+            )
+        }
+        guard records.count <= 100_000 else {
+            throw SQLiteRelayStateStoreError.corrupt("too many rendezvous route records")
         }
         return records
     }
@@ -3455,6 +3873,28 @@ private enum SQLiteRelayStateStore {
         }
     }
 
+    private static func insertRendezvousRouteV2(
+        routeDigest: String,
+        record: RendezvousRelayRouteRecordV2,
+        in db: OpaquePointer
+    ) throws {
+        try executePrepared(
+            "INSERT INTO relay_rendezvous_routes_v2 (route_digest, expires_at, retired_at, value) VALUES (?1, ?2, ?3, ?4);",
+            in: db
+        ) { statement in
+            try bindText(routeDigest, to: 1, in: statement, db: db)
+            try bindDouble(record.expiresAt.timeIntervalSince1970, to: 2, in: statement, db: db)
+            if let retiredAt = record.retiredAt {
+                try bindDouble(retiredAt.timeIntervalSince1970, to: 3, in: statement, db: db)
+            } else {
+                guard sqlite3_bind_null(statement, 3) == SQLITE_OK else {
+                    throw SQLiteRelayStateStoreError.bind(lastError(in: db))
+                }
+            }
+            try bindBlob(encode(record), to: 4, in: statement, db: db)
+        }
+    }
+
     private static func insertAttachmentRecord(attachmentId: String, record: AttachmentRecord, in db: OpaquePointer) throws {
         try executePrepared(
             "INSERT INTO relay_attachment_chunks (attachment_id, chunk_index, stored_at, expires_at, value) VALUES (?1, ?2, ?3, ?4, ?5);",
@@ -3589,6 +4029,7 @@ private enum SQLiteRelayStateStore {
             "relay_inbox_registrations",
             "relay_inbox_retirements",
             "relay_inbox_route_capabilities",
+            "relay_rendezvous_routes_v2",
             "relay_attachment_chunks",
             "relay_prekey_bundles",
             "relay_federation_nodes",
@@ -3654,6 +4095,13 @@ private enum SQLiteRelayStateStore {
             value BLOB NOT NULL
         );
         CREATE INDEX IF NOT EXISTS relay_inbox_route_capabilities_inbox_idx ON relay_inbox_route_capabilities(inbox_id);
+        CREATE TABLE IF NOT EXISTS relay_rendezvous_routes_v2 (
+            route_digest TEXT PRIMARY KEY,
+            expires_at REAL NOT NULL,
+            retired_at REAL,
+            value BLOB NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS relay_rendezvous_routes_v2_expiry_idx ON relay_rendezvous_routes_v2(expires_at);
         CREATE TABLE IF NOT EXISTS relay_attachment_chunks (
             attachment_id TEXT NOT NULL,
             chunk_index INTEGER NOT NULL,
@@ -3830,6 +4278,13 @@ enum RelayStoreError: Error, Equatable {
     case invalidInboxRouteCapabilityMutation
     case inboxRouteCapabilityMutationConflict
     case inboxRouteCapabilityMutationOutOfOrder
+    case invalidRendezvousRoute
+    case rendezvousRouteUnavailable
+    case rendezvousRegistrationConflict
+    case rendezvousCapacityReached
+    case rendezvousFrameConflict
+    case rendezvousSequenceGap
+    case rendezvousQuotaReached
     case destinationInboxNotRegistered
     case relayCapacityExceeded
     case invalidEnvelopePayload

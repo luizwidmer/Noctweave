@@ -27,6 +27,7 @@ struct ServerConfig {
       --access-password <password>     Require relay client authentication
       --attachments-enabled <bool>     Enable or disable attachment chunks
       --attachment-storage <mode>      inline or ipfs
+      --rendezvous-transport <bool>    Enable experimental identity-blind rendezvous transport
       --compatibility-profile <id>     Enable one deprecated compatibility profile
       --temporal-bucket-seconds <n>    Metadata timing bucket; 0 disables it
       --help, -h                       Show this help without starting a relay
@@ -98,6 +99,7 @@ struct ServerConfig {
     var advertisedEndpoint: RelayEndpoint?
     var federationAllowList: [RelayEndpoint]
     var allowPrivateFederationEndpoints: Bool
+    var rendezvousTransportEnabled: Bool
     var compatibilityProfiles: [String]
 
     static func parse(
@@ -188,6 +190,10 @@ struct ServerConfig {
         var advertisedEndpoint: RelayEndpoint?
         var federationAllowList: [RelayEndpoint] = []
         var allowPrivateFederationEndpoints = false
+        var rendezvousTransportEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_RENDEZVOUS_TRANSPORT"] ?? "false",
+            defaultValue: false
+        )
         var compatibilityProfiles = (environment["NOCTWEAVE_COMPATIBILITY_PROFILES"] ?? "")
             .split(separator: ",")
             .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -505,6 +511,12 @@ struct ServerConfig {
                 } else {
                     allowPrivateFederationEndpoints = true
                 }
+            case "--rendezvous-transport":
+                if let value = iterator.next() {
+                    rendezvousTransportEnabled = parseBoolFlag(value, defaultValue: true)
+                } else {
+                    rendezvousTransportEnabled = true
+                }
             case "--compatibility-profile":
                 if let value = iterator.next() {
                     compatibilityProfiles.append(value)
@@ -678,6 +690,7 @@ struct ServerConfig {
             advertisedEndpoint: advertisedEndpoint,
             federationAllowList: federationAllowList,
             allowPrivateFederationEndpoints: allowPrivateFederationEndpoints,
+            rendezvousTransportEnabled: rendezvousTransportEnabled,
             compatibilityProfiles: compatibilityProfiles
         )
     }
@@ -932,7 +945,8 @@ var relayConfiguration = RelayConfiguration(
     advertisedEndpoint: config.advertisedEndpoint,
     federationAllowList: config.federationAllowList,
     allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints,
-    compatibilityProfiles: config.compatibilityProfiles
+    compatibilityProfiles: config.compatibilityProfiles,
+    rendezvousTransportEnabled: config.rendezvousTransportEnabled
 )
 if relayConfiguration.kind == .coordinator {
     if relayConfiguration.coordinatorDirectorySigningPrivateKey == nil,

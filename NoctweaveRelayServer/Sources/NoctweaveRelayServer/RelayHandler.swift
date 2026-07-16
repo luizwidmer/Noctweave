@@ -465,6 +465,103 @@ final class RelayHandler: ChannelInboundHandler {
                     .error("Relay storage is unavailable")
                 )
             }
+        case .registerRendezvousTransportV2:
+            guard relayConfiguration.isRendezvousTransportEnabled else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Rendezvous transport is disabled")
+                )
+            }
+            guard relayConfiguration.tlsEnabled == true
+                    || isLoopbackRequestSource(requestSourceKey) else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Rendezvous transport requires confidential transport")
+                )
+            }
+            guard let registration = request.registerRendezvousTransportV2,
+                  registration.isStructurallyValid() else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Invalid rendezvous transport request")
+                )
+            }
+            do {
+                try store.registerRendezvousTransportV2(registration)
+                return context.eventLoop.makeSucceededFuture(.ok())
+            } catch {
+                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
+            }
+        case .appendRendezvousTransportV2:
+            guard relayConfiguration.isRendezvousTransportEnabled else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Rendezvous transport is disabled")
+                )
+            }
+            guard relayConfiguration.tlsEnabled == true
+                    || isLoopbackRequestSource(requestSourceKey) else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Rendezvous transport requires confidential transport")
+                )
+            }
+            guard let append = request.appendRendezvousTransportV2,
+                  append.isStructurallyValid else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Invalid rendezvous transport request")
+                )
+            }
+            do {
+                _ = try store.appendRendezvousTransportV2(append)
+                return context.eventLoop.makeSucceededFuture(.ok())
+            } catch {
+                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
+            }
+        case .syncRendezvousTransportV2:
+            guard relayConfiguration.isRendezvousTransportEnabled else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Rendezvous transport is disabled")
+                )
+            }
+            guard relayConfiguration.tlsEnabled == true
+                    || isLoopbackRequestSource(requestSourceKey) else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Rendezvous transport requires confidential transport")
+                )
+            }
+            guard let sync = request.syncRendezvousTransportV2,
+                  sync.isStructurallyValid else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Invalid rendezvous transport request")
+                )
+            }
+            do {
+                return context.eventLoop.makeSucceededFuture(
+                    .rendezvousSyncV2(try store.syncRendezvousTransportV2(sync))
+                )
+            } catch {
+                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
+            }
+        case .deleteRendezvousTransportV2:
+            guard relayConfiguration.isRendezvousTransportEnabled else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Rendezvous transport is disabled")
+                )
+            }
+            guard relayConfiguration.tlsEnabled == true
+                    || isLoopbackRequestSource(requestSourceKey) else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Rendezvous transport requires confidential transport")
+                )
+            }
+            guard let deletion = request.deleteRendezvousTransportV2,
+                  deletion.isStructurallyValid else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Invalid rendezvous transport request")
+                )
+            }
+            do {
+                try store.deleteRendezvousTransportV2(deletion)
+                return context.eventLoop.makeSucceededFuture(.ok())
+            } catch {
+                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
+            }
         case .fetch:
             guard let fetch = request.fetch else {
                 return context.eventLoop.makeSucceededFuture(.error("Missing fetch payload"))
@@ -1503,6 +1600,20 @@ final class RelayHandler: ChannelInboundHandler {
             return .error("Destination inbox is not registered")
         case RelayStoreError.inboxRetired:
             return .error("Inbox is retired")
+        case RelayStoreError.invalidRendezvousRoute:
+            return .error("Invalid rendezvous transport request")
+        case RelayStoreError.rendezvousRouteUnavailable:
+            return .error("Rendezvous route is unavailable")
+        case RelayStoreError.rendezvousRegistrationConflict:
+            return .error("Rendezvous route registration conflicts with stored state")
+        case RelayStoreError.rendezvousCapacityReached:
+            return .error("Rendezvous transport capacity reached")
+        case RelayStoreError.rendezvousFrameConflict:
+            return .error("Rendezvous frame conflicts with stored state")
+        case RelayStoreError.rendezvousSequenceGap:
+            return .error("Rendezvous lane sequence is not contiguous")
+        case RelayStoreError.rendezvousQuotaReached:
+            return .error("Rendezvous lane quota reached")
         case RelayStoreError.invalidInboxRetirement:
             return .error("Invalid inbox retirement")
         case RelayStoreError.invalidEnvelopePayload:

@@ -90,6 +90,14 @@ components:
           $ref: "#/components/schemas/CreateInboxRouteCapabilityRequest"
         revokeInboxRouteCapability:
           $ref: "#/components/schemas/RevokeInboxRouteCapabilityRequest"
+        registerRendezvousTransportV2:
+          $ref: "#/components/schemas/RegisterRendezvousTransportV2Request"
+        appendRendezvousTransportV2:
+          $ref: "#/components/schemas/AppendRendezvousTransportV2Request"
+        syncRendezvousTransportV2:
+          $ref: "#/components/schemas/SyncRendezvousTransportV2Request"
+        deleteRendezvousTransportV2:
+          $ref: "#/components/schemas/DeleteRendezvousTransportV2Request"
         acknowledgeMessages:
           type: object
           deprecated: true
@@ -181,6 +189,10 @@ components:
         - retireInbox
         - createInboxRouteCapability
         - revokeInboxRouteCapability
+        - registerRendezvousTransportV2
+        - appendRendezvousTransportV2
+        - syncRendezvousTransportV2
+        - deleteRendezvousTransportV2
         - fetch
         - acknowledgeMessages
         - registerMailboxConsumer
@@ -237,6 +249,8 @@ components:
           $ref: "#/components/schemas/MailboxSyncBatch"
         mailboxConsumer:
           $ref: "#/components/schemas/MailboxConsumerRegistration"
+        rendezvousSyncV2:
+          $ref: "#/components/schemas/RendezvousRelaySyncBatchV2"
         groupMessages:
           type: array
           items:
@@ -298,6 +312,7 @@ components:
         - messages
         - mailboxSync
         - mailboxConsumer
+        - rendezvousSyncV2
         - groupMessages
         - announcements
         - pairRequests
@@ -364,6 +379,169 @@ components:
           contentEncoding: base64
           minLength: 44
           maxLength: 44
+      additionalProperties: false
+    RendezvousRelayOpaque32V2:
+      type: object
+      required: [rawValue]
+      description: |
+        Nonzero 32-byte CSPRNG value. Depending on its typed request position,
+        this is a route locator, opaque lane ID, publish bearer, read bearer,
+        or delete bearer. All seven authority values in a registration MUST be
+        distinct. Relays persist only domain-separated SHA-256 digests of
+        bearers and never persist raw bearer values. Lane IDs are random labels
+        and contain no purpose, identity, generation, endpoint, inbox,
+        provider, or contact field.
+      properties:
+        rawValue:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+      additionalProperties: false
+    RendezvousRelayFrameIDV2:
+      type: object
+      required: [rawValue]
+      properties:
+        rawValue:
+          type: string
+          contentEncoding: base64
+          minLength: 24
+          maxLength: 24
+      additionalProperties: false
+    RendezvousRelayLaneRegistrationV2:
+      type: object
+      required: [laneId, publishCapability, readCapability, deleteCapability]
+      properties:
+        laneId:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        publishCapability:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        readCapability:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        deleteCapability:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+      additionalProperties: false
+    RegisterRendezvousTransportV2Request:
+      type: object
+      required: [version, routeCapability, expiresAt, lanes]
+      description: |
+        Atomically creates exactly two unlabelled directional lanes. The route
+        lifetime is a whole-second interval no longer than 600 seconds from
+        receipt. An exact active-registration retry is idempotent, including
+        after restart; different material under the same route conflicts.
+        Deleted and expired routes retain bounded non-resurrection tombstones.
+        This module is disabled by default and is accepted only over TLS or
+        from a literal loopback development source.
+      properties:
+        version:
+          type: integer
+          const: 2
+        routeCapability:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        expiresAt:
+          type: string
+          format: date-time
+        lanes:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            $ref: "#/components/schemas/RendezvousRelayLaneRegistrationV2"
+      additionalProperties: false
+    RendezvousRelayCiphertextFrameV2:
+      type: object
+      required: [frameId, sequence, ciphertext]
+      description: |
+        Relay-opaque encrypted bytes. The relay does not decode the enclosed
+        RendezvousFrameV2. Decoded ciphertext length MUST be exactly 4096,
+        16384, or 65536 bytes.
+      properties:
+        frameId:
+          $ref: "#/components/schemas/RendezvousRelayFrameIDV2"
+        sequence:
+          type: integer
+          format: uint64
+          minimum: 1
+          maximum: 32
+        ciphertext:
+          type: string
+          contentEncoding: base64
+      additionalProperties: false
+    AppendRendezvousTransportV2Request:
+      type: object
+      required: [routeCapability, laneId, publishCapability, frame]
+      description: |
+        Appends at the next exact lane sequence. Retrying the same frame ID,
+        sequence, and ciphertext digest is idempotent. Reusing a frame ID with
+        different bytes, reusing a sequence with a different ID, or creating a
+        gap is rejected. Each lane is limited to 32 frames and 2097152 decoded
+        ciphertext bytes.
+      properties:
+        routeCapability:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        laneId:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        publishCapability:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        frame:
+          $ref: "#/components/schemas/RendezvousRelayCiphertextFrameV2"
+      additionalProperties: false
+    SyncRendezvousTransportV2Request:
+      type: object
+      required: [routeCapability, laneId, readCapability, afterSequence]
+      properties:
+        routeCapability:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        laneId:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        readCapability:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        afterSequence:
+          type: integer
+          format: uint64
+          minimum: 0
+          maximum: 32
+        maxCount:
+          type: integer
+          minimum: 1
+          maximum: 32
+      additionalProperties: false
+    DeleteRendezvousTransportV2Request:
+      type: object
+      required: [routeCapability, laneId, deleteCapability]
+      description: |
+        Irreversibly deletes one lane using an authority distinct from its
+        publish and read bearers. Exact deletion retries are idempotent. Once
+        both lanes are deleted, the route is a non-resurrectable tombstone.
+      properties:
+        routeCapability:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        laneId:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+        deleteCapability:
+          $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
+      additionalProperties: false
+    RendezvousRelaySyncBatchV2:
+      type: object
+      required: [frames, highWatermark, nextSequence, hasMore]
+      properties:
+        frames:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/RendezvousRelayCiphertextFrameV2"
+        highWatermark:
+          type: integer
+          format: uint64
+          minimum: 0
+          maximum: 32
+        nextSequence:
+          type: integer
+          format: uint64
+          minimum: 0
+          maximum: 32
+        hasMore:
+          type: boolean
       additionalProperties: false
     InboxRegistrationReceiptV3:
       type: object

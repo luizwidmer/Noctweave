@@ -789,6 +789,7 @@ struct RelayConfiguration: Codable, Equatable {
     var requireInboxAccessControl: Bool?
     var compatibilityProfiles: [String]
     var experimentalRouteCapabilitiesEnabled: Bool?
+    var rendezvousTransportEnabled: Bool?
 
     init(
         kind: RelayKind = .standard,
@@ -830,7 +831,8 @@ struct RelayConfiguration: Codable, Equatable {
         allowPrivateFederationEndpoints: Bool = false,
         requireInboxAccessControl: Bool = true,
         compatibilityProfiles: [String] = [],
-        experimentalRouteCapabilitiesEnabled: Bool = false
+        experimentalRouteCapabilitiesEnabled: Bool = false,
+        rendezvousTransportEnabled: Bool = false
     ) {
         self.kind = kind
         self.federation = federation
@@ -898,6 +900,7 @@ struct RelayConfiguration: Codable, Equatable {
             )
         ).sorted().prefix(16).map { $0 }
         self.experimentalRouteCapabilitiesEnabled = experimentalRouteCapabilitiesEnabled ? true : nil
+        self.rendezvousTransportEnabled = rendezvousTransportEnabled ? true : nil
     }
 
     var legacyFingerprintCompatibilityEnabled: Bool {
@@ -906,6 +909,10 @@ struct RelayConfiguration: Codable, Equatable {
 
     var opaqueRouteCapabilitiesEnabled: Bool {
         experimentalRouteCapabilitiesEnabled == true
+    }
+
+    var isRendezvousTransportEnabled: Bool {
+        rendezvousTransportEnabled == true
     }
 
     func makeInfo(now: Date = Date()) -> RelayInfo {
@@ -938,7 +945,8 @@ struct RelayConfiguration: Codable, Equatable {
                 hiddenRetrievalEnabled: advertisedHiddenRetrieval != nil,
                 onionEnabled: advertisedOnionTransport != nil,
                 mixnetEnabled: advertisedMixnetTransport != nil,
-                legacyFingerprintCompatibilityEnabled: legacyFingerprintCompatibilityEnabled
+                legacyFingerprintCompatibilityEnabled: legacyFingerprintCompatibilityEnabled,
+                rendezvousTransportEnabled: isRendezvousTransportEnabled
             ),
             groupCreationMode: legacyFingerprintCompatibilityEnabled ? groupCreationMode : .disabled,
             groupSecurityModel: groupSecurityModel,
@@ -2205,12 +2213,310 @@ struct AcknowledgeGroupMessagesRequest: Codable, Equatable {
     }
 }
 
+enum RendezvousRelayTransportV2 {
+    static let version = 2
+    static let capabilityBytes = 32
+    static let laneIDBytes = 32
+    static let frameIDBytes = 16
+    static let laneCount = 2
+    static let maximumLifetimeSeconds: TimeInterval = 10 * 60
+    static let maximumFramesPerLane: UInt64 = 32
+    static let maximumCiphertextBytesPerLane = 2_097_152
+    static let maximumSyncFrames = 32
+    static let allowedCiphertextByteCounts = [4_096, 16_384, 65_536]
+
+    static func isCanonicalTimestamp(_ date: Date) -> Bool {
+        let seconds = date.timeIntervalSince1970
+        return seconds.isFinite && floor(seconds) == seconds
+    }
+
+    static func isValidOpaqueValue(_ value: Data, byteCount: Int) -> Bool {
+        value.count == byteCount && value.contains { $0 != 0 }
+    }
+}
+
+struct RendezvousRelayRouteCapabilityV2: RawRepresentable, Codable, Equatable, Hashable {
+    let rawValue: Data
+
+    init(rawValue: Data) { self.rawValue = rawValue }
+
+    var isStructurallyValid: Bool {
+        RendezvousRelayTransportV2.isValidOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes
+        )
+    }
+}
+
+struct RendezvousRelayPublishCapabilityV2: RawRepresentable, Codable, Equatable, Hashable {
+    let rawValue: Data
+
+    init(rawValue: Data) { self.rawValue = rawValue }
+
+    var isStructurallyValid: Bool {
+        RendezvousRelayTransportV2.isValidOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes
+        )
+    }
+}
+
+struct RendezvousRelayReadCapabilityV2: RawRepresentable, Codable, Equatable, Hashable {
+    let rawValue: Data
+
+    init(rawValue: Data) { self.rawValue = rawValue }
+
+    var isStructurallyValid: Bool {
+        RendezvousRelayTransportV2.isValidOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes
+        )
+    }
+}
+
+struct RendezvousRelayDeleteCapabilityV2: RawRepresentable, Codable, Equatable, Hashable {
+    let rawValue: Data
+
+    init(rawValue: Data) { self.rawValue = rawValue }
+
+    var isStructurallyValid: Bool {
+        RendezvousRelayTransportV2.isValidOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes
+        )
+    }
+}
+
+struct RendezvousRelayLaneIDV2: RawRepresentable, Codable, Equatable, Hashable {
+    let rawValue: Data
+
+    init(rawValue: Data) { self.rawValue = rawValue }
+
+    var isStructurallyValid: Bool {
+        RendezvousRelayTransportV2.isValidOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.laneIDBytes
+        )
+    }
+}
+
+struct RendezvousRelayFrameIDV2: RawRepresentable, Codable, Equatable, Hashable {
+    let rawValue: Data
+
+    init(rawValue: Data) { self.rawValue = rawValue }
+
+    var isStructurallyValid: Bool {
+        RendezvousRelayTransportV2.isValidOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.frameIDBytes
+        )
+    }
+}
+
+struct RendezvousRelayLaneRegistrationV2: Codable, Equatable {
+    let laneId: RendezvousRelayLaneIDV2
+    let publishCapability: RendezvousRelayPublishCapabilityV2
+    let readCapability: RendezvousRelayReadCapabilityV2
+    let deleteCapability: RendezvousRelayDeleteCapabilityV2
+
+    init(
+        laneId: RendezvousRelayLaneIDV2,
+        publishCapability: RendezvousRelayPublishCapabilityV2,
+        readCapability: RendezvousRelayReadCapabilityV2,
+        deleteCapability: RendezvousRelayDeleteCapabilityV2
+    ) {
+        self.laneId = laneId
+        self.publishCapability = publishCapability
+        self.readCapability = readCapability
+        self.deleteCapability = deleteCapability
+    }
+
+    var isStructurallyValid: Bool {
+        laneId.isStructurallyValid
+            && publishCapability.isStructurallyValid
+            && readCapability.isStructurallyValid
+            && deleteCapability.isStructurallyValid
+    }
+}
+
+struct RegisterRendezvousTransportV2Request: Codable, Equatable {
+    let version: Int
+    let routeCapability: RendezvousRelayRouteCapabilityV2
+    let expiresAt: Date
+    let lanes: [RendezvousRelayLaneRegistrationV2]
+
+    init(
+        version: Int = RendezvousRelayTransportV2.version,
+        routeCapability: RendezvousRelayRouteCapabilityV2,
+        expiresAt: Date,
+        lanes: [RendezvousRelayLaneRegistrationV2]
+    ) {
+        self.version = version
+        self.routeCapability = routeCapability
+        self.expiresAt = expiresAt
+        self.lanes = lanes
+    }
+
+    func isStructurallyValid(at now: Date = Date()) -> Bool {
+        guard version == RendezvousRelayTransportV2.version,
+              routeCapability.isStructurallyValid,
+              RendezvousRelayTransportV2.isCanonicalTimestamp(expiresAt),
+              now.timeIntervalSince1970.isFinite,
+              expiresAt > now,
+              expiresAt <= Date(
+                timeIntervalSince1970: floor(now.timeIntervalSince1970)
+                    + RendezvousRelayTransportV2.maximumLifetimeSeconds
+              ),
+              lanes.count == RendezvousRelayTransportV2.laneCount,
+              lanes.allSatisfy(\.isStructurallyValid),
+              Set(lanes.map(\.laneId)).count == RendezvousRelayTransportV2.laneCount else {
+            return false
+        }
+        let authorityValues = [routeCapability.rawValue] + lanes.flatMap {
+            [
+                $0.publishCapability.rawValue,
+                $0.readCapability.rawValue,
+                $0.deleteCapability.rawValue
+            ]
+        }
+        return Set(authorityValues).count == authorityValues.count
+    }
+}
+
+struct RendezvousRelayCiphertextFrameV2: Codable, Equatable {
+    let frameId: RendezvousRelayFrameIDV2
+    let sequence: UInt64
+    let ciphertext: Data
+
+    init(
+        frameId: RendezvousRelayFrameIDV2,
+        sequence: UInt64,
+        ciphertext: Data
+    ) {
+        self.frameId = frameId
+        self.sequence = sequence
+        self.ciphertext = ciphertext
+    }
+
+    var isStructurallyValid: Bool {
+        frameId.isStructurallyValid
+            && sequence > 0
+            && sequence <= RendezvousRelayTransportV2.maximumFramesPerLane
+            && RendezvousRelayTransportV2.allowedCiphertextByteCounts.contains(ciphertext.count)
+    }
+
+    var ciphertextDigest: Data {
+        Data(SHA256.hash(data: ciphertext))
+    }
+}
+
+struct AppendRendezvousTransportV2Request: Codable, Equatable {
+    let routeCapability: RendezvousRelayRouteCapabilityV2
+    let laneId: RendezvousRelayLaneIDV2
+    let publishCapability: RendezvousRelayPublishCapabilityV2
+    let frame: RendezvousRelayCiphertextFrameV2
+
+    init(
+        routeCapability: RendezvousRelayRouteCapabilityV2,
+        laneId: RendezvousRelayLaneIDV2,
+        publishCapability: RendezvousRelayPublishCapabilityV2,
+        frame: RendezvousRelayCiphertextFrameV2
+    ) {
+        self.routeCapability = routeCapability
+        self.laneId = laneId
+        self.publishCapability = publishCapability
+        self.frame = frame
+    }
+
+    var isStructurallyValid: Bool {
+        routeCapability.isStructurallyValid
+            && laneId.isStructurallyValid
+            && publishCapability.isStructurallyValid
+            && frame.isStructurallyValid
+    }
+}
+
+struct SyncRendezvousTransportV2Request: Codable, Equatable {
+    let routeCapability: RendezvousRelayRouteCapabilityV2
+    let laneId: RendezvousRelayLaneIDV2
+    let readCapability: RendezvousRelayReadCapabilityV2
+    let afterSequence: UInt64
+    let maxCount: Int?
+
+    init(
+        routeCapability: RendezvousRelayRouteCapabilityV2,
+        laneId: RendezvousRelayLaneIDV2,
+        readCapability: RendezvousRelayReadCapabilityV2,
+        afterSequence: UInt64 = 0,
+        maxCount: Int? = nil
+    ) {
+        self.routeCapability = routeCapability
+        self.laneId = laneId
+        self.readCapability = readCapability
+        self.afterSequence = afterSequence
+        self.maxCount = maxCount
+    }
+
+    var isStructurallyValid: Bool {
+        routeCapability.isStructurallyValid
+            && laneId.isStructurallyValid
+            && readCapability.isStructurallyValid
+            && afterSequence <= RendezvousRelayTransportV2.maximumFramesPerLane
+            && maxCount.map { (1...RendezvousRelayTransportV2.maximumSyncFrames).contains($0) } ?? true
+    }
+}
+
+struct DeleteRendezvousTransportV2Request: Codable, Equatable {
+    let routeCapability: RendezvousRelayRouteCapabilityV2
+    let laneId: RendezvousRelayLaneIDV2
+    let deleteCapability: RendezvousRelayDeleteCapabilityV2
+
+    init(
+        routeCapability: RendezvousRelayRouteCapabilityV2,
+        laneId: RendezvousRelayLaneIDV2,
+        deleteCapability: RendezvousRelayDeleteCapabilityV2
+    ) {
+        self.routeCapability = routeCapability
+        self.laneId = laneId
+        self.deleteCapability = deleteCapability
+    }
+
+    var isStructurallyValid: Bool {
+        routeCapability.isStructurallyValid
+            && laneId.isStructurallyValid
+            && deleteCapability.isStructurallyValid
+    }
+}
+
+struct RendezvousRelaySyncBatchV2: Codable, Equatable {
+    let frames: [RendezvousRelayCiphertextFrameV2]
+    let highWatermark: UInt64
+    let nextSequence: UInt64
+    let hasMore: Bool
+
+    init(
+        frames: [RendezvousRelayCiphertextFrameV2],
+        highWatermark: UInt64,
+        nextSequence: UInt64,
+        hasMore: Bool
+    ) {
+        self.frames = frames
+        self.highWatermark = highWatermark
+        self.nextSequence = nextSequence
+        self.hasMore = hasMore
+    }
+}
+
 enum RelayRequestType: String, Codable {
     case deliver
     case registerInbox
     case retireInbox
     case createInboxRouteCapability
     case revokeInboxRouteCapability
+    case registerRendezvousTransportV2
+    case appendRendezvousTransportV2
+    case syncRendezvousTransportV2
+    case deleteRendezvousTransportV2
     case fetch
     case acknowledgeMessages
     case registerMailboxConsumer
@@ -2369,6 +2675,10 @@ struct RelayRequest: Codable, Equatable {
     let retireInbox: RetireInboxRequest?
     let createInboxRouteCapability: CreateInboxRouteCapabilityRequest?
     let revokeInboxRouteCapability: RevokeInboxRouteCapabilityRequest?
+    let registerRendezvousTransportV2: RegisterRendezvousTransportV2Request?
+    let appendRendezvousTransportV2: AppendRendezvousTransportV2Request?
+    let syncRendezvousTransportV2: SyncRendezvousTransportV2Request?
+    let deleteRendezvousTransportV2: DeleteRendezvousTransportV2Request?
     let fetch: FetchRequest?
     let acknowledgeMessages: AcknowledgeMessagesRequest?
     let registerMailboxConsumer: RegisterMailboxConsumerRequest?
@@ -2410,6 +2720,10 @@ struct RelayRequest: Codable, Equatable {
         retireInbox: RetireInboxRequest? = nil,
         createInboxRouteCapability: CreateInboxRouteCapabilityRequest? = nil,
         revokeInboxRouteCapability: RevokeInboxRouteCapabilityRequest? = nil,
+        registerRendezvousTransportV2: RegisterRendezvousTransportV2Request? = nil,
+        appendRendezvousTransportV2: AppendRendezvousTransportV2Request? = nil,
+        syncRendezvousTransportV2: SyncRendezvousTransportV2Request? = nil,
+        deleteRendezvousTransportV2: DeleteRendezvousTransportV2Request? = nil,
         fetch: FetchRequest? = nil,
         acknowledgeMessages: AcknowledgeMessagesRequest? = nil,
         registerMailboxConsumer: RegisterMailboxConsumerRequest? = nil,
@@ -2450,6 +2764,10 @@ struct RelayRequest: Codable, Equatable {
         self.retireInbox = retireInbox
         self.createInboxRouteCapability = createInboxRouteCapability
         self.revokeInboxRouteCapability = revokeInboxRouteCapability
+        self.registerRendezvousTransportV2 = registerRendezvousTransportV2
+        self.appendRendezvousTransportV2 = appendRendezvousTransportV2
+        self.syncRendezvousTransportV2 = syncRendezvousTransportV2
+        self.deleteRendezvousTransportV2 = deleteRendezvousTransportV2
         self.fetch = fetch
         self.acknowledgeMessages = acknowledgeMessages
         self.registerMailboxConsumer = registerMailboxConsumer
@@ -2527,6 +2845,42 @@ struct RelayRequest: Codable, Equatable {
         RelayRequest(
             type: .revokeInboxRouteCapability,
             revokeInboxRouteCapability: request
+        )
+    }
+
+    static func registerRendezvousTransportV2(
+        _ request: RegisterRendezvousTransportV2Request
+    ) -> RelayRequest {
+        RelayRequest(
+            type: .registerRendezvousTransportV2,
+            registerRendezvousTransportV2: request
+        )
+    }
+
+    static func appendRendezvousTransportV2(
+        _ request: AppendRendezvousTransportV2Request
+    ) -> RelayRequest {
+        RelayRequest(
+            type: .appendRendezvousTransportV2,
+            appendRendezvousTransportV2: request
+        )
+    }
+
+    static func syncRendezvousTransportV2(
+        _ request: SyncRendezvousTransportV2Request
+    ) -> RelayRequest {
+        RelayRequest(
+            type: .syncRendezvousTransportV2,
+            syncRendezvousTransportV2: request
+        )
+    }
+
+    static func deleteRendezvousTransportV2(
+        _ request: DeleteRendezvousTransportV2Request
+    ) -> RelayRequest {
+        RelayRequest(
+            type: .deleteRendezvousTransportV2,
+            deleteRendezvousTransportV2: request
         )
     }
 
@@ -2907,6 +3261,10 @@ struct RelayRequest: Codable, Equatable {
             retireInbox: retireInbox,
             createInboxRouteCapability: createInboxRouteCapability,
             revokeInboxRouteCapability: revokeInboxRouteCapability,
+            registerRendezvousTransportV2: registerRendezvousTransportV2,
+            appendRendezvousTransportV2: appendRendezvousTransportV2,
+            syncRendezvousTransportV2: syncRendezvousTransportV2,
+            deleteRendezvousTransportV2: deleteRendezvousTransportV2,
             fetch: fetch,
             acknowledgeMessages: acknowledgeMessages,
             registerMailboxConsumer: registerMailboxConsumer,
@@ -3058,6 +3416,7 @@ enum RelayResponseType: String, Codable {
     case messages
     case mailboxSync
     case mailboxConsumer
+    case rendezvousSyncV2
     case groupMessages
     case announcements
     case pairRequests
@@ -3089,6 +3448,7 @@ struct RelayResponse: Codable, Equatable {
     let messages: [Envelope]?
     let mailboxSync: MailboxSyncBatch?
     let mailboxConsumer: MailboxConsumerRegistration?
+    let rendezvousSyncV2: RendezvousRelaySyncBatchV2?
     let groupMessages: [GroupRatchetEnvelope]?
     let announcements: [PairingAnnouncement]?
     let pairRequests: [PairingRequest]?
@@ -3111,6 +3471,7 @@ struct RelayResponse: Codable, Equatable {
         messages: [Envelope]? = nil,
         mailboxSync: MailboxSyncBatch? = nil,
         mailboxConsumer: MailboxConsumerRegistration? = nil,
+        rendezvousSyncV2: RendezvousRelaySyncBatchV2? = nil,
         groupMessages: [GroupRatchetEnvelope]? = nil,
         announcements: [PairingAnnouncement]? = nil,
         pairRequests: [PairingRequest]? = nil,
@@ -3132,6 +3493,7 @@ struct RelayResponse: Codable, Equatable {
         self.messages = messages
         self.mailboxSync = mailboxSync
         self.mailboxConsumer = mailboxConsumer
+        self.rendezvousSyncV2 = rendezvousSyncV2
         self.groupMessages = groupMessages
         self.announcements = announcements
         self.pairRequests = pairRequests
@@ -3205,6 +3567,10 @@ struct RelayResponse: Codable, Equatable {
 
     static func mailboxConsumer(_ consumer: MailboxConsumerRegistration) -> RelayResponse {
         RelayResponse(type: .mailboxConsumer, mailboxConsumer: consumer)
+    }
+
+    static func rendezvousSyncV2(_ batch: RendezvousRelaySyncBatchV2) -> RelayResponse {
+        RelayResponse(type: .rendezvousSyncV2, rendezvousSyncV2: batch)
     }
 
     static func groupMessages(_ envelopes: [GroupRatchetEnvelope]) -> RelayResponse {

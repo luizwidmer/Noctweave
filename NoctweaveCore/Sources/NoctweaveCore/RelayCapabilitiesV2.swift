@@ -78,7 +78,8 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         hiddenRetrievalEnabled: Bool,
         onionEnabled: Bool,
         mixnetEnabled: Bool,
-        legacyFingerprintCompatibilityEnabled: Bool
+        legacyFingerprintCompatibilityEnabled: Bool,
+        rendezvousTransportEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
             RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .provisional),
@@ -136,6 +137,21 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         if mixnetEnabled {
             modules.append(
                 RelayModuleCapabilityV2(module: "nw.privacy.mixnet", versions: [1], status: .experimental)
+            )
+        }
+        if rendezvousTransportEnabled {
+            modules.append(
+                RelayModuleCapabilityV2(
+                    module: "nw.rendezvous-transport",
+                    versions: [2],
+                    status: .experimental,
+                    limits: [
+                        "maxLifetimeSeconds": 600,
+                        "maxLanes": 2,
+                        "maxFramesPerLane": 32,
+                        "maxCiphertextBytesPerLane": 2_097_152
+                    ]
+                )
             )
         }
         return RelayCapabilityManifestV2(modules: modules)
