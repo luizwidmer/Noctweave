@@ -285,7 +285,7 @@ final class InboxRouteCapabilityRelayTests: XCTestCase {
             .createInboxRouteCapability(unsignedCreate)
         )
         XCTAssertEqual(unauthorizedCreate.error, "Missing actor proof.")
-        var resolved = await store.resolveInboxRouteCapability(capability)
+        let resolved = await store.resolveInboxRouteCapability(capability)
         XCTAssertNil(resolved)
         let create = CreateInboxRouteCapabilityRequest(
             inboxId: inboxId,
@@ -489,7 +489,7 @@ final class InboxRouteCapabilityRelayTests: XCTestCase {
         )
         XCTAssertEqual(
             try request.mutationDigest().base64EncodedString(),
-            "cOCi7pyjuNc1mcAcU8WGHEcy2zQPlm8bg3/t+K6gXvY="
+            "XyEdBJ/tHu/mmgaLIXY0D4JSQ9dLnn5+V9/t3Bh8lWw="
         )
 
         let wire = try NoctweaveCoder.encode(

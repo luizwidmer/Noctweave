@@ -8,8 +8,8 @@
 
 **Implementation commit:** `9ebece0`
 
-**Status:** substantial implementation complete; integration and production
-gates remain
+**Status:** public compatibility baseline green; integration and independent
+security-review gates remain
 
 This report is the durable handoff for the pre-1.0 architecture revision. It
 summarizes what changed, which earlier assumptions were replaced, how the
@@ -51,12 +51,12 @@ The largest functional changes are:
 - capability honesty: unfinished or misleading paths are disabled or omitted
   from advertisements.
 
-The branch is **not yet proven fully green**. JavaScript tests, desktop
-type-checking, Swift syntax parsing, schema/vector parsing, SVG validation, and
-diff hygiene pass. Full SwiftPM builds and test suites could not run in the
-current sandbox because SwiftPM manifest evaluation invokes `sandbox-exec`,
-which is denied. Those commands remain the first verification gate in a normal
-development environment.
+The branch has a **fully green public compatibility baseline**. Both SwiftPM
+packages build, all 559 Swift tests pass except one intentional platform skip,
+the JavaScript suite passes, desktop type-checking passes, and the aggregate
+repository harness completes successfully. This proves repository consistency;
+it is not a substitute for the independent cryptographic, side-channel, and
+metadata review still required before a production claim.
 
 ## Philosophy Correction
 
@@ -424,8 +424,8 @@ gated and cannot be inferred from the existence of model types.
 
 ### P0: architecture completion gates
 
-1. **Run and repair the full public compatibility suite.** In an unrestricted
-   build environment run:
+1. **Keep the full public compatibility suite green.** The following commands
+   now pass and remain mandatory for every architecture milestone:
 
    ```sh
    swift build --package-path NoctweaveCore
@@ -435,9 +435,9 @@ gated and cannot be inferred from the existence of model types.
    scripts/run-tests.sh
    ```
 
-   The current environment proved syntax, JS behavior, and schema integrity,
-   but not Swift type checking, linking, runtime tests, or the aggregate release
-   harness.
+   Current result: Core build passed; Core tests passed 408 tests with one
+   intentional skip; Linux relay build passed; Linux relay tests passed 151
+   tests; the aggregate harness completed successfully.
 
 2. **Finish same-generation multi-endpoint participation without inventing an
    account.** Connect a short-lived purpose-bound rendezvous, endpoint
@@ -539,7 +539,6 @@ gated and cannot be inferred from the existence of model types.
 
 ## Known Limitations and Residual Risks
 
-- Full Swift compilation and runtime tests have not run in this sandbox.
 - The active direct path supports one preferred endpoint only.
 - Internal compatibility naming can still suggest an account/device model if
   read without the philosophy specification.
@@ -563,6 +562,12 @@ gated and cannot be inferred from the existence of model types.
 The following checks passed after the architecture and final route-gating
 changes:
 
+- `swift build --package-path NoctweaveCore`: passed.
+- `swift test --package-path NoctweaveCore`: **408 tests executed, 1 skipped,
+  0 failures**.
+- `swift build --package-path NoctweaveRelayServer`: passed.
+- `swift test --package-path NoctweaveRelayServer`: **151/151 tests passed**.
+- `scripts/run-tests.sh`: passed, including both Swift package suites.
 - `npm test` in `NoctweaveJS`: **80/80 tests passed**.
 - `npm run typecheck:desktop` in `NoctweaveJS`: passed.
 - `xcrun swiftc -parse` over all Swift Core/CLI sources and Core tests: passed.
@@ -572,29 +577,18 @@ changes:
 - Both revised SVG architecture assets parsed with `xmllint`: passed.
 - `git diff --check`: passed.
 
-Not completed in this environment:
-
-- SwiftPM build and tests for `NoctweaveCore`.
-- SwiftPM build and tests for `NoctweaveRelayServer`.
-- The aggregate `scripts/run-tests.sh` release harness.
-
-The attempted SwiftPM run failed during manifest evaluation with
-`sandbox-exec: Operation not permitted`; this is an environment restriction,
-not a passing or failing product test result.
-
 ## Recommended Next Milestone
 
 Call the next milestone **Architecture Revision Stabilization** and keep it
 strictly ordered:
 
-1. Obtain a normal Swift build/test result and fix any compile/runtime failures.
-2. Freeze endpoint terminology and the migration contract.
-3. Replace reusable pairing with purpose-bound rendezvous.
-4. Complete self-sync and same-generation endpoint lifecycle.
-5. Complete private routing and only then activate route capabilities.
-6. Replace the fingerprint compatibility group workflow.
-7. Run independent interoperability and security review.
-8. Finish CI, coverage, benchmarks, container scans, and signed-release
+1. Freeze endpoint terminology and the migration contract.
+2. Replace reusable pairing with purpose-bound rendezvous.
+3. Complete private relationship routes and make-before-break migration.
+4. Complete signed self-sync and the same-generation endpoint lifecycle.
+5. Replace the fingerprint compatibility group workflow.
+6. Run independent interoperability and security review.
+7. Finish CI, coverage, benchmarks, container scans, and signed-release
    evidence.
 
 That sequence finishes the reusable product substrate first while keeping PIR,

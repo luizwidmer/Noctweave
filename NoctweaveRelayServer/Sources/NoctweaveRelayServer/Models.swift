@@ -1881,7 +1881,7 @@ private func inboxRouteCapabilityMutationSignableData(
           mutationSequence <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
         throw InboxRouteCapabilityMutationRequestError.invalidMutationState
     }
-    try GroupProofCodec.encode(
+    return try GroupProofCodec.encode(
         InboxRouteCapabilityMutationProofPayload(
             domain: CreateInboxRouteCapabilityRequest.signatureDomain,
             version: CreateInboxRouteCapabilityRequest.protocolVersion,

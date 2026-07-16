@@ -3038,7 +3038,7 @@ private struct StoredEnvelope: Codable {
     }
 }
 
-private struct MailboxStreamState: Codable {
+struct MailboxStreamState: Codable {
     var highWatermark: UInt64
     var retentionFloor: UInt64
     var consumers: [String: MailboxConsumerRecord]
@@ -3081,7 +3081,7 @@ private struct MailboxStreamState: Codable {
     }
 }
 
-private struct MailboxConsumerRecord: Codable {
+struct MailboxConsumerRecord: Codable {
     var state: MailboxConsumerState
     var committedSequence: UInt64
     let cursorKey: Data

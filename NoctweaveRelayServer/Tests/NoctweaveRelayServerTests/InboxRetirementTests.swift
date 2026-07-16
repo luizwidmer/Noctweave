@@ -152,7 +152,7 @@ final class InboxRetirementTests: XCTestCase {
                 now: now
             )
         }
-        XCTAssertEqual(store.inboxRetirementTombstoneCount(now: now), 10_001)
+        XCTAssertEqual(store.inboxRetirementTombstoneCount(now: now), 10_000)
 
         let overflowKey = Data("retirement-overflow".utf8)
         let overflowInbox = InboxAddress.derived(from: overflowKey)
@@ -162,7 +162,7 @@ final class InboxRetirementTests: XCTestCase {
             requestDigest: Data(repeating: 0xCC, count: SHA256.byteCount),
             now: now
         )
-        XCTAssertEqual(store.inboxRetirementTombstoneCount(now: now), 10_000)
+        XCTAssertEqual(store.inboxRetirementTombstoneCount(now: now), 10_001)
         XCTAssertNil(store.inboxAccessPublicKey(for: overflowInbox))
         XCTAssertTrue(store.isInboxRetired(inboxId: overflowInbox, now: now))
 

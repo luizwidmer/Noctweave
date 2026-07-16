@@ -335,7 +335,7 @@ public struct ProtocolIntentV2: Codable, Equatable, Identifiable {
             date.addingTimeInterval(previousExpiry.timeIntervalSince(createdAt))
         }
         guard renewedExpiry?.timeIntervalSince1970.isFinite ?? true,
-              renewedExpiry.map { $0 > date } ?? true else {
+              renewedExpiry.map({ $0 > date }) ?? true else {
             return nil
         }
         return ProtocolIntentV2(

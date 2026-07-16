@@ -1478,7 +1478,7 @@ final class RelayStore {
         now: Date = Date(),
         maxAgeSeconds: TimeInterval = 300
     ) throws -> Bool {
-        try performSync {
+        performSync {
             let normalizedFingerprint = fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalizedFingerprint.isEmpty else {
                 return false

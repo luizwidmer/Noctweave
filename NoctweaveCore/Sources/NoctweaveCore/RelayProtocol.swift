@@ -933,7 +933,7 @@ private func inboxRouteCapabilityMutationSignableData(
           mutationSequence <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
         throw InboxRouteCapabilityMutationRequestError.invalidMutationState
     }
-    try NoctweaveCoder.encode(
+    return try NoctweaveCoder.encode(
         InboxRouteCapabilityMutationProofPayload(
             domain: CreateInboxRouteCapabilityRequest.signatureDomain,
             version: CreateInboxRouteCapabilityRequest.protocolVersion,

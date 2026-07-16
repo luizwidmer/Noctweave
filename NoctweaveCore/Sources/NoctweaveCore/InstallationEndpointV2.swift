@@ -998,7 +998,7 @@ private struct CertifiedInstallationEndpointAuthorizationReference: Codable {
     let possessionSignature: Data
 }
 
-private struct EndpointSignedPrekeyPackagePayloadV4: Codable {
+private struct EndpointSignedPrekeyPackagePayloadV4: Encodable {
     let purpose = "Noctweave/endpoint-signed-prekey-package/v4"
     let endpointAuthorizationDigest: Data
     let bundle: PrekeyBundle

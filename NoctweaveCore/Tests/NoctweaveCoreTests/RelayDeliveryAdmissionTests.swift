@@ -56,7 +56,12 @@ final class RelayDeliveryAdmissionTests: XCTestCase {
 
     func testCoreRelayHandlerReturnsExplicitAdmissionErrorAndAcceptsAfterRegistration() async throws {
         let store = RelayStore()
-        let server = RelayServer(store: store)
+        let server = RelayServer(
+            store: store,
+            configuration: RelayConfiguration(
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
+        )
         let endpoint = RelayEndpoint(
             host: "127.0.0.1",
             port: UInt16.random(in: 43_000...45_000)

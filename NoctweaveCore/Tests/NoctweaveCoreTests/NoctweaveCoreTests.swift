@@ -5573,11 +5573,12 @@ final class NoctweaveCoreTests: XCTestCase {
         let fileURL = temp.appendingPathComponent("state.json")
         let store = ClientStateStore(fileURL: fileURL, useEncryption: false)
 
-        let state = ClientState(
+        var state = ClientState(
             identity: Identity(displayName: "Alice"),
             relay: RelayEndpoint(host: "localhost", port: 9339),
             inboxId: "inbox"
         )
+        _ = try state.migrateToArchitectureV2()
 
         try await store.save(state)
         let loaded = try await store.load()
@@ -5591,11 +5592,12 @@ final class NoctweaveCoreTests: XCTestCase {
         let fileURL = temp.appendingPathComponent("state.json")
         let store = ClientStateStore(fileURL: fileURL, useEncryption: true)
 
-        let state = ClientState(
+        var state = ClientState(
             identity: Identity(displayName: "Alice"),
             relay: RelayEndpoint(host: "localhost", port: 9339),
             inboxId: "inbox"
         )
+        _ = try state.migrateToArchitectureV2()
 
         try await store.save(state)
         let rawData = try Data(contentsOf: fileURL)
@@ -5606,7 +5608,7 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let loaded = try await store.load()
         XCTAssertEqual(loaded?.identity.displayName, "Alice")
-        XCTAssertEqual(loaded?.inboxId, "inbox")
+        XCTAssertEqual(loaded?.inboxId, state.inboxId)
         #else
         throw XCTSkip("Keychain unavailable on this platform.")
         #endif
@@ -5618,17 +5620,18 @@ final class NoctweaveCoreTests: XCTestCase {
         let fileURL = temp.appendingPathComponent("state.json")
         let key = SymmetricKey(data: Data(repeating: 0xA7, count: 32))
         let store = ClientStateStore(fileURL: fileURL, useEncryption: true, encryptionKey: key)
-        let state = ClientState(
+        var state = ClientState(
             identity: Identity(displayName: "Portable Key"),
             relay: RelayEndpoint(host: "localhost", port: 9339),
             inboxId: "portable-inbox"
         )
+        _ = try state.migrateToArchitectureV2()
 
         try await store.save(state)
         let raw = try Data(contentsOf: fileURL)
         XCTAssertNil(raw.range(of: Data("Portable Key".utf8)))
         let reloaded = try await store.load()
-        XCTAssertEqual(reloaded?.inboxId, "portable-inbox")
+        XCTAssertEqual(reloaded?.inboxId, state.inboxId)
 
         let wrongKeyStore = ClientStateStore(
             fileURL: fileURL,

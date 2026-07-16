@@ -256,7 +256,8 @@ final class InboxRetirementTests: XCTestCase {
             inboxId: absentInbox,
             accessSigningKey: absentKey
         )
-        XCTAssertEqual(try await client.send(.retireInbox(absentRequest)).type, .ok)
+        let absentResponse = try await client.send(.retireInbox(absentRequest))
+        XCTAssertEqual(absentResponse.type, .ok)
         let absentRetired = await store.isInboxRetired(inboxId: absentInbox)
         XCTAssertTrue(absentRetired)
         await XCTAssertThrowsInboxRetirementErrorAsync(

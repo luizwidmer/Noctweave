@@ -1659,6 +1659,16 @@ public final class RelayServer {
             return .error("Inbox is already registered")
         case .inboxRetired:
             return .error("Inbox is retired")
+        case .invalidInboxRouteCapability, .inboxRouteCapabilityRevoked:
+            return .error("Inbox route capability is unavailable")
+        case .inboxRouteCapabilityLimitReached:
+            return .error("Inbox route capability limit reached")
+        case .invalidInboxRouteCapabilityMutation:
+            return .error("Invalid inbox route capability mutation")
+        case .inboxRouteCapabilityMutationConflict:
+            return .error("Inbox route capability mutation conflict")
+        case .inboxRouteCapabilityMutationOutOfOrder:
+            return .error("Inbox route capability mutation out of order")
         case .destinationInboxNotRegistered:
             return .error("Destination inbox is not registered")
         case .relayCapacityExceeded:
