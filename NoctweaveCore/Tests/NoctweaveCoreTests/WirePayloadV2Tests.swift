@@ -107,9 +107,15 @@ final class WirePayloadV2Tests: XCTestCase {
                 try WirePayloadV2.application(makeEvent(content, nil)).applicationProjection()
             )
         }
-        XCTAssertThrowsError(
+        XCTAssertEqual(
             try WirePayloadV2.application(
                 makeEvent(valid, EventRelation(kind: .reply, targetEventId: UUID()))
+            ).applicationProjection().body,
+            .text("canonical text")
+        )
+        XCTAssertThrowsError(
+            try WirePayloadV2.application(
+                makeEvent(valid, EventRelation(kind: .reaction, targetEventId: UUID()))
             ).applicationProjection()
         )
     }
@@ -144,7 +150,218 @@ final class WirePayloadV2Tests: XCTestCase {
 
             XCTAssertEqual(wire.application?.content.fallbackText, expectedFallback)
             XCTAssertEqual(try wire.applicationProjection().body, .attachment(descriptor))
+            let reply = ConversationEvent(
+                conversationId: "conversation",
+                authorInstallationHandle: handle,
+                createdAt: Date(timeIntervalSince1970: 20_001),
+                kind: .application,
+                content: try XCTUnwrap(wire.application?.content),
+                relation: EventRelation(kind: .reply, targetEventId: UUID())
+            )
+            XCTAssertEqual(
+                try WirePayloadV2.application(reply).applicationProjection().body,
+                .attachment(descriptor)
+            )
         }
+    }
+
+    func testStandardRelationsReceiptsAndTombstonesMatchJavaScriptCanonicalPayloads() throws {
+        let handle = RelationshipInstallationHandle(
+            rawValue: Data(repeating: 0x52, count: 32).base64EncodedString()
+        )
+        let target = try XCTUnwrap(UUID(uuidString: "11111111-2222-4333-8444-555555555555"))
+
+        let relationKinds: [EventRelationKind] = [.reply, .replacement, .reference]
+        for kind in relationKinds {
+            let event = ConversationEvent(
+                conversationId: "conversation",
+                authorInstallationHandle: handle,
+                createdAt: Date(timeIntervalSince1970: 21_100),
+                kind: .application,
+                content: try XCTUnwrap(EncodedContent.text("revised text")),
+                relation: EventRelation(kind: kind, targetEventId: target)
+            )
+            XCTAssertEqual(
+                try WirePayloadV2.application(event).applicationProjection().body,
+                .text("revised text")
+            )
+            XCTAssertNotEqual(event.id, target)
+        }
+
+        let reactionContent = try XCTUnwrap(EncodedContent.reaction("👍"))
+        XCTAssertEqual(String(data: reactionContent.payload, encoding: .utf8), #"{"value":"👍"}"#)
+        XCTAssertEqual(reactionContent.fallbackText, "Reacted 👍 to a message")
+        let reactionEvent = ConversationEvent(
+            conversationId: "conversation",
+            authorInstallationHandle: handle,
+            createdAt: Date(timeIntervalSince1970: 21_101),
+            kind: .application,
+            content: reactionContent,
+            relation: EventRelation(kind: .reaction, targetEventId: target)
+        )
+        XCTAssertEqual(
+            try WirePayloadV2.application(reactionEvent).applicationProjection(),
+            .reaction(ReactionContentV1(value: "👍"), targetEventId: target)
+        )
+
+        let retractionContent = try XCTUnwrap(EncodedContent.retraction(reason: "duplicate"))
+        XCTAssertEqual(
+            String(data: retractionContent.payload, encoding: .utf8),
+            #"{"reason":"duplicate","scope":"received-copies-may-remain"}"#
+        )
+        XCTAssertEqual(retractionContent.fallbackText, RetractionContentV1.fallbackText)
+        let retractionEvent = ConversationEvent(
+            conversationId: "conversation",
+            authorInstallationHandle: handle,
+            createdAt: Date(timeIntervalSince1970: 21_102),
+            kind: .application,
+            content: retractionContent,
+            relation: EventRelation(kind: .retraction, targetEventId: target)
+        )
+        XCTAssertEqual(
+            try WirePayloadV2.application(retractionEvent).applicationProjection(),
+            .retraction(RetractionContentV1(reason: "duplicate"), targetEventId: target)
+        )
+        XCTAssertEqual(
+            try WirePayloadV2.application(retractionEvent).applicationProjection().body,
+            .text("Message retracted; received copies may remain")
+        )
+
+        for (content, isRead) in [
+            (try XCTUnwrap(EncodedContent.deliveryReceipt(targetEventId: target)), false),
+            (try XCTUnwrap(EncodedContent.readReceipt(targetEventId: target)), true)
+        ] {
+            XCTAssertEqual(
+                String(data: content.payload, encoding: .utf8),
+                #"{"targetEventId":"11111111-2222-4333-8444-555555555555"}"#
+            )
+            let receiptEvent = ConversationEvent(
+                conversationId: "conversation",
+                authorInstallationHandle: handle,
+                createdAt: Date(timeIntervalSince1970: 21_103),
+                kind: .receipt,
+                content: content
+            )
+            let projection = try WirePayloadV2.application(receiptEvent).applicationProjection()
+            XCTAssertNil(projection.body)
+            if isRead {
+                XCTAssertEqual(projection, .readReceipt(EventReceiptContentV1(targetEventId: target)))
+            } else {
+                XCTAssertEqual(projection, .deliveryReceipt(EventReceiptContentV1(targetEventId: target)))
+            }
+        }
+    }
+
+    func testKnownRelationsAndReceiptsFailClosedForNoncanonicalOrCrossFamilyContent() throws {
+        let handle = RelationshipInstallationHandle(
+            rawValue: Data(repeating: 0x53, count: 32).base64EncodedString()
+        )
+        let target = UUID()
+        let malformedReaction = EncodedContent(
+            type: .reaction,
+            payload: Data(#"{ "value": "👍" }"#.utf8),
+            fallbackText: "Reacted 👍 to a message"
+        )
+        let reactionEvent = ConversationEvent(
+            conversationId: "conversation",
+            authorInstallationHandle: handle,
+            createdAt: Date(timeIntervalSince1970: 21_200),
+            kind: .application,
+            content: malformedReaction,
+            relation: EventRelation(kind: .reaction, targetEventId: target)
+        )
+        XCTAssertThrowsError(
+            try WirePayloadV2.application(reactionEvent).applicationProjection()
+        ) { error in
+            XCTAssertEqual(error as? WirePayloadV2Error, .invalidKnownApplicationContent)
+        }
+
+        let validReaction = try XCTUnwrap(EncodedContent.reaction("👍"))
+        for relation in [
+            Optional<EventRelation>.none,
+            EventRelation(kind: .reply, targetEventId: target)
+        ] {
+            let mismatched = ConversationEvent(
+                conversationId: "conversation",
+                authorInstallationHandle: handle,
+                createdAt: Date(timeIntervalSince1970: 21_200),
+                kind: .application,
+                content: validReaction,
+                relation: relation
+            )
+            XCTAssertThrowsError(try WirePayloadV2.application(mismatched))
+        }
+        let spoofedReactionRelation = ConversationEvent(
+            conversationId: "conversation",
+            authorInstallationHandle: handle,
+            createdAt: Date(timeIntervalSince1970: 21_200),
+            kind: .application,
+            content: try XCTUnwrap(EncodedContent.text("not a reaction")),
+            relation: EventRelation(kind: .reaction, targetEventId: target)
+        )
+        XCTAssertThrowsError(try WirePayloadV2.application(spoofedReactionRelation))
+
+        let validRetraction = try XCTUnwrap(EncodedContent.retraction())
+        for relation in [
+            Optional<EventRelation>.none,
+            EventRelation(kind: .reference, targetEventId: target)
+        ] {
+            let mismatched = ConversationEvent(
+                conversationId: "conversation",
+                authorInstallationHandle: handle,
+                createdAt: Date(timeIntervalSince1970: 21_200),
+                kind: .application,
+                content: validRetraction,
+                relation: relation
+            )
+            XCTAssertThrowsError(try WirePayloadV2.application(mismatched))
+        }
+        let spoofedRetractionRelation = ConversationEvent(
+            conversationId: "conversation",
+            authorInstallationHandle: handle,
+            createdAt: Date(timeIntervalSince1970: 21_200),
+            kind: .application,
+            content: try XCTUnwrap(EncodedContent.text("not a retraction")),
+            relation: EventRelation(kind: .retraction, targetEventId: target)
+        )
+        XCTAssertThrowsError(try WirePayloadV2.application(spoofedRetractionRelation))
+
+        let selfTargeting = ConversationEvent(
+            id: target,
+            conversationId: "conversation",
+            authorInstallationHandle: handle,
+            createdAt: Date(timeIntervalSince1970: 21_201),
+            kind: .application,
+            content: try XCTUnwrap(EncodedContent.text("invalid self edit")),
+            relation: EventRelation(kind: .replacement, targetEventId: target)
+        )
+        XCTAssertThrowsError(try WirePayloadV2.application(selfTargeting))
+
+        let visibleReceipt = EncodedContent(
+            type: .readReceipt,
+            payload: try NoctweaveCoder.encode(EventReceiptContentV1(targetEventId: target)),
+            fallbackText: "Read",
+            disposition: .visible
+        )
+        let invalidReceipt = ConversationEvent(
+            conversationId: "conversation",
+            authorInstallationHandle: handle,
+            createdAt: Date(timeIntervalSince1970: 21_202),
+            kind: .receipt,
+            content: visibleReceipt
+        )
+        XCTAssertThrowsError(try WirePayloadV2.application(invalidReceipt))
+
+        XCTAssertNil(EncodedContent.reaction("bad\u{0000}reaction"))
+        XCTAssertNil(EncodedContent.retraction(reason: "bad\u{0000}reason"))
+        let outOfRange = ConversationEvent(
+            conversationId: "conversation",
+            authorInstallationHandle: handle,
+            createdAt: Date(timeIntervalSince1970: 4_102_444_801),
+            kind: .application,
+            content: try XCTUnwrap(EncodedContent.text("future"))
+        )
+        XCTAssertThrowsError(try WirePayloadV2.application(outOfRange))
     }
 
     func testUnknownApplicationContentIsPreservedWithVisibleOrSilentProjection() throws {
@@ -190,7 +407,7 @@ final class WirePayloadV2Tests: XCTestCase {
             conversationId: "conversation",
             authorInstallationHandle: handle,
             createdAt: Date(timeIntervalSince1970: 21_001),
-            kind: .receipt,
+            kind: .application,
             content: EncodedContent(
                 type: unknownType,
                 payload: Data("opaque-receipt".utf8),

@@ -175,12 +175,19 @@ public struct UnsupportedApplicationContentV2: Codable, Equatable {
 public enum ApplicationContentProjectionV2: Equatable {
     case text(String)
     case attachment(AttachmentDescriptor)
+    case reaction(ReactionContentV1, targetEventId: UUID)
+    case retraction(RetractionContentV1, targetEventId: UUID)
+    case deliveryReceipt(EventReceiptContentV1)
+    case readReceipt(EventReceiptContentV1)
     case unsupported(UnsupportedApplicationContentV2)
 
     public var body: MessageBody? {
         switch self {
         case .text(let text): return .text(text)
         case .attachment(let descriptor): return .attachment(descriptor)
+        case .reaction(let reaction, _): return .text(reaction.fallbackText)
+        case .retraction: return .text(RetractionContentV1.fallbackText)
+        case .deliveryReceipt, .readReceipt: return nil
         case .unsupported(let unsupported):
             return unsupported.disposition == .visible ? .text(unsupported.fallbackText) : nil
         }
@@ -317,26 +324,17 @@ public struct WirePayloadV2: Codable, Equatable {
               event.isStructurallyValid else {
             throw WirePayloadV2Error.invalidApplicationEvent
         }
-        if event.kind == .receipt {
-            guard event.content.disposition == .silent else {
-                throw WirePayloadV2Error.invalidApplicationEvent
-            }
-            return .unsupported(
-                UnsupportedApplicationContentV2(
-                    eventId: event.id,
-                    type: event.content.type,
-                    fallbackText: event.content.fallbackText
-                        ?? "\(NoctweaveWirePayloadV2.unsupportedFallbackPrefix) (\(event.content.type.canonicalName))",
-                    disposition: .silent
-                )
-            )
+        if event.kind == .receipt { return try Self.receiptProjection(event) }
+        guard event.kind == .application else {
+            throw WirePayloadV2Error.invalidApplicationEvent
         }
         if event.content.type == .text {
             guard event.kind == .application,
-                  event.relation == nil,
+                  Self.isTextOrAttachmentRelation(event.relation),
                   event.content.parameters.isEmpty,
                   event.content.disposition == .visible,
                   let text = String(data: event.content.payload, encoding: .utf8),
+                  EncodedContent.text(text) != nil,
                   event.content.fallbackText == text else {
                 throw WirePayloadV2Error.invalidKnownApplicationContent
             }
@@ -344,10 +342,10 @@ public struct WirePayloadV2: Codable, Equatable {
         }
         if event.content.type == .attachment {
             guard event.kind == .application,
-                  event.relation == nil,
+                  Self.isTextOrAttachmentRelation(event.relation),
                   event.content.parameters.isEmpty,
                   event.content.disposition == .visible,
-                  let descriptor = try? NoctweaveCoder.decode(
+                  let descriptor = try? Self.decodeCanonical(
                 AttachmentDescriptor.self,
                 from: event.content.payload
                   ), descriptor.isStructurallyValid(),
@@ -355,6 +353,38 @@ public struct WirePayloadV2: Codable, Equatable {
                 throw WirePayloadV2Error.invalidKnownApplicationContent
             }
             return .attachment(descriptor)
+        }
+        if event.content.type == .reaction {
+            guard event.content.parameters.isEmpty,
+                  event.content.disposition == .visible,
+                  event.relation?.kind == .reaction,
+                  let targetEventId = event.relation?.targetEventId,
+                  let reaction = try? Self.decodeCanonical(
+                    ReactionContentV1.self,
+                    from: event.content.payload
+                  ), reaction.isStructurallyValid,
+                  event.content.fallbackText == reaction.fallbackText else {
+                throw WirePayloadV2Error.invalidKnownApplicationContent
+            }
+            return .reaction(reaction, targetEventId: targetEventId)
+        }
+        if event.content.type == .retraction {
+            guard event.content.parameters.isEmpty,
+                  event.content.disposition == .visible,
+                  event.relation?.kind == .retraction,
+                  let targetEventId = event.relation?.targetEventId,
+                  let retraction = try? Self.decodeCanonical(
+                    RetractionContentV1.self,
+                    from: event.content.payload
+                  ), retraction.isStructurallyValid,
+                  event.content.fallbackText == RetractionContentV1.fallbackText else {
+                throw WirePayloadV2Error.invalidKnownApplicationContent
+            }
+            return .retraction(retraction, targetEventId: targetEventId)
+        }
+        guard event.relation?.kind != .reaction,
+              event.relation?.kind != .retraction else {
+            throw WirePayloadV2Error.invalidApplicationEvent
         }
         let fallback = event.content.fallbackText
             ?? "\(NoctweaveWirePayloadV2.unsupportedFallbackPrefix) (\(event.content.type.canonicalName))"
@@ -373,6 +403,45 @@ public struct WirePayloadV2: Codable, Equatable {
         if mimeType.hasPrefix("audio/") { return "Voice message" }
         if mimeType.hasPrefix("image/") { return "Image" }
         return "Attachment"
+    }
+
+    private static func isTextOrAttachmentRelation(_ relation: EventRelation?) -> Bool {
+        guard let relation else { return true }
+        switch relation.kind {
+        case .reply, .replacement, .reference: return true
+        case .reaction, .retraction: return false
+        }
+    }
+
+    private static func receiptProjection(
+        _ event: ConversationEvent
+    ) throws -> ApplicationContentProjectionV2 {
+        guard event.relation == nil,
+              event.content.parameters.isEmpty,
+              event.content.disposition == .silent,
+              event.content.fallbackText == nil,
+              let receipt = try? decodeCanonical(
+                EventReceiptContentV1.self,
+                from: event.content.payload
+              ), receipt.targetEventId != event.id else {
+            throw WirePayloadV2Error.invalidKnownApplicationContent
+        }
+        switch event.content.type {
+        case .deliveryReceipt: return .deliveryReceipt(receipt)
+        case .readReceipt: return .readReceipt(receipt)
+        default: throw WirePayloadV2Error.invalidApplicationEvent
+        }
+    }
+
+    private static func decodeCanonical<Value: Codable>(
+        _ type: Value.Type,
+        from payload: Data
+    ) throws -> Value {
+        let value = try NoctweaveCoder.decode(type, from: payload)
+        guard try NoctweaveCoder.encode(value, sortedKeys: true) == payload else {
+            throw WirePayloadV2Error.invalidKnownApplicationContent
+        }
+        return value
     }
 
     public func controlDisposition(
