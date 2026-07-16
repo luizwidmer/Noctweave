@@ -1,7 +1,9 @@
+import CryptoKit
 import Foundation
 
 public enum NoctweaveGroupArchitectureV2 {
     public static let version = 2
+    public static let moduleVersion: UInt16 = 2
     public static let maximumUsers = 1_024
     /// The current O(n) experimental PQ provider seals one epoch secret per
     /// active client. Keep its operational bound below the larger abstract
@@ -31,6 +33,155 @@ public enum GroupProtocolProfile: String, Codable, Equatable, Hashable, CaseIter
         case .noctweavePQExperimentalV2, .mlsPQHybridExperimentalV1:
             return true
         }
+    }
+
+    /// A profile identifier being present in the source registry is not an
+    /// implementation claim. Only exact profile/ciphersuite pairs returned
+    /// here may be selected by the current provider boundary.
+    public var implementedCipherSuite: String? {
+        switch self {
+        case .noctweavePQExperimentalV2:
+            return NoctweaveSignedGroupV2.experimentalCipherSuite
+        case .mlsRFC9420V1, .mlsPQHybridExperimentalV1:
+            return nil
+        }
+    }
+}
+
+public enum GroupProtocolNegotiationErrorV2: Error, Equatable {
+    case invalidOffer
+    case noSharedProfile
+    case unsupportedSelection
+    case downgradeRejected
+}
+
+public struct GroupProtocolSuiteOfferV2: Codable, Equatable, Hashable {
+    public let profile: GroupProtocolProfile
+    public let cipherSuite: String
+
+    public init(profile: GroupProtocolProfile, cipherSuite: String) {
+        self.profile = profile
+        self.cipherSuite = cipherSuite
+    }
+
+    public var isStructurallyValid: Bool {
+        !cipherSuite.isEmpty
+            && cipherSuite.utf8.count <= 192
+            && cipherSuite.unicodeScalars.allSatisfy {
+                !CharacterSet.controlCharacters.contains($0)
+            }
+    }
+}
+
+/// Endpoint-advertised group support. This contains only group protocol
+/// information; it deliberately does not copy the endpoint's complete
+/// capability manifest into group membership state.
+public struct GroupProtocolOfferV2: Codable, Equatable {
+    public let moduleVersion: UInt16
+    public let suites: [GroupProtocolSuiteOfferV2]
+
+    public init(
+        moduleVersion: UInt16 = NoctweaveGroupArchitectureV2.moduleVersion,
+        suites: [GroupProtocolSuiteOfferV2]
+    ) {
+        self.moduleVersion = moduleVersion
+        self.suites = Array(Set(suites)).sorted {
+            if $0.profile.rawValue != $1.profile.rawValue {
+                return $0.profile.rawValue < $1.profile.rawValue
+            }
+            return $0.cipherSuite < $1.cipherSuite
+        }
+    }
+
+    public static let currentExperimental = GroupProtocolOfferV2(suites: [
+        GroupProtocolSuiteOfferV2(
+            profile: .noctweavePQExperimentalV2,
+            cipherSuite: NoctweaveSignedGroupV2.experimentalCipherSuite
+        )
+    ])
+
+    public var isStructurallyValid: Bool {
+        moduleVersion == NoctweaveGroupArchitectureV2.moduleVersion
+            && !suites.isEmpty
+            && suites.count <= GroupProtocolProfile.allCases.count
+            && Set(suites).count == suites.count
+            && suites.allSatisfy(\.isStructurallyValid)
+    }
+}
+
+public struct GroupProtocolSelectionV2: Codable, Equatable, Hashable {
+    public let moduleVersion: UInt16
+    public let profile: GroupProtocolProfile
+    public let cipherSuite: String
+
+    public init(
+        moduleVersion: UInt16 = NoctweaveGroupArchitectureV2.moduleVersion,
+        profile: GroupProtocolProfile,
+        cipherSuite: String
+    ) {
+        self.moduleVersion = moduleVersion
+        self.profile = profile
+        self.cipherSuite = cipherSuite
+    }
+
+    public static let currentExperimental = GroupProtocolSelectionV2(
+        profile: .noctweavePQExperimentalV2,
+        cipherSuite: NoctweaveSignedGroupV2.experimentalCipherSuite
+    )
+
+    public var isStructurallyValid: Bool {
+        moduleVersion == NoctweaveGroupArchitectureV2.moduleVersion
+            && profile.implementedCipherSuite == cipherSuite
+    }
+
+    public var digest: Data? {
+        guard isStructurallyValid,
+              let encoded = try? NoctweaveCoder.encode(self, sortedKeys: true) else {
+            return nil
+        }
+        return Data(SHA256.hash(data: encoded))
+    }
+}
+
+public enum GroupProtocolNegotiationV2 {
+    /// Negotiates one exact implemented pair. A caller resuming persisted
+    /// state supplies `required`; any different result is a downgrade rather
+    /// than a new negotiation.
+    public static func negotiate(
+        local: GroupProtocolOfferV2,
+        peer: GroupProtocolOfferV2,
+        required: GroupProtocolSelectionV2? = nil
+    ) throws -> GroupProtocolSelectionV2 {
+        guard local.isStructurallyValid, peer.isStructurallyValid else {
+            throw GroupProtocolNegotiationErrorV2.invalidOffer
+        }
+        if let required {
+            guard required.isStructurallyValid else {
+                throw GroupProtocolNegotiationErrorV2.unsupportedSelection
+            }
+            let requiredOffer = GroupProtocolSuiteOfferV2(
+                profile: required.profile,
+                cipherSuite: required.cipherSuite
+            )
+            guard local.suites.contains(requiredOffer),
+                  peer.suites.contains(requiredOffer) else {
+                throw GroupProtocolNegotiationErrorV2.downgradeRejected
+            }
+            return required
+        }
+        let shared = Set(local.suites).intersection(peer.suites)
+            .compactMap { offered -> GroupProtocolSelectionV2? in
+                let selection = GroupProtocolSelectionV2(
+                    profile: offered.profile,
+                    cipherSuite: offered.cipherSuite
+                )
+                return selection.isStructurallyValid ? selection : nil
+            }
+            .sorted { $0.profile.rawValue < $1.profile.rawValue }
+        guard let selection = shared.first else {
+            throw GroupProtocolNegotiationErrorV2.noSharedProfile
+        }
+        return selection
     }
 }
 
@@ -340,30 +491,149 @@ public struct GroupMembershipState: Codable, Equatable, Identifiable {
 }
 
 public struct GroupCryptoState: Codable, Equatable {
-    public let profile: GroupProtocolProfile
+    public let selection: GroupProtocolSelectionV2
     public let groupId: UUID
     public let epoch: UInt64
     public let opaqueState: Data
 
-    public init(profile: GroupProtocolProfile, groupId: UUID, epoch: UInt64, opaqueState: Data) {
-        self.profile = profile
+    public init(
+        selection: GroupProtocolSelectionV2,
+        groupId: UUID,
+        epoch: UInt64,
+        opaqueState: Data
+    ) {
+        self.selection = selection
         self.groupId = groupId
         self.epoch = epoch
         self.opaqueState = opaqueState
     }
 
+    public var profile: GroupProtocolProfile { selection.profile }
+    public var cipherSuite: String { selection.cipherSuite }
+
     public var isStructurallyValid: Bool {
         epoch > 0
             && !opaqueState.isEmpty
             && opaqueState.count <= NoctweaveGroupArchitectureV2.maximumCryptoStateBytes
+            && selection.isStructurallyValid
+    }
+}
+
+/// The cryptographic provider sees only group-scoped clients. Generation,
+/// endpoint, relationship, inbox, and relay identifiers are intentionally not
+/// part of this boundary.
+public struct GroupProviderClientV2: Codable, Equatable, Identifiable {
+    public var id: GroupScopedClientHandleV2 { clientHandle }
+    public let userId: UUID
+    public let clientHandle: GroupScopedClientHandleV2
+    public let keyPackageDigest: Data
+    public let signingPublicKey: Data
+    public let agreementPublicKey: Data
+
+    public init(
+        userId: UUID,
+        clientHandle: GroupScopedClientHandleV2,
+        keyPackageDigest: Data,
+        signingPublicKey: Data,
+        agreementPublicKey: Data
+    ) {
+        self.userId = userId
+        self.clientHandle = clientHandle
+        self.keyPackageDigest = keyPackageDigest
+        self.signingPublicKey = signingPublicKey
+        self.agreementPublicKey = agreementPublicKey
+    }
+
+    public var isStructurallyValid: Bool {
+        clientHandle.isStructurallyValid
+            && keyPackageDigest.count == 32
+            && SigningKeyPair.isValidPublicKey(signingPublicKey)
+            && AgreementKeyPair.isValidPublicKey(agreementPublicKey)
+    }
+}
+
+public struct GroupProviderMembershipV2: Codable, Equatable {
+    public let groupId: UUID
+    public let epoch: UInt64
+    public let selection: GroupProtocolSelectionV2
+    public let clients: [GroupProviderClientV2]
+    /// Digest of the policy-level proposed membership, before a provider
+    /// commit or accepted transcript exists.
+    public let membershipDigest: Data
+
+    public init(
+        groupId: UUID,
+        epoch: UInt64,
+        selection: GroupProtocolSelectionV2,
+        clients: [GroupProviderClientV2],
+        membershipDigest: Data
+    ) {
+        self.groupId = groupId
+        self.epoch = epoch
+        self.selection = selection
+        self.clients = clients.sorted { $0.clientHandle.rawValue < $1.clientHandle.rawValue }
+        self.membershipDigest = membershipDigest
+    }
+
+    public var isStructurallyValid: Bool {
+        epoch > 0
+            && selection.isStructurallyValid
+            && !clients.isEmpty
+            && clients.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalClientLeaves
+            && Set(clients.map(\.clientHandle)).count == clients.count
+            && Set(clients.map(\.signingPublicKey)).count == clients.count
+            && Set(clients.map(\.agreementPublicKey)).count == clients.count
+            && clients.allSatisfy(\.isStructurallyValid)
+            && membershipDigest.count == 32
+    }
+}
+
+/// Provider preparation deliberately stops before the accepted signed
+/// transcript. This removes the old circular dependency where provider bytes
+/// needed a transcript whose state first needed the provider-byte digest.
+public struct GroupCryptoEpochProposalV2: Codable, Equatable {
+    public let groupId: UUID
+    public let baseEpoch: UInt64
+    public let nextEpoch: UInt64
+    public let selection: GroupProtocolSelectionV2
+    public let currentMembershipDigest: Data?
+    public let proposedMembershipDigest: Data
+    public let authorClientHandle: GroupScopedClientHandleV2
+
+    public init(
+        groupId: UUID,
+        baseEpoch: UInt64,
+        nextEpoch: UInt64,
+        selection: GroupProtocolSelectionV2,
+        currentMembershipDigest: Data?,
+        proposedMembershipDigest: Data,
+        authorClientHandle: GroupScopedClientHandleV2
+    ) {
+        self.groupId = groupId
+        self.baseEpoch = baseEpoch
+        self.nextEpoch = nextEpoch
+        self.selection = selection
+        self.currentMembershipDigest = currentMembershipDigest
+        self.proposedMembershipDigest = proposedMembershipDigest
+        self.authorClientHandle = authorClientHandle
+    }
+
+    public var isStructurallyValid: Bool {
+        baseEpoch < UInt64.max
+            && nextEpoch == baseEpoch + 1
+            && selection.isStructurallyValid
+            && currentMembershipDigest.map { $0.count == 32 } ?? (baseEpoch == 0)
+            && (baseEpoch == 0 ? currentMembershipDigest == nil : currentMembershipDigest != nil)
+            && proposedMembershipDigest.count == 32
+            && authorClientHandle.isStructurallyValid
     }
 }
 
 public struct GroupWelcomePackage: Codable, Equatable {
-    public let destination: RelationshipInstallationHandle
+    public let destination: GroupScopedClientHandleV2
     public let bytes: Data
 
-    public init(destination: RelationshipInstallationHandle, bytes: Data) {
+    public init(destination: GroupScopedClientHandleV2, bytes: Data) {
         self.destination = destination
         self.bytes = bytes
     }
@@ -375,19 +645,40 @@ public struct GroupWelcomePackage: Codable, Equatable {
     }
 }
 
-public struct GroupCryptoCommitOutput: Codable, Equatable {
-    public let state: GroupCryptoState
+public struct GroupCryptoPreparedEpochV2: Codable, Equatable, Identifiable {
+    public let id: UUID
+    public let proposal: GroupCryptoEpochProposalV2
+    /// Provisional state is not usable for application messages until
+    /// `finalizePreparedEpoch` binds the accepted signed transcript.
+    public let provisionalState: GroupCryptoState
     public let commitBytes: Data
     public let welcomes: [GroupWelcomePackage]
 
-    public init(state: GroupCryptoState, commitBytes: Data, welcomes: [GroupWelcomePackage]) {
-        self.state = state
+    public init(
+        id: UUID = UUID(),
+        proposal: GroupCryptoEpochProposalV2,
+        provisionalState: GroupCryptoState,
+        commitBytes: Data,
+        welcomes: [GroupWelcomePackage]
+    ) {
+        self.id = id
+        self.proposal = proposal
+        self.provisionalState = provisionalState
         self.commitBytes = commitBytes
         self.welcomes = welcomes.sorted { $0.destination.rawValue < $1.destination.rawValue }
     }
 
+    public var providerCommitDigest: Data? {
+        guard !commitBytes.isEmpty else { return nil }
+        return Data(SHA256.hash(data: commitBytes))
+    }
+
     public var isStructurallyValid: Bool {
-        state.isStructurallyValid
+        proposal.isStructurallyValid
+            && provisionalState.isStructurallyValid
+            && provisionalState.groupId == proposal.groupId
+            && provisionalState.epoch == proposal.nextEpoch
+            && provisionalState.selection == proposal.selection
             && !commitBytes.isEmpty
             && commitBytes.count <= NoctweaveGroupArchitectureV2.maximumCommitBytes
             && welcomes.count <= NoctweaveGroupArchitectureV2.maximumClientLeaves
@@ -396,37 +687,113 @@ public struct GroupCryptoCommitOutput: Codable, Equatable {
     }
 }
 
-/// Cryptographic providers own epoch secrets and wire compatibility; membership policy stays above them.
-public protocol GroupCryptoProvider {
-    var profile: GroupProtocolProfile { get }
+public struct GroupCryptoAcceptedEpochV2: Codable, Equatable {
+    public let proposal: GroupCryptoEpochProposalV2
+    public let providerCommitDigest: Data
+    public let signedCommitDigest: Data
+    public let acceptedTranscriptHash: Data
 
-    func createGroup(
-        membership: GroupMembershipState,
-        localClientLeafId: UUID
-    ) throws -> GroupCryptoState
+    public init(
+        proposal: GroupCryptoEpochProposalV2,
+        providerCommitDigest: Data,
+        signedCommitDigest: Data,
+        acceptedTranscriptHash: Data
+    ) {
+        self.proposal = proposal
+        self.providerCommitDigest = providerCommitDigest
+        self.signedCommitDigest = signedCommitDigest
+        self.acceptedTranscriptHash = acceptedTranscriptHash
+    }
+
+    public var isStructurallyValid: Bool {
+        proposal.isStructurallyValid
+            && providerCommitDigest.count == 32
+            && signedCommitDigest.count == 32
+            && acceptedTranscriptHash.count == 32
+    }
+}
+
+public struct GroupCryptoSealResultV2: Codable, Equatable {
+    public let state: GroupCryptoState
+    public let ciphertext: Data
+
+    public init(state: GroupCryptoState, ciphertext: Data) {
+        self.state = state
+        self.ciphertext = ciphertext
+    }
+
+    public var isStructurallyValid: Bool {
+        state.isStructurallyValid
+            && !ciphertext.isEmpty
+            && ciphertext.count <= NoctweaveGroupArchitectureV2.maximumCommitBytes
+    }
+}
+
+public struct GroupCryptoOpenResultV2: Codable, Equatable {
+    public let state: GroupCryptoState
+    public let plaintext: Data
+
+    public init(state: GroupCryptoState, plaintext: Data) {
+        self.state = state
+        self.plaintext = plaintext
+    }
+
+    public var isStructurallyValid: Bool {
+        state.isStructurallyValid
+            && plaintext.count <= NoctweaveArchitectureV2.maximumContentPayloadBytes
+    }
+}
+
+@available(*, deprecated, message: "Use GroupCryptoPreparedEpochV2")
+public typealias GroupCryptoCommitOutput = GroupCryptoPreparedEpochV2
+
+/// Cryptographic providers own epoch secrets and wire compatibility;
+/// membership policy stays above them. Every stateful operation returns the
+/// replacement state, making persistence-before-publication enforceable.
+public protocol GroupCryptoProvider {
+    var selection: GroupProtocolSelectionV2 { get }
+
+    func prepareGenesis(
+        membership: GroupProviderMembershipV2,
+        localClientHandle: GroupScopedClientHandleV2
+    ) throws -> GroupCryptoPreparedEpochV2
 
     func prepareCommit(
         state: GroupCryptoState,
-        currentMembership: GroupMembershipState,
-        proposedMembership: GroupMembershipState,
-        authorClientLeafId: UUID
-    ) throws -> GroupCryptoCommitOutput
+        currentMembership: GroupProviderMembershipV2,
+        proposedMembership: GroupProviderMembershipV2,
+        authorClientHandle: GroupScopedClientHandleV2
+    ) throws -> GroupCryptoPreparedEpochV2
+
+    func finalizePreparedEpoch(
+        _ prepared: GroupCryptoPreparedEpochV2,
+        acceptance: GroupCryptoAcceptedEpochV2
+    ) throws -> GroupCryptoState
 
     func processCommit(
         state: GroupCryptoState,
-        currentMembership: GroupMembershipState,
+        currentMembership: GroupProviderMembershipV2,
+        proposedMembership: GroupProviderMembershipV2,
+        acceptance: GroupCryptoAcceptedEpochV2,
         commitBytes: Data
-    ) throws -> GroupCryptoCommitOutput
+    ) throws -> GroupCryptoState
+
+    func processWelcome(
+        _ welcome: GroupWelcomePackage,
+        membership: GroupProviderMembershipV2,
+        acceptance: GroupCryptoAcceptedEpochV2,
+        localClientHandle: GroupScopedClientHandleV2
+    ) throws -> GroupCryptoState
 
     func encryptApplicationEvent(
         _ event: Data,
         authenticatedContext: Data,
         state: GroupCryptoState
-    ) throws -> Data
+    ) throws -> GroupCryptoSealResultV2
 
     func decryptApplicationEvent(
         _ ciphertext: Data,
         authenticatedContext: Data,
         state: GroupCryptoState
-    ) throws -> Data
+    ) throws -> GroupCryptoOpenResultV2
 }
