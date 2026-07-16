@@ -256,13 +256,25 @@ public enum SelfSyncLocalStateV2Error: Error, Equatable {
 public struct SelfSyncReceiveResultV2: Equatable {
     public let sourceResult: SelfSyncSourceApplyResultV2
     public let payload: TypedSelfSyncPayloadV2
+    public let identityGenerationId: UUID
+    public let sourceOrderKey: Data
+    public let recordId: UUID
+    public let recordDigest: Data
 
-    public init(
+    init(
         sourceResult: SelfSyncSourceApplyResultV2,
-        payload: TypedSelfSyncPayloadV2
+        payload: TypedSelfSyncPayloadV2,
+        identityGenerationId: UUID,
+        sourceOrderKey: Data,
+        recordId: UUID,
+        recordDigest: Data
     ) {
         self.sourceResult = sourceResult
         self.payload = payload
+        self.identityGenerationId = identityGenerationId
+        self.sourceOrderKey = sourceOrderKey
+        self.recordId = recordId
+        self.recordDigest = recordDigest
     }
 }
 
@@ -429,6 +441,9 @@ public struct SelfSyncLocalStateV2: Codable, Equatable {
             manifest: manifest,
             identityPublicKey: identityPublicKey
         )
+        guard let recordDigest = record.digest else {
+            throw SelfSyncLocalStateV2Error.invalidState
+        }
         if result == .applied {
             if let index {
                 appliedSourceChains[index] = candidate
@@ -439,7 +454,23 @@ public struct SelfSyncLocalStateV2: Codable, Equatable {
                 }
             }
         }
-        return SelfSyncReceiveResultV2(sourceResult: result, payload: record.payload)
+        var sourceOrderMaterial = Data("Noctweave/self-sync-source-order/v2".utf8)
+        sourceOrderMaterial.append(0)
+        sourceOrderMaterial.append(
+            Data(identityGenerationId.uuidString.lowercased().utf8)
+        )
+        sourceOrderMaterial.append(0)
+        sourceOrderMaterial.append(
+            Data(record.sourceEndpointId.uuidString.lowercased().utf8)
+        )
+        return SelfSyncReceiveResultV2(
+            sourceResult: result,
+            payload: record.payload,
+            identityGenerationId: identityGenerationId,
+            sourceOrderKey: Data(SHA256.hash(data: sourceOrderMaterial)),
+            recordId: record.id,
+            recordDigest: recordDigest
+        )
     }
 
 }
