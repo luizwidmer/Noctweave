@@ -206,7 +206,9 @@ public enum GroupRatchetRecovery {
         identity: Identity,
         existing: GroupRatchetState? = nil
     ) -> GroupRatchetState? {
-        guard MLSGroupEpochHistoryValidator.isValid(
+        guard descriptor.mlsEpochState.protocolVersion == MLSGroupEpochState.currentProtocolVersion,
+              descriptor.mlsEpochState.cipherSuite == MLSGroupEpochState.currentCipherSuite,
+              MLSGroupEpochHistoryValidator.isValid(
             currentState: descriptor.mlsEpochState,
             history: descriptor.mlsEpochHistory
         ) else {
@@ -320,6 +322,8 @@ public enum GroupRatchetRecovery {
 
 public struct GroupRatchetEnvelope: Codable, Identifiable, Equatable {
     public let id: UUID
+    public let protocolVersion: String
+    public let cipherSuite: String
     public let groupId: UUID
     public let epoch: UInt64
     public let transcriptHash: Data
@@ -331,6 +335,8 @@ public struct GroupRatchetEnvelope: Codable, Identifiable, Equatable {
 
     public init(
         id: UUID = UUID(),
+        protocolVersion: String = MLSGroupEpochState.currentProtocolVersion,
+        cipherSuite: String = MLSGroupEpochState.currentCipherSuite,
         groupId: UUID,
         epoch: UInt64,
         transcriptHash: Data,
@@ -341,6 +347,8 @@ public struct GroupRatchetEnvelope: Codable, Identifiable, Equatable {
         signature: Data
     ) {
         self.id = id
+        self.protocolVersion = protocolVersion
+        self.cipherSuite = cipherSuite
         self.groupId = groupId
         self.epoch = epoch
         self.transcriptHash = transcriptHash
@@ -356,6 +364,9 @@ public struct GroupRatchetEnvelope: Codable, Identifiable, Equatable {
               SigningKeyPair.isValidPublicKey(publicSigningKey),
               senderFingerprint == CryptoBox.fingerprint(for: publicSigningKey),
               let data = try? GroupRatchet.signableData(
+                id: id,
+                protocolVersion: protocolVersion,
+                cipherSuite: cipherSuite,
                 groupId: groupId,
                 epoch: epoch,
                 transcriptHash: transcriptHash,
@@ -371,7 +382,9 @@ public struct GroupRatchetEnvelope: Codable, Identifiable, Equatable {
 
     public var isStructurallyValid: Bool {
         let ciphertextBytes = payload.ciphertext.count
-        return transcriptHash.count == 32
+        return protocolVersion == MLSGroupEpochState.currentProtocolVersion
+            && cipherSuite == MLSGroupEpochState.currentCipherSuite
+            && transcriptHash.count == 32
             && Self.isCanonicalFingerprint(senderFingerprint)
             && sentAt.timeIntervalSince1970.isFinite
             && payload.nonce.count == 12
@@ -602,6 +615,11 @@ public struct GroupRatchetPreparedMessageKey {
 }
 
 public enum GroupRatchet {
+    /// Version 2 binds the complete application-envelope context, including the
+    /// envelope identifier and visible metadata, into both the signature and
+    /// AEAD authenticated data. There is deliberately no v1 verification path.
+    public static let applicationEnvelopeVersion = 2
+
     public static func encrypt(
         body: MessageBody,
         senderSigningKey: SigningKeyPair,
@@ -648,18 +666,41 @@ public enum GroupRatchet {
               senderFingerprint == CryptoBox.fingerprint(for: senderSigningKey.publicKeyData) else {
             throw CryptoError.invalidPayload
         }
-        var plaintext = try PaddedMessagePlaintext.encode(body)
+        var plaintext = try PaddedMessagePlaintext.encodeLegacyMessageBody(body)
         defer { plaintext.secureWipe() }
         let sentAt = MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
+        let envelopeId = UUID()
+        let nonce = AES.GCM.Nonce()
+        let nonceData = Data(nonce)
         let aad = try authenticatedData(
+            id: envelopeId,
+            protocolVersion: MLSGroupEpochState.currentProtocolVersion,
+            cipherSuite: MLSGroupEpochState.currentCipherSuite,
             groupId: state.groupId,
             epoch: state.epoch,
             transcriptHash: state.transcriptHash,
             senderFingerprint: senderFingerprint,
-            messageCounter: messageCounter
+            sentAt: sentAt,
+            messageCounter: messageCounter,
+            payloadNonce: nonceData,
+            ciphertextByteCount: plaintext.count,
+            authenticationTagByteCount: 16
         )
-        let payload = try CryptoBox.encrypt(plaintext, key: messageKey, authenticatedData: aad)
+        let sealed = try AES.GCM.seal(
+            plaintext,
+            using: messageKey,
+            nonce: nonce,
+            authenticating: aad
+        )
+        let payload = EncryptedPayload(
+            nonce: nonceData,
+            ciphertext: sealed.ciphertext,
+            tag: sealed.tag
+        )
         let signable = try signableData(
+            id: envelopeId,
+            protocolVersion: MLSGroupEpochState.currentProtocolVersion,
+            cipherSuite: MLSGroupEpochState.currentCipherSuite,
             groupId: state.groupId,
             epoch: state.epoch,
             transcriptHash: state.transcriptHash,
@@ -669,6 +710,9 @@ public enum GroupRatchet {
             payload: payload
         )
         return try GroupRatchetEnvelope(
+            id: envelopeId,
+            protocolVersion: MLSGroupEpochState.currentProtocolVersion,
+            cipherSuite: MLSGroupEpochState.currentCipherSuite,
             groupId: state.groupId,
             epoch: state.epoch,
             transcriptHash: state.transcriptHash,
@@ -698,6 +742,8 @@ public enum GroupRatchet {
         state: inout GroupRatchetState
     ) throws -> (body: MessageBody, messageKey: SymmetricKey) {
         guard envelope.groupId == state.groupId,
+              envelope.protocolVersion == MLSGroupEpochState.currentProtocolVersion,
+              envelope.cipherSuite == MLSGroupEpochState.currentCipherSuite,
               envelope.epoch == state.epoch,
               envelope.transcriptHash == state.transcriptHash,
               envelope.verifySignature(publicSigningKey: senderPublicSigningKey) else {
@@ -709,20 +755,30 @@ public enum GroupRatchet {
             counter: envelope.messageCounter
         )
         let aad = try authenticatedData(
+            id: envelope.id,
+            protocolVersion: envelope.protocolVersion,
+            cipherSuite: envelope.cipherSuite,
             groupId: envelope.groupId,
             epoch: envelope.epoch,
             transcriptHash: envelope.transcriptHash,
             senderFingerprint: envelope.senderFingerprint,
-            messageCounter: envelope.messageCounter
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter,
+            payloadNonce: envelope.payload.nonce,
+            ciphertextByteCount: envelope.payload.ciphertext.count,
+            authenticationTagByteCount: envelope.payload.tag.count
         )
         var plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: aad)
         defer { plaintext.secureWipe() }
-        let body = try PaddedMessagePlaintext.decode(plaintext)
+        let body = try PaddedMessagePlaintext.decodeLegacyMessageBody(plaintext)
         state = candidateState
         return (body, key)
     }
 
     static func signableData(
+        id: UUID,
+        protocolVersion: String,
+        cipherSuite: String,
         groupId: UUID,
         epoch: UInt64,
         transcriptHash: Data,
@@ -733,7 +789,10 @@ public enum GroupRatchet {
     ) throws -> Data {
         try NoctweaveCoder.encode(
             GroupRatchetSignaturePayload(
-                version: 1,
+                version: applicationEnvelopeVersion,
+                id: id,
+                protocolVersion: protocolVersion,
+                cipherSuite: cipherSuite,
                 groupId: groupId,
                 epoch: epoch,
                 transcriptHash: transcriptHash,
@@ -746,21 +805,35 @@ public enum GroupRatchet {
         )
     }
 
-    private static func authenticatedData(
+    static func authenticatedData(
+        id: UUID,
+        protocolVersion: String,
+        cipherSuite: String,
         groupId: UUID,
         epoch: UInt64,
         transcriptHash: Data,
         senderFingerprint: String,
-        messageCounter: UInt64
+        sentAt: Date,
+        messageCounter: UInt64,
+        payloadNonce: Data,
+        ciphertextByteCount: Int,
+        authenticationTagByteCount: Int
     ) throws -> Data {
         try NoctweaveCoder.encode(
             GroupRatchetAuthenticatedData(
-                version: 1,
+                version: applicationEnvelopeVersion,
+                id: id,
+                protocolVersion: protocolVersion,
+                cipherSuite: cipherSuite,
                 groupId: groupId,
                 epoch: epoch,
                 transcriptHash: transcriptHash,
                 senderFingerprint: senderFingerprint,
-                messageCounter: messageCounter
+                sentAt: sentAt,
+                messageCounter: messageCounter,
+                payloadNonce: payloadNonce,
+                ciphertextByteCount: ciphertextByteCount,
+                authenticationTagByteCount: authenticationTagByteCount
             ),
             sortedKeys: true
         )
@@ -769,15 +842,25 @@ public enum GroupRatchet {
 
 private struct GroupRatchetAuthenticatedData: Codable {
     let version: Int
+    let id: UUID
+    let protocolVersion: String
+    let cipherSuite: String
     let groupId: UUID
     let epoch: UInt64
     let transcriptHash: Data
     let senderFingerprint: String
+    let sentAt: Date
     let messageCounter: UInt64
+    let payloadNonce: Data
+    let ciphertextByteCount: Int
+    let authenticationTagByteCount: Int
 }
 
 private struct GroupRatchetSignaturePayload: Codable {
     let version: Int
+    let id: UUID
+    let protocolVersion: String
+    let cipherSuite: String
     let groupId: UUID
     let epoch: UInt64
     let transcriptHash: Data

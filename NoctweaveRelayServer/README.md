@@ -10,7 +10,7 @@ A Linux/Docker relay server for the Noctweave Protocol, used by compatible clien
 
 - Accepts a single JSON request per TCP connection, delimited by `\\n`.
 - Optional HTTP/WebSocket bridge endpoint at `POST /relay` and `ws(s)://.../relay`.
-- Supports `deliver`, `fetch`, `health`, `info`, prekey bundle upload/fetch, pairing discovery requests, and attachment chunk relay.
+- Supports `deliver`, `fetch`, `health`, `info`, and attachment chunk relay by default. Deprecated fingerprint-addressed pairing, prekeys, legacy groups, and inbox-wide destructive acknowledgement require an explicit compatibility profile.
 - Supports federation coordinator directory APIs (`registerFederationNode`, `listFederationNodes`).
 - Supports explicit open-federation DHT node mode and bounded PEX peer hints when enabled by the operator.
 - Persists mailboxes + attachment chunks to `relay_store.sqlite` (unless `--memory-only`).
@@ -89,6 +89,26 @@ not appear in process listings:
 - `NOCTWEAVE_ADMIN_TOKEN`
 - `NOCTWEAVE_ADMIN_HOST`
 - `NOCTWEAVE_ADMIN_PORT`
+- `NOCTWEAVE_COMPATIBILITY_PROFILES` (comma-separated; deprecated migration only)
+
+### Deprecated fingerprint compatibility
+
+Fingerprint-addressed relay pairing/discovery, fingerprint-keyed prekey
+storage, the relay-backed legacy group API, and inbox-wide destructive
+`acknowledgeMessages` are disabled by default. A relay used only for a bounded
+pre-1.0 migration may opt in explicitly:
+
+```bash
+.build/debug/NoctweaveRelayServer \
+  --compatibility-profile nw.compat.legacy-fingerprint
+```
+
+The equivalent environment setting is
+`NOCTWEAVE_COMPATIBILITY_PROFILES=nw.compat.legacy-fingerprint`. When enabled,
+`info.protocolCapabilities` advertises that exact module with `deprecated`
+status. It is never part of direct-v4 endpoint capability negotiation. New
+deployments should leave it disabled and use generation-scoped rendezvous,
+route credentials, mailbox cursors, and endpoint-aware protocol paths.
 
 Use `--attachments-enabled false` for a text-only relay. Attachment upload and
 download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
@@ -479,6 +499,34 @@ Inbound client `authToken` is not forwarded; configure `--federation-forwarding-
 
 **Request**
 
+The architecture-v2 route shape is capability-only:
+
+```json
+{
+  "type": "deliver",
+  "deliver": {
+    "inboxCapability": { "rawValue": "base64-32-byte-bearer-value" },
+    "envelope": { "...": "encrypted envelope" },
+    "destinationRelay": {
+      "host": "relay.example.com",
+      "port": 9340,
+      "useTLS": true,
+      "transport": "websocket"
+    }
+  }
+}
+```
+
+It deliberately omits `inboxId` and `routingToken`. A federation entry relay
+forwards only the opaque value; the final relay hashes it with the
+`org.noctweave.relay.inbox-route-capability/v2` domain and resolves the digest.
+Malformed bearer objects fail strict request decoding. Well-formed unknown or
+revoked values return `Inbox route capability is unavailable` before mailbox
+allocation.
+
+The following inbox-addressed form remains transitional while clients do not
+yet have a private per-relationship issuance/exchange flow:
+
 ```json
 {
   "type": "deliver",
@@ -511,6 +559,94 @@ Inbound client `authToken` is not forwarded; configure `--federation-forwarding-
 {
   "type": "delivered",
   "delivered": { "storedCount": 1 }
+}
+```
+
+The effective destination (`routingToken` when supplied, otherwise `inboxId`)
+must already be registered at the final relay. An unknown destination returns
+an error response with `Destination inbox is not registered` and allocates no
+mailbox state. Federation entry relays may forward without a local registration;
+the final relay always performs this admission check. Group delivery has the
+same final-relay rule, using the persisted group descriptor as registration for
+its generated group inbox.
+
+### Opaque Inbox Route Capabilities
+
+This request family is experimental, disabled by default, and omitted from the
+relay capability manifest. The production relay currently exposes no operator
+switch to activate it; focused conformance tests enable it only through the
+internal configuration model. A client must not infer support from the OpenAPI
+schema alone.
+
+`createInboxRouteCapability` and `revokeInboxRouteCapability` carry `inboxId`,
+the CSPRNG-minted opaque capability object, the relay-issued scope returned by
+authenticated inbox registration, a monotonic inbox-local mutation sequence,
+and an `authorityProof` made by that inbox's registered access key. The v3
+transcript binds all of those fields. The relay atomically persists the route
+change, sequence, and proof-independent logical mutation digest. Exact retries
+of an already-applied matching operation remain idempotent even after the proof
+freshness window; a first application still needs a fresh proof. Stale,
+conflicting, skipped, and cross-relay mutation requests fail closed. Revocation
+of an unseen value records a bounded tombstone, while the durable sequence
+prevents an older delayed create from winning after tombstone compaction.
+
+Reference limits are 16 active capabilities per inbox, 64 retained revoked
+records per inbox, and 100000 total records. These are defensive test bounds,
+not a viable one-capability-per-relationship capacity promise. SQLite stores
+only the domain-separated capability digest, inbox binding, lifecycle
+timestamps, and the inbox registration's relay-local route cursor; never the raw
+bearer value. The final relay can nevertheless correlate every digest mapped to
+one inbox generation and observe delivery timing and volume. Inbox retirement
+atomically purges the scope, cursor, and every mapping.
+
+This relay API is a foundation, not a publication mechanism. No current contact
+offer, announcement, discovery path, or headless direct-v4 sender distributes
+capabilities. Do not place one reusable value in a public contact code. A bearer
+is write authority, so a valid relationship route requires TLS except for
+literal same-host loopback development. Client activation additionally waits
+for relationship-scoped inboxes or equivalent unlinkability, bounded expiring
+route epochs and renewal, realistic rotation capacity, per-capability abuse
+controls, and a padding policy.
+
+### Retire Inbox
+
+`retireInbox` is the irreversible cleanup operation for an old inbox generation.
+The client signs the domain-separated request with that inbox's ML-DSA access
+key and durably journals the exact request before deleting the private key. A
+successful request atomically purges the registration, all mailbox consumers
+and cursor state, all opaque route-capability mappings, and all queued
+envelopes, then stores a compact non-expiring
+non-resurrection record. Delivery, consumer registration, and inbox
+re-registration remain rejected for the lifetime of that relay namespace.
+
+Retirement proofs intentionally do not expire and do not consume the ordinary
+actor-proof replay cache. Replaying the exact journaled request is a safe no-op
+that returns `ok`; a request with a changed nonce or signature does not match a
+durable retirement record. A valid self-bound request also creates the record
+when no registration remains. Retirement is inbox-key-bound, monotonic, and
+cannot recreate state.
+
+Retirement records never expire or evict one another. The relay admits at most
+100,000 inbox generations over one storage namespace's lifetime; each admitted
+live inbox reserves its eventual retirement slot. New first registrations fail
+closed at the ceiling, while an already admitted inbox can always be retired.
+Operators must preserve `relay_inbox_retirements` in backups, provision a new
+relay namespace before exhaustion, and never reuse a retired inbox address for
+a new identity generation.
+
+```json
+{
+  "type": "retireInbox",
+  "retireInbox": {
+    "inboxId": "noctweave1...",
+    "accessProof": {
+      "fingerprint": "base64-sha256-access-key",
+      "publicSigningKey": "base64-ml-dsa-public-key",
+      "signedAt": "2026-07-16T12:34:56Z",
+      "nonce": "11111111-1111-4111-8111-111111111111",
+      "signature": "base64-ml-dsa-signature"
+    }
+  }
 }
 ```
 
@@ -655,7 +791,9 @@ Coordinator responses now include `federationSnapshot` (signed directory snapsho
 ### Pairing Discovery
 
 Announce a contact offer for relay-mediated pairing discovery. The offer is
-signed, but the relay can observe discovery timing and participation metadata:
+signed, but the relay can observe discovery timing and participation metadata.
+Every operation in this section requires the explicitly enabled deprecated
+`nw.compat.legacy-fingerprint` profile:
 
 ```json
 {
@@ -719,6 +857,11 @@ Fetch chunk:
 ```
 
 ### Prekey Bundles
+
+This fingerprint-keyed relay store is part of the disabled-by-default
+`nw.compat.legacy-fingerprint` profile. Direct-v4 uses certified,
+generation-scoped endpoint prekeys and does not negotiate this compatibility
+module.
 
 Upload a signed + one-time prekey bundle:
 

@@ -69,7 +69,12 @@ final class NoctweaveCoreTests: XCTestCase {
     func testHeadlessMessagingClientExchangesDirectMessagesThroughRelay() async throws {
         let port = UInt16.random(in: 45_000...49_000)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
-        let server = RelayServer(store: RelayStore())
+        let server = RelayServer(
+            store: RelayStore(),
+            configuration: RelayConfiguration(
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
+        )
         try server.start(host: "127.0.0.1", port: port)
         defer { server.stop() }
         try await Task.sleep(nanoseconds: 250_000_000)
@@ -117,7 +122,12 @@ final class NoctweaveCoreTests: XCTestCase {
     func testHeadlessMessagingClientSerializesConcurrentMultiContactBursts() async throws {
         let port = UInt16.random(in: 40_000...41_999)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
-        let server = RelayServer(store: RelayStore())
+        let server = RelayServer(
+            store: RelayStore(),
+            configuration: RelayConfiguration(
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
+        )
         try server.start(host: "127.0.0.1", port: port)
         defer { server.stop() }
         try await Task.sleep(nanoseconds: 250_000_000)
@@ -220,9 +230,10 @@ final class NoctweaveCoreTests: XCTestCase {
     func testRelayStoreTreatsEnvelopeIDAsIdempotencyKey() async throws {
         let alice = try Identity.generate(displayName: "Alice")
         let bob = try Identity.generate(displayName: "Bob")
+        let bobInboxId = InboxAddress.generate()
         let bobContact = Contact(
             displayName: bob.displayName,
-            inboxId: "bob-idempotent-inbox",
+            inboxId: bobInboxId,
             relay: RelayEndpoint(host: "127.0.0.1", port: 9339),
             signingPublicKey: bob.signingKey.publicKeyData,
             agreementPublicKey: bob.agreementKey.publicKeyData
@@ -237,6 +248,7 @@ final class NoctweaveCoreTests: XCTestCase {
             kemCiphertext: session.kemCiphertext
         )
         let store = RelayStore()
+        try await store.registerInbox(inboxId: bobInboxId, accessPublicKey: Data([0x91]))
         let pending = PendingDirectDelivery(
             contactId: bobContact.id,
             inboxId: bobContact.inboxId,
@@ -435,7 +447,10 @@ final class NoctweaveCoreTests: XCTestCase {
             XCTFail("Unregistered headless fetch should be rejected by the relay.")
         } catch let error as HeadlessMessagingClientError {
             let description = error.localizedDescription
-            XCTAssertEqual(description, "Relay rejected the request: Relay resource was not found.")
+            // Mailbox-v2 deliberately collapses an unknown inbox into the
+            // structurally-invalid registration response so the registration
+            // endpoint cannot be used as an inbox-existence oracle.
+            XCTAssertEqual(description, "Relay rejected the request: Relay rejected an invalid request.")
             XCTAssertFalse(description.localizedCaseInsensitiveContains("not registered"))
             XCTAssertFalse(description.localizedCaseInsensitiveContains("inbox"))
         }
@@ -514,35 +529,77 @@ final class NoctweaveCoreTests: XCTestCase {
         try await alice.registerInbox()
         try await bob.registerInbox()
 
-        _ = try await alice.importContactCode(try await bob.exportContactCode())
+        let bobContact = try await alice.importContactCode(try await bob.exportContactCode())
         _ = try await bob.importContactCode(try await alice.exportContactCode())
 
-        _ = try await alice.sendText(to: "Bob CLI", text: "before rotate")
-        let beforeRotateBodies = try await bob.receive(maxCount: 10).map(\.body)
+        do {
+            _ = try await alice.sendText(to: "Bob CLI", text: "before rotate")
+        } catch {
+            XCTFail("Initial direct send failed: \(error)")
+            return
+        }
+        let beforeRotateBodies: [MessageBody]
+        do {
+            beforeRotateBodies = try await bob.receive(maxCount: 10).map(\.body)
+        } catch {
+            XCTFail("Initial direct receive failed: \(error)")
+            return
+        }
         XCTAssertEqual(beforeRotateBodies, [.text("before rotate")])
 
-        let rotation = try await alice.rotateIdentity()
+        let rotation: HeadlessIdentityChangeResult
+        do {
+            rotation = try await alice.rotateIdentity(
+                preservingContinuityWith: [bobContact.id]
+            )
+        } catch {
+            XCTFail("Identity rotation failed: \(error)")
+            return
+        }
         XCTAssertEqual(rotation.notifiedContacts, ["Bob CLI"])
         XCTAssertTrue(rotation.failedContacts.isEmpty)
         XCTAssertEqual(rotation.oldFingerprint, initialAliceStatus.fingerprint)
         XCTAssertNotEqual(rotation.newFingerprint, initialAliceStatus.fingerprint)
 
-        let rotationMessages = try await bob.receive(maxCount: 10)
+        let rotationMessages: [HeadlessReceivedMessage]
+        do {
+            rotationMessages = try await bob.receive(maxCount: 10)
+        } catch {
+            XCTFail("Rotation notification receive failed: \(error)")
+            return
+        }
         XCTAssertEqual(rotationMessages.count, 1)
-        guard case .identityRotation = rotationMessages[0].body else {
+        guard case .identityRotation = try XCTUnwrap(rotationMessages.first).body else {
             return XCTFail("Expected identity rotation control message")
         }
         let rotatedContactFingerprint = try await bob.contacts().first?.fingerprint
         XCTAssertEqual(rotatedContactFingerprint, rotation.newFingerprint)
 
-        _ = try await alice.sendText(to: "Bob CLI", text: "after rotate")
-        let afterRotateBodies = try await bob.receive(maxCount: 10).map(\.body)
+        do {
+            _ = try await alice.sendText(to: "Bob CLI", text: "after rotate")
+        } catch {
+            XCTFail("Post-rotation direct send failed: \(error)")
+            return
+        }
+        let afterRotateBodies: [MessageBody]
+        do {
+            afterRotateBodies = try await bob.receive(maxCount: 10).map(\.body)
+        } catch {
+            XCTFail("Post-rotation direct receive failed: \(error)")
+            return
+        }
         XCTAssertEqual(afterRotateBodies, [.text("after rotate")])
 
         let allowedContact = try await alice.setContactIdentityReset(selector: "Bob CLI", allow: true)
         XCTAssertTrue(allowedContact.allowIdentityReset)
 
-        let burn = try await alice.burnIdentity()
+        let burn: HeadlessIdentityChangeResult
+        do {
+            burn = try await alice.burnIdentity()
+        } catch {
+            XCTFail("Identity burn failed: \(error)")
+            return
+        }
         XCTAssertEqual(burn.notifiedContacts, ["Bob CLI"])
         XCTAssertTrue(burn.failedContacts.isEmpty)
         XCTAssertEqual(burn.oldFingerprint, rotation.newFingerprint)
@@ -550,20 +607,39 @@ final class NoctweaveCoreTests: XCTestCase {
         let alicePostBurnStatus = try await alice.status()
         XCTAssertEqual(alicePostBurnStatus.conversationCount, 0)
 
-        let resetMessages = try await bob.receive(maxCount: 10)
+        let resetMessages: [HeadlessReceivedMessage]
+        do {
+            resetMessages = try await bob.receive(maxCount: 10)
+        } catch {
+            XCTFail("Reset notification receive failed: \(error)")
+            return
+        }
         XCTAssertEqual(resetMessages.count, 1)
-        guard case .identityReset = resetMessages[0].body else {
+        guard case .identityReset = try XCTUnwrap(resetMessages.first).body else {
             return XCTFail("Expected identity reset control message")
         }
         let resetContactFingerprint = try await bob.contacts().first?.fingerprint
         XCTAssertEqual(resetContactFingerprint, burn.newFingerprint)
 
-        _ = try await alice.sendText(to: "Bob CLI", text: "after burn")
-        let afterBurnBodies = try await bob.receive(maxCount: 10).map(\.body)
+        do {
+            _ = try await alice.sendText(to: "Bob CLI", text: "after burn")
+        } catch {
+            XCTFail("Post-burn direct send failed: \(error)")
+            return
+        }
+        let afterBurnBodies: [MessageBody]
+        do {
+            afterBurnBodies = try await bob.receive(maxCount: 10).map(\.body)
+        } catch {
+            XCTFail("Post-burn direct receive failed: \(error)")
+            return
+        }
         XCTAssertEqual(afterBurnBodies, [.text("after burn")])
 
         let aliceAudit = try await alice.continuityAudit()
-        XCTAssertEqual(aliceAudit.events.map(\.kind), [.identityRotated, .identityBurned])
+        // Burn severs the local generation link too; selected peers retain
+        // only the reset they explicitly received.
+        XCTAssertTrue(aliceAudit.events.isEmpty)
         XCTAssertEqual(aliceAudit.fingerprint, burn.newFingerprint)
 
         let bobAudit = try await bob.continuityAudit()
@@ -580,7 +656,12 @@ final class NoctweaveCoreTests: XCTestCase {
     func testHeadlessMessagingClientExchangesGroupMessagesThroughRelay() async throws {
         let port = UInt16.random(in: 53_001...57_000)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
-        let server = RelayServer(store: RelayStore())
+        let server = RelayServer(
+            store: RelayStore(),
+            configuration: RelayConfiguration(
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
+        )
         try server.start(host: "127.0.0.1", port: port)
         defer { server.stop() }
         try await Task.sleep(nanoseconds: 250_000_000)
@@ -723,7 +804,12 @@ final class NoctweaveCoreTests: XCTestCase {
     func testHeadlessMessagingClientExchangesGroupVoiceThroughRelay() async throws {
         let port = UInt16.random(in: 60_001...63_000)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
-        let server = RelayServer(store: RelayStore())
+        let server = RelayServer(
+            store: RelayStore(),
+            configuration: RelayConfiguration(
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
+        )
         try server.start(host: "127.0.0.1", port: port)
         defer { server.stop() }
         try await Task.sleep(nanoseconds: 250_000_000)
@@ -2197,29 +2283,24 @@ final class NoctweaveCoreTests: XCTestCase {
 
     func testDecentralizedPrefetchStagerDoesNotAcknowledgeRelayMessages() async throws {
         let store = RelayStore()
-        let envelope = Envelope(
+        let inboxId = InboxAddress.generate()
+        let envelope = makeStructurallyValidRelayEnvelope(
             id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!,
             conversationId: "conversation-c",
-            sessionId: "session-c",
-            senderFingerprint: "sender-c",
-            sentAt: Date(timeIntervalSince1970: 5_000),
             messageCounter: 11,
-            payload: EncryptedPayload(
-                nonce: Data([0x21]),
-                ciphertext: Data([0x31, 0x32, 0x33]),
-                tag: Data([0x41])
-            ),
-            signature: Data([0x51])
+            marker: 0x51,
+            sentAt: Date(timeIntervalSince1970: 5_000)
         )
 
-        try await store.deliver(envelope, to: "inbox-c")
-        let fetched = try await store.fetch(inboxId: "inbox-c")
+        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x92]))
+        try await store.deliver(envelope, to: inboxId)
+        let fetched = try await store.fetch(inboxId: inboxId)
         let batch = try DecentralizedPrefetchStager.stageDirectMessages(
             fetched,
-            inboxId: "inbox-c",
+            inboxId: inboxId,
             relayIdentifier: "relay-c"
         )
-        let fetchedAfterStaging = try await store.fetch(inboxId: "inbox-c")
+        let fetchedAfterStaging = try await store.fetch(inboxId: inboxId)
 
         XCTAssertTrue(batch.isCiphertextOnly)
         XCTAssertEqual(batch.messageIds, [envelope.id])
@@ -3602,6 +3683,44 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(body, .text("bucketed hello"))
     }
 
+    func testEnvelopeSignatureBindsEnvelopeIdentifier() throws {
+        let alice = Identity(displayName: "Alice")
+        let bob = Identity(displayName: "Bob")
+        let bobContact = Contact(
+            displayName: "Bob",
+            inboxId: "bob-inbox",
+            relay: RelayEndpoint(host: "localhost", port: 9339),
+            signingPublicKey: bob.signingKey.publicKeyData,
+            agreementPublicKey: bob.agreementKey.publicKeyData
+        )
+        let session = try MessageEngine.createOutboundSession(identity: alice, contact: bobContact)
+        var conversation = session.conversation
+        let envelope = try MessageEngine.encrypt(
+            body: .text("bind the delivery identifier"),
+            senderSigningKey: alice.signingKey,
+            senderFingerprint: alice.fingerprint,
+            conversation: &conversation,
+            kemCiphertext: session.kemCiphertext
+        )
+        XCTAssertTrue(envelope.verifySignature(publicSigningKey: alice.signingKey.publicKeyData))
+
+        let tampered = Envelope(
+            id: UUID(),
+            conversationId: envelope.conversationId,
+            sessionId: envelope.sessionId,
+            senderFingerprint: envelope.senderFingerprint,
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter,
+            kemCiphertext: envelope.kemCiphertext,
+            prekey: envelope.prekey,
+            rootRatchet: envelope.rootRatchet,
+            authenticatedContext: envelope.authenticatedContext,
+            payload: envelope.payload,
+            signature: envelope.signature
+        )
+        XCTAssertFalse(tampered.verifySignature(publicSigningKey: alice.signingKey.publicKeyData))
+    }
+
     func testMessageEnginePadsSmallPlaintextsToFixedCiphertextSize() throws {
         let alice = Identity(displayName: "Alice")
         let bob = Identity(displayName: "Bob")
@@ -3655,13 +3774,13 @@ final class NoctweaveCoreTests: XCTestCase {
 
     func testPaddedMessagePlaintextRejectsUnpaddedAndIrregularFrames() throws {
         let unpadded = try NoctweaveCoder.encode(MessageBody.text("metadata leak"), sortedKeys: true)
-        XCTAssertThrowsError(try PaddedMessagePlaintext.decode(unpadded)) { error in
+        XCTAssertThrowsError(try PaddedMessagePlaintext.decodeLegacyMessageBody(unpadded)) { error in
             XCTAssertEqual(error as? CryptoError, .invalidPayload)
         }
 
-        var valid = try PaddedMessagePlaintext.encode(.text("bounded"))
+        var valid = try PaddedMessagePlaintext.encodeLegacyMessageBody(.text("bounded"))
         valid.append(0x00)
-        XCTAssertThrowsError(try PaddedMessagePlaintext.decode(valid)) { error in
+        XCTAssertThrowsError(try PaddedMessagePlaintext.decodeLegacyMessageBody(valid)) { error in
             XCTAssertEqual(error as? CryptoError, .invalidPayload)
         }
     }
@@ -3799,6 +3918,7 @@ final class NoctweaveCoreTests: XCTestCase {
         }
 
         let resignableData = try Envelope.signableData(
+            id: envelope.id,
             conversationId: envelope.conversationId,
             sessionId: envelope.sessionId,
             senderFingerprint: envelope.senderFingerprint,
@@ -4863,23 +4983,22 @@ final class NoctweaveCoreTests: XCTestCase {
 
     func testRelayStoreDeliverFetch() async throws {
         let store = RelayStore()
-        let envelope = Envelope(
+        let inboxId = InboxAddress.generate()
+        let envelope = makeStructurallyValidRelayEnvelope(
             conversationId: "conv",
-            senderFingerprint: "fingerprint",
-            sentAt: Date(),
             messageCounter: 0,
-            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([1, 2, 3]), tag: Data()),
-            signature: Data([4, 5, 6])
+            marker: 0x11
         )
 
-        let count = try await store.deliver(envelope, to: "inbox")
+        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x93]))
+        let count = try await store.deliver(envelope, to: inboxId)
         XCTAssertEqual(count, 1)
 
-        let fetched = try await store.fetch(inboxId: "inbox")
+        let fetched = try await store.fetch(inboxId: inboxId)
         XCTAssertEqual(fetched, [envelope])
-        _ = try await store.acknowledge(inboxId: "inbox", messageIds: [envelope.id])
+        _ = try await store.acknowledge(inboxId: inboxId, messageIds: [envelope.id])
 
-        let empty = try await store.fetch(inboxId: "inbox")
+        let empty = try await store.fetch(inboxId: inboxId)
         XCTAssertEqual(empty.count, 0)
     }
 
@@ -4927,27 +5046,24 @@ final class NoctweaveCoreTests: XCTestCase {
 
     func testRelayStoreInboxLimitIsEnforced() async throws {
         let store = RelayStore(maxInboxMessages: 1)
-        let envelope = Envelope(
+        let inboxId = InboxAddress.generate()
+        let envelope = makeStructurallyValidRelayEnvelope(
             conversationId: "bounded-inbox",
-            senderFingerprint: "fingerprint",
-            sentAt: Date(),
             messageCounter: 0,
-            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([1]), tag: Data()),
-            signature: Data([2])
+            marker: 0x12
         )
 
-        _ = try await store.deliver(envelope, to: "inbox")
-        let secondEnvelope = Envelope(
+        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x94]))
+        _ = try await store.deliver(envelope, to: inboxId)
+        let secondEnvelope = makeStructurallyValidRelayEnvelope(
             id: UUID(),
             conversationId: envelope.conversationId,
-            senderFingerprint: envelope.senderFingerprint,
-            sentAt: envelope.sentAt,
             messageCounter: 1,
-            payload: envelope.payload,
-            signature: envelope.signature
+            marker: 0x13,
+            sentAt: envelope.sentAt
         )
         do {
-            _ = try await store.deliver(secondEnvelope, to: "inbox")
+            _ = try await store.deliver(secondEnvelope, to: inboxId)
             XCTFail("Expected inbox capacity to be enforced.")
         } catch RelayStoreError.inboxFull {
             // Expected.
@@ -4993,7 +5109,9 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39488)
         let server = RelayServer(
             store: RelayStore(storeURL: nil),
-            configuration: RelayConfiguration()
+            configuration: RelayConfiguration(
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "prekey proof relay started")
         server.onEvent = { event in
@@ -5021,7 +5139,9 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39489)
         let server = RelayServer(
             store: RelayStore(storeURL: nil),
-            configuration: RelayConfiguration()
+            configuration: RelayConfiguration(
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "signed prekey relay started")
         server.onEvent = { event in
@@ -5144,13 +5264,10 @@ final class NoctweaveCoreTests: XCTestCase {
 
         async let fetchResponse = client.send(.fetch(signedFetch), timeout: 7)
         try await Task.sleep(nanoseconds: 250_000_000)
-        let envelope = Envelope(
+        let envelope = makeStructurallyValidRelayEnvelope(
             conversationId: "long-poll",
-            senderFingerprint: "sender",
-            sentAt: Date(),
             messageCounter: 1,
-            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([1]), tag: Data()),
-            signature: Data([2])
+            marker: 0x14
         )
         let deliveryResponse = try await client.send(
             .deliver(
@@ -5286,27 +5403,22 @@ final class NoctweaveCoreTests: XCTestCase {
         }
 
         let store = RelayStore(storeURL: requestedURL)
-        let envelope = Envelope(
+        let inboxId = InboxAddress.generate()
+        let envelope = makeStructurallyValidRelayEnvelope(
             conversationId: "conv",
-            senderFingerprint: "fingerprint",
-            sentAt: Date(),
             messageCounter: 0,
-            payload: EncryptedPayload(
-                nonce: Data(),
-                ciphertext: Data([0x11, 0x22]),
-                tag: Data()
-            ),
-            signature: Data([0x33, 0x44])
+            marker: 0x15
         )
 
-        _ = try await store.deliver(envelope, to: "sqlite-inbox")
+        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x95]))
+        _ = try await store.deliver(envelope, to: inboxId)
         XCTAssertTrue(FileManager.default.fileExists(atPath: sqliteURL.path))
         let sqliteHeader = try Data(contentsOf: sqliteURL).prefix(16)
         XCTAssertEqual(Data("SQLite format 3\0".utf8), Data(sqliteHeader))
 
         let reloaded = RelayStore(storeURL: requestedURL)
         try await reloaded.loadFromDisk()
-        let fetched = try await reloaded.fetch(inboxId: "sqlite-inbox")
+        let fetched = try await reloaded.fetch(inboxId: inboxId)
         XCTAssertEqual(fetched.count, 1)
         XCTAssertEqual(fetched.first?.id, envelope.id)
         XCTAssertEqual(fetched.first?.conversationId, envelope.conversationId)
@@ -5325,26 +5437,22 @@ final class NoctweaveCoreTests: XCTestCase {
         }
         let requestedURL = tempDirectory.appendingPathComponent("relay_store.json")
         let sqliteURL = tempDirectory.appendingPathComponent("relay_store.sqlite")
-        let first = Envelope(
+        let first = makeStructurallyValidRelayEnvelope(
             conversationId: "conv",
-            senderFingerprint: "fingerprint",
-            sentAt: Date(),
             messageCounter: 1,
-            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([0x01]), tag: Data()),
-            signature: Data([0x11])
+            marker: 0x16
         )
-        let second = Envelope(
+        let second = makeStructurallyValidRelayEnvelope(
             conversationId: "conv",
-            senderFingerprint: "fingerprint",
-            sentAt: Date(),
             messageCounter: 2,
-            payload: EncryptedPayload(nonce: Data(), ciphertext: Data([0x02]), tag: Data()),
-            signature: Data([0x22])
+            marker: 0x17
         )
 
         let writer = RelayStore(storeURL: requestedURL)
-        _ = try await writer.deliver(first, to: "sqlite-inbox")
-        _ = try await writer.deliver(second, to: "sqlite-inbox")
+        let inboxId = InboxAddress.generate()
+        try await writer.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x96]))
+        _ = try await writer.deliver(first, to: inboxId)
+        _ = try await writer.deliver(second, to: inboxId)
         try overwriteMailboxEnvelope(at: sqliteURL, envelopeId: second.id, with: Data([0xDE, 0xAD, 0xBE, 0xEF]))
 
         let reloaded = RelayStore(storeURL: requestedURL)
@@ -5383,6 +5491,29 @@ final class NoctweaveCoreTests: XCTestCase {
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
+    }
+
+    private func makeStructurallyValidRelayEnvelope(
+        id: UUID = UUID(),
+        conversationId: String,
+        messageCounter: UInt64,
+        marker: UInt8,
+        sentAt: Date = Date()
+    ) -> Envelope {
+        Envelope(
+            id: id,
+            conversationId: conversationId,
+            sessionId: "relay-test-session",
+            senderFingerprint: Data(repeating: marker, count: 32).base64EncodedString(),
+            sentAt: sentAt,
+            messageCounter: messageCounter,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: marker, count: 12),
+                ciphertext: Data(repeating: marker, count: 512),
+                tag: Data(repeating: marker, count: 16)
+            ),
+            signature: Data(repeating: marker, count: 3_309)
+        )
     }
 
     private func overwriteMailboxEnvelope(at sqliteURL: URL, envelopeId: UUID, with data: Data) throws {
@@ -5720,18 +5851,16 @@ final class NoctweaveCoreTests: XCTestCase {
         let health = try await client.send(.health())
         XCTAssertEqual(health.type, .ok)
 
-        let inbox = InboxAddress.generate()
+        let accessKey = SigningKeyPair()
+        let inbox = InboxAddress.derived(from: accessKey.publicKeyData)
         let request = RelayRequest.deliver(
             DeliverRequest(
                 inboxId: inbox,
                 routingToken: inbox,
-                envelope: Envelope(
+                envelope: makeStructurallyValidRelayEnvelope(
                     conversationId: "auth-test",
-                    senderFingerprint: "sender",
-                    sentAt: Date(),
                     messageCounter: 1,
-                    payload: EncryptedPayload(nonce: Data(), ciphertext: Data([1]), tag: Data()),
-                    signature: Data([1])
+                    marker: 0x18
                 )
             )
         )
@@ -5740,13 +5869,24 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertTrue((unauthorized.error ?? "").localizedCaseInsensitiveContains("unauthorized"))
 
         let authenticatedClient = RelayClient(endpoint: clientEndpoint, authToken: relayPassword)
+        let registration = try await registerInbox(
+            client: authenticatedClient,
+            inboxId: inbox,
+            accessKey: accessKey
+        )
+        XCTAssertEqual(registration.type, .ok, registration.error ?? "Inbox registration failed")
         let authorized = try await authenticatedClient.send(request)
         XCTAssertEqual(authorized.type, .delivered)
     }
 
     func testPairRequestFetchRequiresIdentityProof() async throws {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39488)
-        let server = RelayServer(store: RelayStore())
+        let server = RelayServer(
+            store: RelayStore(),
+            configuration: RelayConfiguration(
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
+        )
         let started = expectation(description: "pair proof relay started")
         server.onEvent = { event in
             if case .started = event {
@@ -6435,7 +6575,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39442)
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "join route relay started")
         server.onEvent = { event in
@@ -6556,7 +6699,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39452)
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "invitation route relay started")
         server.onEvent = { event in
@@ -6665,7 +6811,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: UInt16.random(in: 39_460...39_900))
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "post creation invitation relay started")
         server.onEvent = { event in
@@ -6738,7 +6887,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: UInt16.random(in: 39_460...39_900))
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "scoped creator relay started")
         server.onEvent = { event in
@@ -7013,7 +7165,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39444)
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "group ratchet route relay started")
         server.onEvent = { event in
@@ -7156,7 +7311,8 @@ final class NoctweaveCoreTests: XCTestCase {
                 kind: .bridge,
                 federation: federation,
                 groupCreationMode: .allowed,
-                allowPrivateFederationEndpoints: true
+                allowPrivateFederationEndpoints: true,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
             )
         )
         let relayB = RelayServer(
@@ -7165,7 +7321,8 @@ final class NoctweaveCoreTests: XCTestCase {
                 kind: .bridge,
                 federation: federation,
                 groupCreationMode: .allowed,
-                allowPrivateFederationEndpoints: true
+                allowPrivateFederationEndpoints: true,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
             )
         )
         let startedA = expectation(description: "group relay A started")
@@ -7270,7 +7427,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39510)
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "member-scoped group ack relay started")
         server.onEvent = { event in
@@ -7422,7 +7582,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39511)
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "offline group attachment relay started")
         server.onEvent = { event in
@@ -7693,7 +7856,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39512)
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "long offline group relay started")
         server.onEvent = { event in
@@ -7893,7 +8059,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39513)
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "multi offline group relay started")
         server.onEvent = { event in
@@ -8075,7 +8244,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39514)
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "expired epoch history group relay started")
         server.onEvent = { event in
@@ -8190,7 +8362,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39443)
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "delete route relay started")
         server.onEvent = { event in
@@ -8277,7 +8452,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: 39479)
         let server = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let started = expectation(description: "replay guard relay started")
         server.onEvent = { event in
@@ -8316,7 +8494,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let disabledEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39440)
         let disabledServer = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .disabled)
+            configuration: RelayConfiguration(
+                groupCreationMode: .disabled,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let startedDisabled = expectation(description: "disabled relay started")
         disabledServer.onEvent = { event in
@@ -8348,7 +8529,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let enabledEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39441)
         let enabledServer = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(groupCreationMode: .allowed)
+            configuration: RelayConfiguration(
+                groupCreationMode: .allowed,
+                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            )
         )
         let startedEnabled = expectation(description: "enabled relay started")
         enabledServer.onEvent = { event in
@@ -8925,20 +9109,20 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let destinationAccessKey = SigningKeyPair()
         let destinationInbox = InboxAddress.derived(from: destinationAccessKey.publicKeyData)
-        let envelope = Envelope(
+        let envelope = makeStructurallyValidRelayEnvelope(
             conversationId: "federated-test",
-            senderFingerprint: "sender-fp",
-            sentAt: Date(),
             messageCounter: 1,
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x01, count: 12),
-                ciphertext: Data([0xDE, 0xAD, 0xBE, 0xEF]),
-                tag: Data(repeating: 0x02, count: 16)
-            ),
-            signature: Data([0xAA])
+            marker: 0x21
         )
 
         let xClient = RelayClient(endpoint: relayXEndpoint)
+        let yClient = RelayClient(endpoint: relayYEndpoint)
+        let yRegistration = try await registerInbox(
+            client: yClient,
+            inboxId: destinationInbox,
+            accessKey: destinationAccessKey
+        )
+        XCTAssertEqual(yRegistration.type, .ok)
         let deliverResponse = try await xClient.send(
             .deliver(
                 DeliverRequest(
@@ -8951,7 +9135,6 @@ final class NoctweaveCoreTests: XCTestCase {
         )
         XCTAssertEqual(deliverResponse.type, .delivered)
 
-        let yClient = RelayClient(endpoint: relayYEndpoint)
         let fetchResponse = try await registerAndFetch(
             client: yClient,
             inboxId: destinationInbox,
@@ -9008,20 +9191,20 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let destinationAccessKey = SigningKeyPair()
         let destinationInbox = InboxAddress.derived(from: destinationAccessKey.publicKeyData)
-        let blockedEnvelope = Envelope(
+        let blockedEnvelope = makeStructurallyValidRelayEnvelope(
             conversationId: "manual-live-test",
-            senderFingerprint: "sender-fp",
-            sentAt: Date(),
             messageCounter: 1,
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x01, count: 12),
-                ciphertext: Data([0x01, 0x02, 0x03]),
-                tag: Data(repeating: 0x02, count: 16)
-            ),
-            signature: Data([0xAA])
+            marker: 0x22
         )
 
         let xClient = RelayClient(endpoint: relayXEndpoint)
+        let yClient = RelayClient(endpoint: relayYEndpoint)
+        let yRegistration = try await registerInbox(
+            client: yClient,
+            inboxId: destinationInbox,
+            accessKey: destinationAccessKey
+        )
+        XCTAssertEqual(yRegistration.type, .ok)
         let blockedResponse = try await xClient.send(
             .deliver(
                 DeliverRequest(
@@ -9036,17 +9219,10 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertTrue((blockedResponse.error ?? "").contains("not in the node list"))
 
         relayX.updateFederationAllowList([relayYEndpoint])
-        let deliveredEnvelope = Envelope(
+        let deliveredEnvelope = makeStructurallyValidRelayEnvelope(
             conversationId: "manual-live-test",
-            senderFingerprint: "sender-fp",
-            sentAt: Date(),
             messageCounter: 2,
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x03, count: 12),
-                ciphertext: Data([0xAA, 0xBB, 0xCC]),
-                tag: Data(repeating: 0x04, count: 16)
-            ),
-            signature: Data([0xBB])
+            marker: 0x23
         )
         let deliveredResponse = try await xClient.send(
             .deliver(
@@ -9060,7 +9236,6 @@ final class NoctweaveCoreTests: XCTestCase {
         )
         XCTAssertEqual(deliveredResponse.type, .delivered)
 
-        let yClient = RelayClient(endpoint: relayYEndpoint)
         let fetchResponse = try await registerAndFetch(
             client: yClient,
             inboxId: destinationInbox,
@@ -9210,17 +9385,10 @@ final class NoctweaveCoreTests: XCTestCase {
         )
 
         let destinationInbox = InboxAddress.generate()
-        let envelope = Envelope(
+        let envelope = makeStructurallyValidRelayEnvelope(
             conversationId: "strict-allowlist-test",
-            senderFingerprint: "sender-fp",
-            sentAt: Date(),
             messageCounter: 1,
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x01, count: 12),
-                ciphertext: Data([0x11, 0x22, 0x33]),
-                tag: Data(repeating: 0x02, count: 16)
-            ),
-            signature: Data([0xAA])
+            marker: 0x24
         )
 
         let xClient = RelayClient(endpoint: relayXEndpoint)
@@ -9287,20 +9455,20 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let destinationAccessKey = SigningKeyPair()
         let destinationInbox = InboxAddress.derived(from: destinationAccessKey.publicKeyData)
-        let envelope = Envelope(
+        let envelope = makeStructurallyValidRelayEnvelope(
             conversationId: "forward-auth-isolation",
-            senderFingerprint: "sender-fp",
-            sentAt: Date(),
             messageCounter: 1,
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x01, count: 12),
-                ciphertext: Data([0x01, 0x02, 0x03]),
-                tag: Data(repeating: 0x02, count: 16)
-            ),
-            signature: Data([0xAA])
+            marker: 0x25
         )
 
         let xClient = RelayClient(endpoint: relayXEndpoint, authToken: "client-token")
+        let yClient = RelayClient(endpoint: relayYEndpoint, authToken: "client-token")
+        let yRegistration = try await registerInbox(
+            client: yClient,
+            inboxId: destinationInbox,
+            accessKey: destinationAccessKey
+        )
+        XCTAssertEqual(yRegistration.type, .ok)
         let deliverResponse = try await xClient.send(
             .deliver(
                 DeliverRequest(
@@ -9314,7 +9482,6 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(deliverResponse.type, .error)
         XCTAssertTrue((deliverResponse.error ?? "").localizedCaseInsensitiveContains("unauthorized"))
 
-        let yClient = RelayClient(endpoint: relayYEndpoint, authToken: "client-token")
         let fetchResponse = try await registerAndFetch(
             client: yClient,
             inboxId: destinationInbox,
@@ -9372,20 +9539,20 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let destinationAccessKey = SigningKeyPair()
         let destinationInbox = InboxAddress.derived(from: destinationAccessKey.publicKeyData)
-        let envelope = Envelope(
+        let envelope = makeStructurallyValidRelayEnvelope(
             conversationId: "forward-auth-success",
-            senderFingerprint: "sender-fp",
-            sentAt: Date(),
             messageCounter: 1,
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x01, count: 12),
-                ciphertext: Data([0xAA, 0xBB, 0xCC]),
-                tag: Data(repeating: 0x02, count: 16)
-            ),
-            signature: Data([0xAA])
+            marker: 0x26
         )
 
         let xClient = RelayClient(endpoint: relayXEndpoint, authToken: "client-token")
+        let yClient = RelayClient(endpoint: relayYEndpoint, authToken: "relay-token")
+        let yRegistration = try await registerInbox(
+            client: yClient,
+            inboxId: destinationInbox,
+            accessKey: destinationAccessKey
+        )
+        XCTAssertEqual(yRegistration.type, .ok)
         let deliverResponse = try await xClient.send(
             .deliver(
                 DeliverRequest(
@@ -9399,7 +9566,6 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(deliverResponse.type, .delivered)
         XCTAssertEqual(deliverResponse.delivered?.storedCount, 1)
 
-        let yClient = RelayClient(endpoint: relayYEndpoint, authToken: "relay-token")
         let fetchResponse = try await registerAndFetch(
             client: yClient,
             inboxId: destinationInbox,
@@ -9493,6 +9659,19 @@ final class NoctweaveCoreTests: XCTestCase {
         )
 
         let relayAClient = RelayClient(endpoint: relayAEndpoint)
+        let relayBClient = RelayClient(endpoint: relayBEndpoint)
+        let aliceRegistration = try await registerInbox(
+            client: relayAClient,
+            inboxId: aliceInbox,
+            accessKey: aliceAccessKey
+        )
+        let bobRegistration = try await registerInbox(
+            client: relayBClient,
+            inboxId: bobInbox,
+            accessKey: bobAccessKey
+        )
+        XCTAssertEqual(aliceRegistration.type, .ok)
+        XCTAssertEqual(bobRegistration.type, .ok)
         let deliverToRelayB = try await relayAClient.send(
             .deliver(
                 DeliverRequest(
@@ -9505,7 +9684,6 @@ final class NoctweaveCoreTests: XCTestCase {
         )
         XCTAssertEqual(deliverToRelayB.type, .delivered)
 
-        let relayBClient = RelayClient(endpoint: relayBEndpoint)
         let fetchedAtRelayB = try await registerAndFetch(
             client: relayBClient,
             inboxId: bobInbox,
@@ -9610,20 +9788,20 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let destinationAccessKey = SigningKeyPair()
         let destinationInbox = InboxAddress.derived(from: destinationAccessKey.publicKeyData)
-        let envelope = Envelope(
+        let envelope = makeStructurallyValidRelayEnvelope(
             conversationId: "manual-federation-test",
-            senderFingerprint: "sender-fp",
-            sentAt: Date(),
             messageCounter: 1,
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x01, count: 12),
-                ciphertext: Data([0xFA, 0xCE]),
-                tag: Data(repeating: 0x02, count: 16)
-            ),
-            signature: Data([0xAA])
+            marker: 0x27
         )
 
         let relayAClient = RelayClient(endpoint: relayAEndpoint)
+        let relayBClient = RelayClient(endpoint: relayBEndpoint)
+        let relayBRegistration = try await registerInbox(
+            client: relayBClient,
+            inboxId: destinationInbox,
+            accessKey: destinationAccessKey
+        )
+        XCTAssertEqual(relayBRegistration.type, .ok)
         let deliverResponse = try await relayAClient.send(
             .deliver(
                 DeliverRequest(
@@ -9636,7 +9814,6 @@ final class NoctweaveCoreTests: XCTestCase {
         )
         XCTAssertEqual(deliverResponse.type, .delivered)
 
-        let relayBClient = RelayClient(endpoint: relayBEndpoint)
         let fetchResponse = try await registerAndFetch(
             client: relayBClient,
             inboxId: destinationInbox,
@@ -9759,17 +9936,10 @@ final class NoctweaveCoreTests: XCTestCase {
         )
 
         let destinationInbox = InboxAddress.generate()
-        let envelope = Envelope(
+        let envelope = makeStructurallyValidRelayEnvelope(
             conversationId: "strict-quorum-test",
-            senderFingerprint: "sender-fp",
-            sentAt: Date(),
             messageCounter: 1,
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x01, count: 12),
-                ciphertext: Data([0xAA, 0xBB, 0xCC]),
-                tag: Data(repeating: 0x02, count: 16)
-            ),
-            signature: Data([0xAA])
+            marker: 0x28
         )
 
         let xClient = RelayClient(endpoint: relayXEndpoint)
@@ -10753,6 +10923,37 @@ final class NoctweaveCoreTests: XCTestCase {
         accessKey: SigningKeyPair,
         maxCount: Int
     ) async throws -> RelayResponse {
+        let registrationResponse = try await registerInbox(
+            client: client,
+            inboxId: inboxId,
+            accessKey: accessKey
+        )
+        guard registrationResponse.type == .ok else {
+            return registrationResponse
+        }
+
+        var fetch = FetchRequest(
+            inboxId: inboxId,
+            routingToken: inboxId,
+            maxCount: maxCount
+        )
+        let fetchProof = try makeInboxProof(signingKey: accessKey) { proof in
+            try fetch.signableData(for: proof)
+        }
+        fetch = FetchRequest(
+            inboxId: inboxId,
+            routingToken: inboxId,
+            maxCount: maxCount,
+            accessProof: fetchProof
+        )
+        return try await client.send(.fetch(fetch))
+    }
+
+    private func registerInbox(
+        client: RelayClient,
+        inboxId: String,
+        accessKey: SigningKeyPair
+    ) async throws -> RelayResponse {
         let identity = Identity(displayName: "Mailbox owner")
         let offer = try MessageEngine.makeContactOffer(
             identity: identity,
@@ -10774,26 +10975,7 @@ final class NoctweaveCoreTests: XCTestCase {
             contactOffer: offer,
             accessProof: registrationProof
         )
-        let registrationResponse = try await client.send(.registerInbox(registration))
-        guard registrationResponse.type == .ok else {
-            return registrationResponse
-        }
-
-        var fetch = FetchRequest(
-            inboxId: inboxId,
-            routingToken: inboxId,
-            maxCount: maxCount
-        )
-        let fetchProof = try makeInboxProof(signingKey: accessKey) { proof in
-            try fetch.signableData(for: proof)
-        }
-        fetch = FetchRequest(
-            inboxId: inboxId,
-            routingToken: inboxId,
-            maxCount: maxCount,
-            accessProof: fetchProof
-        )
-        return try await client.send(.fetch(fetch))
+        return try await client.send(.registerInbox(registration))
     }
 
     private func makeInboxProof(

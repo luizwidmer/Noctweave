@@ -3,10 +3,32 @@ import Foundation
 enum PaddedMessagePlaintext {
     static let minimumPaddedBytes = 512
     static let maximumPaddedBytes = 65_536
-    private static let magic = Data([0x4E, 0x50, 0x41, 0x44, 0x01]) // NPAD v1
+    private static let legacyMagic = Data([0x4E, 0x50, 0x41, 0x44, 0x01]) // NPAD v1
+    private static let wirePayloadV2Magic = Data([0x4E, 0x50, 0x41, 0x44, 0x02]) // NPAD v2
     private static let headerBytes = 9
 
-    static func encode(_ body: MessageBody) throws -> Data {
+    /// Pre-direct-v4 and current experimental-group compatibility only.
+    static func encodeLegacyMessageBody(_ body: MessageBody) throws -> Data {
+        try encode(body, magic: legacyMagic)
+    }
+
+    /// Pre-direct-v4 and current experimental-group compatibility only.
+    static func decodeLegacyMessageBody(_ data: Data) throws -> MessageBody {
+        try decode(MessageBody.self, from: data, magic: legacyMagic)
+    }
+
+    static func encodeWirePayloadV2(_ payload: WirePayloadV2) throws -> Data {
+        guard payload.isStructurallyValid else { throw WirePayloadV2Error.invalidPayload }
+        return try encode(payload, magic: wirePayloadV2Magic)
+    }
+
+    static func decodeWirePayloadV2(_ data: Data) throws -> WirePayloadV2 {
+        let payload = try decode(WirePayloadV2.self, from: data, magic: wirePayloadV2Magic)
+        guard payload.isStructurallyValid else { throw WirePayloadV2Error.invalidPayload }
+        return payload
+    }
+
+    private static func encode<T: Encodable>(_ body: T, magic: Data) throws -> Data {
         var bodyData = try NoctweaveCoder.encode(body, sortedKeys: true)
         defer { bodyData.secureWipe() }
         let paddedSize = paddedSize(for: bodyData.count)
@@ -32,7 +54,7 @@ enum PaddedMessagePlaintext {
         return data
     }
 
-    static func decode(_ data: Data) throws -> MessageBody {
+    private static func decode<T: Decodable>(_ type: T.Type, from data: Data, magic: Data) throws -> T {
         guard data.count >= headerBytes,
               data.count <= maximumPaddedBytes,
               data.count >= minimumPaddedBytes,
@@ -52,7 +74,7 @@ enum PaddedMessagePlaintext {
         }
         var bodyData = Data(data[bodyStart..<bodyEnd])
         defer { bodyData.secureWipe() }
-        return try NoctweaveCoder.decode(MessageBody.self, from: bodyData)
+        return try NoctweaveCoder.decode(type, from: bodyData)
     }
 
     private static func paddedSize(for bodyBytes: Int) -> Int {

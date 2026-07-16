@@ -58,7 +58,7 @@
       <text x="165" y="321" fill="#D1D5E0" font-size="16">establishes PQ session</text>
       <text x="165" y="350" fill="#D1D5E0" font-size="16">encrypts locally</text>
 
-      <text x="460" y="215" fill="#B7F4EE" font-size="14" font-weight="700" letter-spacing="1.4">HOME RELAY</text>
+      <text x="460" y="215" fill="#B7F4EE" font-size="14" font-weight="700" letter-spacing="1.4">CURRENT RELAY</text>
       <text x="460" y="253" fill="#fff" font-size="25" font-weight="750">Relay A</text>
       <text x="460" y="292" fill="#D1D5E0" font-size="16">validates routing proofs</text>
       <text x="460" y="321" fill="#D1D5E0" font-size="16">stores ciphertext</text>

@@ -67,6 +67,7 @@ final class RelayTCPIntegrationTests: XCTestCase {
 
         let inbox = InboxAddress.generate()
         let envelope = makeEnvelope()
+        try harness.registerInboxDirect(inboxId: inbox, accessPublicKey: Data([0x31]))
 
         let deliverResponse = try harness.send(
             .deliver(
@@ -87,6 +88,73 @@ final class RelayTCPIntegrationTests: XCTestCase {
         XCTAssertEqual(fetchResponse.messages?.first?.id, envelope.id)
     }
 
+    func testUnregisteredDirectDestinationIsRejectedWithoutMailboxAllocationOverTCP() throws {
+        let harness = try RelayTCPHarness()
+        defer { try? harness.shutdown() }
+
+        let inbox = InboxAddress.generate()
+        let envelope = makeEnvelope()
+        let request = RelayRequest.deliver(
+            DeliverRequest(
+                inboxId: inbox,
+                routingToken: inbox,
+                envelope: envelope,
+                destinationRelay: nil
+            )
+        )
+
+        let rejected = try harness.send(request)
+        XCTAssertEqual(rejected.type, .error)
+        XCTAssertEqual(rejected.error, "Destination inbox is not registered")
+        let beforeRegistration = try harness.send(
+            .fetch(FetchRequest(inboxId: inbox, routingToken: inbox, maxCount: 10))
+        )
+        XCTAssertEqual(beforeRegistration.messages?.count, 0)
+
+        try harness.registerInboxDirect(inboxId: inbox, accessPublicKey: Data([0x35]))
+        let accepted = try harness.send(request)
+        XCTAssertEqual(accepted.type, .delivered)
+        XCTAssertEqual(accepted.delivered?.storedCount, 1)
+    }
+
+    func testUnregisteredGroupDestinationIsRejectedBeforeStorageOverTCP() throws {
+        let harness = try RelayTCPHarness()
+        defer { try? harness.shutdown() }
+
+        let groupId = UUID()
+        let groupInboxId = InboxAddress.generate()
+        let envelope = GroupRatchetEnvelope(
+            groupId: groupId,
+            epoch: 0,
+            transcriptHash: Data(repeating: 0x44, count: 32),
+            senderFingerprint: Data(repeating: 0x55, count: 32).base64EncodedString(),
+            sentAt: Date(timeIntervalSince1970: 9_100),
+            messageCounter: 0,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x11, count: 12),
+                ciphertext: Data(repeating: 0x22, count: 512),
+                tag: Data(repeating: 0x33, count: 16)
+            ),
+            signature: Data(
+                repeating: 0x66,
+                count: OQSSignatureVerifier.mlDSA65SignatureBytes
+            )
+        )
+        let response = try harness.send(
+            .deliverGroupMessage(
+                DeliverGroupMessageRequest(
+                    groupId: groupId,
+                    groupInboxId: groupInboxId,
+                    envelope: envelope,
+                    destinationRelay: nil
+                )
+            )
+        )
+
+        XCTAssertEqual(response.type, .error)
+        XCTAssertEqual(response.error, "Destination group inbox is not registered")
+    }
+
     func testLongPollFetchReturnsMessageDeliveredDuringWaitOverTCP() throws {
         let harness = try RelayTCPHarness(
             wakeSupport: DecentralizedWakeSupport(
@@ -101,6 +169,7 @@ final class RelayTCPIntegrationTests: XCTestCase {
 
         let inbox = InboxAddress.generate()
         let envelope = makeEnvelope()
+        try harness.registerInboxDirect(inboxId: inbox, accessPublicKey: Data([0x32]))
         let expectation = expectation(description: "long-poll fetch returned delivered message")
         var fetchResponse: RelayResponse?
         var fetchError: Error?
@@ -146,6 +215,7 @@ final class RelayTCPIntegrationTests: XCTestCase {
         let harness = try RelayTCPHarness(accessPassword: "secret-pass")
         defer { try? harness.shutdown() }
         let inbox = InboxAddress.generate()
+        try harness.registerInboxDirect(inboxId: inbox, accessPublicKey: Data([0x33]))
         let request = RelayRequest.deliver(
             DeliverRequest(
                 inboxId: inbox,
@@ -373,6 +443,7 @@ final class RelayTCPIntegrationTests: XCTestCase {
 
         let inbox = InboxAddress.generate()
         let envelope = makeEnvelope()
+        try destination.registerInboxDirect(inboxId: inbox, accessPublicKey: Data([0x34]))
         let deliver = RelayRequest.deliver(
             DeliverRequest(
                 inboxId: inbox,
@@ -393,6 +464,36 @@ final class RelayTCPIntegrationTests: XCTestCase {
         XCTAssertEqual(fetch.type, .messages)
         XCTAssertEqual(fetch.messages?.count, 1)
         XCTAssertEqual(fetch.messages?.first?.id, envelope.id)
+    }
+
+    func testForwardedDeliveryIsAdmittedOnlyByFinalRelayRegistration() throws {
+        let federation = FederationDescriptor(mode: .open, name: "mesh-final-admission")
+        let source = try RelayTCPHarness(kind: .bridge, federation: federation)
+        let destination = try RelayTCPHarness(kind: .standard, federation: federation)
+        defer {
+            try? source.shutdown()
+            try? destination.shutdown()
+        }
+
+        let inbox = InboxAddress.generate()
+        let envelope = makeEnvelope()
+        let request = RelayRequest.deliver(
+            DeliverRequest(
+                inboxId: inbox,
+                routingToken: inbox,
+                envelope: envelope,
+                destinationRelay: destination.endpoint
+            )
+        )
+
+        let rejected = try source.send(request)
+        XCTAssertEqual(rejected.type, .error)
+        XCTAssertEqual(rejected.error, "Destination inbox is not registered")
+
+        try destination.registerInboxDirect(inboxId: inbox, accessPublicKey: Data([0x36]))
+        let accepted = try source.send(request)
+        XCTAssertEqual(accepted.type, .delivered)
+        XCTAssertEqual(accepted.delivered?.storedCount, 1)
     }
 
     func testGroupActorProofRejectedWhenVerificationUnavailable() throws {
@@ -434,20 +535,43 @@ final class RelayTCPIntegrationTests: XCTestCase {
         XCTAssertEqual(response.error, "Forwarding failed")
     }
 
+    func testDefaultCompatibilityProfileRejectsLegacyFingerprintRequestFamilies() throws {
+        let harness = try RelayTCPHarness(compatibilityProfiles: [])
+        defer { try? harness.shutdown() }
+
+        let legacyRequestTypes: [RelayRequestType] = [
+            .sendPairRequest,
+            .fetchPrekeyBundle,
+            .createGroup,
+            .acknowledgeMessages
+        ]
+        for type in legacyRequestTypes {
+            let response = try harness.send(RelayRequest(type: type))
+            XCTAssertEqual(response.type, .error)
+            XCTAssertEqual(
+                response.error,
+                "Deprecated compatibility profile \(RelayCompatibilityProfile.legacyFingerprint) is disabled"
+            )
+        }
+    }
+
     private func makeEnvelope() -> Envelope {
         Envelope(
             conversationId: "tcp-integration-conversation",
             sessionId: UUID().uuidString,
-            senderFingerprint: "sender-fingerprint",
+            senderFingerprint: Data(repeating: 0x44, count: 32).base64EncodedString(),
             sentAt: Date(),
             messageCounter: 1,
-            kemCiphertext: Data([0x01, 0x02, 0x03]),
+            kemCiphertext: nil,
             payload: EncryptedPayload(
                 nonce: Data(repeating: 0xA5, count: 12),
-                ciphertext: Data([0x10, 0x11, 0x12]),
+                ciphertext: Data(repeating: 0x10, count: 512),
                 tag: Data(repeating: 0xB6, count: 16)
             ),
-            signature: Data([0xCC, 0xDD, 0xEE])
+            signature: Data(
+                repeating: 0xCC,
+                count: OQSSignatureVerifier.mlDSA65SignatureBytes
+            )
         )
     }
 
@@ -481,9 +605,10 @@ final class RelayTCPIntegrationTests: XCTestCase {
     }
 }
 
-private final class RelayTCPHarness {
+final class RelayTCPHarness {
     private let group: MultiThreadedEventLoopGroup
     private let channel: Channel
+    private let store: RelayStore
     private let host: String
     private let port: Int
     private let maxLineBytes: Int?
@@ -500,13 +625,21 @@ private final class RelayTCPHarness {
         forwardingRequestTimeoutSeconds: Int = 8,
         maxLineBytes: Int? = 64 * 1024,
         requireInboxAccessControl: Bool = false,
-        wakeSupport: DecentralizedWakeSupport? = nil
+        wakeSupport: DecentralizedWakeSupport? = nil,
+        compatibilityProfiles: [String] = [RelayCompatibilityProfile.legacyFingerprint],
+        storeFileURL: URL? = nil,
+        experimentalRouteCapabilitiesEnabled: Bool = false
     ) throws {
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         self.host = "127.0.0.1"
         self.maxLineBytes = maxLineBytes
 
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        let store = RelayStore(
+            fileURL: storeFileURL,
+            maxInboxMessages: nil,
+            temporalBucketSeconds: 300
+        )
+        self.store = store
         let config = RelayConfiguration(
             kind: kind,
             federation: federation,
@@ -521,7 +654,9 @@ private final class RelayTCPHarness {
             coordinatorRegistrationToken: coordinatorRegistrationToken,
             federationForwardingAuthToken: federationForwardingAuthToken,
             allowPrivateFederationEndpoints: true,
-            requireInboxAccessControl: requireInboxAccessControl
+            requireInboxAccessControl: requireInboxAccessControl,
+            compatibilityProfiles: compatibilityProfiles,
+            experimentalRouteCapabilitiesEnabled: experimentalRouteCapabilitiesEnabled
         )
 
         let bootstrap = ServerBootstrap(group: group)
@@ -560,6 +695,14 @@ private final class RelayTCPHarness {
     func shutdown() throws {
         try? channel.close().wait()
         try group.syncShutdownGracefully()
+    }
+
+    func registerInboxDirect(inboxId: String, accessPublicKey: Data) throws {
+        try store.registerInbox(inboxId: inboxId, accessPublicKey: accessPublicKey)
+    }
+
+    func failNextPersistenceForTesting() {
+        store.failNextPersistenceForTesting()
     }
 
     func send(_ request: RelayRequest) throws -> RelayResponse {

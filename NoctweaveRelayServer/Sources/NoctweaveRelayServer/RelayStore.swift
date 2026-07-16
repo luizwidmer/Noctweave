@@ -1,3 +1,4 @@
+import Crypto
 import Foundation
 #if canImport(SQLite3)
 import SQLite3
@@ -5,10 +6,19 @@ import SQLite3
 import CSQLite
 #endif
 
-enum RelayStoreError: Error {
+enum RelayStoreError: Error, Equatable {
     case inboxFull
     case invalidInboxRegistration
+    case invalidInboxRetirement
     case inboxAlreadyRegistered
+    case inboxRetired
+    case invalidInboxRouteCapability
+    case inboxRouteCapabilityRevoked
+    case inboxRouteCapabilityLimitReached
+    case invalidInboxRouteCapabilityMutation
+    case inboxRouteCapabilityMutationConflict
+    case inboxRouteCapabilityMutationOutOfOrder
+    case destinationInboxNotRegistered
     case relayCapacityExceeded
     case invalidEnvelopePayload
     case invalidChunkIndex
@@ -26,9 +36,27 @@ enum RelayStoreError: Error {
     case alreadyGroupMember
 }
 
+enum InboxRouteCapabilityMutationOperation {
+    case create
+    case revoke
+}
+
+enum InboxRouteCapabilityMutationApplyResult: Equatable {
+    case applied
+    case replayed
+}
+
+enum RelayStorePersistenceError: Error {
+    case injectedFailure
+}
+
 final class RelayStore {
     private var mailboxes: [String: [StoredEnvelope]] = [:]
     private var inboxRegistrations: [String: InboxRegistrationRecord] = [:]
+    private var inboxRetirements: [String: InboxRetirementRecord] = [:]
+    /// Base64(domain-separated SHA-256(capability)) -> route record. Raw
+    /// bearer capabilities are deliberately never persisted.
+    private var inboxRouteCapabilities: [String: InboxRouteCapabilityRecord] = [:]
     private var announcements: [String: PairingAnnouncement] = [:]
     private var pairRequests: [String: [PairingRequest]] = [:]
     private var attachments: [String: [AttachmentRecord]] = [:]
@@ -37,6 +65,8 @@ final class RelayStore {
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
     private var groups: [UUID: RelayGroupDescriptor] = [:]
     private var groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:]
+    private var groupInvitations: [String: [RelayGroupInvitation]] = [:]
+    private var groupInvitationFingerprintsByGroup: [UUID: Set<String>] = [:]
     private var openFederationDHTCache = OpenFederationDHTCandidateCache(
         configuration: OpenFederationDHTDiscoveryConfiguration(isEnabled: false)
     )
@@ -68,6 +98,7 @@ final class RelayStore {
     private let coordinatorMaximumNodeTTL: TimeInterval = 900
     private let maxFederationNodes = 10_000
     private let maxGroupJoinRequests = 256
+    private let maxGroupInvitationsPerIdentity = 256
     private let maxGroups = 10_000
     private let maxGroupsPerCreator = 100
     private let maxGroupMembers = 256
@@ -76,13 +107,25 @@ final class RelayStore {
     private let maxMailboxes = 10_000
     private let maxStoredMessages = 100_000
     private let maxInboxRegistrations = 10_000
+    /// Exact non-resurrection has a storage lower bound. New generations stop
+    /// being admitted at this lifetime ceiling; retirement records are never
+    /// evicted, and every admitted live generation has a reserved slot.
+    private let maxLifetimeInboxGenerations: Int
+    private let maxMailboxConsumersPerInbox = 16
+    private let maxMailboxConsumerHistoryPerInbox = 64
+    private let maxMailboxSyncPage = 256
     private let maxActorProofReplayEntries = 20_000
+    private let maxActiveInboxRouteCapabilitiesPerInbox = 16
+    private let maxRevokedInboxRouteCapabilitiesPerInbox = 64
+    private let maxInboxRouteCapabilityRecords = 100_000
     private var coordinatorDirectoryCache: [FederationNodeRecord] = []
     private var actorProofReplayCache: [String: Date] = [:]
     private var generalRequestAttemptsBySource: [String: [Date]] = [:]
     private var federationRegistrationAttemptsBySource: [String: [Date]] = [:]
     private var federationListAttemptsBySource: [String: [Date]] = [:]
     private var lastFederationRegistrationByEndpoint: [String: Date] = [:]
+    private var lastDurableSnapshot = RelayStoreSnapshot.empty
+    private var persistenceFailuresRemainingForTesting = 0
     private let federationRateWindowSeconds: TimeInterval = 60
     private let generalRequestRateWindowSeconds: TimeInterval = 60
     private let generalRequestMaxPerWindow = 240
@@ -96,11 +139,13 @@ final class RelayStore {
         maxInboxMessages: Int?,
         attachmentBlobStore: AttachmentBlobStore? = nil,
         temporalBucketSeconds: Int = 300,
-        temporalBucketScheduleSeconds: [Int]? = nil
+        temporalBucketScheduleSeconds: [Int]? = nil,
+        maxLifetimeInboxGenerations: Int = 100_000
     ) {
         self.fileURL = fileURL
         self.maxInboxMessages = maxInboxMessages
         self.attachmentBlobStore = attachmentBlobStore
+        self.maxLifetimeInboxGenerations = max(1, maxLifetimeInboxGenerations)
         self.temporalBuckets = RelayStore.normalizeBuckets(
             primarySeconds: temporalBucketSeconds,
             scheduleSeconds: temporalBucketScheduleSeconds
@@ -116,6 +161,7 @@ final class RelayStore {
             let sqliteURL = sqliteStoreURL(for: fileURL)
             if let snapshot = try SQLiteRelayStateStore.loadState(at: sqliteURL) {
                 applySnapshot(snapshot)
+                lastDurableSnapshot = currentSnapshot()
             }
         }
     }
@@ -135,6 +181,15 @@ final class RelayStore {
         }
         try performSync {
             try saveLocked()
+        }
+    }
+
+    /// Deterministic persistence fault injection used by `@testable` regression
+    /// tests. The counter is deliberately outside the durable snapshot so one
+    /// failed attempt is consumed before an exact retry.
+    func failNextPersistenceForTesting(_ count: Int = 1) {
+        performSync {
+            persistenceFailuresRemainingForTesting = max(0, count)
         }
     }
 
@@ -189,14 +244,15 @@ final class RelayStore {
             let storedAt = bucketed(now, discriminator: bucketKey)
             let expiresAt = bucketedCeil(now.addingTimeInterval(ttl), discriminator: bucketKey)
             let key = attachmentId.uuidString
+            var deferredExternalDeletions: [AttachmentExternalRecord] = []
+            var newlyStoredExternal: AttachmentExternalRecord?
+            var attachmentKeyToEvict: String?
             if attachments[key] == nil, attachments.count >= maxAttachmentIds {
-                if let oldestKey = attachments.min(by: { lhs, rhs in
+                attachmentKeyToEvict = attachments.min(by: { lhs, rhs in
                     let lhsDate = lhs.value.map(\.storedAt).min() ?? .distantFuture
                     let rhsDate = rhs.value.map(\.storedAt).min() ?? .distantFuture
                     return lhsDate < rhsDate
-                })?.key {
-                    attachments.removeValue(forKey: oldestKey)
-                }
+                })?.key
             }
             var records = attachments[key, default: []]
             let record: AttachmentRecord
@@ -208,6 +264,7 @@ final class RelayStore {
                     chunkIndex: chunkIndex,
                     expiresAt: expiresAt
                 )
+                newlyStoredExternal = external
                 record = AttachmentRecord(
                     chunkIndex: chunkIndex,
                     payload: nil,
@@ -224,9 +281,13 @@ final class RelayStore {
                     expiresAt: expiresAt
                 )
             }
+            if let attachmentKeyToEvict,
+               let evicted = attachments.removeValue(forKey: attachmentKeyToEvict) {
+                deferredExternalDeletions.append(contentsOf: evicted.compactMap(\.external))
+            }
             if let existing = records.first(where: { $0.chunkIndex == chunkIndex }),
                let external = existing.external {
-                attachmentBlobStore?.delete(external)
+                deferredExternalDeletions.append(external)
             }
             if let index = records.firstIndex(where: { $0.chunkIndex == chunkIndex }) {
                 records[index] = record
@@ -237,13 +298,23 @@ final class RelayStore {
                 records.sort { $0.storedAt < $1.storedAt }
                 for removed in records.dropLast(maxAttachmentChunks) {
                     if let external = removed.external {
-                        attachmentBlobStore?.delete(external)
+                        deferredExternalDeletions.append(external)
                     }
                 }
                 records = Array(records.suffix(maxAttachmentChunks))
             }
             attachments[key] = records
-            try saveLocked()
+            do {
+                try saveLocked()
+            } catch {
+                if let newlyStoredExternal {
+                    deleteExternalAttachmentIfUnreferenced(newlyStoredExternal)
+                }
+                throw error
+            }
+            for external in deferredExternalDeletions {
+                deleteExternalAttachmentIfUnreferenced(external)
+            }
             return AttachmentChunk(attachmentId: attachmentId, chunkIndex: chunkIndex, payload: payload)
         }
     }
@@ -266,8 +337,24 @@ final class RelayStore {
 
     func deliver(_ envelope: Envelope, to inboxId: String) throws -> Int {
         try performSync {
-            guard envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
+            guard envelope.isStructurallyValid,
+                  envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
                 throw RelayStoreError.invalidEnvelopePayload
+            }
+            guard !isInboxRetiredLocked(inboxId: inboxId, now: Date()) else {
+                throw RelayStoreError.inboxRetired
+            }
+            guard inboxRegistrations[inboxId] != nil else {
+                throw RelayStoreError.destinationInboxNotRegistered
+            }
+            let existingInbox = mailboxes[inboxId, default: []]
+            if let existing = existingInbox.first(where: { $0.envelope.id == envelope.id }) {
+                guard existing.envelope == envelope,
+                      existing.pendingGroupRecipientFingerprints == nil,
+                      existing.originalGroupRecipientFingerprints == nil else {
+                    throw RelayStoreError.invalidEnvelopePayload
+                }
+                return existingInbox.count
             }
             if mailboxes[inboxId] == nil, mailboxes.count >= maxMailboxes {
                 throw RelayStoreError.relayCapacityExceeded
@@ -281,7 +368,11 @@ final class RelayStore {
                 throw RelayStoreError.inboxFull
             }
             let discriminator = "\(inboxId):\(envelope.id.uuidString)"
-            inbox.append(StoredEnvelope(envelope: envelope, storedAt: bucketed(Date(), discriminator: discriminator)))
+            inbox.append(StoredEnvelope(
+                sequence: try nextMailboxSequenceLocked(inboxId: inboxId),
+                envelope: envelope,
+                storedAt: bucketed(Date(), discriminator: discriminator)
+            ))
             mailboxes[inboxId] = inbox
             try saveLocked()
             return inbox.count
@@ -294,14 +385,36 @@ final class RelayStore {
         recipientFingerprints: [String]
     ) throws -> Int {
         try performSync {
-            guard envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
+            guard envelope.isStructurallyValid,
+                  envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
                 throw RelayStoreError.invalidEnvelopePayload
             }
-            let recipients = Set(recipientFingerprints.map {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines)
-            }.filter { !$0.isEmpty })
+            guard !isInboxRetiredLocked(inboxId: inboxId, now: Date()) else {
+                throw RelayStoreError.inboxRetired
+            }
+            // Persisted group state is the registration for a generated group
+            // inbox. Normal inbox registration remains valid for store-level
+            // migration/retry tooling; RelayHandler also pins the group ID.
+            guard inboxRegistrations[inboxId] != nil
+                    || groups.values.contains(where: { $0.inboxId == inboxId }) else {
+                throw RelayStoreError.destinationInboxNotRegistered
+            }
+            guard let recipients = StoredEnvelope.normalizedGroupRecipients(
+                recipientFingerprints
+            ) else {
+                throw RelayStoreError.invalidEnvelopePayload
+            }
             guard !recipients.isEmpty else {
                 return mailboxes[inboxId, default: []].count
+            }
+            let existingInbox = mailboxes[inboxId, default: []]
+            if let existing = existingInbox.first(where: { $0.envelope.id == envelope.id }) {
+                guard existing.envelope == envelope,
+                      existing.pendingGroupRecipientFingerprints != nil,
+                      existing.originalGroupRecipientFingerprints == recipients else {
+                    throw RelayStoreError.invalidEnvelopePayload
+                }
+                return existingInbox.count
             }
             if mailboxes[inboxId] == nil, mailboxes.count >= maxMailboxes {
                 throw RelayStoreError.relayCapacityExceeded
@@ -317,9 +430,11 @@ final class RelayStore {
             let discriminator = "\(inboxId):\(envelope.id.uuidString)"
             inbox.append(
                 StoredEnvelope(
+                    sequence: try nextMailboxSequenceLocked(inboxId: inboxId),
                     envelope: envelope,
                     storedAt: bucketed(Date(), discriminator: discriminator),
-                    pendingGroupRecipientFingerprints: recipients
+                    pendingGroupRecipientFingerprints: recipients,
+                    originalGroupRecipientFingerprints: recipients
                 )
             )
             mailboxes[inboxId] = inbox
@@ -358,31 +473,653 @@ final class RelayStore {
         }
     }
 
-    func registerInbox(inboxId: String, accessPublicKey: Data) throws {
+    @discardableResult
+    func registerInbox(
+        inboxId: String,
+        accessPublicKey: Data
+    ) throws -> InboxRegistrationReceiptV3 {
         try performSync {
             guard InboxAddress.isValid(inboxId), !accessPublicKey.isEmpty else {
                 throw RelayStoreError.invalidInboxRegistration
+            }
+            guard !isInboxRetiredLocked(inboxId: inboxId, now: Date()) else {
+                throw RelayStoreError.inboxRetired
             }
             if let existing = inboxRegistrations[inboxId] {
                 guard existing.accessPublicKey == accessPublicKey else {
                     throw RelayStoreError.inboxAlreadyRegistered
                 }
-                return
+                try saveLocked()
+                return existing.routeMutationReceipt
+            }
+            guard inboxRegistrations.count + inboxRetirements.count < maxLifetimeInboxGenerations else {
+                throw RelayStoreError.relayCapacityExceeded
             }
             guard inboxRegistrations.count < maxInboxRegistrations else {
                 throw RelayStoreError.relayCapacityExceeded
             }
-            inboxRegistrations[inboxId] = InboxRegistrationRecord(
+            let registration = InboxRegistrationRecord(
                 accessPublicKey: accessPublicKey,
-                registeredAt: Date()
+                registeredAt: Date(),
+                mailboxStream: MailboxStreamState(nextSequence: try nextSequence(after: mailboxes[inboxId, default: []]))
             )
+            inboxRegistrations[inboxId] = registration
             try saveLocked()
+            return registration.routeMutationReceipt
         }
     }
 
     func inboxAccessPublicKey(for inboxId: String) -> Data? {
         performSync {
             inboxRegistrations[inboxId]?.accessPublicKey
+        }
+    }
+
+    func seedInboxRouteCapabilityForTesting(
+        inboxId: String,
+        capability: InboxRouteCapabilityV2,
+        now: Date = Date()
+    ) throws {
+        try performSync {
+            try createInboxRouteCapabilityLocked(
+                inboxId: inboxId,
+                capability: capability,
+                now: now
+            )
+            try saveLocked()
+        }
+    }
+
+    private func createInboxRouteCapabilityLocked(
+        inboxId: String,
+        capability: InboxRouteCapabilityV2,
+        now: Date
+    ) throws {
+            guard InboxAddress.isValid(inboxId),
+                  capability.isStructurallyValid,
+                  now.timeIntervalSince1970.isFinite else {
+                throw RelayStoreError.invalidInboxRouteCapability
+            }
+            guard !isInboxRetiredLocked(inboxId: inboxId, now: now) else {
+                throw RelayStoreError.inboxRetired
+            }
+            guard inboxRegistrations[inboxId] != nil else {
+                throw RelayStoreError.destinationInboxNotRegistered
+            }
+            let key = inboxRouteCapabilityKey(capability)
+            if let existing = inboxRouteCapabilities[key] {
+                guard existing.inboxId == inboxId else {
+                    throw RelayStoreError.invalidInboxRouteCapability
+                }
+                guard existing.revokedAt == nil else {
+                    throw RelayStoreError.inboxRouteCapabilityRevoked
+                }
+                return
+            }
+            let activeCount = inboxRouteCapabilities.values.reduce(into: 0) { count, record in
+                if record.inboxId == inboxId, record.revokedAt == nil {
+                    count += 1
+                }
+            }
+            guard activeCount < maxActiveInboxRouteCapabilitiesPerInbox else {
+                throw RelayStoreError.inboxRouteCapabilityLimitReached
+            }
+            try makeRoomForInboxRouteCapabilityRecordLocked(
+                inboxId: inboxId,
+                addingRevokedRecord: false
+            )
+            inboxRouteCapabilities[key] = InboxRouteCapabilityRecord(
+                inboxId: inboxId,
+                createdAt: now,
+                revokedAt: nil
+            )
+    }
+
+    func seedInboxRouteCapabilityRevocationForTesting(
+        inboxId: String,
+        capability: InboxRouteCapabilityV2,
+        now: Date = Date()
+    ) throws {
+        try performSync {
+            try revokeInboxRouteCapabilityLocked(
+                inboxId: inboxId,
+                capability: capability,
+                now: now
+            )
+            try saveLocked()
+        }
+    }
+
+    private func revokeInboxRouteCapabilityLocked(
+        inboxId: String,
+        capability: InboxRouteCapabilityV2,
+        now: Date
+    ) throws {
+            guard InboxAddress.isValid(inboxId),
+                  capability.isStructurallyValid,
+                  now.timeIntervalSince1970.isFinite else {
+                throw RelayStoreError.invalidInboxRouteCapability
+            }
+            guard !isInboxRetiredLocked(inboxId: inboxId, now: now) else {
+                throw RelayStoreError.inboxRetired
+            }
+            guard inboxRegistrations[inboxId] != nil else {
+                throw RelayStoreError.destinationInboxNotRegistered
+            }
+            let key = inboxRouteCapabilityKey(capability)
+            if let existing = inboxRouteCapabilities[key] {
+                guard existing.inboxId == inboxId else {
+                    throw RelayStoreError.invalidInboxRouteCapability
+                }
+                guard existing.revokedAt == nil else {
+                    return
+                }
+                evictOldestRevokedInboxRouteCapabilityIfAtLimitLocked(inboxId: inboxId)
+                inboxRouteCapabilities[key] = InboxRouteCapabilityRecord(
+                    inboxId: existing.inboxId,
+                    createdAt: existing.createdAt,
+                    revokedAt: now
+                )
+                return
+            }
+            try makeRoomForInboxRouteCapabilityRecordLocked(
+                inboxId: inboxId,
+                addingRevokedRecord: true
+            )
+            inboxRouteCapabilities[key] = InboxRouteCapabilityRecord(
+                inboxId: inboxId,
+                createdAt: now,
+                revokedAt: now
+            )
+    }
+
+    func applyInboxRouteCapabilityMutation(
+        operation: InboxRouteCapabilityMutationOperation,
+        inboxId: String,
+        capability: InboxRouteCapabilityV2,
+        relayScope: Data,
+        mutationSequence: UInt64,
+        mutationDigest: Data,
+        now: Date = Date()
+    ) throws -> InboxRouteCapabilityMutationApplyResult {
+        try performSync {
+            guard var registration = inboxRegistrations[inboxId] else {
+                throw RelayStoreError.destinationInboxNotRegistered
+            }
+            guard registration.routeMutationScope == relayScope,
+                  relayScope.isValidRouteMutationScope,
+                  mutationDigest.count == SHA256.byteCount,
+                  mutationSequence > 0,
+                  mutationSequence <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
+                throw RelayStoreError.invalidInboxRouteCapabilityMutation
+            }
+            if mutationSequence == registration.lastRouteMutationSequence {
+                guard registration.lastRouteMutationDigest == mutationDigest else {
+                    throw RelayStoreError.inboxRouteCapabilityMutationConflict
+                }
+                return .replayed
+            }
+            guard registration.lastRouteMutationSequence
+                    < CreateInboxRouteCapabilityRequest.maximumMutationSequence,
+                  mutationSequence == registration.lastRouteMutationSequence + 1 else {
+                throw RelayStoreError.inboxRouteCapabilityMutationOutOfOrder
+            }
+
+            switch operation {
+            case .create:
+                try createInboxRouteCapabilityLocked(
+                    inboxId: inboxId,
+                    capability: capability,
+                    now: now
+                )
+            case .revoke:
+                try revokeInboxRouteCapabilityLocked(
+                    inboxId: inboxId,
+                    capability: capability,
+                    now: now
+                )
+            }
+            registration.lastRouteMutationSequence = mutationSequence
+            registration.lastRouteMutationDigest = mutationDigest
+            inboxRegistrations[inboxId] = registration
+            try saveLocked()
+            return .applied
+        }
+    }
+
+    func isCurrentInboxRouteCapabilityMutation(
+        inboxId: String,
+        relayScope: Data,
+        mutationSequence: UInt64,
+        mutationDigest: Data
+    ) -> Bool {
+        performSync {
+            guard let registration = inboxRegistrations[inboxId],
+                  registration.routeMutationScope == relayScope,
+                  relayScope.isValidRouteMutationScope,
+                  mutationSequence == registration.lastRouteMutationSequence,
+                  mutationDigest.count == SHA256.byteCount else {
+                return false
+            }
+            return registration.lastRouteMutationDigest == mutationDigest
+        }
+    }
+
+    func resolveInboxRouteCapability(_ capability: InboxRouteCapabilityV2) -> String? {
+        performSync {
+            guard capability.isStructurallyValid,
+                  let record = inboxRouteCapabilities[inboxRouteCapabilityKey(capability)],
+                  record.revokedAt == nil,
+                  inboxRegistrations[record.inboxId] != nil,
+                  !isInboxRetiredLocked(inboxId: record.inboxId, now: Date()) else {
+                return nil
+            }
+            return record.inboxId
+        }
+    }
+
+    func inboxRouteCapabilityRecordCount() -> Int {
+        performSync { inboxRouteCapabilities.count }
+    }
+
+    func retireInbox(
+        inboxId: String,
+        requestDigest: Data,
+        now: Date = Date()
+    ) throws {
+        try performSync {
+            guard InboxAddress.isValid(inboxId),
+                  requestDigest.count == SHA256.byteCount,
+                  now.timeIntervalSince1970.isFinite else {
+                throw RelayStoreError.invalidInboxRetirement
+            }
+            if let existing = inboxRetirements[inboxId] {
+                guard existing.requestDigest == requestDigest else {
+                    throw RelayStoreError.invalidInboxRetirement
+                }
+                return
+            }
+
+            let hasReservedRegistrationSlot = inboxRegistrations[inboxId] != nil
+            if !hasReservedRegistrationSlot,
+               inboxRegistrations.count + inboxRetirements.count >= maxLifetimeInboxGenerations {
+                throw RelayStoreError.relayCapacityExceeded
+            }
+            mailboxes.removeValue(forKey: inboxId)
+            inboxRegistrations.removeValue(forKey: inboxId)
+            inboxRouteCapabilities = inboxRouteCapabilities.filter { $0.value.inboxId != inboxId }
+            inboxRetirements[inboxId] = InboxRetirementRecord(
+                retiredAt: now,
+                requestDigest: requestDigest
+            )
+            try saveLocked()
+        }
+    }
+
+    func isInboxRetired(inboxId: String, now: Date = Date()) -> Bool {
+        performSync {
+            _ = now
+            return inboxRetirements[inboxId] != nil
+        }
+    }
+
+    func isMatchingInboxRetirement(
+        inboxId: String,
+        requestDigest: Data,
+        now: Date = Date()
+    ) -> Bool {
+        performSync {
+            _ = now
+            return inboxRetirements[inboxId]?.requestDigest == requestDigest
+        }
+    }
+
+    func inboxRetirementTombstoneCount(now: Date = Date()) -> Int {
+        performSync {
+            _ = now
+            return inboxRetirements.count
+        }
+    }
+
+    @discardableResult
+    func registerMailboxConsumer(
+        inboxId: String,
+        consumerId: MailboxConsumerId,
+        consumerSigningPublicKey: Data,
+        sponsorConsumerId: MailboxConsumerId? = nil,
+        startingSequence: UInt64? = nil,
+        now: Date = Date()
+    ) throws -> MailboxConsumerRegistration {
+        try performSync {
+            guard consumerId.isStructurallyValid,
+                  consumerSigningPublicKey.count
+                    == OQSSignatureVerifier.mlDSA65PublicKeyBytes,
+                  now.timeIntervalSince1970.isFinite else {
+                throw MailboxSyncError.invalidConsumer
+            }
+            guard !isInboxRetiredLocked(inboxId: inboxId, now: now) else {
+                throw RelayStoreError.inboxRetired
+            }
+            guard var inboxRegistration = inboxRegistrations[inboxId] else {
+                throw MailboxSyncError.consumerNotFound
+            }
+            let hasActiveBoundConsumer = inboxRegistration.mailboxStream.consumers.values.contains {
+                $0.state == .active
+                    && $0.consumerSigningPublicKey?.count
+                        == OQSSignatureVerifier.mlDSA65PublicKeyBytes
+            }
+            let sponsorIsActiveAndBound: Bool = {
+                guard let sponsorConsumerId,
+                      sponsorConsumerId != consumerId,
+                      let sponsor = inboxRegistration.mailboxStream
+                        .consumers[sponsorConsumerId.rawValue] else {
+                    return false
+                }
+                return sponsor.state == .active
+                    && sponsor.consumerSigningPublicKey?.count
+                        == OQSSignatureVerifier.mlDSA65PublicKeyBytes
+            }()
+            if var existing = inboxRegistration.mailboxStream.consumers[consumerId.rawValue] {
+                guard existing.state == .active else {
+                    throw MailboxSyncError.consumerRevoked
+                }
+                if let boundKey = existing.consumerSigningPublicKey {
+                    guard boundKey == consumerSigningPublicKey else {
+                        throw MailboxSyncError.consumerSigningKeyMismatch
+                    }
+                } else {
+                    if hasActiveBoundConsumer {
+                        guard sponsorConsumerId != nil else {
+                            throw MailboxSyncError.consumerSponsorRequired
+                        }
+                        guard sponsorIsActiveAndBound else {
+                            throw MailboxSyncError.invalidConsumerSponsor
+                        }
+                    }
+                    // The handler validates both authority and possession
+                    // proofs, plus a sponsor when one exists, before allowing
+                    // a legacy snapshot to bind a key.
+                    existing.consumerSigningPublicKey = consumerSigningPublicKey
+                    inboxRegistration.mailboxStream.consumers[consumerId.rawValue] = existing
+                    inboxRegistrations[inboxId] = inboxRegistration
+                    try saveLocked()
+                }
+                return existing
+            }
+            if inboxRegistration.mailboxStream.isInstallationManaged {
+                guard hasActiveBoundConsumer else {
+                    throw MailboxSyncError.freshInboxRequired
+                }
+                guard sponsorConsumerId != nil else {
+                    throw MailboxSyncError.consumerSponsorRequired
+                }
+                guard sponsorIsActiveAndBound else {
+                    throw MailboxSyncError.invalidConsumerSponsor
+                }
+            } else if sponsorConsumerId != nil {
+                throw MailboxSyncError.invalidConsumerSponsor
+            }
+            let activeConsumerCount = inboxRegistration.mailboxStream.consumers.values.reduce(into: 0) {
+                if $1.state == .active { $0 += 1 }
+            }
+            guard activeConsumerCount < maxMailboxConsumersPerInbox else {
+                throw MailboxSyncError.invalidConsumer
+            }
+            Self.compactRevokedMailboxConsumers(
+                &inboxRegistration.mailboxStream.consumers,
+                maximumCount: maxMailboxConsumerHistoryPerInbox,
+                reservingSlots: 1
+            )
+            if !inboxRegistration.mailboxStream.isInstallationManaged,
+               inboxRegistration.mailboxStream.consumers.isEmpty {
+                // A legacy acknowledgement can leave arbitrary holes in the
+                // relay-local sequence. No v2 cursor has observed those
+                // positions yet, so normalize the retained backlog exactly
+                // once before activating the first installation consumer.
+                var retainedLegacyEnvelopes = mailboxes[inboxId, default: []]
+                for index in retainedLegacyEnvelopes.indices {
+                    retainedLegacyEnvelopes[index].sequence = UInt64(index) + 1
+                }
+                mailboxes[inboxId] = retainedLegacyEnvelopes
+                inboxRegistration.mailboxStream.nextSequence =
+                    UInt64(retainedLegacyEnvelopes.count) + 1
+                inboxRegistration.mailboxStream.retentionFloor = 0
+            }
+            let start = startingSequence ?? inboxRegistration.mailboxStream.highWatermark
+            guard start >= inboxRegistration.mailboxStream.retentionFloor else {
+                throw MailboxSyncError.cursorExpired(
+                    retentionFloor: inboxRegistration.mailboxStream.retentionFloor
+                )
+            }
+            guard start <= inboxRegistration.mailboxStream.highWatermark else {
+                throw MailboxSyncError.invalidCursor
+            }
+            let registration = MailboxConsumerRegistration(
+                consumerId: consumerId,
+                consumerSigningPublicKey: consumerSigningPublicKey,
+                committedSequence: start,
+                registeredAt: now
+            )
+            inboxRegistration.mailboxStream.consumers[consumerId.rawValue] = registration
+            inboxRegistration.mailboxStream.isInstallationManaged = true
+            inboxRegistrations[inboxId] = inboxRegistration
+            try saveLocked()
+            return registration
+        }
+    }
+
+    func hasMailboxConsumerBindings(inboxId: String) -> Bool {
+        performSync {
+            inboxRegistrations[inboxId]?.mailboxStream.isInstallationManaged ?? false
+        }
+    }
+
+    func mailboxConsumers(inboxId: String) -> [MailboxConsumerRegistration] {
+        performSync {
+            guard let consumers = inboxRegistrations[inboxId]?.mailboxStream.consumers else {
+                return []
+            }
+            return consumers.values.sorted {
+                $0.consumerId.rawValue < $1.consumerId.rawValue
+            }
+        }
+    }
+
+    func mailboxConsumer(
+        inboxId: String,
+        consumerId: MailboxConsumerId
+    ) -> MailboxConsumerRegistration? {
+        performSync {
+            guard consumerId.isStructurallyValid else { return nil }
+            return inboxRegistrations[inboxId]?
+                .mailboxStream.consumers[consumerId.rawValue]
+        }
+    }
+
+    func mailboxConsumerSigningPublicKey(
+        inboxId: String,
+        consumerId: MailboxConsumerId
+    ) -> Data? {
+        performSync {
+            guard consumerId.isStructurallyValid,
+                  let key = inboxRegistrations[inboxId]?
+                    .mailboxStream.consumers[consumerId.rawValue]?
+                    .consumerSigningPublicKey,
+                  key.count == OQSSignatureVerifier.mlDSA65PublicKeyBytes else {
+                return nil
+            }
+            return key
+        }
+    }
+
+    func activeMailboxConsumerSigningPublicKey(
+        inboxId: String,
+        consumerId: MailboxConsumerId
+    ) -> Data? {
+        performSync {
+            guard consumerId.isStructurallyValid,
+                  let consumer = inboxRegistrations[inboxId]?
+                    .mailboxStream.consumers[consumerId.rawValue],
+                  consumer.state == .active,
+                  let key = consumer.consumerSigningPublicKey,
+                  key.count == OQSSignatureVerifier.mlDSA65PublicKeyBytes else {
+                return nil
+            }
+            return key
+        }
+    }
+
+    func syncMailbox(
+        inboxId: String,
+        consumerId: MailboxConsumerId,
+        cursor: MailboxCursor?,
+        maxCount: Int?
+    ) throws -> MailboxSyncBatch {
+        try performSync {
+            guard consumerId.isStructurallyValid else {
+                throw MailboxSyncError.invalidConsumer
+            }
+            guard let inboxRegistration = inboxRegistrations[inboxId],
+                  let consumer = inboxRegistration.mailboxStream.consumers[consumerId.rawValue] else {
+                throw MailboxSyncError.consumerNotFound
+            }
+            guard consumer.state == .active else {
+                throw MailboxSyncError.consumerRevoked
+            }
+            guard consumer.consumerSigningPublicKey?.count
+                    == OQSSignatureVerifier.mlDSA65PublicKeyBytes else {
+                throw MailboxSyncError.consumerCredentialMissing
+            }
+            let stream = inboxRegistration.mailboxStream
+            guard stream.cursorAuthenticationKey.count == 32 else {
+                throw MailboxSyncError.invalidCursor
+            }
+            let startSequence: UInt64
+            if let cursor {
+                guard let decoded = MailboxCursorAuthenticator.sequence(
+                    from: cursor,
+                    inboxId: inboxId,
+                    consumerId: consumerId,
+                    keyData: stream.cursorAuthenticationKey
+                ) else {
+                    throw MailboxSyncError.invalidCursor
+                }
+                startSequence = decoded
+            } else {
+                startSequence = consumer.committedSequence
+            }
+            guard startSequence >= stream.retentionFloor else {
+                throw MailboxSyncError.cursorExpired(retentionFloor: stream.retentionFloor)
+            }
+            guard startSequence >= consumer.committedSequence else {
+                throw MailboxSyncError.cursorRollback
+            }
+            guard startSequence <= stream.highWatermark else {
+                throw MailboxSyncError.invalidCursor
+            }
+
+            let count = max(1, min(maxCount ?? 100, maxMailboxSyncPage))
+            let eligible = mailboxes[inboxId, default: []]
+                .filter { $0.sequence > startSequence }
+                .sorted { $0.sequence < $1.sequence }
+            let selected = Array(eligible.prefix(count))
+            let events = selected.map {
+                SequencedEnvelope(sequence: $0.sequence, envelope: $0.envelope, storedAt: $0.storedAt)
+            }
+            let nextSequence = events.last?.sequence ?? startSequence
+            return MailboxSyncBatch(
+                events: events,
+                nextCursor: MailboxCursorAuthenticator.make(
+                    inboxId: inboxId,
+                    consumerId: consumerId,
+                    sequence: nextSequence,
+                    keyData: stream.cursorAuthenticationKey
+                ),
+                nextSequence: nextSequence,
+                highWatermark: stream.highWatermark,
+                retentionFloor: stream.retentionFloor,
+                hasMore: eligible.count > selected.count
+            )
+        }
+    }
+
+    @discardableResult
+    func commitMailboxCursor(
+        inboxId: String,
+        consumerId: MailboxConsumerId,
+        cursor: MailboxCursor,
+        sequence: UInt64
+    ) throws -> MailboxConsumerRegistration {
+        try performSync {
+            guard consumerId.isStructurallyValid else {
+                throw MailboxSyncError.invalidConsumer
+            }
+            guard var inboxRegistration = inboxRegistrations[inboxId],
+                  var consumer = inboxRegistration.mailboxStream.consumers[consumerId.rawValue] else {
+                throw MailboxSyncError.consumerNotFound
+            }
+            guard consumer.state == .active else {
+                throw MailboxSyncError.consumerRevoked
+            }
+            guard consumer.consumerSigningPublicKey?.count
+                    == OQSSignatureVerifier.mlDSA65PublicKeyBytes else {
+                throw MailboxSyncError.consumerCredentialMissing
+            }
+            guard inboxRegistration.mailboxStream.cursorAuthenticationKey.count == 32 else {
+                throw MailboxSyncError.invalidCursor
+            }
+            guard let authenticatedSequence = MailboxCursorAuthenticator.sequence(
+                from: cursor,
+                inboxId: inboxId,
+                consumerId: consumerId,
+                keyData: inboxRegistration.mailboxStream.cursorAuthenticationKey
+            ), authenticatedSequence == sequence else {
+                throw MailboxSyncError.invalidCursor
+            }
+            guard sequence >= consumer.committedSequence else {
+                throw MailboxSyncError.cursorRollback
+            }
+            guard sequence >= inboxRegistration.mailboxStream.retentionFloor else {
+                throw MailboxSyncError.cursorExpired(
+                    retentionFloor: inboxRegistration.mailboxStream.retentionFloor
+                )
+            }
+            guard sequence <= inboxRegistration.mailboxStream.highWatermark else {
+                throw MailboxSyncError.invalidCursor
+            }
+            consumer.committedSequence = sequence
+            inboxRegistration.mailboxStream.consumers[consumerId.rawValue] = consumer
+            inboxRegistrations[inboxId] = inboxRegistration
+            advanceMailboxRetentionFloorLocked(inboxId: inboxId)
+            try saveLocked()
+            return consumer
+        }
+    }
+
+    @discardableResult
+    func revokeMailboxConsumer(
+        inboxId: String,
+        consumerId: MailboxConsumerId,
+        now: Date = Date()
+    ) throws -> MailboxConsumerRegistration {
+        try performSync {
+            guard consumerId.isStructurallyValid, now.timeIntervalSince1970.isFinite else {
+                throw MailboxSyncError.invalidConsumer
+            }
+            guard var inboxRegistration = inboxRegistrations[inboxId],
+                  var consumer = inboxRegistration.mailboxStream.consumers[consumerId.rawValue] else {
+                throw MailboxSyncError.consumerNotFound
+            }
+            if consumer.state == .revoked {
+                return consumer
+            }
+            consumer.state = .revoked
+            consumer.revokedAt = now
+            inboxRegistration.mailboxStream.consumers[consumerId.rawValue] = consumer
+            inboxRegistrations[inboxId] = inboxRegistration
+            advanceMailboxRetentionFloorLocked(inboxId: inboxId)
+            try saveLocked()
+            return consumer
         }
     }
 
@@ -394,7 +1131,15 @@ final class RelayStore {
                 return 0
             }
             let inbox = mailboxes[inboxId, default: []]
-            let remaining = inbox.filter { !ids.contains($0.envelope.id) }
+            let protectedFloor = inboxRegistrations[inboxId]?.mailboxStream.consumers.values.compactMap {
+                $0.state == .active ? $0.committedSequence : nil
+            }.min()
+            let remaining = inbox.filter { record in
+                guard ids.contains(record.envelope.id) else { return true }
+                guard record.pendingGroupRecipientFingerprints == nil else { return true }
+                guard let protectedFloor else { return false }
+                return record.sequence > protectedFloor
+            }
             let removed = inbox.count - remaining.count
             if remaining.isEmpty {
                 mailboxes.removeValue(forKey: inboxId)
@@ -423,6 +1168,7 @@ final class RelayStore {
             var removedForRecipient = 0
             var updated = false
             var remaining: [StoredEnvelope] = []
+            let protectsV2Consumers = inboxRegistrations[inboxId]?.mailboxStream.hasActiveConsumers ?? false
             for var record in mailboxes[inboxId, default: []] {
                 guard ids.contains(record.envelope.id),
                       var pending = record.pendingGroupRecipientFingerprints else {
@@ -435,6 +1181,10 @@ final class RelayStore {
                 }
                 if !pending.isEmpty {
                     record.pendingGroupRecipientFingerprints = pending
+                    remaining.append(record)
+                } else if protectsV2Consumers,
+                          record.sequence > (inboxRegistrations[inboxId]?.mailboxStream.retentionFloor ?? 0) {
+                    record.pendingGroupRecipientFingerprints = []
                     remaining.append(record)
                 } else {
                     updated = true
@@ -740,12 +1490,12 @@ final class RelayStore {
             guard actorProofReplayCache[key] == nil else {
                 return false
             }
-            if actorProofReplayCache.count >= maxActorProofReplayEntries,
-               let oldest = actorProofReplayCache.min(by: { $0.value < $1.value })?.key {
-                actorProofReplayCache.removeValue(forKey: oldest)
+            // Unexpired nonces are never evicted under pressure. Failing
+            // closed preserves replay protection during saturation.
+            guard actorProofReplayCache.count < maxActorProofReplayEntries else {
+                return false
             }
             actorProofReplayCache[key] = now
-            try saveActorProofReplayCacheLocked()
             return true
         }
     }
@@ -757,6 +1507,7 @@ final class RelayStore {
         memberFingerprints: [String],
         creatorProfile: RelayGroupMemberProfile? = nil,
         memberProfiles: [RelayGroupMemberProfile]? = nil,
+        invitedFingerprints: [String] = [],
         initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil
     ) throws -> RelayGroupDescriptor {
         try performSync {
@@ -782,10 +1533,13 @@ final class RelayStore {
                 .filter { !$0.isEmpty })
             members.formUnion(profileByFingerprint.keys)
             members.insert(creator)
-            guard members.count >= 2 else {
+            let normalizedInvitedFingerprints = Set(invitedFingerprints.map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }.filter { !$0.isEmpty && $0 != creator && !members.contains($0) })
+            guard members.count >= 2 || !normalizedInvitedFingerprints.isEmpty else {
                 throw RelayStoreError.notEnoughGroupMembers
             }
-            guard members.count <= maxGroupMembers else {
+            guard members.union(normalizedInvitedFingerprints).count <= maxGroupMembers else {
                 throw RelayStoreError.groupCapacityExceeded
             }
             guard groups.count < maxGroups,
@@ -797,6 +1551,10 @@ final class RelayStore {
             guard groups[descriptorId] == nil else {
                 throw RelayStoreError.groupCapacityExceeded
             }
+            try validateInvitationBucketsCanAdd(
+                groupId: descriptorId,
+                fingerprints: normalizedInvitedFingerprints
+            )
             let descriptorInboxId = InboxAddress.generate()
             let descriptorMembers = members.sorted().map {
                 makeGroupMember(
@@ -833,6 +1591,21 @@ final class RelayStore {
                 updatedAt: now
             )
             groups[descriptor.id] = descriptor
+            for fingerprint in normalizedInvitedFingerprints.sorted() {
+                insertGroupInvitation(
+                    RelayGroupInvitation(
+                        groupId: descriptor.id,
+                        title: descriptor.title,
+                        createdByFingerprint: descriptor.createdByFingerprint,
+                        invitedFingerprint: fingerprint,
+                        inboxId: descriptor.inboxId,
+                        epoch: descriptor.epoch,
+                        createdAt: descriptor.createdAt,
+                        updatedAt: descriptor.updatedAt,
+                        invitedAt: now
+                    )
+                )
+            }
             try saveLocked()
             return descriptor
         }
@@ -858,6 +1631,85 @@ final class RelayStore {
                 return lhs.createdAt > rhs.createdAt
             }
             return Array(list.prefix(min(500, max(0, limit ?? 500))))
+        }
+    }
+
+    func listGroupInvitations(_ request: ListGroupInvitationsRequest) -> [RelayGroupInvitation] {
+        performSync {
+            let fingerprint = request.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !fingerprint.isEmpty else { return [] }
+            var invitations = groupInvitations[fingerprint, default: []].filter { invitation in
+                groups[invitation.groupId] != nil
+            }
+            invitations.sort { lhs, rhs in
+                if lhs.invitedAt != rhs.invitedAt {
+                    return lhs.invitedAt > rhs.invitedAt
+                }
+                return lhs.updatedAt > rhs.updatedAt
+            }
+            return Array(invitations.prefix(min(500, max(0, request.limit ?? 500))))
+        }
+    }
+
+    func hasGroupInvitation(groupId: UUID, invitedFingerprint: String) -> Bool {
+        performSync {
+            let fingerprint = invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !fingerprint.isEmpty else { return false }
+            return groupInvitations[fingerprint, default: []].contains { invitation in
+                invitation.groupId == groupId && groups[groupId] != nil
+            }
+        }
+    }
+
+    func inviteGroupMembers(_ request: InviteGroupMembersRequest) throws -> RelayGroupDescriptor {
+        try performSync {
+            guard var group = groups[request.groupId] else {
+                throw RelayStoreError.groupNotFound
+            }
+            let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !actor.isEmpty else {
+                throw RelayStoreError.invalidFingerprint
+            }
+            guard actor == group.createdByFingerprint else {
+                throw RelayStoreError.unauthorizedGroupMutation
+            }
+
+            let currentMembers = Set(group.members.map(\.fingerprint))
+            let requestedInvitees = Set(request.normalizedInvitedFingerprints.filter { fingerprint in
+                fingerprint != group.createdByFingerprint && !currentMembers.contains(fingerprint)
+            })
+            let existingInvitees = groupInvitationFingerprintsByGroup[group.id, default: []]
+            let invitees = requestedInvitees.subtracting(existingInvitees)
+            guard !invitees.isEmpty else {
+                return group
+            }
+            try validateGroupParticipantCapacity(
+                groupId: group.id,
+                memberFingerprints: currentMembers,
+                addingPendingInvitees: invitees
+            )
+            try validateInvitationBucketsCanAdd(groupId: group.id, fingerprints: invitees)
+
+            let now = Date()
+            group.updatedAt = now
+            groups[group.id] = group
+            for fingerprint in invitees.sorted() {
+                insertGroupInvitation(
+                    RelayGroupInvitation(
+                        groupId: group.id,
+                        title: group.title,
+                        createdByFingerprint: group.createdByFingerprint,
+                        invitedFingerprint: fingerprint,
+                        inboxId: group.inboxId,
+                        epoch: group.epoch,
+                        createdAt: group.createdAt,
+                        updatedAt: group.updatedAt,
+                        invitedAt: now
+                    )
+                )
+            }
+            try saveLocked()
+            return group
         }
     }
 
@@ -946,9 +1798,22 @@ final class RelayStore {
                     changed = true
                 }
             }
-            guard members.count <= maxGroupMembers else {
-                throw RelayStoreError.groupCapacityExceeded
+            let projectedMemberFingerprints = Set(members.keys)
+            var consumedInvitationFingerprints = groupInvitationFingerprintsByGroup[group.id, default: []]
+                .intersection(projectedMemberFingerprints)
+            for pendingRequest in groupJoinRequests[group.id, default: []]
+            where projectedMemberFingerprints.contains(pendingRequest.requester.fingerprint) {
+                if let invitedFingerprint = pendingRequest.invitedFingerprint?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !invitedFingerprint.isEmpty {
+                    consumedInvitationFingerprints.insert(invitedFingerprint)
+                }
             }
+            try validateGroupParticipantCapacity(
+                groupId: group.id,
+                memberFingerprints: projectedMemberFingerprints,
+                removingPendingInvitees: consumedInvitationFingerprints
+            )
             guard members.count >= 2 else {
                 throw RelayStoreError.notEnoughGroupMembers
             }
@@ -975,6 +1840,9 @@ final class RelayStore {
                     group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
                 )
                 groups[group.id] = group
+                for invitedFingerprint in consumedInvitationFingerprints {
+                    removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
+                }
                 if var pending = groupJoinRequests[group.id] {
                     pending.removeAll { pendingRequest in
                         group.members.contains { $0.fingerprint == pendingRequest.requester.fingerprint }
@@ -1122,6 +1990,7 @@ final class RelayStore {
             }
             groups.removeValue(forKey: request.groupId)
             groupJoinRequests.removeValue(forKey: request.groupId)
+            removeGroupInvitations(groupId: request.groupId)
             try saveLocked()
         }
     }
@@ -1133,6 +2002,12 @@ final class RelayStore {
             }
             guard let requester = normalizedMemberProfile(request.requesterProfile) else {
                 throw RelayStoreError.invalidFingerprint
+            }
+            let invitedFingerprint = request.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let invitedFingerprint, !invitedFingerprint.isEmpty {
+                guard groupInvitations[invitedFingerprint, default: []].contains(where: { $0.groupId == group.id }) else {
+                    throw RelayStoreError.unauthorizedGroupMutation
+                }
             }
             if group.members.contains(where: { $0.fingerprint == requester.fingerprint }) {
                 throw RelayStoreError.alreadyGroupMember
@@ -1146,6 +2021,9 @@ final class RelayStore {
                     id: existing.id,
                     groupId: group.id,
                     requester: requester,
+                    invitedFingerprint: invitedFingerprint?.isEmpty == false
+                        ? invitedFingerprint
+                        : existing.invitedFingerprint,
                     requestedAt: now
                 )
                 pending[existingIndex] = refreshed
@@ -1156,9 +2034,9 @@ final class RelayStore {
             }
 
             let joinRequest = RelayGroupJoinRequest(
-                id: UUID(),
                 groupId: group.id,
                 requester: requester,
+                invitedFingerprint: invitedFingerprint?.isEmpty == false ? invitedFingerprint : nil,
                 requestedAt: now
             )
             pending.insert(joinRequest, at: 0)
@@ -1168,6 +2046,97 @@ final class RelayStore {
             groupJoinRequests[group.id] = pending
             try saveLocked()
             return joinRequest
+        }
+    }
+
+    func acceptGroupInvitation(_ request: RequestGroupJoinRequest) throws -> RelayGroupDescriptor {
+        try performSync {
+            guard var group = groups[request.groupId] else {
+                throw RelayStoreError.groupNotFound
+            }
+            guard let requester = normalizedMemberProfile(request.requesterProfile) else {
+                throw RelayStoreError.invalidFingerprint
+            }
+            let invitedFingerprint = request.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !invitedFingerprint.isEmpty,
+                  groupInvitations[invitedFingerprint, default: []].contains(where: { $0.groupId == group.id }) else {
+                throw RelayStoreError.unauthorizedGroupMutation
+            }
+            if group.members.contains(where: { $0.fingerprint == requester.fingerprint }) {
+                removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
+                try saveLocked()
+                return group
+            }
+            guard let commit = request.groupCommit,
+                  commit.operation == .joinApprove,
+                  commit.groupId == group.id,
+                  commit.actorFingerprint == requester.fingerprint,
+                  commit.baseEpoch == group.epoch,
+                  commit.previousTranscriptHash == group.mlsEpochState.confirmedTranscriptHash,
+                  commit.title == nil,
+                  Set(commit.addMemberFingerprints) == Set([requester.fingerprint]),
+                  commit.addMemberProfiles == [requester],
+                  commit.removeMemberFingerprints.isEmpty else {
+                throw RelayStoreError.invalidGroupCommit
+            }
+
+            let memberProfiles = projectedGroupMemberProfiles(
+                currentMembers: group.members,
+                addProfiles: [requester]
+            )
+            guard group.epoch < UInt64.max else {
+                throw RelayStoreError.invalidGroupCommit
+            }
+            try validateRatchetSecretDistribution(
+                commit.ratchetSecretDistribution,
+                groupId: group.id,
+                epoch: group.epoch + 1,
+                operation: .joinApprove,
+                memberFingerprints: memberProfiles.map(\.fingerprint)
+            )
+
+            var memberMap = Dictionary(uniqueKeysWithValues: group.members.map { ($0.fingerprint, $0) })
+            memberMap[requester.fingerprint] = makeGroupMember(
+                fingerprint: requester.fingerprint,
+                existing: nil,
+                profile: requester,
+                joinedAt: Date()
+            )
+            try validateGroupParticipantCapacity(
+                groupId: group.id,
+                memberFingerprints: Set(memberMap.keys),
+                removingPendingInvitees: [invitedFingerprint]
+            )
+
+            let now = Date()
+            let nextEpochState = try group.mlsEpochState.advancing(
+                title: group.title,
+                inboxId: group.inboxId,
+                actorFingerprint: requester.fingerprint,
+                members: memberMap.values.sorted { $0.fingerprint < $1.fingerprint },
+                operation: .joinApprove,
+                committedAt: now,
+                ratchetSecretDistribution: commit.ratchetSecretDistribution
+            )
+            group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
+            group.epoch = nextEpochState.epoch
+            group.updatedAt = now
+            group.mlsEpochState = nextEpochState
+            group.mlsEpochHistory = boundedGroupEpochHistory(
+                group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
+            )
+            groups[group.id] = group
+            removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
+            if var pending = groupJoinRequests[group.id] {
+                pending.removeAll { $0.requester.fingerprint == requester.fingerprint }
+                if pending.isEmpty {
+                    groupJoinRequests.removeValue(forKey: group.id)
+                } else {
+                    groupJoinRequests[group.id] = pending
+                }
+            }
+            try saveLocked()
+            return group
         }
     }
 
@@ -1229,6 +2198,10 @@ final class RelayStore {
             } else {
                 groupJoinRequests[group.id] = refreshedPending
             }
+            if updated.members.contains(where: { $0.fingerprint == joinRequest.requester.fingerprint }),
+               let invitedFingerprint = joinRequest.invitedFingerprint {
+                removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
+            }
             try saveLocked()
             return updated
         }
@@ -1258,6 +2231,98 @@ final class RelayStore {
                 groupJoinRequests[group.id] = pending
             }
             try saveLocked()
+        }
+    }
+
+    private func removeGroupInvitation(groupId: UUID, invitedFingerprint: String) {
+        let fingerprint = invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fingerprint.isEmpty, var invitations = groupInvitations[fingerprint] else {
+            return
+        }
+        invitations.removeAll { $0.groupId == groupId }
+        if invitations.isEmpty {
+            groupInvitations.removeValue(forKey: fingerprint)
+        } else {
+            groupInvitations[fingerprint] = invitations
+        }
+        groupInvitationFingerprintsByGroup[groupId]?.remove(fingerprint)
+        if groupInvitationFingerprintsByGroup[groupId]?.isEmpty == true {
+            groupInvitationFingerprintsByGroup.removeValue(forKey: groupId)
+        }
+    }
+
+    private func removeGroupInvitations(groupId: UUID) {
+        for fingerprint in groupInvitationFingerprintsByGroup[groupId, default: []] {
+            removeGroupInvitation(groupId: groupId, invitedFingerprint: fingerprint)
+        }
+    }
+
+    private func insertGroupInvitation(_ invitation: RelayGroupInvitation) {
+        let fingerprint = invitation.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fingerprint.isEmpty,
+              !groupInvitations[fingerprint, default: []].contains(where: { $0.groupId == invitation.groupId }) else {
+            return
+        }
+        groupInvitations[fingerprint, default: []].insert(invitation, at: 0)
+        groupInvitationFingerprintsByGroup[invitation.groupId, default: []].insert(fingerprint)
+    }
+
+    private func validateInvitationBucketsCanAdd(
+        groupId: UUID,
+        fingerprints: Set<String>
+    ) throws {
+        for fingerprint in fingerprints {
+            let existingGroupIds = Set(groupInvitations[fingerprint, default: []].map(\.groupId))
+            guard existingGroupIds.contains(groupId)
+                    || existingGroupIds.count < maxGroupInvitationsPerIdentity else {
+                throw RelayStoreError.groupCapacityExceeded
+            }
+        }
+    }
+
+    private func validateGroupParticipantCapacity(
+        groupId: UUID,
+        memberFingerprints: Set<String>,
+        addingPendingInvitees: Set<String> = [],
+        removingPendingInvitees: Set<String> = []
+    ) throws {
+        var pendingInvitees = groupInvitationFingerprintsByGroup[groupId, default: []]
+        pendingInvitees.formUnion(addingPendingInvitees)
+        pendingInvitees.subtract(removingPendingInvitees)
+        pendingInvitees.subtract(memberFingerprints)
+        guard memberFingerprints.union(pendingInvitees).count <= maxGroupMembers else {
+            throw RelayStoreError.groupCapacityExceeded
+        }
+    }
+
+    private func normalizeGroupInvitationsAfterLoad() {
+        let candidates = groupInvitations.values
+            .flatMap { $0 }
+            .sorted { lhs, rhs in
+                if lhs.invitedAt != rhs.invitedAt {
+                    return lhs.invitedAt > rhs.invitedAt
+                }
+                return lhs.id.uuidString < rhs.id.uuidString
+            }
+        groupInvitations = [:]
+        groupInvitationFingerprintsByGroup = [:]
+        for invitation in candidates {
+            let fingerprint = invitation.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !fingerprint.isEmpty,
+                  let group = groups[invitation.groupId],
+                  !group.members.contains(where: { $0.fingerprint == fingerprint }),
+                  !groupInvitations[fingerprint, default: []].contains(where: {
+                      $0.groupId == invitation.groupId
+                  }),
+                  groupInvitations[fingerprint, default: []].count < maxGroupInvitationsPerIdentity else {
+                continue
+            }
+            let activeFingerprints = Set(group.members.map(\.fingerprint))
+            let pendingFingerprints = groupInvitationFingerprintsByGroup[group.id, default: []]
+            guard activeFingerprints.union(pendingFingerprints).count < maxGroupMembers else {
+                continue
+            }
+            insertGroupInvitation(invitation)
         }
     }
 
@@ -1306,6 +2371,107 @@ final class RelayStore {
         )
     }
 
+    private func projectedGroupMemberProfiles(
+        currentMembers: [RelayGroupMember],
+        addProfiles: [RelayGroupMemberProfile]
+    ) -> [RelayGroupMemberProfile] {
+        var profiles = Dictionary(uniqueKeysWithValues: currentMembers.map { member in
+            (
+                member.fingerprint,
+                RelayGroupMemberProfile(
+                    fingerprint: member.fingerprint,
+                    displayName: member.displayName,
+                    inboxId: member.inboxId,
+                    relay: member.relay,
+                    signingPublicKey: member.signingPublicKey,
+                    agreementPublicKey: member.agreementPublicKey
+                )
+            )
+        })
+        for profile in addProfiles {
+            let fingerprint = profile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !fingerprint.isEmpty else { continue }
+            profiles[fingerprint] = RelayGroupMemberProfile(
+                fingerprint: fingerprint,
+                displayName: profile.displayName,
+                inboxId: profile.inboxId,
+                relay: profile.relay,
+                signingPublicKey: profile.signingPublicKey,
+                agreementPublicKey: profile.agreementPublicKey
+            )
+        }
+        return profiles.values.sorted { $0.fingerprint < $1.fingerprint }
+    }
+
+    private func nextMailboxSequenceLocked(inboxId: String) throws -> UInt64 {
+        let storedNext = try nextSequence(after: mailboxes[inboxId, default: []])
+        var candidate = storedNext
+        if let streamNext = inboxRegistrations[inboxId]?.mailboxStream.nextSequence {
+            candidate = max(candidate, streamNext)
+        }
+        guard candidate > 0, candidate < UInt64.max else {
+            throw MailboxSyncError.sequenceOverflow
+        }
+        if var registration = inboxRegistrations[inboxId] {
+            registration.mailboxStream.nextSequence = candidate + 1
+            inboxRegistrations[inboxId] = registration
+        }
+        return candidate
+    }
+
+    private func nextSequence(after records: [StoredEnvelope]) throws -> UInt64 {
+        guard let maximum = records.map(\.sequence).max() else { return 1 }
+        guard maximum < UInt64.max else {
+            throw MailboxSyncError.sequenceOverflow
+        }
+        return max(1, maximum + 1)
+    }
+
+    private func advanceMailboxRetentionFloorLocked(inboxId: String) {
+        guard var registration = inboxRegistrations[inboxId] else { return }
+        let activeConsumers = registration.mailboxStream.consumers.values.filter { $0.state == .active }
+        guard let newFloor = activeConsumers.map(\.committedSequence).min(),
+              newFloor > registration.mailboxStream.retentionFloor else {
+            return
+        }
+        registration.mailboxStream.retentionFloor = newFloor
+        inboxRegistrations[inboxId] = registration
+        let retained = mailboxes[inboxId, default: []].filter { record in
+            if record.sequence > newFloor {
+                return true
+            }
+            return !(record.pendingGroupRecipientFingerprints?.isEmpty ?? true)
+        }
+        if retained.isEmpty {
+            mailboxes.removeValue(forKey: inboxId)
+        } else {
+            mailboxes[inboxId] = retained
+        }
+    }
+
+    private func normalizeMailboxSequencesLocked() {
+        for inboxId in mailboxes.keys.sorted() {
+            var records = mailboxes[inboxId, default: []]
+            var previous: UInt64 = 0
+            for index in records.indices {
+                if records[index].sequence == 0 || records[index].sequence <= previous {
+                    guard previous < UInt64.max else { break }
+                    records[index].sequence = previous + 1
+                }
+                previous = records[index].sequence
+            }
+            mailboxes[inboxId] = records
+            if var registration = inboxRegistrations[inboxId] {
+                let storedNext = previous == UInt64.max ? UInt64.max : previous + 1
+                registration.mailboxStream.nextSequence = max(
+                    registration.mailboxStream.nextSequence,
+                    max(1, storedNext)
+                )
+                inboxRegistrations[inboxId] = registration
+            }
+        }
+    }
+
     private func performSync<T>(_ block: () throws -> T) rethrows -> T {
         if DispatchQueue.getSpecific(key: queueKey) != nil {
             return try block()
@@ -1319,31 +2485,37 @@ final class RelayStore {
         guard let fileURL else {
             return
         }
-        enforceLimitsLocked()
-        pruneAttachmentsLocked(now: Date())
-        prunePrekeysLocked(now: Date())
-        try SQLiteRelayStateStore.saveState(currentSnapshot(), at: sqliteStoreURL(for: fileURL))
-    }
-
-    private func saveActorProofReplayCacheLocked() throws {
-        guard let fileURL else {
-            return
+        do {
+            if persistenceFailuresRemainingForTesting > 0 {
+                persistenceFailuresRemainingForTesting -= 1
+                throw RelayStorePersistenceError.injectedFailure
+            }
+            enforceLimitsLocked()
+            pruneAttachmentsLocked(now: Date())
+            prunePrekeysLocked(now: Date())
+            let snapshot = currentSnapshot()
+            try SQLiteRelayStateStore.saveState(snapshot, at: sqliteStoreURL(for: fileURL))
+            lastDurableSnapshot = snapshot
+        } catch {
+            restoreSnapshot(lastDurableSnapshot)
+            throw error
         }
-        try SQLiteRelayStateStore.saveActorProofReplayCache(
-            actorProofReplayCache,
-            at: sqliteStoreURL(for: fileURL)
-        )
     }
 
     private func applySnapshot(_ snapshot: RelayStoreSnapshot) {
         mailboxes = snapshot.mailboxes
         inboxRegistrations = snapshot.inboxRegistrations
+        inboxRetirements = snapshot.inboxRetirements
+        inboxRouteCapabilities = snapshot.inboxRouteCapabilities
+        normalizeMailboxSequencesLocked()
         attachments = snapshot.attachments
         prekeyBundles = snapshot.prekeyBundles
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
         groups = snapshot.groups
         groupJoinRequests = snapshot.groupJoinRequests
+        groupInvitations = snapshot.groupInvitations
+        normalizeGroupInvitationsAfterLoad()
         actorProofReplayCache = snapshot.actorProofReplayCache.filter {
             $0.value > Date().addingTimeInterval(-300)
         }
@@ -1351,18 +2523,39 @@ final class RelayStore {
         pruneAttachmentsLocked(now: Date())
         prunePrekeysLocked(now: Date())
         pruneFederationNodesLocked(now: Date())
+        enforceLoadedInboxRetirementsLocked()
+        normalizeInboxRouteCapabilitiesAfterLoadLocked()
+    }
+
+    private func restoreSnapshot(_ snapshot: RelayStoreSnapshot) {
+        mailboxes = snapshot.mailboxes
+        inboxRegistrations = snapshot.inboxRegistrations
+        inboxRetirements = snapshot.inboxRetirements
+        inboxRouteCapabilities = snapshot.inboxRouteCapabilities
+        attachments = snapshot.attachments
+        prekeyBundles = snapshot.prekeyBundles
+        federationNodes = snapshot.federationNodes
+        coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
+        groups = snapshot.groups
+        groupJoinRequests = snapshot.groupJoinRequests
+        groupInvitations = snapshot.groupInvitations
+        normalizeGroupInvitationsAfterLoad()
+        actorProofReplayCache = snapshot.actorProofReplayCache
     }
 
     private func currentSnapshot() -> RelayStoreSnapshot {
         RelayStoreSnapshot(
             mailboxes: mailboxes,
             inboxRegistrations: inboxRegistrations,
+            inboxRetirements: inboxRetirements,
+            inboxRouteCapabilities: inboxRouteCapabilities,
             attachments: attachments,
             prekeyBundles: prekeyBundles,
             federationNodes: federationNodes,
             coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys,
             groups: groups,
             groupJoinRequests: groupJoinRequests,
+            groupInvitations: groupInvitations,
             actorProofReplayCache: actorProofReplayCache
         )
     }
@@ -1394,6 +2587,108 @@ final class RelayStore {
         }
     }
 
+    private func isInboxRetiredLocked(inboxId: String, now: Date) -> Bool {
+        _ = now
+        return inboxRetirements[inboxId] != nil
+    }
+
+    private func enforceLoadedInboxRetirementsLocked() {
+        for inboxId in Array(inboxRetirements.keys) {
+            mailboxes.removeValue(forKey: inboxId)
+            inboxRegistrations.removeValue(forKey: inboxId)
+            inboxRouteCapabilities = inboxRouteCapabilities.filter { $0.value.inboxId != inboxId }
+        }
+    }
+
+    private func inboxRouteCapabilityKey(_ capability: InboxRouteCapabilityV2) -> String {
+        capability.relayRegistryDigest.base64EncodedString()
+    }
+
+    private func evictOldestRevokedInboxRouteCapabilityIfAtLimitLocked(inboxId: String) {
+        let revokedForInbox = inboxRouteCapabilities
+            .filter { $0.value.inboxId == inboxId && $0.value.revokedAt != nil }
+            .sorted {
+                ($0.value.revokedAt ?? $0.value.createdAt)
+                    < ($1.value.revokedAt ?? $1.value.createdAt)
+            }
+        if revokedForInbox.count >= maxRevokedInboxRouteCapabilitiesPerInbox,
+           let oldest = revokedForInbox.first?.key {
+            inboxRouteCapabilities.removeValue(forKey: oldest)
+        }
+    }
+
+    private func makeRoomForInboxRouteCapabilityRecordLocked(
+        inboxId: String,
+        addingRevokedRecord: Bool
+    ) throws {
+        if addingRevokedRecord {
+            evictOldestRevokedInboxRouteCapabilityIfAtLimitLocked(inboxId: inboxId)
+        }
+        while inboxRouteCapabilities.count >= maxInboxRouteCapabilityRecords {
+            guard let oldestRevoked = inboxRouteCapabilities
+                .filter({ $0.value.revokedAt != nil })
+                .min(by: {
+                    ($0.value.revokedAt ?? $0.value.createdAt)
+                        < ($1.value.revokedAt ?? $1.value.createdAt)
+                })?.key else {
+                throw RelayStoreError.relayCapacityExceeded
+            }
+            inboxRouteCapabilities.removeValue(forKey: oldestRevoked)
+        }
+    }
+
+    private func normalizeInboxRouteCapabilitiesAfterLoadLocked() {
+        let valid = inboxRouteCapabilities.filter { key, record in
+            guard let digest = Data(base64Encoded: key),
+                  digest.count == SHA256.byteCount,
+                  InboxAddress.isValid(record.inboxId),
+                  inboxRegistrations[record.inboxId] != nil,
+                  inboxRetirements[record.inboxId] == nil,
+                  record.createdAt.timeIntervalSince1970.isFinite,
+                  record.revokedAt?.timeIntervalSince1970.isFinite ?? true,
+                  record.revokedAt.map({ $0 >= record.createdAt }) ?? true else {
+                return false
+            }
+            return true
+        }
+        var perInboxBounded: [String: InboxRouteCapabilityRecord] = [:]
+        for inboxId in Set(valid.values.map(\.inboxId)) {
+            let active = valid
+                .filter { $0.value.inboxId == inboxId && $0.value.revokedAt == nil }
+                .sorted { $0.value.createdAt > $1.value.createdAt }
+                .prefix(maxActiveInboxRouteCapabilitiesPerInbox)
+            let revoked = valid
+                .filter { $0.value.inboxId == inboxId && $0.value.revokedAt != nil }
+                .sorted {
+                    ($0.value.revokedAt ?? $0.value.createdAt)
+                        > ($1.value.revokedAt ?? $1.value.createdAt)
+                }
+                .prefix(maxRevokedInboxRouteCapabilitiesPerInbox)
+            for entry in active {
+                perInboxBounded[entry.key] = entry.value
+            }
+            for entry in revoked {
+                perInboxBounded[entry.key] = entry.value
+            }
+        }
+        let active = perInboxBounded
+            .filter { $0.value.revokedAt == nil }
+            .sorted { $0.value.createdAt > $1.value.createdAt }
+        let revoked = perInboxBounded
+            .filter { $0.value.revokedAt != nil }
+            .sorted {
+                ($0.value.revokedAt ?? $0.value.createdAt)
+                    > ($1.value.revokedAt ?? $1.value.createdAt)
+            }
+        inboxRouteCapabilities = [:]
+        for entry in active.prefix(maxInboxRouteCapabilityRecords) {
+            inboxRouteCapabilities[entry.key] = entry.value
+        }
+        for entry in revoked where inboxRouteCapabilities.count < maxInboxRouteCapabilityRecords {
+            inboxRouteCapabilities[entry.key] = entry.value
+        }
+    }
+
     private func boundedAttachmentTTL(_ ttlSeconds: Int?) -> TimeInterval {
         let requested = TimeInterval(ttlSeconds ?? Int(attachmentTTL))
         return min(maximumAttachmentTTL, max(minimumAttachmentTTL, requested))
@@ -1410,6 +2705,15 @@ final class RelayStore {
         }
         let data = try attachmentBlobStore.get(external)
         return try RelayCodec.decoder().decode(EncryptedPayload.self, from: data)
+    }
+
+    private func deleteExternalAttachmentIfUnreferenced(_ external: AttachmentExternalRecord) {
+        let isReferenced = attachments.values.contains { records in
+            records.contains { $0.external == external }
+        }
+        if !isReferenced {
+            attachmentBlobStore?.delete(external)
+        }
     }
 
     private func prunePrekeysLocked(now: Date) {
@@ -1430,7 +2734,16 @@ final class RelayStore {
         guard let maxInboxMessages else { return }
         for (inboxId, messages) in mailboxes {
             if messages.count > maxInboxMessages {
+                let removed = messages.dropLast(maxInboxMessages)
                 mailboxes[inboxId] = Array(messages.suffix(maxInboxMessages))
+                if var registration = inboxRegistrations[inboxId],
+                   let droppedThrough = removed.map(\.sequence).max() {
+                    registration.mailboxStream.retentionFloor = max(
+                        registration.mailboxStream.retentionFloor,
+                        droppedThrough
+                    )
+                    inboxRegistrations[inboxId] = registration
+                }
             }
         }
     }
@@ -1447,6 +2760,24 @@ final class RelayStore {
             .filter { $0 > 0 }
             .sorted()
             .map(TimeInterval.init)
+    }
+
+    private static func compactRevokedMailboxConsumers(
+        _ consumers: inout [String: MailboxConsumerRegistration],
+        maximumCount: Int,
+        reservingSlots: Int
+    ) {
+        while consumers.count + max(0, reservingSlots) > maximumCount {
+            guard let oldestRevokedId = consumers
+                .filter({ $0.value.state == .revoked })
+                .min(by: {
+                    ($0.value.revokedAt ?? $0.value.registeredAt)
+                        < ($1.value.revokedAt ?? $1.value.registeredAt)
+                })?.key else {
+                return
+            }
+            consumers.removeValue(forKey: oldestRevokedId)
+        }
     }
 
     private static func fnv1a64<S: Sequence>(_ bytes: S) -> UInt64 where S.Element == UInt8 {
@@ -1525,33 +2856,57 @@ final class RelayStore {
 private struct RelayStoreSnapshot: Codable {
     let mailboxes: [String: [StoredEnvelope]]
     let inboxRegistrations: [String: InboxRegistrationRecord]
+    let inboxRetirements: [String: InboxRetirementRecord]
+    let inboxRouteCapabilities: [String: InboxRouteCapabilityRecord]
     let attachments: [String: [AttachmentRecord]]
     let prekeyBundles: [String: PrekeyBundleRecord]
     let federationNodes: [String: FederationNodeRecord]
     let coordinatorPinnedPublicKeys: [String: Data]
     let groups: [UUID: RelayGroupDescriptor]
     let groupJoinRequests: [UUID: [RelayGroupJoinRequest]]
+    let groupInvitations: [String: [RelayGroupInvitation]]
     let actorProofReplayCache: [String: Date]
+
+    static let empty = RelayStoreSnapshot(
+        mailboxes: [:],
+        inboxRegistrations: [:],
+        inboxRetirements: [:],
+        inboxRouteCapabilities: [:],
+        attachments: [:],
+        prekeyBundles: [:],
+        federationNodes: [:],
+        coordinatorPinnedPublicKeys: [:],
+        groups: [:],
+        groupJoinRequests: [:],
+        groupInvitations: [:],
+        actorProofReplayCache: [:]
+    )
 
     init(
         mailboxes: [String: [StoredEnvelope]],
         inboxRegistrations: [String: InboxRegistrationRecord] = [:],
+        inboxRetirements: [String: InboxRetirementRecord] = [:],
+        inboxRouteCapabilities: [String: InboxRouteCapabilityRecord] = [:],
         attachments: [String: [AttachmentRecord]],
         prekeyBundles: [String: PrekeyBundleRecord] = [:],
         federationNodes: [String: FederationNodeRecord] = [:],
         coordinatorPinnedPublicKeys: [String: Data] = [:],
         groups: [UUID: RelayGroupDescriptor] = [:],
         groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:],
+        groupInvitations: [String: [RelayGroupInvitation]] = [:],
         actorProofReplayCache: [String: Date] = [:]
     ) {
         self.mailboxes = mailboxes
         self.inboxRegistrations = inboxRegistrations
+        self.inboxRetirements = inboxRetirements
+        self.inboxRouteCapabilities = inboxRouteCapabilities
         self.attachments = attachments
         self.prekeyBundles = prekeyBundles
         self.federationNodes = federationNodes
         self.coordinatorPinnedPublicKeys = coordinatorPinnedPublicKeys
         self.groups = groups
         self.groupJoinRequests = groupJoinRequests
+        self.groupInvitations = groupInvitations
         self.actorProofReplayCache = actorProofReplayCache
     }
 
@@ -1559,44 +2914,244 @@ private struct RelayStoreSnapshot: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         mailboxes = try container.decodeIfPresent([String: [StoredEnvelope]].self, forKey: .mailboxes) ?? [:]
         inboxRegistrations = try container.decodeIfPresent([String: InboxRegistrationRecord].self, forKey: .inboxRegistrations) ?? [:]
+        inboxRetirements = try container.decodeIfPresent(
+            [String: InboxRetirementRecord].self,
+            forKey: .inboxRetirements
+        ) ?? [:]
+        inboxRouteCapabilities = try container.decodeIfPresent(
+            [String: InboxRouteCapabilityRecord].self,
+            forKey: .inboxRouteCapabilities
+        ) ?? [:]
         attachments = try container.decodeIfPresent([String: [AttachmentRecord]].self, forKey: .attachments) ?? [:]
         prekeyBundles = try container.decodeIfPresent([String: PrekeyBundleRecord].self, forKey: .prekeyBundles) ?? [:]
         federationNodes = try container.decodeIfPresent([String: FederationNodeRecord].self, forKey: .federationNodes) ?? [:]
         coordinatorPinnedPublicKeys = try container.decodeIfPresent([String: Data].self, forKey: .coordinatorPinnedPublicKeys) ?? [:]
         groups = try container.decodeIfPresent([UUID: RelayGroupDescriptor].self, forKey: .groups) ?? [:]
         groupJoinRequests = try container.decodeIfPresent([UUID: [RelayGroupJoinRequest]].self, forKey: .groupJoinRequests) ?? [:]
+        groupInvitations = try container.decodeIfPresent(
+            [String: [RelayGroupInvitation]].self,
+            forKey: .groupInvitations
+        ) ?? [:]
         actorProofReplayCache = try container.decodeIfPresent([String: Date].self, forKey: .actorProofReplayCache) ?? [:]
     }
 }
 
-private struct InboxRegistrationRecord: Codable {
-    let accessPublicKey: Data
-    let registeredAt: Date
+private struct InboxRetirementRecord: Codable {
+    let retiredAt: Date
+    let requestDigest: Data
 }
 
-private struct StoredEnvelope: Codable {
-    let envelope: Envelope
-    let storedAt: Date
-    var pendingGroupRecipientFingerprints: Set<String>?
+private struct InboxRouteCapabilityRecord: Codable {
+    let inboxId: String
+    let createdAt: Date
+    let revokedAt: Date?
+}
+
+struct InboxRegistrationRecord: Codable {
+    let accessPublicKey: Data
+    let registeredAt: Date
+    var mailboxStream: MailboxStreamState
+    let routeMutationScope: Data
+    var lastRouteMutationSequence: UInt64
+    var lastRouteMutationDigest: Data?
 
     init(
-        envelope: Envelope,
-        storedAt: Date,
-        pendingGroupRecipientFingerprints: Set<String>? = nil
+        accessPublicKey: Data,
+        registeredAt: Date,
+        mailboxStream: MailboxStreamState = MailboxStreamState(),
+        routeMutationScope: Data = InboxRegistrationRecord.generateRouteMutationScope(),
+        lastRouteMutationSequence: UInt64 = 0,
+        lastRouteMutationDigest: Data? = nil
     ) {
-        self.envelope = envelope
-        self.storedAt = storedAt
-        self.pendingGroupRecipientFingerprints = pendingGroupRecipientFingerprints
+        self.accessPublicKey = accessPublicKey
+        self.registeredAt = registeredAt
+        self.mailboxStream = mailboxStream
+        self.routeMutationScope = routeMutationScope
+        self.lastRouteMutationSequence = lastRouteMutationSequence
+        self.lastRouteMutationDigest = lastRouteMutationDigest
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        accessPublicKey = try container.decode(Data.self, forKey: .accessPublicKey)
+        registeredAt = try container.decode(Date.self, forKey: .registeredAt)
+        mailboxStream = try container.decodeIfPresent(MailboxStreamState.self, forKey: .mailboxStream)
+            ?? MailboxStreamState()
+        lastRouteMutationSequence = try container.decodeIfPresent(
+            UInt64.self,
+            forKey: .lastRouteMutationSequence
+        ) ?? 0
+        guard lastRouteMutationSequence
+                <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .lastRouteMutationSequence,
+                in: container,
+                debugDescription: "Route mutation sequence exceeds the protocol bound"
+            )
+        }
+        let decodedDigest = try container.decodeIfPresent(
+            Data.self,
+            forKey: .lastRouteMutationDigest
+        )
+        let hasEncodedScope = container.contains(.routeMutationScope)
+        let decodedScope = try container.decodeIfPresent(Data.self, forKey: .routeMutationScope)
+        if hasEncodedScope {
+            guard let decodedScope else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .routeMutationScope,
+                    in: container,
+                    debugDescription: "Null relay-local route mutation scope"
+                )
+            }
+            guard decodedScope.isValidRouteMutationScope else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .routeMutationScope,
+                    in: container,
+                    debugDescription: "Invalid relay-local route mutation scope"
+                )
+            }
+            routeMutationScope = decodedScope
+        } else {
+            guard lastRouteMutationSequence == 0, decodedDigest == nil else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .routeMutationScope,
+                    in: container,
+                    debugDescription: "Missing route mutation scope for v3 cursor state"
+                )
+            }
+            routeMutationScope = Self.generateRouteMutationScope()
+        }
+        if lastRouteMutationSequence == 0 {
+            guard decodedDigest == nil else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .lastRouteMutationDigest,
+                    in: container,
+                    debugDescription: "Unexpected route mutation digest at sequence zero"
+                )
+            }
+            lastRouteMutationDigest = nil
+        } else {
+            guard let decodedDigest, decodedDigest.count == SHA256.byteCount else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .lastRouteMutationDigest,
+                    in: container,
+                    debugDescription: "Missing or invalid route mutation cursor digest"
+                )
+            }
+            lastRouteMutationDigest = decodedDigest
+        }
+    }
+
+    var routeMutationReceipt: InboxRegistrationReceiptV3 {
+        InboxRegistrationReceiptV3(
+            routeMutationScope: routeMutationScope,
+            nextRouteMutationSequence: CreateInboxRouteCapabilityRequest
+                .nextMutationSequence(after: lastRouteMutationSequence)
+        )
+    }
+
+    private static func generateRouteMutationScope() -> Data {
+        var generator = SystemRandomNumberGenerator()
+        while true {
+            let value = Data((0..<32).map { _ in
+                UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
+            })
+            if value.isValidRouteMutationScope {
+                return value
+            }
+        }
+    }
+}
+
+extension Data {
+    var isValidRouteMutationScope: Bool {
+        count == SHA256.byteCount && contains(where: { $0 != 0 })
+    }
+}
+
+private struct StoredEnvelope: Codable {
+    private static let maximumGroupRecipientCount = 256
+    private static let maximumRecipientFingerprintBytes = 128
+
+    var sequence: UInt64
+    let envelope: Envelope
+    let storedAt: Date
+    var pendingGroupRecipientFingerprints: Set<String>?
+    let originalGroupRecipientFingerprints: Set<String>?
+
+    init(
+        sequence: UInt64,
+        envelope: Envelope,
+        storedAt: Date,
+        pendingGroupRecipientFingerprints: Set<String>? = nil,
+        originalGroupRecipientFingerprints: Set<String>? = nil
+    ) {
+        self.sequence = sequence
+        self.envelope = envelope
+        self.storedAt = storedAt
+        self.pendingGroupRecipientFingerprints = pendingGroupRecipientFingerprints
+        self.originalGroupRecipientFingerprints = pendingGroupRecipientFingerprints.map {
+            originalGroupRecipientFingerprints ?? $0
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sequence = try container.decodeIfPresent(UInt64.self, forKey: .sequence) ?? 0
         envelope = try container.decode(Envelope.self, forKey: .envelope)
         storedAt = try container.decode(Date.self, forKey: .storedAt)
         pendingGroupRecipientFingerprints = try container.decodeIfPresent(
             Set<String>.self,
             forKey: .pendingGroupRecipientFingerprints
         )
+        // Older normalized SQLite records only have the mutable pending set.
+        // Use that set as a fail-closed baseline; later saves persist it as the
+        // immutable original set without changing the table schema.
+        originalGroupRecipientFingerprints = try container.decodeIfPresent(
+            Set<String>.self,
+            forKey: .originalGroupRecipientFingerprints
+        ) ?? pendingGroupRecipientFingerprints
+        guard Self.isValidPersistedRecipientState(
+            pending: pendingGroupRecipientFingerprints,
+            original: originalGroupRecipientFingerprints
+        ) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .pendingGroupRecipientFingerprints,
+                in: container,
+                debugDescription: "Invalid persisted group recipient state"
+            )
+        }
+    }
+
+    static func normalizedGroupRecipients(_ values: [String]) -> Set<String>? {
+        guard values.count <= maximumGroupRecipientCount else { return nil }
+        let recipients = Set(values.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty })
+        return isValidRecipientSet(recipients) ? recipients : nil
+    }
+
+    private static func isValidPersistedRecipientState(
+        pending: Set<String>?,
+        original: Set<String>?
+    ) -> Bool {
+        switch (pending, original) {
+        case (nil, nil):
+            return true
+        case let (.some(pending), .some(original)):
+            return isValidRecipientSet(pending)
+                && isValidRecipientSet(original)
+                && pending.isSubset(of: original)
+        default:
+            return false
+        }
+    }
+
+    private static func isValidRecipientSet(_ recipients: Set<String>) -> Bool {
+        recipients.count <= maximumGroupRecipientCount
+            && recipients.allSatisfy {
+                !$0.isEmpty && $0.utf8.count <= maximumRecipientFingerprintBytes
+            }
     }
 }
 
@@ -1657,12 +3212,15 @@ private enum SQLiteRelayStateStore {
         return RelayStoreSnapshot(
             mailboxes: try loadMailboxes(in: db),
             inboxRegistrations: try loadInboxRegistrations(in: db),
+            inboxRetirements: try loadInboxRetirements(in: db),
+            inboxRouteCapabilities: try loadInboxRouteCapabilities(in: db),
             attachments: try loadAttachments(in: db),
             prekeyBundles: try loadPrekeyBundles(in: db),
             federationNodes: try loadFederationNodes(in: db),
             coordinatorPinnedPublicKeys: try loadCoordinatorPinnedPublicKeys(in: db),
             groups: try loadGroups(in: db),
             groupJoinRequests: try loadGroupJoinRequests(in: db),
+            groupInvitations: try loadGroupInvitations(in: db),
             actorProofReplayCache: try loadActorProofReplayCache(in: db)
         )
     }
@@ -1684,6 +3242,16 @@ private enum SQLiteRelayStateStore {
             }
             for (inboxId, record) in snapshot.inboxRegistrations {
                 try insertInboxRegistration(inboxId: inboxId, record: record, in: db)
+            }
+            for (inboxId, record) in snapshot.inboxRetirements {
+                try insertInboxRetirement(inboxId: inboxId, record: record, in: db)
+            }
+            for (capabilityDigest, record) in snapshot.inboxRouteCapabilities {
+                try insertInboxRouteCapability(
+                    capabilityDigest: capabilityDigest,
+                    record: record,
+                    in: db
+                )
             }
             for (attachmentId, records) in snapshot.attachments {
                 for record in records {
@@ -1707,28 +3275,17 @@ private enum SQLiteRelayStateStore {
                     try insertGroupJoinRequest(groupId: groupId, position: position, request: request, in: db)
                 }
             }
-            for (cacheKey, consumedAt) in snapshot.actorProofReplayCache {
-                try insertActorProofReplayCacheEntry(cacheKey: cacheKey, consumedAt: consumedAt, in: db)
+            for (fingerprint, invitations) in snapshot.groupInvitations {
+                for (position, invitation) in invitations.enumerated() {
+                    try insertGroupInvitation(
+                        invitedFingerprint: fingerprint,
+                        position: position,
+                        invitation: invitation,
+                        in: db
+                    )
+                }
             }
-            try insertMeta(key: normalizedSchemaKey, value: Data("1".utf8), in: db)
-            try execute("COMMIT;", in: db)
-        } catch {
-            _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
-            throw error
-        }
-    }
-
-    static func saveActorProofReplayCache(_ cache: [String: Date], at url: URL) throws {
-        var db: OpaquePointer?
-        try openDatabase(at: url, handle: &db)
-        defer { sqlite3_close(db) }
-        guard let db else { return }
-
-        try ensureSchema(in: db)
-        try execute("BEGIN IMMEDIATE TRANSACTION;", in: db)
-        do {
-            try execute("DELETE FROM relay_actor_proof_replay_cache;", in: db)
-            for (cacheKey, consumedAt) in cache {
+            for (cacheKey, consumedAt) in snapshot.actorProofReplayCache {
                 try insertActorProofReplayCacheEntry(cacheKey: cacheKey, consumedAt: consumedAt, in: db)
             }
             try insertMeta(key: normalizedSchemaKey, value: Data("1".utf8), in: db)
@@ -1756,6 +3313,35 @@ private enum SQLiteRelayStateStore {
             registrations[inboxId] = try decode(InboxRegistrationRecord.self, from: readBlob(statement, column: 1))
         }
         return registrations
+    }
+
+    private static func loadInboxRetirements(in db: OpaquePointer) throws -> [String: InboxRetirementRecord] {
+        var retirements: [String: InboxRetirementRecord] = [:]
+        try queryRows("SELECT inbox_id, value FROM relay_inbox_retirements;", in: db) { statement in
+            let inboxId = try readText(statement, column: 0, in: db)
+            retirements[inboxId] = try decode(
+                InboxRetirementRecord.self,
+                from: readBlob(statement, column: 1)
+            )
+        }
+        return retirements
+    }
+
+    private static func loadInboxRouteCapabilities(
+        in db: OpaquePointer
+    ) throws -> [String: InboxRouteCapabilityRecord] {
+        var records: [String: InboxRouteCapabilityRecord] = [:]
+        try queryRows(
+            "SELECT capability_digest, value FROM relay_inbox_route_capabilities;",
+            in: db
+        ) { statement in
+            let digest = try readText(statement, column: 0, in: db)
+            records[digest] = try decode(
+                InboxRouteCapabilityRecord.self,
+                from: readBlob(statement, column: 1)
+            )
+        }
+        return records
     }
 
     private static func loadAttachments(in db: OpaquePointer) throws -> [String: [AttachmentRecord]] {
@@ -1823,6 +3409,19 @@ private enum SQLiteRelayStateStore {
         return requests
     }
 
+    private static func loadGroupInvitations(in db: OpaquePointer) throws -> [String: [RelayGroupInvitation]] {
+        var invitations: [String: [RelayGroupInvitation]] = [:]
+        try queryRows(
+            "SELECT invited_fingerprint, value FROM relay_group_invitations ORDER BY invited_fingerprint, position;",
+            in: db
+        ) { statement in
+            let fingerprint = try readText(statement, column: 0, in: db)
+            let invitation = try decode(RelayGroupInvitation.self, from: readBlob(statement, column: 1))
+            invitations[fingerprint, default: []].append(invitation)
+        }
+        return invitations
+    }
+
     private static func loadActorProofReplayCache(in db: OpaquePointer) throws -> [String: Date] {
         var cache: [String: Date] = [:]
         try queryRows("SELECT cache_key, consumed_at FROM relay_actor_proof_replay_cache;", in: db) { statement in
@@ -1855,6 +3454,48 @@ private enum SQLiteRelayStateStore {
             try bindDouble(record.registeredAt.timeIntervalSince1970, to: 2, in: statement, db: db)
             try bindBlob(record.accessPublicKey, to: 3, in: statement, db: db)
             try bindBlob(encode(record), to: 4, in: statement, db: db)
+        }
+    }
+
+    private static func insertInboxRetirement(
+        inboxId: String,
+        record: InboxRetirementRecord,
+        in db: OpaquePointer
+    ) throws {
+        try executePrepared(
+            "INSERT INTO relay_inbox_retirements (inbox_id, retired_at, expires_at, request_digest, value) VALUES (?1, ?2, ?3, ?4, ?5);",
+            in: db
+        ) { statement in
+            try bindText(inboxId, to: 1, in: statement, db: db)
+            try bindDouble(record.retiredAt.timeIntervalSince1970, to: 2, in: statement, db: db)
+            // `expires_at` is retained only for pre-1.0 SQLite schema
+            // compatibility. Retirement records never expire.
+            try bindDouble(Date.distantFuture.timeIntervalSince1970, to: 3, in: statement, db: db)
+            try bindBlob(record.requestDigest, to: 4, in: statement, db: db)
+            try bindBlob(encode(record), to: 5, in: statement, db: db)
+        }
+    }
+
+    private static func insertInboxRouteCapability(
+        capabilityDigest: String,
+        record: InboxRouteCapabilityRecord,
+        in db: OpaquePointer
+    ) throws {
+        try executePrepared(
+            "INSERT INTO relay_inbox_route_capabilities (capability_digest, inbox_id, created_at, revoked_at, value) VALUES (?1, ?2, ?3, ?4, ?5);",
+            in: db
+        ) { statement in
+            try bindText(capabilityDigest, to: 1, in: statement, db: db)
+            try bindText(record.inboxId, to: 2, in: statement, db: db)
+            try bindDouble(record.createdAt.timeIntervalSince1970, to: 3, in: statement, db: db)
+            if let revokedAt = record.revokedAt {
+                try bindDouble(revokedAt.timeIntervalSince1970, to: 4, in: statement, db: db)
+            } else {
+                guard sqlite3_bind_null(statement, 4) == SQLITE_OK else {
+                    throw SQLiteRelayStateStoreError.bind(lastError(in: db))
+                }
+            }
+            try bindBlob(encode(record), to: 5, in: statement, db: db)
         }
     }
 
@@ -1925,6 +3566,24 @@ private enum SQLiteRelayStateStore {
         }
     }
 
+    private static func insertGroupInvitation(
+        invitedFingerprint: String,
+        position: Int,
+        invitation: RelayGroupInvitation,
+        in db: OpaquePointer
+    ) throws {
+        try executePrepared(
+            "INSERT INTO relay_group_invitations (invited_fingerprint, position, invitation_id, group_id, value) VALUES (?1, ?2, ?3, ?4, ?5);",
+            in: db
+        ) { statement in
+            try bindText(invitedFingerprint, to: 1, in: statement, db: db)
+            try bindInt(position, to: 2, in: statement, db: db)
+            try bindText(invitation.id.uuidString, to: 3, in: statement, db: db)
+            try bindText(invitation.groupId.uuidString, to: 4, in: statement, db: db)
+            try bindBlob(encode(invitation), to: 5, in: statement, db: db)
+        }
+    }
+
     private static func insertActorProofReplayCacheEntry(cacheKey: String, consumedAt: Date, in db: OpaquePointer) throws {
         try executePrepared(
             "INSERT INTO relay_actor_proof_replay_cache (cache_key, consumed_at) VALUES (?1, ?2);",
@@ -1968,12 +3627,15 @@ private enum SQLiteRelayStateStore {
         for table in [
             "relay_mailbox_envelopes",
             "relay_inbox_registrations",
+            "relay_inbox_retirements",
+            "relay_inbox_route_capabilities",
             "relay_attachment_chunks",
             "relay_prekey_bundles",
             "relay_federation_nodes",
             "relay_coordinator_pinned_keys",
             "relay_groups",
             "relay_group_join_requests",
+            "relay_group_invitations",
             "relay_actor_proof_replay_cache"
         ] {
             try execute("DELETE FROM \(table);", in: db)
@@ -2016,6 +3678,22 @@ private enum SQLiteRelayStateStore {
             access_public_key BLOB NOT NULL,
             value BLOB NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS relay_inbox_retirements (
+            inbox_id TEXT PRIMARY KEY,
+            retired_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            request_digest BLOB NOT NULL,
+            value BLOB NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS relay_inbox_retirements_expiry_idx ON relay_inbox_retirements(expires_at);
+        CREATE TABLE IF NOT EXISTS relay_inbox_route_capabilities (
+            capability_digest TEXT PRIMARY KEY,
+            inbox_id TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            revoked_at REAL,
+            value BLOB NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS relay_inbox_route_capabilities_inbox_idx ON relay_inbox_route_capabilities(inbox_id);
         CREATE TABLE IF NOT EXISTS relay_attachment_chunks (
             attachment_id TEXT NOT NULL,
             chunk_index INTEGER NOT NULL,
@@ -2051,6 +3729,16 @@ private enum SQLiteRelayStateStore {
             PRIMARY KEY (group_id, position)
         );
         CREATE INDEX IF NOT EXISTS relay_group_join_requests_group_idx ON relay_group_join_requests(group_id);
+        CREATE TABLE IF NOT EXISTS relay_group_invitations (
+            invited_fingerprint TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            invitation_id TEXT NOT NULL,
+            group_id TEXT NOT NULL,
+            value BLOB NOT NULL,
+            PRIMARY KEY (invited_fingerprint, position)
+        );
+        CREATE INDEX IF NOT EXISTS relay_group_invitations_invited_idx ON relay_group_invitations(invited_fingerprint);
+        CREATE INDEX IF NOT EXISTS relay_group_invitations_group_idx ON relay_group_invitations(group_id);
         CREATE TABLE IF NOT EXISTS relay_actor_proof_replay_cache (
             cache_key TEXT PRIMARY KEY,
             consumed_at REAL NOT NULL

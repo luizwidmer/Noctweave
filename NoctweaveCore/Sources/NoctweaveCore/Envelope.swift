@@ -2,20 +2,76 @@ import Foundation
 
 public enum MessageAuthenticatedContextPurpose: String, Codable, Equatable {
     case group
+    case directV4
+}
+
+public struct DirectMessageAuthenticatedContextV4: Codable, Equatable {
+    public let version: Int
+    public let payloadFormat: String
+    public let cipherSuite: String
+    public let negotiatedCapabilitiesDigest: Data
+    public let eventId: UUID
+    public let senderInstallationHandle: RelationshipInstallationHandle
+    public let senderCertificateDigest: Data
+    public let recipientInstallationHandle: RelationshipInstallationHandle
+    public let senderManifestEpoch: UInt64
+    public let recipientManifestEpoch: UInt64
+    public let recipientCertificateDigest: Data
+
+    public init(
+        cipherSuite: String,
+        negotiatedCapabilitiesDigest: Data,
+        eventId: UUID,
+        senderInstallationHandle: RelationshipInstallationHandle,
+        senderCertificateDigest: Data,
+        recipientInstallationHandle: RelationshipInstallationHandle,
+        senderManifestEpoch: UInt64,
+        recipientManifestEpoch: UInt64,
+        recipientCertificateDigest: Data
+    ) throws {
+        self.version = CertifiedInstallationEndpoint.version
+        self.payloadFormat = NoctweaveWirePayloadV2.directV4Format
+        self.cipherSuite = cipherSuite
+        self.negotiatedCapabilitiesDigest = negotiatedCapabilitiesDigest
+        self.eventId = eventId
+        self.senderInstallationHandle = senderInstallationHandle
+        self.senderCertificateDigest = senderCertificateDigest
+        self.recipientInstallationHandle = recipientInstallationHandle
+        self.senderManifestEpoch = senderManifestEpoch
+        self.recipientManifestEpoch = recipientManifestEpoch
+        self.recipientCertificateDigest = recipientCertificateDigest
+    }
+
+    public var isStructurallyValid: Bool {
+        version == CertifiedInstallationEndpoint.version
+            && payloadFormat == NoctweaveWirePayloadV2.directV4Format
+            && cipherSuite == DirectV4CipherSuite.identifier
+            && negotiatedCapabilitiesDigest.count == 32
+            && senderInstallationHandle.isStructurallyValid
+            && senderCertificateDigest.count == 32
+            && recipientInstallationHandle.isStructurallyValid
+            && recipientCertificateDigest.count == 32
+    }
 }
 
 public struct GroupMessageAuthenticatedContext: Codable, Equatable {
+    public let protocolVersion: String
+    public let cipherSuite: String
     public let groupId: UUID
     public let epoch: UInt64
     public let senderFingerprint: String
     public let transcriptHash: Data
 
     public init(
+        protocolVersion: String = MLSGroupEpochState.currentProtocolVersion,
+        cipherSuite: String = MLSGroupEpochState.currentCipherSuite,
         groupId: UUID,
         epoch: UInt64,
         senderFingerprint: String,
         transcriptHash: Data
     ) {
+        self.protocolVersion = protocolVersion
+        self.cipherSuite = cipherSuite
         self.groupId = groupId
         self.epoch = epoch
         self.senderFingerprint = senderFingerprint
@@ -26,16 +82,21 @@ public struct GroupMessageAuthenticatedContext: Codable, Equatable {
 public struct MessageAuthenticatedContext: Codable, Equatable {
     public let purpose: MessageAuthenticatedContextPurpose
     public let group: GroupMessageAuthenticatedContext?
+    public let directV4: DirectMessageAuthenticatedContextV4?
 
     public init(
         purpose: MessageAuthenticatedContextPurpose,
-        group: GroupMessageAuthenticatedContext?
+        group: GroupMessageAuthenticatedContext?,
+        directV4: DirectMessageAuthenticatedContextV4? = nil
     ) {
         self.purpose = purpose
         self.group = group
+        self.directV4 = directV4
     }
 
     public static func group(
+        protocolVersion: String = MLSGroupEpochState.currentProtocolVersion,
+        cipherSuite: String = MLSGroupEpochState.currentCipherSuite,
         groupId: UUID,
         epoch: UInt64,
         senderFingerprint: String,
@@ -44,10 +105,43 @@ public struct MessageAuthenticatedContext: Codable, Equatable {
         MessageAuthenticatedContext(
             purpose: .group,
             group: GroupMessageAuthenticatedContext(
+                protocolVersion: protocolVersion,
+                cipherSuite: cipherSuite,
                 groupId: groupId,
                 epoch: epoch,
                 senderFingerprint: senderFingerprint,
                 transcriptHash: transcriptHash
+            ),
+            directV4: nil
+        )
+    }
+
+    public static func directV4(
+        eventId: UUID,
+        senderEndpoint: CertifiedInstallationEndpoint,
+        recipientEndpoint: CertifiedInstallationEndpoint,
+        pairwiseBinding: PairwiseInstallationBindingV4
+    ) throws -> MessageAuthenticatedContext {
+        let negotiation = try pairwiseBinding.validatedNegotiation(
+            localEndpoint: senderEndpoint,
+            peerEndpoint: recipientEndpoint
+        )
+        guard pairwiseBinding.isStructurallyValid else {
+            throw CryptoError.invalidPayload
+        }
+        return MessageAuthenticatedContext(
+            purpose: .directV4,
+            group: nil,
+            directV4: try DirectMessageAuthenticatedContextV4(
+                cipherSuite: negotiation.cipherSuite,
+                negotiatedCapabilitiesDigest: try negotiation.digest(),
+                eventId: eventId,
+                senderInstallationHandle: pairwiseBinding.localInstallationHandle,
+                senderCertificateDigest: pairwiseBinding.localCertificateReferenceDigest,
+                recipientInstallationHandle: pairwiseBinding.peerInstallationHandle,
+                senderManifestEpoch: senderEndpoint.manifestEpoch,
+                recipientManifestEpoch: recipientEndpoint.manifestEpoch,
+                recipientCertificateDigest: pairwiseBinding.peerCertificateReferenceDigest
             )
         )
     }
@@ -98,8 +192,15 @@ public struct Envelope: Codable, Identifiable, Equatable {
     public func verifySignature(publicSigningKey: Data) -> Bool {
         guard isStructurallyValid,
               SigningKeyPair.isValidPublicKey(publicSigningKey),
-              senderFingerprint == CryptoBox.fingerprint(for: publicSigningKey),
               let data = try? NoctweaveCoder.encode(signaturePayload, sortedKeys: true) else {
+            return false
+        }
+        if authenticatedContext?.purpose == .directV4 {
+            guard authenticatedContext?.directV4?.senderInstallationHandle.rawValue
+                    == senderFingerprint else {
+                return false
+            }
+        } else if senderFingerprint != CryptoBox.fingerprint(for: publicSigningKey) {
             return false
         }
         return SigningKeyPair.verify(signature: signature, data: data, publicKeyData: publicSigningKey)
@@ -125,11 +226,23 @@ public struct Envelope: Codable, Identifiable, Equatable {
             return false
         }
         if let context = authenticatedContext {
-            guard context.purpose == .group,
-                  let group = context.group,
-                  group.senderFingerprint == senderFingerprint,
-                  group.transcriptHash.count == 32 else {
-                return false
+            switch context.purpose {
+            case .group:
+                guard let group = context.group,
+                      context.directV4 == nil,
+                      group.protocolVersion == MLSGroupEpochState.currentProtocolVersion,
+                      group.cipherSuite == MLSGroupEpochState.currentCipherSuite,
+                      group.senderFingerprint == senderFingerprint,
+                      group.transcriptHash.count == 32 else {
+                    return false
+                }
+            case .directV4:
+                guard context.group == nil,
+                      let direct = context.directV4,
+                      direct.isStructurallyValid,
+                      direct.senderInstallationHandle.rawValue == senderFingerprint else {
+                    return false
+                }
             }
         }
         return true
@@ -141,6 +254,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
     }
 
     public static func signableData(
+        id: UUID,
         conversationId: String,
         sessionId: String?,
         senderFingerprint: String,
@@ -153,6 +267,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
         payload: EncryptedPayload
     ) throws -> Data {
         let payload = SignaturePayload(
+            id: id,
             conversationId: conversationId,
             sessionId: sessionId,
             senderFingerprint: senderFingerprint,
@@ -169,6 +284,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
 
     private var signaturePayload: SignaturePayload {
         SignaturePayload(
+            id: id,
             conversationId: conversationId,
             sessionId: sessionId,
             senderFingerprint: senderFingerprint,
@@ -184,6 +300,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
 }
 
 private struct SignaturePayload: Codable {
+    let id: UUID
     let conversationId: String
     let sessionId: String?
     let senderFingerprint: String

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum RelayCertificatePinOrigin: String, Codable, Equatable {
@@ -38,6 +39,7 @@ public struct RelayCertificatePinRecord: Codable, Equatable, Identifiable {
 }
 
 public struct ClientState: Codable {
+    public var schemaVersion: Int
     public var identityProfiles: [IdentityProfile]
     public var activeIdentityId: UUID
     public var relayServers: [RelayServerRecord]
@@ -54,6 +56,31 @@ public struct ClientState: Codable {
     public var prekeys: PrekeyState {
         get { activeProfile.prekeys }
         set { updateActiveProfile { $0.prekeys = newValue } }
+    }
+
+    public var localInstallation: LocalInstallationState? {
+        get { activeProfile.localInstallation }
+        set { updateActiveProfile { $0.localInstallation = newValue } }
+    }
+
+    public var installationManifest: InstallationManifest? {
+        get { activeProfile.installationManifest }
+        set { updateActiveProfile { $0.installationManifest = newValue } }
+    }
+
+    public var issuedContactEndpointsV2: [CertifiedInstallationEndpoint] {
+        get { activeProfile.issuedContactEndpointsV2 }
+        set {
+            updateActiveProfile {
+                $0.issuedContactEndpointsV2 = Array(
+                    newValue.suffix(NoctweaveArchitectureV2.maximumIssuedContactEndpoints)
+                )
+            }
+        }
+    }
+
+    public var identityGenerationId: UUID? {
+        activeProfile.identityGenerationId
     }
 
     public var identity: Identity {
@@ -96,6 +123,55 @@ public struct ClientState: Codable {
         set { updateActiveProfile { $0.pendingDirectDeliveries = newValue } }
     }
 
+    public var protocolIntents: [ProtocolIntentV2] {
+        get { activeProfile.protocolIntents }
+        set { updateActiveProfile { $0.protocolIntents = newValue } }
+    }
+
+    public var inboundEnvelopeReceiptsV2: [InboundEnvelopeReceiptV2] {
+        get { activeProfile.inboundEnvelopeReceiptsV2 }
+        set { updateActiveProfile { $0.inboundEnvelopeReceiptsV2 = newValue } }
+    }
+
+    public var quarantinedTransportEnvelopesV2: [QuarantinedTransportEnvelopeV2] {
+        get { activeProfile.quarantinedTransportEnvelopesV2 }
+        set {
+            updateActiveProfile {
+                $0.quarantinedTransportEnvelopesV2 = Array(
+                    newValue.suffix(
+                        NoctweaveArchitectureV2.maximumQuarantinedTransportEnvelopes
+                    )
+                )
+            }
+        }
+    }
+
+    public var relationshipsV2: [RelationshipStateV2] {
+        get { activeProfile.relationshipsV2 }
+        set { updateActiveProfile { $0.relationshipsV2 = newValue } }
+    }
+
+    public var quarantinedControlEvents: [QuarantinedControlEvent] {
+        get { activeProfile.quarantinedControlEvents }
+        set {
+            updateActiveProfile {
+                $0.quarantinedControlEvents = Array(
+                    newValue.suffix(NoctweaveArchitectureV2.maximumQuarantinedControlEvents)
+                )
+            }
+        }
+    }
+
+    public var selfSyncV2: SelfSyncLocalStateV2? {
+        get { activeProfile.selfSyncV2 }
+        set { updateActiveProfile { $0.selfSyncV2 = newValue } }
+    }
+
+    public var identityMutationV2: IdentityMutationJournalV2? {
+        get { activeProfile.identityMutationV2 }
+        set { updateActiveProfile { $0.identityMutationV2 = newValue } }
+    }
+
     public var federationPolicy: FederationDescriptor? {
         get { activeProfile.federationPolicy }
         set { updateActiveProfile { $0.federationPolicy = newValue } }
@@ -107,6 +183,7 @@ public struct ClientState: Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case schemaVersion
         case identityProfiles
         case activeIdentityId
         case relayServers
@@ -123,6 +200,7 @@ public struct ClientState: Codable {
     }
 
     public init(
+        schemaVersion: Int = 1,
         identity: Identity,
         relay: RelayEndpoint,
         inboxId: String,
@@ -145,6 +223,7 @@ public struct ClientState: Codable {
         identityProfiles: [IdentityProfile]? = nil,
         activeIdentityId: UUID? = nil
     ) {
+        self.schemaVersion = schemaVersion
         self.relayServers = relayServers
         self.masterServerSources = masterServerSources
         self.insecurePairing = insecurePairing
@@ -185,6 +264,7 @@ public struct ClientState: Codable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
         relayServers = try container.decodeIfPresent([RelayServerRecord].self, forKey: .relayServers) ?? []
         masterServerSources = try container.decodeIfPresent([MasterServerSource].self, forKey: .masterServerSources) ?? []
         insecurePairing = try container.decodeIfPresent(InsecurePairingSettings.self, forKey: .insecurePairing) ?? InsecurePairingSettings()
@@ -212,6 +292,7 @@ public struct ClientState: Codable {
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
         try container.encode(identityProfiles, forKey: .identityProfiles)
         try container.encode(activeIdentityId, forKey: .activeIdentityId)
         try container.encode(relayServers, forKey: .relayServers)
@@ -225,6 +306,21 @@ public struct ClientState: Codable {
         try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
         try container.encode(hasAcceptedPrivacyPolicy, forKey: .hasAcceptedPrivacyPolicy)
         try container.encode(hasAcceptedTermsOfUse, forKey: .hasAcceptedTermsOfUse)
+    }
+
+    @discardableResult
+    public mutating func migrateToArchitectureV2() throws -> Bool {
+        guard schemaVersion == 1 || schemaVersion == NoctweaveArchitectureV2.version else {
+            throw ClientStateMigrationError.unsupportedVersion(schemaVersion)
+        }
+        var changed = schemaVersion != NoctweaveArchitectureV2.version
+        for index in identityProfiles.indices {
+            if try identityProfiles[index].migrateToArchitectureV2() {
+                changed = true
+            }
+        }
+        schemaVersion = NoctweaveArchitectureV2.version
+        return changed
     }
 
     private static func sanitizedRelayCertificatePins(
@@ -292,7 +388,10 @@ public struct ClientState: Codable {
     }
 
     public mutating func upsert(conversation: Conversation) {
-        if let index = conversations.firstIndex(where: { $0.contactId == conversation.contactId }) {
+        if let index = conversations.firstIndex(where: {
+            $0.contactId == conversation.contactId
+                && $0.endpointSession == conversation.endpointSession
+        }) {
             conversations[index] = conversation
         } else {
             conversations.append(conversation)
@@ -308,7 +407,10 @@ public struct ClientState: Codable {
     }
 
     public mutating func mergeUpsert(conversation incoming: Conversation) {
-        if let index = conversations.firstIndex(where: { $0.contactId == incoming.contactId }) {
+        if let index = conversations.firstIndex(where: {
+            $0.contactId == incoming.contactId
+                && $0.endpointSession == incoming.endpointSession
+        }) {
             var merged = incoming
             merged.messages = mergedMessages(conversations[index].messages, incoming.messages)
             merged.unreadCount = max(conversations[index].unreadCount, incoming.unreadCount)
@@ -333,6 +435,47 @@ public struct ClientState: Codable {
         contacts.first { $0.fingerprint == fingerprint }
     }
 
+    public func resolveCertifiedDirectContext(
+        _ direct: DirectMessageAuthenticatedContextV4
+    ) -> (
+        contact: Contact,
+        localEndpoint: CertifiedInstallationEndpoint,
+        binding: PairwiseInstallationBindingV4
+    )? {
+        var matches: [(Contact, CertifiedInstallationEndpoint, PairwiseInstallationBindingV4)] = []
+        for contact in contacts {
+            guard let peerEndpoint = try? contact.certifiedInstallationEndpoint() else { continue }
+            for localEndpoint in issuedContactEndpointsV2 {
+                guard let binding = try? PairwiseInstallationBindingV4.derive(
+                    localIdentityGenerationId: localEndpoint.identityGenerationId,
+                    localIdentitySigningPublicKey: localEndpoint.identityAuthorityPublicKey,
+                    localEndpoint: localEndpoint,
+                    peerIdentityGenerationId: peerEndpoint.identityGenerationId,
+                    peerIdentitySigningPublicKey: peerEndpoint.identityAuthorityPublicKey,
+                    peerEndpoint: peerEndpoint
+                ) else { continue }
+                if binding.peerInstallationHandle == direct.senderInstallationHandle,
+                   binding.peerCertificateReferenceDigest == direct.senderCertificateDigest,
+                   peerEndpoint.manifestEpoch == direct.senderManifestEpoch,
+                   binding.localInstallationHandle == direct.recipientInstallationHandle,
+                   binding.localCertificateReferenceDigest == direct.recipientCertificateDigest,
+                   localEndpoint.manifestEpoch == direct.recipientManifestEpoch {
+                    matches.append((contact, localEndpoint, binding))
+                }
+            }
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    public func conversation(
+        for contactId: UUID,
+        endpointSession: DirectEndpointSessionIdentity
+    ) -> Conversation? {
+        conversations.first {
+            $0.contactId == contactId && $0.endpointSession == endpointSession
+        }
+    }
+
     public func conversation(for contactId: UUID) -> Conversation? {
         let matches = conversations.filter { $0.contactId == contactId }
         if matches.count <= 1 {
@@ -353,7 +496,10 @@ public struct ClientState: Codable {
     }
 
     public mutating func updateConversation(_ conversation: Conversation) {
-        if let index = conversations.firstIndex(where: { $0.contactId == conversation.contactId }) {
+        if let index = conversations.firstIndex(where: {
+            $0.contactId == conversation.contactId
+                && $0.endpointSession == conversation.endpointSession
+        }) {
             conversations[index] = conversation
         }
     }
@@ -393,6 +539,114 @@ public struct ClientState: Codable {
         }
         identityProfiles[index].continuityEvents.removeAll()
     }
+
+    /// Atomically promotes a previously registered burn generation. Until this
+    /// mutation is durably saved, the old identity remains the active profile.
+    public mutating func cutOverStagedIdentityBurn(at date: Date = Date()) throws {
+        guard let index = identityProfiles.firstIndex(where: { $0.id == activeIdentityId }),
+              var journal = identityProfiles[index].identityMutationV2,
+              journal.kind == .burn,
+              journal.phase == .newRouteReady,
+              journal.isStructurallyValid,
+              identityProfiles[index].identity.fingerprint == journal.oldFingerprint,
+              let staged = journal.stagedBurn,
+              staged.isStructurallyValid,
+              date.timeIntervalSince1970.isFinite,
+              date >= journal.updatedAt else {
+            throw IdentityProfileMigrationError.invalidV2State
+        }
+        let stagedDeliveries = journal.notifications.compactMap(\.stagedDelivery)
+        guard stagedDeliveries.count == journal.notifications.count,
+              Set(stagedDeliveries.map(\.id)).count == stagedDeliveries.count else {
+            throw IdentityProfileMigrationError.invalidV2State
+        }
+
+        let retainedContactIds = Set(journal.notifications.map(\.contactId))
+        var profile = identityProfiles[index]
+        profile.identity = staged.identity
+        profile.prekeys = staged.prekeys
+        profile.architectureVersion = NoctweaveArchitectureV2.version
+        profile.identityGenerationId = staged.identityGenerationId
+        profile.localInstallation = staged.localInstallation
+        profile.installationManifest = staged.installationManifest
+        profile.issuedContactEndpointsV2 = staged.issuedContactEndpointsV2
+        profile.selfSyncV2 = staged.selfSync
+        profile.inboxId = staged.inboxId
+        profile.inboxAccessKey = staged.inboxAccessKey
+        profile.relay = staged.relay
+        profile.contacts = profile.contacts.filter { retainedContactIds.contains($0.id) }
+        profile.conversations.removeAll()
+        profile.groups.removeAll()
+        profile.locallyLeftRelayGroupIds.removeAll()
+        profile.pendingDirectDeliveries = stagedDeliveries
+        profile.deliveryStates.removeAll()
+        profile.inboundEnvelopeReceiptsV2.removeAll()
+        profile.quarantinedTransportEnvelopesV2.removeAll()
+        profile.quarantinedControlEvents.removeAll()
+        profile.relationshipsV2.removeAll()
+        profile.protocolIntents = try stagedDeliveries.map { delivery in
+            let encodedEnvelope = try NoctweaveCoder.encode(delivery.envelope, sortedKeys: true)
+            return ProtocolIntentV2.prepare(
+                id: delivery.id,
+                kind: .sendEvent,
+                targetIdentifier: Data(delivery.contactId.uuidString.lowercased().utf8),
+                payloadDigest: Data(SHA256.hash(data: encodedEnvelope)),
+                createdAt: delivery.queuedAt
+            )
+        }
+        // A burn is a severance boundary, including in local state. Selected
+        // contacts receive exact old-authorized reset ciphertexts, but the new
+        // generation must not retain a general old-to-new audit link.
+        profile.continuityEvents.removeAll()
+        guard journal.markCutoverComplete(at: date) else {
+            throw IdentityProfileMigrationError.invalidV2State
+        }
+        profile.identityMutationV2 = journal
+        _ = profile.backfillArchitectureV2ProfileState()
+        identityProfiles[index] = profile
+        schemaVersion = NoctweaveArchitectureV2.version
+        guard identityProfiles[index].isArchitectureV2Ready else {
+            throw IdentityProfileMigrationError.invalidV2State
+        }
+    }
+
+    public mutating func resignInstallationManifestAfterIdentityRotation(
+        at date: Date = Date()
+    ) throws {
+        guard let index = identityProfiles.firstIndex(where: { $0.id == activeIdentityId }),
+              let generationId = identityProfiles[index].identityGenerationId,
+              let localInstallation = identityProfiles[index].localInstallation,
+              let current = identityProfiles[index].installationManifest,
+              let localRecord = current.installations.first(where: {
+                  $0.id == localInstallation.id
+              }),
+              current.isStructurallyValid,
+              current.identityGenerationId == generationId,
+              localInstallation.identityGenerationId == generationId,
+              localRecord.identityGenerationId == generationId,
+              localRecord.signingPublicKey == localInstallation.signingKey.publicKeyData,
+              localRecord.agreementPublicKey == localInstallation.agreementKey.publicKeyData,
+              localRecord.isActive(at: date, manifestEpoch: current.epoch),
+              date.timeIntervalSince1970.isFinite,
+              date >= current.issuedAt,
+              let previousDigest = current.digest,
+              current.epoch < UInt64.max else {
+            throw IdentityProfileMigrationError.invalidV2State
+        }
+        identityProfiles[index].installationManifest = try InstallationManifest.create(
+            identityGenerationId: generationId,
+            epoch: current.epoch + 1,
+            previousManifestDigest: previousDigest,
+            installations: current.installations,
+            identity: identityProfiles[index].identity,
+            issuedAt: date
+        )
+    }
+}
+
+public enum ClientStateMigrationError: Error, Equatable {
+    case unsupportedVersion(Int)
+    case missingActiveProfile
 }
 
 fileprivate extension ClientState {
@@ -470,6 +724,12 @@ fileprivate extension ClientState {
             relay: incoming.relay,
             signingPublicKey: incoming.signingPublicKey,
             agreementPublicKey: incoming.agreementPublicKey,
+            identityGenerationId: incoming.identityGenerationId,
+            installationCheckpoint: incoming.installationCheckpoint,
+            preferredInstallationEndpoint: incoming.preferredInstallationEndpoint,
+            endpointAuthoritySigningPublicKey: incoming.endpointAuthoritySigningPublicKey,
+            preferredEndpointRevocation: incoming.preferredEndpointRevocation
+                ?? existing.preferredEndpointRevocation,
             rotationCounter: mergedCounter,
             allowIdentityReset: existing.allowIdentityReset || incoming.allowIdentityReset,
             trustAssertions: mergedTrust
@@ -543,6 +803,19 @@ private extension Conversation {
         return Conversation(
             id: id,
             contactId: contactId,
+            endpointSession: endpointSession.map {
+                DirectEndpointSessionIdentity(
+                    contactId: contactId,
+                    localInstallationId: $0.localInstallationId,
+                    localInstallationHandle: $0.localInstallationHandle,
+                    localCertificateReferenceDigest: $0.localCertificateReferenceDigest,
+                    localManifestEpoch: $0.localManifestEpoch,
+                    peerInstallationId: $0.peerInstallationId,
+                    peerInstallationHandle: $0.peerInstallationHandle,
+                    peerCertificateReferenceDigest: $0.peerCertificateReferenceDigest,
+                    peerManifestEpoch: $0.peerManifestEpoch
+                )
+            },
             sessionId: sessionId,
             rootKey: rootKey,
             rootCounter: rootCounter,

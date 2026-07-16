@@ -1,6 +1,6 @@
 # Noctweave Roadmap
 
-**Last updated:** July 10, 2026
+**Last updated:** July 16, 2026
 **Scope:** public core protocol, `NoctweaveCLI`, Linux relay, Docker/ops tooling, and public protocol documentation.
 
 This roadmap reflects repository evidence rather than early planning estimates. Items are marked complete only when code, tests, documentation, or release tooling exist in this repository.
@@ -8,6 +8,71 @@ This roadmap reflects repository evidence rather than early planning estimates. 
 ## Current Status
 
 Noctweave has moved past the initial prototype phase. The public repository now contains the shared Swift core, a command-line headless messaging/API client, a Linux relay server, Docker packaging, relay federation machinery, protocol documentation, security notes, SBOM generation, and release verification scripts.
+
+## Architecture Revision v2
+
+Noctweave is still pre-1.0, so the `architecture-revision` branch deliberately
+breaks unsafe single-endpoint wire and state assumptions. The status source
+of truth is
+[`noctweave_architecture_revision_v2.md`](noctweave_architecture_revision_v2.md).
+Public model availability is not counted as an active end-to-end workflow.
+
+Implemented and active in the paths named by that status document:
+
+- [x] Idempotent profile migration to an independently keyed local endpoint,
+  signed manifest, relationship shells, and local self-sync state
+- [x] One certified preferred endpoint for fresh direct-v4 Swift
+  and JavaScript contacts, using pairwise handles and endpoint-keyed sessions
+- [x] Endpoint-scoped ordered mailbox synchronization in the Swift headless
+  client, JavaScript reference client, in-process relay, and Linux relay
+- [x] Canonical string wire encoding for mailbox consumer IDs and cursors across
+  Swift, JavaScript, OpenAPI, and proof transcripts
+- [x] Durable exact-ciphertext direct outbox and intent retry, bounded
+  backpressure, explicit action-required state, and safe manual rearming
+- [x] Typed encrypted application events separated from authenticated control
+  frames on the certified direct-v4 path
+- [x] Bounded direct-receive receipts binding logical event ID, envelope ID, and
+  canonical signed-envelope digest before duplicate skipping
+- [x] Privacy-minimized inbox registration v2 without relay-stored contact,
+  identity, endpoint-set, endpoint-certificate, or prekey material
+- [x] Purpose-bound, generation-scoped endpoint admission with identity-authority
+  ML-DSA signatures plus endpoint ML-DSA and ML-KEM possession proofs
+- [x] Complete burn teardown through exact pre-signed inbox retirement on every
+  known route, without retaining the old inbox private key after cutover
+- [x] Transcript-bound direct-v4 capability and exact PQ ciphersuite negotiation
+  with shared Swift/JavaScript vectors and Linux relay wire preservation
+- [x] Bounded relationship-event checkpoint compaction instead of silent history
+  eviction or a permanent capacity wedge
+- [x] Local read-only history export/import with sender authorization,
+  replay-protected inert projections, and a recipient-KEM fixed-bucket outer
+  transport seal
+- [x] Linux/in-process relay parity for the fingerprint-scoped compatibility
+  group-invitation lifecycle
+- [x] Authenticated endpoint-aware signed-group foundation with trusted
+  manifest admission, hierarchy-bounded roles, and an explicitly experimental
+  O(n) PQ provider capped at 128 active leaves
+
+Remaining architecture integration work:
+
+- [ ] Publish encrypted endpoint-set updates, connect admission rendezvous,
+  implement independent self-sync delivery, per-endpoint direct fan-out, and aggregated
+  delivery state
+- [ ] Connect purpose-bound rendezvous and user-selected/resumable history
+  transports; add attachment-byte history migration where explicitly authorized
+- [ ] Replace reusable contact-code pairing with purpose-bound, expiring,
+  replay-safe rendezvous offers that disclose relationship-scoped endpoint and
+  route material; until then, document that recipients can correlate a reused
+  code and its identity generation
+- [ ] Exchange encrypted relationship route sets and complete make-before-break
+  relay migration in active clients
+- [ ] Replace the deprecated opt-in fingerprint-scoped group workflow with
+  endpoint leaves,
+  trusted key-package distribution, per-endpoint delivery cursors,
+  Welcome delivery, persistence, and restart recovery
+- [x] Add proactive single-endpoint prekey rotation, endpoint-signed
+  republication, and expiry-bounded in-flight private-key retention
+- [ ] Obtain independent cryptographic and side-channel review before treating
+  the experimental group provider or the revision as production-audited
 
 ## Completed Foundations
 
@@ -39,15 +104,18 @@ Noctweave has moved past the initial prototype phase. The public repository now 
 
 ## Groups
 
-- [x] MLS-derived group design documented
+- [x] Experimental Noctweave PQ group design and non-MLS boundary documented
 - [x] Relay group descriptors and lifecycle operations
 - [x] Signed group commits for membership changes
 - [x] Epoch/transcript-bound group ratchet
 - [x] Group-ratchet encrypted messages
 - [x] Group-ratchet encrypted attachments and voice-message bodies
-- [x] Member-scoped group acknowledgements
+- [x] Identity-fingerprint-scoped group acknowledgements
 - [x] Bounded retained epoch history for offline recovery
 - [x] Route-level tests for group join, update, delete, self-leave, stale epochs, and federated group delivery
+- [x] In-process/Linux relay parity for compatibility group invitation listing,
+  idempotent invitation creation, acceptance, persistence, deletion cleanup,
+  and bounded active-member-plus-pending-invite capacity
 - [x] Bounded group protocol model checker for commit-state invariants
 
 ## Linux Relay
@@ -156,8 +224,13 @@ Noctweave has moved past the initial prototype phase. The public repository now 
 - [x] Redirect rejection, omitted ambient credentials, response-size limits, and redacted transport errors
 - [x] ML-KEM-768 and ML-DSA-65 liboqs WASM adapter with fixed-profile checks
 - [x] Native Noctweave direct-message/contact-offer interoperability profile
+- [x] Certified direct-v4 text profile with pairwise endpoint bindings
+- [x] Endpoint-scoped mailbox v2 sync and durable cursor commit in the
+  packaged reference client
+- [x] Bounded logical-event/envelope/digest receive receipts for exact-duplicate
+  handling before cursor advancement
 - [x] Bounded memory, localStorage, IndexedDB, and database adapters
-- [x] AES-GCM encrypted storage wrapper and password-protected portable profile vault
+- [x] AES-GCM encrypted local storage wrapper; live endpoint export was removed because cloning keys, ratchets, routes, and cursors violates endpoint isolation
 - [x] Localhost-only browser demo server with Host-header validation and DOM-safe rendering
 
 ## Test And Verification Coverage
@@ -182,6 +255,10 @@ Noctweave has moved past the initial prototype phase. The public repository now 
 - [x] Open-federation poisoning, flood, churn, and stale-record tests
 - [x] Hidden-retrieval plan validation tests
 - [x] Group protocol model-checking tests
+- [x] Cross-language direct-v4 and mailbox canonical-wire vectors
+- [x] Architecture-v2 identity, mailbox, lifecycle, route/intent, typed-event,
+  relationship-compaction, signed-group, and sealed-history tests
+- [x] Linux relay mailbox semantic-parity and group-invitation parity tests
 - [x] SBOM JSON validation
 - [x] Package pin verification
 
@@ -202,7 +279,7 @@ These are finite release gates. They should stay bounded to a concrete artifact,
 
 These are intentionally not release blockers unless a future release claims them as production properties.
 
-- [ ] External cryptographic review of the group protocol model and MLS-derived ratchet construction.
+- [ ] External cryptographic review of the experimental Noctweave PQ group protocol and ratchet construction.
 - [ ] External side-channel review of PQ primitive use, key handling, and memory behavior.
 - [ ] Production-grade mixnet deployment with sustained cover traffic and shared route policy.
 - [ ] Production-grade PIR deployment with non-collusion evidence and availability monitoring.

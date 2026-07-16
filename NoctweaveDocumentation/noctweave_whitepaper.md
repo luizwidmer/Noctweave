@@ -26,7 +26,7 @@ Most deployed messaging systems still inherit one or more structural privacy wea
 - central key-distribution or notification infrastructure
 - coarse identity semantics where a user is expected to remain the same entity forever
 
-Noctweave was designed against that backdrop. Its central claim is that identity continuity is not the same thing as permanent identity. A user may need to prove continuity to a chosen contact while being intentionally unlinkable to everyone else. This leads to a model where identity is not a public social anchor but a cryptographic state that can be rotated, archived, or burned.
+Noctweave was designed against that backdrop. Its central claim is that identity continuity is not the same thing as permanent identity. A user may need to prove continuity to a chosen contact while being intentionally unlinkable to everyone else. This leads to a model where identity is not a public social anchor but a bounded cryptographic generation that can undergo an in-generation authority rotation or be burned. Only inert, read-only history may be archived; live identity authority is never an archive payload.
 
 ## 1.2 Design stance
 
@@ -52,7 +52,7 @@ Each active identity owns:
 - an ML-DSA signing keypair
 - an ML-KEM agreement keypair
 - an inbox routing address
-- a home relay selection
+- one or more replaceable, generation-scoped relay routes
 - prekey state for session bootstrap
 
 Inbox routing addresses are bech32-encoded capability-style addresses. They are used for relay routing and mailbox lookup. They are not meant to replace the larger contact-sharing payload used for trust establishment. In practice, the human-shareable pairing object still contains the substantial cryptographic material needed for a contact relationship.
@@ -158,6 +158,13 @@ Pairing is explicit. A contact relationship is created from a contact-share payl
 - password-protected contact-share files suitable for AirDrop or file transfer
 - relay-mediated pairing requests with explicit metadata-leakage warnings
 
+The currently implemented signed contact code is reusable compatibility
+material, not a one-time unlinkable rendezvous. Sharing the same code exposes
+the same identity generation, preferred endpoint authorization, inbox, and
+relay details to each recipient, so colluding recipients can correlate it.
+This is an explicit linkability limit until a purpose-bound, expiring
+rendezvous flow replaces reusable contact codes.
+
 The relay-mediated path is intentionally described as metadata-leaky rather than plaintext-insecure. It can simplify onboarding, but it exposes more timing and discovery metadata to the relay than an offline QR or file exchange.
 
 ## 5.2 Identity creation
@@ -166,22 +173,34 @@ Onboarding creates an identity explicitly. The user chooses relay configuration,
 
 ## 5.3 Identity rotation
 
-Identity rotation preserves inbox continuity while replacing signing and agreement keys. A signed rotation statement links the new keyset to the prior one. Chosen contacts can verify the continuity event and continue messaging without creating an unrelated new trust relationship.
+Identity rotation preserves selected pairwise continuity while replacing the
+identity-generation authority. A signed rotation statement is disclosed only
+inside relationships the user chooses to retain. It is not a public or global
+continuity record.
 
 Rotation is therefore appropriate when the user wants to remain the same person to selected contacts while refreshing cryptographic state.
 
 ## 5.4 Identity burn
 
-Identity burn is materially different. Burn is a severance operation. The client can selectively notify only contacts marked in advance as eligible to receive the successor identity. Everyone else loses continuity and cannot continue interaction under the burned identity's recipient material.
+Identity burn is materially different. Burn is a severance operation. The
+client first journals exact old-key-authenticated reset ciphertext only for
+contacts selected by the user and pre-signs retirement for every known old
+inbox route. It then creates an unrelated generation, deletes old private and
+self-sync state, clears the general local old-to-new audit link, and retries
+the selected ciphertext and route retirements idempotently. Everyone else
+receives no cryptographic link to the replacement.
 
 This distinction is central to the system:
 
 - rotation means "same relationship, new keys"
 - burn means "new entity unless I explicitly carry you forward"
 
-## 5.5 Identity book and audit
+## 5.5 Local history and continuity scope
 
-The system includes multiple active or archived identities per client, each with its own home relay. Continuity-relevant actions are recorded in a continuity audit trail that can be reviewed or purged.
+A client may keep inert, read-only message history, but it does not archive live
+identity authority, route credentials, ratchets, cursors, or a general
+cross-generation identity graph. Continuity evidence exists only within the
+relationships to which the user explicitly disclosed it.
 
 # 6. Relay Architecture
 
@@ -199,7 +218,12 @@ The relay sees routing metadata, timing, protocol operation types, and policy-re
 
 Direct-message and group-message bodies are encoded into padded plaintext buckets before AEAD encryption. This means relays observe bucketed ciphertext sizes rather than exact text, attachment-descriptor, or voice-descriptor plaintext lengths. This is metadata reduction, not anonymity: large payload classes, timing, routing, and traffic volume can still be observed.
 
-Relay fetch and state-mutation operations are not unauthenticated mailbox reads. Inbox-access keys and actor proofs bind sensitive operations to identity-held signing material, and explicit acknowledgement allows clients to remove delivered messages from relay storage without relying on crash-prone implicit deletion.
+Relay synchronization and state mutations are authenticated without exposing
+plaintext. A fresh route-only ML-DSA credential owns one ordered cursor for one
+relay/inbox route; it verifies, decrypts, and durably stores events before
+committing progress. The inbox-access key is limited to registering or removing
+route credentials and pre-signing full inbox retirement. One endpoint's cursor
+never destructively consumes another endpoint's delivery state.
 
 ## 6.2 Storage
 
@@ -329,7 +353,48 @@ The Linux relay path is part of the supported deployment model rather than a tra
 
 ## 8.1 Groups
 
-Noctweave supports groups through relay-backed coordination while the group cryptography path is MLS-derived. Current group state is controlled through actor proofs and signed group commits for title edits, member additions, member removals, self-leave operations, and join approvals. Each signed commit is bound to the group ID, actor fingerprint, base epoch, and previous transcript hash so stale or replayed membership edits are rejected. Group descriptors carry a required MLS epoch state containing a tree hash, confirmed transcript hash, ciphersuite label, last commit summary, and bounded `mlsEpochHistory` of recent signed commit summaries. Approved joins carry an explicit signed `joinApprove` commit payload and advance the epoch with a `joinApprove` commit summary. A bounded group protocol model checker explores signed update, join approval, member removal, self-leave, stale-epoch, forked-transcript, duplicate-member, creator-removal, and no-op commit cases against the same epoch and transcript state used by relay descriptors. Group ratchet epoch secrets are distributed through signed group create, commit, and join-approval payloads by sealing the secret to each post-commit member with ML-KEM and AEAD-bound metadata. Clients that were offline across multiple group commits can replay retained epoch-secret distributions in order when those commits remain inside the relay's bounded descriptor history; before recovery, the retained history must be non-empty, duplicate-free, transcript-linked, contiguous inside the retained window, and ended by the advertised current commit. The same recovery path is used for stale persisted app state and route-level refresh. The group ratchet state transition itself rejects skipped epoch jumps, so direct callers cannot bypass the retained-history recovery path by jumping from a stale epoch to a later one. Relay-backed text, image, and voice group messages are delivered as signed group-ratchet envelopes to the group inbox. A sender can submit a group envelope through another relay in the same federation; that relay applies federation policy and forwards the ciphertext to the group-owning relay, which performs group membership and signature validation before storage. Group inbox acknowledgements are member-scoped: the relay keeps an envelope until all pending non-sender members have acknowledged it, so an online member cannot remove a ciphertext before an offline peer has fetched it. The envelope context is used as AEAD data to bind ciphertexts to the group ID, epoch, sender fingerprint, message counter, and confirmed transcript hash. Attachment chunks are encrypted under the same group message key as the descriptor envelope and bind chunk metadata into AEAD. The relay coordinates membership and registry state, validates member signatures for group-inbox ciphertexts, and does not receive plaintext group messages or group epoch secrets. Supported flows include:
+Noctweave supports groups through relay-backed coordination and the explicit
+experimental profile `noctweave-pq-group-experimental-2`. This is a
+Noctweave-specific post-quantum epoch and sender-chain construction, not RFC
+9420 MLS. Migration-era source names such as `MLSGroupEpochState` describe
+internal state vocabulary only.
+
+Current group state is controlled through actor proofs and signed group commits
+for title edits, member additions, member removals, self-leave operations, and
+join approvals. Each signed commit is bound to the group ID, actor fingerprint,
+base epoch, and previous transcript hash so stale or replayed membership edits
+are rejected. Group descriptors carry tree and transcript hashes, the explicit
+experimental cipher-suite label, a last-commit summary, and a bounded
+`mlsEpochHistory` of recent signed commit summaries. Approved joins carry an
+explicit signed `joinApprove` payload and advance the epoch.
+
+A bounded model checker explores signed update, join approval, member removal,
+self-leave, stale-epoch, forked-transcript, duplicate-member, creator-removal,
+and no-op cases against the same epoch/transcript state used by relay
+descriptors. Epoch secrets are sealed to each post-commit member with ML-KEM and
+AEAD-bound metadata. Offline clients can replay retained epoch-secret
+distributions only while the relay's bounded history remains complete,
+duplicate-free, transcript-linked, contiguous, and terminated by the advertised
+commit. The ratchet rejects skipped epoch jumps outside that recovery path.
+
+Relay-backed text, image, and voice messages use signed group-ratchet envelopes
+only when an operator explicitly enables the deprecated
+`nw.compat.legacy-fingerprint` profile. Federated forwarding remains
+ciphertext-only, and the destination relay checks membership and signatures
+before storage. Compatibility acknowledgements are scoped to an identity
+fingerprint: they protect distinct group members, but they do not provide
+independent progress for multiple local endpoints within one generation. The
+additive architecture-v2 group model introduces endpoint leaves and policy
+state, but it is not yet connected to this relay path. The
+application-envelope context binds the envelope UUID, explicit profile and
+cipher suite, group ID, epoch and transcript, sender fingerprint, bucketed
+timestamp, message counter, nonce, and ciphertext/tag sizes into AEAD data. The
+ML-DSA signature additionally covers the complete encrypted payload. Attachment
+chunks bind their own metadata under the same group message key. Relays never
+receive group plaintext or epoch secrets, and there is no verifier fallback to
+the superseded experimental-1 transcript.
+
+Supported flows include:
 
 - create
 - list
@@ -340,7 +405,17 @@ Noctweave supports groups through relay-backed coordination while the group cryp
 - leave
 - creator-side delete or extinguish
 
-This design is compatible with the relay architecture and provides practical group coordination, but it should not be misrepresented as a complete MLS deployment or an externally proven group ratchet yet. Relays advertise their group security model so clients can distinguish pairwise-fan-out groups from `mlsDerivedTree` groups. The shipped client path fails closed when relay-backed group-ratchet state is unavailable instead of silently downgrading to pairwise direct-message fan-out. Route and state coverage exercises offline epoch refresh, multiple missed epoch-distribution replay, multiple offline members independently recovering after a shared outage, direct skipped-epoch rejection in the group ratchet primitive, fail-closed recovery after the retained epoch-history window expires, stale persisted group-state recovery, retained-history chain validation, rejection of retained epoch-secret distributions whose metadata does not match their commit summaries, encrypted attachment retrieval after another member has acknowledged the same group envelope, federated group-ratchet delivery across two relays, and bounded model-checking of group commit state evolution.
+This design provides practical group coordination, but it is neither a complete
+MLS deployment nor an externally proven group protocol. Relays advertise their
+group security model so clients can distinguish pairwise fan-out from the
+experimental tree/epoch path. The shipped client fails closed when group-ratchet
+state is unavailable instead of silently downgrading to pairwise fan-out. Route
+and state coverage exercises offline epoch refresh, missed distributions,
+multiple offline members, skipped-epoch rejection, expired retained history,
+stale persisted state, malformed history/distribution metadata, attachment
+retrieval after another member acknowledgement, federated ciphertext delivery,
+and bounded commit-state exploration. These tests are not a proof or an
+interoperability claim.
 
 ## 8.2 Attachments
 
@@ -393,7 +468,7 @@ The reference implementation delivers:
 - prekey bundle upload and fetch
 - symmetric ratchet plus periodic ML-KEM root ratchet
 - identity rotation and identity burn
-- continuity event tracking and audit
+- relationship-scoped continuity event tracking and active-generation audit
 - encrypted attachment and voice-message transfer
 - secure camera and app-owned secure keyboard options
 - relay-backed groups with actor-proof mutation controls
@@ -407,7 +482,7 @@ The reference implementation delivers:
 - optional relay-advertised replicated XOR-PIR for non-colluding replicated buckets, with padded query shares, fixed-size response shares, PIR plan-integrity validation, replica-set metadata validation, operational profile validation, and promotion evidence gating
 - optional relay-advertised onion packet support with ML-KEM per-hop wrapping and AES-GCM layer protection
 - optional relay-advertised mixnet scheduling policy for fixed-size packet shaping, batching, bounded release delay, cover-packet planning, inter-relay cover coordination plans, diverse route selection, and route-policy validation
-- explicit group-security-model advertisement, required MLS epoch metadata, and bounded group epoch history
+- explicit experimental group-security-model advertisement, required epoch/transcript metadata, and bounded group history
 - bounded group protocol model checking over commit state transitions
 - release verification that blocks autonomous public-DHT adapter code from shipped source paths
 - relay-native open-federation DHT node mode with signed short-lived relay records, bounded cache/query limits, and bounded PEX hints

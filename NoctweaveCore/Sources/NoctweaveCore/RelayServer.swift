@@ -85,7 +85,13 @@ public final class RelayServer {
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
-                self?.onEvent?(.started(port: port))
+                // Port zero asks Network.framework for an available local port.
+                // Report the actual bound port so callers can establish a
+                // race-free ephemeral listener without probing a random port
+                // before startup.
+                let boundPort = self?.listener?.port?.rawValue ?? port
+                self?.localEndpoint?.port = boundPort
+                self?.onEvent?(.started(port: boundPort))
             case .failed:
                 self?.onEvent?(.error("Listener failed"))
             default:
@@ -393,14 +399,32 @@ public final class RelayServer {
            !isCoordinatorDirectoryRequestType(request.type) {
             return .error("Coordinator relays are directory-only and do not carry user traffic.")
         }
+        if request.type.requiresLegacyFingerprintCompatibility,
+           !configuration.legacyFingerprintCompatibilityEnabled {
+            return .error(
+                "Deprecated compatibility profile \(RelayCompatibilityProfile.legacyFingerprint) is disabled"
+            )
+        }
         switch request.type {
         case .deliver:
             guard let deliver = request.deliver else {
                 return .error("Missing deliver payload")
             }
-            let routingToken = deliver.routingToken ?? deliver.inboxId
-            guard InboxAddress.isValid(routingToken) else {
-                return .error("Invalid routing token")
+            let capability = deliver.inboxCapability
+            if let capability {
+                guard configuration.opaqueRouteCapabilitiesEnabled else {
+                    return .error("Experimental opaque route capabilities are disabled")
+                }
+                guard capability.isStructurallyValid,
+                      deliver.inboxId == nil,
+                      deliver.routingToken == nil else {
+                    return .error("Invalid inbox route capability")
+                }
+            } else {
+                guard let legacyRoutingToken = deliver.routingToken ?? deliver.inboxId,
+                      InboxAddress.isValid(legacyRoutingToken) else {
+                    return .error("Invalid routing token")
+                }
             }
             if let destination = deliver.destinationRelay,
                destination != localEndpoint {
@@ -408,16 +432,41 @@ public final class RelayServer {
                     if let response = try await federationGate(forwardingTo: destination) {
                         return response
                     }
-                    let forward = DeliverRequest(
-                        inboxId: deliver.inboxId,
-                        routingToken: routingToken,
-                        envelope: deliver.envelope
-                    )
+                    let forward: DeliverRequest
+                    if let capability {
+                        // Federation preserves only the opaque bearer value;
+                        // the forwarding relay never learns the destination
+                        // inbox or any endpoint/relationship identifier.
+                        forward = DeliverRequest(
+                            inboxCapability: capability,
+                            envelope: deliver.envelope
+                        )
+                    } else {
+                        guard let legacyInboxId = deliver.inboxId else {
+                            return .error("Invalid routing token")
+                        }
+                        forward = DeliverRequest(
+                            inboxId: legacyInboxId,
+                            routingToken: deliver.routingToken,
+                            envelope: deliver.envelope
+                        )
+                    }
                     let client = RelayClient(endpoint: destination, authToken: configuration.federationForwardingAuthToken)
                     return try await client.send(.deliver(forward))
                 } catch {
                     return .error("Forwarding failed")
                 }
+            }
+            let routingToken: String
+            if let capability {
+                guard let resolved = await store.resolveInboxRouteCapability(capability) else {
+                    return .error("Inbox route capability is unavailable")
+                }
+                routingToken = resolved
+            } else if let legacyRoutingToken = deliver.routingToken ?? deliver.inboxId {
+                routingToken = legacyRoutingToken
+            } else {
+                return .error("Invalid routing token")
             }
             do {
                 let count = try await store.deliver(deliver.envelope, to: routingToken)
@@ -425,8 +474,14 @@ public final class RelayServer {
                 return .delivered(count: count)
             } catch RelayStoreError.inboxFull {
                 return .error("Inbox full")
+            } catch RelayStoreError.destinationInboxNotRegistered {
+                return .error("Destination inbox is not registered")
+            } catch RelayStoreError.inboxRetired {
+                return .error("Destination inbox is retired")
             } catch RelayStoreError.relayCapacityExceeded {
                 return .error("Relay storage capacity reached")
+            } catch RelayStoreError.invalidEnvelopePayload {
+                return .error("Invalid envelope payload")
             }
         case .registerInbox:
             guard let registration = request.registerInbox else {
@@ -437,11 +492,20 @@ public final class RelayServer {
                   InboxAddress.isBound(registration.inboxId, to: registration.accessPublicKey) else {
                 return .error("Invalid inbox registration")
             }
-            guard let offer = registration.contactOffer,
-                  (try? offer.verified()) != nil,
-                  offer.inboxId == registration.inboxId,
-                  offer.inboxAccessPublicKey == registration.accessPublicKey else {
-                return .error("Inbox registration is not bound to a valid identity offer")
+            switch registration.registrationVersion {
+            case RegisterInboxRequest.privacyMinimizedVersion:
+                guard registration.contactOffer == nil else {
+                    return .error("Privacy-minimized inbox registration must not include a contact offer")
+                }
+            case nil:
+                guard let offer = registration.contactOffer,
+                      (try? offer.verified()) != nil,
+                      offer.inboxId == registration.inboxId,
+                      offer.inboxAccessPublicKey == registration.accessPublicKey else {
+                    return .error("Inbox registration is not bound to a valid identity offer")
+                }
+            default:
+                return .error("Unsupported inbox registration version")
             }
             let accessFingerprint = CryptoBox.fingerprint(for: registration.accessPublicKey)
             if let proofFailure = await validateActorProof(
@@ -453,17 +517,188 @@ public final class RelayServer {
                 return proofFailure
             }
             do {
-                try await store.registerInbox(
+                let receipt = try await store.registerInbox(
                     inboxId: registration.inboxId,
                     accessPublicKey: registration.accessPublicKey
                 )
-                return .ok()
+                return .ok(
+                    inboxRegistration: configuration.opaqueRouteCapabilitiesEnabled
+                        ? receipt
+                        : nil
+                )
             } catch RelayStoreError.inboxAlreadyRegistered {
                 return .error("Inbox is already registered to another access key")
+            } catch RelayStoreError.inboxRetired {
+                return .error("Inbox is retired")
             } catch RelayStoreError.relayCapacityExceeded {
                 return .error("Relay storage capacity reached")
             } catch {
                 return .error("Invalid inbox registration")
+            }
+        case .retireInbox:
+            guard let retirement = request.retireInbox,
+                  InboxAddress.isValid(retirement.inboxId),
+                  let requestDigest = try? retirement.requestDigest() else {
+                return .error("Invalid inbox retirement request")
+            }
+            if await store.isInboxRetired(inboxId: retirement.inboxId) {
+                guard await store.isMatchingInboxRetirement(
+                    inboxId: retirement.inboxId,
+                    requestDigest: requestDigest
+                ) else {
+                    return .error("Inbox retirement request does not match tombstone")
+                }
+                return .ok()
+            }
+            let accessPublicKey = await store.inboxAccessPublicKey(for: retirement.inboxId)
+            guard let proofSigningKey = retirement.accessProof?.publicSigningKey else {
+                return .error("Missing inbox retirement proof.")
+            }
+            if let proofFailure = validateInboxRetirementProof(
+                retirement.accessProof,
+                inboxId: retirement.inboxId,
+                expectedSigningKey: accessPublicKey ?? proofSigningKey,
+                signableDataBuilder: { proof in try retirement.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            do {
+                // Persist the non-resurrection marker even when this relay has
+                // no live registration. That makes a pre-signed burn request
+                // safe after partial state loss and prevents later reuse.
+                try await store.retireInbox(
+                    inboxId: retirement.inboxId,
+                    requestDigest: requestDigest
+                )
+                return .ok()
+            } catch RelayStoreError.invalidInboxRetirement {
+                return .error("Inbox retirement request does not match tombstone")
+            } catch RelayStoreError.relayCapacityExceeded {
+                return .error("Relay lifetime inbox capacity reached")
+            } catch {
+                return .error("Relay storage is unavailable")
+            }
+        case .createInboxRouteCapability:
+            guard configuration.opaqueRouteCapabilitiesEnabled else {
+                return .error("Experimental opaque route capabilities are disabled")
+            }
+            guard let mutation = request.createInboxRouteCapability,
+                  InboxAddress.isValid(mutation.inboxId),
+                  mutation.capability.isStructurallyValid,
+                  mutation.relayScope.isValidRouteMutationScope,
+                  mutation.mutationSequence > 0,
+                  mutation.mutationSequence <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
+                return .error("Invalid inbox route capability request")
+            }
+            guard let accessPublicKey = await store.inboxAccessPublicKey(for: mutation.inboxId) else {
+                return .error("Inbox is not registered")
+            }
+            guard let mutationDigest = try? mutation.mutationDigest() else {
+                return .error("Invalid inbox route capability request")
+            }
+            let isCurrentReplay = await store.isCurrentInboxRouteCapabilityMutation(
+                inboxId: mutation.inboxId,
+                relayScope: mutation.relayScope,
+                mutationSequence: mutation.mutationSequence,
+                mutationDigest: mutationDigest
+            )
+            let accessFingerprint = CryptoBox.fingerprint(for: accessPublicKey)
+            if let proofFailure = validateActorProofCryptographically(
+                mutation.authorityProof,
+                expectedFingerprint: accessFingerprint,
+                expectedSigningKey: accessPublicKey,
+                enforceFreshness: !isCurrentReplay,
+                signableDataBuilder: { proof in try mutation.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            do {
+                _ = try await store.applyInboxRouteCapabilityMutation(
+                    operation: .create,
+                    inboxId: mutation.inboxId,
+                    capability: mutation.capability,
+                    relayScope: mutation.relayScope,
+                    mutationSequence: mutation.mutationSequence,
+                    mutationDigest: mutationDigest
+                )
+                return .ok()
+            } catch RelayStoreError.inboxRouteCapabilityRevoked {
+                return .error("Inbox route capability is revoked")
+            } catch RelayStoreError.inboxRouteCapabilityLimitReached {
+                return .error("Inbox route capability limit reached")
+            } catch RelayStoreError.relayCapacityExceeded {
+                return .error("Relay route capability capacity reached")
+            } catch RelayStoreError.inboxRetired {
+                return .error("Inbox is retired")
+            } catch RelayStoreError.invalidInboxRouteCapabilityMutation {
+                return .error("Inbox route capability relay scope mismatch")
+            } catch RelayStoreError.inboxRouteCapabilityMutationConflict {
+                return .error("Inbox route capability mutation sequence conflict")
+            } catch RelayStoreError.inboxRouteCapabilityMutationOutOfOrder {
+                return .error("Inbox route capability mutation is out of order")
+            } catch RelayStoreError.destinationInboxNotRegistered {
+                return .error("Inbox is not registered")
+            } catch {
+                return .error("Relay storage is unavailable")
+            }
+        case .revokeInboxRouteCapability:
+            guard configuration.opaqueRouteCapabilitiesEnabled else {
+                return .error("Experimental opaque route capabilities are disabled")
+            }
+            guard let mutation = request.revokeInboxRouteCapability,
+                  InboxAddress.isValid(mutation.inboxId),
+                  mutation.capability.isStructurallyValid,
+                  mutation.relayScope.isValidRouteMutationScope,
+                  mutation.mutationSequence > 0,
+                  mutation.mutationSequence <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
+                return .error("Invalid inbox route capability request")
+            }
+            guard let accessPublicKey = await store.inboxAccessPublicKey(for: mutation.inboxId) else {
+                return .error("Inbox is not registered")
+            }
+            guard let mutationDigest = try? mutation.mutationDigest() else {
+                return .error("Invalid inbox route capability request")
+            }
+            let isCurrentReplay = await store.isCurrentInboxRouteCapabilityMutation(
+                inboxId: mutation.inboxId,
+                relayScope: mutation.relayScope,
+                mutationSequence: mutation.mutationSequence,
+                mutationDigest: mutationDigest
+            )
+            let accessFingerprint = CryptoBox.fingerprint(for: accessPublicKey)
+            if let proofFailure = validateActorProofCryptographically(
+                mutation.authorityProof,
+                expectedFingerprint: accessFingerprint,
+                expectedSigningKey: accessPublicKey,
+                enforceFreshness: !isCurrentReplay,
+                signableDataBuilder: { proof in try mutation.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            do {
+                _ = try await store.applyInboxRouteCapabilityMutation(
+                    operation: .revoke,
+                    inboxId: mutation.inboxId,
+                    capability: mutation.capability,
+                    relayScope: mutation.relayScope,
+                    mutationSequence: mutation.mutationSequence,
+                    mutationDigest: mutationDigest
+                )
+                return .ok()
+            } catch RelayStoreError.relayCapacityExceeded {
+                return .error("Relay route capability capacity reached")
+            } catch RelayStoreError.inboxRetired {
+                return .error("Inbox is retired")
+            } catch RelayStoreError.invalidInboxRouteCapabilityMutation {
+                return .error("Inbox route capability relay scope mismatch")
+            } catch RelayStoreError.inboxRouteCapabilityMutationConflict {
+                return .error("Inbox route capability mutation sequence conflict")
+            } catch RelayStoreError.inboxRouteCapabilityMutationOutOfOrder {
+                return .error("Inbox route capability mutation is out of order")
+            } catch RelayStoreError.destinationInboxNotRegistered {
+                return .error("Inbox is not registered")
+            } catch {
+                return .error("Relay storage is unavailable")
             }
         case .fetch:
             guard let fetch = request.fetch else {
@@ -475,6 +710,9 @@ public final class RelayServer {
             }
             guard let accessPublicKey = await store.inboxAccessPublicKey(for: routingToken) else {
                 return .error("Inbox is not registered")
+            }
+            guard !(await store.hasMailboxConsumerBindings(inboxId: routingToken)) else {
+                return .error("Legacy mailbox fetch is disabled for endpoint-managed inboxes")
             }
             let accessFingerprint = CryptoBox.fingerprint(for: accessPublicKey)
             if let proofFailure = await validateActorProof(
@@ -500,6 +738,9 @@ public final class RelayServer {
             guard let accessPublicKey = await store.inboxAccessPublicKey(for: acknowledgement.inboxId) else {
                 return .error("Inbox is not registered")
             }
+            guard !(await store.hasMailboxConsumerBindings(inboxId: acknowledgement.inboxId)) else {
+                return .error("Legacy mailbox acknowledgement is disabled for endpoint-managed inboxes")
+            }
             let accessFingerprint = CryptoBox.fingerprint(for: accessPublicKey)
             if let proofFailure = await validateActorProof(
                 acknowledgement.accessProof,
@@ -514,6 +755,176 @@ public final class RelayServer {
                 messageIds: acknowledgement.messageIds
             )
             return .ok()
+        case .registerMailboxConsumer:
+            guard let registration = request.registerMailboxConsumer,
+                  InboxAddress.isValid(registration.inboxId),
+                  registration.consumerId.isStructurallyValid,
+                  registration.sponsorConsumerId?.isStructurallyValid ?? true,
+                  SigningKeyPair.isValidPublicKey(registration.consumerSigningPublicKey) else {
+                return .error("Invalid mailbox consumer registration")
+            }
+            guard !(await store.isInboxRetired(inboxId: registration.inboxId)) else {
+                return .error("Inbox is retired")
+            }
+            guard let accessPublicKey = await store.inboxAccessPublicKey(for: registration.inboxId) else {
+                return .error("Invalid mailbox consumer registration")
+            }
+            let accessFingerprint = CryptoBox.fingerprint(for: accessPublicKey)
+            if let proofFailure = await validateActorProof(
+                registration.authorityProof,
+                expectedFingerprint: accessFingerprint,
+                expectedSigningKey: accessPublicKey,
+                signableDataBuilder: { proof in try registration.authoritySignableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            let consumerFingerprint = CryptoBox.fingerprint(for: registration.consumerSigningPublicKey)
+            if let proofFailure = await validateActorProof(
+                registration.consumerProof,
+                expectedFingerprint: consumerFingerprint,
+                expectedSigningKey: registration.consumerSigningPublicKey,
+                signableDataBuilder: { proof in try registration.consumerSignableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            let existingConsumer = await store.mailboxConsumer(
+                inboxId: registration.inboxId,
+                consumerId: registration.consumerId
+            )
+            let activeBoundConsumers = await store.mailboxConsumers(inboxId: registration.inboxId)
+                .filter {
+                    $0.state == .active
+                        && $0.consumerSigningPublicKey.map(SigningKeyPair.isValidPublicKey) == true
+                }
+            let isManaged = await store.hasMailboxConsumerBindings(inboxId: registration.inboxId)
+            let requiresSponsor: Bool
+            if let existingConsumer {
+                requiresSponsor = existingConsumer.state == .active
+                    && existingConsumer.consumerSigningPublicKey == nil
+                    && !activeBoundConsumers.isEmpty
+            } else {
+                guard !isManaged || !activeBoundConsumers.isEmpty else {
+                    return mailboxSyncErrorResponse(MailboxSyncError.freshInboxRequired)
+                }
+                requiresSponsor = isManaged
+            }
+            if requiresSponsor {
+                guard let sponsorConsumerId = registration.sponsorConsumerId,
+                      sponsorConsumerId != registration.consumerId,
+                      let sponsorSigningPublicKey = await store.activeMailboxConsumerSigningPublicKey(
+                        inboxId: registration.inboxId,
+                        consumerId: sponsorConsumerId
+                      ) else {
+                    return mailboxSyncErrorResponse(MailboxSyncError.consumerSponsorRequired)
+                }
+                let sponsorFingerprint = CryptoBox.fingerprint(for: sponsorSigningPublicKey)
+                if let proofFailure = await validateActorProof(
+                    registration.sponsorProof,
+                    expectedFingerprint: sponsorFingerprint,
+                    expectedSigningKey: sponsorSigningPublicKey,
+                    signableDataBuilder: { proof in try registration.sponsorSignableData(for: proof) }
+                ) {
+                    return proofFailure
+                }
+            }
+            do {
+                return .mailboxConsumer(
+                    try await store.registerMailboxConsumer(
+                        inboxId: registration.inboxId,
+                        consumerId: registration.consumerId,
+                        consumerSigningPublicKey: registration.consumerSigningPublicKey,
+                        sponsorConsumerId: registration.sponsorConsumerId,
+                        startingSequence: registration.startingSequence
+                    )
+                )
+            } catch {
+                return mailboxSyncErrorResponse(error)
+            }
+        case .syncMailbox:
+            guard let sync = request.syncMailbox,
+                  InboxAddress.isValid(sync.inboxId),
+                  sync.consumerId.isStructurallyValid,
+                  sync.cursor?.isStructurallyValid ?? true,
+                  (sync.maxCount ?? 100) > 0,
+                  (sync.maxCount ?? 100) <= 256,
+                  let consumerSigningPublicKey = await store.mailboxConsumerSigningPublicKey(
+                    inboxId: sync.inboxId,
+                    consumerId: sync.consumerId
+                  ) else {
+                return .error("Invalid mailbox sync request")
+            }
+            let consumerFingerprint = CryptoBox.fingerprint(for: consumerSigningPublicKey)
+            if let proofFailure = await validateActorProof(
+                sync.consumerProof,
+                expectedFingerprint: consumerFingerprint,
+                expectedSigningKey: consumerSigningPublicKey,
+                signableDataBuilder: { proof in try sync.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            do {
+                return .mailboxSync(try await syncMailboxWithOptionalLongPoll(sync))
+            } catch {
+                return mailboxSyncErrorResponse(error)
+            }
+        case .commitMailboxCursor:
+            guard let commit = request.commitMailboxCursor,
+                  InboxAddress.isValid(commit.inboxId),
+                  commit.consumerId.isStructurallyValid,
+                  commit.cursor.isStructurallyValid,
+                  let consumerSigningPublicKey = await store.mailboxConsumerSigningPublicKey(
+                    inboxId: commit.inboxId,
+                    consumerId: commit.consumerId
+                  ) else {
+                return .error("Invalid mailbox cursor commit")
+            }
+            let consumerFingerprint = CryptoBox.fingerprint(for: consumerSigningPublicKey)
+            if let proofFailure = await validateActorProof(
+                commit.consumerProof,
+                expectedFingerprint: consumerFingerprint,
+                expectedSigningKey: consumerSigningPublicKey,
+                signableDataBuilder: { proof in try commit.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            do {
+                return .mailboxConsumer(
+                    try await store.commitMailboxCursor(
+                        inboxId: commit.inboxId,
+                        consumerId: commit.consumerId,
+                        cursor: commit.cursor,
+                        sequence: commit.sequence
+                    )
+                )
+            } catch {
+                return mailboxSyncErrorResponse(error)
+            }
+        case .revokeMailboxConsumer:
+            guard let revocation = request.revokeMailboxConsumer,
+                  InboxAddress.isValid(revocation.inboxId),
+                  revocation.consumerId.isStructurallyValid,
+                  let accessPublicKey = await store.inboxAccessPublicKey(for: revocation.inboxId) else {
+                return .error("Invalid mailbox consumer revocation")
+            }
+            let accessFingerprint = CryptoBox.fingerprint(for: accessPublicKey)
+            if let proofFailure = await validateActorProof(
+                revocation.authorityProof,
+                expectedFingerprint: accessFingerprint,
+                expectedSigningKey: accessPublicKey,
+                signableDataBuilder: { proof in try revocation.signableData(for: proof) }
+            ) {
+                return proofFailure
+            }
+            do {
+                return .mailboxConsumer(
+                    try await store.revokeMailboxConsumer(
+                        inboxId: revocation.inboxId,
+                        consumerId: revocation.consumerId
+                    )
+                )
+            } catch {
+                return mailboxSyncErrorResponse(error)
+            }
         case .deliverGroupMessage:
             guard let deliver = request.deliverGroupMessage else {
                 return .error("Missing group message delivery payload")
@@ -541,7 +952,15 @@ public final class RelayServer {
             }
             guard let group = await store.fetchGroup(groupId: deliver.groupId),
                   group.inboxId == deliver.groupInboxId else {
-                return .error("Group not found")
+                return .error("Destination group inbox is not registered")
+            }
+            guard group.mlsEpochState.protocolVersion == MLSGroupEpochState.currentProtocolVersion,
+                  group.mlsEpochState.cipherSuite == MLSGroupEpochState.currentCipherSuite,
+                  deliver.envelope.protocolVersion == group.mlsEpochState.protocolVersion,
+                  deliver.envelope.cipherSuite == group.mlsEpochState.cipherSuite,
+                  deliver.envelope.epoch == group.mlsEpochState.epoch,
+                  deliver.envelope.transcriptHash == group.mlsEpochState.confirmedTranscriptHash else {
+                return .error("Group message does not match the current authenticated epoch")
             }
             guard let senderKey = registeredSigningKey(
                 for: deliver.envelope.senderFingerprint,
@@ -563,8 +982,14 @@ public final class RelayServer {
                 return .delivered(count: count)
             } catch RelayStoreError.inboxFull {
                 return .error("Inbox full")
+            } catch RelayStoreError.destinationInboxNotRegistered {
+                return .error("Destination group inbox is not registered")
+            } catch RelayStoreError.inboxRetired {
+                return .error("Destination group inbox is retired")
             } catch RelayStoreError.relayCapacityExceeded {
                 return .error("Relay storage capacity reached")
+            } catch RelayStoreError.invalidEnvelopePayload {
+                return .error("Invalid envelope payload")
             }
         case .fetchGroupMessages:
             guard let fetch = request.fetchGroupMessages else {
@@ -1228,8 +1653,14 @@ public final class RelayServer {
             return .error("Inbox full")
         case .invalidInboxRegistration:
             return .error("Invalid inbox registration")
+        case .invalidInboxRetirement:
+            return .error("Invalid inbox retirement")
         case .inboxAlreadyRegistered:
             return .error("Inbox is already registered")
+        case .inboxRetired:
+            return .error("Inbox is retired")
+        case .destinationInboxNotRegistered:
+            return .error("Destination inbox is not registered")
         case .relayCapacityExceeded:
             return .error("Relay storage capacity reached")
         case .invalidEnvelopePayload:
@@ -1261,6 +1692,37 @@ public final class RelayServer {
         }
     }
 
+    private func mailboxSyncErrorResponse(_ error: Error) -> RelayResponse {
+        switch error {
+        case MailboxSyncError.invalidConsumer:
+            return .error("Invalid mailbox consumer")
+        case MailboxSyncError.consumerNotFound:
+            return .error("Mailbox consumer not found")
+        case MailboxSyncError.consumerRevoked:
+            return .error("Mailbox consumer revoked")
+        case MailboxSyncError.consumerCredentialMissing:
+            return .error("Mailbox consumer credential is not bound")
+        case MailboxSyncError.consumerSigningKeyMismatch:
+            return .error("Mailbox consumer signing key mismatch")
+        case MailboxSyncError.consumerSponsorRequired:
+            return .error("Active mailbox consumer sponsorship is required")
+        case MailboxSyncError.invalidConsumerSponsor:
+            return .error("Invalid mailbox consumer sponsor")
+        case MailboxSyncError.freshInboxRequired:
+            return .error("The old inbox has no active route credential; create a fresh identity generation and inbox")
+        case MailboxSyncError.invalidCursor:
+            return .error("Invalid mailbox cursor")
+        case MailboxSyncError.cursorExpired:
+            return .error("Mailbox cursor expired; encrypted history recovery is required")
+        case MailboxSyncError.cursorRollback:
+            return .error("Mailbox cursor rollback rejected")
+        case MailboxSyncError.sequenceOverflow:
+            return .error("Mailbox sequence exhausted")
+        default:
+            return .error("Mailbox synchronization failed")
+        }
+    }
+
     private func registeredSigningKey(
         for actorFingerprint: String,
         in group: RelayGroupDescriptor
@@ -1280,6 +1742,36 @@ public final class RelayServer {
         expectedSigningKey: Data?,
         signableDataBuilder: (RelayActorProof) throws -> Data
     ) async -> RelayResponse? {
+        if let failure = validateActorProofCryptographically(
+            proof,
+            expectedFingerprint: expectedFingerprint,
+            expectedSigningKey: expectedSigningKey,
+            signableDataBuilder: signableDataBuilder
+        ) {
+            return failure
+        }
+        guard let proof else {
+            return .error("Missing actor proof.")
+        }
+        let nonceAccepted = await store.consumeActorProofNonce(
+            fingerprint: proof.fingerprint,
+            nonce: proof.nonce,
+            now: Date(),
+            maxAgeSeconds: RelayActorProof.maximumAgeSeconds
+        )
+        guard nonceAccepted else {
+            return .error("Actor proof replay detected.")
+        }
+        return nil
+    }
+
+    private func validateActorProofCryptographically(
+        _ proof: RelayActorProof?,
+        expectedFingerprint: String,
+        expectedSigningKey: Data?,
+        enforceFreshness: Bool = true,
+        signableDataBuilder: (RelayActorProof) throws -> Data
+    ) -> RelayResponse? {
         guard let proof else {
             return .error("Missing actor proof.")
         }
@@ -1292,8 +1784,8 @@ public final class RelayServer {
         if let expectedSigningKey, proof.publicSigningKey != expectedSigningKey {
             return .error("Actor proof signing key mismatch.")
         }
-        let maxAgeSeconds: TimeInterval = 300
-        guard abs(proof.signedAt.timeIntervalSinceNow) <= maxAgeSeconds else {
+        guard !enforceFreshness
+                || abs(proof.signedAt.timeIntervalSinceNow) <= RelayActorProof.maximumAgeSeconds else {
             return .error("Actor proof expired.")
         }
         let signableData: Data
@@ -1305,14 +1797,38 @@ public final class RelayServer {
         guard proof.verify(signableData: signableData) else {
             return .error("Invalid actor proof signature.")
         }
-        let nonceAccepted = await store.consumeActorProofNonce(
-            fingerprint: proof.fingerprint,
-            nonce: proof.nonce,
-            now: Date(),
-            maxAgeSeconds: maxAgeSeconds
-        )
-        guard nonceAccepted else {
-            return .error("Actor proof replay detected.")
+        return nil
+    }
+
+    /// Retirement proofs are intentionally non-expiring and do not consume the
+    /// general actor-proof replay cache. The operation is monotonic and bound to
+    /// one inbox access key; its durable request digest is the replay boundary.
+    /// This lets a client journal the exact request, delete the old private key,
+    /// and retry after arbitrary offline time or a relay persistence failure.
+    private func validateInboxRetirementProof(
+        _ proof: RelayActorProof?,
+        inboxId: String,
+        expectedSigningKey: Data,
+        signableDataBuilder: (RelayActorProof) throws -> Data
+    ) -> RelayResponse? {
+        guard let proof else {
+            return .error("Missing inbox retirement proof.")
+        }
+        guard InboxAddress.isBound(inboxId, to: proof.publicSigningKey),
+              proof.publicSigningKey == expectedSigningKey else {
+            return .error("Inbox retirement proof signing key mismatch.")
+        }
+        guard proof.isConsistentFingerprint() else {
+            return .error("Inbox retirement proof key does not match fingerprint.")
+        }
+        let signableData: Data
+        do {
+            signableData = try signableDataBuilder(proof)
+        } catch {
+            return .error("Invalid inbox retirement proof payload.")
+        }
+        guard proof.verify(signableData: signableData) else {
+            return .error("Invalid inbox retirement proof signature.")
         }
         return nil
     }
@@ -1337,6 +1853,37 @@ public final class RelayServer {
             }
         }
         return messages
+    }
+
+    private func syncMailboxWithOptionalLongPoll(_ request: SyncMailboxRequest) async throws -> MailboxSyncBatch {
+        var batch = try await store.syncMailbox(
+            inboxId: request.inboxId,
+            consumerId: request.consumerId,
+            cursor: request.cursor,
+            maxCount: request.maxCount
+        )
+        guard batch.events.isEmpty,
+              let timeout = boundedLongPollTimeoutSeconds(requested: request.longPollTimeoutSeconds) else {
+            return batch
+        }
+        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
+        while Date() < deadline {
+            let remaining = max(0, deadline.timeIntervalSinceNow)
+            let sleepSeconds = min(0.25, remaining)
+            if sleepSeconds > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(sleepSeconds * 1_000_000_000))
+            }
+            batch = try await store.syncMailbox(
+                inboxId: request.inboxId,
+                consumerId: request.consumerId,
+                cursor: request.cursor,
+                maxCount: request.maxCount
+            )
+            if !batch.events.isEmpty {
+                return batch
+            }
+        }
+        return batch
     }
 
     private func fetchGroupMessagesWithOptionalLongPoll(_ fetch: FetchGroupMessagesRequest) async throws -> [GroupRatchetEnvelope] {
@@ -1404,6 +1951,8 @@ public final class RelayServer {
             prekey: nil,
             rootRatchet: nil,
             authenticatedContext: .group(
+                protocolVersion: envelope.protocolVersion,
+                cipherSuite: envelope.cipherSuite,
                 groupId: envelope.groupId,
                 epoch: envelope.epoch,
                 senderFingerprint: envelope.senderFingerprint,
@@ -1420,6 +1969,8 @@ public final class RelayServer {
         }
         return GroupRatchetEnvelope(
             id: carrier.id,
+            protocolVersion: context.protocolVersion,
+            cipherSuite: context.cipherSuite,
             groupId: context.groupId,
             epoch: context.epoch,
             transcriptHash: context.transcriptHash,

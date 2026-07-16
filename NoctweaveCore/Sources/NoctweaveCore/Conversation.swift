@@ -3,6 +3,7 @@ import Foundation
 public struct Conversation: Codable, Identifiable, Equatable {
     public let id: String
     public let contactId: UUID
+    public let endpointSession: DirectEndpointSessionIdentity?
     public var sessionId: String
     public var rootKey: Data
     public var rootCounter: UInt64
@@ -22,6 +23,7 @@ public struct Conversation: Codable, Identifiable, Equatable {
     public init(
         id: String,
         contactId: UUID,
+        endpointSession: DirectEndpointSessionIdentity? = nil,
         sessionId: String,
         rootKey: Data = Data(),
         rootCounter: UInt64 = 0,
@@ -33,6 +35,7 @@ public struct Conversation: Codable, Identifiable, Equatable {
     ) {
         self.id = id
         self.contactId = contactId
+        self.endpointSession = endpointSession
         self.sessionId = sessionId
         self.rootKey = rootKey
         self.rootCounter = rootCounter
@@ -47,6 +50,10 @@ public struct Conversation: Codable, Identifiable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         contactId = try container.decode(UUID.self, forKey: .contactId)
+        endpointSession = try container.decodeIfPresent(
+            DirectEndpointSessionIdentity.self,
+            forKey: .endpointSession
+        )
         sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId) ?? id
         rootKey = try container.decodeIfPresent(Data.self, forKey: .rootKey) ?? Data()
         rootCounter = try container.decodeIfPresent(UInt64.self, forKey: .rootCounter) ?? 0

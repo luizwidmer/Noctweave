@@ -48,7 +48,7 @@
       <circle cx="964" cy="177" r="16" fill="#7B61FF"/><text x="964" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">5</text>
       <text x="958" y="220" fill="#fff" font-size="19" font-weight="700">Open</text>
       <text x="958" y="251" fill="#A8ADBD" font-size="14">Verify, decrypt, persist,</text>
-      <text x="958" y="273" fill="#A8ADBD" font-size="14">then acknowledge delivery.</text>
+      <text x="958" y="273" fill="#A8ADBD" font-size="14">then commit endpoint cursor.</text>
     </g>
 
     <text x="600" y="377" fill="#A8ADBD" font-size="15" text-anchor="middle">Out-of-order windows, replay rejection, and explicit recovery requests protect the session as messages advance.</text>

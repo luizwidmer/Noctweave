@@ -44,10 +44,16 @@ public actor ClientStateStore {
         guard payload.count <= Self.maximumPlaintextBytes else {
             throw ClientStateStoreError.stateTooLarge
         }
-        return try NoctweaveCoder.decode(ClientState.self, from: payload)
+        var state = try NoctweaveCoder.decode(ClientState.self, from: payload)
+        if try state.migrateToArchitectureV2() {
+            try save(state)
+        }
+        return state
     }
 
     public func save(_ state: ClientState) throws {
+        var state = state
+        _ = try state.migrateToArchitectureV2()
         let directory = fileURL.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.createDirectory(

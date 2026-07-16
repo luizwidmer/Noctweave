@@ -52,6 +52,8 @@ public struct MLSGroupCommitSummary: Codable, Equatable {
 }
 
 public enum MLSGroupEpochHistoryIssue: String, Codable, Equatable, Hashable {
+    case unsupportedProtocolVersion
+    case unsupportedCipherSuite
     case emptyHistory
     case duplicateEpoch
     case invalidInitialEpoch
@@ -67,11 +69,19 @@ public enum MLSGroupEpochHistoryValidator {
         history: [MLSGroupCommitSummary],
         allowTruncatedHistory: Bool = true
     ) -> [MLSGroupEpochHistoryIssue] {
+        var issues = Set<MLSGroupEpochHistoryIssue>()
+        if currentState.protocolVersion != MLSGroupEpochState.currentProtocolVersion {
+            issues.insert(.unsupportedProtocolVersion)
+        }
+        if currentState.cipherSuite != MLSGroupEpochState.currentCipherSuite {
+            issues.insert(.unsupportedCipherSuite)
+        }
         guard !history.isEmpty else {
-            return [.emptyHistory, .currentCommitMissing]
+            issues.insert(.emptyHistory)
+            issues.insert(.currentCommitMissing)
+            return Array(issues).sortedByRawValue()
         }
 
-        var issues = Set<MLSGroupEpochHistoryIssue>()
         let sorted = history.sorted { $0.epoch < $1.epoch }
         if Set(sorted.map(\.epoch)).count != sorted.count {
             issues.insert(.duplicateEpoch)
@@ -132,8 +142,8 @@ private extension Array where Element == MLSGroupEpochHistoryIssue {
 }
 
 public struct MLSGroupEpochState: Codable, Equatable {
-    public static let currentProtocolVersion = "noctyra-mls-v1"
-    public static let currentCipherSuite = "Noctyra-MLS-ML-KEM-768-ML-DSA-65-AES-256-GCM-SHA384-v1"
+    public static let currentProtocolVersion = "noctweave-pq-group-experimental-2"
+    public static let currentCipherSuite = "Noctweave-PQ-Group-Experimental-ML-KEM-768-ML-DSA-65-AES-256-GCM-SHA384-2"
 
     public let protocolVersion: String
     public let cipherSuite: String
@@ -482,6 +492,8 @@ public struct RelayGroupInvitation: Codable, Equatable, Identifiable {
 }
 
 public struct RelayActorProof: Codable, Equatable {
+    public static let maximumAgeSeconds: TimeInterval = 300
+
     public let fingerprint: String
     public let publicSigningKey: Data
     public let signedAt: Date

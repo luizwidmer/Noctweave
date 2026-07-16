@@ -81,7 +81,7 @@ NoctweaveCLI import-contact --file bob.noctweave --password-file ./contact-passw
 Contact-package passphrases must contain at least 12 UTF-8 bytes. Prefer the
 file or environment forms because literal `--password` and `--auth` values can
 appear in shell history and process listings. Secret files should be regular,
-small, and readable only by the invoking account.
+small, and readable only by the invoking operating-system user.
 
 List contacts:
 
@@ -181,11 +181,29 @@ Allow a contact to receive a new identity if you later burn your current identit
 NoctweaveCLI allow-identity-reset --contact "Bob" --allow true
 ```
 
-Rotate the active identity keys and notify contacts with an authenticated continuity message:
+Rotate the active identity keys and disclose authenticated continuity only to
+an explicit set of contact UUIDs:
 
 ```sh
-NoctweaveCLI rotate-identity --confirm ROTATE
+NoctweaveCLI rotate-identity --confirm ROTATE \
+  --preserve-with 38A1128E-4C2B-4DF4-A64A-1E3A54B4D275
 ```
+
+To rotate without disclosing continuity to any relationship, make the empty
+selection explicit:
+
+```sh
+NoctweaveCLI rotate-identity --confirm ROTATE --preserve-with none
+```
+
+Omitting `--preserve-with` fails closed. Names and fingerprints are not
+accepted for this security-sensitive choice; use the local contact UUID shown
+by `NoctweaveCLI contacts`. A crash-resumed rotation must be invoked with
+the same UUID set that was durably prepared.
+
+An empty rotation selection suppresses continuity statements but does not tear
+down this generation's endpoints or routes. Use identity burn when the intended
+result is unlinkability and old-generation reachability teardown.
 
 Burn the active identity, create a new inbox identity, register the new inbox, purge local conversations and groups, and notify only contacts marked with `allow-identity-reset`:
 

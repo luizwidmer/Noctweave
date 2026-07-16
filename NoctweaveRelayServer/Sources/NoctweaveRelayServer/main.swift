@@ -27,6 +27,7 @@ struct ServerConfig {
       --access-password <password>     Require relay client authentication
       --attachments-enabled <bool>     Enable or disable attachment chunks
       --attachment-storage <mode>      inline or ipfs
+      --compatibility-profile <id>     Enable one deprecated compatibility profile
       --temporal-bucket-seconds <n>    Metadata timing bucket; 0 disables it
       --help, -h                       Show this help without starting a relay
       --version                        Print the relay software version
@@ -97,6 +98,7 @@ struct ServerConfig {
     var advertisedEndpoint: RelayEndpoint?
     var federationAllowList: [RelayEndpoint]
     var allowPrivateFederationEndpoints: Bool
+    var compatibilityProfiles: [String]
 
     static func parse(
         arguments: [String] = Array(CommandLine.arguments.dropFirst()),
@@ -186,6 +188,10 @@ struct ServerConfig {
         var advertisedEndpoint: RelayEndpoint?
         var federationAllowList: [RelayEndpoint] = []
         var allowPrivateFederationEndpoints = false
+        var compatibilityProfiles = (environment["NOCTWEAVE_COMPATIBILITY_PROFILES"] ?? "")
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
 
         var iterator = arguments.makeIterator()
         while let arg = iterator.next() {
@@ -499,6 +505,10 @@ struct ServerConfig {
                 } else {
                     allowPrivateFederationEndpoints = true
                 }
+            case "--compatibility-profile":
+                if let value = iterator.next() {
+                    compatibilityProfiles.append(value)
+                }
             default:
                 break
             }
@@ -563,6 +573,13 @@ struct ServerConfig {
         curatedCoordinatorQuorum = min(max(curatedCoordinatorQuorum, 1), 16)
         federationCoordinatorEndpoints = Array(federationCoordinatorEndpoints.prefix(16))
         federationAllowList = Array(federationAllowList.prefix(256))
+        compatibilityProfiles = Array(
+            Set(
+                compatibilityProfiles
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty && $0.utf8.count <= 96 }
+            )
+        ).sorted().prefix(16).map { $0 }
         if let key = coordinatorDirectorySigningPrivateKey, key.count > 16_384 {
             coordinatorDirectorySigningPrivateKey = nil
         }
@@ -660,7 +677,8 @@ struct ServerConfig {
             curatedRequireSignedDirectory: curatedRequireSignedDirectory,
             advertisedEndpoint: advertisedEndpoint,
             federationAllowList: federationAllowList,
-            allowPrivateFederationEndpoints: allowPrivateFederationEndpoints
+            allowPrivateFederationEndpoints: allowPrivateFederationEndpoints,
+            compatibilityProfiles: compatibilityProfiles
         )
     }
 }
@@ -913,7 +931,8 @@ var relayConfiguration = RelayConfiguration(
     curatedRequireSignedDirectory: config.curatedRequireSignedDirectory,
     advertisedEndpoint: config.advertisedEndpoint,
     federationAllowList: config.federationAllowList,
-    allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints
+    allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints,
+    compatibilityProfiles: config.compatibilityProfiles
 )
 if relayConfiguration.kind == .coordinator {
     if relayConfiguration.coordinatorDirectorySigningPrivateKey == nil,

@@ -417,9 +417,21 @@ public enum CryptoBox {
     }
 
     public static func decrypt(_ payload: EncryptedPayload, key: SymmetricKey, authenticatedData: Data) throws -> Data {
-        let nonce = try AES.GCM.Nonce(data: payload.nonce)
-        let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: payload.ciphertext, tag: payload.tag)
-        return try AES.GCM.open(box, using: key, authenticating: authenticatedData)
+        do {
+            let nonce = try AES.GCM.Nonce(data: payload.nonce)
+            let box = try AES.GCM.SealedBox(
+                nonce: nonce,
+                ciphertext: payload.ciphertext,
+                tag: payload.tag
+            )
+            return try AES.GCM.open(box, using: key, authenticating: authenticatedData)
+        } catch {
+            // Authentication failure and malformed sealed-box bytes are
+            // deterministic properties of this envelope. Normalize them so
+            // ordered mailbox consumers can quarantine the event without
+            // treating it as a transient crypto-runtime failure.
+            throw CryptoError.invalidPayload
+        }
     }
 
     public static func fingerprint(for publicKeyData: Data) -> String {

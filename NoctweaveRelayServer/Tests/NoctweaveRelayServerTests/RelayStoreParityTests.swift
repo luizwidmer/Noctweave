@@ -28,6 +28,12 @@ final class RelayStoreParityTests: XCTestCase {
                 maxAgeSeconds: 300
             )
         )
+        // The replay entry commits with the authenticated state mutation,
+        // rather than in a separate transaction before it.
+        try firstStore.registerInbox(
+            inboxId: InboxAddress.generate(),
+            accessPublicKey: Data([0xA1])
+        )
 
         let reloadedStore = RelayStore(fileURL: storeURL, maxInboxMessages: nil, temporalBucketSeconds: 300)
         try reloadedStore.load()
@@ -190,8 +196,9 @@ final class RelayStoreParityTests: XCTestCase {
         let inboxId = InboxAddress.generate()
         let envelope = makeEnvelope()
 
+        try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x91]))
         _ = try store.deliver(envelope, to: inboxId)
-        XCTAssertThrowsError(try store.deliver(envelope, to: inboxId)) { error in
+        XCTAssertThrowsError(try store.deliver(makeEnvelope(), to: inboxId)) { error in
             XCTAssertEqual(error as? RelayStoreError, .inboxFull)
         }
     }
@@ -235,6 +242,7 @@ final class RelayStoreParityTests: XCTestCase {
         let inboxId = InboxAddress.generate()
         let envelope = makeEnvelope()
 
+        try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x92]))
         _ = try store.deliverGroupEnvelope(
             envelope,
             to: inboxId,
@@ -1262,6 +1270,7 @@ final class RelayStoreParityTests: XCTestCase {
         let envelope = makeEnvelope()
 
         let writer = RelayStore(fileURL: requestedURL, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        try writer.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x93]))
         _ = try writer.deliver(envelope, to: inboxId)
         XCTAssertTrue(FileManager.default.fileExists(atPath: sqliteURL.path))
         let sqliteHeader = try Data(contentsOf: sqliteURL).prefix(16)
@@ -1294,6 +1303,7 @@ final class RelayStoreParityTests: XCTestCase {
         let second = makeEnvelope()
 
         let writer = RelayStore(fileURL: requestedURL, maxInboxMessages: nil, temporalBucketSeconds: 300)
+        try writer.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x94]))
         _ = try writer.deliver(first, to: inboxId)
         _ = try writer.deliver(second, to: inboxId)
         try overwriteMailboxEnvelope(at: sqliteURL, envelopeId: second.id, with: Data([0xDE, 0xAD, 0xBE, 0xEF]))
@@ -1305,19 +1315,22 @@ final class RelayStoreParityTests: XCTestCase {
     private func makeEnvelope(
         payload: EncryptedPayload = EncryptedPayload(
             nonce: Data(repeating: 0xA1, count: 12),
-            ciphertext: Data([0x01, 0x02, 0x03]),
+            ciphertext: Data(repeating: 0x01, count: 512),
             tag: Data(repeating: 0xB2, count: 16)
         )
     ) -> Envelope {
         Envelope(
             conversationId: "parity-conversation",
             sessionId: UUID().uuidString,
-            senderFingerprint: "sender-fingerprint",
+            senderFingerprint: Data(repeating: 0x44, count: 32).base64EncodedString(),
             sentAt: Date(),
             messageCounter: 1,
-            kemCiphertext: Data([0x10, 0x20]),
+            kemCiphertext: nil,
             payload: payload,
-            signature: Data([0x99, 0x98, 0x97])
+            signature: Data(
+                repeating: 0x99,
+                count: OQSSignatureVerifier.mlDSA65SignatureBytes
+            )
         )
     }
 
@@ -1505,6 +1518,25 @@ final class RelayStoreParityTests: XCTestCase {
         XCTAssertEqual(config.wakeSupport?.maxPollIntervalSeconds, 86_400)
         XCTAssertEqual(config.relayPeerExchangeLimit, 128)
         XCTAssertEqual(config.openFederationDHTMaxRecords, 256)
+    }
+
+    func testLegacyFingerprintCompatibilityRequiresExactExplicitProfile() {
+        XCTAssertTrue(
+            ServerConfig.parse(arguments: [], environment: [:])
+                .compatibilityProfiles.isEmpty
+        )
+
+        let configured = ServerConfig.parse(
+            arguments: [
+                "--compatibility-profile",
+                RelayCompatibilityProfile.legacyFingerprint
+            ],
+            environment: [:]
+        )
+        XCTAssertEqual(
+            configured.compatibilityProfiles,
+            [RelayCompatibilityProfile.legacyFingerprint]
+        )
     }
 
     func testServerHelpAndVersionFlagsAreRecognizedWithoutParsingAConfiguration() {

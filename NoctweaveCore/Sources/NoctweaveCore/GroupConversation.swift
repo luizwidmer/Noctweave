@@ -1,5 +1,30 @@
 import Foundation
 
+public struct PendingGroupAcknowledgement: Codable, Equatable, Identifiable {
+    public let envelopeId: UUID
+    public let envelopeDigest: Data
+    public let storedAt: Date
+
+    public var id: UUID { envelopeId }
+
+    init(envelopeId: UUID, envelopeDigest: Data, storedAt: Date) {
+        self.envelopeId = envelopeId
+        self.envelopeDigest = envelopeDigest
+        self.storedAt = storedAt
+    }
+
+    var isStructurallyValid: Bool {
+        envelopeDigest.count == 32 && storedAt.timeIntervalSince1970.isFinite
+    }
+}
+
+enum PendingGroupAcknowledgementInsertion: Equatable {
+    case inserted
+    case alreadyPending
+    case conflictingEnvelope
+    case capacityExceeded
+}
+
 public struct GroupScopedIdentity: Codable, Equatable {
     public var displayName: String
     public var signingKey: SigningKeyPair
@@ -56,6 +81,8 @@ public struct GroupScopedIdentity: Codable, Equatable {
 }
 
 public struct GroupConversation: Codable, Identifiable, Equatable {
+    public static let maximumPendingAcknowledgements = 512
+
     public let id: UUID
     public var title: String
     public var memberContactIds: [UUID]
@@ -67,6 +94,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
     public var memberProfiles: [RelayGroupMemberProfile]
     public var scopedIdentity: GroupScopedIdentity?
     public var isPendingInvitation: Bool
+    public internal(set) var pendingAcknowledgements: [PendingGroupAcknowledgement]
     public var messages: [Message]
     public var unreadCount: Int
     public let createdAt: Date
@@ -98,6 +126,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         self.memberProfiles = Self.uniqueMemberProfiles(memberProfiles)
         self.scopedIdentity = scopedIdentity
         self.isPendingInvitation = isPendingInvitation
+        self.pendingAcknowledgements = []
         self.messages = messages
         self.unreadCount = unreadCount
         self.createdAt = createdAt
@@ -115,6 +144,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         case memberProfiles
         case scopedIdentity
         case isPendingInvitation
+        case pendingAcknowledgements
         case messages
         case unreadCount
         case createdAt
@@ -135,6 +165,19 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         )
         scopedIdentity = try container.decodeIfPresent(GroupScopedIdentity.self, forKey: .scopedIdentity)
         isPendingInvitation = try container.decodeIfPresent(Bool.self, forKey: .isPendingInvitation) ?? false
+        pendingAcknowledgements = try container.decodeIfPresent(
+            [PendingGroupAcknowledgement].self,
+            forKey: .pendingAcknowledgements
+        ) ?? []
+        guard pendingAcknowledgements.count <= Self.maximumPendingAcknowledgements,
+              pendingAcknowledgements.allSatisfy(\.isStructurallyValid),
+              Set(pendingAcknowledgements.map(\.envelopeId)).count == pendingAcknowledgements.count else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .pendingAcknowledgements,
+                in: container,
+                debugDescription: "Pending group acknowledgements are malformed or exceed the bounded window."
+            )
+        }
         messages = try container.decodeIfPresent([Message].self, forKey: .messages) ?? []
         unreadCount = try container.decodeIfPresent(Int.self, forKey: .unreadCount) ?? 0
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
@@ -153,6 +196,7 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
         try container.encode(memberProfiles, forKey: .memberProfiles)
         try container.encodeIfPresent(scopedIdentity, forKey: .scopedIdentity)
         try container.encode(isPendingInvitation, forKey: .isPendingInvitation)
+        try container.encode(pendingAcknowledgements, forKey: .pendingAcknowledgements)
         try container.encode(messages, forKey: .messages)
         try container.encode(unreadCount, forKey: .unreadCount)
         try container.encode(createdAt, forKey: .createdAt)
@@ -160,6 +204,45 @@ public struct GroupConversation: Codable, Identifiable, Equatable {
 
     public var resolvedMemberCount: Int {
         memberProfiles.isEmpty ? memberContactIds.count + 1 : memberProfiles.count
+    }
+
+    func pendingAcknowledgement(
+        for envelopeId: UUID
+    ) -> PendingGroupAcknowledgement? {
+        pendingAcknowledgements.first { $0.envelopeId == envelopeId }
+    }
+
+    @discardableResult
+    mutating func recordPendingAcknowledgement(
+        envelopeId: UUID,
+        envelopeDigest: Data,
+        storedAt: Date = Date()
+    ) -> PendingGroupAcknowledgementInsertion {
+        guard envelopeDigest.count == 32, storedAt.timeIntervalSince1970.isFinite else {
+            return .conflictingEnvelope
+        }
+        if let existing = pendingAcknowledgement(for: envelopeId) {
+            return existing.envelopeDigest == envelopeDigest ? .alreadyPending : .conflictingEnvelope
+        }
+        guard pendingAcknowledgements.count < Self.maximumPendingAcknowledgements else {
+            return .capacityExceeded
+        }
+        pendingAcknowledgements.append(
+            PendingGroupAcknowledgement(
+                envelopeId: envelopeId,
+                envelopeDigest: envelopeDigest,
+                storedAt: storedAt
+            )
+        )
+        return .inserted
+    }
+
+    @discardableResult
+    mutating func clearPendingAcknowledgements(_ envelopeIds: Set<UUID>) -> Int {
+        guard !envelopeIds.isEmpty else { return 0 }
+        let previousCount = pendingAcknowledgements.count
+        pendingAcknowledgements.removeAll { envelopeIds.contains($0.envelopeId) }
+        return previousCount - pendingAcknowledgements.count
     }
 
     private static func uniqueMemberProfiles(_ profiles: [RelayGroupMemberProfile]) -> [RelayGroupMemberProfile] {

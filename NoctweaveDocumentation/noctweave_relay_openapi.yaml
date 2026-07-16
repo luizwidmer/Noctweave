@@ -1,13 +1,15 @@
 openapi: 3.1.0
 info:
   title: Noctweave Relay API
-  version: "1.0"
+  version: "2.0.0-draft"
   description: |
     HTTP/WebSocket bridge for Noctweave Protocol relay requests. TCP uses the
     same RelayRequest and RelayResponse JSON objects as one newline-delimited
-    request per connection.
+    request per connection. Architecture-v2 mailbox synchronization coexists
+    with the deprecated destructive fetch/acknowledgement operations during the
+    pre-1.0 migration window.
 servers:
-  - url: http://localhost:9339
+  - url: http://localhost:9340
     description: Local HTTP relay bridge
   - url: https://relay.example.org
     description: TLS relay bridge or reverse proxy
@@ -75,18 +77,39 @@ components:
         authToken:
           type: string
           maxLength: 4096
-          nullable: true
           description: Optional relay password or inter-relay forwarding token.
         deliver:
           $ref: "#/components/schemas/DeliverRequest"
         fetch:
           $ref: "#/components/schemas/FetchRequest"
         registerInbox:
-          type: object
+          $ref: "#/components/schemas/RegisterInboxRequest"
+        retireInbox:
+          $ref: "#/components/schemas/RetireInboxRequest"
+        createInboxRouteCapability:
+          $ref: "#/components/schemas/CreateInboxRouteCapabilityRequest"
+        revokeInboxRouteCapability:
+          $ref: "#/components/schemas/RevokeInboxRouteCapabilityRequest"
         acknowledgeMessages:
           type: object
+          deprecated: true
+          description: Legacy single-consumer destructive acknowledgement.
+        registerMailboxConsumer:
+          $ref: "#/components/schemas/RegisterMailboxConsumerRequest"
+        syncMailbox:
+          $ref: "#/components/schemas/SyncMailboxRequest"
+        commitMailboxCursor:
+          $ref: "#/components/schemas/CommitMailboxCursorRequest"
+        revokeMailboxConsumer:
+          $ref: "#/components/schemas/RevokeMailboxConsumerRequest"
         deliverGroupMessage:
           type: object
+          description: |
+            Encrypted group-envelope delivery. A forwarding relay preserves
+            the destination fields, while the final relay accepts storage only
+            when groupId resolves to a persisted group descriptor whose
+            generated inbox equals groupInboxId. Otherwise the operation
+            returns an error response and allocates no mailbox state.
         fetchGroupMessages:
           type: object
         acknowledgeGroupMessages:
@@ -113,6 +136,22 @@ components:
           type: object
         listGroups:
           type: object
+        listGroupInvitations:
+          type: object
+          description: |
+            Fingerprint-scoped compatibility request. The invitee proves the
+            listed fingerprint with a fresh actor proof. Implemented by both
+            reference relays; this is not endpoint-aware group admission.
+        inviteGroupMembers:
+          type: object
+          description: |
+            Fingerprint-scoped compatibility request for the authorized group
+            creator to add bounded invitations. Active members and unique
+            pending invitee fingerprints share one 256-entry per-group budget;
+            each invitee may retain invitations for at most 256 groups. Exact
+            reinvites are idempotent, and capacity failures do not evict older
+            invitations. Invitations remain distinct from membership until
+            accepted with the signed join flow.
         updateGroup:
           type: object
         deleteGroup:
@@ -139,8 +178,15 @@ components:
       enum:
         - deliver
         - registerInbox
+        - retireInbox
+        - createInboxRouteCapability
+        - revokeInboxRouteCapability
         - fetch
         - acknowledgeMessages
+        - registerMailboxConsumer
+        - syncMailbox
+        - commitMailboxCursor
+        - revokeMailboxConsumer
         - deliverGroupMessage
         - fetchGroupMessages
         - acknowledgeGroupMessages
@@ -157,6 +203,8 @@ components:
         - createGroup
         - getGroup
         - listGroups
+        - listGroupInvitations
+        - inviteGroupMembers
         - updateGroup
         - deleteGroup
         - requestGroupJoin
@@ -179,10 +227,16 @@ components:
             storedCount:
               type: integer
               minimum: 0
+        inboxRegistration:
+          $ref: "#/components/schemas/InboxRegistrationReceiptV3"
         messages:
           type: array
           items:
             type: object
+        mailboxSync:
+          $ref: "#/components/schemas/MailboxSyncBatch"
+        mailboxConsumer:
+          $ref: "#/components/schemas/MailboxConsumerRegistration"
         groupMessages:
           type: array
           items:
@@ -205,6 +259,13 @@ components:
           type: array
           items:
             type: object
+        groupInvitations:
+          type: array
+          description: |
+            Persisted compatibility invitations visible to the proved invitee.
+            Implemented by both the in-process and Linux reference relays.
+          items:
+            type: object
         groupJoinRequests:
           type: array
           items:
@@ -223,6 +284,11 @@ components:
             type: object
         error:
           type: string
+          description: |
+            Stable human-readable rejection reason. Delivery admission uses
+            "Destination inbox is not registered" for a direct route that is
+            unknown at the final relay and "Destination group inbox is not
+            registered" when group storage lacks a registered destination.
       additionalProperties: false
     RelayResponseType:
       type: string
@@ -230,6 +296,8 @@ components:
         - ok
         - delivered
         - messages
+        - mailboxSync
+        - mailboxConsumer
         - groupMessages
         - announcements
         - pairRequests
@@ -237,6 +305,7 @@ components:
         - prekeyBundle
         - group
         - groups
+        - groupInvitations
         - groupJoinRequests
         - federationNodes
         - info
@@ -244,29 +313,225 @@ components:
         - error
     DeliverRequest:
       type: object
-      required: [inboxId, envelope]
+      description: |
+        Submits one opaque encrypted direct envelope. The architecture-v2 route
+        form carries inboxCapability and MUST omit inboxId and routingToken. A
+        federation relay forwards that bearer value unchanged and therefore
+        learns no destination inbox, endpoint, relationship, or identity label;
+        only the final relay resolves its domain-separated digest. The final
+        relay can correlate all capability digests mapped to one inbox and
+        observe delivery timing and volume. Malformed bearer objects fail
+        request decoding; well-formed unknown or revoked capabilities fail
+        before mailbox allocation. This experimental form is disabled by
+        default and omitted from capability advertisements. The
+        inboxId/routingToken form remains transitional while private,
+        expiring, relationship-scale capability routing is unresolved.
+      oneOf:
+        - required: [inboxCapability, envelope]
+          not:
+            anyOf:
+              - required: [inboxId]
+              - required: [routingToken]
+        - required: [inboxId, envelope]
+          not:
+            required: [inboxCapability]
       properties:
         inboxId:
           type: string
         routingToken:
           type: string
-          nullable: true
+        inboxCapability:
+          $ref: "#/components/schemas/InboxRouteCapabilityV2"
         envelope:
           type: object
           description: AEAD-protected direct message envelope.
         destinationRelay:
           $ref: "#/components/schemas/RelayEndpoint"
       additionalProperties: false
+    InboxRouteCapabilityV2:
+      type: object
+      required: [rawValue]
+      description: |
+        Unlabelled, nonzero 32-byte bearer value. An owning client MUST mint it
+        with a CSPRNG; a relay can validate structure but cannot prove entropy.
+        It contains no account, endpoint,
+        identity, conversation, or relationship identifier. Relays persist only
+        SHA-256("org.noctweave.relay.inbox-route-capability/v2" || 0x00 ||
+        rawValue), encoded as a lookup key; they never persist rawValue.
+      properties:
+        rawValue:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+      additionalProperties: false
+    InboxRegistrationReceiptV3:
+      type: object
+      required: [routeMutationScope, nextRouteMutationSequence]
+      description: |
+        Relay-issued authority scope for this one ephemeral inbox generation,
+        returned only after authenticated registration when the experimental
+        opaque-route request family is internally enabled. Default relays omit
+        this optional receipt. It is not an account, provider identity, or
+        contact identifier and is deleted on retirement.
+      properties:
+        routeMutationScope:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        nextRouteMutationSequence:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 4294967295
+          description: Zero means the generation-local mutation cursor is exhausted.
+      additionalProperties: false
+    RegisterInboxRequest:
+      type: object
+      required: [inboxId, accessPublicKey, registrationVersion, accessProof]
+      description: |
+        Privacy-minimized inbox registration. New clients set
+        registrationVersion to 2 and MUST omit contactOffer. The actor proof is
+        made by accessPublicKey over canonical inboxId, accessPublicKey,
+        registrationVersion, signedAt, and nonce fields. The relay validates
+        InboxAddress binding and access-key possession and persists only the
+        inbox address, access public key, registration time, mailbox stream
+        state, and a random relay-local route-mutation scope/cursor. Success
+        returns that scope and the next sequence in inboxRegistration. This
+        OpenAPI surface is version 2 registration plus version 3 route control.
+        The explicit pre-1.0
+        signed-contact-offer compatibility decoder is intentionally outside
+        this schema; other versions and version-2 requests containing legacy
+        fields fail closed.
+      properties:
+        inboxId:
+          type: string
+          maxLength: 256
+        accessPublicKey:
+          type: string
+          contentEncoding: base64
+          description: ML-DSA inbox-access public key from which inboxId is derived.
+        registrationVersion:
+          type: integer
+          enum: [2]
+        accessProof:
+          $ref: "#/components/schemas/RelayActorProof"
+      additionalProperties: false
+    RetireInboxRequest:
+      type: object
+      required: [inboxId, accessProof]
+      description: |
+        Irreversibly retires one route-level inbox generation. The ML-DSA
+        accessProof signs the canonical domain, version, inboxId, signedAt, and
+        nonce fields with the inbox access key. Unlike ordinary actor proofs,
+        this monotonic operation has no freshness window and does not consume
+        the relay actor-proof replay cache: a client can durably journal the
+        exact signed request, delete the old private key, and retry after an
+        arbitrary offline interval or persistence failure. Success atomically
+        deletes the registration, all mailbox consumers/stream state, every
+        opaque route-capability mapping, and all queued direct or group
+        envelopes for the inbox, then persists a compact,
+        non-expiring route-only non-resurrection record. An exact replay returns
+        ok; a changed request for the same retired inbox fails. A valid
+        self-bound request for an inbox with no live registration creates the
+        same record. Records never expire or evict one another. The reference
+        relay caps one storage namespace at 100000 lifetime inbox generations;
+        every admitted live registration reserves its retirement slot, and new
+        first registrations fail closed at the ceiling. Old inbox IDs must never
+        be reused by a new identity generation.
+      properties:
+        inboxId:
+          type: string
+          maxLength: 256
+        accessProof:
+          $ref: "#/components/schemas/RelayActorProof"
+      additionalProperties: false
+    CreateInboxRouteCapabilityRequest:
+      type: object
+      required: [inboxId, capability, relayScope, mutationSequence, authorityProof]
+      description: |
+        Experimental, default-disabled authenticated creation of one opaque
+        delivery route. Presence in this schema does not advertise support.
+        authorityProof is made by the registered inbox access key over domain
+        org.noctweave.relay.inbox-route-capability-mutation, version 3,
+        operation create, inboxId, the domain-separated capability digest,
+        the relay-issued inbox scope, monotonic mutation sequence, signedAt,
+        and nonce. The relay persists the sequence and a proof-independent
+        logical mutation digest atomically with the route change. A matching
+        already-applied signed mutation remains idempotent after the ordinary
+        proof-freshness window; a first application requires a fresh proof.
+        Stale, conflicting, skipped, and cross-relay sequences fail closed. An old
+        delayed create therefore cannot win after a newer revoke even after
+        bounded tombstone churn.
+        The 16-active-value limit is defensive test headroom, not a
+        one-capability-per-relationship capacity promise. The registry is
+        bounded to 100000 records, with at most 64 retained revoked values per
+        inbox. Activation remains blocked pending confidential transport,
+        relationship-scoped inboxes or equivalent unlinkability, expiring
+        renewal, realistic limits, per-capability abuse controls, and padding.
+      properties:
+        inboxId:
+          type: string
+          maxLength: 256
+        capability:
+          $ref: "#/components/schemas/InboxRouteCapabilityV2"
+        relayScope:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        mutationSequence:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 4294967295
+        authorityProof:
+          $ref: "#/components/schemas/RelayActorProof"
+      additionalProperties: false
+    RevokeInboxRouteCapabilityRequest:
+      type: object
+      required: [inboxId, capability, relayScope, mutationSequence, authorityProof]
+      description: |
+        Authenticated, replay-protected revocation using the same canonical
+        v3 payload and inbox-local sequence as creation with operation revoke.
+        Revoking an unseen value creates a bounded tombstone; the durable
+        sequence prevents any older delayed create from reactivating it after
+        tombstone compaction. Inbox retirement atomically purges the scope,
+        cursor, and every mapping.
+      properties:
+        inboxId:
+          type: string
+          maxLength: 256
+        capability:
+          $ref: "#/components/schemas/InboxRouteCapabilityV2"
+        relayScope:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        mutationSequence:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 4294967295
+        authorityProof:
+          $ref: "#/components/schemas/RelayActorProof"
+      additionalProperties: false
     FetchRequest:
       type: object
       required: [inboxId, accessProof]
+      deprecated: true
+      description: |
+        Legacy single-consumer mailbox fetch. New clients use syncMailbox. The
+        relay permanently rejects this operation after the inbox has registered
+        any v2 consumer, including after all such consumers are revoked.
       properties:
         inboxId:
           type: string
           maxLength: 256
         routingToken:
           type: string
-          nullable: true
         maxCount:
           type: integer
           minimum: 1
@@ -274,10 +539,280 @@ components:
         longPollTimeoutSeconds:
           type: integer
           minimum: 0
-          maximum: 300
+          maximum: 600
         accessProof:
           type: object
           description: Inbox-bound signed actor proof with a fresh replay-protected nonce.
+      additionalProperties: false
+    RegisterMailboxConsumerRequest:
+      type: object
+      required:
+        - inboxId
+        - consumerId
+        - consumerSigningPublicKey
+        - authorityProof
+        - consumerProof
+      description: |
+        Registers one opaque relay-route-scoped consumer. Registration is
+        idempotent for the same consumer and cannot move an existing consumer
+        backward or change its signing key. The inbox authority proof authorizes
+        the binding and the consumer proof demonstrates possession of the bound
+        route-only key. The first consumer bootstraps with those two proofs.
+        A fresh consumer on an endpoint-managed inbox also requires an
+        active bound sponsor via sponsorConsumerId and sponsorProof over the
+        complete registration. Authority alone cannot add a consumer. A legacy
+        keyless rebind omits sponsorship only while no active bound sponsor
+        exists. An all-revoked mailbox requires a new inbox/identity generation.
+        Active consumers and bounded revoked-consumer history use separate
+        limits, so ordinary route replacement does not exhaust a lifetime
+        registration counter.
+      properties:
+        inboxId:
+          type: string
+          maxLength: 256
+        consumerId:
+          $ref: "#/components/schemas/MailboxConsumerId"
+        consumerSigningPublicKey:
+          type: string
+          contentEncoding: base64
+          minLength: 2604
+          maxLength: 2604
+          description: Route-scoped ML-DSA public key bound to this consumer.
+        sponsorConsumerId:
+          allOf:
+            - $ref: "#/components/schemas/MailboxConsumerId"
+          description: Active bound consumer authorizing a post-bootstrap fresh binding.
+        startingSequence:
+          type: integer
+          format: uint64
+          minimum: 0
+          description: Defaults to the current mailbox high watermark when omitted.
+        authorityProof:
+          $ref: "#/components/schemas/RelayActorProof"
+        consumerProof:
+          $ref: "#/components/schemas/RelayActorProof"
+        sponsorProof:
+          allOf:
+            - $ref: "#/components/schemas/RelayActorProof"
+          description: register-sponsor proof over the complete registration.
+      additionalProperties: false
+    SyncMailboxRequest:
+      type: object
+      required: [inboxId, consumerId, consumerProof]
+      description: |
+        Reads a bounded ordered page without committing delivery state. The
+        supplied cursor, when present, is relay-issued and authenticated. A
+        valid response never advances another consumer.
+      properties:
+        inboxId:
+          type: string
+          maxLength: 256
+        consumerId:
+          $ref: "#/components/schemas/MailboxConsumerId"
+        cursor:
+          $ref: "#/components/schemas/MailboxCursor"
+        maxCount:
+          type: integer
+          minimum: 1
+          maximum: 256
+        longPollTimeoutSeconds:
+          type: integer
+          minimum: 0
+          maximum: 600
+          description: Bounded by the relay configuration as well as this protocol ceiling.
+        consumerProof:
+          $ref: "#/components/schemas/RelayActorProof"
+      additionalProperties: false
+    CommitMailboxCursorRequest:
+      type: object
+      required: [inboxId, consumerId, cursor, sequence, consumerProof]
+      description: |
+        Commits one consumer after the client has verified, decrypted, and
+        durably persisted every event through sequence. Cursor and sequence
+        must match and rollback is rejected.
+      properties:
+        inboxId:
+          type: string
+          maxLength: 256
+        consumerId:
+          $ref: "#/components/schemas/MailboxConsumerId"
+        cursor:
+          $ref: "#/components/schemas/MailboxCursor"
+        sequence:
+          type: integer
+          format: uint64
+          minimum: 0
+        consumerProof:
+          $ref: "#/components/schemas/RelayActorProof"
+      additionalProperties: false
+    RevokeMailboxConsumerRequest:
+      type: object
+      required: [inboxId, consumerId, authorityProof]
+      description: |
+        Revokes one consumer so it cannot synchronize or hold the mailbox
+        retention floor. Revocation does not expose an endpoint identifier.
+      properties:
+        inboxId:
+          type: string
+          maxLength: 256
+        consumerId:
+          $ref: "#/components/schemas/MailboxConsumerId"
+        authorityProof:
+          $ref: "#/components/schemas/RelayActorProof"
+      additionalProperties: false
+    MailboxConsumerId:
+      type: string
+      contentEncoding: base64
+      minLength: 44
+      maxLength: 44
+      description: Opaque 32-byte, base64-encoded consumer handle scoped to one relay route.
+    MailboxCursor:
+      type: string
+      minLength: 1
+      maxLength: 512
+      description: Opaque relay-issued cursor. Clients must not parse or synthesize it.
+    SequencedEnvelope:
+      type: object
+      required: [sequence, envelope, storedAt]
+      properties:
+        sequence:
+          type: integer
+          format: uint64
+          minimum: 1
+        envelope:
+          type: object
+          description: AEAD-protected and sender-signed direct message envelope.
+        storedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+    MailboxSyncBatch:
+      type: object
+      required:
+        [events, nextCursor, nextSequence, highWatermark, retentionFloor, hasMore]
+      properties:
+        events:
+          type: array
+          maxItems: 256
+          items:
+            $ref: "#/components/schemas/SequencedEnvelope"
+        nextCursor:
+          $ref: "#/components/schemas/MailboxCursor"
+        nextSequence:
+          type: integer
+          format: uint64
+          minimum: 0
+        highWatermark:
+          type: integer
+          format: uint64
+          minimum: 0
+          description: Highest relay-local mailbox sequence assigned when the batch was produced.
+        retentionFloor:
+          type: integer
+          format: uint64
+          minimum: 0
+          description: Sequences at or below this value are no longer available from this relay.
+        hasMore:
+          type: boolean
+      additionalProperties: false
+    MailboxConsumerRegistration:
+      type: object
+      required: [consumerId, consumerSigningPublicKey, state, committedSequence, registeredAt]
+      properties:
+        consumerId:
+          $ref: "#/components/schemas/MailboxConsumerId"
+        consumerSigningPublicKey:
+          type: string
+          contentEncoding: base64
+          description: |
+            Bound relay/inbox-route ML-DSA public key. Absence is accepted only in
+            legacy relay snapshots; such consumers fail closed until rebound.
+        state:
+          type: string
+          enum: [active, revoked]
+        committedSequence:
+          type: integer
+          format: uint64
+          minimum: 0
+        registeredAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+    RelayActorProof:
+      type: object
+      required: [fingerprint, publicSigningKey, signedAt, nonce, signature]
+      description: Replay-protected ML-DSA actor proof over operation-specific canonical bytes.
+      properties:
+        fingerprint:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        publicSigningKey:
+          type: string
+          contentEncoding: base64
+          minLength: 2604
+          maxLength: 2604
+        signedAt:
+          type: string
+          format: date-time
+        nonce:
+          type: string
+          format: uuid
+        signature:
+          type: string
+          contentEncoding: base64
+          minLength: 4412
+          maxLength: 4412
+      additionalProperties: false
+    RelayModuleCapabilityV2:
+      type: object
+      required: [module, versions, status, limits]
+      properties:
+        module:
+          type: string
+          pattern: "^nw\\."
+          maxLength: 96
+        versions:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: integer
+            minimum: 1
+            maximum: 65535
+        status:
+          type: string
+          enum: [experimental, provisional, stable, deprecated]
+        limits:
+          type: object
+          maxProperties: 32
+          additionalProperties:
+            type: integer
+            format: uint64
+            minimum: 0
+      additionalProperties: false
+    RelayCapabilityManifestV2:
+      type: object
+      required: [architectureVersion, modules]
+      description: |
+        Relay-terminated modules actually advertised by this relay. This is not
+        an application-content capability manifest and does not authorize a
+        silent protocol downgrade.
+      properties:
+        architectureVersion:
+          type: integer
+          const: 2
+        modules:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/RelayModuleCapabilityV2"
       additionalProperties: false
     RelayEndpoint:
       type: object
@@ -299,11 +834,9 @@ components:
         tlsCertificateFingerprintSHA256:
           type: string
           contentEncoding: base64
-          nullable: true
         directorySigningPublicKey:
           type: string
           contentEncoding: base64
-          nullable: true
       additionalProperties: false
     RelayInfo:
       type: object
@@ -343,6 +876,8 @@ components:
           type: string
           readOnly: true
           description: Binary-defined software identifier; not operator-controlled.
+        protocolCapabilities:
+          $ref: "#/components/schemas/RelayCapabilityManifestV2"
         requiresPassword:
           type: boolean
         tlsEnabled:

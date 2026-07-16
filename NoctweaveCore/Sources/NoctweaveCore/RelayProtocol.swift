@@ -1,4 +1,12 @@
+import CryptoKit
 import Foundation
+
+public enum RelayCompatibilityProfile {
+    /// Deprecated pre-architecture-v2 operations addressed by an identity
+    /// fingerprint. Relays must keep this disabled unless an operator opts in
+    /// for a bounded migration window.
+    public static let legacyFingerprint = "nw.compat.legacy-fingerprint"
+}
 
 public enum RelayEndpointTransport: String, Codable, CaseIterable {
     case tcp
@@ -179,6 +187,7 @@ public struct RelayInfo: Codable, Equatable {
     public var relayName: String?
     public var operatorNote: String?
     public var softwareVersion: String?
+    public var protocolCapabilities: RelayCapabilityManifestV2?
     public var groupCreationMode: GroupCreationMode?
     public var groupSecurityModel: GroupSecurityModel?
     public var requiresPassword: Bool?
@@ -211,6 +220,7 @@ public struct RelayInfo: Codable, Equatable {
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
+        protocolCapabilities: RelayCapabilityManifestV2? = nil,
         groupCreationMode: GroupCreationMode? = nil,
         groupSecurityModel: GroupSecurityModel? = nil,
         requiresPassword: Bool? = nil,
@@ -249,6 +259,9 @@ public struct RelayInfo: Codable, Equatable {
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
+        self.protocolCapabilities = protocolCapabilities?.isStructurallyValid == true
+            ? protocolCapabilities
+            : nil
         self.groupCreationMode = groupCreationMode
         self.groupSecurityModel = groupSecurityModel
         self.requiresPassword = requiresPassword
@@ -308,6 +321,8 @@ public struct RelayConfiguration: Codable, Equatable {
     public var advertisedEndpoint: RelayEndpoint?
     public var federationAllowList: [RelayEndpoint]
     public var allowPrivateFederationEndpoints: Bool
+    public var compatibilityProfiles: [String]
+    public var experimentalRouteCapabilitiesEnabled: Bool?
 
     public init(
         kind: RelayKind = .standard,
@@ -349,7 +364,9 @@ public struct RelayConfiguration: Codable, Equatable {
         curatedRequireSignedDirectory: Bool = true,
         advertisedEndpoint: RelayEndpoint? = nil,
         federationAllowList: [RelayEndpoint] = [],
-        allowPrivateFederationEndpoints: Bool = false
+        allowPrivateFederationEndpoints: Bool = false,
+        compatibilityProfiles: [String] = [],
+        experimentalRouteCapabilitiesEnabled: Bool = false
     ) {
         self.kind = kind
         self.federation = federation
@@ -411,6 +428,22 @@ public struct RelayConfiguration: Codable, Equatable {
         self.advertisedEndpoint = advertisedEndpoint
         self.federationAllowList = Array(federationAllowList.prefix(256))
         self.allowPrivateFederationEndpoints = allowPrivateFederationEndpoints
+        self.compatibilityProfiles = Array(
+            Set(
+                compatibilityProfiles
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty && $0.utf8.count <= 96 }
+            )
+        ).sorted().prefix(16).map { $0 }
+        self.experimentalRouteCapabilitiesEnabled = experimentalRouteCapabilitiesEnabled ? true : nil
+    }
+
+    public var legacyFingerprintCompatibilityEnabled: Bool {
+        compatibilityProfiles.contains(RelayCompatibilityProfile.legacyFingerprint)
+    }
+
+    public var opaqueRouteCapabilitiesEnabled: Bool {
+        experimentalRouteCapabilitiesEnabled == true
     }
 
     public func makeInfo(now: Date = Date()) -> RelayInfo {
@@ -434,7 +467,16 @@ public struct RelayConfiguration: Codable, Equatable {
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
-            groupCreationMode: groupCreationMode,
+            protocolCapabilities: .advertised(
+                attachmentsEnabled: attachmentsEnabled != false,
+                groupsEnabled: groupCreationMode == .allowed && legacyFingerprintCompatibilityEnabled,
+                wakeEnabled: wakeSupport != nil,
+                hiddenRetrievalEnabled: advertisedHiddenRetrieval != nil,
+                onionEnabled: advertisedOnionTransport != nil,
+                mixnetEnabled: advertisedMixnetTransport != nil,
+                legacyFingerprintCompatibilityEnabled: legacyFingerprintCompatibilityEnabled
+            ),
+            groupCreationMode: legacyFingerprintCompatibilityEnabled ? groupCreationMode : .disabled,
             groupSecurityModel: groupSecurityModel,
             requiresPassword: requiresPassword,
             tlsEnabled: advertisedTLSEnabled ?? tlsEnabled,
@@ -501,8 +543,15 @@ public struct RelayConfiguration: Codable, Equatable {
 public enum RelayRequestType: String, Codable {
     case deliver
     case registerInbox
+    case retireInbox
+    case createInboxRouteCapability
+    case revokeInboxRouteCapability
     case fetch
     case acknowledgeMessages
+    case registerMailboxConsumer
+    case syncMailbox
+    case commitMailboxCursor
+    case revokeMailboxConsumer
     case deliverGroupMessage
     case fetchGroupMessages
     case acknowledgeGroupMessages
@@ -531,11 +580,43 @@ public enum RelayRequestType: String, Codable {
     case listFederationNodes
     case publishOpenFederationDHTRecord
     case listOpenFederationDHTRecords
+
+    public var requiresLegacyFingerprintCompatibility: Bool {
+        switch self {
+        case .announce,
+             .listAnnouncements,
+             .sendPairRequest,
+             .fetchPairRequests,
+             .uploadPrekeys,
+             .fetchPrekeyBundle,
+             .acknowledgeMessages,
+             .deliverGroupMessage,
+             .fetchGroupMessages,
+             .acknowledgeGroupMessages,
+             .createGroup,
+             .getGroup,
+             .listGroups,
+             .listGroupInvitations,
+             .inviteGroupMembers,
+             .updateGroup,
+             .deleteGroup,
+             .requestGroupJoin,
+             .listGroupJoinRequests,
+             .approveGroupJoin,
+             .rejectGroupJoin:
+            return true
+        default:
+            return false
+        }
+    }
 }
 
 public struct DeliverRequest: Codable, Equatable {
-    public let inboxId: String
+    /// Present only for the transitional pre-v2 inbox-addressed path.
+    /// Capability-addressed delivery deliberately omits the inbox identifier.
+    public let inboxId: String?
     public let routingToken: String?
+    public let inboxCapability: InboxRouteCapabilityV2?
     public let envelope: Envelope
     public let destinationRelay: RelayEndpoint?
 
@@ -547,6 +628,22 @@ public struct DeliverRequest: Codable, Equatable {
     ) {
         self.inboxId = inboxId
         self.routingToken = routingToken
+        self.inboxCapability = nil
+        self.envelope = envelope
+        self.destinationRelay = destinationRelay
+    }
+
+    /// Constructs the future fail-closed delivery shape. Client relationship
+    /// publication is intentionally not wired yet; callers must obtain the
+    /// opaque capability through a separately authenticated private exchange.
+    public init(
+        inboxCapability: InboxRouteCapabilityV2,
+        envelope: Envelope,
+        destinationRelay: RelayEndpoint? = nil
+    ) {
+        self.inboxId = nil
+        self.routingToken = nil
+        self.inboxCapability = inboxCapability
         self.envelope = envelope
         self.destinationRelay = destinationRelay
     }
@@ -574,7 +671,7 @@ public struct FetchRequest: Codable, Equatable {
     }
 
     public func signableData(for proof: RelayActorProof) throws -> Data {
-        try NoctweaveCoder.encode(
+        return try NoctweaveCoder.encode(
             InboxFetchProofPayload(
                 inboxId: inboxId,
                 routingToken: routingToken,
@@ -589,26 +686,59 @@ public struct FetchRequest: Codable, Equatable {
 }
 
 public struct RegisterInboxRequest: Codable, Equatable {
+    /// The privacy-minimized registration profile. A missing discriminator is
+    /// reserved for decoding the pre-1.0 contact-offer-bound legacy request.
+    public static let privacyMinimizedVersion = 2
+
     public let inboxId: String
     public let accessPublicKey: Data
+    public let registrationVersion: Int?
     public let contactOffer: ContactOffer?
     public let accessProof: RelayActorProof?
 
     public init(
         inboxId: String,
         accessPublicKey: Data,
+        registrationVersion: Int? = nil,
         contactOffer: ContactOffer? = nil,
         accessProof: RelayActorProof? = nil
     ) {
         self.inboxId = inboxId
         self.accessPublicKey = accessPublicKey
+        self.registrationVersion = registrationVersion
         self.contactOffer = contactOffer
         self.accessProof = accessProof
     }
 
+    public static func privacyMinimizedV2(
+        inboxId: String,
+        accessPublicKey: Data,
+        accessProof: RelayActorProof? = nil
+    ) -> RegisterInboxRequest {
+        RegisterInboxRequest(
+            inboxId: inboxId,
+            accessPublicKey: accessPublicKey,
+            registrationVersion: privacyMinimizedVersion,
+            contactOffer: nil,
+            accessProof: accessProof
+        )
+    }
+
     public func signableData(for proof: RelayActorProof) throws -> Data {
-        try NoctweaveCoder.encode(
-            InboxRegistrationProofPayload(
+        if let registrationVersion {
+            return try NoctweaveCoder.encode(
+                InboxRegistrationProofPayloadV2(
+                    inboxId: inboxId,
+                    accessPublicKey: accessPublicKey,
+                    registrationVersion: registrationVersion,
+                    signedAt: proof.signedAt,
+                    nonce: proof.nonce
+                ),
+                sortedKeys: true
+            )
+        }
+        return try NoctweaveCoder.encode(
+            LegacyInboxRegistrationProofPayload(
                 inboxId: inboxId,
                 accessPublicKey: accessPublicKey,
                 contactOffer: contactOffer,
@@ -618,6 +748,233 @@ public struct RegisterInboxRequest: Codable, Equatable {
             sortedKeys: true
         )
     }
+}
+
+/// Permanently removes the live state for one route-level inbox generation.
+///
+/// The proof is made by the inbox access key. Relays retain a compact,
+/// non-expiring non-resurrection record after the registration, stream
+/// consumers, and queued envelopes have been deleted.
+public struct RetireInboxRequest: Codable, Equatable {
+    public static let protocolVersion = 1
+    public static let signatureDomain = "org.noctweave.relay.retire-inbox"
+
+    public let inboxId: String
+    public let accessProof: RelayActorProof?
+
+    public init(inboxId: String, accessProof: RelayActorProof? = nil) {
+        self.inboxId = inboxId
+        self.accessProof = accessProof
+    }
+
+    /// Produces the exact, self-contained request that a burn journal can
+    /// persist before deleting the inbox access private key.
+    public static func make(
+        inboxId: String,
+        accessSigningKey: SigningKeyPair,
+        signedAt: Date = Date(),
+        nonce: UUID = UUID()
+    ) throws -> RetireInboxRequest {
+        guard InboxAddress.isBound(inboxId, to: accessSigningKey.publicKeyData) else {
+            throw RetireInboxRequestError.inboxAccessKeyMismatch
+        }
+        let proofTemplate = RelayActorProof(
+            fingerprint: CryptoBox.fingerprint(for: accessSigningKey.publicKeyData),
+            publicSigningKey: accessSigningKey.publicKeyData,
+            signedAt: signedAt,
+            nonce: nonce,
+            signature: Data()
+        )
+        let unsigned = RetireInboxRequest(inboxId: inboxId, accessProof: proofTemplate)
+        let proof = try RelayActorProof.make(
+            signingKey: accessSigningKey,
+            signableData: unsigned.signableData(for: proofTemplate),
+            signedAt: signedAt,
+            nonce: nonce
+        )
+        return RetireInboxRequest(inboxId: inboxId, accessProof: proof)
+    }
+
+    public func signableData(for proof: RelayActorProof) throws -> Data {
+        try NoctweaveCoder.encode(
+            InboxRetirementProofPayload(
+                domain: Self.signatureDomain,
+                version: Self.protocolVersion,
+                inboxId: inboxId,
+                signedAt: proof.signedAt,
+                nonce: proof.nonce
+            ),
+            sortedKeys: true
+        )
+    }
+
+    func requestDigest() throws -> Data {
+        Data(SHA256.hash(data: try NoctweaveCoder.encode(self, sortedKeys: true)))
+    }
+}
+
+public enum RetireInboxRequestError: Error, Equatable {
+    case inboxAccessKeyMismatch
+}
+
+public enum InboxRouteCapabilityMutationRequestError: Error, Equatable {
+    case invalidMutationState
+}
+
+public struct CreateInboxRouteCapabilityRequest: Codable, Equatable {
+    public static let protocolVersion = 3
+    public static let maximumMutationSequence: UInt64 = UInt64(UInt32.max)
+    public static let signatureDomain = "org.noctweave.relay.inbox-route-capability-mutation"
+
+    static func nextMutationSequence(after current: UInt64) -> UInt64 {
+        guard current < maximumMutationSequence else { return 0 }
+        return current + 1
+    }
+
+    public let inboxId: String
+    public let capability: InboxRouteCapabilityV2
+    public let relayScope: Data
+    public let mutationSequence: UInt64
+    public let authorityProof: RelayActorProof?
+
+    public init(
+        inboxId: String,
+        capability: InboxRouteCapabilityV2,
+        relayScope: Data,
+        mutationSequence: UInt64,
+        authorityProof: RelayActorProof? = nil
+    ) {
+        self.inboxId = inboxId
+        self.capability = capability
+        self.relayScope = relayScope
+        self.mutationSequence = mutationSequence
+        self.authorityProof = authorityProof
+    }
+
+    public func signableData(for proof: RelayActorProof) throws -> Data {
+        try inboxRouteCapabilityMutationSignableData(
+            operation: "create",
+            inboxId: inboxId,
+            capability: capability,
+            relayScope: relayScope,
+            mutationSequence: mutationSequence,
+            proof: proof
+        )
+    }
+
+    public func mutationDigest() throws -> Data {
+        try inboxRouteCapabilityMutationDigest(
+            operation: "create",
+            inboxId: inboxId,
+            capability: capability,
+            relayScope: relayScope,
+            mutationSequence: mutationSequence
+        )
+    }
+}
+
+public struct RevokeInboxRouteCapabilityRequest: Codable, Equatable {
+    public static let protocolVersion = CreateInboxRouteCapabilityRequest.protocolVersion
+    public static let signatureDomain = CreateInboxRouteCapabilityRequest.signatureDomain
+
+    public let inboxId: String
+    public let capability: InboxRouteCapabilityV2
+    public let relayScope: Data
+    public let mutationSequence: UInt64
+    public let authorityProof: RelayActorProof?
+
+    public init(
+        inboxId: String,
+        capability: InboxRouteCapabilityV2,
+        relayScope: Data,
+        mutationSequence: UInt64,
+        authorityProof: RelayActorProof? = nil
+    ) {
+        self.inboxId = inboxId
+        self.capability = capability
+        self.relayScope = relayScope
+        self.mutationSequence = mutationSequence
+        self.authorityProof = authorityProof
+    }
+
+    public func signableData(for proof: RelayActorProof) throws -> Data {
+        try inboxRouteCapabilityMutationSignableData(
+            operation: "revoke",
+            inboxId: inboxId,
+            capability: capability,
+            relayScope: relayScope,
+            mutationSequence: mutationSequence,
+            proof: proof
+        )
+    }
+
+    public func mutationDigest() throws -> Data {
+        try inboxRouteCapabilityMutationDigest(
+            operation: "revoke",
+            inboxId: inboxId,
+            capability: capability,
+            relayScope: relayScope,
+            mutationSequence: mutationSequence
+        )
+    }
+}
+
+private func inboxRouteCapabilityMutationSignableData(
+    operation: String,
+    inboxId: String,
+    capability: InboxRouteCapabilityV2,
+    relayScope: Data,
+    mutationSequence: UInt64,
+    proof: RelayActorProof
+) throws -> Data {
+    guard relayScope.count == 32,
+          relayScope.contains(where: { $0 != 0 }),
+          mutationSequence > 0,
+          mutationSequence <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
+        throw InboxRouteCapabilityMutationRequestError.invalidMutationState
+    }
+    try NoctweaveCoder.encode(
+        InboxRouteCapabilityMutationProofPayload(
+            domain: CreateInboxRouteCapabilityRequest.signatureDomain,
+            version: CreateInboxRouteCapabilityRequest.protocolVersion,
+            operation: operation,
+            inboxId: inboxId,
+            capabilityDigest: capability.relayRegistryDigest,
+            relayScope: relayScope,
+            mutationSequence: mutationSequence,
+            signedAt: proof.signedAt,
+            nonce: proof.nonce
+        ),
+        sortedKeys: true
+    )
+}
+
+private func inboxRouteCapabilityMutationDigest(
+    operation: String,
+    inboxId: String,
+    capability: InboxRouteCapabilityV2,
+    relayScope: Data,
+    mutationSequence: UInt64
+) throws -> Data {
+    guard relayScope.count == 32,
+          relayScope.contains(where: { $0 != 0 }),
+          mutationSequence > 0,
+          mutationSequence <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
+        throw InboxRouteCapabilityMutationRequestError.invalidMutationState
+    }
+    let payload = try NoctweaveCoder.encode(
+        InboxRouteCapabilityMutationStatePayload(
+            domain: "\(CreateInboxRouteCapabilityRequest.signatureDomain)/state",
+            version: CreateInboxRouteCapabilityRequest.protocolVersion,
+            operation: operation,
+            inboxId: inboxId,
+            capabilityDigest: capability.relayRegistryDigest,
+            relayScope: relayScope,
+            mutationSequence: mutationSequence
+        ),
+        sortedKeys: true
+    )
+    return Data(SHA256.hash(data: payload))
 }
 
 public struct AcknowledgeMessagesRequest: Codable, Equatable {
@@ -646,6 +1003,202 @@ public struct AcknowledgeMessagesRequest: Codable, Equatable {
             sortedKeys: true
         )
     }
+}
+
+public struct RegisterMailboxConsumerRequest: Codable, Equatable {
+    public let inboxId: String
+    public let consumerId: MailboxConsumerId
+    public let consumerSigningPublicKey: Data
+    public let sponsorConsumerId: MailboxConsumerId?
+    public let startingSequence: UInt64?
+    public let authorityProof: RelayActorProof?
+    public let consumerProof: RelayActorProof?
+    public let sponsorProof: RelayActorProof?
+
+    public init(
+        inboxId: String,
+        consumerId: MailboxConsumerId,
+        consumerSigningPublicKey: Data,
+        sponsorConsumerId: MailboxConsumerId? = nil,
+        startingSequence: UInt64? = nil,
+        authorityProof: RelayActorProof? = nil,
+        consumerProof: RelayActorProof? = nil,
+        sponsorProof: RelayActorProof? = nil
+    ) {
+        self.inboxId = inboxId
+        self.consumerId = consumerId
+        self.consumerSigningPublicKey = consumerSigningPublicKey
+        self.sponsorConsumerId = sponsorConsumerId
+        self.startingSequence = startingSequence
+        self.authorityProof = authorityProof
+        self.consumerProof = consumerProof
+        self.sponsorProof = sponsorProof
+    }
+
+    public func authoritySignableData(for proof: RelayActorProof) throws -> Data {
+        try signableData(operation: "register-authority", proof: proof)
+    }
+
+    public func consumerSignableData(for proof: RelayActorProof) throws -> Data {
+        try signableData(operation: "register-possession", proof: proof)
+    }
+
+    public func sponsorSignableData(for proof: RelayActorProof) throws -> Data {
+        try signableData(operation: "register-sponsor", proof: proof)
+    }
+
+    private func signableData(operation: String, proof: RelayActorProof) throws -> Data {
+        try NoctweaveCoder.encode(
+            MailboxConsumerProofPayload(
+                operation: operation,
+                inboxId: inboxId,
+                consumerId: consumerId,
+                consumerSigningPublicKey: consumerSigningPublicKey,
+                sponsorConsumerId: sponsorConsumerId,
+                cursor: nil,
+                sequence: startingSequence,
+                maxCount: nil,
+                longPollTimeoutSeconds: nil,
+                signedAt: proof.signedAt,
+                nonce: proof.nonce
+            ),
+            sortedKeys: true
+        )
+    }
+}
+
+public struct SyncMailboxRequest: Codable, Equatable {
+    public let inboxId: String
+    public let consumerId: MailboxConsumerId
+    public let cursor: MailboxCursor?
+    public let maxCount: Int?
+    public let longPollTimeoutSeconds: Int?
+    public let consumerProof: RelayActorProof?
+
+    public init(
+        inboxId: String,
+        consumerId: MailboxConsumerId,
+        cursor: MailboxCursor? = nil,
+        maxCount: Int? = nil,
+        longPollTimeoutSeconds: Int? = nil,
+        consumerProof: RelayActorProof? = nil
+    ) {
+        self.inboxId = inboxId
+        self.consumerId = consumerId
+        self.cursor = cursor
+        self.maxCount = maxCount
+        self.longPollTimeoutSeconds = longPollTimeoutSeconds
+        self.consumerProof = consumerProof
+    }
+
+    public func signableData(for proof: RelayActorProof) throws -> Data {
+        try NoctweaveCoder.encode(
+            MailboxConsumerProofPayload(
+                operation: "sync",
+                inboxId: inboxId,
+                consumerId: consumerId,
+                consumerSigningPublicKey: nil,
+                sponsorConsumerId: nil,
+                cursor: cursor,
+                sequence: nil,
+                maxCount: maxCount,
+                longPollTimeoutSeconds: longPollTimeoutSeconds,
+                signedAt: proof.signedAt,
+                nonce: proof.nonce
+            ),
+            sortedKeys: true
+        )
+    }
+}
+
+public struct CommitMailboxCursorRequest: Codable, Equatable {
+    public let inboxId: String
+    public let consumerId: MailboxConsumerId
+    public let cursor: MailboxCursor
+    public let sequence: UInt64
+    public let consumerProof: RelayActorProof?
+
+    public init(
+        inboxId: String,
+        consumerId: MailboxConsumerId,
+        cursor: MailboxCursor,
+        sequence: UInt64,
+        consumerProof: RelayActorProof? = nil
+    ) {
+        self.inboxId = inboxId
+        self.consumerId = consumerId
+        self.cursor = cursor
+        self.sequence = sequence
+        self.consumerProof = consumerProof
+    }
+
+    public func signableData(for proof: RelayActorProof) throws -> Data {
+        try NoctweaveCoder.encode(
+            MailboxConsumerProofPayload(
+                operation: "commit",
+                inboxId: inboxId,
+                consumerId: consumerId,
+                consumerSigningPublicKey: nil,
+                sponsorConsumerId: nil,
+                cursor: cursor,
+                sequence: sequence,
+                maxCount: nil,
+                longPollTimeoutSeconds: nil,
+                signedAt: proof.signedAt,
+                nonce: proof.nonce
+            ),
+            sortedKeys: true
+        )
+    }
+}
+
+public struct RevokeMailboxConsumerRequest: Codable, Equatable {
+    public let inboxId: String
+    public let consumerId: MailboxConsumerId
+    public let authorityProof: RelayActorProof?
+
+    public init(
+        inboxId: String,
+        consumerId: MailboxConsumerId,
+        authorityProof: RelayActorProof? = nil
+    ) {
+        self.inboxId = inboxId
+        self.consumerId = consumerId
+        self.authorityProof = authorityProof
+    }
+
+    public func signableData(for proof: RelayActorProof) throws -> Data {
+        try NoctweaveCoder.encode(
+            MailboxConsumerProofPayload(
+                operation: "revoke-authority",
+                inboxId: inboxId,
+                consumerId: consumerId,
+                consumerSigningPublicKey: nil,
+                sponsorConsumerId: nil,
+                cursor: nil,
+                sequence: nil,
+                maxCount: nil,
+                longPollTimeoutSeconds: nil,
+                signedAt: proof.signedAt,
+                nonce: proof.nonce
+            ),
+            sortedKeys: true
+        )
+    }
+}
+
+private struct MailboxConsumerProofPayload: Codable {
+    let operation: String
+    let inboxId: String
+    let consumerId: MailboxConsumerId
+    let consumerSigningPublicKey: Data?
+    let sponsorConsumerId: MailboxConsumerId?
+    let cursor: MailboxCursor?
+    let sequence: UInt64?
+    let maxCount: Int?
+    let longPollTimeoutSeconds: Int?
+    let signedAt: Date
+    let nonce: UUID
 }
 
 public struct DeliverGroupMessageRequest: Codable, Equatable {
@@ -743,7 +1296,45 @@ public struct AcknowledgeGroupMessagesRequest: Codable, Equatable {
     }
 }
 
-private struct InboxRegistrationProofPayload: Codable {
+private struct InboxRegistrationProofPayloadV2: Codable {
+    let inboxId: String
+    let accessPublicKey: Data
+    let registrationVersion: Int
+    let signedAt: Date
+    let nonce: UUID
+}
+
+private struct InboxRetirementProofPayload: Codable {
+    let domain: String
+    let version: Int
+    let inboxId: String
+    let signedAt: Date
+    let nonce: UUID
+}
+
+private struct InboxRouteCapabilityMutationProofPayload: Codable {
+    let domain: String
+    let version: Int
+    let operation: String
+    let inboxId: String
+    let capabilityDigest: Data
+    let relayScope: Data
+    let mutationSequence: UInt64
+    let signedAt: Date
+    let nonce: UUID
+}
+
+private struct InboxRouteCapabilityMutationStatePayload: Codable {
+    let domain: String
+    let version: Int
+    let operation: String
+    let inboxId: String
+    let capabilityDigest: Data
+    let relayScope: Data
+    let mutationSequence: UInt64
+}
+
+private struct LegacyInboxRegistrationProofPayload: Codable {
     let inboxId: String
     let accessPublicKey: Data
     let contactOffer: ContactOffer?
@@ -1063,8 +1654,15 @@ public struct RelayRequest: Codable, Equatable {
     public let authToken: String?
     public let deliver: DeliverRequest?
     public let registerInbox: RegisterInboxRequest?
+    public let retireInbox: RetireInboxRequest?
+    public let createInboxRouteCapability: CreateInboxRouteCapabilityRequest?
+    public let revokeInboxRouteCapability: RevokeInboxRouteCapabilityRequest?
     public let fetch: FetchRequest?
     public let acknowledgeMessages: AcknowledgeMessagesRequest?
+    public let registerMailboxConsumer: RegisterMailboxConsumerRequest?
+    public let syncMailbox: SyncMailboxRequest?
+    public let commitMailboxCursor: CommitMailboxCursorRequest?
+    public let revokeMailboxConsumer: RevokeMailboxConsumerRequest?
     public let deliverGroupMessage: DeliverGroupMessageRequest?
     public let fetchGroupMessages: FetchGroupMessagesRequest?
     public let acknowledgeGroupMessages: AcknowledgeGroupMessagesRequest?
@@ -1097,8 +1695,15 @@ public struct RelayRequest: Codable, Equatable {
         authToken: String? = nil,
         deliver: DeliverRequest? = nil,
         registerInbox: RegisterInboxRequest? = nil,
+        retireInbox: RetireInboxRequest? = nil,
+        createInboxRouteCapability: CreateInboxRouteCapabilityRequest? = nil,
+        revokeInboxRouteCapability: RevokeInboxRouteCapabilityRequest? = nil,
         fetch: FetchRequest? = nil,
         acknowledgeMessages: AcknowledgeMessagesRequest? = nil,
+        registerMailboxConsumer: RegisterMailboxConsumerRequest? = nil,
+        syncMailbox: SyncMailboxRequest? = nil,
+        commitMailboxCursor: CommitMailboxCursorRequest? = nil,
+        revokeMailboxConsumer: RevokeMailboxConsumerRequest? = nil,
         deliverGroupMessage: DeliverGroupMessageRequest? = nil,
         fetchGroupMessages: FetchGroupMessagesRequest? = nil,
         acknowledgeGroupMessages: AcknowledgeGroupMessagesRequest? = nil,
@@ -1130,8 +1735,15 @@ public struct RelayRequest: Codable, Equatable {
         self.authToken = authToken
         self.deliver = deliver
         self.registerInbox = registerInbox
+        self.retireInbox = retireInbox
+        self.createInboxRouteCapability = createInboxRouteCapability
+        self.revokeInboxRouteCapability = revokeInboxRouteCapability
         self.fetch = fetch
         self.acknowledgeMessages = acknowledgeMessages
+        self.registerMailboxConsumer = registerMailboxConsumer
+        self.syncMailbox = syncMailbox
+        self.commitMailboxCursor = commitMailboxCursor
+        self.revokeMailboxConsumer = revokeMailboxConsumer
         self.deliverGroupMessage = deliverGroupMessage
         self.fetchGroupMessages = fetchGroupMessages
         self.acknowledgeGroupMessages = acknowledgeGroupMessages
@@ -1168,12 +1780,50 @@ public struct RelayRequest: Codable, Equatable {
         RelayRequest(type: .registerInbox, registerInbox: request)
     }
 
+    public static func retireInbox(_ request: RetireInboxRequest) -> RelayRequest {
+        RelayRequest(type: .retireInbox, retireInbox: request)
+    }
+
+    public static func createInboxRouteCapability(
+        _ request: CreateInboxRouteCapabilityRequest
+    ) -> RelayRequest {
+        RelayRequest(
+            type: .createInboxRouteCapability,
+            createInboxRouteCapability: request
+        )
+    }
+
+    public static func revokeInboxRouteCapability(
+        _ request: RevokeInboxRouteCapabilityRequest
+    ) -> RelayRequest {
+        RelayRequest(
+            type: .revokeInboxRouteCapability,
+            revokeInboxRouteCapability: request
+        )
+    }
+
     public static func fetch(_ request: FetchRequest) -> RelayRequest {
         RelayRequest(type: .fetch, fetch: request)
     }
 
     public static func acknowledgeMessages(_ request: AcknowledgeMessagesRequest) -> RelayRequest {
         RelayRequest(type: .acknowledgeMessages, acknowledgeMessages: request)
+    }
+
+    public static func registerMailboxConsumer(_ request: RegisterMailboxConsumerRequest) -> RelayRequest {
+        RelayRequest(type: .registerMailboxConsumer, registerMailboxConsumer: request)
+    }
+
+    public static func syncMailbox(_ request: SyncMailboxRequest) -> RelayRequest {
+        RelayRequest(type: .syncMailbox, syncMailbox: request)
+    }
+
+    public static func commitMailboxCursor(_ request: CommitMailboxCursorRequest) -> RelayRequest {
+        RelayRequest(type: .commitMailboxCursor, commitMailboxCursor: request)
+    }
+
+    public static func revokeMailboxConsumer(_ request: RevokeMailboxConsumerRequest) -> RelayRequest {
+        RelayRequest(type: .revokeMailboxConsumer, revokeMailboxConsumer: request)
     }
 
     public static func deliverGroupMessage(_ request: DeliverGroupMessageRequest) -> RelayRequest {
@@ -1294,8 +1944,15 @@ public struct RelayRequest: Codable, Equatable {
             authToken: token,
             deliver: deliver,
             registerInbox: registerInbox,
+            retireInbox: retireInbox,
+            createInboxRouteCapability: createInboxRouteCapability,
+            revokeInboxRouteCapability: revokeInboxRouteCapability,
             fetch: fetch,
             acknowledgeMessages: acknowledgeMessages,
+            registerMailboxConsumer: registerMailboxConsumer,
+            syncMailbox: syncMailbox,
+            commitMailboxCursor: commitMailboxCursor,
+            revokeMailboxConsumer: revokeMailboxConsumer,
             deliverGroupMessage: deliverGroupMessage,
             fetchGroupMessages: fetchGroupMessages,
             acknowledgeGroupMessages: acknowledgeGroupMessages,
@@ -1330,6 +1987,8 @@ public enum RelayResponseType: String, Codable {
     case ok
     case delivered
     case messages
+    case mailboxSync
+    case mailboxConsumer
     case groupMessages
     case announcements
     case pairRequests
@@ -1353,10 +2012,29 @@ public struct DeliverResponse: Codable, Equatable {
     }
 }
 
+/// Relay-local, inbox-generation-scoped authority returned after an
+/// authenticated inbox registration. It is not an account or provider ID and
+/// is removed with the inbox generation.
+public struct InboxRegistrationReceiptV3: Codable, Equatable {
+    public let routeMutationScope: Data
+    public let nextRouteMutationSequence: UInt64
+
+    public init(
+        routeMutationScope: Data,
+        nextRouteMutationSequence: UInt64
+    ) {
+        self.routeMutationScope = routeMutationScope
+        self.nextRouteMutationSequence = nextRouteMutationSequence
+    }
+}
+
 public struct RelayResponse: Codable, Equatable {
     public let type: RelayResponseType
     public let delivered: DeliverResponse?
+    public let inboxRegistration: InboxRegistrationReceiptV3?
     public let messages: [Envelope]?
+    public let mailboxSync: MailboxSyncBatch?
+    public let mailboxConsumer: MailboxConsumerRegistration?
     public let groupMessages: [GroupRatchetEnvelope]?
     public let announcements: [PairingAnnouncement]?
     public let pairRequests: [PairingRequest]?
@@ -1375,7 +2053,10 @@ public struct RelayResponse: Codable, Equatable {
     public init(
         type: RelayResponseType,
         delivered: DeliverResponse? = nil,
+        inboxRegistration: InboxRegistrationReceiptV3? = nil,
         messages: [Envelope]? = nil,
+        mailboxSync: MailboxSyncBatch? = nil,
+        mailboxConsumer: MailboxConsumerRegistration? = nil,
         groupMessages: [GroupRatchetEnvelope]? = nil,
         announcements: [PairingAnnouncement]? = nil,
         pairRequests: [PairingRequest]? = nil,
@@ -1393,7 +2074,10 @@ public struct RelayResponse: Codable, Equatable {
     ) {
         self.type = type
         self.delivered = delivered
+        self.inboxRegistration = inboxRegistration
         self.messages = messages
+        self.mailboxSync = mailboxSync
+        self.mailboxConsumer = mailboxConsumer
         self.groupMessages = groupMessages
         self.announcements = announcements
         self.pairRequests = pairRequests
@@ -1410,8 +2094,10 @@ public struct RelayResponse: Codable, Equatable {
         self.error = error
     }
 
-    public static func ok() -> RelayResponse {
-        RelayResponse(type: .ok)
+    public static func ok(
+        inboxRegistration: InboxRegistrationReceiptV3? = nil
+    ) -> RelayResponse {
+        RelayResponse(type: .ok, inboxRegistration: inboxRegistration)
     }
 
     public static func delivered(count: Int) -> RelayResponse {
@@ -1420,6 +2106,14 @@ public struct RelayResponse: Codable, Equatable {
 
     public static func messages(_ envelopes: [Envelope]) -> RelayResponse {
         RelayResponse(type: .messages, messages: envelopes)
+    }
+
+    public static func mailboxSync(_ batch: MailboxSyncBatch) -> RelayResponse {
+        RelayResponse(type: .mailboxSync, mailboxSync: batch)
+    }
+
+    public static func mailboxConsumer(_ consumer: MailboxConsumerRegistration) -> RelayResponse {
+        RelayResponse(type: .mailboxConsumer, mailboxConsumer: consumer)
     }
 
     public static func groupMessages(_ envelopes: [GroupRatchetEnvelope]) -> RelayResponse {

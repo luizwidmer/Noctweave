@@ -8,6 +8,11 @@ relay, the proprietary Apple reference client, the macOS relay control plane,
 public documentation, build scripts, and dependency manifests at the reviewed
 commit.
 
+Terminology note (July 16, 2026): the reviewed group construction is now
+identified on the wire as `noctweave-pq-group-experimental-2`. References below
+to “MLS-derived” record the terminology used at the audited commit; they do not
+claim RFC 9420 compatibility, MLS interoperability, or formal MLS security.
+
 The review examined trust boundaries, cryptographic API failure behavior,
 ratchet/state transitions, persistence, untrusted decoding, allocation bounds,
 relay authentication, HTTP and federation behavior, local privacy surfaces,
@@ -96,7 +101,10 @@ tests and runtime builds.
 - Raw memory, localStorage, IndexedDB, and database adapters validate keys,
   serialization, and record sizes. `EncryptedNoctweaveStore` refuses plaintext
   records and binds AES-GCM storage ciphertext to its record key.
-- Portable profiles require bounded metadata and a nontrivial passphrase/KDF.
+- Live portable profiles are not exposed: cloning identity keys, ratchets,
+  routes, cursors, and self-sync authority would create two unsafe copies of one
+  endpoint. Local storage remains encrypted; portability is limited to inert,
+  read-only history projections.
 - The liboqs WASM adapter validates the exact ML-KEM-768/ML-DSA-65 profile,
   lengths, allocations, and signatures, and clears temporary WASM allocations.
 - The browser demo uses DOM node construction for untrusted values. Its local

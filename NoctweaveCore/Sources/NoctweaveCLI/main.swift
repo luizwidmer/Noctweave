@@ -334,7 +334,10 @@ private struct CommandRunner {
 
     private func rotateIdentity(options: ParsedOptions) async throws {
         try requireConfirmation(options, key: "--confirm", expected: "ROTATE")
-        let result = try await headlessClient(from: options).rotateIdentity()
+        let contactIds = try rotationContinuityContactIds(from: options)
+        let result = try await headlessClient(from: options).rotateIdentity(
+            preservingContinuityWith: contactIds
+        )
         try writeJSON(result)
     }
 
@@ -547,6 +550,34 @@ private struct CommandRunner {
             .filter { !$0.isEmpty }
     }
 
+    private func rotationContinuityContactIds(from options: ParsedOptions) throws -> Set<UUID> {
+        guard let raw = options.value(for: "--preserve-with")?.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ), !raw.isEmpty else {
+            throw CLIError(
+                "Identity rotation requires an explicit continuity choice. Use `--preserve-with <contact-uuid,...>` or `--preserve-with none`."
+            )
+        }
+        if raw.lowercased() == "none" {
+            return []
+        }
+        let values = raw.split(separator: ",", omittingEmptySubsequences: false)
+        guard values.count <= IdentityMutationJournalV2.maximumNotifications else {
+            throw CLIError(
+                "Identity rotation supports at most \(IdentityMutationJournalV2.maximumNotifications) continuity recipients."
+            )
+        }
+        var result: Set<UUID> = []
+        for value in values {
+            let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !candidate.isEmpty, let id = UUID(uuidString: candidate) else {
+                throw CLIError("Invalid contact UUID in `--preserve-with`: \(candidate)")
+            }
+            result.insert(id)
+        }
+        return result
+    }
+
     private func attachmentInput(from options: ParsedOptions, voice: Bool) throws -> CLIAttachmentInput {
         guard let file = options.value(for: "--file") else {
             throw CLIError("Missing file. Use `--file <path>`.")
@@ -670,7 +701,7 @@ private struct CommandRunner {
           NoctweaveCLI receive [--max count] [--long-poll seconds] [--state path]
           NoctweaveCLI download-attachment --id <uuid> --out <path-or-directory> [--overwrite true] [--state path]
           NoctweaveCLI allow-identity-reset --contact <contact> --allow true [--state path]
-          NoctweaveCLI rotate-identity --confirm ROTATE [--state path]
+          NoctweaveCLI rotate-identity --confirm ROTATE --preserve-with <contact-uuid,...|none> [--state path]
           NoctweaveCLI burn-identity --confirm BURN [--state path]
           NoctweaveCLI endpoint --relay <url|host:port>
           NoctweaveCLI health --relay <url|host:port> [--auth-file path] [--timeout seconds]

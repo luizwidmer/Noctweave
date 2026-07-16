@@ -30,6 +30,31 @@ envelopes; message plaintext and private identity keys stay with clients.
 There are no hosted accounts, developer-operated relays, or required central
 notification services. You choose where every component runs.
 
+## Architecture Revision Status
+
+The pre-1.0 `architecture-revision` work now provides independently keyed local
+endpoints scoped to a disposable identity generation, one certified preferred
+direct endpoint, endpoint-scoped
+ordered mailbox cursors, durable exact-ciphertext retries, typed encrypted
+events and controls, privacy-minimized inbox registration, bounded replay-safe
+receive receipts, and local read-only history export/import inside a padded
+recipient-KEM transport seal. The in-process and Linux relays also share the
+fingerprint-scoped compatibility group-invitation implementation, which stays
+disabled unless an operator explicitly enables the deprecated
+`nw.compat.legacy-fingerprint` profile.
+
+This is not yet a complete multi-endpoint protocol. Purpose-bound
+same-generation endpoint admission exists only as an internal conformance
+model; there is no public authorization, linking, or recovery flow. A safe
+multi-endpoint release still requires a rendezvous transport, published
+self-sync, multi-endpoint fan-out, encrypted route exchange, complete removal
+obligations, and active endpoint-aware group delivery. The current group construction is
+Noctweave-specific, experimental, O(n), and independently unaudited; the signed
+endpoint-aware group objects are a tested foundation, not the active relay
+or client group path. See the
+[architecture status matrix](NoctweaveDocumentation/noctweave_architecture_revision_v2.md)
+before selecting a protocol surface.
+
 ## Install And Try It
 
 The quickest path uses Docker for the relay and a browser for two local clients.
@@ -84,6 +109,11 @@ Open two independent profiles:
 Set the relay to `http://127.0.0.1:9340`, create both identities, exchange
 contact codes, and send a message.
 
+Current contact codes are reusable compatibility material, not one-time
+unlinkable rendezvous offers. Sharing the same code lets recipients correlate
+the same identity generation, preferred endpoint authorization, inbox, and
+relay details.
+
 ![NoctweaveJS encrypted browser client](docs/assets/NoctweaveJSClient.png)
 
 ## Use The Tools
@@ -94,7 +124,9 @@ contact codes, and send a message.
 | Build a browser or Node client | [`NoctweaveJS/`](NoctweaveJS/) |
 | Integrate from Swift | [`NoctweaveCore/`](NoctweaveCore/) |
 | Script identities and messages | [`NoctweaveCLI`](NoctweaveDocumentation/noctweave_cli_usage.md) |
-| Review the wire protocol | [`Protocol specification`](NoctweaveDocumentation/noctweave_protocol_spec_v1.md) |
+| Review the pre-1.0 architecture | [`Architecture revision v2`](NoctweaveDocumentation/noctweave_architecture_revision_v2.md) |
+| Review read-only endpoint history transfer | [`History transfer v2`](NoctweaveDocumentation/history_transfer_v2.md) |
+| Review the compatibility wire surface | [`Protocol v1 compatibility specification`](NoctweaveDocumentation/noctweave_protocol_spec_v1.md) |
 
 ### Relay
 
@@ -155,8 +187,9 @@ swift run --package-path NoctweaveCore NoctweaveCLI init \
   --relay http://127.0.0.1:9340
 ```
 
-The CLI supports relay diagnostics, encrypted local identities, contact import
-and export, direct and group messaging, attachments, continuity events, and
+The CLI supports relay diagnostics, encrypted local identities, public
+contact-share import and export, direct and group messaging, attachments,
+continuity events, and
 identity rotation. See the [CLI usage guide](NoctweaveDocumentation/noctweave_cli_usage.md).
 
 ## Desktop Apps
@@ -228,7 +261,7 @@ Noctweave is pre-1.0 and has not received an independent external audit.
 | --- | --- |
 | ML-KEM/ML-DSA protocol profile | Protection from a compromised operating system |
 | End-to-end encrypted payloads and attachments | Global anonymity |
-| Signed identity continuity and replay rejection | Formal MLS proof |
+| Signed identity continuity and replay rejection | Formal group-protocol proof or RFC 9420 interoperability |
 | Bounded parsers, stores, and discovery inputs | Single-server cryptographic PIR |
 | Relay ciphertext-only payload storage | Guaranteed closed-app delivery |
 
@@ -252,12 +285,17 @@ dependency, Docker, and optional container-scan checks with
 
 ## Documentation
 
+- [Identity philosophy and external-feature filter](NoctweaveDocumentation/noctweave_identity_philosophy.md)
+
 Technical detail lives in focused documents:
 
-- [Protocol specification](NoctweaveDocumentation/noctweave_protocol_spec_v1.md)
+- [Architecture revision v2 and implementation status](NoctweaveDocumentation/noctweave_architecture_revision_v2.md)
+- [Protocol v1 compatibility specification](NoctweaveDocumentation/noctweave_protocol_spec_v1.md)
 - [Relay OpenAPI schema](NoctweaveDocumentation/noctweave_relay_openapi.yaml)
 - [Wire format and test vectors](NoctweaveDocumentation/wire_format_and_test_vectors.md)
 - [Core public API](NoctweaveDocumentation/noctweave_core_public_api.md)
+- [Read-only history transfer v2](NoctweaveDocumentation/history_transfer_v2.md)
+- [Experimental PQ group design](NoctweaveDocumentation/group_mls_design.md)
 - [Federation protocol and operations](NoctweaveDocumentation/federation_protocol_and_operations.md)
 - [Relay hardening](NoctweaveDocumentation/relay_ops_hardening_guide.md)
 - [Whitepaper](NoctweaveDocumentation/noctweave_whitepaper.md)
