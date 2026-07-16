@@ -34,22 +34,6 @@ final class ArchitectureV2MailboxTests: XCTestCase {
         }
     }
 
-    func testLegacyConsumerRegistrationDecodesWithoutCredentialAndFailsValidation() throws {
-        let legacy = LegacyCoreMailboxConsumerRegistration(
-            consumerId: MailboxConsumerId.generate(),
-            state: .active,
-            committedSequence: 0,
-            registeredAt: Date(timeIntervalSince1970: 100),
-            revokedAt: nil
-        )
-        let decoded = try NoctweaveCoder.decode(
-            MailboxConsumerRegistration.self,
-            from: NoctweaveCoder.encode(legacy, sortedKeys: true)
-        )
-        XCTAssertNil(decoded.consumerSigningPublicKey)
-        XCTAssertFalse(decoded.isStructurallyValid)
-    }
-
     func testRevokedConsumerHistoryIsBoundedWithoutExhaustingDeviceChurn() async throws {
         let store = RelayStore()
         let inboxId = InboxAddress.generate()
@@ -158,67 +142,6 @@ final class ArchitectureV2MailboxTests: XCTestCase {
         XCTAssertTrue(afterDesktopSecondCommit.isEmpty)
     }
 
-    func testFirstV2ConsumerNormalizesRetainedLegacyMailboxSequenceGaps() async throws {
-        let store = RelayStore()
-        let inboxId = InboxAddress.generate()
-        let consumer = MailboxConsumerId.generate()
-        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x0C]))
-
-        let first = makeEnvelope(counter: 1)
-        let removed = makeEnvelope(counter: 2)
-        let third = makeEnvelope(counter: 3)
-        try await store.deliver(first, to: inboxId)
-        try await store.deliver(removed, to: inboxId)
-        try await store.deliver(third, to: inboxId)
-        let acknowledged = try await store.acknowledge(
-            inboxId: inboxId,
-            messageIds: [removed.id]
-        )
-        XCTAssertEqual(acknowledged, 1)
-
-        _ = try await store.registerMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumer,
-            consumerSigningPublicKey: architectureMailboxPublicKey(0xF6),
-            startingSequence: 0
-        )
-        let batch = try await store.syncMailbox(inboxId: inboxId, consumerId: consumer)
-
-        XCTAssertEqual(batch.events.map(\.id), [first.id, third.id])
-        XCTAssertEqual(batch.events.map(\.sequence), [1, 2])
-        XCTAssertEqual(batch.highWatermark, 2)
-        XCTAssertEqual(batch.retentionFloor, 0)
-        XCTAssertFalse(batch.hasMore)
-    }
-
-    func testFirstV2ConsumerNormalizesFullyAcknowledgedLegacyMailboxToZero() async throws {
-        let store = RelayStore()
-        let inboxId = InboxAddress.generate()
-        let consumer = MailboxConsumerId.generate()
-        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x0D]))
-
-        let envelope = makeEnvelope(counter: 4)
-        try await store.deliver(envelope, to: inboxId)
-        let acknowledged = try await store.acknowledge(
-            inboxId: inboxId,
-            messageIds: [envelope.id]
-        )
-        XCTAssertEqual(acknowledged, 1)
-
-        _ = try await store.registerMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumer,
-            consumerSigningPublicKey: architectureMailboxPublicKey(0xF7),
-            startingSequence: 0
-        )
-        let batch = try await store.syncMailbox(inboxId: inboxId, consumerId: consumer)
-
-        XCTAssertTrue(batch.events.isEmpty)
-        XCTAssertEqual(batch.nextSequence, 0)
-        XCTAssertEqual(batch.highWatermark, 0)
-        XCTAssertEqual(batch.retentionFloor, 0)
-    }
-
     func testMailboxRejectsForgedAndRollbackCursors() async throws {
         let store = RelayStore()
         let inboxId = InboxAddress.generate()
@@ -291,47 +214,6 @@ final class ArchitectureV2MailboxTests: XCTestCase {
         XCTAssertTrue(remaining.isEmpty)
     }
 
-    func testGroupEnvelopeUsesOrderedStreamAndLegacyAckCannotRaceV2Consumer() async throws {
-        let store = RelayStore()
-        let inboxId = InboxAddress.generate()
-        let consumer = MailboxConsumerId.generate()
-        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x03]))
-        _ = try await store.registerMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumer,
-            consumerSigningPublicKey: architectureMailboxPublicKey(0xF5),
-            startingSequence: 0
-        )
-        let envelope = makeEnvelope(counter: 7)
-        _ = try await store.deliverGroupEnvelope(
-            envelope,
-            to: inboxId,
-            recipientFingerprints: ["member-a"]
-        )
-
-        let batch = try await store.syncMailbox(inboxId: inboxId, consumerId: consumer)
-        XCTAssertEqual(batch.events.map(\.id), [envelope.id])
-        XCTAssertEqual(batch.events.map(\.sequence), [1])
-
-        let acknowledged = try await store.acknowledgeGroupEnvelopes(
-            inboxId: inboxId,
-            messageIds: [envelope.id],
-            recipientFingerprint: "member-a"
-        )
-        XCTAssertEqual(acknowledged, 1)
-        let retained = try await store.fetch(inboxId: inboxId)
-        XCTAssertEqual(retained.map(\.id), [envelope.id])
-
-        _ = try await store.commitMailboxCursor(
-            inboxId: inboxId,
-            consumerId: consumer,
-            cursor: batch.nextCursor,
-            sequence: batch.nextSequence
-        )
-        let remaining = try await store.fetch(inboxId: inboxId)
-        XCTAssertTrue(remaining.isEmpty)
-    }
-
     private func makeEnvelope(counter: UInt64) -> Envelope {
         Envelope(
             conversationId: "architecture-v2-mailbox",
@@ -347,14 +229,6 @@ final class ArchitectureV2MailboxTests: XCTestCase {
             signature: Data(repeating: 0x33, count: 3_309)
         )
     }
-}
-
-private struct LegacyCoreMailboxConsumerRegistration: Codable {
-    let consumerId: MailboxConsumerId
-    let state: MailboxConsumerState
-    let committedSequence: UInt64
-    let registeredAt: Date
-    let revokedAt: Date?
 }
 
 private func architectureMailboxPublicKey(_ marker: UInt8) -> Data {

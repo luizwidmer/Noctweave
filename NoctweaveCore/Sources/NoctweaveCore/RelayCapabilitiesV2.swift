@@ -73,12 +73,10 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
 
     public static func advertised(
         attachmentsEnabled: Bool,
-        groupsEnabled: Bool,
         wakeEnabled: Bool,
         hiddenRetrievalEnabled: Bool,
         onionEnabled: Bool,
         mixnetEnabled: Bool,
-        legacyFingerprintCompatibilityEnabled: Bool,
         rendezvousTransportEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
@@ -99,23 +97,8 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
             // are part of the active client protocol.
             RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .provisional)
         ]
-        if legacyFingerprintCompatibilityEnabled {
-            modules.append(
-                RelayModuleCapabilityV2(
-                    module: RelayCompatibilityProfile.legacyFingerprint,
-                    versions: [1],
-                    status: .deprecated
-                )
-            )
-            modules.append(
-                RelayModuleCapabilityV2(module: "nw.prekeys", versions: [1], status: .deprecated)
-            )
-        }
         if attachmentsEnabled {
             modules.append(RelayModuleCapabilityV2(module: "nw.blobs", versions: [1], status: .stable))
-        }
-        if groupsEnabled {
-            modules.append(RelayModuleCapabilityV2(module: "nw.groups", versions: [1], status: .deprecated))
         }
         if wakeEnabled {
             modules.append(RelayModuleCapabilityV2(module: "nw.wake", versions: [1], status: .experimental))

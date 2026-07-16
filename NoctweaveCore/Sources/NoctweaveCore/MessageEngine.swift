@@ -1,33 +1,7 @@
 import CryptoKit
 import Foundation
 
-public struct RootRatchetContext {
-    public let ratchet: RootRatchet
-    public let sharedSecret: Data
-
-    public init(ratchet: RootRatchet, sharedSecret: Data) {
-        self.ratchet = ratchet
-        self.sharedSecret = sharedSecret
-    }
-}
-
 public enum MessageEngine {
-    public static func makeContactOffer(
-        identity: Identity,
-        inboxId: String,
-        relay: RelayEndpoint,
-        inboxAccessPublicKey: Data? = nil
-    ) throws -> ContactOffer {
-        try ContactOffer.create(
-            displayName: identity.displayName,
-            inboxId: inboxId,
-            relay: relay,
-            signingKey: identity.signingKey,
-            agreementPublicKey: identity.agreementKey.publicKeyData,
-            inboxAccessPublicKey: inboxAccessPublicKey
-        )
-    }
-
     public static func makeCertifiedContactOffer(
         identity: Identity,
         identityGenerationId: UUID,
@@ -58,6 +32,12 @@ public enum MessageEngine {
 
     public static func contact(from offer: ContactOffer) throws -> Contact {
         let offer = try offer.verified()
+        guard offer.version == CertifiedInstallationEndpoint.version,
+              offer.identityGenerationId != nil,
+              offer.installationCheckpoint != nil,
+              offer.preferredInstallationEndpoint != nil else {
+            throw ContactOfferError.invalidStructure
+        }
         return Contact(
             displayName: offer.displayName,
             inboxId: offer.inboxId,
@@ -67,9 +47,7 @@ public enum MessageEngine {
             identityGenerationId: offer.identityGenerationId,
             installationCheckpoint: offer.installationCheckpoint,
             preferredInstallationEndpoint: offer.preferredInstallationEndpoint,
-            endpointAuthoritySigningPublicKey: offer.preferredInstallationEndpoint == nil
-                ? nil
-                : offer.signingPublicKey
+            endpointAuthoritySigningPublicKey: offer.signingPublicKey
         )
     }
 
@@ -197,58 +175,13 @@ public enum MessageEngine {
         )
     }
 
-    public static func createOutboundSession(
-        identity: Identity,
-        contact: Contact,
-        recipientAgreementPublicKey: Data? = nil
-    ) throws -> (conversation: Conversation, kemCiphertext: Data) {
-        guard !contact.usesCertifiedInstallationEndpoint else {
-            throw DirectV4CapabilityNegotiationError.transcriptMismatch
-        }
-        let publicKey = recipientAgreementPublicKey ?? contact.agreementPublicKey
-        var kemOutput = try AgreementKeyPair.encapsulate(to: publicKey)
-        defer { kemOutput.sharedSecret.secureWipe() }
-        let conversation = conversationFromSharedSecret(sharedSecret: kemOutput.sharedSecret, identity: identity, contact: contact)
-        return (conversation, kemOutput.ciphertext)
-    }
-
-    public static func createInboundSession(
-        identity: Identity,
-        contact: Contact,
-        kemCiphertext: Data,
-        agreementKey: AgreementKeyPair? = nil
-    ) throws -> Conversation {
-        guard !contact.usesCertifiedInstallationEndpoint else {
-            throw DirectV4CapabilityNegotiationError.transcriptMismatch
-        }
-        let key = agreementKey ?? identity.agreementKey
-        var sharedSecret = try key.decapsulate(ciphertext: kemCiphertext)
-        defer { sharedSecret.secureWipe() }
-        return conversationFromSharedSecret(sharedSecret: sharedSecret, identity: identity, contact: contact)
-    }
-
-    private static func conversationFromSharedSecret(sharedSecret: Data, identity: Identity, contact: Contact) -> Conversation {
-        conversationFromSharedSecret(
-            sharedSecret: sharedSecret,
-            ourAgreementPublicKey: identity.agreementKey.publicKeyData,
-            theirAgreementPublicKey: contact.agreementPublicKey,
-            contactId: contact.id,
-            endpointSession: nil,
-            directV4Binding: nil,
-            conversationId: conversationIdForAgreement(
-                ourKey: identity.agreementKey.publicKeyData,
-                theirKey: contact.agreementPublicKey
-            )
-        )
-    }
-
     private static func conversationFromSharedSecret(
         sharedSecret: Data,
         ourAgreementPublicKey: Data,
         theirAgreementPublicKey: Data,
         contactId: UUID,
-        endpointSession: DirectEndpointSessionIdentity?,
-        directV4Binding: PairwiseInstallationBindingV4?,
+        endpointSession: DirectEndpointSessionIdentity,
+        directV4Binding: PairwiseInstallationBindingV4,
         conversationId: String
     ) -> Conversation {
         let (sendLabel, receiveLabel) = labelsForAgreement(
@@ -261,10 +194,10 @@ public enum MessageEngine {
             directV4Binding: directV4Binding
         )
         let (sendKey, receiveKey) = deriveChains(rootKey: rootKey, sendLabel: sendLabel, receiveLabel: receiveLabel)
-        let sessionId = sessionIdForSharedSecret(
-            sharedSecret,
+        let sessionId = directV4SessionId(
             rootKey: rootKey,
-            directV4Binding: directV4Binding
+            cipherSuite: directV4Binding.cipherSuite,
+            negotiatedCapabilitiesDigest: directV4Binding.negotiatedCapabilitiesDigest
         )
         return Conversation(
             id: conversationId,
@@ -278,143 +211,10 @@ public enum MessageEngine {
         )
     }
 
-    public static func createRootRatchet(contact: Contact, conversation: Conversation) throws -> RootRatchetContext {
-        guard conversation.endpointSession == nil,
-              !contact.usesCertifiedInstallationEndpoint else {
-            throw DirectV4CapabilityNegotiationError.transcriptMismatch
-        }
-        guard conversation.rootCounter < UInt64.max else {
-            throw CryptoError.counterOutOfOrder
-        }
-        let nextCounter = conversation.rootCounter + 1
-        var kemOutput = try AgreementKeyPair.encapsulate(to: contact.agreementPublicKey)
-        let ratchet = RootRatchet(counter: nextCounter, kemCiphertext: kemOutput.ciphertext)
-        let sharedSecret = kemOutput.sharedSecret
-        kemOutput.sharedSecret.secureWipe()
-        return RootRatchetContext(ratchet: ratchet, sharedSecret: sharedSecret)
-    }
-
-    public static func applyRootRatchet(
-        sharedSecret: Data,
-        counter: UInt64,
-        identity: Identity,
-        contact: Contact,
-        conversation: inout Conversation
-    ) {
-        guard sharedSecret.count == 32,
-              counter > conversation.rootCounter,
-              conversation.endpointSession == nil,
-              !contact.usesCertifiedInstallationEndpoint else {
-            return
-        }
-        let rootKey = deriveRootKey(sharedSecret: sharedSecret, priorRootKey: conversation.rootKey)
-        let (sendLabel, receiveLabel) = labelsForAgreement(
-            ourKey: identity.agreementKey.publicKeyData,
-            theirKey: contact.agreementPublicKey
-        )
-        let (sendKey, receiveKey) = deriveChains(rootKey: rootKey, sendLabel: sendLabel, receiveLabel: receiveLabel)
-        conversation.rootKey.secureWipe()
-        conversation.sendChain.secureWipe()
-        conversation.receiveChain.secureWipe()
-        conversation.rootKey = rootKey
-        conversation.rootCounter = counter
-        conversation.sessionId = sessionIdForSharedSecret(sharedSecret)
-        conversation.sendChain = ChainKeyState(keyData: sendKey)
-        conversation.receiveChain = ChainKeyState(keyData: receiveKey)
-    }
-
-    public static func encrypt(
-        body: MessageBody,
-        senderSigningKey: SigningKeyPair,
-        senderFingerprint: String,
-        conversation: inout Conversation,
-        kemCiphertext: Data? = nil,
-        prekey: PrekeyReference? = nil,
-        rootRatchet: RootRatchet? = nil,
-        authenticatedContext: MessageAuthenticatedContext? = nil,
-        sentAt: Date = Date(),
-        metadataBucketSeconds: Int? = nil
-    ) throws -> Envelope {
-        var candidateConversation = conversation
-        let prepared = try prepareMessageKey(conversation: &candidateConversation)
-        let envelope = try encrypt(
-            body: body,
-            senderSigningKey: senderSigningKey,
-            senderFingerprint: senderFingerprint,
-            conversation: candidateConversation,
-            messageCounter: prepared.counter,
-            messageKey: prepared.key,
-            kemCiphertext: kemCiphertext,
-            prekey: prekey,
-            rootRatchet: rootRatchet,
-            authenticatedContext: authenticatedContext,
-            sentAt: sentAt,
-            metadataBucketSeconds: metadataBucketSeconds
-        )
-        conversation.sendChain = candidateConversation.sendChain
-        return envelope
-    }
-
     public static func prepareMessageKey(
         conversation: inout Conversation
     ) throws -> (counter: UInt64, key: SymmetricKey) {
         try conversation.sendChain.nextMessageKey()
-    }
-
-    public static func encrypt(
-        body: MessageBody,
-        senderSigningKey: SigningKeyPair,
-        senderFingerprint: String,
-        conversation: Conversation,
-        messageCounter: UInt64,
-        messageKey: SymmetricKey,
-        kemCiphertext: Data? = nil,
-        prekey: PrekeyReference? = nil,
-        rootRatchet: RootRatchet? = nil,
-        authenticatedContext: MessageAuthenticatedContext? = nil,
-        sentAt: Date = Date(),
-        metadataBucketSeconds: Int? = nil
-    ) throws -> Envelope {
-        let visibleSentAt = MetadataMinimizer.bucketedTimestamp(
-            sentAt,
-            bucketSeconds: metadataBucketSeconds
-        )
-        let payloadData: Data
-        if authenticatedContext?.purpose == .directV4 {
-            guard let direct = authenticatedContext?.directV4 else {
-                throw WirePayloadV2Error.directV4FormatRequired
-            }
-            let wirePayload = try WirePayloadV2.projectingMessageBody(
-                body,
-                eventId: direct.eventId,
-                clientTransactionId: UUID(),
-                conversationId: conversation.id,
-                authorInstallationHandle: direct.senderInstallationHandle,
-                createdAt: visibleSentAt
-            )
-            try wirePayload.validateDirectV4(
-                context: direct,
-                conversationId: conversation.id,
-                sentAt: visibleSentAt
-            )
-            payloadData = try PaddedMessagePlaintext.encodeWirePayloadV2(wirePayload)
-        } else {
-            payloadData = try PaddedMessagePlaintext.encodeLegacyMessageBody(body)
-        }
-        return try encryptEncodedPayload(
-            payloadData,
-            senderSigningKey: senderSigningKey,
-            senderFingerprint: senderFingerprint,
-            conversation: conversation,
-            messageCounter: messageCounter,
-            messageKey: messageKey,
-            kemCiphertext: kemCiphertext,
-            prekey: prekey,
-            rootRatchet: rootRatchet,
-            authenticatedContext: authenticatedContext,
-            visibleSentAt: visibleSentAt,
-            metadataBucketSeconds: metadataBucketSeconds
-        )
     }
 
     public static func encryptDirectV4(
@@ -503,7 +303,7 @@ public enum MessageEngine {
         kemCiphertext: Data?,
         prekey: PrekeyReference?,
         rootRatchet: RootRatchet?,
-        authenticatedContext: MessageAuthenticatedContext?,
+        authenticatedContext: MessageAuthenticatedContext,
         visibleSentAt: Date,
         metadataBucketSeconds: Int?
     ) throws -> Envelope {
@@ -553,27 +353,6 @@ public enum MessageEngine {
         )
     }
 
-    public static func decrypt(
-        envelope: Envelope,
-        contact: Contact,
-        conversation: inout Conversation
-    ) throws -> MessageBody {
-        let result = try decryptWithKey(envelope: envelope, contact: contact, conversation: &conversation)
-        return result.body
-    }
-
-    public static func decryptWithKey(
-        envelope: Envelope,
-        contact: Contact,
-        conversation: inout Conversation
-    ) throws -> (body: MessageBody, messageKey: SymmetricKey) {
-        try decryptWithSigningKey(
-            envelope: envelope,
-            publicSigningKey: contact.signingPublicKey,
-            conversation: &conversation
-        )
-    }
-
     public static func decryptDirectV4(
         envelope: Envelope,
         contact: Contact,
@@ -613,6 +392,11 @@ public enum MessageEngine {
         conversation: inout Conversation
     ) throws -> DirectV4DecryptionResultV2 {
         let senderEndpoint = try contact.certifiedInstallationEndpoint()
+        _ = try localEndpoint.verified(
+            identityPublicKey: localIdentity.signingKey.publicKeyData,
+            manifest: localManifest,
+            now: localEndpoint.prekeyBundle.createdAt
+        )
         let negotiation = try pairwiseBinding.validatedNegotiation(
             localEndpoint: localEndpoint,
             peerEndpoint: senderEndpoint
@@ -698,24 +482,6 @@ public enum MessageEngine {
         )
     }
 
-    private static func decryptWithSigningKey(
-        envelope: Envelope,
-        publicSigningKey: Data,
-        conversation: inout Conversation
-    ) throws -> (body: MessageBody, messageKey: SymmetricKey) {
-        guard envelope.authenticatedContext?.purpose != .directV4 else {
-            throw WirePayloadV2Error.legacyFormatRequired
-        }
-        let decrypted: (value: MessageBody, messageKey: SymmetricKey) = try decryptPayloadWithSigningKey(
-            envelope: envelope,
-            publicSigningKey: publicSigningKey,
-            conversation: &conversation
-        ) { plaintext in
-            try PaddedMessagePlaintext.decodeLegacyMessageBody(plaintext)
-        }
-        return (decrypted.value, decrypted.messageKey)
-    }
-
     private static func decryptWirePayloadWithSigningKey(
         envelope: Envelope,
         publicSigningKey: Data,
@@ -749,7 +515,10 @@ public enum MessageEngine {
         conversation: inout Conversation,
         decode: (Data) throws -> T
     ) throws -> (value: T, messageKey: SymmetricKey) {
-        guard envelope.conversationId == conversation.id else {
+        guard envelope.conversationId == conversation.id,
+              let authenticatedContext = envelope.authenticatedContext,
+              authenticatedContext.purpose == .directV4,
+              authenticatedContext.directV4 != nil else {
             throw CryptoError.invalidPayload
         }
         if let sessionId = envelope.sessionId {
@@ -771,7 +540,7 @@ public enum MessageEngine {
         let authenticatedData = try authenticatedData(
             conversationId: conversation.id,
             sessionId: sessionId,
-            context: envelope.authenticatedContext,
+            context: authenticatedContext,
             messageCounter: envelope.messageCounter
         )
         var plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: authenticatedData)
@@ -849,7 +618,7 @@ public enum MessageEngine {
     private static func deriveRootKey(
         sharedSecret: Data,
         priorRootKey: Data?,
-        directV4Binding: PairwiseInstallationBindingV4? = nil
+        directV4Binding: PairwiseInstallationBindingV4
     ) -> Data {
         let salt: Data
         if let priorRootKey, !priorRootKey.isEmpty {
@@ -858,9 +627,7 @@ public enum MessageEngine {
             salt = Data("NOCTWEAVE-ROOT".utf8)
         }
         var info = Data("ROOT".utf8)
-        if let directV4Binding {
-            info.append(directV4SessionBindingData(directV4Binding))
-        }
+        info.append(directV4SessionBindingData(directV4Binding))
         return CryptoBox.deriveChainKey(sharedSecret: sharedSecret, salt: salt, info: info)
     }
 
@@ -869,13 +636,6 @@ public enum MessageEngine {
         let sendKey = CryptoBox.deriveChainKey(sharedSecret: rootKey, salt: salt, info: Data(sendLabel.utf8))
         let receiveKey = CryptoBox.deriveChainKey(sharedSecret: rootKey, salt: salt, info: Data(receiveLabel.utf8))
         return (sendKey, receiveKey)
-    }
-
-    public static func conversationIdForAgreement(ourKey: Data, theirKey: Data) -> String {
-        let ordered = [ourKey, theirKey].sorted(by: { $0.lexicographicallyPrecedes($1) })
-        let combined = ordered[0] + ordered[1]
-        let hash = SHA256.hash(data: combined)
-        return Data(hash).base64EncodedString()
     }
 
     public static func conversationIdForEndpoints(
@@ -892,24 +652,6 @@ public enum MessageEngine {
         combined.append(entries[0])
         combined.append(entries[1])
         return Data(SHA256.hash(data: combined)).base64EncodedString()
-    }
-
-    private static func sessionIdForSharedSecret(
-        _ sharedSecret: Data,
-        rootKey: Data? = nil,
-        directV4Binding: PairwiseInstallationBindingV4? = nil
-    ) -> String {
-        if let directV4Binding, let rootKey {
-            return directV4SessionId(
-                rootKey: rootKey,
-                cipherSuite: directV4Binding.cipherSuite,
-                negotiatedCapabilitiesDigest: directV4Binding.negotiatedCapabilitiesDigest
-            )
-        }
-        var material = Data("NOCTWEAVE-SESSION".utf8)
-        material.append(sharedSecret)
-        let hash = SHA256.hash(data: material)
-        return Data(hash).base64EncodedString()
     }
 
     private static func directV4SessionId(
@@ -995,11 +737,11 @@ public enum MessageEngine {
     }
 
     private static func validateOutboundDirectV4Context(
-        _ context: MessageAuthenticatedContext?,
+        _ context: MessageAuthenticatedContext,
         conversation: Conversation
     ) throws {
-        guard context?.purpose == .directV4 else { return }
-        guard let direct = context?.directV4,
+        guard context.purpose == .directV4,
+              let direct = context.directV4,
               direct.isStructurallyValid,
               let session = conversation.endpointSession,
               direct.senderInstallationHandle == session.localInstallationHandle,
@@ -1020,35 +762,29 @@ public enum MessageEngine {
     private static func authenticatedData(
         conversationId: String,
         sessionId: String,
-        context: MessageAuthenticatedContext?,
+        context: MessageAuthenticatedContext,
         messageCounter: UInt64
     ) throws -> Data {
-        if context?.purpose == .directV4 {
-            return try NoctweaveCoder.encode(
-                DirectMessageAuthenticatedDataPayloadV4(
-                    version: CertifiedInstallationEndpoint.version,
-                    conversationId: conversationId,
-                    sessionId: sessionId,
-                    messageCounter: messageCounter,
-                    context: context
-                ),
-                sortedKeys: true
-            )
+        guard context.purpose == .directV4, context.directV4 != nil else {
+            throw WirePayloadV2Error.directV4FormatRequired
         }
-        let payload = MessageAuthenticatedDataPayload(
-            version: 1,
-            conversationId: conversationId,
-            sessionId: sessionId,
-            context: context
+        return try NoctweaveCoder.encode(
+            DirectMessageAuthenticatedDataPayloadV4(
+                version: CertifiedInstallationEndpoint.version,
+                conversationId: conversationId,
+                sessionId: sessionId,
+                messageCounter: messageCounter,
+                context: context
+            ),
+            sortedKeys: true
         )
-        return try NoctweaveCoder.encode(payload, sortedKeys: true)
     }
 
     private static func encryptPayload(
         _ payload: Data,
         conversationId: String,
         sessionId: String,
-        authenticatedContext: MessageAuthenticatedContext?,
+        authenticatedContext: MessageAuthenticatedContext,
         messageCounter: UInt64,
         messageKey: SymmetricKey
     ) throws -> EncryptedPayload {
@@ -1069,17 +805,10 @@ public enum MessageEngine {
     }
 }
 
-private struct MessageAuthenticatedDataPayload: Codable {
-    let version: Int
-    let conversationId: String
-    let sessionId: String
-    let context: MessageAuthenticatedContext?
-}
-
 private struct DirectMessageAuthenticatedDataPayloadV4: Codable {
     let version: Int
     let conversationId: String
     let sessionId: String
     let messageCounter: UInt64
-    let context: MessageAuthenticatedContext?
+    let context: MessageAuthenticatedContext
 }

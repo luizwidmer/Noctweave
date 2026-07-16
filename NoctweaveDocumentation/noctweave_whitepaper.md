@@ -377,15 +377,9 @@ distributions only while the relay's bounded history remains complete,
 duplicate-free, transcript-linked, contiguous, and terminated by the advertised
 commit. The ratchet rejects skipped epoch jumps outside that recovery path.
 
-Relay-backed text, image, and voice messages use signed group-ratchet envelopes
-only when an operator explicitly enables the deprecated
-`nw.compat.legacy-fingerprint` profile. Federated forwarding remains
-ciphertext-only, and the destination relay checks membership and signatures
-before storage. Compatibility acknowledgements are scoped to an identity
-fingerprint: they protect distinct group members, but they do not provide
-independent progress for multiple local endpoints within one generation. The
-additive architecture-v2 group model introduces endpoint leaves and policy
-state, but it is not yet connected to this relay path. The
+The 1.0 relay does not expose the earlier fingerprint-addressed group service.
+The additive architecture-v2 group model introduces endpoint leaves and policy
+state, but it is not yet connected to a relay path. The
 application-envelope context binds the envelope UUID, explicit profile and
 cipher suite, group ID, epoch and transcript, sender fingerprint, bucketed
 timestamp, message counter, nonce, and ciphertext/tag sizes into AEAD data. The

@@ -41,29 +41,3 @@ public struct InsecurePairingSettings: Codable, Equatable {
         isEnabled && acknowledgeInterceptRisk
     }
 }
-
-public struct PairingAnnouncement: Codable, Identifiable, Equatable {
-    public let id: UUID
-    public let offer: ContactOffer
-    public let announcedAt: Date
-    public let expiresAt: Date
-
-    public init(id: UUID = UUID(), offer: ContactOffer, announcedAt: Date, expiresAt: Date) {
-        self.id = id
-        self.offer = offer
-        self.announcedAt = announcedAt
-        self.expiresAt = expiresAt
-    }
-}
-
-public struct PairingRequest: Codable, Identifiable, Equatable {
-    public let id: UUID
-    public let from: ContactOffer
-    public let sentAt: Date
-
-    public init(id: UUID = UUID(), from: ContactOffer, sentAt: Date) {
-        self.id = id
-        self.from = from
-        self.sentAt = sentAt
-    }
-}

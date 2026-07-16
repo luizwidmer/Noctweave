@@ -174,22 +174,6 @@ final class RelayMailboxV2WireTests: XCTestCase {
             "Legacy mailbox fetch is disabled for endpoint-managed inboxes"
         )
 
-        let legacyAckDraft = AcknowledgeMessagesRequest(
-            inboxId: inboxId,
-            messageIds: [envelope.id]
-        )
-        let legacyAck = AcknowledgeMessagesRequest(
-            inboxId: inboxId,
-            messageIds: [envelope.id],
-            accessProof: try signer.proof { try legacyAckDraft.signableData(for: $0) }
-        )
-        let legacyAckResponse = try harness.send(.acknowledgeMessages(legacyAck))
-        XCTAssertEqual(legacyAckResponse.type, .error)
-        XCTAssertEqual(
-            legacyAckResponse.error,
-            "Legacy mailbox acknowledgement is disabled for endpoint-managed inboxes"
-        )
-
         let syncDraft = SyncMailboxRequest(
             inboxId: inboxId,
             consumerId: consumerId,

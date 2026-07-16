@@ -77,116 +77,6 @@ final class RelayStoreMailboxV2SemanticParityTests: XCTestCase {
         XCTAssertEqual(remaining.events.map(\.sequence), [3])
     }
 
-    func testLegacyAckCannotCrossEnvelopeKindsOrDeleteAheadOfConsumer() throws {
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
-        let inboxId = InboxAddress.generate()
-        let consumer = MailboxConsumerId.generate()
-        try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0xA2]))
-        _ = try store.registerMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumer,
-            consumerSigningPublicKey: linuxParityMailboxPublicKey(0xD3),
-            startingSequence: 0
-        )
-        let direct = makeEnvelope(counter: 1)
-        let group = makeEnvelope(counter: 2)
-        _ = try store.deliver(direct, to: inboxId)
-        _ = try store.deliverGroupEnvelope(
-            group,
-            to: inboxId,
-            recipientFingerprints: ["member-a"]
-        )
-
-        XCTAssertEqual(try store.acknowledge(inboxId: inboxId, messageIds: [direct.id]), 0)
-        XCTAssertEqual(try store.acknowledge(inboxId: inboxId, messageIds: [group.id]), 0)
-        let batch = try store.syncMailbox(
-            inboxId: inboxId,
-            consumerId: consumer,
-            cursor: nil,
-            maxCount: nil
-        )
-        XCTAssertEqual(batch.events.map(\.id), [direct.id, group.id])
-        _ = try store.commitMailboxCursor(
-            inboxId: inboxId,
-            consumerId: consumer,
-            cursor: batch.nextCursor,
-            sequence: batch.nextSequence
-        )
-        XCTAssertEqual(store.fetch(inboxId: inboxId, maxCount: nil).map(\.id), [group.id])
-        XCTAssertEqual(try store.acknowledge(inboxId: inboxId, messageIds: [group.id]), 0)
-        XCTAssertEqual(
-            try store.acknowledgeGroupEnvelopes(
-                inboxId: inboxId,
-                messageIds: [group.id],
-                recipientFingerprint: "member-a"
-            ),
-            1
-        )
-        XCTAssertTrue(store.fetch(inboxId: inboxId, maxCount: nil).isEmpty)
-    }
-
-    func testFirstV2ConsumerNormalizesRetainedLegacySequenceGaps() throws {
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
-        let inboxId = InboxAddress.generate()
-        let consumer = MailboxConsumerId.generate()
-        try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0xA5]))
-
-        let first = makeEnvelope(counter: 1)
-        let removed = makeEnvelope(counter: 2)
-        let third = makeEnvelope(counter: 3)
-        _ = try store.deliver(first, to: inboxId)
-        _ = try store.deliver(removed, to: inboxId)
-        _ = try store.deliver(third, to: inboxId)
-        XCTAssertEqual(try store.acknowledge(inboxId: inboxId, messageIds: [removed.id]), 1)
-
-        _ = try store.registerMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumer,
-            consumerSigningPublicKey: linuxParityMailboxPublicKey(0xD7),
-            startingSequence: 0
-        )
-        let batch = try store.syncMailbox(
-            inboxId: inboxId,
-            consumerId: consumer,
-            cursor: nil,
-            maxCount: nil
-        )
-
-        XCTAssertEqual(batch.events.map(\.id), [first.id, third.id])
-        XCTAssertEqual(batch.events.map(\.sequence), [1, 2])
-        XCTAssertEqual(batch.highWatermark, 2)
-        XCTAssertEqual(batch.retentionFloor, 0)
-    }
-
-    func testFirstV2ConsumerNormalizesFullyAcknowledgedLegacyMailboxToZero() throws {
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
-        let inboxId = InboxAddress.generate()
-        let consumer = MailboxConsumerId.generate()
-        try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0xA6]))
-
-        let envelope = makeEnvelope(counter: 4)
-        _ = try store.deliver(envelope, to: inboxId)
-        XCTAssertEqual(try store.acknowledge(inboxId: inboxId, messageIds: [envelope.id]), 1)
-
-        _ = try store.registerMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumer,
-            consumerSigningPublicKey: linuxParityMailboxPublicKey(0xD8),
-            startingSequence: 0
-        )
-        let batch = try store.syncMailbox(
-            inboxId: inboxId,
-            consumerId: consumer,
-            cursor: nil,
-            maxCount: nil
-        )
-
-        XCTAssertTrue(batch.events.isEmpty)
-        XCTAssertEqual(batch.nextSequence, 0)
-        XCTAssertEqual(batch.highWatermark, 0)
-        XCTAssertEqual(batch.retentionFloor, 0)
-    }
-
     func testConflictingEnvelopeIdReplayIsRejected() throws {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
         let inboxId = InboxAddress.generate()
@@ -199,22 +89,6 @@ final class RelayStoreMailboxV2SemanticParityTests: XCTestCase {
             XCTAssertEqual(error as? RelayStoreError, .invalidEnvelopePayload)
         }
 
-        let groupInbox = InboxAddress.generate()
-        try store.registerInbox(inboxId: groupInbox, accessPublicKey: Data([0xA8]))
-        _ = try store.deliverGroupEnvelope(
-            original,
-            to: groupInbox,
-            recipientFingerprints: ["member-a"]
-        )
-        XCTAssertThrowsError(
-            try store.deliverGroupEnvelope(
-                original,
-                to: groupInbox,
-                recipientFingerprints: ["member-b"]
-            )
-        ) { error in
-            XCTAssertEqual(error as? RelayStoreError, .invalidEnvelopePayload)
-        }
     }
 
     func testSequenceDoesNotReuseAfterRetentionGarbageCollection() throws {

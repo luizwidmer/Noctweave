@@ -22,12 +22,6 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
             .experimental
         )
         XCTAssertFalse(manifest.supports(module: "nw.prekeys", version: 1))
-        XCTAssertFalse(
-            manifest.supports(
-                module: RelayCompatibilityProfile.legacyFingerprint,
-                version: 1
-            )
-        )
         XCTAssertFalse(manifest.modules.contains { $0.module == "nw.blobs" })
         XCTAssertFalse(manifest.modules.contains { $0.module == "nw.groups" })
         XCTAssertFalse(manifest.modules.contains { $0.module == "nw.wake" })
@@ -45,74 +39,14 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
         XCTAssertEqual(roundTrip.protocolCapabilities, manifest)
     }
 
-    func testLegacyFingerprintProfileIsExplicitAndAdvertisedAsDeprecated() throws {
-        let configuration = RelayConfiguration(
-            compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
-        )
-        let info = configuration.makeInfo(now: Date(timeIntervalSince1970: 1_000))
-        let manifest = try XCTUnwrap(info.protocolCapabilities)
-
-        XCTAssertTrue(configuration.legacyFingerprintCompatibilityEnabled)
-        XCTAssertTrue(manifest.supports(module: "nw.prekeys", version: 1))
-        XCTAssertTrue(manifest.supports(module: "nw.groups", version: 1))
-        XCTAssertEqual(
-            manifest.modules.first { $0.module == "nw.groups" }?.status,
-            .deprecated
-        )
-        XCTAssertEqual(
-            manifest.modules.first {
-                $0.module == RelayCompatibilityProfile.legacyFingerprint
-            }?.status,
-            .deprecated
-        )
-        XCTAssertEqual(info.groupCreationMode, .allowed)
-    }
-
-    func testDefaultRelayRejectsLegacyFingerprintRequestFamilies() async throws {
-        let port = UInt16.random(in: 42_000...45_000)
-        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
-        let server = RelayServer(store: RelayStore())
-        try server.start(host: endpoint.host, port: endpoint.port)
-        defer { server.stop() }
-        try await Task.sleep(nanoseconds: 100_000_000)
-
-        let client = RelayClient(endpoint: endpoint)
-        let legacyRequestTypes: [RelayRequestType] = [
-            .sendPairRequest,
-            .fetchPrekeyBundle,
-            .createGroup,
-            .acknowledgeMessages
-        ]
-        for type in legacyRequestTypes {
-            let response = try await client.send(RelayRequest(type: type))
-            XCTAssertEqual(response.type, .error)
-            XCTAssertEqual(
-                response.error,
-                "Deprecated compatibility profile \(RelayCompatibilityProfile.legacyFingerprint) is disabled"
-            )
-        }
-    }
-
-    func testDirectV4NeverNegotiatesLegacyFingerprintProfile() throws {
-        let compatibility = ProtocolModuleCapability(
-            module: RelayCompatibilityProfile.legacyFingerprint,
-            versions: [1],
-            status: .deprecated
-        )
-        let manifest = ProtocolCapabilityManifest(
-            modules: ProtocolCapabilityManifest.defaultActiveEndpointModules + [compatibility]
-        )
+    func testDirectV4NegotiatesTheActiveEndpointModules() throws {
+        let manifest = ProtocolCapabilityManifest()
 
         let negotiated = try DirectV4NegotiatedCapabilityManifest.negotiate(
             local: manifest,
             peer: manifest
         )
 
-        XCTAssertFalse(
-            negotiated.modules.contains {
-                $0.module == RelayCompatibilityProfile.legacyFingerprint
-            }
-        )
         XCTAssertEqual(negotiated.modules.map(\.module), [
             "nw.core", "nw.endpoints", "nw.events", "nw.prekeys"
         ])

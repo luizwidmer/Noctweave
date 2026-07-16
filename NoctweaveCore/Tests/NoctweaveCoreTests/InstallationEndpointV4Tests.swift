@@ -3,6 +3,21 @@ import XCTest
 @testable import NoctweaveCore
 
 final class InstallationEndpointV4Tests: XCTestCase {
+    func testDirectV4ContactImportRejectsPreV4Offer() throws {
+        let identity = try Identity.generate(displayName: "Pre-v4")
+        let offer = try ContactOffer.create(
+            displayName: identity.displayName,
+            inboxId: "pre-v4-inbox",
+            relay: RelayEndpoint(host: "127.0.0.1", port: 9339),
+            signingKey: identity.signingKey,
+            agreementPublicKey: identity.agreementKey.publicKeyData
+        )
+
+        XCTAssertThrowsError(try MessageEngine.contact(from: offer)) { error in
+            XCTAssertEqual(error as? ContactOfferError, .invalidStructure)
+        }
+    }
+
     func testPairwiseBindingMatchesSharedSwiftAndJavaScriptVector() throws {
         let repositoryRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -214,19 +229,6 @@ final class InstallationEndpointV4Tests: XCTestCase {
         )
         XCTAssertFalse(downgraded.isStructurallyValid)
 
-        let alice = try fixture("Alice")
-        let certifiedContact = try MessageEngine.contact(from: try offer(try fixture("Bob")))
-        XCTAssertThrowsError(
-            try MessageEngine.createOutboundSession(
-                identity: alice.identity,
-                contact: certifiedContact
-            )
-        ) { error in
-            XCTAssertEqual(
-                error as? DirectV4CapabilityNegotiationError,
-                .transcriptMismatch
-            )
-        }
     }
 
     func testDirectV4NegotiationIsSymmetricAndBindsAlteredLimits() throws {
@@ -314,14 +316,24 @@ final class InstallationEndpointV4Tests: XCTestCase {
             recipientEndpoint: bob.endpoint,
             pairwiseBinding: aliceBob
         )
-        let envelope = try MessageEngine.encrypt(
-            body: .text("installation signed"),
+        let sentAt = Date(timeIntervalSince1970: 1_752_680_100)
+        let event = ConversationEvent(
+            id: eventId,
+            conversationId: outboundConversation.id,
+            authorInstallationHandle: aliceBob.localInstallationHandle,
+            createdAt: sentAt,
+            kind: .application,
+            content: try XCTUnwrap(EncodedContent.text("installation signed"))
+        )
+        let envelope = try MessageEngine.encryptDirectV4(
+            wirePayload: .application(event),
             senderSigningKey: alice.installation.signingKey,
             senderFingerprint: aliceBob.localInstallationHandle.rawValue,
             conversation: &outboundConversation,
             kemCiphertext: outbound.kemCiphertext,
             prekey: outbound.prekey,
-            authenticatedContext: context
+            authenticatedContext: context,
+            sentAt: sentAt
         )
 
         XCTAssertEqual(envelope.senderFingerprint, aliceBob.localInstallationHandle.rawValue)

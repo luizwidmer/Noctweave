@@ -117,44 +117,6 @@ final class RelayTCPIntegrationTests: XCTestCase {
         XCTAssertEqual(accepted.delivered?.storedCount, 1)
     }
 
-    func testUnregisteredGroupDestinationIsRejectedBeforeStorageOverTCP() throws {
-        let harness = try RelayTCPHarness()
-        defer { try? harness.shutdown() }
-
-        let groupId = UUID()
-        let groupInboxId = InboxAddress.generate()
-        let envelope = GroupRatchetEnvelope(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: Data(repeating: 0x44, count: 32),
-            senderFingerprint: Data(repeating: 0x55, count: 32).base64EncodedString(),
-            sentAt: Date(timeIntervalSince1970: 9_100),
-            messageCounter: 0,
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x11, count: 12),
-                ciphertext: Data(repeating: 0x22, count: 512),
-                tag: Data(repeating: 0x33, count: 16)
-            ),
-            signature: Data(
-                repeating: 0x66,
-                count: OQSSignatureVerifier.mlDSA65SignatureBytes
-            )
-        )
-        let response = try harness.send(
-            .deliverGroupMessage(
-                DeliverGroupMessageRequest(
-                    groupId: groupId,
-                    groupInboxId: groupInboxId,
-                    envelope: envelope,
-                    destinationRelay: nil
-                )
-            )
-        )
-
-        XCTAssertEqual(response.type, .error)
-        XCTAssertEqual(response.error, "Destination group inbox is not registered")
-    }
-
     func testLongPollFetchReturnsMessageDeliveredDuringWaitOverTCP() throws {
         let harness = try RelayTCPHarness(
             wakeSupport: DecentralizedWakeSupport(
@@ -233,68 +195,6 @@ final class RelayTCPIntegrationTests: XCTestCase {
         XCTAssertEqual(authorized.type, .delivered)
     }
 
-    func testUnsignedContactAnnouncementIsRejected() throws {
-        let harness = try RelayTCPHarness()
-        defer { try? harness.shutdown() }
-        let signingKey = Data("invalid-signing-key".utf8)
-        let offer = ContactOffer(
-            version: 2,
-            displayName: "Mallory",
-            inboxId: InboxAddress.generate(),
-            relay: harness.endpoint,
-            signingPublicKey: signingKey,
-            agreementPublicKey: Data([0x01]),
-            inboxAccessPublicKey: nil,
-            fingerprint: Data(SHA256.hash(data: signingKey)).base64EncodedString(),
-            signature: Data()
-        )
-
-        let response = try harness.send(.announce(AnnounceRequest(offer: offer, ttlSeconds: 300)))
-        XCTAssertEqual(response.type, .error)
-        XCTAssertEqual(response.error, "Invalid contact offer.")
-    }
-
-    func testInboxRegistrationWithoutIdentityBindingIsRejected() throws {
-        let harness = try RelayTCPHarness()
-        defer { try? harness.shutdown() }
-        let accessPublicKey = Data(repeating: 0x01, count: 32)
-        let request = RegisterInboxRequest(
-            inboxId: InboxAddress.derived(from: accessPublicKey),
-            accessPublicKey: accessPublicKey
-        )
-
-        let response = try harness.send(.registerInbox(request))
-        XCTAssertEqual(response.type, .error)
-        XCTAssertEqual(response.error, "Inbox registration is not bound to a valid identity offer")
-    }
-
-    func testPrekeyUploadWithoutIdentityProofIsRejected() throws {
-        let harness = try RelayTCPHarness()
-        defer { try? harness.shutdown() }
-        let fingerprint = "prekey-owner"
-        let bundle = PrekeyBundle(
-            identityFingerprint: fingerprint,
-            signedPrekey: SignedPrekey(
-                id: UUID(),
-                publicKey: Data([0x01]),
-                issuedAt: Date(),
-                signature: Data([0x02])
-            ),
-            oneTimePrekeys: []
-        )
-
-        let response = try harness.send(
-            .uploadPrekeys(
-                UploadPrekeyBundleRequest(
-                    fingerprint: fingerprint,
-                    bundle: bundle
-                )
-            )
-        )
-        XCTAssertEqual(response.type, .error)
-        XCTAssertEqual(response.error, "Missing actor proof.")
-    }
-
     func testInboxFetchRequiresRegistrationAndProof() throws {
         let harness = try RelayTCPHarness(requireInboxAccessControl: true)
         defer { try? harness.shutdown() }
@@ -306,25 +206,6 @@ final class RelayTCPIntegrationTests: XCTestCase {
 
         XCTAssertEqual(response.type, .error)
         XCTAssertEqual(response.error, "Inbox is not registered")
-    }
-
-    func testPairRequestFetchRequiresIdentityProof() throws {
-        let harness = try RelayTCPHarness()
-        defer { try? harness.shutdown() }
-        let signingKey = Data("synthetic-recipient-key".utf8)
-        let fingerprint = Data(SHA256.hash(data: signingKey)).base64EncodedString()
-
-        let response = try harness.send(
-            .fetchPairRequests(
-                FetchPairRequestsRequest(
-                    fingerprint: fingerprint,
-                    maxCount: 10
-                )
-            )
-        )
-
-        XCTAssertEqual(response.type, .error)
-        XCTAssertEqual(response.error, "Missing actor proof.")
     }
 
     func testCoordinatorRegistrationTokenIsEnforcedOverTCP() throws {
@@ -496,19 +377,6 @@ final class RelayTCPIntegrationTests: XCTestCase {
         XCTAssertEqual(accepted.delivered?.storedCount, 1)
     }
 
-    func testGroupActorProofRejectedWhenVerificationUnavailable() throws {
-        let harness = try RelayTCPHarness()
-        defer { try? harness.shutdown() }
-
-        let response = try harness.send(makeCreateGroupRelayRequest())
-        XCTAssertEqual(response.type, .error)
-        if OQSSignatureVerifier.shared.isAvailable {
-            XCTAssertEqual(response.error, "Invalid actor proof signature.")
-        } else {
-            XCTAssertEqual(response.error, "Actor proof signature verification is unavailable on this relay build.")
-        }
-    }
-
     func testForwardingTimesOutWhenDestinationStalls() throws {
         let stalledDestination = try SilentRelayDestinationHarness()
         defer { try? stalledDestination.shutdown() }
@@ -535,26 +403,6 @@ final class RelayTCPIntegrationTests: XCTestCase {
         XCTAssertEqual(response.error, "Forwarding failed")
     }
 
-    func testDefaultCompatibilityProfileRejectsLegacyFingerprintRequestFamilies() throws {
-        let harness = try RelayTCPHarness(compatibilityProfiles: [])
-        defer { try? harness.shutdown() }
-
-        let legacyRequestTypes: [RelayRequestType] = [
-            .sendPairRequest,
-            .fetchPrekeyBundle,
-            .createGroup,
-            .acknowledgeMessages
-        ]
-        for type in legacyRequestTypes {
-            let response = try harness.send(RelayRequest(type: type))
-            XCTAssertEqual(response.type, .error)
-            XCTAssertEqual(
-                response.error,
-                "Deprecated compatibility profile \(RelayCompatibilityProfile.legacyFingerprint) is disabled"
-            )
-        }
-    }
-
     private func makeEnvelope() -> Envelope {
         Envelope(
             conversationId: "tcp-integration-conversation",
@@ -575,34 +423,6 @@ final class RelayTCPIntegrationTests: XCTestCase {
         )
     }
 
-    private func makeCreateGroupRelayRequest() -> RelayRequest {
-        let signingKey = Data("synthetic-group-signing-key".utf8)
-        let fingerprint = Data(SHA256.hash(data: signingKey)).base64EncodedString()
-        let proof = RelayActorProof(
-            fingerprint: fingerprint,
-            publicSigningKey: signingKey,
-            signedAt: Date(),
-            nonce: UUID(),
-            signature: Data([0x01, 0x02, 0x03])
-        )
-        let creatorProfile = RelayGroupMemberProfile(
-            fingerprint: fingerprint,
-            displayName: "Creator",
-            inboxId: nil,
-            relay: nil,
-            signingPublicKey: signingKey,
-            agreementPublicKey: nil
-        )
-        let request = CreateGroupRequest(
-            title: "Ops",
-            creatorFingerprint: fingerprint,
-            memberFingerprints: ["member-b"],
-            creatorProfile: creatorProfile,
-            memberProfiles: nil,
-            creatorProof: proof
-        )
-        return .createGroup(request)
-    }
 }
 
 final class RelayTCPHarness {
@@ -626,7 +446,6 @@ final class RelayTCPHarness {
         maxLineBytes: Int? = 64 * 1024,
         requireInboxAccessControl: Bool = false,
         wakeSupport: DecentralizedWakeSupport? = nil,
-        compatibilityProfiles: [String] = [RelayCompatibilityProfile.legacyFingerprint],
         storeFileURL: URL? = nil,
         experimentalRouteCapabilitiesEnabled: Bool = false
     ) throws {
@@ -655,7 +474,6 @@ final class RelayTCPHarness {
             federationForwardingAuthToken: federationForwardingAuthToken,
             allowPrivateFederationEndpoints: true,
             requireInboxAccessControl: requireInboxAccessControl,
-            compatibilityProfiles: compatibilityProfiles,
             experimentalRouteCapabilitiesEnabled: experimentalRouteCapabilitiesEnabled
         )
 

@@ -89,27 +89,6 @@ not appear in process listings:
 - `NOCTWEAVE_ADMIN_TOKEN`
 - `NOCTWEAVE_ADMIN_HOST`
 - `NOCTWEAVE_ADMIN_PORT`
-- `NOCTWEAVE_COMPATIBILITY_PROFILES` (comma-separated; deprecated migration only)
-
-### Deprecated fingerprint compatibility
-
-Fingerprint-addressed relay pairing/discovery, fingerprint-keyed prekey
-storage, the relay-backed legacy group API, and inbox-wide destructive
-`acknowledgeMessages` are disabled by default. A relay used only for a bounded
-pre-1.0 migration may opt in explicitly:
-
-```bash
-.build/debug/NoctweaveRelayServer \
-  --compatibility-profile nw.compat.legacy-fingerprint
-```
-
-The equivalent environment setting is
-`NOCTWEAVE_COMPATIBILITY_PROFILES=nw.compat.legacy-fingerprint`. When enabled,
-`info.protocolCapabilities` advertises that exact module with `deprecated`
-status. It is never part of direct-v4 endpoint capability negotiation. New
-deployments should leave it disabled and use generation-scoped rendezvous,
-route credentials, mailbox cursors, and endpoint-aware protocol paths.
-
 Use `--attachments-enabled false` for a text-only relay. Attachment upload and
 download routes then fail closed. Set `--temporal-bucket-seconds 0` with no
 bucket schedule to disable temporal bucketing.
@@ -788,44 +767,6 @@ List currently healthy federation relays from a coordinator:
 
 Coordinator responses now include `federationSnapshot` (signed directory snapshot with `issuedAt` / `validUntil` / `signature`), when available.
 
-### Pairing Discovery
-
-Announce a contact offer for relay-mediated pairing discovery. The offer is
-signed, but the relay can observe discovery timing and participation metadata.
-Every operation in this section requires the explicitly enabled deprecated
-`nw.compat.legacy-fingerprint` profile:
-
-```json
-{
-  "type": "announce",
-  "announce": { "offer": { "...": "..." }, "ttlSeconds": 120 }
-}
-```
-
-List announcements:
-
-```json
-{ "type": "listAnnouncements", "listAnnouncements": { "limit": 50 } }
-```
-
-Send a pairing request to a specific fingerprint:
-
-```json
-{
-  "type": "sendPairRequest",
-  "sendPairRequest": { "targetFingerprint": "base64", "offer": { "...": "..." } }
-}
-```
-
-Fetch pending pairing requests:
-
-```json
-{
-  "type": "fetchPairRequests",
-  "fetchPairRequests": { "fingerprint": "base64", "maxCount": 5 }
-}
-```
-
 ### Attachments
 
 Attachments are uploaded as encrypted chunks and fetched by attachment ID + chunk index.
@@ -853,35 +794,6 @@ Fetch chunk:
     "attachmentId": "C8B8F0E0-6C2D-4A2E-8D31-0C31B25C7B7A",
     "chunkIndex": 0
   }
-}
-```
-
-### Prekey Bundles
-
-This fingerprint-keyed relay store is part of the disabled-by-default
-`nw.compat.legacy-fingerprint` profile. Direct-v4 uses certified,
-generation-scoped endpoint prekeys and does not negotiate this compatibility
-module.
-
-Upload a signed + one-time prekey bundle:
-
-```json
-{
-  "type": "uploadPrekeys",
-  "uploadPrekeys": {
-    "fingerprint": "base64",
-    "bundle": { "...": "..." },
-    "ttlSeconds": 86400
-  }
-}
-```
-
-Fetch a prekey bundle (returns one-time prekey if available):
-
-```json
-{
-  "type": "fetchPrekeyBundle",
-  "fetchPrekeyBundle": { "fingerprint": "base64" }
 }
 ```
 

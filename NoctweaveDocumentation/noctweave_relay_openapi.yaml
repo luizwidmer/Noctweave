@@ -98,10 +98,6 @@ components:
           $ref: "#/components/schemas/SyncRendezvousTransportV2Request"
         deleteRendezvousTransportV2:
           $ref: "#/components/schemas/DeleteRendezvousTransportV2Request"
-        acknowledgeMessages:
-          type: object
-          deprecated: true
-          description: Legacy single-consumer destructive acknowledgement.
         registerMailboxConsumer:
           $ref: "#/components/schemas/RegisterMailboxConsumerRequest"
         syncMailbox:
@@ -110,67 +106,9 @@ components:
           $ref: "#/components/schemas/CommitMailboxCursorRequest"
         revokeMailboxConsumer:
           $ref: "#/components/schemas/RevokeMailboxConsumerRequest"
-        deliverGroupMessage:
-          type: object
-          description: |
-            Encrypted group-envelope delivery. A forwarding relay preserves
-            the destination fields, while the final relay accepts storage only
-            when groupId resolves to a persisted group descriptor whose
-            generated inbox equals groupInboxId. Otherwise the operation
-            returns an error response and allocates no mailbox state.
-        fetchGroupMessages:
-          type: object
-        acknowledgeGroupMessages:
-          type: object
-        announce:
-          type: object
-        listAnnouncements:
-          type: object
-        sendPairRequest:
-          type: object
-        fetchPairRequests:
-          type: object
         uploadAttachment:
           type: object
         fetchAttachment:
-          type: object
-        uploadPrekeys:
-          type: object
-        fetchPrekeyBundle:
-          type: object
-        createGroup:
-          type: object
-        getGroup:
-          type: object
-        listGroups:
-          type: object
-        listGroupInvitations:
-          type: object
-          description: |
-            Fingerprint-scoped compatibility request. The invitee proves the
-            listed fingerprint with a fresh actor proof. Implemented by both
-            reference relays; this is not endpoint-aware group admission.
-        inviteGroupMembers:
-          type: object
-          description: |
-            Fingerprint-scoped compatibility request for the authorized group
-            creator to add bounded invitations. Active members and unique
-            pending invitee fingerprints share one 256-entry per-group budget;
-            each invitee may retain invitations for at most 256 groups. Exact
-            reinvites are idempotent, and capacity failures do not evict older
-            invitations. Invitations remain distinct from membership until
-            accepted with the signed join flow.
-        updateGroup:
-          type: object
-        deleteGroup:
-          type: object
-        requestGroupJoin:
-          type: object
-        listGroupJoinRequests:
-          type: object
-        approveGroupJoin:
-          type: object
-        rejectGroupJoin:
           type: object
         registerFederationNode:
           type: object
@@ -194,35 +132,14 @@ components:
         - syncRendezvousTransportV2
         - deleteRendezvousTransportV2
         - fetch
-        - acknowledgeMessages
         - registerMailboxConsumer
         - syncMailbox
         - commitMailboxCursor
         - revokeMailboxConsumer
-        - deliverGroupMessage
-        - fetchGroupMessages
-        - acknowledgeGroupMessages
         - health
         - info
-        - announce
-        - listAnnouncements
-        - sendPairRequest
-        - fetchPairRequests
         - uploadAttachment
         - fetchAttachment
-        - uploadPrekeys
-        - fetchPrekeyBundle
-        - createGroup
-        - getGroup
-        - listGroups
-        - listGroupInvitations
-        - inviteGroupMembers
-        - updateGroup
-        - deleteGroup
-        - requestGroupJoin
-        - listGroupJoinRequests
-        - approveGroupJoin
-        - rejectGroupJoin
         - registerFederationNode
         - listFederationNodes
         - publishOpenFederationDHTRecord

@@ -20,7 +20,7 @@ the current branch actually claims:
 | Area | Current status |
 | --- | --- |
 | State migration and endpoint records | Active. Legacy profiles migrate idempotently to one independently keyed local endpoint, signed generation-scoped endpoint set, per-contact relationship shells, and local self-sync secret/progress state. Fresh contact offers publish a compact signed checkpoint plus one preferred endpoint authorization; full peer sets and multi-endpoint fan-out are not published. |
-| Certified direct endpoint | Active for one preferred endpoint in the Swift headless and JavaScript browser/Node reference paths. Direct-v4 envelopes use endpoint signing/prekeys, pairwise opaque sender/recipient handles, relationship-blinded certificate references, endpoint-keyed sessions, logical event IDs, and typed application content. Both paths strictly project text and attachments and preserve bounded unknown-content fallback/disposition; Swift additionally applies the closed rotation and burn/reset control set. Legacy contacts retain an explicit legacy identity-key wire; neither implementation performs multi-endpoint fan-out yet. |
+| Certified direct endpoint | Active for one preferred endpoint in the Swift headless and JavaScript browser/Node reference paths. Direct-v4 envelopes use endpoint signing/prekeys, pairwise opaque sender/recipient handles, relationship-blinded certificate references, endpoint-keyed sessions, logical event IDs, and typed application content. Both paths strictly project text and attachments and preserve bounded unknown-content fallback/disposition; Swift additionally applies the closed rotation and burn/reset control set. Uncertified contacts and pre-v4 direct frames are rejected; neither implementation performs multi-endpoint fan-out yet. |
 | Direct mailbox synchronization | Active in the Swift headless client, in-process relay, and Linux relay. Consumers use fresh ML-DSA credentials per relay/inbox route; sequences, opaque cursors, commit/revoke, persistence, long polling, retention gating, legacy-gap normalization, and durable dead-letter progress are implemented. |
 | Durable intents | Active for direct send and exact-envelope retry. Other intent kinds are bounded model surface only. |
 | Envelope identifier authentication | Active and wire-breaking. The direct envelope signature includes `id`; there is no legacy fallback verifier. |
@@ -515,10 +515,10 @@ it does not copy live ratchet state to a second endpoint.
 Certified direct-v4 now requires `WirePayloadV2` in an NPAD-v2 frame. Text and
 attachment sends create distinct client-transaction and event identifiers and
 persist the immutable event before delivery; exact-envelope retry reuses both.
-Legacy `MessageBody` wire encoding remains isolated to pre-v4 sessions and the
-current experimental group profile through an NPAD-v1 decoder. There is no
-format-probing downgrade between those paths. Direct-v4 negotiates only within
-its exact authenticated profile and never falls back to legacy. Security
+`MessageBody` wire encoding is not available to direct sessions. The current
+experimental group profile uses its own `NWGP-v1` frame, which a direct-v4
+decoder rejects. Direct-v4 negotiates only within its exact authenticated
+profile and has no fallback path. Security
 control messages never downgrade to custom application content.
 
 Legacy mailbox fetch and acknowledgement are compatibility routes only until

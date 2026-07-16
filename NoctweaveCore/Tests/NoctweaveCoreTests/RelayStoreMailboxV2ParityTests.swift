@@ -71,61 +71,6 @@ final class RelayStoreMailboxV2ParityTests: XCTestCase {
         XCTAssertEqual(remaining.events.map(\.sequence), [3])
     }
 
-    func testLegacyAckCannotCrossEnvelopeKindsOrDeleteAheadOfConsumer() async throws {
-        let store = RelayStore()
-        let inboxId = InboxAddress.generate()
-        let consumer = MailboxConsumerId.generate()
-        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0xA2]))
-        _ = try await store.registerMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumer,
-            consumerSigningPublicKey: parityMailboxPublicKey(0xB3),
-            startingSequence: 0
-        )
-        let direct = makeEnvelope(counter: 1)
-        let group = makeEnvelope(counter: 2)
-        _ = try await store.deliver(direct, to: inboxId)
-        _ = try await store.deliverGroupEnvelope(
-            group,
-            to: inboxId,
-            recipientFingerprints: ["member-a"]
-        )
-
-        let directAckBeforeCommit = try await store.acknowledge(
-            inboxId: inboxId,
-            messageIds: [direct.id]
-        )
-        let groupAckThroughDirectAPI = try await store.acknowledge(
-            inboxId: inboxId,
-            messageIds: [group.id]
-        )
-        XCTAssertEqual(directAckBeforeCommit, 0)
-        XCTAssertEqual(groupAckThroughDirectAPI, 0)
-        let batch = try await store.syncMailbox(inboxId: inboxId, consumerId: consumer)
-        XCTAssertEqual(batch.events.map(\.id), [direct.id, group.id])
-        _ = try await store.commitMailboxCursor(
-            inboxId: inboxId,
-            consumerId: consumer,
-            cursor: batch.nextCursor,
-            sequence: batch.nextSequence
-        )
-        let afterCommit = try await store.fetch(inboxId: inboxId)
-        let groupAckAfterCommitThroughDirectAPI = try await store.acknowledge(
-            inboxId: inboxId,
-            messageIds: [group.id]
-        )
-        let groupAck = try await store.acknowledgeGroupEnvelopes(
-            inboxId: inboxId,
-            messageIds: [group.id],
-            recipientFingerprint: "member-a"
-        )
-        let finalInbox = try await store.fetch(inboxId: inboxId)
-        XCTAssertEqual(afterCommit.map(\.id), [group.id])
-        XCTAssertEqual(groupAckAfterCommitThroughDirectAPI, 0)
-        XCTAssertEqual(groupAck, 1)
-        XCTAssertTrue(finalInbox.isEmpty)
-    }
-
     func testConflictingEnvelopeIdReplayIsRejected() async throws {
         let store = RelayStore()
         let inboxId = InboxAddress.generate()
@@ -138,22 +83,6 @@ final class RelayStoreMailboxV2ParityTests: XCTestCase {
             XCTAssertEqual(error as? RelayStoreError, .invalidEnvelopePayload)
         }
 
-        let groupInbox = InboxAddress.generate()
-        try await store.registerInbox(inboxId: groupInbox, accessPublicKey: Data([0xA8]))
-        _ = try await store.deliverGroupEnvelope(
-            original,
-            to: groupInbox,
-            recipientFingerprints: ["member-a"]
-        )
-        await XCTAssertThrowsMailboxErrorAsync(
-            try await store.deliverGroupEnvelope(
-                original,
-                to: groupInbox,
-                recipientFingerprints: ["member-b"]
-            )
-        ) { error in
-            XCTAssertEqual(error as? RelayStoreError, .invalidEnvelopePayload)
-        }
     }
 
     func testSequenceDoesNotReuseAfterRetentionGarbageCollection() async throws {

@@ -44,8 +44,7 @@ public struct HeadlessSentMessage: Codable, Equatable {
 }
 
 public struct HeadlessSentAttachment: Codable, Equatable {
-    public let contact: Contact?
-    public let group: HeadlessGroupSummary?
+    public let contact: Contact
     public let envelopeId: UUID
     public let messageCounter: UInt64
     public let descriptor: AttachmentDescriptor
@@ -53,8 +52,7 @@ public struct HeadlessSentAttachment: Codable, Equatable {
     public let storedCount: Int
 
     public init(
-        contact: Contact?,
-        group: HeadlessGroupSummary?,
+        contact: Contact,
         envelopeId: UUID,
         messageCounter: UInt64,
         descriptor: AttachmentDescriptor,
@@ -62,7 +60,6 @@ public struct HeadlessSentAttachment: Codable, Equatable {
         storedCount: Int
     ) {
         self.contact = contact
-        self.group = group
         self.envelopeId = envelopeId
         self.messageCounter = messageCounter
         self.descriptor = descriptor
@@ -146,76 +143,6 @@ public struct HeadlessContinuityAuditPurgeResult: Codable, Equatable {
     }
 }
 
-public struct HeadlessGroupSummary: Codable, Equatable {
-    public let id: UUID
-    public let title: String
-    public let inboxId: String?
-    public let memberCount: Int
-    public let relayEpoch: UInt64?
-    public let unreadCount: Int
-    public let createdByFingerprint: String?
-
-    public init(
-        id: UUID,
-        title: String,
-        inboxId: String?,
-        memberCount: Int,
-        relayEpoch: UInt64?,
-        unreadCount: Int,
-        createdByFingerprint: String?
-    ) {
-        self.id = id
-        self.title = title
-        self.inboxId = inboxId
-        self.memberCount = memberCount
-        self.relayEpoch = relayEpoch
-        self.unreadCount = unreadCount
-        self.createdByFingerprint = createdByFingerprint
-    }
-}
-
-public struct HeadlessSentGroupMessage: Codable, Equatable {
-    public let group: HeadlessGroupSummary
-    public let envelopeId: UUID
-    public let messageCounter: UInt64
-    public let storedCount: Int
-
-    public init(group: HeadlessGroupSummary, envelopeId: UUID, messageCounter: UInt64, storedCount: Int) {
-        self.group = group
-        self.envelopeId = envelopeId
-        self.messageCounter = messageCounter
-        self.storedCount = storedCount
-    }
-}
-
-public struct HeadlessReceivedGroupMessage: Codable, Equatable {
-    public let group: HeadlessGroupSummary
-    public let envelopeId: UUID
-    public let messageCounter: UInt64
-    public let senderFingerprint: String
-    public let senderDisplayName: String?
-    public let body: MessageBody
-    public let sentAt: Date
-
-    public init(
-        group: HeadlessGroupSummary,
-        envelopeId: UUID,
-        messageCounter: UInt64,
-        senderFingerprint: String,
-        senderDisplayName: String?,
-        body: MessageBody,
-        sentAt: Date
-    ) {
-        self.group = group
-        self.envelopeId = envelopeId
-        self.messageCounter = messageCounter
-        self.senderFingerprint = senderFingerprint
-        self.senderDisplayName = senderDisplayName
-        self.body = body
-        self.sentAt = sentAt
-    }
-}
-
 public enum HeadlessMessagingClientError: Error, Equatable {
     case stateAlreadyExists
     case missingState
@@ -226,14 +153,7 @@ public enum HeadlessMessagingClientError: Error, Equatable {
     case directDeliveryRequiresAction(UUID)
     case contactNotFound(String)
     case ambiguousContact(String)
-    case groupNotFound(String)
-    case ambiguousGroup(String)
-    case missingGroupRatchet(String)
-    case missingGroupSenderKey(String)
-    case legacyGroupAcknowledgementConflict(UUID)
-    case legacyGroupAcknowledgementBackpressure(String, Int)
     case inboundEnvelopeConflict(UUID)
-    case identityRotationBlockedByLegacyGroups(Int)
     case identityRotationSelectionMismatch
     case attachmentNotFound(String)
     case missingAttachmentKey(String)
@@ -264,22 +184,8 @@ extension HeadlessMessagingClientError: LocalizedError {
             return "No contact matched `\(selector)`."
         case .ambiguousContact(let selector):
             return "More than one contact matched `\(selector)`. Use the contact UUID or fingerprint."
-        case .groupNotFound(let selector):
-            return "No group matched `\(selector)`."
-        case .ambiguousGroup(let selector):
-            return "More than one group matched `\(selector)`. Use the group UUID."
-        case .missingGroupRatchet(let selector):
-            return "Group `\(selector)` is missing recoverable ratchet state. Refresh groups or recreate the group."
-        case .missingGroupSenderKey(let fingerprint):
-            return "Group sender signing key is missing for `\(fingerprint)`."
-        case .legacyGroupAcknowledgementConflict(let envelopeId):
-            return "Legacy group envelope `\(envelopeId.uuidString)` conflicts with a durably processed envelope using the same identifier."
-        case .legacyGroupAcknowledgementBackpressure(let group, let limit):
-            return "Legacy group `\(group)` has \(limit) processed messages awaiting destructive relay acknowledgement. Acknowledge them before fetching more."
         case .inboundEnvelopeConflict(let eventId):
             return "Inbound event `\(eventId.uuidString)` conflicts with a previously processed signed envelope. The mailbox cursor was not advanced."
-        case .identityRotationBlockedByLegacyGroups(let count):
-            return "Identity rotation is blocked while \(count) active fingerprint-scoped legacy group(s) remain. Leave or migrate those groups to signed installation-aware group state first."
         case .identityRotationSelectionMismatch:
             return "The requested continuity recipients do not match the durably prepared identity rotation. Resume it with the same contact IDs."
         case .attachmentNotFound(let selector):
@@ -489,65 +395,6 @@ public actor HeadlessMessagingClient {
         }
     }
 
-    public func createGroup(title: String, memberSelectors: [String]) async throws -> HeadlessGroupSummary {
-        var state = try await loadState()
-        let contacts = try memberSelectors.map { try resolveContact($0, in: state.contacts) }
-        let groupId = UUID()
-        let creatorProfile = groupMemberProfile(identity: state.identity, inboxId: state.inboxId, relay: state.relay)
-        let memberProfiles = contacts.map(groupMemberProfile(contact:))
-        let distribution = try GroupRatchetEpochSecretDistribution.seal(
-            secret: Self.randomBytes(count: 32),
-            groupId: groupId,
-            epoch: 0,
-            operation: .create,
-            recipients: [creatorProfile] + memberProfiles
-        )
-        var request = CreateGroupRequest(
-            groupId: groupId,
-            title: title,
-            creatorFingerprint: state.identity.fingerprint,
-            memberFingerprints: contacts.map(\.fingerprint),
-            creatorProfile: creatorProfile,
-            memberProfiles: memberProfiles,
-            initialRatchetSecretDistribution: distribution
-        )
-        let proof = try Self.makeActorProof(signingKey: state.identity.signingKey) { actorProof in
-            try request.signableData(for: actorProof)
-        }
-        request = CreateGroupRequest(
-            groupId: request.groupId,
-            title: request.title,
-            creatorFingerprint: request.creatorFingerprint,
-            memberFingerprints: request.memberFingerprints,
-            invitedFingerprints: request.invitedFingerprints,
-            creatorProfile: request.creatorProfile,
-            memberProfiles: request.memberProfiles,
-            initialRatchetSecretDistribution: request.initialRatchetSecretDistribution,
-            creatorProof: proof
-        )
-        let response = try await relayClient(for: state.relay).send(.createGroup(request), timeout: timeout)
-        guard response.type == .group, let descriptor = response.group else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-        let group = try groupConversation(from: descriptor, contacts: contacts, state: state, existing: nil)
-        state.upsert(group: group)
-        try await store.save(state)
-        return summary(for: group)
-    }
-
-    public func groups(refreshFromRelay: Bool = true, limit: Int = 100) async throws -> [HeadlessGroupSummary] {
-        var state = try await loadState()
-        if refreshFromRelay {
-            try await refreshGroups(into: &state, limit: limit)
-            try await store.save(state)
-        }
-        return state.groups
-            .sorted { lhs, rhs in
-                lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
-            }
-            .map(summary(for:))
-    }
-
     public func continuityAudit() async throws -> HeadlessContinuityAudit {
         let state = try await loadState()
         return continuityAudit(for: state)
@@ -596,14 +443,6 @@ public actor HeadlessMessagingClient {
             _ = try await retryPendingDirectDeliveriesUnlocked(maxCount: 256)
             return identityMutationResult(existing, state: try await loadState())
         }
-        let activeLegacyGroupCount = state.groups.reduce(into: 0) { count, group in
-            if !group.isPendingInvitation, group.relayInboxId != nil {
-                count += 1
-            }
-        }
-        guard activeLegacyGroupCount == 0 else {
-            throw HeadlessMessagingClientError.identityRotationBlockedByLegacyGroups(activeLegacyGroupCount)
-        }
         let knownContactIds = Set(state.contacts.map(\.id))
         guard contactIds.isSubset(of: knownContactIds) else {
             let unknownId = contactIds
@@ -626,10 +465,7 @@ public actor HeadlessMessagingClient {
             try ensurePreparedIntent(for: pending, dependencies: [], state: &state)
         }
 
-        var previousIdentity = state.identity
         let rotationContext = try state.identity.rotateKeys()
-        previousIdentity.signingKey = rotationContext.oldSigningKey
-        previousIdentity.agreementKey = rotationContext.oldAgreementKey
 
         let oldFingerprint = rotationContext.oldFingerprint
         let newFingerprint = state.identity.fingerprint
@@ -647,77 +483,54 @@ public actor HeadlessMessagingClient {
 
         var notifications: [IdentityMutationNotificationV2] = []
         for contact in selectedContacts {
-            let envelope: Envelope
-            let notificationSigner: Data?
-            if contact.usesCertifiedInstallationEndpoint {
-                guard let installation = state.localInstallation else {
-                    throw HeadlessMessagingClientError.missingInstallation
-                }
-                let peerEndpoint = try contact.certifiedInstallationEndpoint()
-                let selected = try directSendEndpointContext(
-                    contact: contact,
-                    peerEndpoint: peerEndpoint,
-                    state: &state
-                )
-                var conversation: Conversation
-                var kemCiphertext: Data?
-                var prekey: PrekeyReference?
-                if let existing = state.conversation(
-                    for: contact.id,
-                    endpointSession: selected.endpointSession
-                ) {
-                    conversation = existing
-                } else {
-                    let session = try MessageEngine.createOutboundInstallationSession(
-                        localInstallation: installation,
-                        localEndpoint: selected.localEndpoint,
-                        pairwiseBinding: selected.binding,
-                        contact: contact
-                    )
-                    conversation = session.conversation
-                    kemCiphertext = session.kemCiphertext
-                    prekey = session.prekey
-                }
-                let context = try MessageAuthenticatedContext.directV4(
-                    eventId: UUID(),
-                    senderEndpoint: selected.localEndpoint,
-                    recipientEndpoint: peerEndpoint,
-                    pairwiseBinding: selected.binding
-                )
-                envelope = try MessageEngine.encrypt(
-                    body: .identityRotation(rotationContext.rotation),
-                    senderSigningKey: installation.signingKey,
-                    senderFingerprint: selected.binding.localInstallationHandle.rawValue,
-                    conversation: &conversation,
-                    kemCiphertext: kemCiphertext,
-                    prekey: prekey,
-                    authenticatedContext: context
-                )
-                conversation.markMessageProcessed()
-                state.upsert(conversation: conversation)
-                notificationSigner = installation.signingKey.publicKeyData
+            guard contact.usesCertifiedInstallationEndpoint,
+                  let installation = state.localInstallation else {
+                throw HeadlessMessagingClientError.unsupportedInboundSession
+            }
+            let peerEndpoint = try contact.certifiedInstallationEndpoint()
+            let selected = try directSendEndpointContext(
+                contact: contact,
+                peerEndpoint: peerEndpoint,
+                state: &state
+            )
+            var conversation: Conversation
+            var kemCiphertext: Data?
+            var prekey: PrekeyReference?
+            if let existing = state.conversation(
+                for: contact.id,
+                endpointSession: selected.endpointSession
+            ) {
+                conversation = existing
             } else {
-                let existingConversation = state.conversation(for: contact.id)
-                let bootstrapSession = try MessageEngine.createOutboundSession(
-                    identity: previousIdentity,
+                let session = try MessageEngine.createOutboundInstallationSession(
+                    localInstallation: installation,
+                    localEndpoint: selected.localEndpoint,
+                    pairwiseBinding: selected.binding,
                     contact: contact
                 )
-                var conversation = bootstrapSession.conversation
-                envelope = try MessageEngine.encrypt(
-                    body: .identityRotation(rotationContext.rotation),
-                    senderSigningKey: rotationContext.oldSigningKey,
-                    senderFingerprint: oldFingerprint,
-                    conversation: &conversation,
-                    kemCiphertext: bootstrapSession.kemCiphertext
-                )
-                conversation.markMessageProcessed()
-                if let existingConversation {
-                    conversation.messages = existingConversation.messages
-                    conversation.unreadCount = existingConversation.unreadCount
-                }
-                state.upsert(conversation: conversation)
-                notificationSigner = nil
+                conversation = session.conversation
+                kemCiphertext = session.kemCiphertext
+                prekey = session.prekey
             }
+            let eventId = UUID()
+            let context = try MessageAuthenticatedContext.directV4(
+                eventId: eventId,
+                senderEndpoint: selected.localEndpoint,
+                recipientEndpoint: peerEndpoint,
+                pairwiseBinding: selected.binding
+            )
+            let envelope = try MessageEngine.encryptDirectV4(
+                wirePayload: .control(.identityRotation(rotationContext.rotation)),
+                senderSigningKey: installation.signingKey,
+                senderFingerprint: selected.binding.localInstallationHandle.rawValue,
+                conversation: &conversation,
+                kemCiphertext: kemCiphertext,
+                prekey: prekey,
+                authenticatedContext: context,
+                sentAt: mutationAt
+            )
+            conversation.markMessageProcessed()
+            state.upsert(conversation: conversation)
             let pending = PendingDirectDelivery(
                 contactId: contact.id,
                 inboxId: contact.inboxId,
@@ -737,7 +550,7 @@ public actor HeadlessMessagingClient {
                     id: envelope.id,
                     contactId: contact.id,
                     contactDisplayName: contact.displayName,
-                    signerPublicKey: notificationSigner
+                    signerPublicKey: installation.signingKey.publicKeyData
                 )
             )
         }
@@ -801,65 +614,51 @@ public actor HeadlessMessagingClient {
         )
         var notifications: [IdentityMutationNotificationV2] = []
         for contact in retainedContacts {
-            let envelope: Envelope
-            let notificationSigner: Data?
-            if contact.usesCertifiedInstallationEndpoint {
-                guard let installation = state.localInstallation else {
-                    throw HeadlessMessagingClientError.missingInstallation
-                }
-                let peerEndpoint = try contact.certifiedInstallationEndpoint()
-                let selected = try directSendEndpointContext(
-                    contact: contact,
-                    peerEndpoint: peerEndpoint,
-                    state: &state
-                )
-                var conversation: Conversation
-                var kemCiphertext: Data?
-                var prekey: PrekeyReference?
-                if let existing = state.conversation(
-                    for: contact.id,
-                    endpointSession: selected.endpointSession
-                ) {
-                    conversation = existing
-                } else {
-                    let session = try MessageEngine.createOutboundInstallationSession(
-                        localInstallation: installation,
-                        localEndpoint: selected.localEndpoint,
-                        pairwiseBinding: selected.binding,
-                        contact: contact
-                    )
-                    conversation = session.conversation
-                    kemCiphertext = session.kemCiphertext
-                    prekey = session.prekey
-                }
-                let context = try MessageAuthenticatedContext.directV4(
-                    eventId: UUID(),
-                    senderEndpoint: selected.localEndpoint,
-                    recipientEndpoint: peerEndpoint,
-                    pairwiseBinding: selected.binding
-                )
-                envelope = try MessageEngine.encrypt(
-                    body: .identityReset(reset),
-                    senderSigningKey: installation.signingKey,
-                    senderFingerprint: selected.binding.localInstallationHandle.rawValue,
-                    conversation: &conversation,
-                    kemCiphertext: kemCiphertext,
-                    prekey: prekey,
-                    authenticatedContext: context
-                )
-                notificationSigner = installation.signingKey.publicKeyData
-            } else {
-                let session = try MessageEngine.createOutboundSession(identity: oldIdentity, contact: contact)
-                var conversation = session.conversation
-                envelope = try MessageEngine.encrypt(
-                    body: .identityReset(reset),
-                    senderSigningKey: oldIdentity.signingKey,
-                    senderFingerprint: oldFingerprint,
-                    conversation: &conversation,
-                    kemCiphertext: session.kemCiphertext
-                )
-                notificationSigner = nil
+            guard contact.usesCertifiedInstallationEndpoint,
+                  let installation = state.localInstallation else {
+                throw HeadlessMessagingClientError.unsupportedInboundSession
             }
+            let peerEndpoint = try contact.certifiedInstallationEndpoint()
+            let selected = try directSendEndpointContext(
+                contact: contact,
+                peerEndpoint: peerEndpoint,
+                state: &state
+            )
+            var conversation: Conversation
+            var kemCiphertext: Data?
+            var prekey: PrekeyReference?
+            if let existing = state.conversation(
+                for: contact.id,
+                endpointSession: selected.endpointSession
+            ) {
+                conversation = existing
+            } else {
+                let session = try MessageEngine.createOutboundInstallationSession(
+                    localInstallation: installation,
+                    localEndpoint: selected.localEndpoint,
+                    pairwiseBinding: selected.binding,
+                    contact: contact
+                )
+                conversation = session.conversation
+                kemCiphertext = session.kemCiphertext
+                prekey = session.prekey
+            }
+            let context = try MessageAuthenticatedContext.directV4(
+                eventId: UUID(),
+                senderEndpoint: selected.localEndpoint,
+                recipientEndpoint: peerEndpoint,
+                pairwiseBinding: selected.binding
+            )
+            let envelope = try MessageEngine.encryptDirectV4(
+                wirePayload: .control(.identityReset(reset)),
+                senderSigningKey: installation.signingKey,
+                senderFingerprint: selected.binding.localInstallationHandle.rawValue,
+                conversation: &conversation,
+                kemCiphertext: kemCiphertext,
+                prekey: prekey,
+                authenticatedContext: context,
+                sentAt: staged.createdAt
+            )
             let pending = PendingDirectDelivery(
                 contactId: contact.id,
                 inboxId: contact.inboxId,
@@ -873,7 +672,7 @@ public actor HeadlessMessagingClient {
                     id: envelope.id,
                     contactId: contact.id,
                     contactDisplayName: contact.displayName,
-                    signerPublicKey: notificationSigner,
+                    signerPublicKey: installation.signingKey.publicKeyData,
                     stagedDelivery: pending
                 )
             )
@@ -1055,85 +854,64 @@ public actor HeadlessMessagingClient {
         var kemCiphertext: Data?
         let eventId = UUID()
         let clientTransactionId = UUID()
-        var directApplicationEvent: ConversationEvent?
-        var directRelationshipBinding: PairwiseInstallationBindingV4?
-        let envelope: Envelope
-        if contact.usesCertifiedInstallationEndpoint {
-            guard let installation = state.localInstallation else {
-                throw HeadlessMessagingClientError.missingInstallation
-            }
-            let peerEndpoint = try contact.certifiedInstallationEndpoint()
-            let selected = try directSendEndpointContext(
-                contact: contact,
-                peerEndpoint: peerEndpoint,
-                state: &state
-            )
-            let senderEndpoint = selected.localEndpoint
-            let binding = selected.binding
-            let endpointSession = selected.endpointSession
-            var prekey: PrekeyReference?
-            if let existing = state.conversation(for: contact.id, endpointSession: endpointSession) {
-                conversation = existing
-            } else {
-                let session = try MessageEngine.createOutboundInstallationSession(
-                    localInstallation: installation,
-                    localEndpoint: senderEndpoint,
-                    pairwiseBinding: binding,
-                    contact: contact
-                )
-                conversation = session.conversation
-                kemCiphertext = session.kemCiphertext
-                prekey = session.prekey
-            }
-            let context = try MessageAuthenticatedContext.directV4(
-                eventId: eventId,
-                senderEndpoint: senderEndpoint,
-                recipientEndpoint: peerEndpoint,
-                pairwiseBinding: binding
-            )
-            let eventTimestamp = Date()
-            guard let content = EncodedContent.text(text) else {
-                throw WirePayloadV2Error.invalidKnownApplicationContent
-            }
-            let event = ConversationEvent(
-                id: eventId,
-                clientTransactionId: clientTransactionId,
-                conversationId: conversation.id,
-                authorInstallationHandle: binding.localInstallationHandle,
-                createdAt: eventTimestamp,
-                kind: .application,
-                content: content
-            )
-            envelope = try MessageEngine.encryptDirectV4(
-                wirePayload: .application(event),
-                senderSigningKey: installation.signingKey,
-                senderFingerprint: binding.localInstallationHandle.rawValue,
-                conversation: &conversation,
-                kemCiphertext: kemCiphertext,
-                prekey: prekey,
-                authenticatedContext: context,
-                sentAt: eventTimestamp
-            )
-            directApplicationEvent = event
-            directRelationshipBinding = binding
-        } else {
-            if let existing = state.conversation(for: contact.id) {
-                conversation = existing
-            } else {
-                let session = try MessageEngine.createOutboundSession(identity: state.identity, contact: contact)
-                conversation = session.conversation
-                kemCiphertext = session.kemCiphertext
-            }
-            envelope = try MessageEngine.encrypt(
-                body: .text(text),
-                senderSigningKey: state.identity.signingKey,
-                senderFingerprint: state.identity.fingerprint,
-                conversation: &conversation,
-                kemCiphertext: kemCiphertext
-            )
+        guard contact.usesCertifiedInstallationEndpoint,
+              let installation = state.localInstallation else {
+            throw HeadlessMessagingClientError.unsupportedInboundSession
         }
+        let peerEndpoint = try contact.certifiedInstallationEndpoint()
+        let selected = try directSendEndpointContext(
+            contact: contact,
+            peerEndpoint: peerEndpoint,
+            state: &state
+        )
+        let senderEndpoint = selected.localEndpoint
+        let binding = selected.binding
+        let endpointSession = selected.endpointSession
+        var prekey: PrekeyReference?
+        if let existing = state.conversation(for: contact.id, endpointSession: endpointSession) {
+            conversation = existing
+        } else {
+            let session = try MessageEngine.createOutboundInstallationSession(
+                localInstallation: installation,
+                localEndpoint: senderEndpoint,
+                pairwiseBinding: binding,
+                contact: contact
+            )
+            conversation = session.conversation
+            kemCiphertext = session.kemCiphertext
+            prekey = session.prekey
+        }
+        let context = try MessageAuthenticatedContext.directV4(
+            eventId: eventId,
+            senderEndpoint: senderEndpoint,
+            recipientEndpoint: peerEndpoint,
+            pairwiseBinding: binding
+        )
+        let eventTimestamp = Date()
+        guard let content = EncodedContent.text(text) else {
+            throw WirePayloadV2Error.invalidKnownApplicationContent
+        }
+        let event = ConversationEvent(
+            id: eventId,
+            clientTransactionId: clientTransactionId,
+            conversationId: conversation.id,
+            authorInstallationHandle: binding.localInstallationHandle,
+            createdAt: eventTimestamp,
+            kind: .application,
+            content: content
+        )
+        let envelope = try MessageEngine.encryptDirectV4(
+            wirePayload: .application(event),
+            senderSigningKey: installation.signingKey,
+            senderFingerprint: binding.localInstallationHandle.rawValue,
+            conversation: &conversation,
+            kemCiphertext: kemCiphertext,
+            prekey: prekey,
+            authenticatedContext: context,
+            sentAt: eventTimestamp
+        )
         _ = MessageEngine.appendMessage(
-            id: envelope.authenticatedContext?.directV4?.eventId ?? envelope.id,
+            id: eventId,
             body: .text(text),
             direction: .sent,
             counter: envelope.messageCounter,
@@ -1141,14 +919,7 @@ public actor HeadlessMessagingClient {
             conversation: &conversation
         )
         state.upsert(conversation: conversation)
-        if let directApplicationEvent, let directRelationshipBinding {
-            try persistDirectEvent(
-                directApplicationEvent,
-                contact: contact,
-                binding: directRelationshipBinding,
-                state: &state
-            )
-        }
+        try persistDirectEvent(event, contact: contact, binding: binding, state: &state)
 
         let attemptId = try await persistDirectDeliveryIntent(
             envelope: envelope,
@@ -1214,58 +985,40 @@ public actor HeadlessMessagingClient {
         var conversation: Conversation
         var kemCiphertext: Data?
         var prekey: PrekeyReference?
-        var authenticatedContext: MessageAuthenticatedContext?
-        var directRelationshipBinding: PairwiseInstallationBindingV4?
-        let senderSigningKey: SigningKeyPair
-        let senderIdentifier: String
         let eventId = UUID()
         let clientTransactionId = UUID()
-        if contact.usesCertifiedInstallationEndpoint {
-            guard let installation = state.localInstallation else {
-                throw HeadlessMessagingClientError.missingInstallation
-            }
-            let peerEndpoint = try contact.certifiedInstallationEndpoint()
-            let selected = try directSendEndpointContext(
-                contact: contact,
-                peerEndpoint: peerEndpoint,
-                state: &state
-            )
-            let senderEndpoint = selected.localEndpoint
-            let binding = selected.binding
-            let endpointSession = selected.endpointSession
-            if let existing = state.conversation(for: contact.id, endpointSession: endpointSession) {
-                conversation = existing
-            } else {
-                let session = try MessageEngine.createOutboundInstallationSession(
-                    localInstallation: installation,
-                    localEndpoint: senderEndpoint,
-                    pairwiseBinding: binding,
-                    contact: contact
-                )
-                conversation = session.conversation
-                kemCiphertext = session.kemCiphertext
-                prekey = session.prekey
-            }
-            authenticatedContext = try .directV4(
-                eventId: eventId,
-                senderEndpoint: senderEndpoint,
-                recipientEndpoint: peerEndpoint,
-                pairwiseBinding: binding
-            )
-            directRelationshipBinding = binding
-            senderSigningKey = installation.signingKey
-            senderIdentifier = binding.localInstallationHandle.rawValue
-        } else {
-            if let existing = state.conversation(for: contact.id) {
-                conversation = existing
-            } else {
-                let session = try MessageEngine.createOutboundSession(identity: state.identity, contact: contact)
-                conversation = session.conversation
-                kemCiphertext = session.kemCiphertext
-            }
-            senderSigningKey = state.identity.signingKey
-            senderIdentifier = state.identity.fingerprint
+        guard contact.usesCertifiedInstallationEndpoint,
+              let installation = state.localInstallation else {
+            throw HeadlessMessagingClientError.unsupportedInboundSession
         }
+        let peerEndpoint = try contact.certifiedInstallationEndpoint()
+        let selected = try directSendEndpointContext(
+            contact: contact,
+            peerEndpoint: peerEndpoint,
+            state: &state
+        )
+        let senderEndpoint = selected.localEndpoint
+        let binding = selected.binding
+        let endpointSession = selected.endpointSession
+        if let existing = state.conversation(for: contact.id, endpointSession: endpointSession) {
+            conversation = existing
+        } else {
+            let session = try MessageEngine.createOutboundInstallationSession(
+                localInstallation: installation,
+                localEndpoint: senderEndpoint,
+                pairwiseBinding: binding,
+                contact: contact
+            )
+            conversation = session.conversation
+            kemCiphertext = session.kemCiphertext
+            prekey = session.prekey
+        }
+        let authenticatedContext = try MessageAuthenticatedContext.directV4(
+            eventId: eventId,
+            senderEndpoint: senderEndpoint,
+            recipientEndpoint: peerEndpoint,
+            pairwiseBinding: binding
+        )
         let prepared = try MessageEngine.prepareMessageKey(conversation: &conversation)
         let context = AttachmentCryptoContext(
             conversationId: conversation.id,
@@ -1282,54 +1035,36 @@ public actor HeadlessMessagingClient {
             relayTTLSeconds: ttlSeconds
         )
         try await upload(chunks: chunks, to: contact.relay, ttlSeconds: ttlSeconds)
-        let envelope: Envelope
-        var directApplicationEvent: ConversationEvent?
-        if let directRelationshipBinding,
-           let authenticatedContext {
-            let eventTimestamp = Date()
-            let content = EncodedContent(
-                type: .attachment,
-                payload: try NoctweaveCoder.encode(descriptor, sortedKeys: true),
-                fallbackText: Self.attachmentTitle(for: descriptor),
-                disposition: .visible
-            )
-            let event = ConversationEvent(
-                id: eventId,
-                clientTransactionId: clientTransactionId,
-                conversationId: conversation.id,
-                authorInstallationHandle: directRelationshipBinding.localInstallationHandle,
-                createdAt: eventTimestamp,
-                kind: .application,
-                content: content
-            )
-            envelope = try MessageEngine.encryptDirectV4(
-                wirePayload: .application(event),
-                senderSigningKey: senderSigningKey,
-                senderFingerprint: senderIdentifier,
-                conversation: conversation,
-                messageCounter: prepared.counter,
-                messageKey: prepared.key,
-                kemCiphertext: kemCiphertext,
-                prekey: prekey,
-                authenticatedContext: authenticatedContext,
-                sentAt: eventTimestamp
-            )
-            directApplicationEvent = event
-        } else {
-            envelope = try MessageEngine.encrypt(
-                body: .attachment(descriptor),
-                senderSigningKey: senderSigningKey,
-                senderFingerprint: senderIdentifier,
-                conversation: conversation,
-                messageCounter: prepared.counter,
-                messageKey: prepared.key,
-                kemCiphertext: kemCiphertext,
-                prekey: prekey,
-                authenticatedContext: authenticatedContext
-            )
-        }
+        let eventTimestamp = Date()
+        let content = EncodedContent(
+            type: .attachment,
+            payload: try NoctweaveCoder.encode(descriptor, sortedKeys: true),
+            fallbackText: Self.attachmentTitle(for: descriptor),
+            disposition: .visible
+        )
+        let event = ConversationEvent(
+            id: eventId,
+            clientTransactionId: clientTransactionId,
+            conversationId: conversation.id,
+            authorInstallationHandle: binding.localInstallationHandle,
+            createdAt: eventTimestamp,
+            kind: .application,
+            content: content
+        )
+        let envelope = try MessageEngine.encryptDirectV4(
+            wirePayload: .application(event),
+            senderSigningKey: installation.signingKey,
+            senderFingerprint: binding.localInstallationHandle.rawValue,
+            conversation: conversation,
+            messageCounter: prepared.counter,
+            messageKey: prepared.key,
+            kemCiphertext: kemCiphertext,
+            prekey: prekey,
+            authenticatedContext: authenticatedContext,
+            sentAt: eventTimestamp
+        )
         _ = MessageEngine.appendMessage(
-            id: envelope.authenticatedContext?.directV4?.eventId ?? envelope.id,
+            id: eventId,
             body: .attachment(descriptor),
             direction: .sent,
             counter: envelope.messageCounter,
@@ -1339,14 +1074,7 @@ public actor HeadlessMessagingClient {
             messageKey: prepared.key
         )
         state.upsert(conversation: conversation)
-        if let directApplicationEvent, let directRelationshipBinding {
-            try persistDirectEvent(
-                directApplicationEvent,
-                contact: contact,
-                binding: directRelationshipBinding,
-                state: &state
-            )
-        }
+        try persistDirectEvent(event, contact: contact, binding: binding, state: &state)
         let attemptId = try await persistDirectDeliveryIntent(
             envelope: envelope,
             contact: contact,
@@ -1371,7 +1099,6 @@ public actor HeadlessMessagingClient {
         }
         return HeadlessSentAttachment(
             contact: contact,
-            group: nil,
             envelopeId: envelope.id,
             messageCounter: envelope.messageCounter,
             descriptor: descriptor,
@@ -1389,175 +1116,6 @@ public actor HeadlessMessagingClient {
         ttlSeconds: Int? = nil
     ) async throws -> HeadlessSentAttachment {
         try await sendAttachment(
-            to: selector,
-            data: data,
-            fileName: fileName,
-            mimeType: mimeType,
-            chunkSize: chunkSize,
-            ttlSeconds: ttlSeconds
-        )
-    }
-
-    public func sendGroupText(to selector: String, text: String) async throws -> HeadlessSentGroupMessage {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        return try await sendGroupTextUnlocked(to: selector, text: text)
-    }
-
-    private func sendGroupTextUnlocked(to selector: String, text: String) async throws -> HeadlessSentGroupMessage {
-        var state = try await loadState()
-        try await refreshGroups(into: &state, limit: 100)
-        var group = try resolveGroup(selector, in: state.groups)
-        guard var ratchetState = group.groupRatchetState else {
-            throw HeadlessMessagingClientError.missingGroupRatchet(group.title)
-        }
-        let envelope = try GroupRatchet.encrypt(
-            body: .text(text),
-            senderSigningKey: state.identity.signingKey,
-            senderFingerprint: state.identity.fingerprint,
-            state: &ratchetState
-        )
-        group.groupRatchetState = ratchetState
-        group.messages.append(
-            Message(
-                direction: .sent,
-                body: text,
-                timestamp: envelope.sentAt,
-                counter: envelope.messageCounter
-            )
-        )
-        state.upsert(group: group)
-        let response = try await relayClient(for: state.relay).send(
-            .deliverGroupMessage(
-                DeliverGroupMessageRequest(
-                    groupId: group.id,
-                    groupInboxId: try groupInboxId(for: group),
-                    envelope: envelope
-                )
-            ),
-            timeout: timeout
-        )
-        guard response.type == .delivered || response.type == .ok else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-        try await store.save(state)
-        return HeadlessSentGroupMessage(
-            group: summary(for: group),
-            envelopeId: envelope.id,
-            messageCounter: envelope.messageCounter,
-            storedCount: response.delivered?.storedCount ?? 0
-        )
-    }
-
-    public func sendGroupAttachment(
-        to selector: String,
-        data: Data,
-        fileName: String?,
-        mimeType: String = "application/octet-stream",
-        chunkSize: Int = 64 * 1024,
-        ttlSeconds: Int? = nil
-    ) async throws -> HeadlessSentAttachment {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        return try await sendGroupAttachmentUnlocked(
-            to: selector,
-            data: data,
-            fileName: fileName,
-            mimeType: mimeType,
-            chunkSize: chunkSize,
-            ttlSeconds: ttlSeconds
-        )
-    }
-
-    private func sendGroupAttachmentUnlocked(
-        to selector: String,
-        data: Data,
-        fileName: String?,
-        mimeType: String,
-        chunkSize: Int,
-        ttlSeconds: Int?
-    ) async throws -> HeadlessSentAttachment {
-        var state = try await loadState()
-        try await refreshGroups(into: &state, limit: 100)
-        var group = try resolveGroup(selector, in: state.groups)
-        guard var ratchetState = group.groupRatchetState else {
-            throw HeadlessMessagingClientError.missingGroupRatchet(group.title)
-        }
-        let prepared = try GroupRatchet.prepareMessageKey(
-            senderFingerprint: state.identity.fingerprint,
-            state: &ratchetState
-        )
-        let context = Self.groupAttachmentContext(
-            groupId: group.id,
-            epoch: ratchetState.epoch,
-            transcriptHash: ratchetState.transcriptHash,
-            messageCounter: prepared.counter
-        )
-        let (descriptor, chunks) = try Self.encryptAttachmentChunks(
-            data: data,
-            fileName: nil,
-            mimeType: mimeType,
-            chunkSize: chunkSize,
-            messageKey: prepared.key,
-            context: context,
-            relayTTLSeconds: ttlSeconds
-        )
-        try await upload(chunks: chunks, to: state.relay, ttlSeconds: ttlSeconds)
-        let envelope = try GroupRatchet.encrypt(
-            body: .attachment(descriptor),
-            senderSigningKey: state.identity.signingKey,
-            senderFingerprint: state.identity.fingerprint,
-            messageCounter: prepared.counter,
-            messageKey: prepared.key,
-            state: ratchetState
-        )
-        group.groupRatchetState = ratchetState
-        appendGroupMessage(
-            body: .attachment(descriptor),
-            direction: .sent,
-            senderDisplayName: nil,
-            counter: envelope.messageCounter,
-            timestamp: envelope.sentAt,
-            group: &group,
-            attachmentRelay: state.relay,
-            attachmentCryptoContext: context,
-            messageKey: prepared.key
-        )
-        state.upsert(group: group)
-        let response = try await relayClient(for: state.relay).send(
-            .deliverGroupMessage(
-                DeliverGroupMessageRequest(
-                    groupId: group.id,
-                    groupInboxId: try groupInboxId(for: group),
-                    envelope: envelope
-                )
-            ),
-            timeout: timeout
-        )
-        guard response.type == .delivered || response.type == .ok else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-        try await store.save(state)
-        return HeadlessSentAttachment(
-            contact: nil,
-            group: summary(for: group),
-            envelopeId: envelope.id,
-            messageCounter: envelope.messageCounter,
-            descriptor: descriptor,
-            uploadedChunkCount: chunks.count,
-            storedCount: response.delivered?.storedCount ?? 0
-        )
-    }
-
-    public func sendGroupVoice(
-        to selector: String,
-        data: Data,
-        fileName: String?,
-        mimeType: String = "audio/m4a",
-        chunkSize: Int = 64 * 1024,
-        ttlSeconds: Int? = nil
-    ) async throws -> HeadlessSentAttachment {
-        try await sendGroupAttachment(
             to: selector,
             data: data,
             fileName: fileName,
@@ -1621,150 +1179,6 @@ public actor HeadlessMessagingClient {
             recovered.secureWipe()
             throw error
         }
-    }
-
-    public func receiveGroupMessages(
-        group selector: String? = nil,
-        maxCount: Int = 25,
-        longPollTimeoutSeconds: Int? = nil,
-        acknowledge: Bool = true
-    ) async throws -> [HeadlessReceivedGroupMessage] {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        return try await receiveGroupMessagesUnlocked(
-            group: selector,
-            maxCount: maxCount,
-            longPollTimeoutSeconds: longPollTimeoutSeconds,
-            acknowledge: acknowledge
-        )
-    }
-
-    private func receiveGroupMessagesUnlocked(
-        group selector: String?,
-        maxCount: Int,
-        longPollTimeoutSeconds: Int?,
-        acknowledge: Bool
-    ) async throws -> [HeadlessReceivedGroupMessage] {
-        var state = try await loadState()
-        try await refreshGroups(into: &state, limit: 100)
-        let targetGroups: [GroupConversation]
-        if let selector {
-            targetGroups = [try resolveGroup(selector, in: state.groups)]
-        } else {
-            targetGroups = state.groups
-        }
-
-        var received: [HeadlessReceivedGroupMessage] = []
-        for var group in targetGroups {
-            if acknowledge, !group.pendingAcknowledgements.isEmpty {
-                try await flushPendingGroupAcknowledgements(group: &group, state: &state)
-            }
-            let inboxId = try groupInboxId(for: group)
-            var request = FetchGroupMessagesRequest(
-                groupId: group.id,
-                groupInboxId: inboxId,
-                maxCount: max(1, maxCount),
-                longPollTimeoutSeconds: longPollTimeoutSeconds,
-                actorFingerprint: state.identity.fingerprint
-            )
-            let proof = try Self.makeActorProof(signingKey: state.identity.signingKey) { actorProof in
-                try request.signableData(for: actorProof)
-            }
-            request = FetchGroupMessagesRequest(
-                groupId: request.groupId,
-                groupInboxId: request.groupInboxId,
-                maxCount: request.maxCount,
-                longPollTimeoutSeconds: request.longPollTimeoutSeconds,
-                actorFingerprint: request.actorFingerprint,
-                actorProof: proof
-            )
-            let response = try await relayClient(for: state.relay).send(
-                .fetchGroupMessages(request),
-                timeout: timeout + TimeInterval(longPollTimeoutSeconds ?? 0)
-            )
-            guard response.type == .groupMessages else {
-                if response.type == .ok {
-                    continue
-                }
-                throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-            }
-            var stagedGroup = group
-            var envelopesToProcess: [GroupRatchetEnvelope] = []
-            for envelope in response.groupMessages ?? [] {
-                let digest = try Self.groupEnvelopeDigest(envelope)
-                switch stagedGroup.recordPendingAcknowledgement(
-                    envelopeId: envelope.id,
-                    envelopeDigest: digest
-                ) {
-                case .inserted:
-                    envelopesToProcess.append(envelope)
-                case .alreadyPending:
-                    continue
-                case .conflictingEnvelope:
-                    throw HeadlessMessagingClientError.legacyGroupAcknowledgementConflict(envelope.id)
-                case .capacityExceeded:
-                    throw HeadlessMessagingClientError.legacyGroupAcknowledgementBackpressure(
-                        group.title,
-                        GroupConversation.maximumPendingAcknowledgements
-                    )
-                }
-            }
-            group.pendingAcknowledgements = stagedGroup.pendingAcknowledgements
-            for envelope in envelopesToProcess {
-                guard var ratchetState = group.groupRatchetState else {
-                    throw HeadlessMessagingClientError.missingGroupRatchet(group.title)
-                }
-                let sender = senderContact(for: envelope.senderFingerprint, in: state.contacts)
-                let senderProfile = group.memberProfiles.first { $0.fingerprint == envelope.senderFingerprint }
-                guard let senderKey = sender?.signingPublicKey
-                    ?? groupMemberSigningKey(for: envelope.senderFingerprint, group: group, state: state) else {
-                    throw HeadlessMessagingClientError.missingGroupSenderKey(envelope.senderFingerprint)
-                }
-                let decrypted = try GroupRatchet.decryptWithKey(
-                    envelope: envelope,
-                    senderPublicSigningKey: senderKey,
-                    state: &ratchetState
-                )
-                let body = decrypted.body
-                group.groupRatchetState = ratchetState
-                appendGroupMessage(
-                    body: body,
-                    direction: .received,
-                    senderDisplayName: sender?.displayName ?? senderProfile?.displayName,
-                    counter: envelope.messageCounter,
-                    timestamp: envelope.sentAt,
-                    group: &group,
-                    attachmentRelay: state.relay,
-                    attachmentCryptoContext: Self.groupAttachmentContext(
-                        groupId: envelope.groupId,
-                        epoch: envelope.epoch,
-                        transcriptHash: envelope.transcriptHash,
-                        messageCounter: envelope.messageCounter
-                    ),
-                    messageKey: decrypted.messageKey
-                )
-                received.append(
-                    HeadlessReceivedGroupMessage(
-                        group: summary(for: group),
-                        envelopeId: envelope.id,
-                        messageCounter: envelope.messageCounter,
-                        senderFingerprint: envelope.senderFingerprint,
-                        senderDisplayName: sender?.displayName ?? senderProfile?.displayName,
-                        body: body,
-                        sentAt: envelope.sentAt
-                    )
-                )
-            }
-            state.upsert(group: group)
-            // A relay acknowledgement is destructive in the legacy group path.
-            // Persist the advanced ratchet, message, and receipt before releasing it.
-            try await store.save(state)
-            if acknowledge, !group.pendingAcknowledgements.isEmpty {
-                try await flushPendingGroupAcknowledgements(group: &group, state: &state)
-            }
-        }
-        try await store.save(state)
-        return received
     }
 
     public func receive(maxCount: Int = 25, longPollTimeoutSeconds: Int? = nil, acknowledge: Bool = true) async throws -> [HeadlessReceivedMessage] {
@@ -1833,134 +1247,12 @@ public actor HeadlessMessagingClient {
         for sequenced in batch.events {
             let envelope = sequenced.envelope
             do {
-            if envelope.authenticatedContext?.purpose == .directV4 {
+                guard envelope.authenticatedContext?.purpose == .directV4 else {
+                    throw HeadlessMessagingClientError.unsupportedInboundSession
+                }
                 if let message = try receiveCertifiedDirectEnvelope(envelope, state: &state) {
                     received.append(message)
                 }
-                continue
-            }
-            guard var contact = state.contact(for: envelope.senderFingerprint) else {
-                throw HeadlessMessagingClientError.contactNotFound(envelope.senderFingerprint)
-            }
-            guard !contact.usesCertifiedInstallationEndpoint else {
-                // A certified relationship is pinned to the direct-v4 typed
-                // profile. Identity-fingerprint/NPAD-v1 delivery is not a
-                // compatibility fallback for that same contact.
-                throw HeadlessMessagingClientError.unsupportedInboundSession
-            }
-            var conversation: Conversation
-            let previousConversation = state.conversation(for: contact.id)
-            if let existing = state.conversation(for: contact.id) {
-                conversation = existing
-            } else if let kemCiphertext = envelope.kemCiphertext {
-                conversation = try MessageEngine.createInboundSession(
-                    identity: state.identity,
-                    contact: contact,
-                    kemCiphertext: kemCiphertext
-                )
-            } else {
-                throw HeadlessMessagingClientError.unsupportedInboundSession
-            }
-            // Verify attribution before consulting the replay cache. A forged
-            // envelope must not be able to claim a known logical ID and turn
-            // the conflict detector into a cursor-stalling oracle.
-            guard envelope.verifySignature(publicSigningKey: contact.signingPublicKey) else {
-                throw CryptoError.invalidSignature
-            }
-            // Envelope IDs are signed in architecture v2 and are the sole
-            // logical delivery idempotency key. Counters restart with a fresh
-            // session, so counter+timestamp heuristics can discard valid
-            // rotation/reset messages.
-            guard let inboundDigest = try Self.unseenInboundEnvelopeDigest(
-                envelope,
-                sourceScopeId: contact.id,
-                logicalEventId: envelope.id,
-                state: state
-            ) else {
-                continue
-            }
-            if conversation.messages.contains(where: { $0.id == envelope.id }) {
-                throw HeadlessMessagingClientError.inboundEnvelopeConflict(envelope.id)
-            }
-            let decrypted: (body: MessageBody, messageKey: SymmetricKey)
-            do {
-                decrypted = try MessageEngine.decryptWithKey(envelope: envelope, contact: contact, conversation: &conversation)
-            } catch {
-                guard let kemCiphertext = envelope.kemCiphertext else {
-                    throw error
-                }
-                conversation = try MessageEngine.createInboundSession(
-                    identity: state.identity,
-                    contact: contact,
-                    kemCiphertext: kemCiphertext
-                )
-                decrypted = try MessageEngine.decryptWithKey(envelope: envelope, contact: contact, conversation: &conversation)
-                if let previousConversation {
-                    conversation.messages = previousConversation.messages
-                    conversation.unreadCount = previousConversation.unreadCount
-                }
-            }
-            let body = decrypted.body
-            Self.recordInboundEnvelopeReceipt(
-                envelope,
-                sourceScopeId: contact.id,
-                logicalEventId: envelope.id,
-                digest: inboundDigest,
-                state: &state
-            )
-            _ = MessageEngine.appendMessage(
-                id: envelope.id,
-                body: body,
-                direction: .received,
-                counter: envelope.messageCounter,
-                timestamp: envelope.sentAt,
-                conversation: &conversation,
-                attachmentRelay: state.relay,
-                messageKey: decrypted.messageKey
-            )
-            conversation.markMessageProcessed()
-            switch body {
-            case .identityRotation(let rotation):
-                let previousFingerprint = contact.fingerprint
-                if contact.apply(rotation: rotation) {
-                    state.updateContact(contact)
-                    state.appendContinuityEvent(
-                        ContinuityEvent(
-                            kind: .contactRotationReceived,
-                            contactId: contact.id,
-                            contactDisplayName: contact.displayName,
-                            oldFingerprint: previousFingerprint,
-                            newFingerprint: contact.fingerprint
-                        )
-                    )
-                }
-            case .identityReset(let reset):
-                let previousFingerprint = contact.fingerprint
-                if contact.apply(reset: reset) {
-                    state.updateContact(contact)
-                    state.appendContinuityEvent(
-                        ContinuityEvent(
-                            kind: .contactResetReceived,
-                            contactId: contact.id,
-                            contactDisplayName: contact.displayName,
-                            oldFingerprint: previousFingerprint,
-                            newFingerprint: contact.fingerprint
-                        )
-                    )
-                }
-            case .text, .attachment, .sessionReset, .resendRequest:
-                break
-            }
-            state.upsert(conversation: conversation)
-            received.append(
-                HeadlessReceivedMessage(
-                    contact: contact,
-                    envelopeId: envelope.id,
-                    messageCounter: envelope.messageCounter,
-                    body: body,
-                    sentAt: envelope.sentAt
-                )
-            )
             } catch {
                 guard let reason = Self.transportQuarantineReason(for: error) else {
                     // Local state corruption, storage/runtime failure, and
@@ -2283,68 +1575,6 @@ public actor HeadlessMessagingClient {
         state.localInstallation = installation
     }
 
-    private func refreshGroups(into state: inout ClientState, limit: Int) async throws {
-        var request = ListGroupsRequest(
-            memberFingerprint: state.identity.fingerprint,
-            limit: max(1, limit)
-        )
-        let proof = try Self.makeActorProof(signingKey: state.identity.signingKey) { actorProof in
-            try request.signableData(for: actorProof)
-        }
-        request = ListGroupsRequest(
-            memberFingerprint: request.memberFingerprint,
-            limit: request.limit,
-            memberProof: proof
-        )
-        let response = try await relayClient(for: state.relay).send(.listGroups(request), timeout: timeout)
-        guard response.type == .groups else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-        for descriptor in response.groups ?? [] {
-            let contacts = state.contacts.filter { contact in
-                descriptor.members.contains { $0.fingerprint == contact.fingerprint }
-            }
-            let existing = state.group(for: descriptor.id)
-            let group = try groupConversation(from: descriptor, contacts: contacts, state: state, existing: existing)
-            state.upsert(group: group)
-        }
-    }
-
-    private func groupConversation(
-        from descriptor: RelayGroupDescriptor,
-        contacts: [Contact],
-        state: ClientState,
-        existing: GroupConversation?
-    ) throws -> GroupConversation {
-        let ratchetState = GroupRatchetRecovery.state(
-            from: descriptor,
-            identity: state.identity,
-            existing: existing?.groupRatchetState
-        )
-        var group = GroupConversation(
-            id: descriptor.id,
-            title: descriptor.title,
-            memberContactIds: contacts.map(\.id),
-            relayInboxId: descriptor.inboxId,
-            relayEpoch: descriptor.epoch,
-            relayTranscriptHash: descriptor.mlsEpochState.confirmedTranscriptHash,
-            groupRatchetState: ratchetState,
-            createdByFingerprint: descriptor.createdByFingerprint,
-            memberProfiles: groupMemberProfiles(from: descriptor, preferredRelay: state.relay),
-            scopedIdentity: existing?.scopedIdentity,
-            isPendingInvitation: existing?.isPendingInvitation ?? false,
-            messages: existing?.messages ?? [],
-            unreadCount: existing?.unreadCount ?? 0,
-            createdAt: existing?.createdAt ?? descriptor.createdAt
-        )
-        group.pendingAcknowledgements = existing?.pendingAcknowledgements ?? []
-        return group
-    }
-
-    private static func groupEnvelopeDigest(_ envelope: GroupRatchetEnvelope) throws -> Data {
-        Data(SHA256.hash(data: try NoctweaveCoder.encode(envelope, sortedKeys: true)))
-    }
-
     private static func transportQuarantineReason(
         for error: Error
     ) -> TransportQuarantineReasonV2? {
@@ -2473,41 +1703,6 @@ public actor HeadlessMessagingClient {
                 envelopeDigest: digest
             )
         )
-    }
-
-    private func flushPendingGroupAcknowledgements(
-        group: inout GroupConversation,
-        state: inout ClientState
-    ) async throws {
-        let ids = group.pendingAcknowledgements.map(\.envelopeId)
-        guard !ids.isEmpty else { return }
-        try await acknowledgeGroupMessages(ids, group: group, state: state)
-        group.clearPendingAcknowledgements(Set(ids))
-        state.upsert(group: group)
-        // If this save fails, the durable receipt remains and the idempotent relay
-        // acknowledgement is retried after restart before any ratchet replay.
-        try await store.save(state)
-    }
-
-    private func acknowledgeGroupMessages(_ ids: [UUID], group: GroupConversation, state: ClientState) async throws {
-        var request = AcknowledgeGroupMessagesRequest(
-            groupId: group.id,
-            groupInboxId: try groupInboxId(for: group),
-            messageIds: ids,
-            actorFingerprint: state.identity.fingerprint
-        )
-        let proof = try Self.makeActorProof(signingKey: state.identity.signingKey) { actorProof in
-            try request.signableData(for: actorProof)
-        }
-        request = AcknowledgeGroupMessagesRequest(
-            groupId: request.groupId,
-            groupInboxId: request.groupInboxId,
-            messageIds: request.messageIds,
-            actorFingerprint: request.actorFingerprint,
-            actorProof: proof
-        )
-        let response = try await relayClient(for: state.relay).send(.acknowledgeGroupMessages(request), timeout: timeout)
-        try requireOK(response)
     }
 
     private func importContactOffer(_ offer: ContactOffer) async throws -> Contact {
@@ -2782,16 +1977,6 @@ public actor HeadlessMessagingClient {
         installation.pendingMailboxCommitsByStream.removeValue(forKey: routeKey)
         state.localInstallation = installation
         try await store.save(state)
-    }
-
-    private func acknowledgeMessages(_ ids: [UUID], state: ClientState, accessKey: SigningKeyPair) async throws {
-        var request = AcknowledgeMessagesRequest(inboxId: state.inboxId, messageIds: ids)
-        let proof = try Self.makeActorProof(signingKey: accessKey) { actorProof in
-            try request.signableData(for: actorProof)
-        }
-        request = AcknowledgeMessagesRequest(inboxId: state.inboxId, messageIds: ids, accessProof: proof)
-        let response = try await relayClient(for: state.relay).send(.acknowledgeMessages(request), timeout: timeout)
-        try requireOK(response)
     }
 
     private func registerInbox(for state: ClientState) async throws {
@@ -3249,25 +2434,20 @@ public actor HeadlessMessagingClient {
     }
 
     private func contactOffer(for state: ClientState) throws -> ContactOffer {
-        if let generationId = state.identityGenerationId,
-           state.localInstallation != nil,
-           let manifest = state.installationManifest,
-           let endpoint = state.issuedContactEndpointsV2.last {
-            return try ContactOffer.createCertified(
-                displayName: state.identity.displayName,
-                inboxId: state.inboxId,
-                relay: state.relay,
-                identity: state.identity,
-                identityGenerationId: generationId,
-                installationManifest: manifest,
-                preferredInstallationEndpoint: endpoint,
-                inboxAccessPublicKey: state.inboxAccessKey?.publicKeyData
-            )
+        guard let generationId = state.identityGenerationId,
+              state.localInstallation != nil,
+              let manifest = state.installationManifest,
+              let endpoint = state.issuedContactEndpointsV2.last else {
+            throw HeadlessMessagingClientError.missingInstallation
         }
-        return try MessageEngine.makeContactOffer(
-            identity: state.identity,
+        return try ContactOffer.createCertified(
+            displayName: state.identity.displayName,
             inboxId: state.inboxId,
             relay: state.relay,
+            identity: state.identity,
+            identityGenerationId: generationId,
+            installationManifest: manifest,
+            preferredInstallationEndpoint: endpoint,
             inboxAccessPublicKey: state.inboxAccessKey?.publicKeyData
         )
     }
@@ -3445,145 +2625,6 @@ public actor HeadlessMessagingClient {
         )
     }
 
-    private func summary(for group: GroupConversation) -> HeadlessGroupSummary {
-        HeadlessGroupSummary(
-            id: group.id,
-            title: group.title,
-            inboxId: group.relayInboxId,
-            memberCount: group.resolvedMemberCount,
-            relayEpoch: group.relayEpoch,
-            unreadCount: group.unreadCount,
-            createdByFingerprint: group.createdByFingerprint
-        )
-    }
-
-    private func groupMemberProfile(identity: Identity, inboxId: String, relay: RelayEndpoint) -> RelayGroupMemberProfile {
-        RelayGroupMemberProfile(
-            fingerprint: identity.fingerprint,
-            displayName: identity.displayName,
-            inboxId: inboxId,
-            relay: relay,
-            signingPublicKey: identity.signingKey.publicKeyData,
-            agreementPublicKey: identity.agreementKey.publicKeyData
-        )
-    }
-
-    private func groupMemberProfile(contact: Contact) -> RelayGroupMemberProfile {
-        RelayGroupMemberProfile(
-            fingerprint: contact.fingerprint,
-            displayName: contact.displayName,
-            inboxId: contact.inboxId,
-            relay: contact.relay,
-            signingPublicKey: contact.signingPublicKey,
-            agreementPublicKey: contact.agreementPublicKey
-        )
-    }
-
-    private func groupMemberProfile(member: RelayGroupMember) -> RelayGroupMemberProfile {
-        RelayGroupMemberProfile(
-            fingerprint: member.fingerprint,
-            displayName: member.displayName,
-            inboxId: member.inboxId,
-            relay: member.relay,
-            signingPublicKey: member.signingPublicKey,
-            agreementPublicKey: member.agreementPublicKey
-        )
-    }
-
-    private func groupMemberProfiles(
-        from descriptor: RelayGroupDescriptor,
-        preferredRelay: RelayEndpoint
-    ) -> [RelayGroupMemberProfile] {
-        var byFingerprint: [String: RelayGroupMemberProfile] = [:]
-        for member in descriptor.members {
-            let fingerprint = member.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !fingerprint.isEmpty else { continue }
-            var profile = groupMemberProfile(member: member)
-            if profile.relay == nil, profile.inboxId != nil {
-                profile = RelayGroupMemberProfile(
-                    fingerprint: profile.fingerprint,
-                    displayName: profile.displayName,
-                    inboxId: profile.inboxId,
-                    relay: preferredRelay,
-                    signingPublicKey: profile.signingPublicKey,
-                    agreementPublicKey: profile.agreementPublicKey
-                )
-            }
-            byFingerprint[fingerprint] = profile
-        }
-        return byFingerprint.values.sorted { $0.fingerprint < $1.fingerprint }
-    }
-
-    private func groupInboxId(for group: GroupConversation) throws -> String {
-        guard let inboxId = group.relayInboxId?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !inboxId.isEmpty else {
-            throw HeadlessMessagingClientError.missingGroupRatchet(group.title)
-        }
-        return inboxId
-    }
-
-    private func senderContact(for fingerprint: String, in contacts: [Contact]) -> Contact? {
-        contacts.first { $0.fingerprint == fingerprint }
-    }
-
-    private func groupMemberSigningKey(for fingerprint: String, group: GroupConversation, state: ClientState) -> Data? {
-        if fingerprint == state.identity.fingerprint {
-            return state.identity.signingKey.publicKeyData
-        }
-        if let profile = group.memberProfiles.first(where: { $0.fingerprint == fingerprint }),
-           let signingPublicKey = profile.signingPublicKey,
-           !signingPublicKey.isEmpty {
-            return signingPublicKey
-        }
-        return state.contacts.first { contact in
-            group.memberContactIds.contains(contact.id) && contact.fingerprint == fingerprint
-        }?.signingPublicKey
-    }
-
-    private func appendGroupMessage(
-        body: MessageBody,
-        direction: MessageDirection,
-        senderDisplayName: String?,
-        counter: UInt64,
-        timestamp: Date,
-        group: inout GroupConversation,
-        attachmentRelay: RelayEndpoint? = nil,
-        attachmentCryptoContext: AttachmentCryptoContext? = nil,
-        messageKey: SymmetricKey? = nil
-    ) {
-        switch body {
-        case .text(let text):
-            group.messages.append(
-                Message(
-                    direction: direction,
-                    senderDisplayName: senderDisplayName,
-                    body: text,
-                    timestamp: timestamp,
-                    counter: counter
-                )
-            )
-        case .attachment(let descriptor):
-            let title = Self.attachmentTitle(for: descriptor)
-            group.messages.append(
-                Message(
-                    direction: direction,
-                    senderDisplayName: senderDisplayName,
-                    body: title,
-                    timestamp: timestamp,
-                    counter: counter,
-                    attachment: AttachmentInfo(
-                        descriptor: descriptor,
-                        relay: attachmentRelay,
-                        cryptoContext: attachmentCryptoContext,
-                        messageKeyData: messageKey.map(AttachmentCrypto.keyData)
-                    )
-                )
-            )
-        case .identityRotation, .identityReset, .sessionReset, .resendRequest:
-            break
-        }
-    }
-
     private func upload(chunks: [AttachmentChunk], to relay: RelayEndpoint, ttlSeconds: Int?) async throws {
         let client = relayClient(for: relay)
         for chunk in chunks {
@@ -3673,24 +2714,6 @@ public actor HeadlessMessagingClient {
         }
         guard matches.count == 1 else {
             throw HeadlessMessagingClientError.ambiguousContact(selector)
-        }
-        return matches[0]
-    }
-
-    private func resolveGroup(_ selector: String, in groups: [GroupConversation]) throws -> GroupConversation {
-        let needle = selector.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else {
-            throw HeadlessMessagingClientError.groupNotFound(selector)
-        }
-        let matches = groups.filter { group in
-            group.id.uuidString.caseInsensitiveCompare(needle) == .orderedSame
-                || group.title.localizedCaseInsensitiveCompare(needle) == .orderedSame
-        }
-        guard !matches.isEmpty else {
-            throw HeadlessMessagingClientError.groupNotFound(selector)
-        }
-        guard matches.count == 1 else {
-            throw HeadlessMessagingClientError.ambiguousGroup(selector)
         }
         return matches[0]
     }

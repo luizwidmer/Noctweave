@@ -119,9 +119,6 @@ public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
         guard version == Self.version,
               architectureVersion == NoctweaveArchitectureV2.version,
               cipherSuite == DirectV4CipherSuite.identifier,
-              !modules.contains(where: {
-                  $0.module == RelayCompatibilityProfile.legacyFingerprint
-              }),
               modules.map(\.module) == Self.requirements.map(\.module) else {
             throw DirectV4CapabilityNegotiationError.invalidManifest
         }

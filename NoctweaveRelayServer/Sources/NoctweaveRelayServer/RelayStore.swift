@@ -31,16 +31,6 @@ enum RelayStoreError: Error, Equatable {
     case invalidChunkIndex
     case invalidAttachmentPayload
     case attachmentBlobUnavailable
-    case invalidPrekeyBundle
-    case groupCapacityExceeded
-    case invalidGroupTitle
-    case invalidFingerprint
-    case invalidGroupCommit
-    case notEnoughGroupMembers
-    case groupNotFound
-    case unauthorizedGroupMutation
-    case groupJoinRequestNotFound
-    case alreadyGroupMember
 }
 
 enum InboxRouteCapabilityMutationOperation {
@@ -67,16 +57,9 @@ final class RelayStore {
     /// Keyed by a domain-separated route-capability digest. Values contain
     /// only digests of lane authorities; raw bearer material is never stored.
     private var rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:]
-    private var announcements: [String: PairingAnnouncement] = [:]
-    private var pairRequests: [String: [PairingRequest]] = [:]
     private var attachments: [String: [AttachmentRecord]] = [:]
-    private var prekeyBundles: [String: PrekeyBundleRecord] = [:]
     private var federationNodes: [String: FederationNodeRecord] = [:]
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
-    private var groups: [UUID: RelayGroupDescriptor] = [:]
-    private var groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:]
-    private var groupInvitations: [String: [RelayGroupInvitation]] = [:]
-    private var groupInvitationFingerprintsByGroup: [UUID: Set<String>] = [:]
     private var openFederationDHTCache = OpenFederationDHTCandidateCache(
         configuration: OpenFederationDHTDiscoveryConfiguration(isEnabled: false)
     )
@@ -86,12 +69,6 @@ final class RelayStore {
     private let attachmentBlobStore: AttachmentBlobStore?
     private var temporalBuckets: [TimeInterval]
     private let queueKey = DispatchSpecificKey<Void>()
-    private let announcementTTL: TimeInterval = 300
-    private let minimumAnnouncementTTL: TimeInterval = 30
-    private let maximumAnnouncementTTL: TimeInterval = 900
-    private let maxAnnouncements = 2_048
-    private let maxPairRequests = 100
-    private let maxPairRequestTargets = 2_048
     private let attachmentTTL: TimeInterval = 3600
     private let minimumAttachmentTTL: TimeInterval = 60
     private let maximumAttachmentTTL: TimeInterval = 6 * 3600
@@ -99,21 +76,9 @@ final class RelayStore {
     private let maxAttachmentChunkPayloadBytes = 128 * 1024
     private let maxEnvelopePayloadBytes = 96 * 1024
     private let maxAttachmentIds = 4_096
-    private let prekeyTTL: TimeInterval = 86400
-    private let minimumPrekeyTTL: TimeInterval = 300
-    private let maximumPrekeyTTL: TimeInterval = 7 * 86400
-    private let maxPrekeyBundles = 10_000
-    private let maxOneTimePrekeysPerBundle = 64
     private let coordinatorDefaultNodeTTL: TimeInterval = 180
     private let coordinatorMaximumNodeTTL: TimeInterval = 900
     private let maxFederationNodes = 10_000
-    private let maxGroupJoinRequests = 256
-    private let maxGroupInvitationsPerIdentity = 256
-    private let maxGroups = 10_000
-    private let maxGroupsPerCreator = 100
-    private let maxGroupMembers = 256
-    private let maxGroupTitleCharacters = 128
-    private let maxGroupEpochHistory = 64
     private let maxMailboxes = 10_000
     private let maxStoredMessages = 100_000
     private let maxInboxRegistrations = 10_000
@@ -361,9 +326,7 @@ final class RelayStore {
             }
             let existingInbox = mailboxes[inboxId, default: []]
             if let existing = existingInbox.first(where: { $0.envelope.id == envelope.id }) {
-                guard existing.envelope == envelope,
-                      existing.pendingGroupRecipientFingerprints == nil,
-                      existing.originalGroupRecipientFingerprints == nil else {
+                guard existing.envelope == envelope else {
                     throw RelayStoreError.invalidEnvelopePayload
                 }
                 return existingInbox.count
@@ -391,70 +354,6 @@ final class RelayStore {
         }
     }
 
-    func deliverGroupEnvelope(
-        _ envelope: Envelope,
-        to inboxId: String,
-        recipientFingerprints: [String]
-    ) throws -> Int {
-        try performSync {
-            guard envelope.isStructurallyValid,
-                  envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
-                throw RelayStoreError.invalidEnvelopePayload
-            }
-            guard !isInboxRetiredLocked(inboxId: inboxId, now: Date()) else {
-                throw RelayStoreError.inboxRetired
-            }
-            // Persisted group state is the registration for a generated group
-            // inbox. Normal inbox registration remains valid for store-level
-            // migration/retry tooling; RelayHandler also pins the group ID.
-            guard inboxRegistrations[inboxId] != nil
-                    || groups.values.contains(where: { $0.inboxId == inboxId }) else {
-                throw RelayStoreError.destinationInboxNotRegistered
-            }
-            guard let recipients = StoredEnvelope.normalizedGroupRecipients(
-                recipientFingerprints
-            ) else {
-                throw RelayStoreError.invalidEnvelopePayload
-            }
-            guard !recipients.isEmpty else {
-                return mailboxes[inboxId, default: []].count
-            }
-            let existingInbox = mailboxes[inboxId, default: []]
-            if let existing = existingInbox.first(where: { $0.envelope.id == envelope.id }) {
-                guard existing.envelope == envelope,
-                      existing.pendingGroupRecipientFingerprints != nil,
-                      existing.originalGroupRecipientFingerprints == recipients else {
-                    throw RelayStoreError.invalidEnvelopePayload
-                }
-                return existingInbox.count
-            }
-            if mailboxes[inboxId] == nil, mailboxes.count >= maxMailboxes {
-                throw RelayStoreError.relayCapacityExceeded
-            }
-            let totalMessages = mailboxes.values.reduce(into: 0) { $0 += $1.count }
-            guard totalMessages < maxStoredMessages else {
-                throw RelayStoreError.relayCapacityExceeded
-            }
-            var inbox = mailboxes[inboxId, default: []]
-            if let maxInboxMessages, inbox.count >= maxInboxMessages {
-                throw RelayStoreError.inboxFull
-            }
-            let discriminator = "\(inboxId):\(envelope.id.uuidString)"
-            inbox.append(
-                StoredEnvelope(
-                    sequence: try nextMailboxSequenceLocked(inboxId: inboxId),
-                    envelope: envelope,
-                    storedAt: bucketed(Date(), discriminator: discriminator),
-                    pendingGroupRecipientFingerprints: recipients,
-                    originalGroupRecipientFingerprints: recipients
-                )
-            )
-            mailboxes[inboxId] = inbox
-            try saveLocked()
-            return inbox.count
-        }
-    }
-
     private func envelopePayloadBytes(_ envelope: Envelope) -> Int {
         envelope.payload.nonce.count + envelope.payload.ciphertext.count + envelope.payload.tag.count
     }
@@ -467,25 +366,6 @@ final class RelayStore {
         }
     }
 
-    func fetchGroupEnvelopes(
-        inboxId: String,
-        recipientFingerprint: String,
-        maxCount: Int?
-    ) -> [Envelope] {
-        performSync {
-            let recipient = recipientFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !recipient.isEmpty else {
-                return []
-            }
-            let inbox = mailboxes[inboxId, default: []].filter { record in
-                record.pendingGroupRecipientFingerprints?.contains(recipient) ?? false
-            }
-            let count = max(0, maxCount ?? inbox.count)
-            return Array(inbox.prefix(count)).map(\.envelope)
-        }
-    }
-
-    @discardableResult
     func registerInbox(
         inboxId: String,
         accessPublicKey: Data
@@ -1356,211 +1236,10 @@ final class RelayStore {
         }
     }
 
-    @discardableResult
-    func acknowledge(inboxId: String, messageIds: [UUID]) throws -> Int {
-        try performSync {
-            let ids = Set(messageIds.prefix(1_000))
-            guard !ids.isEmpty else {
-                return 0
-            }
-            let inbox = mailboxes[inboxId, default: []]
-            let protectedFloor = inboxRegistrations[inboxId]?.mailboxStream.consumers.values.compactMap {
-                $0.state == .active ? $0.committedSequence : nil
-            }.min()
-            let remaining = inbox.filter { record in
-                guard ids.contains(record.envelope.id) else { return true }
-                guard record.pendingGroupRecipientFingerprints == nil else { return true }
-                guard let protectedFloor else { return false }
-                return record.sequence > protectedFloor
-            }
-            let removed = inbox.count - remaining.count
-            if remaining.isEmpty {
-                mailboxes.removeValue(forKey: inboxId)
-            } else {
-                mailboxes[inboxId] = remaining
-            }
-            if removed > 0 {
-                try saveLocked()
-            }
-            return removed
-        }
-    }
-
-    @discardableResult
-    func acknowledgeGroupEnvelopes(
-        inboxId: String,
-        messageIds: [UUID],
-        recipientFingerprint: String
-    ) throws -> Int {
-        try performSync {
-            let ids = Set(messageIds.prefix(1_000))
-            let recipient = recipientFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !ids.isEmpty, !recipient.isEmpty else {
-                return 0
-            }
-            var removedForRecipient = 0
-            var updated = false
-            var remaining: [StoredEnvelope] = []
-            let protectsV2Consumers = inboxRegistrations[inboxId]?.mailboxStream.hasActiveConsumers ?? false
-            for var record in mailboxes[inboxId, default: []] {
-                guard ids.contains(record.envelope.id),
-                      var pending = record.pendingGroupRecipientFingerprints else {
-                    remaining.append(record)
-                    continue
-                }
-                if pending.remove(recipient) != nil {
-                    removedForRecipient += 1
-                    updated = true
-                }
-                if !pending.isEmpty {
-                    record.pendingGroupRecipientFingerprints = pending
-                    remaining.append(record)
-                } else if protectsV2Consumers,
-                          record.sequence > (inboxRegistrations[inboxId]?.mailboxStream.retentionFloor ?? 0) {
-                    record.pendingGroupRecipientFingerprints = []
-                    remaining.append(record)
-                } else {
-                    updated = true
-                }
-            }
-            if updated {
-                if remaining.isEmpty {
-                    mailboxes.removeValue(forKey: inboxId)
-                } else {
-                    mailboxes[inboxId] = remaining
-                }
-                try saveLocked()
-            }
-            return removedForRecipient
-        }
-    }
-
     func stats() -> (mailboxes: Int, messages: Int) {
         performSync {
             let messageCount = mailboxes.values.reduce(0) { $0 + $1.count }
             return (mailboxes.count, messageCount)
-        }
-    }
-
-    func announce(_ offer: ContactOffer, ttlSeconds: Int?, now: Date = Date()) -> PairingAnnouncement {
-        performSync {
-            pruneAnnouncements(now: now)
-            let requestedTTL = TimeInterval(ttlSeconds ?? Int(announcementTTL))
-            let ttl = min(maximumAnnouncementTTL, max(minimumAnnouncementTTL, requestedTTL))
-            let visibleNow = bucketed(now, discriminator: "announce:\(offer.fingerprint)")
-            let announcement = PairingAnnouncement(
-                id: UUID(),
-                offer: offer,
-                announcedAt: visibleNow,
-                expiresAt: visibleNow.addingTimeInterval(ttl)
-            )
-            announcements[offer.fingerprint] = announcement
-            if announcements.count > maxAnnouncements,
-               let oldest = announcements.min(by: { $0.value.announcedAt < $1.value.announcedAt })?.key {
-                announcements.removeValue(forKey: oldest)
-            }
-            return announcement
-        }
-    }
-
-    func listAnnouncements(limit: Int?) -> [PairingAnnouncement] {
-        performSync {
-            pruneAnnouncements(now: Date())
-            let list = announcements.values.sorted { $0.announcedAt > $1.announcedAt }
-            let boundedLimit = min(500, max(0, limit ?? 500))
-            return Array(list.prefix(boundedLimit))
-        }
-    }
-
-    func sendPairRequest(targetFingerprint: String, offer: ContactOffer, now: Date = Date()) -> Int {
-        performSync {
-            if pairRequests[targetFingerprint] == nil,
-               pairRequests.count >= maxPairRequestTargets,
-               let oldestTarget = pairRequests.min(by: {
-                   ($0.value.first?.sentAt ?? .distantFuture) < ($1.value.first?.sentAt ?? .distantFuture)
-               })?.key {
-                pairRequests.removeValue(forKey: oldestTarget)
-            }
-            var requests = pairRequests[targetFingerprint, default: []]
-            requests.append(PairingRequest(
-                id: UUID(),
-                from: offer,
-                sentAt: bucketed(now, discriminator: "pair:\(targetFingerprint):\(offer.fingerprint)")
-            ))
-            if requests.count > maxPairRequests {
-                requests = Array(requests.suffix(maxPairRequests))
-            }
-            pairRequests[targetFingerprint] = requests
-            return requests.count
-        }
-    }
-
-    func fetchPairRequests(targetFingerprint: String, maxCount: Int?) -> [PairingRequest] {
-        performSync {
-            let requests = pairRequests[targetFingerprint, default: []]
-            let count = max(0, maxCount ?? requests.count)
-            return Array(requests.prefix(count))
-        }
-    }
-
-    func uploadPrekeyBundle(fingerprint: String, bundle: PrekeyBundle, ttlSeconds: Int?) throws {
-        try performSync {
-            guard !fingerprint.isEmpty,
-                  fingerprint == bundle.identityFingerprint,
-                  bundle.oneTimePrekeys.count <= maxOneTimePrekeysPerBundle,
-                  bundle.isStructurallyValid() else {
-                throw RelayStoreError.invalidPrekeyBundle
-            }
-            let requestedTTL = TimeInterval(ttlSeconds ?? Int(prekeyTTL))
-            let ttl = min(maximumPrekeyTTL, max(minimumPrekeyTTL, requestedTTL))
-            let now = Date()
-            prunePrekeysLocked(now: now)
-            if prekeyBundles[fingerprint] == nil,
-               prekeyBundles.count >= maxPrekeyBundles,
-               let oldest = prekeyBundles.min(by: { $0.value.expiresAt < $1.value.expiresAt })?.key {
-                prekeyBundles.removeValue(forKey: oldest)
-            }
-            prekeyBundles[fingerprint] = PrekeyBundleRecord(
-                bundle: bundle,
-                expiresAt: now.addingTimeInterval(ttl)
-            )
-            try saveLocked()
-        }
-    }
-
-    func fetchPrekeyBundle(fingerprint: String) throws -> PrekeyBundle? {
-        try performSync {
-            prunePrekeysLocked(now: Date())
-            guard var record = prekeyBundles[fingerprint] else {
-                return nil
-            }
-            guard record.bundle.isStructurallyValid() else {
-                prekeyBundles.removeValue(forKey: fingerprint)
-                try saveLocked()
-                throw RelayStoreError.invalidPrekeyBundle
-            }
-            var bundle = record.bundle
-            if !bundle.oneTimePrekeys.isEmpty {
-                let prekey = bundle.oneTimePrekeys[0]
-                bundle = PrekeyBundle(
-                    version: bundle.version,
-                    identityFingerprint: bundle.identityFingerprint,
-                    signedPrekey: bundle.signedPrekey,
-                    oneTimePrekeys: [prekey],
-                    createdAt: bundle.createdAt
-                )
-                record.bundle = PrekeyBundle(
-                    version: record.bundle.version,
-                    identityFingerprint: record.bundle.identityFingerprint,
-                    signedPrekey: record.bundle.signedPrekey,
-                    oneTimePrekeys: Array(record.bundle.oneTimePrekeys.dropFirst()),
-                    createdAt: record.bundle.createdAt
-                )
-                prekeyBundles[fingerprint] = record
-                try saveLocked()
-                return bundle
-            }
-            return bundle
         }
     }
 
@@ -1733,909 +1412,6 @@ final class RelayStore {
         }
     }
 
-    func createGroup(
-        groupId: UUID? = nil,
-        title: String,
-        creatorFingerprint: String,
-        memberFingerprints: [String],
-        creatorProfile: RelayGroupMemberProfile? = nil,
-        memberProfiles: [RelayGroupMemberProfile]? = nil,
-        invitedFingerprints: [String] = [],
-        initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil
-    ) throws -> RelayGroupDescriptor {
-        try performSync {
-            let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmedTitle.isEmpty, trimmedTitle.count <= maxGroupTitleCharacters else {
-                throw RelayStoreError.invalidGroupTitle
-            }
-            let creator = creatorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !creator.isEmpty else {
-                throw RelayStoreError.invalidFingerprint
-            }
-            var profileByFingerprint: [String: RelayGroupMemberProfile] = [:]
-            if let normalizedCreatorProfile = normalizedMemberProfile(creatorProfile),
-               normalizedCreatorProfile.fingerprint == creator {
-                profileByFingerprint[creator] = normalizedCreatorProfile
-            }
-            for profile in memberProfiles ?? [] {
-                guard let normalized = normalizedMemberProfile(profile) else { continue }
-                profileByFingerprint[normalized.fingerprint] = normalized
-            }
-
-            var members = Set(memberFingerprints.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty })
-            members.formUnion(profileByFingerprint.keys)
-            members.insert(creator)
-            let normalizedInvitedFingerprints = Set(invitedFingerprints.map {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines)
-            }.filter { !$0.isEmpty && $0 != creator && !members.contains($0) })
-            guard members.count >= 2 || !normalizedInvitedFingerprints.isEmpty else {
-                throw RelayStoreError.notEnoughGroupMembers
-            }
-            guard members.union(normalizedInvitedFingerprints).count <= maxGroupMembers else {
-                throw RelayStoreError.groupCapacityExceeded
-            }
-            guard groups.count < maxGroups,
-                  groups.values.filter({ $0.createdByFingerprint == creator }).count < maxGroupsPerCreator else {
-                throw RelayStoreError.groupCapacityExceeded
-            }
-            let now = Date()
-            let descriptorId = groupId ?? UUID()
-            guard groups[descriptorId] == nil else {
-                throw RelayStoreError.groupCapacityExceeded
-            }
-            try validateInvitationBucketsCanAdd(
-                groupId: descriptorId,
-                fingerprints: normalizedInvitedFingerprints
-            )
-            let descriptorInboxId = InboxAddress.generate()
-            let descriptorMembers = members.sorted().map {
-                makeGroupMember(
-                    fingerprint: $0,
-                    existing: nil,
-                    profile: profileByFingerprint[$0],
-                    joinedAt: now
-                )
-            }
-            try validateRatchetSecretDistribution(
-                initialRatchetSecretDistribution,
-                groupId: descriptorId,
-                epoch: 0,
-                operation: .create,
-                memberFingerprints: descriptorMembers.map(\.fingerprint)
-            )
-            let descriptor = RelayGroupDescriptor(
-                id: descriptorId,
-                title: trimmedTitle,
-                inboxId: descriptorInboxId,
-                createdByFingerprint: creator,
-                epoch: 0,
-                members: descriptorMembers,
-                mlsEpochState: MLSGroupEpochState.initial(
-                    groupId: descriptorId,
-                    title: trimmedTitle,
-                    inboxId: descriptorInboxId,
-                    createdByFingerprint: creator,
-                    members: descriptorMembers,
-                    createdAt: now,
-                    ratchetSecretDistribution: initialRatchetSecretDistribution
-                ),
-                createdAt: now,
-                updatedAt: now
-            )
-            groups[descriptor.id] = descriptor
-            for fingerprint in normalizedInvitedFingerprints.sorted() {
-                insertGroupInvitation(
-                    RelayGroupInvitation(
-                        groupId: descriptor.id,
-                        title: descriptor.title,
-                        createdByFingerprint: descriptor.createdByFingerprint,
-                        invitedFingerprint: fingerprint,
-                        inboxId: descriptor.inboxId,
-                        epoch: descriptor.epoch,
-                        createdAt: descriptor.createdAt,
-                        updatedAt: descriptor.updatedAt,
-                        invitedAt: now
-                    )
-                )
-            }
-            try saveLocked()
-            return descriptor
-        }
-    }
-
-    func fetchGroup(groupId: UUID) -> RelayGroupDescriptor? {
-        performSync {
-            groups[groupId]
-        }
-    }
-
-    func listGroups(memberFingerprint: String, limit: Int?) -> [RelayGroupDescriptor] {
-        performSync {
-            let fingerprint = memberFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !fingerprint.isEmpty else { return [] }
-            var list = groups.values.filter { group in
-                group.members.contains(where: { $0.fingerprint == fingerprint })
-            }
-            list.sort { lhs, rhs in
-                if lhs.updatedAt != rhs.updatedAt {
-                    return lhs.updatedAt > rhs.updatedAt
-                }
-                return lhs.createdAt > rhs.createdAt
-            }
-            return Array(list.prefix(min(500, max(0, limit ?? 500))))
-        }
-    }
-
-    func listGroupInvitations(_ request: ListGroupInvitationsRequest) -> [RelayGroupInvitation] {
-        performSync {
-            let fingerprint = request.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !fingerprint.isEmpty else { return [] }
-            var invitations = groupInvitations[fingerprint, default: []].filter { invitation in
-                groups[invitation.groupId] != nil
-            }
-            invitations.sort { lhs, rhs in
-                if lhs.invitedAt != rhs.invitedAt {
-                    return lhs.invitedAt > rhs.invitedAt
-                }
-                return lhs.updatedAt > rhs.updatedAt
-            }
-            return Array(invitations.prefix(min(500, max(0, request.limit ?? 500))))
-        }
-    }
-
-    func hasGroupInvitation(groupId: UUID, invitedFingerprint: String) -> Bool {
-        performSync {
-            let fingerprint = invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !fingerprint.isEmpty else { return false }
-            return groupInvitations[fingerprint, default: []].contains { invitation in
-                invitation.groupId == groupId && groups[groupId] != nil
-            }
-        }
-    }
-
-    func inviteGroupMembers(_ request: InviteGroupMembersRequest) throws -> RelayGroupDescriptor {
-        try performSync {
-            guard var group = groups[request.groupId] else {
-                throw RelayStoreError.groupNotFound
-            }
-            let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actor.isEmpty else {
-                throw RelayStoreError.invalidFingerprint
-            }
-            guard actor == group.createdByFingerprint else {
-                throw RelayStoreError.unauthorizedGroupMutation
-            }
-
-            let currentMembers = Set(group.members.map(\.fingerprint))
-            let requestedInvitees = Set(request.normalizedInvitedFingerprints.filter { fingerprint in
-                fingerprint != group.createdByFingerprint && !currentMembers.contains(fingerprint)
-            })
-            let existingInvitees = groupInvitationFingerprintsByGroup[group.id, default: []]
-            let invitees = requestedInvitees.subtracting(existingInvitees)
-            guard !invitees.isEmpty else {
-                return group
-            }
-            try validateGroupParticipantCapacity(
-                groupId: group.id,
-                memberFingerprints: currentMembers,
-                addingPendingInvitees: invitees
-            )
-            try validateInvitationBucketsCanAdd(groupId: group.id, fingerprints: invitees)
-
-            let now = Date()
-            group.updatedAt = now
-            groups[group.id] = group
-            for fingerprint in invitees.sorted() {
-                insertGroupInvitation(
-                    RelayGroupInvitation(
-                        groupId: group.id,
-                        title: group.title,
-                        createdByFingerprint: group.createdByFingerprint,
-                        invitedFingerprint: fingerprint,
-                        inboxId: group.inboxId,
-                        epoch: group.epoch,
-                        createdAt: group.createdAt,
-                        updatedAt: group.updatedAt,
-                        invitedAt: now
-                    )
-                )
-            }
-            try saveLocked()
-            return group
-        }
-    }
-
-    func updateGroup(_ request: UpdateGroupRequest) throws -> RelayGroupDescriptor {
-        try performSync {
-            guard var group = groups[request.groupId] else {
-                throw RelayStoreError.groupNotFound
-            }
-            let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actor.isEmpty else {
-                throw RelayStoreError.invalidFingerprint
-            }
-            let isCreator = actor == group.createdByFingerprint
-            let isMember = group.members.contains { $0.fingerprint == actor }
-            guard isCreator || isMember else {
-                throw RelayStoreError.unauthorizedGroupMutation
-            }
-            let operation = expectedGroupCommitOperation(
-                request: request,
-                actorFingerprint: actor,
-                isCreator: isCreator
-            )
-            try validateGroupCommit(
-                request: request,
-                group: group,
-                actorFingerprint: actor,
-                operation: operation
-            )
-            if !isCreator {
-                let hasTitleChange = !(request.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-                let hasMemberAdds = request.addMemberFingerprints.contains {
-                    !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                } || (request.addMemberProfiles?.contains { normalizedMemberProfile($0) != nil } ?? false)
-                let removeSet = Set(request.removeMemberFingerprints.map {
-                    $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                }.filter { !$0.isEmpty })
-                let isSelfRemovalOnly = !removeSet.isEmpty && removeSet.isSubset(of: [actor])
-                guard !hasTitleChange, !hasMemberAdds, isSelfRemovalOnly else {
-                    throw RelayStoreError.unauthorizedGroupMutation
-                }
-            }
-            var changed = false
-            if let title = request.title?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !title.isEmpty,
-               title != group.title {
-                guard title.count <= maxGroupTitleCharacters else {
-                    throw RelayStoreError.invalidGroupTitle
-                }
-                group.title = title
-                changed = true
-            }
-
-            var members = Dictionary(uniqueKeysWithValues: group.members.map { ($0.fingerprint, $0) })
-            for fingerprint in request.addMemberFingerprints {
-                let normalized = fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !normalized.isEmpty else { continue }
-                if members[normalized] == nil {
-                    members[normalized] = makeGroupMember(
-                        fingerprint: normalized,
-                        existing: nil,
-                        profile: nil,
-                        joinedAt: Date()
-                    )
-                    changed = true
-                }
-            }
-            for profile in request.addMemberProfiles ?? [] {
-                guard let normalized = normalizedMemberProfile(profile) else { continue }
-                let existing = members[normalized.fingerprint]
-                let merged = makeGroupMember(
-                    fingerprint: normalized.fingerprint,
-                    existing: existing,
-                    profile: normalized,
-                    joinedAt: Date()
-                )
-                if existing != merged {
-                    members[normalized.fingerprint] = merged
-                    changed = true
-                }
-            }
-            for fingerprint in request.removeMemberFingerprints {
-                let normalized = fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !normalized.isEmpty else { continue }
-                guard normalized != group.createdByFingerprint else { continue }
-                if members.removeValue(forKey: normalized) != nil {
-                    changed = true
-                }
-            }
-            let projectedMemberFingerprints = Set(members.keys)
-            var consumedInvitationFingerprints = groupInvitationFingerprintsByGroup[group.id, default: []]
-                .intersection(projectedMemberFingerprints)
-            for pendingRequest in groupJoinRequests[group.id, default: []]
-            where projectedMemberFingerprints.contains(pendingRequest.requester.fingerprint) {
-                if let invitedFingerprint = pendingRequest.invitedFingerprint?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                   !invitedFingerprint.isEmpty {
-                    consumedInvitationFingerprints.insert(invitedFingerprint)
-                }
-            }
-            try validateGroupParticipantCapacity(
-                groupId: group.id,
-                memberFingerprints: projectedMemberFingerprints,
-                removingPendingInvitees: consumedInvitationFingerprints
-            )
-            guard members.count >= 2 else {
-                throw RelayStoreError.notEnoughGroupMembers
-            }
-
-            if changed {
-                let now = Date()
-                guard group.epoch < UInt64.max else {
-                    throw RelayStoreError.invalidGroupCommit
-                }
-                let nextEpochState = try group.mlsEpochState.advancing(
-                    title: group.title,
-                    inboxId: group.inboxId,
-                    actorFingerprint: actor,
-                    members: members.values.sorted { $0.fingerprint < $1.fingerprint },
-                    operation: operation,
-                    committedAt: now,
-                    ratchetSecretDistribution: request.groupCommit?.ratchetSecretDistribution
-                )
-                group.members = members.values.sorted { $0.fingerprint < $1.fingerprint }
-                group.epoch = nextEpochState.epoch
-                group.updatedAt = now
-                group.mlsEpochState = nextEpochState
-                group.mlsEpochHistory = boundedGroupEpochHistory(
-                    group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
-                )
-                groups[group.id] = group
-                for invitedFingerprint in consumedInvitationFingerprints {
-                    removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
-                }
-                if var pending = groupJoinRequests[group.id] {
-                    pending.removeAll { pendingRequest in
-                        group.members.contains { $0.fingerprint == pendingRequest.requester.fingerprint }
-                    }
-                    if pending.isEmpty {
-                        groupJoinRequests.removeValue(forKey: group.id)
-                    } else {
-                        groupJoinRequests[group.id] = pending
-                    }
-                }
-                try saveLocked()
-            }
-            return group
-        }
-    }
-
-    private func expectedGroupCommitOperation(
-        request: UpdateGroupRequest,
-        actorFingerprint: String,
-        isCreator: Bool
-    ) -> MLSGroupCommitOperation {
-        if request.groupCommit?.operation == .joinApprove,
-           isCreator,
-           request.normalizedTitle == nil,
-           !request.normalizedAddMemberFingerprints.isEmpty,
-           request.normalizedRemoveMemberFingerprints.isEmpty {
-            return .joinApprove
-        }
-        return groupCommitOperation(
-            request: request,
-            actorFingerprint: actorFingerprint,
-            isCreator: isCreator
-        )
-    }
-
-    private func validateGroupCommit(
-        request: UpdateGroupRequest,
-        group: RelayGroupDescriptor,
-        actorFingerprint: String,
-        operation: MLSGroupCommitOperation
-    ) throws {
-        guard let commit = request.groupCommit else {
-            throw RelayStoreError.invalidGroupCommit
-        }
-        guard commit.operation == operation,
-              commit.groupId == request.groupId,
-              commit.actorFingerprint == actorFingerprint,
-              commit.baseEpoch == group.epoch,
-              commit.previousTranscriptHash == group.mlsEpochState.confirmedTranscriptHash,
-              commit.title == request.normalizedTitle,
-              Set(commit.addMemberFingerprints) == Set(request.normalizedAddMemberFingerprints),
-              (commit.addMemberProfiles ?? []).sorted(by: { $0.fingerprint < $1.fingerprint }) == request.normalizedAddMemberProfiles,
-              Set(commit.removeMemberFingerprints) == Set(request.normalizedRemoveMemberFingerprints) else {
-            throw RelayStoreError.invalidGroupCommit
-        }
-        guard group.epoch < UInt64.max else {
-            throw RelayStoreError.invalidGroupCommit
-        }
-        try validateRatchetSecretDistribution(
-            commit.ratchetSecretDistribution,
-            groupId: group.id,
-            epoch: group.epoch + 1,
-            operation: operation,
-            memberFingerprints: projectedMemberFingerprints(for: request, group: group)
-        )
-    }
-
-    private func validateRatchetSecretDistribution(
-        _ distribution: GroupRatchetEpochSecretDistribution?,
-        groupId: UUID,
-        epoch: UInt64,
-        operation: MLSGroupCommitOperation,
-        memberFingerprints: [String]
-    ) throws {
-        guard let distribution else {
-            return
-        }
-        let members = Set(memberFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty })
-        guard distribution.groupId == groupId,
-              distribution.epoch == epoch,
-              distribution.operation == operation,
-              distribution.isStructurallyValid,
-              Set(distribution.memberFingerprints) == members,
-              Set(distribution.shares.map(\.recipientFingerprint)) == members,
-              distribution.shares.count == members.count else {
-            throw RelayStoreError.invalidGroupCommit
-        }
-    }
-
-    private func boundedGroupEpochHistory(_ history: [MLSGroupCommitSummary]) -> [MLSGroupCommitSummary] {
-        Array(history.sorted { $0.epoch < $1.epoch }.suffix(maxGroupEpochHistory))
-    }
-
-    private func projectedMemberFingerprints(
-        for request: UpdateGroupRequest,
-        group: RelayGroupDescriptor
-    ) -> [String] {
-        var members = Set(group.members.map(\.fingerprint))
-        members.formUnion(request.normalizedAddMemberFingerprints)
-        members.formUnion(request.normalizedAddMemberProfiles.map(\.fingerprint))
-        members.subtract(request.normalizedRemoveMemberFingerprints)
-        members.insert(group.createdByFingerprint)
-        return members.sorted()
-    }
-
-    private func groupCommitOperation(
-        request: UpdateGroupRequest,
-        actorFingerprint: String,
-        isCreator: Bool
-    ) -> MLSGroupCommitOperation {
-        let hasTitleChange = !(request.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        let addFingerprints = request.addMemberFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty }
-        let hasProfileAdds = request.addMemberProfiles?.contains { normalizedMemberProfile($0) != nil } ?? false
-        let removeFingerprints = request.removeMemberFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty }
-
-        if !isCreator && !removeFingerprints.isEmpty && Set(removeFingerprints).isSubset(of: [actorFingerprint]) {
-            return .selfLeave
-        }
-        if !addFingerprints.isEmpty || hasProfileAdds {
-            return removeFingerprints.isEmpty && !hasTitleChange ? .addMembers : .update
-        }
-        if !removeFingerprints.isEmpty {
-            return hasTitleChange ? .update : .removeMembers
-        }
-        return .update
-    }
-
-    func deleteGroup(_ request: DeleteGroupRequest) throws {
-        try performSync {
-            guard let group = groups[request.groupId] else {
-                throw RelayStoreError.groupNotFound
-            }
-            let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actor.isEmpty else {
-                throw RelayStoreError.invalidFingerprint
-            }
-            guard actor == group.createdByFingerprint else {
-                throw RelayStoreError.unauthorizedGroupMutation
-            }
-            groups.removeValue(forKey: request.groupId)
-            groupJoinRequests.removeValue(forKey: request.groupId)
-            removeGroupInvitations(groupId: request.groupId)
-            try saveLocked()
-        }
-    }
-
-    func requestGroupJoin(_ request: RequestGroupJoinRequest) throws -> RelayGroupJoinRequest {
-        try performSync {
-            guard let group = groups[request.groupId] else {
-                throw RelayStoreError.groupNotFound
-            }
-            guard let requester = normalizedMemberProfile(request.requesterProfile) else {
-                throw RelayStoreError.invalidFingerprint
-            }
-            let invitedFingerprint = request.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let invitedFingerprint, !invitedFingerprint.isEmpty {
-                guard groupInvitations[invitedFingerprint, default: []].contains(where: { $0.groupId == group.id }) else {
-                    throw RelayStoreError.unauthorizedGroupMutation
-                }
-            }
-            if group.members.contains(where: { $0.fingerprint == requester.fingerprint }) {
-                throw RelayStoreError.alreadyGroupMember
-            }
-
-            var pending = groupJoinRequests[group.id, default: []]
-            let now = Date()
-            if let existingIndex = pending.firstIndex(where: { $0.requester.fingerprint == requester.fingerprint }) {
-                let existing = pending[existingIndex]
-                let refreshed = RelayGroupJoinRequest(
-                    id: existing.id,
-                    groupId: group.id,
-                    requester: requester,
-                    invitedFingerprint: invitedFingerprint?.isEmpty == false
-                        ? invitedFingerprint
-                        : existing.invitedFingerprint,
-                    requestedAt: now
-                )
-                pending[existingIndex] = refreshed
-                pending.sort { lhs, rhs in lhs.requestedAt > rhs.requestedAt }
-                groupJoinRequests[group.id] = pending
-                try saveLocked()
-                return refreshed
-            }
-
-            let joinRequest = RelayGroupJoinRequest(
-                groupId: group.id,
-                requester: requester,
-                invitedFingerprint: invitedFingerprint?.isEmpty == false ? invitedFingerprint : nil,
-                requestedAt: now
-            )
-            pending.insert(joinRequest, at: 0)
-            if pending.count > maxGroupJoinRequests {
-                pending = Array(pending.prefix(maxGroupJoinRequests))
-            }
-            groupJoinRequests[group.id] = pending
-            try saveLocked()
-            return joinRequest
-        }
-    }
-
-    func acceptGroupInvitation(_ request: RequestGroupJoinRequest) throws -> RelayGroupDescriptor {
-        try performSync {
-            guard var group = groups[request.groupId] else {
-                throw RelayStoreError.groupNotFound
-            }
-            guard let requester = normalizedMemberProfile(request.requesterProfile) else {
-                throw RelayStoreError.invalidFingerprint
-            }
-            let invitedFingerprint = request.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !invitedFingerprint.isEmpty,
-                  groupInvitations[invitedFingerprint, default: []].contains(where: { $0.groupId == group.id }) else {
-                throw RelayStoreError.unauthorizedGroupMutation
-            }
-            if group.members.contains(where: { $0.fingerprint == requester.fingerprint }) {
-                removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
-                try saveLocked()
-                return group
-            }
-            guard let commit = request.groupCommit,
-                  commit.operation == .joinApprove,
-                  commit.groupId == group.id,
-                  commit.actorFingerprint == requester.fingerprint,
-                  commit.baseEpoch == group.epoch,
-                  commit.previousTranscriptHash == group.mlsEpochState.confirmedTranscriptHash,
-                  commit.title == nil,
-                  Set(commit.addMemberFingerprints) == Set([requester.fingerprint]),
-                  commit.addMemberProfiles == [requester],
-                  commit.removeMemberFingerprints.isEmpty else {
-                throw RelayStoreError.invalidGroupCommit
-            }
-
-            let memberProfiles = projectedGroupMemberProfiles(
-                currentMembers: group.members,
-                addProfiles: [requester]
-            )
-            guard group.epoch < UInt64.max else {
-                throw RelayStoreError.invalidGroupCommit
-            }
-            try validateRatchetSecretDistribution(
-                commit.ratchetSecretDistribution,
-                groupId: group.id,
-                epoch: group.epoch + 1,
-                operation: .joinApprove,
-                memberFingerprints: memberProfiles.map(\.fingerprint)
-            )
-
-            var memberMap = Dictionary(uniqueKeysWithValues: group.members.map { ($0.fingerprint, $0) })
-            memberMap[requester.fingerprint] = makeGroupMember(
-                fingerprint: requester.fingerprint,
-                existing: nil,
-                profile: requester,
-                joinedAt: Date()
-            )
-            try validateGroupParticipantCapacity(
-                groupId: group.id,
-                memberFingerprints: Set(memberMap.keys),
-                removingPendingInvitees: [invitedFingerprint]
-            )
-
-            let now = Date()
-            let nextEpochState = try group.mlsEpochState.advancing(
-                title: group.title,
-                inboxId: group.inboxId,
-                actorFingerprint: requester.fingerprint,
-                members: memberMap.values.sorted { $0.fingerprint < $1.fingerprint },
-                operation: .joinApprove,
-                committedAt: now,
-                ratchetSecretDistribution: commit.ratchetSecretDistribution
-            )
-            group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
-            group.epoch = nextEpochState.epoch
-            group.updatedAt = now
-            group.mlsEpochState = nextEpochState
-            group.mlsEpochHistory = boundedGroupEpochHistory(
-                group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
-            )
-            groups[group.id] = group
-            removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
-            if var pending = groupJoinRequests[group.id] {
-                pending.removeAll { $0.requester.fingerprint == requester.fingerprint }
-                if pending.isEmpty {
-                    groupJoinRequests.removeValue(forKey: group.id)
-                } else {
-                    groupJoinRequests[group.id] = pending
-                }
-            }
-            try saveLocked()
-            return group
-        }
-    }
-
-    func listGroupJoinRequests(_ request: ListGroupJoinRequestsRequest) throws -> [RelayGroupJoinRequest] {
-        try performSync {
-            guard let group = groups[request.groupId] else {
-                throw RelayStoreError.groupNotFound
-            }
-            let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actor.isEmpty else {
-                throw RelayStoreError.invalidFingerprint
-            }
-            guard actor == group.createdByFingerprint else {
-                throw RelayStoreError.unauthorizedGroupMutation
-            }
-            var pending = groupJoinRequests[group.id, default: []]
-            pending.sort { lhs, rhs in lhs.requestedAt > rhs.requestedAt }
-            if let limit = request.limit {
-                return Array(pending.prefix(max(0, limit)))
-            }
-            return pending
-        }
-    }
-
-    func approveGroupJoin(_ request: ApproveGroupJoinRequest) throws -> RelayGroupDescriptor {
-        try performSync {
-            guard let group = groups[request.groupId] else {
-                throw RelayStoreError.groupNotFound
-            }
-            let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actor.isEmpty else {
-                throw RelayStoreError.invalidFingerprint
-            }
-            guard actor == group.createdByFingerprint else {
-                throw RelayStoreError.unauthorizedGroupMutation
-            }
-
-            let pending = groupJoinRequests[group.id, default: []]
-            guard let joinRequest = pending.first(where: { $0.id == request.joinRequestId }) else {
-                throw RelayStoreError.groupJoinRequestNotFound
-            }
-
-            let updated = try updateGroup(
-                UpdateGroupRequest(
-                    groupId: group.id,
-                    actorFingerprint: actor,
-                    title: nil,
-                    addMemberFingerprints: [joinRequest.requester.fingerprint],
-                    addMemberProfiles: [joinRequest.requester],
-                    removeMemberFingerprints: [],
-                    actorProof: nil,
-                    groupCommit: request.groupCommit
-                )
-            )
-            var refreshedPending = groupJoinRequests[group.id, default: []]
-            refreshedPending.removeAll { $0.id == request.joinRequestId }
-            if refreshedPending.isEmpty {
-                groupJoinRequests.removeValue(forKey: group.id)
-            } else {
-                groupJoinRequests[group.id] = refreshedPending
-            }
-            if updated.members.contains(where: { $0.fingerprint == joinRequest.requester.fingerprint }),
-               let invitedFingerprint = joinRequest.invitedFingerprint {
-                removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
-            }
-            try saveLocked()
-            return updated
-        }
-    }
-
-    func rejectGroupJoin(_ request: RejectGroupJoinRequest) throws {
-        try performSync {
-            guard let group = groups[request.groupId] else {
-                throw RelayStoreError.groupNotFound
-            }
-            let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actor.isEmpty else {
-                throw RelayStoreError.invalidFingerprint
-            }
-            guard actor == group.createdByFingerprint else {
-                throw RelayStoreError.unauthorizedGroupMutation
-            }
-
-            var pending = groupJoinRequests[group.id, default: []]
-            guard let index = pending.firstIndex(where: { $0.id == request.joinRequestId }) else {
-                throw RelayStoreError.groupJoinRequestNotFound
-            }
-            pending.remove(at: index)
-            if pending.isEmpty {
-                groupJoinRequests.removeValue(forKey: group.id)
-            } else {
-                groupJoinRequests[group.id] = pending
-            }
-            try saveLocked()
-        }
-    }
-
-    private func removeGroupInvitation(groupId: UUID, invitedFingerprint: String) {
-        let fingerprint = invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fingerprint.isEmpty, var invitations = groupInvitations[fingerprint] else {
-            return
-        }
-        invitations.removeAll { $0.groupId == groupId }
-        if invitations.isEmpty {
-            groupInvitations.removeValue(forKey: fingerprint)
-        } else {
-            groupInvitations[fingerprint] = invitations
-        }
-        groupInvitationFingerprintsByGroup[groupId]?.remove(fingerprint)
-        if groupInvitationFingerprintsByGroup[groupId]?.isEmpty == true {
-            groupInvitationFingerprintsByGroup.removeValue(forKey: groupId)
-        }
-    }
-
-    private func removeGroupInvitations(groupId: UUID) {
-        for fingerprint in groupInvitationFingerprintsByGroup[groupId, default: []] {
-            removeGroupInvitation(groupId: groupId, invitedFingerprint: fingerprint)
-        }
-    }
-
-    private func insertGroupInvitation(_ invitation: RelayGroupInvitation) {
-        let fingerprint = invitation.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fingerprint.isEmpty,
-              !groupInvitations[fingerprint, default: []].contains(where: { $0.groupId == invitation.groupId }) else {
-            return
-        }
-        groupInvitations[fingerprint, default: []].insert(invitation, at: 0)
-        groupInvitationFingerprintsByGroup[invitation.groupId, default: []].insert(fingerprint)
-    }
-
-    private func validateInvitationBucketsCanAdd(
-        groupId: UUID,
-        fingerprints: Set<String>
-    ) throws {
-        for fingerprint in fingerprints {
-            let existingGroupIds = Set(groupInvitations[fingerprint, default: []].map(\.groupId))
-            guard existingGroupIds.contains(groupId)
-                    || existingGroupIds.count < maxGroupInvitationsPerIdentity else {
-                throw RelayStoreError.groupCapacityExceeded
-            }
-        }
-    }
-
-    private func validateGroupParticipantCapacity(
-        groupId: UUID,
-        memberFingerprints: Set<String>,
-        addingPendingInvitees: Set<String> = [],
-        removingPendingInvitees: Set<String> = []
-    ) throws {
-        var pendingInvitees = groupInvitationFingerprintsByGroup[groupId, default: []]
-        pendingInvitees.formUnion(addingPendingInvitees)
-        pendingInvitees.subtract(removingPendingInvitees)
-        pendingInvitees.subtract(memberFingerprints)
-        guard memberFingerprints.union(pendingInvitees).count <= maxGroupMembers else {
-            throw RelayStoreError.groupCapacityExceeded
-        }
-    }
-
-    private func normalizeGroupInvitationsAfterLoad() {
-        let candidates = groupInvitations.values
-            .flatMap { $0 }
-            .sorted { lhs, rhs in
-                if lhs.invitedAt != rhs.invitedAt {
-                    return lhs.invitedAt > rhs.invitedAt
-                }
-                return lhs.id.uuidString < rhs.id.uuidString
-            }
-        groupInvitations = [:]
-        groupInvitationFingerprintsByGroup = [:]
-        for invitation in candidates {
-            let fingerprint = invitation.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !fingerprint.isEmpty,
-                  let group = groups[invitation.groupId],
-                  !group.members.contains(where: { $0.fingerprint == fingerprint }),
-                  !groupInvitations[fingerprint, default: []].contains(where: {
-                      $0.groupId == invitation.groupId
-                  }),
-                  groupInvitations[fingerprint, default: []].count < maxGroupInvitationsPerIdentity else {
-                continue
-            }
-            let activeFingerprints = Set(group.members.map(\.fingerprint))
-            let pendingFingerprints = groupInvitationFingerprintsByGroup[group.id, default: []]
-            guard activeFingerprints.union(pendingFingerprints).count < maxGroupMembers else {
-                continue
-            }
-            insertGroupInvitation(invitation)
-        }
-    }
-
-    private func normalizedMemberProfile(_ profile: RelayGroupMemberProfile?) -> RelayGroupMemberProfile? {
-        guard let profile else { return nil }
-        let fingerprint = profile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fingerprint.isEmpty else { return nil }
-        let trimmedDisplayName: String?
-        if let displayName = profile.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !displayName.isEmpty {
-            trimmedDisplayName = displayName
-        } else {
-            trimmedDisplayName = nil
-        }
-        let trimmedInboxId: String?
-        if let inboxId = profile.inboxId?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !inboxId.isEmpty {
-            trimmedInboxId = inboxId
-        } else {
-            trimmedInboxId = nil
-        }
-        return RelayGroupMemberProfile(
-            fingerprint: fingerprint,
-            displayName: trimmedDisplayName,
-            inboxId: trimmedInboxId,
-            relay: profile.relay,
-            signingPublicKey: profile.signingPublicKey,
-            agreementPublicKey: profile.agreementPublicKey
-        )
-    }
-
-    private func makeGroupMember(
-        fingerprint: String,
-        existing: RelayGroupMember?,
-        profile: RelayGroupMemberProfile?,
-        joinedAt: Date
-    ) -> RelayGroupMember {
-        RelayGroupMember(
-            fingerprint: fingerprint,
-            joinedAt: existing?.joinedAt ?? joinedAt,
-            displayName: profile?.displayName ?? existing?.displayName,
-            inboxId: profile?.inboxId ?? existing?.inboxId,
-            relay: profile?.relay ?? existing?.relay,
-            signingPublicKey: profile?.signingPublicKey ?? existing?.signingPublicKey,
-            agreementPublicKey: profile?.agreementPublicKey ?? existing?.agreementPublicKey
-        )
-    }
-
-    private func projectedGroupMemberProfiles(
-        currentMembers: [RelayGroupMember],
-        addProfiles: [RelayGroupMemberProfile]
-    ) -> [RelayGroupMemberProfile] {
-        var profiles = Dictionary(uniqueKeysWithValues: currentMembers.map { member in
-            (
-                member.fingerprint,
-                RelayGroupMemberProfile(
-                    fingerprint: member.fingerprint,
-                    displayName: member.displayName,
-                    inboxId: member.inboxId,
-                    relay: member.relay,
-                    signingPublicKey: member.signingPublicKey,
-                    agreementPublicKey: member.agreementPublicKey
-                )
-            )
-        })
-        for profile in addProfiles {
-            let fingerprint = profile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !fingerprint.isEmpty else { continue }
-            profiles[fingerprint] = RelayGroupMemberProfile(
-                fingerprint: fingerprint,
-                displayName: profile.displayName,
-                inboxId: profile.inboxId,
-                relay: profile.relay,
-                signingPublicKey: profile.signingPublicKey,
-                agreementPublicKey: profile.agreementPublicKey
-            )
-        }
-        return profiles.values.sorted { $0.fingerprint < $1.fingerprint }
-    }
-
     private func nextMailboxSequenceLocked(inboxId: String) throws -> UInt64 {
         let storedNext = try nextSequence(after: mailboxes[inboxId, default: []])
         var candidate = storedNext
@@ -2669,12 +1445,7 @@ final class RelayStore {
         }
         registration.mailboxStream.retentionFloor = newFloor
         inboxRegistrations[inboxId] = registration
-        let retained = mailboxes[inboxId, default: []].filter { record in
-            if record.sequence > newFloor {
-                return true
-            }
-            return !(record.pendingGroupRecipientFingerprints?.isEmpty ?? true)
-        }
+        let retained = mailboxes[inboxId, default: []].filter { $0.sequence > newFloor }
         if retained.isEmpty {
             mailboxes.removeValue(forKey: inboxId)
         } else {
@@ -2725,7 +1496,6 @@ final class RelayStore {
             }
             enforceLimitsLocked()
             pruneAttachmentsLocked(now: Date())
-            prunePrekeysLocked(now: Date())
             let snapshot = currentSnapshot()
             try SQLiteRelayStateStore.saveState(snapshot, at: sqliteStoreURL(for: fileURL))
             lastDurableSnapshot = snapshot
@@ -2743,19 +1513,13 @@ final class RelayStore {
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
         normalizeMailboxSequencesLocked()
         attachments = snapshot.attachments
-        prekeyBundles = snapshot.prekeyBundles
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
-        groups = snapshot.groups
-        groupJoinRequests = snapshot.groupJoinRequests
-        groupInvitations = snapshot.groupInvitations
-        normalizeGroupInvitationsAfterLoad()
         actorProofReplayCache = snapshot.actorProofReplayCache.filter {
             $0.value > Date().addingTimeInterval(-300)
         }
         enforceLimitsLocked()
         pruneAttachmentsLocked(now: Date())
-        prunePrekeysLocked(now: Date())
         pruneFederationNodesLocked(now: Date())
         enforceLoadedInboxRetirementsLocked()
         normalizeInboxRouteCapabilitiesAfterLoadLocked()
@@ -2769,13 +1533,8 @@ final class RelayStore {
         inboxRouteCapabilities = snapshot.inboxRouteCapabilities
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
         attachments = snapshot.attachments
-        prekeyBundles = snapshot.prekeyBundles
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
-        groups = snapshot.groups
-        groupJoinRequests = snapshot.groupJoinRequests
-        groupInvitations = snapshot.groupInvitations
-        normalizeGroupInvitationsAfterLoad()
         actorProofReplayCache = snapshot.actorProofReplayCache
     }
 
@@ -2787,12 +1546,8 @@ final class RelayStore {
             inboxRouteCapabilities: inboxRouteCapabilities,
             rendezvousRoutesV2: rendezvousRoutesV2,
             attachments: attachments,
-            prekeyBundles: prekeyBundles,
             federationNodes: federationNodes,
             coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys,
-            groups: groups,
-            groupJoinRequests: groupJoinRequests,
-            groupInvitations: groupInvitations,
             actorProofReplayCache: actorProofReplayCache
         )
     }
@@ -2804,10 +1559,6 @@ final class RelayStore {
         }
         let base = url.pathExtension.isEmpty ? url : url.deletingPathExtension()
         return base.appendingPathExtension("sqlite")
-    }
-
-    private func pruneAnnouncements(now: Date) {
-        announcements = announcements.filter { $0.value.expiresAt > now }
     }
 
     private func pruneAttachmentsLocked(now: Date) {
@@ -2951,10 +1702,6 @@ final class RelayStore {
         if !isReferenced {
             attachmentBlobStore?.delete(external)
         }
-    }
-
-    private func prunePrekeysLocked(now: Date) {
-        prekeyBundles = prekeyBundles.filter { $0.value.expiresAt > now }
     }
 
     private func pruneFederationNodesLocked(now: Date) {
@@ -3248,12 +1995,8 @@ private struct RelayStoreSnapshot: Codable {
     let inboxRouteCapabilities: [String: InboxRouteCapabilityRecord]
     let rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2]
     let attachments: [String: [AttachmentRecord]]
-    let prekeyBundles: [String: PrekeyBundleRecord]
     let federationNodes: [String: FederationNodeRecord]
     let coordinatorPinnedPublicKeys: [String: Data]
-    let groups: [UUID: RelayGroupDescriptor]
-    let groupJoinRequests: [UUID: [RelayGroupJoinRequest]]
-    let groupInvitations: [String: [RelayGroupInvitation]]
     let actorProofReplayCache: [String: Date]
 
     static let empty = RelayStoreSnapshot(
@@ -3263,12 +2006,8 @@ private struct RelayStoreSnapshot: Codable {
         inboxRouteCapabilities: [:],
         rendezvousRoutesV2: [:],
         attachments: [:],
-        prekeyBundles: [:],
         federationNodes: [:],
         coordinatorPinnedPublicKeys: [:],
-        groups: [:],
-        groupJoinRequests: [:],
-        groupInvitations: [:],
         actorProofReplayCache: [:]
     )
 
@@ -3279,12 +2018,8 @@ private struct RelayStoreSnapshot: Codable {
         inboxRouteCapabilities: [String: InboxRouteCapabilityRecord] = [:],
         rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:],
         attachments: [String: [AttachmentRecord]],
-        prekeyBundles: [String: PrekeyBundleRecord] = [:],
         federationNodes: [String: FederationNodeRecord] = [:],
         coordinatorPinnedPublicKeys: [String: Data] = [:],
-        groups: [UUID: RelayGroupDescriptor] = [:],
-        groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:],
-        groupInvitations: [String: [RelayGroupInvitation]] = [:],
         actorProofReplayCache: [String: Date] = [:]
     ) {
         self.mailboxes = mailboxes
@@ -3293,12 +2028,8 @@ private struct RelayStoreSnapshot: Codable {
         self.inboxRouteCapabilities = inboxRouteCapabilities
         self.rendezvousRoutesV2 = rendezvousRoutesV2
         self.attachments = attachments
-        self.prekeyBundles = prekeyBundles
         self.federationNodes = federationNodes
         self.coordinatorPinnedPublicKeys = coordinatorPinnedPublicKeys
-        self.groups = groups
-        self.groupJoinRequests = groupJoinRequests
-        self.groupInvitations = groupInvitations
         self.actorProofReplayCache = actorProofReplayCache
     }
 
@@ -3319,15 +2050,8 @@ private struct RelayStoreSnapshot: Codable {
             forKey: .rendezvousRoutesV2
         ) ?? [:]
         attachments = try container.decodeIfPresent([String: [AttachmentRecord]].self, forKey: .attachments) ?? [:]
-        prekeyBundles = try container.decodeIfPresent([String: PrekeyBundleRecord].self, forKey: .prekeyBundles) ?? [:]
         federationNodes = try container.decodeIfPresent([String: FederationNodeRecord].self, forKey: .federationNodes) ?? [:]
         coordinatorPinnedPublicKeys = try container.decodeIfPresent([String: Data].self, forKey: .coordinatorPinnedPublicKeys) ?? [:]
-        groups = try container.decodeIfPresent([UUID: RelayGroupDescriptor].self, forKey: .groups) ?? [:]
-        groupJoinRequests = try container.decodeIfPresent([UUID: [RelayGroupJoinRequest]].self, forKey: .groupJoinRequests) ?? [:]
-        groupInvitations = try container.decodeIfPresent(
-            [String: [RelayGroupInvitation]].self,
-            forKey: .groupInvitations
-        ) ?? [:]
         actorProofReplayCache = try container.decodeIfPresent([String: Date].self, forKey: .actorProofReplayCache) ?? [:]
     }
 }
@@ -3466,89 +2190,9 @@ extension Data {
 }
 
 private struct StoredEnvelope: Codable {
-    private static let maximumGroupRecipientCount = 256
-    private static let maximumRecipientFingerprintBytes = 128
-
     var sequence: UInt64
     let envelope: Envelope
     let storedAt: Date
-    var pendingGroupRecipientFingerprints: Set<String>?
-    let originalGroupRecipientFingerprints: Set<String>?
-
-    init(
-        sequence: UInt64,
-        envelope: Envelope,
-        storedAt: Date,
-        pendingGroupRecipientFingerprints: Set<String>? = nil,
-        originalGroupRecipientFingerprints: Set<String>? = nil
-    ) {
-        self.sequence = sequence
-        self.envelope = envelope
-        self.storedAt = storedAt
-        self.pendingGroupRecipientFingerprints = pendingGroupRecipientFingerprints
-        self.originalGroupRecipientFingerprints = pendingGroupRecipientFingerprints.map {
-            originalGroupRecipientFingerprints ?? $0
-        }
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        sequence = try container.decodeIfPresent(UInt64.self, forKey: .sequence) ?? 0
-        envelope = try container.decode(Envelope.self, forKey: .envelope)
-        storedAt = try container.decode(Date.self, forKey: .storedAt)
-        pendingGroupRecipientFingerprints = try container.decodeIfPresent(
-            Set<String>.self,
-            forKey: .pendingGroupRecipientFingerprints
-        )
-        // Older normalized SQLite records only have the mutable pending set.
-        // Use that set as a fail-closed baseline; later saves persist it as the
-        // immutable original set without changing the table schema.
-        originalGroupRecipientFingerprints = try container.decodeIfPresent(
-            Set<String>.self,
-            forKey: .originalGroupRecipientFingerprints
-        ) ?? pendingGroupRecipientFingerprints
-        guard Self.isValidPersistedRecipientState(
-            pending: pendingGroupRecipientFingerprints,
-            original: originalGroupRecipientFingerprints
-        ) else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .pendingGroupRecipientFingerprints,
-                in: container,
-                debugDescription: "Invalid persisted group recipient state"
-            )
-        }
-    }
-
-    static func normalizedGroupRecipients(_ values: [String]) -> Set<String>? {
-        guard values.count <= maximumGroupRecipientCount else { return nil }
-        let recipients = Set(values.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty })
-        return isValidRecipientSet(recipients) ? recipients : nil
-    }
-
-    private static func isValidPersistedRecipientState(
-        pending: Set<String>?,
-        original: Set<String>?
-    ) -> Bool {
-        switch (pending, original) {
-        case (nil, nil):
-            return true
-        case let (.some(pending), .some(original)):
-            return isValidRecipientSet(pending)
-                && isValidRecipientSet(original)
-                && pending.isSubset(of: original)
-        default:
-            return false
-        }
-    }
-
-    private static func isValidRecipientSet(_ recipients: Set<String>) -> Bool {
-        recipients.count <= maximumGroupRecipientCount
-            && recipients.allSatisfy {
-                !$0.isEmpty && $0.utf8.count <= maximumRecipientFingerprintBytes
-            }
-    }
 }
 
 private struct AttachmentRecord: Codable {
@@ -3556,11 +2200,6 @@ private struct AttachmentRecord: Codable {
     let payload: EncryptedPayload?
     let external: AttachmentExternalRecord?
     let storedAt: Date
-    let expiresAt: Date
-}
-
-private struct PrekeyBundleRecord: Codable {
-    var bundle: PrekeyBundle
     let expiresAt: Date
 }
 
@@ -3612,12 +2251,8 @@ private enum SQLiteRelayStateStore {
             inboxRouteCapabilities: try loadInboxRouteCapabilities(in: db),
             rendezvousRoutesV2: try loadRendezvousRoutesV2(in: db),
             attachments: try loadAttachments(in: db),
-            prekeyBundles: try loadPrekeyBundles(in: db),
             federationNodes: try loadFederationNodes(in: db),
             coordinatorPinnedPublicKeys: try loadCoordinatorPinnedPublicKeys(in: db),
-            groups: try loadGroups(in: db),
-            groupJoinRequests: try loadGroupJoinRequests(in: db),
-            groupInvitations: try loadGroupInvitations(in: db),
             actorProofReplayCache: try loadActorProofReplayCache(in: db)
         )
     }
@@ -3662,32 +2297,11 @@ private enum SQLiteRelayStateStore {
                     try insertAttachmentRecord(attachmentId: attachmentId, record: record, in: db)
                 }
             }
-            for (fingerprint, record) in snapshot.prekeyBundles {
-                try insertPrekeyBundle(fingerprint: fingerprint, record: record, in: db)
-            }
             for (nodeKey, record) in snapshot.federationNodes {
                 try insertFederationNode(nodeKey: nodeKey, record: record, in: db)
             }
             for (coordinatorKey, publicKey) in snapshot.coordinatorPinnedPublicKeys {
                 try insertCoordinatorPinnedPublicKey(coordinatorKey: coordinatorKey, publicKey: publicKey, in: db)
-            }
-            for (groupId, group) in snapshot.groups {
-                try insertGroup(groupId: groupId, group: group, in: db)
-            }
-            for (groupId, requests) in snapshot.groupJoinRequests {
-                for (position, request) in requests.enumerated() {
-                    try insertGroupJoinRequest(groupId: groupId, position: position, request: request, in: db)
-                }
-            }
-            for (fingerprint, invitations) in snapshot.groupInvitations {
-                for (position, invitation) in invitations.enumerated() {
-                    try insertGroupInvitation(
-                        invitedFingerprint: fingerprint,
-                        position: position,
-                        invitation: invitation,
-                        in: db
-                    )
-                }
             }
             for (cacheKey, consumedAt) in snapshot.actorProofReplayCache {
                 try insertActorProofReplayCacheEntry(cacheKey: cacheKey, consumedAt: consumedAt, in: db)
@@ -3778,15 +2392,6 @@ private enum SQLiteRelayStateStore {
         return attachments
     }
 
-    private static func loadPrekeyBundles(in db: OpaquePointer) throws -> [String: PrekeyBundleRecord] {
-        var bundles: [String: PrekeyBundleRecord] = [:]
-        try queryRows("SELECT fingerprint, value FROM relay_prekey_bundles;", in: db) { statement in
-            let fingerprint = try readText(statement, column: 0, in: db)
-            bundles[fingerprint] = try decode(PrekeyBundleRecord.self, from: readBlob(statement, column: 1))
-        }
-        return bundles
-    }
-
     private static func loadFederationNodes(in db: OpaquePointer) throws -> [String: FederationNodeRecord] {
         var nodes: [String: FederationNodeRecord] = [:]
         try queryRows("SELECT node_key, value FROM relay_federation_nodes;", in: db) { statement in
@@ -3807,43 +2412,6 @@ private enum SQLiteRelayStateStore {
             keys[coordinatorKey] = publicKey
         }
         return keys
-    }
-
-    private static func loadGroups(in db: OpaquePointer) throws -> [UUID: RelayGroupDescriptor] {
-        var groups: [UUID: RelayGroupDescriptor] = [:]
-        try queryRows("SELECT group_id, value FROM relay_groups;", in: db) { statement in
-            guard let groupId = try UUID(uuidString: readText(statement, column: 0, in: db)) else {
-                throw SQLiteRelayStateStoreError.corrupt("invalid group identifier")
-            }
-            let group = try decode(RelayGroupDescriptor.self, from: readBlob(statement, column: 1))
-            groups[groupId] = group
-        }
-        return groups
-    }
-
-    private static func loadGroupJoinRequests(in db: OpaquePointer) throws -> [UUID: [RelayGroupJoinRequest]] {
-        var requests: [UUID: [RelayGroupJoinRequest]] = [:]
-        try queryRows("SELECT group_id, value FROM relay_group_join_requests ORDER BY group_id, position;", in: db) { statement in
-            guard let groupId = try UUID(uuidString: readText(statement, column: 0, in: db)) else {
-                throw SQLiteRelayStateStoreError.corrupt("invalid group join-request identifier")
-            }
-            let request = try decode(RelayGroupJoinRequest.self, from: readBlob(statement, column: 1))
-            requests[groupId, default: []].append(request)
-        }
-        return requests
-    }
-
-    private static func loadGroupInvitations(in db: OpaquePointer) throws -> [String: [RelayGroupInvitation]] {
-        var invitations: [String: [RelayGroupInvitation]] = [:]
-        try queryRows(
-            "SELECT invited_fingerprint, value FROM relay_group_invitations ORDER BY invited_fingerprint, position;",
-            in: db
-        ) { statement in
-            let fingerprint = try readText(statement, column: 0, in: db)
-            let invitation = try decode(RelayGroupInvitation.self, from: readBlob(statement, column: 1))
-            invitations[fingerprint, default: []].append(invitation)
-        }
-        return invitations
     }
 
     private static func loadActorProofReplayCache(in db: OpaquePointer) throws -> [String: Date] {
@@ -3958,17 +2526,6 @@ private enum SQLiteRelayStateStore {
         }
     }
 
-    private static func insertPrekeyBundle(fingerprint: String, record: PrekeyBundleRecord, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_prekey_bundles (fingerprint, expires_at, value) VALUES (?1, ?2, ?3);",
-            in: db
-        ) { statement in
-            try bindText(fingerprint, to: 1, in: statement, db: db)
-            try bindDouble(record.expiresAt.timeIntervalSince1970, to: 2, in: statement, db: db)
-            try bindBlob(encode(record), to: 3, in: statement, db: db)
-        }
-    }
-
     private static func insertFederationNode(nodeKey: String, record: FederationNodeRecord, in db: OpaquePointer) throws {
         try executePrepared(
             "INSERT INTO relay_federation_nodes (node_key, expires_at, value) VALUES (?1, ?2, ?3);",
@@ -3987,46 +2544,6 @@ private enum SQLiteRelayStateStore {
         ) { statement in
             try bindText(coordinatorKey, to: 1, in: statement, db: db)
             try bindBlob(publicKey, to: 2, in: statement, db: db)
-        }
-    }
-
-    private static func insertGroup(groupId: UUID, group: RelayGroupDescriptor, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_groups (group_id, value) VALUES (?1, ?2);",
-            in: db
-        ) { statement in
-            try bindText(groupId.uuidString, to: 1, in: statement, db: db)
-            try bindBlob(encode(group), to: 2, in: statement, db: db)
-        }
-    }
-
-    private static func insertGroupJoinRequest(groupId: UUID, position: Int, request: RelayGroupJoinRequest, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_group_join_requests (group_id, position, request_id, value) VALUES (?1, ?2, ?3, ?4);",
-            in: db
-        ) { statement in
-            try bindText(groupId.uuidString, to: 1, in: statement, db: db)
-            try bindInt(position, to: 2, in: statement, db: db)
-            try bindText(request.id.uuidString, to: 3, in: statement, db: db)
-            try bindBlob(encode(request), to: 4, in: statement, db: db)
-        }
-    }
-
-    private static func insertGroupInvitation(
-        invitedFingerprint: String,
-        position: Int,
-        invitation: RelayGroupInvitation,
-        in db: OpaquePointer
-    ) throws {
-        try executePrepared(
-            "INSERT INTO relay_group_invitations (invited_fingerprint, position, invitation_id, group_id, value) VALUES (?1, ?2, ?3, ?4, ?5);",
-            in: db
-        ) { statement in
-            try bindText(invitedFingerprint, to: 1, in: statement, db: db)
-            try bindInt(position, to: 2, in: statement, db: db)
-            try bindText(invitation.id.uuidString, to: 3, in: statement, db: db)
-            try bindText(invitation.groupId.uuidString, to: 4, in: statement, db: db)
-            try bindBlob(encode(invitation), to: 5, in: statement, db: db)
         }
     }
 
@@ -4077,12 +2594,8 @@ private enum SQLiteRelayStateStore {
             "relay_inbox_route_capabilities",
             "relay_rendezvous_routes_v2",
             "relay_attachment_chunks",
-            "relay_prekey_bundles",
             "relay_federation_nodes",
             "relay_coordinator_pinned_keys",
-            "relay_groups",
-            "relay_group_join_requests",
-            "relay_group_invitations",
             "relay_actor_proof_replay_cache"
         ] {
             try execute("DELETE FROM \(table);", in: db)
@@ -4157,11 +2670,6 @@ private enum SQLiteRelayStateStore {
             PRIMARY KEY (attachment_id, chunk_index)
         );
         CREATE INDEX IF NOT EXISTS relay_attachment_chunks_expiry_idx ON relay_attachment_chunks(expires_at);
-        CREATE TABLE IF NOT EXISTS relay_prekey_bundles (
-            fingerprint TEXT PRIMARY KEY,
-            expires_at REAL NOT NULL,
-            value BLOB NOT NULL
-        );
         CREATE TABLE IF NOT EXISTS relay_federation_nodes (
             node_key TEXT PRIMARY KEY,
             expires_at REAL NOT NULL,
@@ -4171,28 +2679,6 @@ private enum SQLiteRelayStateStore {
             coordinator_key TEXT PRIMARY KEY,
             public_key BLOB NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS relay_groups (
-            group_id TEXT PRIMARY KEY,
-            value BLOB NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS relay_group_join_requests (
-            group_id TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            request_id TEXT NOT NULL,
-            value BLOB NOT NULL,
-            PRIMARY KEY (group_id, position)
-        );
-        CREATE INDEX IF NOT EXISTS relay_group_join_requests_group_idx ON relay_group_join_requests(group_id);
-        CREATE TABLE IF NOT EXISTS relay_group_invitations (
-            invited_fingerprint TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            invitation_id TEXT NOT NULL,
-            group_id TEXT NOT NULL,
-            value BLOB NOT NULL,
-            PRIMARY KEY (invited_fingerprint, position)
-        );
-        CREATE INDEX IF NOT EXISTS relay_group_invitations_invited_idx ON relay_group_invitations(invited_fingerprint);
-        CREATE INDEX IF NOT EXISTS relay_group_invitations_group_idx ON relay_group_invitations(group_id);
         CREATE TABLE IF NOT EXISTS relay_actor_proof_replay_cache (
             cache_key TEXT PRIMARY KEY,
             consumed_at REAL NOT NULL

@@ -5,9 +5,7 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
     func testConfiguredRelayAdvertisesMailboxV2AndEnabledModules() throws {
         let info = RelayConfiguration(
             federation: FederationDescriptor(mode: .manual),
-            attachmentsEnabled: true,
-            groupCreationMode: .allowed,
-            compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
+            attachmentsEnabled: true
         ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
         let manifest = try XCTUnwrap(info.protocolCapabilities)
 
@@ -17,23 +15,7 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 2))
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 3))
         XCTAssertTrue(manifest.supports(module: "nw.blobs", version: 1))
-        XCTAssertTrue(manifest.supports(module: "nw.groups", version: 1))
-        XCTAssertEqual(
-            manifest.modules.first { $0.module == "nw.groups" }?.status,
-            .deprecated
-        )
-        XCTAssertTrue(
-            manifest.supports(
-                module: RelayCompatibilityProfile.legacyFingerprint,
-                version: 1
-            )
-        )
-        XCTAssertEqual(
-            manifest.modules.first {
-                $0.module == RelayCompatibilityProfile.legacyFingerprint
-            }?.status,
-            .deprecated
-        )
+        XCTAssertFalse(manifest.supports(module: "nw.groups", version: 1))
         let internallyEnabled = RelayConfiguration(
             experimentalRouteCapabilitiesEnabled: true
         ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
@@ -45,18 +27,12 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         XCTAssertEqual(decoded.protocolCapabilities, manifest)
     }
 
-    func testDefaultRelayDoesNotAdvertiseLegacyFingerprintOperations() throws {
+    func testDefaultRelayDoesNotAdvertiseUnavailableModules() throws {
         let info = RelayConfiguration().makeInfo()
         let manifest = try XCTUnwrap(info.protocolCapabilities)
 
         XCTAssertFalse(manifest.supports(module: "nw.prekeys", version: 1))
         XCTAssertFalse(manifest.supports(module: "nw.groups", version: 1))
-        XCTAssertFalse(
-            manifest.supports(
-                module: RelayCompatibilityProfile.legacyFingerprint,
-                version: 1
-            )
-        )
         XCTAssertEqual(info.groupCreationMode, .disabled)
     }
 }

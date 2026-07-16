@@ -38,10 +38,10 @@ direct endpoint, endpoint-scoped
 ordered mailbox cursors, durable exact-ciphertext retries, typed encrypted
 events and controls, privacy-minimized inbox registration, bounded replay-safe
 receive receipts, and local read-only history export/import inside a padded
-recipient-KEM transport seal. The in-process and Linux relays also share the
-fingerprint-scoped compatibility group-invitation implementation, which stays
-disabled unless an operator explicitly enables the deprecated
-`nw.compat.legacy-fingerprint` profile.
+recipient-KEM transport seal. The in-process and Linux relays expose only the
+1.0 mailbox, rendezvous, opaque-route, attachment, and federation surfaces;
+fingerprint-addressed pairing, prekey storage, groups, and destructive inbox
+acknowledgement are not protocol operations.
 
 This is not yet a complete multi-endpoint protocol. Purpose-bound
 same-generation endpoint admission exists only as an internal conformance
@@ -290,6 +290,7 @@ dependency, Docker, and optional container-scan checks with
 Technical detail lives in focused documents:
 
 - [Architecture revision v2 and implementation status](NoctweaveDocumentation/noctweave_architecture_revision_v2.md)
+- [Extension proposal and promotion process](NoctweaveDocumentation/noctweave_extension_process.md)
 - [Protocol v1 compatibility specification](NoctweaveDocumentation/noctweave_protocol_spec_v1.md)
 - [Relay OpenAPI schema](NoctweaveDocumentation/noctweave_relay_openapi.yaml)
 - [Wire format and test vectors](NoctweaveDocumentation/wire_format_and_test_vectors.md)

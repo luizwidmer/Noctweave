@@ -35,23 +35,6 @@ final class RelayStoreMailboxV2Tests: XCTestCase {
         }
     }
 
-    func testLegacyConsumerRegistrationDecodesWithoutCredentialAndFailsValidation() throws {
-        let consumer = MailboxConsumerId.generate()
-        let legacy = LegacyMailboxConsumerRegistration(
-            consumerId: consumer,
-            state: .active,
-            committedSequence: 0,
-            registeredAt: Date(timeIntervalSince1970: 100),
-            revokedAt: nil
-        )
-        let decoded = try JSONDecoder().decode(
-            MailboxConsumerRegistration.self,
-            from: JSONEncoder().encode(legacy)
-        )
-        XCTAssertNil(decoded.consumerSigningPublicKey)
-        XCTAssertFalse(decoded.isStructurallyValid)
-    }
-
     func testRevokedConsumerHistoryIsBoundedWithoutExhaustingDeviceChurn() throws {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
         let inboxId = InboxAddress.generate()
@@ -133,7 +116,7 @@ final class RelayStoreMailboxV2Tests: XCTestCase {
         )
     }
 
-    func testDirectAndGroupDeliveryAreIdempotentAndShareOneOrderedStream() throws {
+    func testDirectDeliveryIsIdempotentInTheOrderedStream() throws {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
         let inboxId = InboxAddress.generate()
         try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
@@ -146,18 +129,9 @@ final class RelayStoreMailboxV2Tests: XCTestCase {
             consumerSigningPublicKey: linuxMailboxPublicKey(0xC3)
         )
         let direct = makeEnvelope(id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!)
-        let group = makeEnvelope(id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!)
 
         XCTAssertEqual(try store.deliver(direct, to: inboxId), 1)
         XCTAssertEqual(try store.deliver(direct, to: inboxId), 1)
-        XCTAssertEqual(
-            try store.deliverGroupEnvelope(group, to: inboxId, recipientFingerprints: ["member-a"]),
-            2
-        )
-        XCTAssertEqual(
-            try store.deliverGroupEnvelope(group, to: inboxId, recipientFingerprints: ["member-a"]),
-            2
-        )
 
         let batch = try store.syncMailbox(
             inboxId: inboxId,
@@ -165,14 +139,14 @@ final class RelayStoreMailboxV2Tests: XCTestCase {
             cursor: nil,
             maxCount: nil
         )
-        XCTAssertEqual(batch.events.map(\.sequence), [1, 2])
-        XCTAssertEqual(batch.events.map(\.id), [direct.id, group.id])
-        XCTAssertEqual(batch.highWatermark, 2)
+        XCTAssertEqual(batch.events.map(\.sequence), [1])
+        XCTAssertEqual(batch.events.map(\.id), [direct.id])
+        XCTAssertEqual(batch.highWatermark, 1)
         XCTAssertFalse(batch.hasMore)
         XCTAssertTrue(batch.isStructurallyValid)
     }
 
-    func testConsumersCommitIndependentlyAndLegacyAckCannotDeleteTheirData() throws {
+    func testConsumersCommitIndependentlyBeforeGarbageCollection() throws {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
         let inboxId = InboxAddress.generate()
         try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x02]))
@@ -210,7 +184,6 @@ final class RelayStoreMailboxV2Tests: XCTestCase {
             cursor: nil,
             maxCount: nil
         )
-        XCTAssertEqual(try store.acknowledge(inboxId: inboxId, messageIds: [first.id, second.id]), 0)
         XCTAssertEqual(store.fetch(inboxId: inboxId, maxCount: nil).count, 2)
 
         XCTAssertEqual(
@@ -243,64 +216,6 @@ final class RelayStoreMailboxV2Tests: XCTestCase {
         XCTAssertTrue(caughtUp.events.isEmpty)
         XCTAssertEqual(caughtUp.retentionFloor, 2)
         XCTAssertTrue(caughtUp.isStructurallyValid)
-    }
-
-    func testLegacyGroupAckLeavesEnvelopeForActiveV2ConsumerUntilCommit() throws {
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
-        let inboxId = InboxAddress.generate()
-        try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x03]))
-        let consumer = MailboxConsumerId.generate(
-            nonce: UUID(uuidString: "DDDDDDDD-DDDD-DDDD-DDDD-DDDDDDDDDDDD")!
-        )
-        try store.registerMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumer,
-            consumerSigningPublicKey: linuxMailboxPublicKey(0xC6)
-        )
-        let envelope = makeEnvelope()
-        _ = try store.deliverGroupEnvelope(
-            envelope,
-            to: inboxId,
-            recipientFingerprints: ["member-a"]
-        )
-        let batch = try store.syncMailbox(
-            inboxId: inboxId,
-            consumerId: consumer,
-            cursor: nil,
-            maxCount: nil
-        )
-
-        XCTAssertEqual(
-            try store.acknowledgeGroupEnvelopes(
-                inboxId: inboxId,
-                messageIds: [envelope.id],
-                recipientFingerprint: "member-a"
-            ),
-            1
-        )
-        XCTAssertTrue(
-            store.fetchGroupEnvelopes(
-                inboxId: inboxId,
-                recipientFingerprint: "member-a",
-                maxCount: nil
-            ).isEmpty
-        )
-        XCTAssertEqual(
-            try store.syncMailbox(
-                inboxId: inboxId,
-                consumerId: consumer,
-                cursor: nil,
-                maxCount: nil
-            ).events.map(\.id),
-            [envelope.id]
-        )
-        _ = try store.commitMailboxCursor(
-            inboxId: inboxId,
-            consumerId: consumer,
-            cursor: batch.nextCursor,
-            sequence: batch.nextSequence
-        )
-        XCTAssertTrue(store.fetch(inboxId: inboxId, maxCount: nil).isEmpty)
     }
 
     func testRevocationRemovesConsumerFromRetentionAndRejectsFutureSync() throws {
@@ -420,14 +335,6 @@ final class RelayStoreMailboxV2Tests: XCTestCase {
             )
         )
     }
-}
-
-private struct LegacyMailboxConsumerRegistration: Codable {
-    let consumerId: MailboxConsumerId
-    let state: MailboxConsumerState
-    let committedSequence: UInt64
-    let registeredAt: Date
-    let revokedAt: Date?
 }
 
 private func linuxMailboxPublicKey(_ marker: UInt8) -> Data {

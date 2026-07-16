@@ -3,14 +3,12 @@ import XCTest
 @testable import NoctweaveCore
 
 final class RelayStorePersistenceAtomicityTests: XCTestCase {
-    func testFailedDirectAndGroupDeliveryRollBackThenExactRetryPersistsWithoutSequenceGap() async throws {
+    func testFailedDirectDeliveryRollsBackThenExactRetryPersistsWithoutSequenceGap() async throws {
         let fixture = try makeCorePersistentRelayFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let store = RelayStore(storeURL: fixture.storeURL, temporalBucketSeconds: 0)
         let inboxId = InboxAddress.generate()
-        let recipient = canonicalRelayFingerprint(0x31)
         let direct = structurallyValidCoreEnvelope(marker: 0x11)
-        let group = structurallyValidCoreEnvelope(marker: 0x12)
         try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
 
         await store.failNextPersistenceForTesting()
@@ -21,26 +19,6 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
         XCTAssertTrue(afterFailedDirect.isEmpty)
         let directCount = try await store.deliver(direct, to: inboxId)
         XCTAssertEqual(directCount, 1)
-
-        await store.failNextPersistenceForTesting()
-        await assertCoreFailure {
-            _ = try await store.deliverGroupEnvelope(
-                group,
-                to: inboxId,
-                recipientFingerprints: [recipient]
-            )
-        }
-        let afterFailedGroup = try await store.fetchGroupEnvelopes(
-            inboxId: inboxId,
-            recipientFingerprint: recipient
-        )
-        XCTAssertTrue(afterFailedGroup.isEmpty)
-        let groupCount = try await store.deliverGroupEnvelope(
-            group,
-            to: inboxId,
-            recipientFingerprints: [recipient]
-        )
-        XCTAssertEqual(groupCount, 2)
 
         let reloaded = RelayStore(storeURL: fixture.storeURL, temporalBucketSeconds: 0)
         try await reloaded.loadFromDisk()
@@ -57,62 +35,8 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
             consumerId: consumerId,
             maxCount: 10
         )
-        XCTAssertEqual(batch.events.map(\.sequence), [1, 2])
-        XCTAssertEqual(batch.events.map(\.envelope.id), [direct.id, group.id])
-    }
-
-    func testFailedDestructiveAcknowledgementsRollBackThenExactRetryPersists() async throws {
-        let fixture = try makeCorePersistentRelayFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let store = RelayStore(storeURL: fixture.storeURL, temporalBucketSeconds: 0)
-        let inboxId = InboxAddress.generate()
-        let recipient = canonicalRelayFingerprint(0x32)
-        let direct = structurallyValidCoreEnvelope(marker: 0x21)
-        let group = structurallyValidCoreEnvelope(marker: 0x22)
-        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
-        _ = try await store.deliver(direct, to: inboxId)
-        _ = try await store.deliverGroupEnvelope(
-            group,
-            to: inboxId,
-            recipientFingerprints: [recipient]
-        )
-
-        await store.failNextPersistenceForTesting()
-        await assertCoreFailure {
-            _ = try await store.acknowledge(inboxId: inboxId, messageIds: [direct.id])
-        }
-        let afterFailedDirectAck = try await store.fetch(inboxId: inboxId)
-        XCTAssertTrue(afterFailedDirectAck.contains { $0.id == direct.id })
-        let directRemoved = try await store.acknowledge(
-            inboxId: inboxId,
-            messageIds: [direct.id]
-        )
-        XCTAssertEqual(directRemoved, 1)
-
-        await store.failNextPersistenceForTesting()
-        await assertCoreFailure {
-            _ = try await store.acknowledgeGroupEnvelopes(
-                inboxId: inboxId,
-                messageIds: [group.id],
-                recipientFingerprint: recipient
-            )
-        }
-        let afterFailedGroupAck = try await store.fetchGroupEnvelopes(
-            inboxId: inboxId,
-            recipientFingerprint: recipient
-        )
-        XCTAssertEqual(afterFailedGroupAck.map(\.id), [group.id])
-        let groupRemoved = try await store.acknowledgeGroupEnvelopes(
-            inboxId: inboxId,
-            messageIds: [group.id],
-            recipientFingerprint: recipient
-        )
-        XCTAssertEqual(groupRemoved, 1)
-
-        let reloaded = RelayStore(storeURL: fixture.storeURL, temporalBucketSeconds: 0)
-        try await reloaded.loadFromDisk()
-        let persisted = try await reloaded.fetch(inboxId: inboxId)
-        XCTAssertTrue(persisted.isEmpty)
+        XCTAssertEqual(batch.events.map(\.sequence), [1])
+        XCTAssertEqual(batch.events.map(\.envelope.id), [direct.id])
     }
 
     func testMalformedEnvelopeIsRejectedBeforeMailboxSequenceAllocation() async throws {
@@ -122,13 +46,6 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
         try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
         await assertCoreFailure {
             _ = try await store.deliver(malformed, to: inboxId)
-        }
-        await assertCoreFailure {
-            _ = try await store.deliverGroupEnvelope(
-                malformed,
-                to: inboxId,
-                recipientFingerprints: [canonicalRelayFingerprint(0x42)]
-            )
         }
         let retained = try await store.fetch(inboxId: inboxId)
         XCTAssertTrue(retained.isEmpty)

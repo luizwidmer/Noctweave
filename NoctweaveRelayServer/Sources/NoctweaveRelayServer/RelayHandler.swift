@@ -113,14 +113,6 @@ final class RelayHandler: ChannelInboundHandler {
                 .error("Coordinator relays are directory-only and do not carry user traffic.")
             )
         }
-        if request.type.requiresLegacyFingerprintCompatibility,
-           !relayConfiguration.legacyFingerprintCompatibilityEnabled {
-            return context.eventLoop.makeSucceededFuture(
-                .error(
-                    "Deprecated compatibility profile \(RelayCompatibilityProfile.legacyFingerprint) is disabled"
-                )
-            )
-        }
         switch request.type {
         case .deliver:
             guard let deliver = request.deliver else {
@@ -220,23 +212,7 @@ final class RelayHandler: ChannelInboundHandler {
                   InboxAddress.isBound(registration.inboxId, to: registration.accessPublicKey) else {
                 return context.eventLoop.makeSucceededFuture(.error("Invalid inbox registration"))
             }
-            switch registration.registrationVersion {
-            case RegisterInboxRequest.privacyMinimizedVersion:
-                guard registration.contactOffer == nil else {
-                    return context.eventLoop.makeSucceededFuture(
-                        .error("Privacy-minimized inbox registration must not include a contact offer")
-                    )
-                }
-            case nil:
-                guard let offer = registration.contactOffer,
-                      offer.verifySignature(),
-                      offer.inboxId == registration.inboxId,
-                      offer.inboxAccessPublicKey == registration.accessPublicKey else {
-                    return context.eventLoop.makeSucceededFuture(
-                        .error("Inbox registration is not bound to a valid identity offer")
-                    )
-                }
-            default:
+            guard registration.registrationVersion == RegisterInboxRequest.privacyMinimizedVersion else {
                 return context.eventLoop.makeSucceededFuture(
                     .error("Unsupported inbox registration version")
                 )
@@ -591,41 +567,6 @@ final class RelayHandler: ChannelInboundHandler {
             }
             return fetchWithOptionalLongPoll(fetch, routingToken: routingToken, on: context.eventLoop)
                 .map { RelayResponse.messages($0) }
-        case .acknowledgeMessages:
-            guard let acknowledgement = request.acknowledgeMessages else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing acknowledgement payload"))
-            }
-            guard InboxAddress.isValid(acknowledgement.inboxId),
-                  !acknowledgement.messageIds.isEmpty,
-                  acknowledgement.messageIds.count <= 1_000 else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid acknowledgement"))
-            }
-            guard let accessPublicKey = store.inboxAccessPublicKey(for: acknowledgement.inboxId) else {
-                return context.eventLoop.makeSucceededFuture(.error("Inbox is not registered"))
-            }
-            guard !store.hasMailboxConsumerBindings(inboxId: acknowledgement.inboxId) else {
-                return context.eventLoop.makeSucceededFuture(
-                    .error("Legacy mailbox acknowledgement is disabled for endpoint-managed inboxes")
-                )
-            }
-            let accessFingerprint = Data(SHA256.hash(data: accessPublicKey)).base64EncodedString()
-            if let proofFailure = validateActorProof(
-                acknowledgement.accessProof,
-                expectedFingerprint: accessFingerprint,
-                expectedSigningKey: accessPublicKey,
-                signableDataBuilder: { proof in try acknowledgement.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                _ = try store.acknowledge(
-                    inboxId: acknowledgement.inboxId,
-                    messageIds: acknowledgement.messageIds
-                )
-            } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Relay storage is unavailable"))
-            }
-            return context.eventLoop.makeSucceededFuture(.ok())
         case .registerMailboxConsumer:
             guard let registration = request.registerMailboxConsumer,
                   InboxAddress.isValid(registration.inboxId),
@@ -820,142 +761,6 @@ final class RelayHandler: ChannelInboundHandler {
             } catch {
                 return context.eventLoop.makeSucceededFuture(mailboxSyncErrorResponse(error))
             }
-        case .deliverGroupMessage:
-            guard let deliver = request.deliverGroupMessage else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing group message delivery payload"))
-            }
-            guard InboxAddress.isValid(deliver.groupInboxId),
-                  deliver.envelope.groupId == deliver.groupId else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid group message delivery"))
-            }
-            if let destination = deliver.destinationRelay,
-               destination != localEndpoint {
-                let eventLoop = context.eventLoop
-                return federationGate(forwardingTo: destination, on: eventLoop).flatMap { response in
-                    if let response {
-                        return eventLoop.makeSucceededFuture(response)
-                    }
-                    let forward = DeliverGroupMessageRequest(
-                        groupId: deliver.groupId,
-                        groupInboxId: deliver.groupInboxId,
-                        envelope: deliver.envelope,
-                        destinationRelay: nil
-                    )
-                    return self.forwardGroupDeliver(
-                        forward,
-                        to: destination,
-                        on: eventLoop
-                    ).recover { _ in
-                        .error("Forwarding failed")
-                    }
-                }.recover { _ in
-                    .error("Forwarding failed")
-                }
-            }
-            guard let group = store.fetchGroup(groupId: deliver.groupId),
-                  group.inboxId == deliver.groupInboxId else {
-                return context.eventLoop.makeSucceededFuture(
-                    .error("Destination group inbox is not registered")
-                )
-            }
-            guard group.mlsEpochState.protocolVersion == MLSGroupEpochState.currentProtocolVersion,
-                  group.mlsEpochState.cipherSuite == MLSGroupEpochState.currentCipherSuite,
-                  deliver.envelope.protocolVersion == group.mlsEpochState.protocolVersion,
-                  deliver.envelope.cipherSuite == group.mlsEpochState.cipherSuite,
-                  deliver.envelope.epoch == group.mlsEpochState.epoch,
-                  deliver.envelope.transcriptHash == group.mlsEpochState.confirmedTranscriptHash else {
-                return context.eventLoop.makeSucceededFuture(
-                    .error("Group message does not match the current authenticated epoch")
-                )
-            }
-            guard let senderKey = registeredSigningKey(
-                for: deliver.envelope.senderFingerprint,
-                in: group
-            ),
-                  deliver.envelope.verifySignature(publicSigningKey: senderKey) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid group message signature"))
-            }
-            do {
-                let recipientFingerprints = group.members
-                    .map(\.fingerprint)
-                    .filter { $0 != deliver.envelope.senderFingerprint }
-                let count = try store.deliverGroupEnvelope(
-                    carrierEnvelope(for: deliver.envelope),
-                    to: deliver.groupInboxId,
-                    recipientFingerprints: recipientFingerprints
-                )
-                return context.eventLoop.makeSucceededFuture(.delivered(count: count))
-            } catch RelayStoreError.inboxFull {
-                return context.eventLoop.makeSucceededFuture(.error("Inbox full"))
-            } catch RelayStoreError.destinationInboxNotRegistered {
-                return context.eventLoop.makeSucceededFuture(.error("Destination group inbox is not registered"))
-            } catch RelayStoreError.inboxRetired {
-                return context.eventLoop.makeSucceededFuture(.error("Destination group inbox is retired"))
-            } catch RelayStoreError.relayCapacityExceeded {
-                return context.eventLoop.makeSucceededFuture(.error("Relay storage capacity reached"))
-            } catch RelayStoreError.invalidEnvelopePayload {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid envelope payload"))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Store error"))
-            }
-        case .fetchGroupMessages:
-            guard let fetch = request.fetchGroupMessages else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing group message fetch payload"))
-            }
-            guard InboxAddress.isValid(fetch.groupInboxId) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid group inbox"))
-            }
-            guard let group = store.fetchGroup(groupId: fetch.groupId),
-                  group.inboxId == fetch.groupInboxId else {
-                return context.eventLoop.makeSucceededFuture(.error("Group not found"))
-            }
-            guard let signingKey = registeredSigningKey(for: fetch.actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Actor is not a group member"))
-            }
-            if let proofFailure = validateActorProof(
-                fetch.actorProof,
-                expectedFingerprint: fetch.actorFingerprint,
-                expectedSigningKey: signingKey,
-                signableDataBuilder: { proof in try fetch.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            return fetchGroupMessagesWithOptionalLongPoll(fetch, on: context.eventLoop)
-                .map { RelayResponse.groupMessages($0) }
-        case .acknowledgeGroupMessages:
-            guard let acknowledgement = request.acknowledgeGroupMessages else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing group acknowledgement payload"))
-            }
-            guard InboxAddress.isValid(acknowledgement.groupInboxId),
-                  !acknowledgement.messageIds.isEmpty,
-                  acknowledgement.messageIds.count <= 1_000 else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid group acknowledgement"))
-            }
-            guard let group = store.fetchGroup(groupId: acknowledgement.groupId),
-                  group.inboxId == acknowledgement.groupInboxId else {
-                return context.eventLoop.makeSucceededFuture(.error("Group not found"))
-            }
-            guard let signingKey = registeredSigningKey(for: acknowledgement.actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Actor is not a group member"))
-            }
-            if let proofFailure = validateActorProof(
-                acknowledgement.actorProof,
-                expectedFingerprint: acknowledgement.actorFingerprint,
-                expectedSigningKey: signingKey,
-                signableDataBuilder: { proof in try acknowledgement.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                _ = try store.acknowledgeGroupEnvelopes(
-                    inboxId: acknowledgement.groupInboxId,
-                    messageIds: acknowledgement.messageIds,
-                    recipientFingerprint: acknowledgement.actorFingerprint
-                )
-            } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Relay storage is unavailable"))
-            }
-            return context.eventLoop.makeSucceededFuture(.ok())
         case .health:
             return context.eventLoop.makeSucceededFuture(.ok())
         case .info:
@@ -1029,61 +834,6 @@ final class RelayHandler: ChannelInboundHandler {
                 }
             }
             return context.eventLoop.makeSucceededFuture(.info(info))
-        case .announce:
-            guard let announce = request.announce else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing announce payload"))
-            }
-            guard OQSSignatureVerifier.shared.isAvailable,
-                  announce.offer.verifySignature() else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid contact offer."))
-            }
-            let announcement = store.announce(announce.offer, ttlSeconds: announce.ttlSeconds)
-            return context.eventLoop.makeSucceededFuture(.announcements([announcement]))
-        case .listAnnouncements:
-            guard let list = request.listAnnouncements else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing list payload"))
-            }
-            let announcements = store.listAnnouncements(limit: list.limit)
-            return context.eventLoop.makeSucceededFuture(.announcements(announcements))
-        case .sendPairRequest:
-            guard let request = request.sendPairRequest else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing pair request payload"))
-            }
-            guard isValidIdentityFingerprint(request.targetFingerprint) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid target fingerprint."))
-            }
-            guard OQSSignatureVerifier.shared.isAvailable,
-                  request.offer.verifySignature() else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid contact offer."))
-            }
-            if let proofFailure = validateActorProof(
-                request.actorProof,
-                expectedFingerprint: request.offer.fingerprint,
-                expectedSigningKey: request.offer.signingPublicKey,
-                signableDataBuilder: { proof in try request.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            _ = store.sendPairRequest(targetFingerprint: request.targetFingerprint, offer: request.offer)
-            return context.eventLoop.makeSucceededFuture(.ok())
-        case .fetchPairRequests:
-            guard let fetch = request.fetchPairRequests else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing fetch pair payload"))
-            }
-            let expectedFingerprint = fetch.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard isValidIdentityFingerprint(expectedFingerprint) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint."))
-            }
-            if let proofFailure = validateActorProof(
-                fetch.actorProof,
-                expectedFingerprint: expectedFingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try fetch.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            let requests = store.fetchPairRequests(targetFingerprint: fetch.fingerprint, maxCount: fetch.maxCount)
-            return context.eventLoop.makeSucceededFuture(.pairRequests(requests))
         case .uploadAttachment:
             guard relayConfiguration.attachmentsEnabled != false else {
                 return context.eventLoop.makeSucceededFuture(
@@ -1134,378 +884,6 @@ final class RelayHandler: ChannelInboundHandler {
                 return context.eventLoop.makeSucceededFuture(.error("Attachment blob backend unavailable"))
             } catch {
                 return context.eventLoop.makeSucceededFuture(.error("Attachment store error"))
-            }
-        case .uploadPrekeys:
-            guard let upload = request.uploadPrekeys else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing prekey bundle payload"))
-            }
-            let fingerprint = upload.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard fingerprint == upload.bundle.identityFingerprint else {
-                return context.eventLoop.makeSucceededFuture(.error("Prekey bundle fingerprint mismatch."))
-            }
-            if let proofFailure = validateActorProof(
-                upload.actorProof,
-                expectedFingerprint: fingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try upload.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            guard let publicSigningKey = upload.actorProof?.publicSigningKey,
-                  upload.bundle.isStructurallyValid(),
-                  verifySignedPrekey(upload.bundle.signedPrekey, using: publicSigningKey),
-                  upload.bundle.oneTimePrekeys.allSatisfy({
-                      verifyOneTimePrekey($0, using: publicSigningKey)
-                  }) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid authenticated prekey bundle."))
-            }
-            do {
-                try store.uploadPrekeyBundle(
-                    fingerprint: fingerprint,
-                    bundle: upload.bundle,
-                    ttlSeconds: upload.ttlSeconds
-                )
-                return context.eventLoop.makeSucceededFuture(.ok())
-            } catch RelayStoreError.invalidPrekeyBundle {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid prekey bundle."))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Prekey store error"))
-            }
-        case .fetchPrekeyBundle:
-            guard let fetch = request.fetchPrekeyBundle else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing fetch prekey payload"))
-            }
-            do {
-                let bundle = try store.fetchPrekeyBundle(fingerprint: fetch.fingerprint)
-                return context.eventLoop.makeSucceededFuture(.prekeyBundle(bundle))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Prekey fetch error"))
-            }
-        case .createGroup:
-            guard let create = request.createGroup else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing create group payload"))
-            }
-            guard relayConfiguration.groupCreationMode != .disabled else {
-                return context.eventLoop.makeSucceededFuture(.error("Group creation is disabled on this relay."))
-            }
-            let creatorFingerprint = create.creatorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !creatorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let creatorProfile = create.creatorProfile,
-                  let creatorSigningKey = creatorProfile.signingPublicKey,
-                  !creatorSigningKey.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Creator profile must include a signing key."))
-            }
-            guard creatorProfile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines) == creatorFingerprint else {
-                return context.eventLoop.makeSucceededFuture(.error("Creator profile fingerprint mismatch."))
-            }
-            if let proofFailure = validateActorProof(
-                create.creatorProof,
-                expectedFingerprint: creatorFingerprint,
-                expectedSigningKey: creatorSigningKey,
-                signableDataBuilder: { proof in try create.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                let group = try store.createGroup(
-                    groupId: create.groupId,
-                    title: create.title,
-                    creatorFingerprint: create.creatorFingerprint,
-                    memberFingerprints: create.memberFingerprints,
-                    creatorProfile: create.creatorProfile,
-                    memberProfiles: create.memberProfiles,
-                    invitedFingerprints: create.invitedFingerprints,
-                    initialRatchetSecretDistribution: create.initialRatchetSecretDistribution
-                )
-                return context.eventLoop.makeSucceededFuture(.group(group))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .getGroup:
-            guard let get = request.getGroup else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing get group payload"))
-            }
-            guard let group = store.fetchGroup(groupId: get.groupId) else {
-                return context.eventLoop.makeSucceededFuture(.group(nil))
-            }
-            let memberFingerprint = get.memberFingerprint?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !memberFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Group membership is required"))
-            }
-            let memberKey = registeredSigningKey(for: memberFingerprint, in: group)
-            let isInvited = store.hasGroupInvitation(
-                groupId: get.groupId,
-                invitedFingerprint: memberFingerprint
-            )
-            guard memberKey != nil || isInvited else {
-                return context.eventLoop.makeSucceededFuture(.error("Group membership is required"))
-            }
-            if let proofFailure = validateActorProof(
-                get.memberProof,
-                expectedFingerprint: memberFingerprint,
-                expectedSigningKey: memberKey,
-                signableDataBuilder: { proof in try get.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            return context.eventLoop.makeSucceededFuture(.group(group))
-        case .listGroups:
-            guard let list = request.listGroups else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing list groups payload"))
-            }
-            let memberFingerprint = list.memberFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !memberFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            if let proofFailure = validateActorProof(
-                list.memberProof,
-                expectedFingerprint: memberFingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try list.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            let groups = store.listGroups(memberFingerprint: list.memberFingerprint, limit: list.limit)
-            return context.eventLoop.makeSucceededFuture(.groups(groups))
-        case .listGroupInvitations:
-            guard let list = request.listGroupInvitations else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing list invitations payload"))
-            }
-            let invitedFingerprint = list.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !invitedFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            if let proofFailure = validateActorProof(
-                list.invitedProof,
-                expectedFingerprint: invitedFingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try list.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            let invitations = store.listGroupInvitations(list)
-            return context.eventLoop.makeSucceededFuture(.groupInvitations(invitations))
-        case .inviteGroupMembers:
-            guard let invite = request.inviteGroupMembers else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing invite group members payload"))
-            }
-            guard let group = store.fetchGroup(groupId: invite.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = invite.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard actorFingerprint == group.createdByFingerprint else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.unauthorizedGroupMutation))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group creator signing key is missing. Re-pair and re-join the group."))
-            }
-            if let proofFailure = validateActorProof(
-                invite.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try invite.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                let group = try store.inviteGroupMembers(invite)
-                return context.eventLoop.makeSucceededFuture(.group(group))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .updateGroup:
-            guard let update = request.updateGroup else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing update group payload"))
-            }
-            guard let group = store.fetchGroup(groupId: update.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = update.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
-            }
-            guard let groupCommit = update.groupCommit else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing signed group commit"))
-            }
-            if let proofFailure = validateActorProof(
-                groupCommit.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try groupCommit.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                let group = try store.updateGroup(update)
-                return context.eventLoop.makeSucceededFuture(.group(group))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .deleteGroup:
-            guard let delete = request.deleteGroup else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing delete group payload"))
-            }
-            guard let group = store.fetchGroup(groupId: delete.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = delete.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
-            }
-            if let proofFailure = validateActorProof(
-                delete.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try delete.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                try store.deleteGroup(delete)
-                return context.eventLoop.makeSucceededFuture(.ok())
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .requestGroupJoin:
-            guard let join = request.requestGroupJoin else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing request join payload"))
-            }
-            let requesterFingerprint = join.requesterProfile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !requesterFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let requesterSigningKey = join.requesterProfile.signingPublicKey,
-                  !requesterSigningKey.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Requester profile must include a signing key."))
-            }
-            if let proofFailure = validateActorProof(
-                join.requesterProof,
-                expectedFingerprint: requesterFingerprint,
-                expectedSigningKey: requesterSigningKey,
-                signableDataBuilder: { proof in try join.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            if let groupCommit = join.groupCommit,
-               let proofFailure = validateActorProof(
-                   groupCommit.actorProof,
-                   expectedFingerprint: requesterFingerprint,
-                   expectedSigningKey: requesterSigningKey,
-                   signableDataBuilder: { proof in try groupCommit.signableData(for: proof) }
-               ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                if join.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
-                   join.groupCommit != nil {
-                    let group = try store.acceptGroupInvitation(join)
-                    return context.eventLoop.makeSucceededFuture(.group(group))
-                }
-                let created = try store.requestGroupJoin(join)
-                return context.eventLoop.makeSucceededFuture(.groupJoinRequests([created]))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .listGroupJoinRequests:
-            guard let list = request.listGroupJoinRequests else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing list join payload"))
-            }
-            guard let group = store.fetchGroup(groupId: list.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = list.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
-            }
-            if let proofFailure = validateActorProof(
-                list.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try list.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                let pending = try store.listGroupJoinRequests(list)
-                return context.eventLoop.makeSucceededFuture(.groupJoinRequests(pending))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .approveGroupJoin:
-            guard let approve = request.approveGroupJoin else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing approve join payload"))
-            }
-            guard let group = store.fetchGroup(groupId: approve.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = approve.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
-            }
-            if let proofFailure = validateActorProof(
-                approve.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try approve.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            if let proofFailure = validateActorProof(
-                approve.groupCommit.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try approve.groupCommit.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                let group = try store.approveGroupJoin(approve)
-                return context.eventLoop.makeSucceededFuture(.group(group))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .rejectGroupJoin:
-            guard let reject = request.rejectGroupJoin else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing reject join payload"))
-            }
-            guard let group = store.fetchGroup(groupId: reject.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = reject.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
-            }
-            if let proofFailure = validateActorProof(
-                reject.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try reject.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                try store.rejectGroupJoin(reject)
-                return context.eventLoop.makeSucceededFuture(.ok())
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
             }
         case .registerFederationNode:
             guard relayConfiguration.kind == .coordinator else {
@@ -1624,26 +1002,6 @@ final class RelayHandler: ChannelInboundHandler {
             return .error("Invalid attachment payload")
         case RelayStoreError.attachmentBlobUnavailable:
             return .error("Attachment blob backend unavailable")
-        case RelayStoreError.invalidPrekeyBundle:
-            return .error("Invalid prekey bundle")
-        case RelayStoreError.groupCapacityExceeded:
-            return .error("Group capacity reached")
-        case RelayStoreError.invalidGroupTitle:
-            return .error("Invalid group title")
-        case RelayStoreError.invalidFingerprint:
-            return .error("Invalid fingerprint")
-        case RelayStoreError.invalidGroupCommit:
-            return .error("Invalid group commit")
-        case RelayStoreError.notEnoughGroupMembers:
-            return .error("A group requires at least 2 members")
-        case RelayStoreError.groupNotFound:
-            return .error("Group not found")
-        case RelayStoreError.unauthorizedGroupMutation:
-            return .error("Unauthorized group update")
-        case RelayStoreError.groupJoinRequestNotFound:
-            return .error("Group join request not found")
-        case RelayStoreError.alreadyGroupMember:
-            return .error("Requester is already a group member")
         default:
             return .error("Store error")
         }
@@ -1671,18 +1029,6 @@ final class RelayHandler: ChannelInboundHandler {
     ) -> EventLoopFuture<RelayResponse> {
         sendRequest(
             .deliver(deliver).withAuthToken(relayConfiguration.federationForwardingAuthToken),
-            to: endpoint,
-            on: eventLoop
-        )
-    }
-
-    private func forwardGroupDeliver(
-        _ deliver: DeliverGroupMessageRequest,
-        to endpoint: RelayEndpoint,
-        on eventLoop: EventLoop
-    ) -> EventLoopFuture<RelayResponse> {
-        sendRequest(
-            .deliverGroupMessage(deliver).withAuthToken(relayConfiguration.federationForwardingAuthToken),
             to: endpoint,
             on: eventLoop
         )
@@ -2286,19 +1632,6 @@ final class RelayHandler: ChannelInboundHandler {
         return promise.futureResult
     }
 
-    private func registeredSigningKey(
-        for actorFingerprint: String,
-        in group: RelayGroupDescriptor
-    ) -> Data? {
-        guard let key = group.members.first(where: { member in
-            member.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines) == actorFingerprint
-        })?.signingPublicKey,
-            !key.isEmpty else {
-            return nil
-        }
-        return key
-    }
-
     private func mailboxSyncErrorResponse(_ error: Error) -> RelayResponse {
         switch error {
         case MailboxSyncError.invalidConsumer:
@@ -2445,41 +1778,6 @@ final class RelayHandler: ChannelInboundHandler {
         return nil
     }
 
-    private func verifySignedPrekey(_ prekey: SignedPrekey, using publicSigningKey: Data) -> Bool {
-        guard OQSSignatureVerifier.shared.isAvailable,
-              let signableData = try? RelayCodec.encoder(sortedKeys: true).encode(
-                SignedPrekeyVerificationPayload(
-                    id: prekey.id,
-                    publicKey: prekey.publicKey,
-                    issuedAt: prekey.issuedAt
-                )
-              ) else {
-            return false
-        }
-        return OQSSignatureVerifier.shared.verify(
-            signature: prekey.signature,
-            data: signableData,
-            publicKey: publicSigningKey
-        )
-    }
-
-    private func verifyOneTimePrekey(_ prekey: OneTimePrekey, using publicSigningKey: Data) -> Bool {
-        guard OQSSignatureVerifier.shared.isAvailable,
-              let signableData = try? RelayCodec.encoder(sortedKeys: true).encode(
-                OneTimePrekeyVerificationPayload(
-                    id: prekey.id,
-                    publicKey: prekey.publicKey
-                )
-              ) else {
-            return false
-        }
-        return OQSSignatureVerifier.shared.verify(
-            signature: prekey.signature,
-            data: signableData,
-            publicKey: publicSigningKey
-        )
-    }
-
     private func fetchWithOptionalLongPoll(
         _ fetch: FetchRequest,
         routingToken: String,
@@ -2599,55 +1897,6 @@ final class RelayHandler: ChannelInboundHandler {
         boundedLongPollTimeoutSeconds(requested: fetch.longPollTimeoutSeconds)
     }
 
-    private func fetchGroupMessagesWithOptionalLongPoll(
-        _ fetch: FetchGroupMessagesRequest,
-        on eventLoop: EventLoop
-    ) -> EventLoopFuture<[GroupRatchetEnvelope]> {
-        let messages = store.fetchGroupEnvelopes(
-            inboxId: fetch.groupInboxId,
-            recipientFingerprint: fetch.actorFingerprint,
-            maxCount: fetch.maxCount
-        )
-            .compactMap { groupRatchetEnvelope(from: $0, groupId: fetch.groupId) }
-        guard messages.isEmpty,
-              let timeout = boundedLongPollTimeoutSeconds(requested: fetch.longPollTimeoutSeconds) else {
-            return eventLoop.makeSucceededFuture(messages)
-        }
-        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
-        return fetchGroupMessagesWithLongPollRetry(fetch, deadline: deadline, on: eventLoop)
-    }
-
-    private func fetchGroupMessagesWithLongPollRetry(
-        _ fetch: FetchGroupMessagesRequest,
-        deadline: Date,
-        on eventLoop: EventLoop
-    ) -> EventLoopFuture<[GroupRatchetEnvelope]> {
-        let remaining = deadline.timeIntervalSinceNow
-        guard remaining > 0 else {
-            return eventLoop.makeSucceededFuture(
-                store.fetchGroupEnvelopes(
-                    inboxId: fetch.groupInboxId,
-                    recipientFingerprint: fetch.actorFingerprint,
-                    maxCount: fetch.maxCount
-                )
-                    .compactMap { groupRatchetEnvelope(from: $0, groupId: fetch.groupId) }
-            )
-        }
-        let delayMilliseconds = Int64(max(1, min(250, remaining * 1_000)))
-        return eventLoop.scheduleTask(in: .milliseconds(delayMilliseconds)) {
-            let messages = self.store.fetchGroupEnvelopes(
-                inboxId: fetch.groupInboxId,
-                recipientFingerprint: fetch.actorFingerprint,
-                maxCount: fetch.maxCount
-            )
-                .compactMap { self.groupRatchetEnvelope(from: $0, groupId: fetch.groupId) }
-            if !messages.isEmpty || Date() >= deadline {
-                return eventLoop.makeSucceededFuture(messages)
-            }
-            return self.fetchGroupMessagesWithLongPollRetry(fetch, deadline: deadline, on: eventLoop)
-        }.futureResult.flatMap { $0 }
-    }
-
     private func boundedLongPollTimeoutSeconds(requested: Int?) -> Int? {
         guard let requested,
               requested > 0,
@@ -2661,55 +1910,6 @@ final class RelayHandler: ChannelInboundHandler {
             return nil
         }
         return min(max(1, requested), advertised)
-    }
-
-    private func carrierEnvelope(for envelope: GroupRatchetEnvelope) -> Envelope {
-        Envelope(
-            id: envelope.id,
-            conversationId: "group:\(envelope.groupId.uuidString)",
-            sessionId: nil,
-            senderFingerprint: envelope.senderFingerprint,
-            sentAt: envelope.sentAt,
-            messageCounter: envelope.messageCounter,
-            kemCiphertext: nil,
-            prekey: nil,
-            rootRatchet: nil,
-            authenticatedContext: MessageAuthenticatedContext(
-                purpose: .group,
-                group: GroupMessageAuthenticatedContext(
-                    protocolVersion: envelope.protocolVersion,
-                    cipherSuite: envelope.cipherSuite,
-                    groupId: envelope.groupId,
-                    epoch: envelope.epoch,
-                    senderFingerprint: envelope.senderFingerprint,
-                    transcriptHash: envelope.transcriptHash
-                )
-            ),
-            payload: envelope.payload,
-            signature: envelope.signature
-        )
-    }
-
-    private func groupRatchetEnvelope(from carrier: Envelope, groupId: UUID) -> GroupRatchetEnvelope? {
-        guard carrier.conversationId == "group:\(groupId.uuidString)",
-              let context = carrier.authenticatedContext?.group,
-              context.groupId == groupId,
-              context.senderFingerprint == carrier.senderFingerprint else {
-            return nil
-        }
-        return GroupRatchetEnvelope(
-            id: carrier.id,
-            protocolVersion: context.protocolVersion,
-            cipherSuite: context.cipherSuite,
-            groupId: groupId,
-            epoch: context.epoch,
-            transcriptHash: context.transcriptHash,
-            senderFingerprint: carrier.senderFingerprint,
-            sentAt: carrier.sentAt,
-            messageCounter: carrier.messageCounter,
-            payload: carrier.payload,
-            signature: carrier.signature
-        )
     }
 
     private func requiresAuthentication(for type: RelayRequestType) -> Bool {
@@ -2785,13 +1985,6 @@ final class RelayHandler: ChannelInboundHandler {
             difference |= Int(left ^ right)
         }
         return difference == 0
-    }
-
-    private func isValidIdentityFingerprint(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed == value
-            && trimmed.count <= 64
-            && Data(base64Encoded: trimmed)?.count == 32
     }
 
     private func isCoordinatorDirectoryRequestType(_ type: RelayRequestType) -> Bool {

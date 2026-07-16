@@ -3,7 +3,7 @@ import XCTest
 @testable import NoctweaveRelayServer
 
 final class RelayStorePersistenceAtomicityTests: XCTestCase {
-    func testFailedDirectAndGroupDeliveryRollBackThenExactRetryPersistsWithoutSequenceGap() throws {
+    func testFailedDirectDeliveryRollsBackThenExactRetryPersistsWithoutSequenceGap() throws {
         let fixture = try makeLinuxPersistentRelayFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let store = RelayStore(
@@ -12,39 +12,13 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
             temporalBucketSeconds: 0
         )
         let inboxId = InboxAddress.generate()
-        let recipient = canonicalLinuxRelayFingerprint(0x31)
         let direct = structurallyValidLinuxEnvelope(marker: 0x11)
-        let group = structurallyValidLinuxEnvelope(marker: 0x12)
         try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
 
         store.failNextPersistenceForTesting()
         XCTAssertThrowsError(try store.deliver(direct, to: inboxId))
         XCTAssertTrue(store.fetch(inboxId: inboxId, maxCount: nil).isEmpty)
         XCTAssertEqual(try store.deliver(direct, to: inboxId), 1)
-
-        store.failNextPersistenceForTesting()
-        XCTAssertThrowsError(
-            try store.deliverGroupEnvelope(
-                group,
-                to: inboxId,
-                recipientFingerprints: [recipient]
-            )
-        )
-        XCTAssertTrue(
-            store.fetchGroupEnvelopes(
-                inboxId: inboxId,
-                recipientFingerprint: recipient,
-                maxCount: nil
-            ).isEmpty
-        )
-        XCTAssertEqual(
-            try store.deliverGroupEnvelope(
-                group,
-                to: inboxId,
-                recipientFingerprints: [recipient]
-            ),
-            2
-        )
 
         let reloaded = RelayStore(
             fileURL: fixture.storeURL,
@@ -69,74 +43,8 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
             cursor: nil,
             maxCount: 10
         )
-        XCTAssertEqual(batch.events.map(\.sequence), [1, 2])
-        XCTAssertEqual(batch.events.map(\.envelope.id), [direct.id, group.id])
-    }
-
-    func testFailedDestructiveAcknowledgementsRollBackThenExactRetryPersists() throws {
-        let fixture = try makeLinuxPersistentRelayFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let store = RelayStore(
-            fileURL: fixture.storeURL,
-            maxInboxMessages: nil,
-            temporalBucketSeconds: 0
-        )
-        let inboxId = InboxAddress.generate()
-        let recipient = canonicalLinuxRelayFingerprint(0x32)
-        let direct = structurallyValidLinuxEnvelope(marker: 0x21)
-        let group = structurallyValidLinuxEnvelope(marker: 0x22)
-        try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
-        _ = try store.deliver(direct, to: inboxId)
-        _ = try store.deliverGroupEnvelope(
-            group,
-            to: inboxId,
-            recipientFingerprints: [recipient]
-        )
-
-        store.failNextPersistenceForTesting()
-        XCTAssertThrowsError(
-            try store.acknowledge(inboxId: inboxId, messageIds: [direct.id])
-        )
-        XCTAssertTrue(
-            store.fetch(inboxId: inboxId, maxCount: nil).contains { $0.id == direct.id }
-        )
-        XCTAssertEqual(
-            try store.acknowledge(inboxId: inboxId, messageIds: [direct.id]),
-            1
-        )
-
-        store.failNextPersistenceForTesting()
-        XCTAssertThrowsError(
-            try store.acknowledgeGroupEnvelopes(
-                inboxId: inboxId,
-                messageIds: [group.id],
-                recipientFingerprint: recipient
-            )
-        )
-        XCTAssertEqual(
-            store.fetchGroupEnvelopes(
-                inboxId: inboxId,
-                recipientFingerprint: recipient,
-                maxCount: nil
-            ).map(\.id),
-            [group.id]
-        )
-        XCTAssertEqual(
-            try store.acknowledgeGroupEnvelopes(
-                inboxId: inboxId,
-                messageIds: [group.id],
-                recipientFingerprint: recipient
-            ),
-            1
-        )
-
-        let reloaded = RelayStore(
-            fileURL: fixture.storeURL,
-            maxInboxMessages: nil,
-            temporalBucketSeconds: 0
-        )
-        try reloaded.load()
-        XCTAssertTrue(reloaded.fetch(inboxId: inboxId, maxCount: nil).isEmpty)
+        XCTAssertEqual(batch.events.map(\.sequence), [1])
+        XCTAssertEqual(batch.events.map(\.envelope.id), [direct.id])
     }
 
     func testMalformedEnvelopeIsRejectedBeforeMailboxSequenceAllocation() throws {
@@ -145,13 +53,6 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
         let malformed = structurallyValidLinuxEnvelope(marker: 0x41, signatureBytes: 100_000)
         try store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
         XCTAssertThrowsError(try store.deliver(malformed, to: inboxId))
-        XCTAssertThrowsError(
-            try store.deliverGroupEnvelope(
-                malformed,
-                to: inboxId,
-                recipientFingerprints: [canonicalLinuxRelayFingerprint(0x42)]
-            )
-        )
         XCTAssertTrue(store.fetch(inboxId: inboxId, maxCount: nil).isEmpty)
     }
 

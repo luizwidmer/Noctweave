@@ -666,7 +666,7 @@ public enum GroupRatchet {
               senderFingerprint == CryptoBox.fingerprint(for: senderSigningKey.publicKeyData) else {
             throw CryptoError.invalidPayload
         }
-        var plaintext = try PaddedMessagePlaintext.encodeLegacyMessageBody(body)
+        var plaintext = try PaddedMessagePlaintext.encodeGroupMessageBody(body)
         defer { plaintext.secureWipe() }
         let sentAt = MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
         let envelopeId = UUID()
@@ -770,7 +770,7 @@ public enum GroupRatchet {
         )
         var plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: aad)
         defer { plaintext.secureWipe() }
-        let body = try PaddedMessagePlaintext.decodeLegacyMessageBody(plaintext)
+        let body = try PaddedMessagePlaintext.decodeGroupMessageBody(plaintext)
         state = candidateState
         return (body, key)
     }

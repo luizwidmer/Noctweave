@@ -84,9 +84,9 @@ delivery. Multi-endpoint admission itself is deliberately not a public API yet:
   references are relationship-scoped hashes. The full certificate, public
   keys, prekey bundle, global endpoint UUID, identity fingerprint, and endpoint
   set are not carried in the relay-visible direct context. Sessions are keyed
-  by contact, local endpoint, peer endpoint, both
-  handles, certificate references, and manifest epochs. Legacy contacts remain
-  on the explicit legacy identity-key wire and are not silently upgraded.
+  by contact, local endpoint, peer endpoint, both handles, certificate
+  references, and manifest epochs. Uncertified contacts are rejected; there is
+  no identity-key direct-message wire or implicit upgrade path.
 - Fresh direct messages, attachments, identity-rotation notices, and burn/reset
   notices are signed by the local endpoint key and use the preferred peer
   endpoint's signed prekey. Rotation keeps the pinned endpoint session;
@@ -251,9 +251,9 @@ The Swift certified direct-v4 path actively uses these typed APIs:
   `decryptDirectV4(...)` returns the existing `MessageBody` UI/control
   projection only when one exists.
 
-`MessageBody` remains a public local UI/control projection and the explicit
-NPAD-v1 compatibility wire for pre-v4 direct sessions and the experimental
-group path. It is not the certified direct-v4 plaintext. Direct-v4 binds the
+`MessageBody` remains a public local UI/control projection and the closed
+payload projection used by the separately framed experimental group path. It
+is not a direct-message wire format. Direct-v4 binds the
 negotiated `nw.events` module version and resource limits into the messaging
 transcript. Unknown application types remain forward-compatible through their
 authenticated fallback/disposition; security controls remain a closed,
@@ -261,7 +261,7 @@ separate namespace.
 
 NoctweaveJS mirrors this boundary with
 `encryptNativeApplicationEnvelope(...)` and
-`decryptNativeApplicationEnvelope(...)`. Its compatibility text decoder
+`decryptNativeApplicationEnvelope(...)`. Its text-oriented projection
 returns the fallback for an unknown visible event and `null` for an unknown
 silent event, so older text-oriented callers do not invent an unsupported chat
 bubble.
@@ -273,15 +273,9 @@ bubble.
 - `RelayCertificatePinRecord`: bounded persisted relay trust record. Automatic first-use pins and manual pins are distinguished so a client can explain its trust decision.
 - `RelayRequest` and `RelayResponse`: canonical relay protocol request/response envelopes.
 - `RelayServer` and `RelayStore`: in-process relay implementation used by tests
-  and local tools. The Linux relay now matches the in-process compatibility
-  group-invitation routes (`listGroupInvitations`, `inviteGroupMembers`, and
-  `groupInvitations`), including authorization, persistence, acceptance into a
-  group-scoped profile, deletion cleanup, and transactional capacity checks.
-  Active members plus unique pending invitees are capped at 256 per group;
-  each invitee retains at most 256 group invitations, and an exact reinvite is
-  idempotent rather than an eviction. These routes remain part of the
-  fingerprint-scoped experimental group workflow rather than the additive
-  endpoint-aware group model.
+  and local tools, with ordered per-consumer mailbox cursors, rendezvous,
+  opaque-route capabilities, attachments, and federation. Relay-backed group
+  operations are not part of the 1.0 public surface.
 - `NoctweaveJS/NoctweaveRelayClient`: browser/Node HTTP and WebSocket relay access for applications that need relay diagnostics, inbox polling, or custom protocol integration.
 
 ## JavaScript Web Integration
@@ -317,11 +311,7 @@ HTTP(S)/WebSocket URLs retain their standard or specified port.
 ## Operator And Federation APIs
 
 - `RelayConfiguration` and `RelayInfo`: operator-controlled relay capabilities
-  and advertised metadata. `compatibilityProfiles` is empty by default; adding
-  exactly `nw.compat.legacy-fingerprint` temporarily enables deprecated
-  fingerprint-addressed pairing/prekeys/groups and inbox-wide destructive
-  acknowledgement. The relay advertises this profile honestly as deprecated,
-  and direct-v4 never negotiates it.
+  and advertised metadata. Only implemented 1.0 modules are advertised.
 - `FederationDescriptor`, coordinator records, signed directory snapshots, and open-federation DHT records.
 - Hidden retrieval, onion transport, mixnet transport, decentralized wake, and metadata-minimization helpers.
 

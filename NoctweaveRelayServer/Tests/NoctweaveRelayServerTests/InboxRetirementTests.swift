@@ -10,7 +10,6 @@ final class InboxRetirementTests: XCTestCase {
         let consumer = try makeRetirementSignerOrSkip()
         let inboxId = InboxAddress.derived(from: access.publicKey)
         let direct = linuxRetirementEnvelope(marker: 0x11)
-        let group = linuxRetirementEnvelope(marker: 0x12)
         let consumerId = MailboxConsumerId.generate()
 
         try store.registerInbox(inboxId: inboxId, accessPublicKey: access.publicKey)
@@ -21,11 +20,6 @@ final class InboxRetirementTests: XCTestCase {
             startingSequence: 0
         )
         _ = try store.deliver(direct, to: inboxId)
-        _ = try store.deliverGroupEnvelope(
-            group,
-            to: inboxId,
-            recipientFingerprints: [linuxRetirementFingerprint(0x31)]
-        )
 
         let digest = Data(repeating: 0xA1, count: SHA256.byteCount)
         try store.retireInbox(inboxId: inboxId, requestDigest: digest)
@@ -37,13 +31,6 @@ final class InboxRetirementTests: XCTestCase {
         XCTAssertThrowsError(try store.deliver(direct, to: inboxId)) {
             XCTAssertEqual($0 as? RelayStoreError, .inboxRetired)
         }
-        XCTAssertThrowsError(
-            try store.deliverGroupEnvelope(
-                group,
-                to: inboxId,
-                recipientFingerprints: [linuxRetirementFingerprint(0x31)]
-            )
-        ) { XCTAssertEqual($0 as? RelayStoreError, .inboxRetired) }
         XCTAssertThrowsError(try store.registerInbox(inboxId: inboxId, accessPublicKey: access.publicKey)) {
             XCTAssertEqual($0 as? RelayStoreError, .inboxRetired)
         }

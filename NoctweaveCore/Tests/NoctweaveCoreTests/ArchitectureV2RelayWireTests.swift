@@ -54,12 +54,7 @@ final class ArchitectureV2RelayWireTests: XCTestCase {
     func testRelayWireKeepsMailboxEventsUntilEveryConsumerCommits() async throws {
         let port = UInt16.random(in: 58_100...60_000)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
-        let server = RelayServer(
-            store: RelayStore(),
-            configuration: RelayConfiguration(
-                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
-            )
-        )
+        let server = RelayServer(store: RelayStore())
         try server.start(host: "127.0.0.1", port: port)
         defer { server.stop() }
         try await Task.sleep(nanoseconds: 200_000_000)
@@ -67,22 +62,13 @@ final class ArchitectureV2RelayWireTests: XCTestCase {
         let client = RelayClient(endpoint: endpoint)
         let accessKey = try SigningKeyPair.generate()
         let inboxId = InboxAddress.derived(from: accessKey.publicKeyData)
-        let identity = try Identity.generate(displayName: "Mailbox owner")
-        let offer = try MessageEngine.makeContactOffer(
-            identity: identity,
+        var inboxRegistration = RegisterInboxRequest.privacyMinimizedV2(
             inboxId: inboxId,
-            relay: endpoint,
-            inboxAccessPublicKey: accessKey.publicKeyData
+            accessPublicKey: accessKey.publicKeyData
         )
-        var inboxRegistration = RegisterInboxRequest(
+        inboxRegistration = RegisterInboxRequest.privacyMinimizedV2(
             inboxId: inboxId,
             accessPublicKey: accessKey.publicKeyData,
-            contactOffer: offer
-        )
-        inboxRegistration = RegisterInboxRequest(
-            inboxId: inboxId,
-            accessPublicKey: accessKey.publicKeyData,
-            contactOffer: offer,
             accessProof: try makeProof(key: accessKey) { try inboxRegistration.signableData(for: $0) }
         )
         let inboxResponse = try await client.send(.registerInbox(inboxRegistration))
@@ -241,18 +227,6 @@ final class ArchitectureV2RelayWireTests: XCTestCase {
         )
         let legacyFetchResponse = try await client.send(.fetch(legacyFetch))
         XCTAssertEqual(legacyFetchResponse.type, .error)
-
-        var legacyAck = AcknowledgeMessagesRequest(
-            inboxId: inboxId,
-            messageIds: [envelope.id]
-        )
-        legacyAck = AcknowledgeMessagesRequest(
-            inboxId: inboxId,
-            messageIds: [envelope.id],
-            accessProof: try makeProof(key: accessKey) { try legacyAck.signableData(for: $0) }
-        )
-        let legacyAckResponse = try await client.send(.acknowledgeMessages(legacyAck))
-        XCTAssertEqual(legacyAckResponse.type, .error)
 
         var revocation = RevokeMailboxConsumerRequest(inboxId: inboxId, consumerId: phone)
         revocation = RevokeMailboxConsumerRequest(

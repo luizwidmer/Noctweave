@@ -232,14 +232,9 @@ transaction rollback so failed persistence does not leave mutated memory ahead
 of durable state.
 
 The final relay rejects delivery to an unregistered inbox before allocating
-mailbox storage. Group retries bind an immutable original-recipient set so an
-exact retry remains a no-op after partial acknowledgement, while a payload,
-kind, or recipient-set conflict fails closed.
-
-Legacy fingerprint-based pairing, relay prekeys, groups, and destructive
-acknowledgements are disabled by default behind the explicit deprecated
-`nw.compat.legacy-fingerprint` operator profile. Direct-v4 never negotiates
-that profile.
+mailbox storage. Fingerprint-based pairing, relay prekeys, groups, and
+destructive inbox acknowledgements have been removed from the 1.0 protocol
+surface.
 
 ### 8. Opaque route-capability foundation
 
@@ -485,11 +480,11 @@ gated and cannot be inferred from the existence of model types.
    Add a third-party or independently implemented client/conformance runner.
    Until then, mark the revision and experimental group construction unaudited.
 
-9. **Resolve compatibility naming and migration policy.** Rename remaining
-   public `Installation*` symbols to endpoint terminology where source breakage
-   is acceptable, or publish an explicit deprecation/alias schedule. Specify
-   the supported migration window for legacy profile, mailbox, direct, and
-   group data; define rollback limits and recovery for interrupted migration.
+9. **Finish the clean 1.0 naming and state baseline.** Rename remaining public
+   `Installation*` symbols to generation-scoped endpoint terminology and delete
+   obsolete profile, mailbox, direct, and group compatibility surfaces. Git
+   history is the record of the pre-1.0 formats; production code must not carry
+   aliases, migration windows, or downgrade paths for them.
 
 ### P1: product and interoperability completion
 

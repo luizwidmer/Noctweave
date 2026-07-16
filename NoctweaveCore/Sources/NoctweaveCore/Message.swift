@@ -48,8 +48,8 @@ public struct Message: Codable, Identifiable, Equatable {
     }
 }
 
-/// Local UI/control projection and explicit NPAD-v1 compatibility payload.
-/// Certified direct-v4 encrypts `WirePayloadV2`, not this closed enum.
+/// Local UI/control projection. Certified direct-v4 encrypts
+/// `WirePayloadV2`, not this closed enum.
 public enum MessageBody: Codable, Equatable {
     case text(String)
     case attachment(AttachmentDescriptor)

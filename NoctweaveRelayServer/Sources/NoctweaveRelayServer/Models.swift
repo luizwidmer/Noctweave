@@ -1,10 +1,6 @@
 import Foundation
 import Crypto
 
-enum RelayCompatibilityProfile {
-    static let legacyFingerprint = "nw.compat.legacy-fingerprint"
-}
-
 enum RelayKind: String, Codable, CaseIterable {
     case standard
     case discovery
@@ -787,7 +783,6 @@ struct RelayConfiguration: Codable, Equatable {
     var federationAllowList: [RelayEndpoint]
     var allowPrivateFederationEndpoints: Bool
     var requireInboxAccessControl: Bool?
-    var compatibilityProfiles: [String]
     var experimentalRouteCapabilitiesEnabled: Bool?
     var rendezvousTransportEnabled: Bool?
 
@@ -830,7 +825,6 @@ struct RelayConfiguration: Codable, Equatable {
         federationAllowList: [RelayEndpoint] = [],
         allowPrivateFederationEndpoints: Bool = false,
         requireInboxAccessControl: Bool = true,
-        compatibilityProfiles: [String] = [],
         experimentalRouteCapabilitiesEnabled: Bool = false,
         rendezvousTransportEnabled: Bool = false
     ) {
@@ -892,19 +886,8 @@ struct RelayConfiguration: Codable, Equatable {
         self.federationAllowList = Array(federationAllowList.prefix(256))
         self.allowPrivateFederationEndpoints = allowPrivateFederationEndpoints
         self.requireInboxAccessControl = requireInboxAccessControl
-        self.compatibilityProfiles = Array(
-            Set(
-                compatibilityProfiles
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty && $0.utf8.count <= 96 }
-            )
-        ).sorted().prefix(16).map { $0 }
         self.experimentalRouteCapabilitiesEnabled = experimentalRouteCapabilitiesEnabled ? true : nil
         self.rendezvousTransportEnabled = rendezvousTransportEnabled ? true : nil
-    }
-
-    var legacyFingerprintCompatibilityEnabled: Bool {
-        compatibilityProfiles.contains(RelayCompatibilityProfile.legacyFingerprint)
     }
 
     var opaqueRouteCapabilitiesEnabled: Bool {
@@ -940,15 +923,13 @@ struct RelayConfiguration: Codable, Equatable {
             softwareVersion: softwareVersion,
             protocolCapabilities: .advertised(
                 attachmentsEnabled: attachmentsEnabled != false,
-                groupsEnabled: groupCreationMode == .allowed && legacyFingerprintCompatibilityEnabled,
                 wakeEnabled: wakeSupport != nil,
                 hiddenRetrievalEnabled: advertisedHiddenRetrieval != nil,
                 onionEnabled: advertisedOnionTransport != nil,
                 mixnetEnabled: advertisedMixnetTransport != nil,
-                legacyFingerprintCompatibilityEnabled: legacyFingerprintCompatibilityEnabled,
                 rendezvousTransportEnabled: isRendezvousTransportEnabled
             ),
-            groupCreationMode: legacyFingerprintCompatibilityEnabled ? groupCreationMode : .disabled,
+            groupCreationMode: .disabled,
             groupSecurityModel: groupSecurityModel,
             requiresPassword: requiresPassword,
             federationCoordinatorEndpoints: federationCoordinatorEndpoints,
@@ -1691,21 +1672,18 @@ struct RegisterInboxRequest: Codable, Equatable {
 
     let inboxId: String
     let accessPublicKey: Data
-    let registrationVersion: Int?
-    let contactOffer: ContactOffer?
+    let registrationVersion: Int
     let accessProof: RelayActorProof?
 
     init(
         inboxId: String,
         accessPublicKey: Data,
-        registrationVersion: Int? = nil,
-        contactOffer: ContactOffer? = nil,
+        registrationVersion: Int = privacyMinimizedVersion,
         accessProof: RelayActorProof? = nil
     ) {
         self.inboxId = inboxId
         self.accessPublicKey = accessPublicKey
         self.registrationVersion = registrationVersion
-        self.contactOffer = contactOffer
         self.accessProof = accessProof
     }
 
@@ -1718,28 +1696,16 @@ struct RegisterInboxRequest: Codable, Equatable {
             inboxId: inboxId,
             accessPublicKey: accessPublicKey,
             registrationVersion: privacyMinimizedVersion,
-            contactOffer: nil,
             accessProof: accessProof
         )
     }
 
     func signableData(for proof: RelayActorProof) throws -> Data {
-        if let registrationVersion {
-            return try GroupProofCodec.encode(
-                InboxRegistrationProofPayloadV2(
-                    inboxId: inboxId,
-                    accessPublicKey: accessPublicKey,
-                    registrationVersion: registrationVersion,
-                    signedAt: proof.signedAt,
-                    nonce: proof.nonce
-                )
-            )
-        }
         return try GroupProofCodec.encode(
-            LegacyInboxRegistrationProofPayload(
+            InboxRegistrationProofPayloadV2(
                 inboxId: inboxId,
                 accessPublicKey: accessPublicKey,
-                contactOffer: contactOffer,
+                registrationVersion: registrationVersion,
                 signedAt: proof.signedAt,
                 nonce: proof.nonce
             )
@@ -1931,29 +1897,6 @@ private func inboxRouteCapabilityMutationDigest(
     return Data(SHA256.hash(data: payload))
 }
 
-struct AcknowledgeMessagesRequest: Codable, Equatable {
-    let inboxId: String
-    let messageIds: [UUID]
-    let accessProof: RelayActorProof?
-
-    init(inboxId: String, messageIds: [UUID], accessProof: RelayActorProof? = nil) {
-        self.inboxId = inboxId
-        self.messageIds = messageIds
-        self.accessProof = accessProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            InboxAcknowledgementProofPayload(
-                inboxId: inboxId,
-                messageIds: messageIds,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
 struct RegisterMailboxConsumerRequest: Codable, Equatable {
     let inboxId: String
     let consumerId: MailboxConsumerId
@@ -2125,87 +2068,6 @@ struct RevokeMailboxConsumerRequest: Codable, Equatable {
                 sequence: nil,
                 maxCount: nil,
                 longPollTimeoutSeconds: nil,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-struct DeliverGroupMessageRequest: Codable, Equatable {
-    let groupId: UUID
-    let groupInboxId: String
-    let envelope: GroupRatchetEnvelope
-    let destinationRelay: RelayEndpoint?
-}
-
-struct FetchGroupMessagesRequest: Codable, Equatable {
-    let groupId: UUID
-    let groupInboxId: String
-    let maxCount: Int?
-    let longPollTimeoutSeconds: Int?
-    let actorFingerprint: String
-    let actorProof: RelayActorProof?
-
-    init(
-        groupId: UUID,
-        groupInboxId: String,
-        maxCount: Int? = nil,
-        longPollTimeoutSeconds: Int? = nil,
-        actorFingerprint: String,
-        actorProof: RelayActorProof? = nil
-    ) {
-        self.groupId = groupId
-        self.groupInboxId = groupInboxId
-        self.maxCount = maxCount
-        self.longPollTimeoutSeconds = longPollTimeoutSeconds
-        self.actorFingerprint = actorFingerprint
-        self.actorProof = actorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            GroupMessageFetchProofPayload(
-                groupId: groupId,
-                groupInboxId: groupInboxId,
-                maxCount: maxCount,
-                longPollTimeoutSeconds: longPollTimeoutSeconds,
-                actorFingerprint: actorFingerprint,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-struct AcknowledgeGroupMessagesRequest: Codable, Equatable {
-    let groupId: UUID
-    let groupInboxId: String
-    let messageIds: [UUID]
-    let actorFingerprint: String
-    let actorProof: RelayActorProof?
-
-    init(
-        groupId: UUID,
-        groupInboxId: String,
-        messageIds: [UUID],
-        actorFingerprint: String,
-        actorProof: RelayActorProof? = nil
-    ) {
-        self.groupId = groupId
-        self.groupInboxId = groupInboxId
-        self.messageIds = messageIds
-        self.actorFingerprint = actorFingerprint
-        self.actorProof = actorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            GroupMessageAcknowledgementProofPayload(
-                groupId: groupId,
-                groupInboxId: groupInboxId,
-                messageIds: messageIds,
-                actorFingerprint: actorFingerprint,
                 signedAt: proof.signedAt,
                 nonce: proof.nonce
             )
@@ -2518,68 +2380,19 @@ enum RelayRequestType: String, Codable {
     case syncRendezvousTransportV2
     case deleteRendezvousTransportV2
     case fetch
-    case acknowledgeMessages
     case registerMailboxConsumer
     case syncMailbox
     case commitMailboxCursor
     case revokeMailboxConsumer
-    case deliverGroupMessage
-    case fetchGroupMessages
-    case acknowledgeGroupMessages
     case health
     case info
-    case announce
-    case listAnnouncements
-    case sendPairRequest
-    case fetchPairRequests
     case uploadAttachment
     case fetchAttachment
-    case uploadPrekeys
-    case fetchPrekeyBundle
-    case createGroup
-    case getGroup
-    case listGroups
-    case listGroupInvitations
-    case inviteGroupMembers
-    case updateGroup
-    case deleteGroup
-    case requestGroupJoin
-    case listGroupJoinRequests
-    case approveGroupJoin
-    case rejectGroupJoin
     case registerFederationNode
     case listFederationNodes
     case publishOpenFederationDHTRecord
     case listOpenFederationDHTRecords
 
-    var requiresLegacyFingerprintCompatibility: Bool {
-        switch self {
-        case .announce,
-             .listAnnouncements,
-             .sendPairRequest,
-             .fetchPairRequests,
-             .uploadPrekeys,
-             .fetchPrekeyBundle,
-             .acknowledgeMessages,
-             .deliverGroupMessage,
-             .fetchGroupMessages,
-             .acknowledgeGroupMessages,
-             .createGroup,
-             .getGroup,
-             .listGroups,
-             .listGroupInvitations,
-             .inviteGroupMembers,
-             .updateGroup,
-             .deleteGroup,
-             .requestGroupJoin,
-             .listGroupJoinRequests,
-             .approveGroupJoin,
-             .rejectGroupJoin:
-            return true
-        default:
-            return false
-        }
-    }
 }
 
 struct FederationNodeRegistrationRequest: Codable, Equatable {
@@ -2680,33 +2493,12 @@ struct RelayRequest: Codable, Equatable {
     let syncRendezvousTransportV2: SyncRendezvousTransportV2Request?
     let deleteRendezvousTransportV2: DeleteRendezvousTransportV2Request?
     let fetch: FetchRequest?
-    let acknowledgeMessages: AcknowledgeMessagesRequest?
     let registerMailboxConsumer: RegisterMailboxConsumerRequest?
     let syncMailbox: SyncMailboxRequest?
     let commitMailboxCursor: CommitMailboxCursorRequest?
     let revokeMailboxConsumer: RevokeMailboxConsumerRequest?
-    let deliverGroupMessage: DeliverGroupMessageRequest?
-    let fetchGroupMessages: FetchGroupMessagesRequest?
-    let acknowledgeGroupMessages: AcknowledgeGroupMessagesRequest?
-    let announce: AnnounceRequest?
-    let listAnnouncements: ListAnnouncementsRequest?
-    let sendPairRequest: SendPairRequest?
-    let fetchPairRequests: FetchPairRequestsRequest?
     let uploadAttachment: UploadAttachmentRequest?
     let fetchAttachment: FetchAttachmentRequest?
-    let uploadPrekeys: UploadPrekeyBundleRequest?
-    let fetchPrekeyBundle: FetchPrekeyBundleRequest?
-    let createGroup: CreateGroupRequest?
-    let getGroup: GetGroupRequest?
-    let listGroups: ListGroupsRequest?
-    let listGroupInvitations: ListGroupInvitationsRequest?
-    let inviteGroupMembers: InviteGroupMembersRequest?
-    let updateGroup: UpdateGroupRequest?
-    let deleteGroup: DeleteGroupRequest?
-    let requestGroupJoin: RequestGroupJoinRequest?
-    let listGroupJoinRequests: ListGroupJoinRequestsRequest?
-    let approveGroupJoin: ApproveGroupJoinRequest?
-    let rejectGroupJoin: RejectGroupJoinRequest?
     let registerFederationNode: FederationNodeRegistrationRequest?
     let listFederationNodes: ListFederationNodesRequest?
     let publishOpenFederationDHTRecord: PublishOpenFederationDHTRecordRequest?
@@ -2725,33 +2517,12 @@ struct RelayRequest: Codable, Equatable {
         syncRendezvousTransportV2: SyncRendezvousTransportV2Request? = nil,
         deleteRendezvousTransportV2: DeleteRendezvousTransportV2Request? = nil,
         fetch: FetchRequest? = nil,
-        acknowledgeMessages: AcknowledgeMessagesRequest? = nil,
         registerMailboxConsumer: RegisterMailboxConsumerRequest? = nil,
         syncMailbox: SyncMailboxRequest? = nil,
         commitMailboxCursor: CommitMailboxCursorRequest? = nil,
         revokeMailboxConsumer: RevokeMailboxConsumerRequest? = nil,
-        deliverGroupMessage: DeliverGroupMessageRequest? = nil,
-        fetchGroupMessages: FetchGroupMessagesRequest? = nil,
-        acknowledgeGroupMessages: AcknowledgeGroupMessagesRequest? = nil,
-        announce: AnnounceRequest? = nil,
-        listAnnouncements: ListAnnouncementsRequest? = nil,
-        sendPairRequest: SendPairRequest? = nil,
-        fetchPairRequests: FetchPairRequestsRequest? = nil,
         uploadAttachment: UploadAttachmentRequest? = nil,
         fetchAttachment: FetchAttachmentRequest? = nil,
-        uploadPrekeys: UploadPrekeyBundleRequest? = nil,
-        fetchPrekeyBundle: FetchPrekeyBundleRequest? = nil,
-        createGroup: CreateGroupRequest? = nil,
-        getGroup: GetGroupRequest? = nil,
-        listGroups: ListGroupsRequest? = nil,
-        listGroupInvitations: ListGroupInvitationsRequest? = nil,
-        inviteGroupMembers: InviteGroupMembersRequest? = nil,
-        updateGroup: UpdateGroupRequest? = nil,
-        deleteGroup: DeleteGroupRequest? = nil,
-        requestGroupJoin: RequestGroupJoinRequest? = nil,
-        listGroupJoinRequests: ListGroupJoinRequestsRequest? = nil,
-        approveGroupJoin: ApproveGroupJoinRequest? = nil,
-        rejectGroupJoin: RejectGroupJoinRequest? = nil,
         registerFederationNode: FederationNodeRegistrationRequest? = nil,
         listFederationNodes: ListFederationNodesRequest? = nil,
         publishOpenFederationDHTRecord: PublishOpenFederationDHTRecordRequest? = nil,
@@ -2769,33 +2540,12 @@ struct RelayRequest: Codable, Equatable {
         self.syncRendezvousTransportV2 = syncRendezvousTransportV2
         self.deleteRendezvousTransportV2 = deleteRendezvousTransportV2
         self.fetch = fetch
-        self.acknowledgeMessages = acknowledgeMessages
         self.registerMailboxConsumer = registerMailboxConsumer
         self.syncMailbox = syncMailbox
         self.commitMailboxCursor = commitMailboxCursor
         self.revokeMailboxConsumer = revokeMailboxConsumer
-        self.deliverGroupMessage = deliverGroupMessage
-        self.fetchGroupMessages = fetchGroupMessages
-        self.acknowledgeGroupMessages = acknowledgeGroupMessages
-        self.announce = announce
-        self.listAnnouncements = listAnnouncements
-        self.sendPairRequest = sendPairRequest
-        self.fetchPairRequests = fetchPairRequests
         self.uploadAttachment = uploadAttachment
         self.fetchAttachment = fetchAttachment
-        self.uploadPrekeys = uploadPrekeys
-        self.fetchPrekeyBundle = fetchPrekeyBundle
-        self.createGroup = createGroup
-        self.getGroup = getGroup
-        self.listGroups = listGroups
-        self.listGroupInvitations = listGroupInvitations
-        self.inviteGroupMembers = inviteGroupMembers
-        self.updateGroup = updateGroup
-        self.deleteGroup = deleteGroup
-        self.requestGroupJoin = requestGroupJoin
-        self.listGroupJoinRequests = listGroupJoinRequests
-        self.approveGroupJoin = approveGroupJoin
-        self.rejectGroupJoin = rejectGroupJoin
         self.registerFederationNode = registerFederationNode
         self.listFederationNodes = listFederationNodes
         self.publishOpenFederationDHTRecord = publishOpenFederationDHTRecord
@@ -2803,23 +2553,7 @@ struct RelayRequest: Codable, Equatable {
     }
 
     static func deliver(_ request: DeliverRequest) -> RelayRequest {
-        RelayRequest(
-            type: .deliver,
-            deliver: request,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
+        RelayRequest(type: .deliver, deliver: request)
     }
 
     static func registerInbox(_ request: RegisterInboxRequest) -> RelayRequest {
@@ -2885,27 +2619,7 @@ struct RelayRequest: Codable, Equatable {
     }
 
     static func fetch(_ request: FetchRequest) -> RelayRequest {
-        RelayRequest(
-            type: .fetch,
-            deliver: nil,
-            fetch: request,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
-    }
-
-    static func acknowledgeMessages(_ request: AcknowledgeMessagesRequest) -> RelayRequest {
-        RelayRequest(type: .acknowledgeMessages, acknowledgeMessages: request)
+        RelayRequest(type: .fetch, fetch: request)
     }
 
     static func registerMailboxConsumer(_ request: RegisterMailboxConsumerRequest) -> RelayRequest {
@@ -2924,316 +2638,20 @@ struct RelayRequest: Codable, Equatable {
         RelayRequest(type: .revokeMailboxConsumer, revokeMailboxConsumer: request)
     }
 
-    static func deliverGroupMessage(_ request: DeliverGroupMessageRequest) -> RelayRequest {
-        RelayRequest(type: .deliverGroupMessage, deliverGroupMessage: request)
-    }
-
-    static func fetchGroupMessages(_ request: FetchGroupMessagesRequest) -> RelayRequest {
-        RelayRequest(type: .fetchGroupMessages, fetchGroupMessages: request)
-    }
-
-    static func acknowledgeGroupMessages(_ request: AcknowledgeGroupMessagesRequest) -> RelayRequest {
-        RelayRequest(type: .acknowledgeGroupMessages, acknowledgeGroupMessages: request)
-    }
-
     static func health() -> RelayRequest {
-        RelayRequest(
-            type: .health,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
+        RelayRequest(type: .health)
     }
 
     static func info() -> RelayRequest {
-        RelayRequest(
-            type: .info,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
-    }
-
-    static func announce(_ request: AnnounceRequest) -> RelayRequest {
-        RelayRequest(
-            type: .announce,
-            deliver: nil,
-            fetch: nil,
-            announce: request,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
-    }
-
-    static func listAnnouncements(_ request: ListAnnouncementsRequest) -> RelayRequest {
-        RelayRequest(
-            type: .listAnnouncements,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: request,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
-    }
-
-    static func sendPairRequest(_ request: SendPairRequest) -> RelayRequest {
-        RelayRequest(
-            type: .sendPairRequest,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: request,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil
-        )
-    }
-
-    static func fetchPairRequests(_ request: FetchPairRequestsRequest) -> RelayRequest {
-        RelayRequest(
-            type: .fetchPairRequests,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: request,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil
-        )
+        RelayRequest(type: .info)
     }
 
     static func uploadAttachment(_ request: UploadAttachmentRequest) -> RelayRequest {
-        RelayRequest(
-            type: .uploadAttachment,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: request,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
+        RelayRequest(type: .uploadAttachment, uploadAttachment: request)
     }
 
     static func fetchAttachment(_ request: FetchAttachmentRequest) -> RelayRequest {
-        RelayRequest(
-            type: .fetchAttachment,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: request,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
-    }
-
-    static func uploadPrekeys(_ request: UploadPrekeyBundleRequest) -> RelayRequest {
-        RelayRequest(
-            type: .uploadPrekeys,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: request,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
-    }
-
-    static func fetchPrekeyBundle(_ request: FetchPrekeyBundleRequest) -> RelayRequest {
-        RelayRequest(
-            type: .fetchPrekeyBundle,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: request,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
-    }
-
-    static func createGroup(_ request: CreateGroupRequest) -> RelayRequest {
-        RelayRequest(
-            type: .createGroup,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: request,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: nil
-        )
-    }
-
-    static func getGroup(_ request: GetGroupRequest) -> RelayRequest {
-        RelayRequest(
-            type: .getGroup,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: request,
-            listGroups: nil,
-            updateGroup: nil
-        )
-    }
-
-    static func listGroups(_ request: ListGroupsRequest) -> RelayRequest {
-        RelayRequest(
-            type: .listGroups,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: request,
-            updateGroup: nil
-        )
-    }
-
-    static func listGroupInvitations(_ request: ListGroupInvitationsRequest) -> RelayRequest {
-        RelayRequest(type: .listGroupInvitations, listGroupInvitations: request)
-    }
-
-    static func inviteGroupMembers(_ request: InviteGroupMembersRequest) -> RelayRequest {
-        RelayRequest(type: .inviteGroupMembers, inviteGroupMembers: request)
-    }
-
-    static func updateGroup(_ request: UpdateGroupRequest) -> RelayRequest {
-        RelayRequest(
-            type: .updateGroup,
-            deliver: nil,
-            fetch: nil,
-            announce: nil,
-            listAnnouncements: nil,
-            sendPairRequest: nil,
-            fetchPairRequests: nil,
-            uploadAttachment: nil,
-            fetchAttachment: nil,
-            uploadPrekeys: nil,
-            fetchPrekeyBundle: nil,
-            createGroup: nil,
-            getGroup: nil,
-            listGroups: nil,
-            updateGroup: request
-        )
-    }
-
-    static func deleteGroup(_ request: DeleteGroupRequest) -> RelayRequest {
-        RelayRequest(type: .deleteGroup, deleteGroup: request)
-    }
-
-    static func requestGroupJoin(_ request: RequestGroupJoinRequest) -> RelayRequest {
-        RelayRequest(type: .requestGroupJoin, requestGroupJoin: request)
-    }
-
-    static func listGroupJoinRequests(_ request: ListGroupJoinRequestsRequest) -> RelayRequest {
-        RelayRequest(type: .listGroupJoinRequests, listGroupJoinRequests: request)
-    }
-
-    static func approveGroupJoin(_ request: ApproveGroupJoinRequest) -> RelayRequest {
-        RelayRequest(type: .approveGroupJoin, approveGroupJoin: request)
-    }
-
-    static func rejectGroupJoin(_ request: RejectGroupJoinRequest) -> RelayRequest {
-        RelayRequest(type: .rejectGroupJoin, rejectGroupJoin: request)
+        RelayRequest(type: .fetchAttachment, fetchAttachment: request)
     }
 
     static func registerFederationNode(_ request: FederationNodeRegistrationRequest) -> RelayRequest {
@@ -3266,33 +2684,12 @@ struct RelayRequest: Codable, Equatable {
             syncRendezvousTransportV2: syncRendezvousTransportV2,
             deleteRendezvousTransportV2: deleteRendezvousTransportV2,
             fetch: fetch,
-            acknowledgeMessages: acknowledgeMessages,
             registerMailboxConsumer: registerMailboxConsumer,
             syncMailbox: syncMailbox,
             commitMailboxCursor: commitMailboxCursor,
             revokeMailboxConsumer: revokeMailboxConsumer,
-            deliverGroupMessage: deliverGroupMessage,
-            fetchGroupMessages: fetchGroupMessages,
-            acknowledgeGroupMessages: acknowledgeGroupMessages,
-            announce: announce,
-            listAnnouncements: listAnnouncements,
-            sendPairRequest: sendPairRequest,
-            fetchPairRequests: fetchPairRequests,
             uploadAttachment: uploadAttachment,
             fetchAttachment: fetchAttachment,
-            uploadPrekeys: uploadPrekeys,
-            fetchPrekeyBundle: fetchPrekeyBundle,
-            createGroup: createGroup,
-            getGroup: getGroup,
-            listGroups: listGroups,
-            listGroupInvitations: listGroupInvitations,
-            inviteGroupMembers: inviteGroupMembers,
-            updateGroup: updateGroup,
-            deleteGroup: deleteGroup,
-            requestGroupJoin: requestGroupJoin,
-            listGroupJoinRequests: listGroupJoinRequests,
-            approveGroupJoin: approveGroupJoin,
-            rejectGroupJoin: rejectGroupJoin,
             registerFederationNode: registerFederationNode,
             listFederationNodes: listFederationNodes,
             publishOpenFederationDHTRecord: publishOpenFederationDHTRecord,
@@ -3339,26 +2736,11 @@ private struct InboxRouteCapabilityMutationStatePayload: Codable {
     let mutationSequence: UInt64
 }
 
-private struct LegacyInboxRegistrationProofPayload: Codable {
-    let inboxId: String
-    let accessPublicKey: Data
-    let contactOffer: ContactOffer?
-    let signedAt: Date
-    let nonce: UUID
-}
-
 private struct InboxFetchProofPayload: Codable {
     let inboxId: String
     let routingToken: String?
     let maxCount: Int?
     let longPollTimeoutSeconds: Int?
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct InboxAcknowledgementProofPayload: Codable {
-    let inboxId: String
-    let messageIds: [UUID]
     let signedAt: Date
     let nonce: UUID
 }
@@ -3373,25 +2755,6 @@ private struct MailboxConsumerProofPayload: Codable {
     let sequence: UInt64?
     let maxCount: Int?
     let longPollTimeoutSeconds: Int?
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct GroupMessageFetchProofPayload: Codable {
-    let groupId: UUID
-    let groupInboxId: String
-    let maxCount: Int?
-    let longPollTimeoutSeconds: Int?
-    let actorFingerprint: String
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct GroupMessageAcknowledgementProofPayload: Codable {
-    let groupId: UUID
-    let groupInboxId: String
-    let messageIds: [UUID]
-    let actorFingerprint: String
     let signedAt: Date
     let nonce: UUID
 }
@@ -3417,16 +2780,8 @@ enum RelayResponseType: String, Codable {
     case mailboxSync
     case mailboxConsumer
     case rendezvousSyncV2
-    case groupMessages
-    case announcements
-    case pairRequests
     case attachment
     case info
-    case prekeyBundle
-    case group
-    case groups
-    case groupInvitations
-    case groupJoinRequests
     case federationNodes
     case openFederationDHTRecords
     case error
@@ -3449,16 +2804,8 @@ struct RelayResponse: Codable, Equatable {
     let mailboxSync: MailboxSyncBatch?
     let mailboxConsumer: MailboxConsumerRegistration?
     let rendezvousSyncV2: RendezvousRelaySyncBatchV2?
-    let groupMessages: [GroupRatchetEnvelope]?
-    let announcements: [PairingAnnouncement]?
-    let pairRequests: [PairingRequest]?
     let attachment: AttachmentChunk?
     let relayInfo: RelayInfo?
-    let prekeyBundle: PrekeyBundle?
-    let group: RelayGroupDescriptor?
-    let groups: [RelayGroupDescriptor]?
-    let groupInvitations: [RelayGroupInvitation]?
-    let groupJoinRequests: [RelayGroupJoinRequest]?
     let federationNodes: [FederationNodeRecord]?
     let federationSnapshot: FederationDirectorySnapshot?
     let openFederationDHTRecords: [OpenFederationDHTRecord]?
@@ -3472,16 +2819,8 @@ struct RelayResponse: Codable, Equatable {
         mailboxSync: MailboxSyncBatch? = nil,
         mailboxConsumer: MailboxConsumerRegistration? = nil,
         rendezvousSyncV2: RendezvousRelaySyncBatchV2? = nil,
-        groupMessages: [GroupRatchetEnvelope]? = nil,
-        announcements: [PairingAnnouncement]? = nil,
-        pairRequests: [PairingRequest]? = nil,
         attachment: AttachmentChunk? = nil,
         relayInfo: RelayInfo? = nil,
-        prekeyBundle: PrekeyBundle? = nil,
-        group: RelayGroupDescriptor? = nil,
-        groups: [RelayGroupDescriptor]? = nil,
-        groupInvitations: [RelayGroupInvitation]? = nil,
-        groupJoinRequests: [RelayGroupJoinRequest]? = nil,
         federationNodes: [FederationNodeRecord]? = nil,
         federationSnapshot: FederationDirectorySnapshot? = nil,
         openFederationDHTRecords: [OpenFederationDHTRecord]? = nil,
@@ -3494,16 +2833,8 @@ struct RelayResponse: Codable, Equatable {
         self.mailboxSync = mailboxSync
         self.mailboxConsumer = mailboxConsumer
         self.rendezvousSyncV2 = rendezvousSyncV2
-        self.groupMessages = groupMessages
-        self.announcements = announcements
-        self.pairRequests = pairRequests
         self.attachment = attachment
         self.relayInfo = relayInfo
-        self.prekeyBundle = prekeyBundle
-        self.group = group
-        self.groups = groups
-        self.groupInvitations = groupInvitations
-        self.groupJoinRequests = groupJoinRequests
         self.federationNodes = federationNodes
         self.federationSnapshot = federationSnapshot
         self.openFederationDHTRecords = openFederationDHTRecords
@@ -3513,52 +2844,15 @@ struct RelayResponse: Codable, Equatable {
     static func ok(
         inboxRegistration: InboxRegistrationReceiptV3? = nil
     ) -> RelayResponse {
-        RelayResponse(
-            type: .ok,
-            delivered: nil,
-            inboxRegistration: inboxRegistration,
-            messages: nil,
-            announcements: nil,
-            pairRequests: nil,
-            attachment: nil,
-            relayInfo: nil,
-            prekeyBundle: nil,
-            group: nil,
-            groups: nil,
-            error: nil
-        )
+        RelayResponse(type: .ok, inboxRegistration: inboxRegistration)
     }
 
     static func delivered(count: Int) -> RelayResponse {
-        RelayResponse(
-            type: .delivered,
-            delivered: DeliverResponse(storedCount: count),
-            messages: nil,
-            announcements: nil,
-            pairRequests: nil,
-            attachment: nil,
-            relayInfo: nil,
-            prekeyBundle: nil,
-            group: nil,
-            groups: nil,
-            error: nil
-        )
+        RelayResponse(type: .delivered, delivered: DeliverResponse(storedCount: count))
     }
 
     static func messages(_ envelopes: [Envelope]) -> RelayResponse {
-        RelayResponse(
-            type: .messages,
-            delivered: nil,
-            messages: envelopes,
-            announcements: nil,
-            pairRequests: nil,
-            attachment: nil,
-            relayInfo: nil,
-            prekeyBundle: nil,
-            group: nil,
-            groups: nil,
-            error: nil
-        )
+        RelayResponse(type: .messages, messages: envelopes)
     }
 
     static func mailboxSync(_ batch: MailboxSyncBatch) -> RelayResponse {
@@ -3573,129 +2867,12 @@ struct RelayResponse: Codable, Equatable {
         RelayResponse(type: .rendezvousSyncV2, rendezvousSyncV2: batch)
     }
 
-    static func groupMessages(_ envelopes: [GroupRatchetEnvelope]) -> RelayResponse {
-        RelayResponse(type: .groupMessages, groupMessages: envelopes)
-    }
-
-    static func announcements(_ list: [PairingAnnouncement]) -> RelayResponse {
-        RelayResponse(
-            type: .announcements,
-            delivered: nil,
-            messages: nil,
-            announcements: list,
-            pairRequests: nil,
-            attachment: nil,
-            relayInfo: nil,
-            prekeyBundle: nil,
-            group: nil,
-            groups: nil,
-            error: nil
-        )
-    }
-
-    static func pairRequests(_ list: [PairingRequest]) -> RelayResponse {
-        RelayResponse(
-            type: .pairRequests,
-            delivered: nil,
-            messages: nil,
-            announcements: nil,
-            pairRequests: list,
-            attachment: nil,
-            relayInfo: nil,
-            prekeyBundle: nil,
-            group: nil,
-            groups: nil,
-            error: nil
-        )
-    }
-
     static func attachment(_ chunk: AttachmentChunk) -> RelayResponse {
-        RelayResponse(
-            type: .attachment,
-            delivered: nil,
-            messages: nil,
-            announcements: nil,
-            pairRequests: nil,
-            attachment: chunk,
-            relayInfo: nil,
-            prekeyBundle: nil,
-            group: nil,
-            groups: nil,
-            error: nil
-        )
+        RelayResponse(type: .attachment, attachment: chunk)
     }
 
     static func info(_ info: RelayInfo) -> RelayResponse {
-        RelayResponse(
-            type: .info,
-            delivered: nil,
-            messages: nil,
-            announcements: nil,
-            pairRequests: nil,
-            attachment: nil,
-            relayInfo: info,
-            prekeyBundle: nil,
-            group: nil,
-            groups: nil,
-            error: nil
-        )
-    }
-
-    static func prekeyBundle(_ bundle: PrekeyBundle?) -> RelayResponse {
-        RelayResponse(
-            type: .prekeyBundle,
-            delivered: nil,
-            messages: nil,
-            announcements: nil,
-            pairRequests: nil,
-            attachment: nil,
-            relayInfo: nil,
-            prekeyBundle: bundle,
-            group: nil,
-            groups: nil,
-            error: nil
-        )
-    }
-
-    static func group(_ group: RelayGroupDescriptor?) -> RelayResponse {
-        RelayResponse(
-            type: .group,
-            delivered: nil,
-            messages: nil,
-            announcements: nil,
-            pairRequests: nil,
-            attachment: nil,
-            relayInfo: nil,
-            prekeyBundle: nil,
-            group: group,
-            groups: nil,
-            error: nil
-        )
-    }
-
-    static func groups(_ groups: [RelayGroupDescriptor]) -> RelayResponse {
-        RelayResponse(
-            type: .groups,
-            delivered: nil,
-            messages: nil,
-            announcements: nil,
-            pairRequests: nil,
-            attachment: nil,
-            relayInfo: nil,
-            prekeyBundle: nil,
-            group: nil,
-            groups: groups,
-            groupJoinRequests: nil,
-            error: nil
-        )
-    }
-
-    static func groupInvitations(_ invitations: [RelayGroupInvitation]) -> RelayResponse {
-        RelayResponse(type: .groupInvitations, groupInvitations: invitations)
-    }
-
-    static func groupJoinRequests(_ requests: [RelayGroupJoinRequest]) -> RelayResponse {
-        RelayResponse(type: .groupJoinRequests, groupJoinRequests: requests)
+        RelayResponse(type: .info, relayInfo: info)
     }
 
     static func federationNodes(
@@ -3710,260 +2887,7 @@ struct RelayResponse: Codable, Equatable {
     }
 
     static func error(_ message: String) -> RelayResponse {
-        RelayResponse(
-            type: .error,
-            delivered: nil,
-            messages: nil,
-            announcements: nil,
-            pairRequests: nil,
-            attachment: nil,
-            relayInfo: nil,
-            prekeyBundle: nil,
-            group: nil,
-            groups: nil,
-            error: message
-        )
-    }
-}
-
-struct CreateGroupRequest: Codable, Equatable {
-    let groupId: UUID?
-    let title: String
-    let creatorFingerprint: String
-    let memberFingerprints: [String]
-    let invitedFingerprints: [String]
-    let creatorProfile: RelayGroupMemberProfile?
-    let memberProfiles: [RelayGroupMemberProfile]?
-    let initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution?
-    let creatorProof: RelayActorProof?
-
-    init(
-        groupId: UUID? = nil,
-        title: String,
-        creatorFingerprint: String,
-        memberFingerprints: [String],
-        invitedFingerprints: [String] = [],
-        creatorProfile: RelayGroupMemberProfile? = nil,
-        memberProfiles: [RelayGroupMemberProfile]? = nil,
-        initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil,
-        creatorProof: RelayActorProof? = nil
-    ) {
-        self.groupId = groupId
-        self.title = title
-        self.creatorFingerprint = creatorFingerprint
-        self.memberFingerprints = memberFingerprints
-        self.invitedFingerprints = invitedFingerprints
-        self.creatorProfile = creatorProfile
-        self.memberProfiles = memberProfiles
-        self.initialRatchetSecretDistribution = initialRatchetSecretDistribution
-        self.creatorProof = creatorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            CreateGroupProofPayload(
-                groupId: groupId,
-                title: title,
-                creatorFingerprint: creatorFingerprint,
-                memberFingerprints: memberFingerprints,
-                invitedFingerprints: invitedFingerprints,
-                creatorProfile: creatorProfile,
-                memberProfiles: memberProfiles,
-                initialRatchetSecretDistribution: initialRatchetSecretDistribution,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-struct GetGroupRequest: Codable, Equatable {
-    let groupId: UUID
-    let memberFingerprint: String?
-    let memberProof: RelayActorProof?
-
-    init(
-        groupId: UUID,
-        memberFingerprint: String? = nil,
-        memberProof: RelayActorProof? = nil
-    ) {
-        self.groupId = groupId
-        self.memberFingerprint = memberFingerprint
-        self.memberProof = memberProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            GetGroupProofPayload(
-                groupId: groupId,
-                memberFingerprint: memberFingerprint,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-struct ListGroupsRequest: Codable, Equatable {
-    let memberFingerprint: String
-    let limit: Int?
-    let memberProof: RelayActorProof?
-
-    init(
-        memberFingerprint: String,
-        limit: Int? = nil,
-        memberProof: RelayActorProof? = nil
-    ) {
-        self.memberFingerprint = memberFingerprint
-        self.limit = limit
-        self.memberProof = memberProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            ListGroupsProofPayload(
-                memberFingerprint: memberFingerprint,
-                limit: limit,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-struct ListGroupInvitationsRequest: Codable, Equatable {
-    let invitedFingerprint: String
-    let limit: Int?
-    let invitedProof: RelayActorProof?
-
-    init(
-        invitedFingerprint: String,
-        limit: Int? = nil,
-        invitedProof: RelayActorProof? = nil
-    ) {
-        self.invitedFingerprint = invitedFingerprint
-        self.limit = limit
-        self.invitedProof = invitedProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            ListGroupInvitationsProofPayload(
-                invitedFingerprint: invitedFingerprint,
-                limit: limit,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-struct InviteGroupMembersRequest: Codable, Equatable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let invitedFingerprints: [String]
-    let actorProof: RelayActorProof?
-
-    init(
-        groupId: UUID,
-        actorFingerprint: String,
-        invitedFingerprints: [String],
-        actorProof: RelayActorProof? = nil
-    ) {
-        self.groupId = groupId
-        self.actorFingerprint = actorFingerprint
-        self.invitedFingerprints = invitedFingerprints
-        self.actorProof = actorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            InviteGroupMembersProofPayload(
-                groupId: groupId,
-                actorFingerprint: actorFingerprint,
-                invitedFingerprints: invitedFingerprints,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-
-    var normalizedInvitedFingerprints: [String] {
-        Array(Set(invitedFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty })).sorted()
-    }
-}
-
-struct UpdateGroupRequest: Codable, Equatable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let title: String?
-    let addMemberFingerprints: [String]
-    let addMemberProfiles: [RelayGroupMemberProfile]?
-    let removeMemberFingerprints: [String]
-    let actorProof: RelayActorProof?
-    let groupCommit: SignedGroupCommit?
-
-    init(
-        groupId: UUID,
-        actorFingerprint: String,
-        title: String? = nil,
-        addMemberFingerprints: [String] = [],
-        addMemberProfiles: [RelayGroupMemberProfile]? = nil,
-        removeMemberFingerprints: [String] = [],
-        actorProof: RelayActorProof? = nil,
-        groupCommit: SignedGroupCommit? = nil
-    ) {
-        self.groupId = groupId
-        self.actorFingerprint = actorFingerprint
-        self.title = title
-        self.addMemberFingerprints = addMemberFingerprints
-        self.addMemberProfiles = addMemberProfiles
-        self.removeMemberFingerprints = removeMemberFingerprints
-        self.actorProof = actorProof
-        self.groupCommit = groupCommit
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            UpdateGroupProofPayload(
-                groupId: groupId,
-                actorFingerprint: actorFingerprint,
-                title: title,
-                addMemberFingerprints: addMemberFingerprints,
-                addMemberProfiles: addMemberProfiles,
-                removeMemberFingerprints: removeMemberFingerprints,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-
-    var normalizedTitle: String? {
-        guard let title = title?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !title.isEmpty else {
-            return nil
-        }
-        return title
-    }
-
-    var normalizedAddMemberFingerprints: [String] {
-        Array(Set(addMemberFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty })).sorted()
-    }
-
-    var normalizedAddMemberProfiles: [RelayGroupMemberProfile] {
-        (addMemberProfiles ?? [])
-            .filter { !$0.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .sorted { $0.fingerprint < $1.fingerprint }
-    }
-
-    var normalizedRemoveMemberFingerprints: [String] {
-        Array(Set(removeMemberFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty })).sorted()
+        RelayResponse(type: .error, error: message)
     }
 }
 
@@ -4026,249 +2950,10 @@ struct SignedGroupCommit: Codable, Equatable {
     }
 }
 
-struct DeleteGroupRequest: Codable, Equatable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let actorProof: RelayActorProof?
-
-    init(
-        groupId: UUID,
-        actorFingerprint: String,
-        actorProof: RelayActorProof? = nil
-    ) {
-        self.groupId = groupId
-        self.actorFingerprint = actorFingerprint
-        self.actorProof = actorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            DeleteGroupProofPayload(
-                groupId: groupId,
-                actorFingerprint: actorFingerprint,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-struct RequestGroupJoinRequest: Codable, Equatable {
-    let groupId: UUID
-    let requesterProfile: RelayGroupMemberProfile
-    let invitedFingerprint: String?
-    let groupCommit: SignedGroupCommit?
-    let requesterProof: RelayActorProof?
-
-    init(
-        groupId: UUID,
-        requesterProfile: RelayGroupMemberProfile,
-        invitedFingerprint: String? = nil,
-        groupCommit: SignedGroupCommit? = nil,
-        requesterProof: RelayActorProof? = nil
-    ) {
-        self.groupId = groupId
-        self.requesterProfile = requesterProfile
-        self.invitedFingerprint = invitedFingerprint
-        self.groupCommit = groupCommit
-        self.requesterProof = requesterProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            RequestGroupJoinProofPayload(
-                groupId: groupId,
-                requesterProfile: requesterProfile,
-                invitedFingerprint: invitedFingerprint,
-                groupCommit: groupCommit,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-struct ListGroupJoinRequestsRequest: Codable, Equatable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let limit: Int?
-    let actorProof: RelayActorProof?
-
-    init(
-        groupId: UUID,
-        actorFingerprint: String,
-        limit: Int? = nil,
-        actorProof: RelayActorProof? = nil
-    ) {
-        self.groupId = groupId
-        self.actorFingerprint = actorFingerprint
-        self.limit = limit
-        self.actorProof = actorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            ListGroupJoinProofPayload(
-                groupId: groupId,
-                actorFingerprint: actorFingerprint,
-                limit: limit,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-struct ApproveGroupJoinRequest: Codable, Equatable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let joinRequestId: UUID
-    let groupCommit: SignedGroupCommit
-    let actorProof: RelayActorProof?
-
-    init(
-        groupId: UUID,
-        actorFingerprint: String,
-        joinRequestId: UUID,
-        groupCommit: SignedGroupCommit,
-        actorProof: RelayActorProof? = nil
-    ) {
-        self.groupId = groupId
-        self.actorFingerprint = actorFingerprint
-        self.joinRequestId = joinRequestId
-        self.groupCommit = groupCommit
-        self.actorProof = actorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            ApproveGroupJoinProofPayload(
-                groupId: groupId,
-                actorFingerprint: actorFingerprint,
-                joinRequestId: joinRequestId,
-                groupCommit: groupCommit,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-struct RejectGroupJoinRequest: Codable, Equatable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let joinRequestId: UUID
-    let actorProof: RelayActorProof?
-
-    init(
-        groupId: UUID,
-        actorFingerprint: String,
-        joinRequestId: UUID,
-        actorProof: RelayActorProof? = nil
-    ) {
-        self.groupId = groupId
-        self.actorFingerprint = actorFingerprint
-        self.joinRequestId = joinRequestId
-        self.actorProof = actorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            RejectGroupJoinProofPayload(
-                groupId: groupId,
-                actorFingerprint: actorFingerprint,
-                joinRequestId: joinRequestId,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
 private enum GroupProofCodec {
     static func encode<T: Encodable>(_ value: T) throws -> Data {
         try RelayCodec.encoder(sortedKeys: true).encode(value)
     }
-}
-
-private struct CreateGroupProofPayload: Codable {
-    let groupId: UUID?
-    let title: String
-    let creatorFingerprint: String
-    let memberFingerprints: [String]
-    let invitedFingerprints: [String]
-    let creatorProfile: RelayGroupMemberProfile?
-    let memberProfiles: [RelayGroupMemberProfile]?
-    let initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution?
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct RequestGroupJoinProofPayload: Codable {
-    let groupId: UUID
-    let requesterProfile: RelayGroupMemberProfile
-    let invitedFingerprint: String?
-    let groupCommit: SignedGroupCommit?
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct ListGroupInvitationsProofPayload: Codable {
-    let invitedFingerprint: String
-    let limit: Int?
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct InviteGroupMembersProofPayload: Codable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let invitedFingerprints: [String]
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct ListGroupJoinProofPayload: Codable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let limit: Int?
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct GetGroupProofPayload: Codable {
-    let groupId: UUID
-    let memberFingerprint: String?
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct ApproveGroupJoinProofPayload: Codable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let joinRequestId: UUID
-    let groupCommit: SignedGroupCommit
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct RejectGroupJoinProofPayload: Codable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let joinRequestId: UUID
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct UpdateGroupProofPayload: Codable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let title: String?
-    let addMemberFingerprints: [String]
-    let addMemberProfiles: [RelayGroupMemberProfile]?
-    let removeMemberFingerprints: [String]
-    let signedAt: Date
-    let nonce: UUID
 }
 
 private struct SignedGroupCommitProofPayload: Codable {
@@ -4284,33 +2969,6 @@ private struct SignedGroupCommitProofPayload: Codable {
     let ratchetSecretDistribution: GroupRatchetEpochSecretDistribution?
     let signedAt: Date
     let nonce: UUID
-}
-
-private struct DeleteGroupProofPayload: Codable {
-    let groupId: UUID
-    let actorFingerprint: String
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct ListGroupsProofPayload: Codable {
-    let memberFingerprint: String
-    let limit: Int?
-    let signedAt: Date
-    let nonce: UUID
-}
-
-struct PairingAnnouncement: Codable, Equatable {
-    let id: UUID
-    let offer: ContactOffer
-    let announcedAt: Date
-    let expiresAt: Date
-}
-
-struct PairingRequest: Codable, Equatable {
-    let id: UUID
-    let from: ContactOffer
-    let sentAt: Date
 }
 
 struct ContactOffer: Codable, Equatable {
@@ -4396,83 +3054,6 @@ private struct UnsignedContactOffer: Codable {
     let fingerprint: String
 }
 
-struct AnnounceRequest: Codable, Equatable {
-    let offer: ContactOffer
-    let ttlSeconds: Int?
-}
-
-struct ListAnnouncementsRequest: Codable, Equatable {
-    let limit: Int?
-}
-
-struct SendPairRequest: Codable, Equatable {
-    let targetFingerprint: String
-    let offer: ContactOffer
-    let actorProof: RelayActorProof?
-
-    init(
-        targetFingerprint: String,
-        offer: ContactOffer,
-        actorProof: RelayActorProof? = nil
-    ) {
-        self.targetFingerprint = targetFingerprint
-        self.offer = offer
-        self.actorProof = actorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            SendPairRequestProofPayload(
-                targetFingerprint: targetFingerprint,
-                offer: offer,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-private struct SendPairRequestProofPayload: Codable {
-    let targetFingerprint: String
-    let offer: ContactOffer
-    let signedAt: Date
-    let nonce: UUID
-}
-
-struct FetchPairRequestsRequest: Codable, Equatable {
-    let fingerprint: String
-    let maxCount: Int?
-    let actorProof: RelayActorProof?
-
-    init(
-        fingerprint: String,
-        maxCount: Int? = nil,
-        actorProof: RelayActorProof? = nil
-    ) {
-        self.fingerprint = fingerprint
-        self.maxCount = maxCount
-        self.actorProof = actorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try GroupProofCodec.encode(
-            FetchPairRequestsProofPayload(
-                fingerprint: fingerprint,
-                maxCount: maxCount,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-private struct FetchPairRequestsProofPayload: Codable {
-    let fingerprint: String
-    let maxCount: Int?
-    let signedAt: Date
-    let nonce: UUID
-}
-
 struct UploadAttachmentRequest: Codable, Equatable {
     let attachmentId: UUID
     let chunkIndex: Int
@@ -4483,53 +3064,6 @@ struct UploadAttachmentRequest: Codable, Equatable {
 struct FetchAttachmentRequest: Codable, Equatable {
     let attachmentId: UUID
     let chunkIndex: Int
-}
-
-struct UploadPrekeyBundleRequest: Codable, Equatable {
-    let fingerprint: String
-    let bundle: PrekeyBundle
-    let ttlSeconds: Int?
-    let actorProof: RelayActorProof?
-
-    init(
-        fingerprint: String,
-        bundle: PrekeyBundle,
-        ttlSeconds: Int? = nil,
-        actorProof: RelayActorProof? = nil
-    ) {
-        self.fingerprint = fingerprint
-        self.bundle = bundle
-        self.ttlSeconds = ttlSeconds
-        self.actorProof = actorProof
-    }
-
-    func signableData(for proof: RelayActorProof) throws -> Data {
-        try RelayCodec.encoder(sortedKeys: true).encode(
-            UploadPrekeyBundleProofPayload(
-                fingerprint: fingerprint,
-                bundle: bundle,
-                ttlSeconds: ttlSeconds,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            )
-        )
-    }
-}
-
-private struct UploadPrekeyBundleProofPayload: Codable {
-    let fingerprint: String
-    let bundle: PrekeyBundle
-    let ttlSeconds: Int?
-    let signedAt: Date
-    let nonce: UUID
-}
-
-struct FetchPrekeyBundleRequest: Codable, Equatable {
-    let fingerprint: String
-
-    init(fingerprint: String) {
-        self.fingerprint = fingerprint
-    }
 }
 
 struct AttachmentChunk: Codable, Equatable {

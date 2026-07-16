@@ -252,9 +252,9 @@ version=4, conversationId, sessionId, messageCounter, context
 The encrypted plaintext begins with the NPAD-v2 (`NPAD` plus version byte `02`)
 frame and contains a `WirePayloadV2`. JavaScript currently emits the standard
 text application event; Swift additionally supports its documented typed
-application/control projections. A direct-v4 receiver does not probe the
-NPAD-v1 legacy decoder. Persisted contact-offer versions 2 and 3 remain on an
-explicit identity-key/NPAD-v1 path.
+application/control projections. Direct messaging has no NPAD-v1 decoder or
+format probe. Pre-v4 contact offers are rejected as unsupported input rather
+than migrated into an identity-key session.
 
 [`test_vectors/direct_v4_pairwise_binding.json`](test_vectors/direct_v4_pairwise_binding.json)
 is consumed by both Swift and JavaScript tests. It fixes pairwise relationship

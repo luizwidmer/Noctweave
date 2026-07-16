@@ -312,7 +312,6 @@ private final class RendezvousRelayTCPHarness {
         let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
         let configuration = RelayConfiguration(
             tlsEnabled: false,
-            compatibilityProfiles: [],
             rendezvousTransportEnabled: enabled
         )
         let bootstrap = ServerBootstrap(group: group)

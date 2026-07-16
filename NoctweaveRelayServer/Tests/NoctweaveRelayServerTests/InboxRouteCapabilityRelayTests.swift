@@ -5,7 +5,7 @@ import XCTest
 
 final class InboxRouteCapabilityRelayTests: XCTestCase {
     func testRouteCapabilityProtocolIsDisabledByDefault() throws {
-        let harness = try RelayTCPHarness(compatibilityProfiles: [])
+        let harness = try RelayTCPHarness()
         defer { try? harness.shutdown() }
         let response = try harness.send(
             .deliver(
@@ -169,13 +169,11 @@ final class InboxRouteCapabilityRelayTests: XCTestCase {
         let source = try RelayTCPHarness(
             kind: .bridge,
             federation: federation,
-            compatibilityProfiles: [],
             experimentalRouteCapabilitiesEnabled: true
         )
         let destination = try RelayTCPHarness(
             kind: .standard,
             federation: federation,
-            compatibilityProfiles: [],
             experimentalRouteCapabilitiesEnabled: true
         )
         defer {
@@ -238,10 +236,7 @@ final class InboxRouteCapabilityRelayTests: XCTestCase {
     }
 
     func testRelayAuthenticatesCapabilityLifecycleAndFailsClosedAfterRevocation() throws {
-        let harness = try RelayTCPHarness(
-            compatibilityProfiles: [],
-            experimentalRouteCapabilitiesEnabled: true
-        )
+        let harness = try RelayTCPHarness(experimentalRouteCapabilitiesEnabled: true)
         defer { try? harness.shutdown() }
         let signer = try makeSignerOrSkip()
         let inboxId = InboxAddress.derived(from: signer.publicKey)
@@ -370,7 +365,6 @@ final class InboxRouteCapabilityRelayTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let harness = try RelayTCPHarness(
-            compatibilityProfiles: [],
             storeFileURL: directory.appendingPathComponent("relay.sqlite"),
             experimentalRouteCapabilitiesEnabled: true
         )

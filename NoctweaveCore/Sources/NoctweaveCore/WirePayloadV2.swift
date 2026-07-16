@@ -14,7 +14,6 @@ public enum WirePayloadV2Error: Error, Equatable {
     case invalidKnownApplicationContent
     case invalidKnownControl
     case unknownControl
-    case legacyFormatRequired
     case directV4FormatRequired
 }
 

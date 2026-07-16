@@ -51,45 +51,12 @@ final class InboxRegistrationV2Tests: XCTestCase {
         }
     }
 
-    func testRelayAcceptsV2AndRejectsDowngradeWrongKeyTamperContactOfferAndReplay() throws {
+    func testRelayAcceptsV2AndRejectsWrongKeyTamperUnknownVersionAndReplay() throws {
         let harness = try RelayTCPHarness()
         defer { try? harness.shutdown() }
         let signer = try makeSignerOrSkip()
         let inboxId = InboxAddress.derived(from: signer.publicKey)
         let valid = try signedV2Request(inboxId: inboxId, signer: signer)
-
-        let downgraded = RegisterInboxRequest(
-            inboxId: inboxId,
-            accessPublicKey: signer.publicKey,
-            accessProof: valid.accessProof
-        )
-        XCTAssertEqual(
-            try harness.send(.registerInbox(downgraded)).error,
-            "Inbox registration is not bound to a valid identity offer"
-        )
-
-        let forbiddenOffer = ContactOffer(
-            version: 2,
-            displayName: "Must stay off relay",
-            inboxId: inboxId,
-            relay: harness.endpoint,
-            signingPublicKey: Data("IDENTITY-SIGNING-PUBLIC-KEY".utf8),
-            agreementPublicKey: Data("IDENTITY-AGREEMENT-PUBLIC-KEY".utf8),
-            inboxAccessPublicKey: signer.publicKey,
-            fingerprint: "identity-fingerprint",
-            signature: Data()
-        )
-        let v2WithContact = RegisterInboxRequest(
-            inboxId: inboxId,
-            accessPublicKey: signer.publicKey,
-            registrationVersion: 2,
-            contactOffer: forbiddenOffer,
-            accessProof: valid.accessProof
-        )
-        XCTAssertEqual(
-            try harness.send(.registerInbox(v2WithContact)).error,
-            "Privacy-minimized inbox registration must not include a contact offer"
-        )
 
         let wrongSigner = try makeSignerOrSkip()
         let wrongDraft = RegisterInboxRequest.privacyMinimizedV2(
@@ -209,10 +176,9 @@ final class InboxRegistrationV2Tests: XCTestCase {
         }
     }
 
-    func testLegacyRegistrationDecodesWithoutV2Discriminator() throws {
-        let data = Data(#"{"inboxId":"legacy","accessPublicKey":"Ig=="}"#.utf8)
-        let decoded = try RelayCodec.decoder().decode(RegisterInboxRequest.self, from: data)
-        XCTAssertNil(decoded.registrationVersion)
+    func testRegistrationVersionIsRequiredWhenDecoded() {
+        let data = Data(#"{"inboxId":"inbox","accessPublicKey":"Ig=="}"#.utf8)
+        XCTAssertThrowsError(try RelayCodec.decoder().decode(RegisterInboxRequest.self, from: data))
     }
 
     private func signedV2Request(

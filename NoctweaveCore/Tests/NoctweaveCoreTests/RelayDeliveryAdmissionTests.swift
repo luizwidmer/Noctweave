@@ -22,46 +22,9 @@ final class RelayDeliveryAdmissionTests: XCTestCase {
         XCTAssertEqual(acceptedInbox.map(\.id), [envelope.id])
     }
 
-    func testGroupDeliveryRequiresRegisteredDestinationAndAcceptsGroupDescriptorInbox() async throws {
-        let store = RelayStore()
-        let syntheticInboxId = InboxAddress.generate()
-        let envelope = makeAdmissionEnvelope(counter: 2)
-
-        await XCTAssertThrowsDeliveryAdmissionErrorAsync(
-            try await store.deliverGroupEnvelope(
-                envelope,
-                to: syntheticInboxId,
-                recipientFingerprints: ["member-b"]
-            )
-        ) { error in
-            XCTAssertEqual(error as? RelayStoreError, .destinationInboxNotRegistered)
-        }
-        let rejectedInbox = try await store.fetch(inboxId: syntheticInboxId)
-        XCTAssertTrue(rejectedInbox.isEmpty)
-
-        let group = try await store.createGroup(
-            title: "Registered group",
-            creatorFingerprint: "member-a",
-            memberFingerprints: ["member-a", "member-b"]
-        )
-        let storedCount = try await store.deliverGroupEnvelope(
-            envelope,
-            to: group.inboxId,
-            recipientFingerprints: ["member-b"]
-        )
-        let acceptedInbox = try await store.fetch(inboxId: group.inboxId)
-        XCTAssertEqual(storedCount, 1)
-        XCTAssertEqual(acceptedInbox.map(\.id), [envelope.id])
-    }
-
     func testCoreRelayHandlerReturnsExplicitAdmissionErrorAndAcceptsAfterRegistration() async throws {
         let store = RelayStore()
-        let server = RelayServer(
-            store: store,
-            configuration: RelayConfiguration(
-                compatibilityProfiles: [RelayCompatibilityProfile.legacyFingerprint]
-            )
-        )
+        let server = RelayServer(store: store)
         let endpoint = RelayEndpoint(
             host: "127.0.0.1",
             port: UInt16.random(in: 43_000...45_000)
@@ -96,19 +59,6 @@ final class RelayDeliveryAdmissionTests: XCTestCase {
         XCTAssertEqual(accepted.type, .delivered)
         XCTAssertEqual(accepted.delivered?.storedCount, 1)
 
-        let groupId = UUID()
-        let groupInboxId = InboxAddress.generate()
-        let groupRejected = try await client.send(
-            .deliverGroupMessage(
-                DeliverGroupMessageRequest(
-                    groupId: groupId,
-                    groupInboxId: groupInboxId,
-                    envelope: makeUnregisteredGroupEnvelope(groupId: groupId)
-                )
-            )
-        )
-        XCTAssertEqual(groupRejected.type, .error)
-        XCTAssertEqual(groupRejected.error, "Destination group inbox is not registered")
     }
 
     private func makeAdmissionEnvelope(counter: UInt64) -> Envelope {
@@ -127,22 +77,6 @@ final class RelayDeliveryAdmissionTests: XCTestCase {
         )
     }
 
-    private func makeUnregisteredGroupEnvelope(groupId: UUID) -> GroupRatchetEnvelope {
-        GroupRatchetEnvelope(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: Data(repeating: 0x44, count: 32),
-            senderFingerprint: Data(repeating: 0x55, count: 32).base64EncodedString(),
-            sentAt: Date(timeIntervalSince1970: 9_100),
-            messageCounter: 0,
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x11, count: 12),
-                ciphertext: Data(repeating: 0x22, count: 512),
-                tag: Data(repeating: 0x33, count: 16)
-            ),
-            signature: Data(repeating: 0x66, count: 3_309)
-        )
-    }
 }
 
 private func XCTAssertThrowsDeliveryAdmissionErrorAsync<T>(

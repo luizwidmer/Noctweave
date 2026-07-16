@@ -284,7 +284,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             federationAllowList: mode == .solo ? [] : allowList,
             allowPrivateFederationEndpoints: allowPrivateFederationEndpoints ?? current.allowPrivateFederationEndpoints,
             requireInboxAccessControl: current.requireInboxAccessControl ?? true,
-            compatibilityProfiles: current.compatibilityProfiles,
             rendezvousTransportEnabled: current.isRendezvousTransportEnabled
         )
     }
@@ -332,7 +331,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             advertisedEndpoint: config.advertisedEndpoint,
             federationAllowList: config.federationAllowList,
             allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints,
-            compatibilityProfiles: config.compatibilityProfiles,
             rendezvousTransportEnabled: config.rendezvousTransportEnabled
         )
         let updated = try validatedConfiguration(from: current)

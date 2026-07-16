@@ -222,11 +222,6 @@ public struct ProtocolCapabilityManifest: Codable, Equatable {
         ProtocolModuleCapability(module: "nw.wake", versions: [1], status: .experimental),
         ProtocolModuleCapability(module: "nw.federation", versions: [1], status: .provisional),
         ProtocolModuleCapability(
-            module: "nw.compat.legacy-fingerprint",
-            versions: [1],
-            status: .deprecated
-        ),
-        ProtocolModuleCapability(
             module: "nw.privacy.hidden-retrieval",
             versions: [1],
             status: .experimental

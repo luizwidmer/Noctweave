@@ -106,7 +106,7 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             manifest.modules.first { $0.module == "nw.endpoints" }?.limits["maxActiveEndpoints"],
             1
         )
-        XCTAssertEqual(ProtocolCapabilityManifest.knownModuleCatalog.count, 14)
+        XCTAssertEqual(ProtocolCapabilityManifest.knownModuleCatalog.count, 13)
 
         for inactive in [
             "nw.mailbox",
@@ -115,7 +115,6 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             "nw.groups",
             "nw.wake",
             "nw.federation",
-            "nw.compat.legacy-fingerprint",
             "nw.privacy.hidden-retrieval",
             "nw.privacy.onion",
             "nw.privacy.mixnet"

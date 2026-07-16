@@ -63,14 +63,24 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
             recipientEndpoint: bob.endpoint,
             pairwiseBinding: aliceBob
         )
-        let envelope = try MessageEngine.encrypt(
-            body: .text("established session survives prekey age"),
+        let sentAt = Date(timeIntervalSince1970: 1_752_680_000)
+        let event = ConversationEvent(
+            id: try XCTUnwrap(context.directV4?.eventId),
+            conversationId: outboundConversation.id,
+            authorInstallationHandle: aliceBob.localInstallationHandle,
+            createdAt: sentAt,
+            kind: .application,
+            content: try XCTUnwrap(EncodedContent.text("established session survives prekey age"))
+        )
+        let envelope = try MessageEngine.encryptDirectV4(
+            wirePayload: .application(event),
             senderSigningKey: alice.installation.signingKey,
             senderFingerprint: aliceBob.localInstallationHandle.rawValue,
             conversation: &outboundConversation,
             kemCiphertext: outbound.kemCiphertext,
             prekey: outbound.prekey,
-            authenticatedContext: context
+            authenticatedContext: context,
+            sentAt: sentAt
         )
         let decrypted = try MessageEngine.decryptDirectV4(
             envelope: envelope,

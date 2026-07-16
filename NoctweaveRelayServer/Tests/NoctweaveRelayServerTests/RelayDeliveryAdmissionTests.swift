@@ -17,38 +17,6 @@ final class RelayDeliveryAdmissionTests: XCTestCase {
         XCTAssertEqual(store.fetch(inboxId: inboxId, maxCount: nil).map(\.id), [envelope.id])
     }
 
-    func testGroupDeliveryRequiresRegisteredDestinationAndAcceptsGroupDescriptorInbox() throws {
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
-        let syntheticInboxId = InboxAddress.generate()
-        let envelope = makeAdmissionEnvelope(counter: 2)
-
-        XCTAssertThrowsError(
-            try store.deliverGroupEnvelope(
-                envelope,
-                to: syntheticInboxId,
-                recipientFingerprints: ["member-b"]
-            )
-        ) { error in
-            XCTAssertEqual(error as? RelayStoreError, .destinationInboxNotRegistered)
-        }
-        XCTAssertTrue(store.fetch(inboxId: syntheticInboxId, maxCount: nil).isEmpty)
-
-        let group = try store.createGroup(
-            title: "Registered group",
-            creatorFingerprint: "member-a",
-            memberFingerprints: ["member-a", "member-b"]
-        )
-        XCTAssertEqual(
-            try store.deliverGroupEnvelope(
-                envelope,
-                to: group.inboxId,
-                recipientFingerprints: ["member-b"]
-            ),
-            1
-        )
-        XCTAssertEqual(store.fetch(inboxId: group.inboxId, maxCount: nil).map(\.id), [envelope.id])
-    }
-
     private func makeAdmissionEnvelope(counter: UInt64) -> Envelope {
         Envelope(
             conversationId: "relay-delivery-admission",

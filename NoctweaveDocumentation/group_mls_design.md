@@ -21,17 +21,12 @@ provider implementation for either profile in this repository.
 
 ## Implementation Status
 
-The relay-backed group path described below is disabled by default and becomes
-active only when an operator explicitly enables the deprecated
-`nw.compat.legacy-fingerprint` profile. It treats one identity fingerprint as
-one delivery/membership participant. The additive v2 model in
+The earlier fingerprint-addressed relay group path is not part of the 1.0
+protocol. The additive v2 model in
 `GroupArchitectureV2.swift` defines `GroupUser`, endpoint-level
 `GroupClientLeaf`, signed roles and permissions, and a `GroupCryptoProvider`
 boundary, with state-model tests. It is not yet connected to relay group
-creation, delivery, or the headless group workflow. In particular, the current
-compatibility relay cannot remove one endpoint leaf while preserving a sibling
-leaf, and one identity fingerprint's acknowledgement cannot represent
-independent endpoint progress.
+creation, delivery, or the headless group workflow.
 
 The isolated signed v2 model also requires every `addClient` and `addUser`
 commit to carry a commit-signed `GroupClientKeyPackageV2`. Acceptance verifies

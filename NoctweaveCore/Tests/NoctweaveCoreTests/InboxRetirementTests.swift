@@ -10,7 +10,6 @@ final class InboxRetirementTests: XCTestCase {
         let consumerKey = try SigningKeyPair.generate()
         let inboxId = InboxAddress.derived(from: accessKey.publicKeyData)
         let direct = retirementEnvelope(marker: 0x11)
-        let group = retirementEnvelope(marker: 0x12)
         let consumerId = MailboxConsumerId.generate()
 
         try await store.registerInbox(inboxId: inboxId, accessPublicKey: accessKey.publicKeyData)
@@ -21,11 +20,6 @@ final class InboxRetirementTests: XCTestCase {
             startingSequence: 0
         )
         _ = try await store.deliver(direct, to: inboxId)
-        _ = try await store.deliverGroupEnvelope(
-            group,
-            to: inboxId,
-            recipientFingerprints: [retirementFingerprint(0x31)]
-        )
 
         let digest = Data(repeating: 0xA1, count: SHA256.byteCount)
         try await store.retireInbox(inboxId: inboxId, requestDigest: digest)
@@ -41,14 +35,6 @@ final class InboxRetirementTests: XCTestCase {
 
         await XCTAssertThrowsInboxRetirementErrorAsync(
             try await store.deliver(direct, to: inboxId),
-            expected: .inboxRetired
-        )
-        await XCTAssertThrowsInboxRetirementErrorAsync(
-            try await store.deliverGroupEnvelope(
-                group,
-                to: inboxId,
-                recipientFingerprints: [retirementFingerprint(0x31)]
-            ),
             expected: .inboxRetired
         )
         await XCTAssertThrowsInboxRetirementErrorAsync(

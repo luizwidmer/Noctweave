@@ -505,8 +505,8 @@ final class WirePayloadV2Tests: XCTestCase {
         XCTAssertEqual(inbound.receiveChain.counter, counterBefore)
     }
 
-    func testLegacyAndTypedPaddingFramesAreMutuallyIsolated() throws {
-        let legacy = try PaddedMessagePlaintext.encodeLegacyMessageBody(.text("legacy"))
+    func testGroupAndDirectPaddingFramesAreMutuallyIsolated() throws {
+        let group = try PaddedMessagePlaintext.encodeGroupMessageBody(.text("group"))
         let handle = RelationshipInstallationHandle(
             rawValue: Data(repeating: 0x61, count: 32).base64EncodedString()
         )
@@ -519,9 +519,9 @@ final class WirePayloadV2Tests: XCTestCase {
         )
         let typed = try PaddedMessagePlaintext.encodeWirePayloadV2(.application(event))
 
-        XCTAssertThrowsError(try PaddedMessagePlaintext.decodeWirePayloadV2(legacy))
-        XCTAssertThrowsError(try PaddedMessagePlaintext.decodeLegacyMessageBody(typed))
-        XCTAssertEqual(try PaddedMessagePlaintext.decodeLegacyMessageBody(legacy), .text("legacy"))
+        XCTAssertThrowsError(try PaddedMessagePlaintext.decodeWirePayloadV2(group))
+        XCTAssertThrowsError(try PaddedMessagePlaintext.decodeGroupMessageBody(typed))
+        XCTAssertEqual(try PaddedMessagePlaintext.decodeGroupMessageBody(group), .text("group"))
         XCTAssertEqual(try PaddedMessagePlaintext.decodeWirePayloadV2(typed).application, event)
     }
 
@@ -669,86 +669,6 @@ final class WirePayloadV2Tests: XCTestCase {
         XCTAssertEqual(persisted.quarantinedControlEvents.map(\.id), [unknownControlId])
     }
 
-    func testCertifiedHeadlessContactQuarantinesDowngradeWithoutBlockingLaterEvent() async throws {
-        let relayStore = RelayStore()
-        let server = RelayServer(store: relayStore)
-        let started = expectation(description: "downgrade quarantine relay started")
-        var boundPort: UInt16?
-        server.onEvent = { event in
-            if case .started(let port) = event {
-                boundPort = port
-                started.fulfill()
-            }
-        }
-        try server.start(host: "127.0.0.1", port: 0)
-        await fulfillment(of: [started], timeout: 2)
-        let relay = RelayEndpoint(host: "127.0.0.1", port: try XCTUnwrap(boundPort))
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer {
-            server.stop()
-            try? FileManager.default.removeItem(at: directory)
-        }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let alice = HeadlessMessagingClient(
-            stateURL: directory.appendingPathComponent("alice.json"),
-            useEncryptedStore: false
-        )
-        let bob = HeadlessMessagingClient(
-            stateURL: directory.appendingPathComponent("bob.json"),
-            useEncryptedStore: false
-        )
-        _ = try await alice.createState(displayName: "Alice", relay: relay)
-        _ = try await bob.createState(displayName: "Bob", relay: relay)
-        try await alice.registerInbox()
-        try await bob.registerInbox()
-        let aliceCode = try await alice.exportContactCode()
-        let bobCode = try await bob.exportContactCode()
-        _ = try await alice.importContactCode(bobCode)
-        _ = try await bob.importContactCode(aliceCode)
-
-        let maybeAliceState = try await alice.store.load()
-        let maybeBobState = try await bob.store.load()
-        let aliceState = try XCTUnwrap(maybeAliceState)
-        let bobState = try XCTUnwrap(maybeBobState)
-        let bobContact = try XCTUnwrap(aliceState.contacts.first)
-        XCTAssertTrue(bobContact.usesCertifiedInstallationEndpoint)
-        // Forge a legacy-only projection to model a hostile downgraded sender.
-        // Production APIs now reject passing the certified contact itself to
-        // legacy session creation, so the test must not rely on that fallback.
-        let legacyProjection = Contact(
-            id: bobContact.id,
-            displayName: bobContact.displayName,
-            inboxId: bobContact.inboxId,
-            relay: bobContact.relay,
-            signingPublicKey: bobContact.signingPublicKey,
-            agreementPublicKey: bobContact.agreementPublicKey
-        )
-        let legacySession = try MessageEngine.createOutboundSession(
-            identity: aliceState.identity,
-            contact: legacyProjection
-        )
-        var legacyConversation = legacySession.conversation
-        let downgradedEnvelope = try MessageEngine.encrypt(
-            body: .text("legacy downgrade"),
-            senderSigningKey: aliceState.identity.signingKey,
-            senderFingerprint: aliceState.identity.fingerprint,
-            conversation: &legacyConversation,
-            kemCiphertext: legacySession.kemCiphertext
-        )
-        _ = try await relayStore.deliver(downgradedEnvelope, to: bobState.inboxId)
-        _ = try await alice.sendText(to: "Bob", text: "valid after poison")
-
-        let received = try await bob.receive(maxCount: 10)
-        XCTAssertEqual(received.map(\.body), [.text("valid after poison")])
-        let maybePersisted = try await bob.store.load()
-        let persisted = try XCTUnwrap(maybePersisted)
-        XCTAssertEqual(persisted.quarantinedTransportEnvelopesV2.count, 1)
-        XCTAssertEqual(
-            persisted.quarantinedTransportEnvelopesV2.first?.reason,
-            .incompatibleProfile
-        )
-        XCTAssertFalse(persisted.relationshipsV2.flatMap(\.events).isEmpty)
-    }
 }
 
 private struct WireEndpointFixture {

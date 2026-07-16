@@ -44,7 +44,7 @@ final class InboxRegistrationV2Tests: XCTestCase {
         }
     }
 
-    func testRelayAcceptsV2AndRejectsDowngradeWrongKeyTamperContactOfferAndReplay() async throws {
+    func testRelayAcceptsV2AndRejectsWrongKeyTamperUnknownVersionAndReplay() async throws {
         let port = UInt16.random(in: 56_000...58_000)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
         let server = RelayServer(store: RelayStore())
@@ -56,35 +56,6 @@ final class InboxRegistrationV2Tests: XCTestCase {
         let accessKey = try SigningKeyPair.generate()
         let inboxId = InboxAddress.derived(from: accessKey.publicKeyData)
         let valid = try signedV2Request(inboxId: inboxId, accessKey: accessKey)
-
-        let identity = try Identity.generate(displayName: "Must stay off relay")
-        let offer = try MessageEngine.makeContactOffer(
-            identity: identity,
-            inboxId: inboxId,
-            relay: endpoint,
-            inboxAccessPublicKey: accessKey.publicKeyData
-        )
-        let downgraded = RegisterInboxRequest(
-            inboxId: inboxId,
-            accessPublicKey: accessKey.publicKeyData,
-            contactOffer: offer,
-            accessProof: valid.accessProof
-        )
-        let downgradedResponse = try await client.send(.registerInbox(downgraded))
-        XCTAssertEqual(downgradedResponse.error, "Invalid actor proof signature.")
-
-        let v2WithContact = RegisterInboxRequest(
-            inboxId: inboxId,
-            accessPublicKey: accessKey.publicKeyData,
-            registrationVersion: 2,
-            contactOffer: offer,
-            accessProof: valid.accessProof
-        )
-        let contactResponse = try await client.send(.registerInbox(v2WithContact))
-        XCTAssertEqual(
-            contactResponse.error,
-            "Privacy-minimized inbox registration must not include a contact offer"
-        )
 
         let wrongKey = try SigningKeyPair.generate()
         let wrongKeyProof = try actorProof(signingKey: wrongKey) { proof in
@@ -132,10 +103,9 @@ final class InboxRegistrationV2Tests: XCTestCase {
         XCTAssertEqual(replayResponse.error, "Actor proof replay detected.")
     }
 
-    func testLegacyRegistrationDiscriminatorRemainsAbsentWhenDecoded() throws {
-        let data = Data(#"{"inboxId":"legacy","accessPublicKey":"Ig=="}"#.utf8)
-        let decoded = try NoctweaveCoder.decode(RegisterInboxRequest.self, from: data)
-        XCTAssertNil(decoded.registrationVersion)
+    func testRegistrationVersionIsRequiredWhenDecoded() {
+        let data = Data(#"{"inboxId":"inbox","accessPublicKey":"Ig=="}"#.utf8)
+        XCTAssertThrowsError(try NoctweaveCoder.decode(RegisterInboxRequest.self, from: data))
     }
 
     private func signedV2Request(
