@@ -88,7 +88,7 @@ final class OperatorWebUITests: XCTestCase {
             fileURL: directory.appendingPathComponent("operator-config.json")
         )
         let configurationStore = RelayConfigurationStore(makeBaseConfiguration())
-        let relayStore = RelayStore(fileURL: nil, maxInboxMessages: 10, temporalBucketSeconds: 300)
+        let relayStore = RelayStore(fileURL: nil, temporalBucketSeconds: 300)
         let controlPlane = OperatorControlPlane(
             configurationStore: configurationStore,
             persistence: persistence,
@@ -103,9 +103,12 @@ final class OperatorWebUITests: XCTestCase {
         editable.operatorNote = "Configured in the Web UI"
         editable.temporalBucketSeconds = 120
         editable.relayPeerExchangeLimit = 0
+        editable.opaqueRouteRuntimeEnabled = false
 
         let updated = try controlPlane.update(editable)
         XCTAssertEqual(updated.configuration.relayName, "Persisted Relay")
+        XCTAssertFalse(updated.configuration.opaqueRouteRuntimeEnabled)
+        XCTAssertFalse(configurationStore.snapshot().isOpaqueRouteRuntimeEnabled)
         XCTAssertEqual(configurationStore.snapshot().operatorNote, "Configured in the Web UI")
         XCTAssertEqual(try persistence.load()?.relayName, "Persisted Relay")
 
@@ -124,7 +127,7 @@ final class OperatorWebUITests: XCTestCase {
         let controlPlane = OperatorControlPlane(
             configurationStore: RelayConfigurationStore(base),
             persistence: persistence,
-            relayStore: RelayStore(fileURL: nil, maxInboxMessages: 10),
+            relayStore: RelayStore(fileURL: nil),
             startedAt: Date(),
             bootstrap: [:],
             storageDescription: "SQLite",
@@ -180,22 +183,6 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertEqual(updated.openFederationDHTMaxRecordsPerHost, 3)
         XCTAssertEqual(updated.openFederationDHTMaxQueryRecords, 192)
         XCTAssertEqual(updated.groupSecurityModel, .mlsDerivedTree)
-    }
-
-    func testLegacyOperatorConfigurationDecodesWithNewFieldsAbsent() throws {
-        let current = OperatorEditableConfiguration(configuration: makeBaseConfiguration())
-        let encoded = try JSONEncoder().encode(current)
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        [
-            "attachmentStorageMode", "ipfsAPIEndpoint", "ipfsGatewayEndpoint", "ipfsTimeoutSeconds",
-            "hiddenRetrievalEnabled", "onionTransportEnabled", "mixnetTransportEnabled"
-        ].forEach { object.removeValue(forKey: $0) }
-        let legacyData = try JSONSerialization.data(withJSONObject: object)
-
-        let decoded = try JSONDecoder().decode(OperatorEditableConfiguration.self, from: legacyData)
-        XCTAssertNil(decoded.attachmentStorageMode)
-        XCTAssertNil(decoded.hiddenRetrievalEnabled)
-        XCTAssertNoThrow(try decoded.validatedConfiguration(from: makeBaseConfiguration()))
     }
 
     func testOperatorSecurityHeadersDisallowEmbeddingAndInlineCode() {

@@ -2,7 +2,7 @@ import XCTest
 @testable import NoctweaveRelayServer
 
 final class RelayCapabilitiesV2Tests: XCTestCase {
-    func testConfiguredRelayAdvertisesMailboxV2AndEnabledModules() throws {
+    func testConfiguredRelayAdvertisesStableOpaqueRouteAndEnabledModules() throws {
         let info = RelayConfiguration(
             federation: FederationDescriptor(mode: .manual),
             attachmentsEnabled: true
@@ -11,16 +11,16 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
 
         XCTAssertTrue(manifest.isStructurallyValid)
         XCTAssertTrue(manifest.supports(module: "nw.core", version: 2))
-        XCTAssertTrue(manifest.supports(module: "nw.mailbox", version: 2))
+        XCTAssertTrue(manifest.supports(module: "nw.opaque-route", version: 2))
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 2))
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 3))
         XCTAssertTrue(manifest.supports(module: "nw.blobs", version: 1))
         XCTAssertFalse(manifest.supports(module: "nw.groups", version: 1))
-        let internallyEnabled = RelayConfiguration(
-            experimentalRouteCapabilitiesEnabled: true
+        let disabled = RelayConfiguration(
+            opaqueRouteRuntimeEnabled: false
         ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
-        let internallyEnabledManifest = try XCTUnwrap(internallyEnabled.protocolCapabilities)
-        XCTAssertFalse(internallyEnabledManifest.supports(module: "nw.routes", version: 3))
+        let disabledManifest = try XCTUnwrap(disabled.protocolCapabilities)
+        XCTAssertFalse(disabledManifest.supports(module: "nw.opaque-route", version: 2))
 
         let encoded = try JSONEncoder().encode(info)
         let decoded = try JSONDecoder().decode(RelayInfo.self, from: encoded)

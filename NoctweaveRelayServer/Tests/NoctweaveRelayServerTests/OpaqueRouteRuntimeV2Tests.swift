@@ -34,7 +34,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("opaque-routes.sqlite")
 
-        let writer = RelayStore(fileURL: url, maxInboxMessages: nil)
+        let writer = RelayStore(fileURL: url)
         let create = try fixture.create(at: fixture.now)
         let route = try writer.createOpaqueRouteV2(create, confidentialTransport: true, receivedAt: fixture.now)
         XCTAssertEqual(route.lease.renewalSequence, 0)
@@ -55,7 +55,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
             firstReceipt
         )
 
-        let reader = RelayStore(fileURL: url, maxInboxMessages: nil)
+        let reader = RelayStore(fileURL: url)
         try reader.load()
         XCTAssertEqual(
             try reader.appendOpaqueRouteV2(
@@ -102,7 +102,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("opaque-routes.sqlite")
-        let store = RelayStore(fileURL: url, maxInboxMessages: nil)
+        let store = RelayStore(fileURL: url)
         _ = try store.createOpaqueRouteV2(
             fixture.create(at: fixture.now),
             confidentialTransport: true,
@@ -123,7 +123,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
             confidentialTransport: true,
             receivedAt: fixture.now.addingTimeInterval(1)
         )
-        let reloaded = RelayStore(fileURL: url, maxInboxMessages: nil)
+        let reloaded = RelayStore(fileURL: url)
         try reloaded.load()
         XCTAssertEqual(
             try reloaded.appendOpaqueRouteV2(
@@ -142,7 +142,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("opaque-routes.sqlite")
-        let store = RelayStore(fileURL: url, maxInboxMessages: nil)
+        let store = RelayStore(fileURL: url)
         let create = try fixture.create(at: fixture.now)
         let route = try store.createOpaqueRouteV2(
             create,
@@ -160,7 +160,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
         )
         XCTAssertEqual(tombstone.status, .tornDown)
 
-        let reloaded = RelayStore(fileURL: url, maxInboxMessages: nil)
+        let reloaded = RelayStore(fileURL: url)
         try reloaded.load()
         XCTAssertThrowsError(try reloaded.createOpaqueRouteV2(
             create,
@@ -173,7 +173,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
 
     func testConfidentialTransportIsRequiredBeforeMutation() throws {
         let fixture = Fixture()
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil)
+        let store = RelayStore(fileURL: nil)
         XCTAssertThrowsError(try store.createOpaqueRouteV2(
             fixture.create(at: fixture.now),
             confidentialTransport: false,
@@ -185,7 +185,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
 
     func testRenewalRevisionRetentionFloorAndQuotaSemantics() throws {
         let fixture = Fixture()
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil)
+        let store = RelayStore(fileURL: nil)
         let route = try store.createOpaqueRouteV2(
             fixture.create(at: fixture.now, leaseDuration: 10_800),
             confidentialTransport: true,
@@ -220,7 +220,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
         )
         XCTAssertEqual(page.packets.map(\.routeRevision), [0, 1])
 
-        let quotaStore = RelayStore(fileURL: nil, maxInboxMessages: nil)
+        let quotaStore = RelayStore(fileURL: nil)
         _ = try quotaStore.createOpaqueRouteV2(
             fixture.create(at: fixture.now),
             confidentialTransport: true,
@@ -246,7 +246,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
 
     func testExpiredPacketAdvancesRetentionFloorAndRejectsStaleCursor() throws {
         let fixture = Fixture()
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil)
+        let store = RelayStore(fileURL: nil)
         _ = try store.createOpaqueRouteV2(
             fixture.create(at: fixture.now, leaseDuration: 7_200),
             confidentialTransport: true,
@@ -278,12 +278,28 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
     }
 
     func testCapabilityAdvertisementIsExplicit() {
-        let disabled = RelayConfiguration(experimentalRouteCapabilitiesEnabled: false)
+        let disabled = RelayConfiguration(opaqueRouteRuntimeEnabled: false)
             .makeInfo().protocolCapabilities
-        let enabled = RelayConfiguration(experimentalRouteCapabilitiesEnabled: true)
+        let enabled = RelayConfiguration(opaqueRouteRuntimeEnabled: true)
             .makeInfo().protocolCapabilities
         XCTAssertFalse(disabled?.supports(module: "nw.opaque-route", version: 2) == true)
         XCTAssertTrue(enabled?.supports(module: "nw.opaque-route", version: 2) == true)
+    }
+
+    func testStableRuntimeConfigurationDefaultsOnAndCanBeDisabled() {
+        XCTAssertTrue(ServerConfig.parse(arguments: [], environment: [:]).opaqueRouteRuntimeEnabled)
+        XCTAssertFalse(
+            ServerConfig.parse(
+                arguments: [],
+                environment: ["NOCTWEAVE_OPAQUE_ROUTE_RUNTIME": "false"]
+            ).opaqueRouteRuntimeEnabled
+        )
+        XCTAssertFalse(
+            ServerConfig.parse(
+                arguments: ["--opaque-route-runtime", "false"],
+                environment: [:]
+            ).opaqueRouteRuntimeEnabled
+        )
     }
 }
 

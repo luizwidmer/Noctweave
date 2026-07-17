@@ -7,17 +7,6 @@ import CSQLite
 #endif
 
 enum RelayStoreError: Error, Equatable {
-    case inboxFull
-    case invalidInboxRegistration
-    case invalidInboxRetirement
-    case inboxAlreadyRegistered
-    case inboxRetired
-    case invalidInboxRouteCapability
-    case inboxRouteCapabilityRevoked
-    case inboxRouteCapabilityLimitReached
-    case invalidInboxRouteCapabilityMutation
-    case inboxRouteCapabilityMutationConflict
-    case inboxRouteCapabilityMutationOutOfOrder
     case invalidRendezvousRoute
     case rendezvousRouteUnavailable
     case rendezvousRegistrationConflict
@@ -25,22 +14,10 @@ enum RelayStoreError: Error, Equatable {
     case rendezvousFrameConflict
     case rendezvousSequenceGap
     case rendezvousQuotaReached
-    case destinationInboxNotRegistered
     case relayCapacityExceeded
-    case invalidEnvelopePayload
     case invalidChunkIndex
     case invalidAttachmentPayload
     case attachmentBlobUnavailable
-}
-
-enum InboxRouteCapabilityMutationOperation {
-    case create
-    case revoke
-}
-
-enum InboxRouteCapabilityMutationApplyResult: Equatable {
-    case applied
-    case replayed
 }
 
 enum RelayStorePersistenceError: Error {
@@ -49,12 +26,6 @@ enum RelayStorePersistenceError: Error {
 }
 
 final class RelayStore {
-    private var mailboxes: [String: [StoredEnvelope]] = [:]
-    private var inboxRegistrations: [String: InboxRegistrationRecord] = [:]
-    private var inboxRetirements: [String: InboxRetirementRecord] = [:]
-    /// Base64(domain-separated SHA-256(capability)) -> route record. Raw
-    /// bearer capabilities are deliberately never persisted.
-    private var inboxRouteCapabilities: [String: InboxRouteCapabilityRecord] = [:]
     /// Keyed by a domain-separated route-capability digest. Values contain
     /// only digests of lane authorities; raw bearer material is never stored.
     private var rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:]
@@ -67,7 +38,6 @@ final class RelayStore {
     )
     private let queue = DispatchQueue(label: "noctweave.relay.store")
     private let fileURL: URL?
-    private let maxInboxMessages: Int?
     private let attachmentBlobStore: AttachmentBlobStore?
     private var temporalBuckets: [TimeInterval]
     private let queueKey = DispatchSpecificKey<Void>()
@@ -76,29 +46,13 @@ final class RelayStore {
     private let maximumAttachmentTTL: TimeInterval = 6 * 3600
     private let maxAttachmentChunks = 512
     private let maxAttachmentChunkPayloadBytes = 128 * 1024
-    private let maxEnvelopePayloadBytes = 96 * 1024
     private let maxAttachmentIds = 4_096
     private let coordinatorDefaultNodeTTL: TimeInterval = 180
     private let coordinatorMaximumNodeTTL: TimeInterval = 900
     private let maxFederationNodes = 10_000
-    private let maxMailboxes = 10_000
-    private let maxStoredMessages = 100_000
-    private let maxInboxRegistrations = 10_000
-    /// Exact non-resurrection has a storage lower bound. New generations stop
-    /// being admitted at this lifetime ceiling; retirement records are never
-    /// evicted, and every admitted live generation has a reserved slot.
-    private let maxLifetimeInboxGenerations: Int
-    private let maxMailboxConsumersPerInbox = 16
-    private let maxMailboxConsumerHistoryPerInbox = 64
-    private let maxMailboxSyncPage = 256
-    private let maxActorProofReplayEntries = 20_000
-    private let maxActiveInboxRouteCapabilitiesPerInbox = 16
-    private let maxRevokedInboxRouteCapabilitiesPerInbox = 64
-    private let maxInboxRouteCapabilityRecords = 100_000
     private let maxActiveRendezvousRoutesV2 = 2_048
     private let maxLifetimeRendezvousRoutesV2 = 100_000
     private var coordinatorDirectoryCache: [FederationNodeRecord] = []
-    private var actorProofReplayCache: [String: Date] = [:]
     private var generalRequestAttemptsBySource: [String: [Date]] = [:]
     private var federationRegistrationAttemptsBySource: [String: [Date]] = [:]
     private var federationListAttemptsBySource: [String: [Date]] = [:]
@@ -115,16 +69,12 @@ final class RelayStore {
 
     init(
         fileURL: URL?,
-        maxInboxMessages: Int?,
         attachmentBlobStore: AttachmentBlobStore? = nil,
         temporalBucketSeconds: Int = 300,
-        temporalBucketScheduleSeconds: [Int]? = nil,
-        maxLifetimeInboxGenerations: Int = 100_000
+        temporalBucketScheduleSeconds: [Int]? = nil
     ) {
         self.fileURL = fileURL
-        self.maxInboxMessages = maxInboxMessages
         self.attachmentBlobStore = attachmentBlobStore
-        self.maxLifetimeInboxGenerations = max(1, maxLifetimeInboxGenerations)
         self.temporalBuckets = RelayStore.normalizeBuckets(
             primarySeconds: temporalBucketSeconds,
             scheduleSeconds: temporalBucketScheduleSeconds
@@ -411,307 +361,6 @@ final class RelayStore {
         }
     }
 
-    func deliver(_ envelope: Envelope, to inboxId: String) throws -> Int {
-        try performSync {
-            guard envelope.isStructurallyValid,
-                  envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
-                throw RelayStoreError.invalidEnvelopePayload
-            }
-            guard !isInboxRetiredLocked(inboxId: inboxId, now: Date()) else {
-                throw RelayStoreError.inboxRetired
-            }
-            guard inboxRegistrations[inboxId] != nil else {
-                throw RelayStoreError.destinationInboxNotRegistered
-            }
-            let existingInbox = mailboxes[inboxId, default: []]
-            if let existing = existingInbox.first(where: { $0.envelope.id == envelope.id }) {
-                guard existing.envelope == envelope else {
-                    throw RelayStoreError.invalidEnvelopePayload
-                }
-                return existingInbox.count
-            }
-            if mailboxes[inboxId] == nil, mailboxes.count >= maxMailboxes {
-                throw RelayStoreError.relayCapacityExceeded
-            }
-            let totalMessages = mailboxes.values.reduce(into: 0) { $0 += $1.count }
-            guard totalMessages < maxStoredMessages else {
-                throw RelayStoreError.relayCapacityExceeded
-            }
-            var inbox = mailboxes[inboxId, default: []]
-            if let maxInboxMessages, inbox.count >= maxInboxMessages {
-                throw RelayStoreError.inboxFull
-            }
-            let discriminator = "\(inboxId):\(envelope.id.uuidString)"
-            inbox.append(StoredEnvelope(
-                sequence: try nextMailboxSequenceLocked(inboxId: inboxId),
-                envelope: envelope,
-                storedAt: bucketed(Date(), discriminator: discriminator)
-            ))
-            mailboxes[inboxId] = inbox
-            try saveLocked()
-            return inbox.count
-        }
-    }
-
-    private func envelopePayloadBytes(_ envelope: Envelope) -> Int {
-        envelope.payload.nonce.count + envelope.payload.ciphertext.count + envelope.payload.tag.count
-    }
-
-    func fetch(inboxId: String, maxCount: Int?) -> [Envelope] {
-        performSync {
-            let inbox = mailboxes[inboxId, default: []]
-            let count = max(0, maxCount ?? inbox.count)
-            return Array(inbox.prefix(count)).map(\.envelope)
-        }
-    }
-
-    func registerInbox(
-        inboxId: String,
-        accessPublicKey: Data
-    ) throws -> InboxRegistrationReceiptV3 {
-        try performSync {
-            guard InboxAddress.isValid(inboxId), !accessPublicKey.isEmpty else {
-                throw RelayStoreError.invalidInboxRegistration
-            }
-            guard !isInboxRetiredLocked(inboxId: inboxId, now: Date()) else {
-                throw RelayStoreError.inboxRetired
-            }
-            if let existing = inboxRegistrations[inboxId] {
-                guard existing.accessPublicKey == accessPublicKey else {
-                    throw RelayStoreError.inboxAlreadyRegistered
-                }
-                try saveLocked()
-                return existing.routeMutationReceipt
-            }
-            guard inboxRegistrations.count + inboxRetirements.count < maxLifetimeInboxGenerations else {
-                throw RelayStoreError.relayCapacityExceeded
-            }
-            guard inboxRegistrations.count < maxInboxRegistrations else {
-                throw RelayStoreError.relayCapacityExceeded
-            }
-            let registration = InboxRegistrationRecord(
-                accessPublicKey: accessPublicKey,
-                registeredAt: Date(),
-                mailboxStream: MailboxStreamState(nextSequence: try nextSequence(after: mailboxes[inboxId, default: []]))
-            )
-            inboxRegistrations[inboxId] = registration
-            try saveLocked()
-            return registration.routeMutationReceipt
-        }
-    }
-
-    func inboxAccessPublicKey(for inboxId: String) -> Data? {
-        performSync {
-            inboxRegistrations[inboxId]?.accessPublicKey
-        }
-    }
-
-    func seedInboxRouteCapabilityForTesting(
-        inboxId: String,
-        capability: InboxRouteCapabilityV2,
-        now: Date = Date()
-    ) throws {
-        try performSync {
-            try createInboxRouteCapabilityLocked(
-                inboxId: inboxId,
-                capability: capability,
-                now: now
-            )
-            try saveLocked()
-        }
-    }
-
-    private func createInboxRouteCapabilityLocked(
-        inboxId: String,
-        capability: InboxRouteCapabilityV2,
-        now: Date
-    ) throws {
-            guard InboxAddress.isValid(inboxId),
-                  capability.isStructurallyValid,
-                  now.timeIntervalSince1970.isFinite else {
-                throw RelayStoreError.invalidInboxRouteCapability
-            }
-            guard !isInboxRetiredLocked(inboxId: inboxId, now: now) else {
-                throw RelayStoreError.inboxRetired
-            }
-            guard inboxRegistrations[inboxId] != nil else {
-                throw RelayStoreError.destinationInboxNotRegistered
-            }
-            let key = inboxRouteCapabilityKey(capability)
-            if let existing = inboxRouteCapabilities[key] {
-                guard existing.inboxId == inboxId else {
-                    throw RelayStoreError.invalidInboxRouteCapability
-                }
-                guard existing.revokedAt == nil else {
-                    throw RelayStoreError.inboxRouteCapabilityRevoked
-                }
-                return
-            }
-            let activeCount = inboxRouteCapabilities.values.reduce(into: 0) { count, record in
-                if record.inboxId == inboxId, record.revokedAt == nil {
-                    count += 1
-                }
-            }
-            guard activeCount < maxActiveInboxRouteCapabilitiesPerInbox else {
-                throw RelayStoreError.inboxRouteCapabilityLimitReached
-            }
-            try makeRoomForInboxRouteCapabilityRecordLocked(
-                inboxId: inboxId,
-                addingRevokedRecord: false
-            )
-            inboxRouteCapabilities[key] = InboxRouteCapabilityRecord(
-                inboxId: inboxId,
-                createdAt: now,
-                revokedAt: nil
-            )
-    }
-
-    func seedInboxRouteCapabilityRevocationForTesting(
-        inboxId: String,
-        capability: InboxRouteCapabilityV2,
-        now: Date = Date()
-    ) throws {
-        try performSync {
-            try revokeInboxRouteCapabilityLocked(
-                inboxId: inboxId,
-                capability: capability,
-                now: now
-            )
-            try saveLocked()
-        }
-    }
-
-    private func revokeInboxRouteCapabilityLocked(
-        inboxId: String,
-        capability: InboxRouteCapabilityV2,
-        now: Date
-    ) throws {
-            guard InboxAddress.isValid(inboxId),
-                  capability.isStructurallyValid,
-                  now.timeIntervalSince1970.isFinite else {
-                throw RelayStoreError.invalidInboxRouteCapability
-            }
-            guard !isInboxRetiredLocked(inboxId: inboxId, now: now) else {
-                throw RelayStoreError.inboxRetired
-            }
-            guard inboxRegistrations[inboxId] != nil else {
-                throw RelayStoreError.destinationInboxNotRegistered
-            }
-            let key = inboxRouteCapabilityKey(capability)
-            if let existing = inboxRouteCapabilities[key] {
-                guard existing.inboxId == inboxId else {
-                    throw RelayStoreError.invalidInboxRouteCapability
-                }
-                guard existing.revokedAt == nil else {
-                    return
-                }
-                evictOldestRevokedInboxRouteCapabilityIfAtLimitLocked(inboxId: inboxId)
-                inboxRouteCapabilities[key] = InboxRouteCapabilityRecord(
-                    inboxId: existing.inboxId,
-                    createdAt: existing.createdAt,
-                    revokedAt: now
-                )
-                return
-            }
-            try makeRoomForInboxRouteCapabilityRecordLocked(
-                inboxId: inboxId,
-                addingRevokedRecord: true
-            )
-            inboxRouteCapabilities[key] = InboxRouteCapabilityRecord(
-                inboxId: inboxId,
-                createdAt: now,
-                revokedAt: now
-            )
-    }
-
-    func applyInboxRouteCapabilityMutation(
-        operation: InboxRouteCapabilityMutationOperation,
-        inboxId: String,
-        capability: InboxRouteCapabilityV2,
-        relayScope: Data,
-        mutationSequence: UInt64,
-        mutationDigest: Data,
-        now: Date = Date()
-    ) throws -> InboxRouteCapabilityMutationApplyResult {
-        try performSync {
-            guard var registration = inboxRegistrations[inboxId] else {
-                throw RelayStoreError.destinationInboxNotRegistered
-            }
-            guard registration.routeMutationScope == relayScope,
-                  relayScope.isValidRouteMutationScope,
-                  mutationDigest.count == SHA256.byteCount,
-                  mutationSequence > 0,
-                  mutationSequence <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
-                throw RelayStoreError.invalidInboxRouteCapabilityMutation
-            }
-            if mutationSequence == registration.lastRouteMutationSequence {
-                guard registration.lastRouteMutationDigest == mutationDigest else {
-                    throw RelayStoreError.inboxRouteCapabilityMutationConflict
-                }
-                return .replayed
-            }
-            guard registration.lastRouteMutationSequence
-                    < CreateInboxRouteCapabilityRequest.maximumMutationSequence,
-                  mutationSequence == registration.lastRouteMutationSequence + 1 else {
-                throw RelayStoreError.inboxRouteCapabilityMutationOutOfOrder
-            }
-
-            switch operation {
-            case .create:
-                try createInboxRouteCapabilityLocked(
-                    inboxId: inboxId,
-                    capability: capability,
-                    now: now
-                )
-            case .revoke:
-                try revokeInboxRouteCapabilityLocked(
-                    inboxId: inboxId,
-                    capability: capability,
-                    now: now
-                )
-            }
-            registration.lastRouteMutationSequence = mutationSequence
-            registration.lastRouteMutationDigest = mutationDigest
-            inboxRegistrations[inboxId] = registration
-            try saveLocked()
-            return .applied
-        }
-    }
-
-    func isCurrentInboxRouteCapabilityMutation(
-        inboxId: String,
-        relayScope: Data,
-        mutationSequence: UInt64,
-        mutationDigest: Data
-    ) -> Bool {
-        performSync {
-            guard let registration = inboxRegistrations[inboxId],
-                  registration.routeMutationScope == relayScope,
-                  relayScope.isValidRouteMutationScope,
-                  mutationSequence == registration.lastRouteMutationSequence,
-                  mutationDigest.count == SHA256.byteCount else {
-                return false
-            }
-            return registration.lastRouteMutationDigest == mutationDigest
-        }
-    }
-
-    func resolveInboxRouteCapability(_ capability: InboxRouteCapabilityV2) -> String? {
-        performSync {
-            guard capability.isStructurallyValid,
-                  let record = inboxRouteCapabilities[inboxRouteCapabilityKey(capability)],
-                  record.revokedAt == nil,
-                  inboxRegistrations[record.inboxId] != nil,
-                  !isInboxRetiredLocked(inboxId: record.inboxId, now: Date()) else {
-                return nil
-            }
-            return record.inboxId
-        }
-    }
-
-    func inboxRouteCapabilityRecordCount() -> Int {
-        performSync { inboxRouteCapabilities.count }
-    }
 
     func registerRendezvousTransportV2(
         _ request: RegisterRendezvousTransportV2Request,
@@ -934,380 +583,6 @@ final class RelayStore {
         performSync { rendezvousRoutesV2.count }
     }
 
-    func retireInbox(
-        inboxId: String,
-        requestDigest: Data,
-        now: Date = Date()
-    ) throws {
-        try performSync {
-            guard InboxAddress.isValid(inboxId),
-                  requestDigest.count == SHA256.byteCount,
-                  now.timeIntervalSince1970.isFinite else {
-                throw RelayStoreError.invalidInboxRetirement
-            }
-            if let existing = inboxRetirements[inboxId] {
-                guard existing.requestDigest == requestDigest else {
-                    throw RelayStoreError.invalidInboxRetirement
-                }
-                return
-            }
-
-            let hasReservedRegistrationSlot = inboxRegistrations[inboxId] != nil
-            if !hasReservedRegistrationSlot,
-               inboxRegistrations.count + inboxRetirements.count >= maxLifetimeInboxGenerations {
-                throw RelayStoreError.relayCapacityExceeded
-            }
-            mailboxes.removeValue(forKey: inboxId)
-            inboxRegistrations.removeValue(forKey: inboxId)
-            inboxRouteCapabilities = inboxRouteCapabilities.filter { $0.value.inboxId != inboxId }
-            inboxRetirements[inboxId] = InboxRetirementRecord(
-                retiredAt: now,
-                requestDigest: requestDigest
-            )
-            try saveLocked()
-        }
-    }
-
-    func isInboxRetired(inboxId: String, now: Date = Date()) -> Bool {
-        performSync {
-            _ = now
-            return inboxRetirements[inboxId] != nil
-        }
-    }
-
-    func isMatchingInboxRetirement(
-        inboxId: String,
-        requestDigest: Data,
-        now: Date = Date()
-    ) -> Bool {
-        performSync {
-            _ = now
-            return inboxRetirements[inboxId]?.requestDigest == requestDigest
-        }
-    }
-
-    func inboxRetirementTombstoneCount(now: Date = Date()) -> Int {
-        performSync {
-            _ = now
-            return inboxRetirements.count
-        }
-    }
-
-    @discardableResult
-    func registerMailboxConsumer(
-        inboxId: String,
-        consumerId: MailboxConsumerId,
-        consumerSigningPublicKey: Data,
-        sponsorConsumerId: MailboxConsumerId? = nil,
-        startingSequence: UInt64? = nil,
-        now: Date = Date()
-    ) throws -> MailboxConsumerRegistration {
-        try performSync {
-            guard consumerId.isStructurallyValid,
-                  consumerSigningPublicKey.count
-                    == OQSSignatureVerifier.mlDSA65PublicKeyBytes,
-                  now.timeIntervalSince1970.isFinite else {
-                throw MailboxSyncError.invalidConsumer
-            }
-            guard !isInboxRetiredLocked(inboxId: inboxId, now: now) else {
-                throw RelayStoreError.inboxRetired
-            }
-            guard var inboxRegistration = inboxRegistrations[inboxId] else {
-                throw MailboxSyncError.consumerNotFound
-            }
-            let hasActiveBoundConsumer = inboxRegistration.mailboxStream.consumers.values.contains {
-                $0.state == .active
-                    && $0.consumerSigningPublicKey.count
-                        == OQSSignatureVerifier.mlDSA65PublicKeyBytes
-            }
-            let sponsorIsActiveAndBound: Bool = {
-                guard let sponsorConsumerId,
-                      sponsorConsumerId != consumerId,
-                      let sponsor = inboxRegistration.mailboxStream
-                        .consumers[sponsorConsumerId.rawValue] else {
-                    return false
-                }
-                return sponsor.state == .active
-                    && sponsor.consumerSigningPublicKey.count
-                        == OQSSignatureVerifier.mlDSA65PublicKeyBytes
-            }()
-            if let existing = inboxRegistration.mailboxStream.consumers[consumerId.rawValue] {
-                guard existing.state == .active else {
-                    throw MailboxSyncError.consumerRevoked
-                }
-                guard existing.consumerSigningPublicKey == consumerSigningPublicKey else {
-                    throw MailboxSyncError.consumerSigningKeyMismatch
-                }
-                return existing
-            }
-            if inboxRegistration.mailboxStream.isEndpointManaged {
-                guard hasActiveBoundConsumer else {
-                    throw MailboxSyncError.freshInboxRequired
-                }
-                guard sponsorConsumerId != nil else {
-                    throw MailboxSyncError.consumerSponsorRequired
-                }
-                guard sponsorIsActiveAndBound else {
-                    throw MailboxSyncError.invalidConsumerSponsor
-                }
-            } else if sponsorConsumerId != nil {
-                throw MailboxSyncError.invalidConsumerSponsor
-            }
-            let activeConsumerCount = inboxRegistration.mailboxStream.consumers.values.reduce(into: 0) {
-                if $1.state == .active { $0 += 1 }
-            }
-            guard activeConsumerCount < maxMailboxConsumersPerInbox else {
-                throw MailboxSyncError.invalidConsumer
-            }
-            Self.compactRevokedMailboxConsumers(
-                &inboxRegistration.mailboxStream.consumers,
-                maximumCount: maxMailboxConsumerHistoryPerInbox,
-                reservingSlots: 1
-            )
-            let start = startingSequence ?? inboxRegistration.mailboxStream.highWatermark
-            guard start >= inboxRegistration.mailboxStream.retentionFloor else {
-                throw MailboxSyncError.cursorExpired(
-                    retentionFloor: inboxRegistration.mailboxStream.retentionFloor
-                )
-            }
-            guard start <= inboxRegistration.mailboxStream.highWatermark else {
-                throw MailboxSyncError.invalidCursor
-            }
-            let registration = MailboxConsumerRegistration(
-                consumerId: consumerId,
-                consumerSigningPublicKey: consumerSigningPublicKey,
-                committedSequence: start,
-                registeredAt: now
-            )
-            inboxRegistration.mailboxStream.consumers[consumerId.rawValue] = registration
-            inboxRegistration.mailboxStream.isEndpointManaged = true
-            inboxRegistrations[inboxId] = inboxRegistration
-            try saveLocked()
-            return registration
-        }
-    }
-
-    func hasMailboxConsumerBindings(inboxId: String) -> Bool {
-        performSync {
-            inboxRegistrations[inboxId]?.mailboxStream.isEndpointManaged ?? false
-        }
-    }
-
-    func mailboxConsumers(inboxId: String) -> [MailboxConsumerRegistration] {
-        performSync {
-            guard let consumers = inboxRegistrations[inboxId]?.mailboxStream.consumers else {
-                return []
-            }
-            return consumers.values.sorted {
-                $0.consumerId.rawValue < $1.consumerId.rawValue
-            }
-        }
-    }
-
-    func mailboxConsumer(
-        inboxId: String,
-        consumerId: MailboxConsumerId
-    ) -> MailboxConsumerRegistration? {
-        performSync {
-            guard consumerId.isStructurallyValid else { return nil }
-            return inboxRegistrations[inboxId]?
-                .mailboxStream.consumers[consumerId.rawValue]
-        }
-    }
-
-    func mailboxConsumerSigningPublicKey(
-        inboxId: String,
-        consumerId: MailboxConsumerId
-    ) -> Data? {
-        performSync {
-            guard consumerId.isStructurallyValid,
-                  let consumer = inboxRegistrations[inboxId]?
-                    .mailboxStream.consumers[consumerId.rawValue],
-                  consumer.consumerSigningPublicKey.count
-                    == OQSSignatureVerifier.mlDSA65PublicKeyBytes else {
-                return nil
-            }
-            return consumer.consumerSigningPublicKey
-        }
-    }
-
-    func activeMailboxConsumerSigningPublicKey(
-        inboxId: String,
-        consumerId: MailboxConsumerId
-    ) -> Data? {
-        performSync {
-            guard consumerId.isStructurallyValid,
-                  let consumer = inboxRegistrations[inboxId]?
-                    .mailboxStream.consumers[consumerId.rawValue],
-                  consumer.state == .active,
-                  consumer.consumerSigningPublicKey.count
-                    == OQSSignatureVerifier.mlDSA65PublicKeyBytes else {
-                return nil
-            }
-            return consumer.consumerSigningPublicKey
-        }
-    }
-
-    func syncMailbox(
-        inboxId: String,
-        consumerId: MailboxConsumerId,
-        cursor: MailboxCursor?,
-        maxCount: Int?
-    ) throws -> MailboxSyncBatch {
-        try performSync {
-            guard consumerId.isStructurallyValid else {
-                throw MailboxSyncError.invalidConsumer
-            }
-            guard let inboxRegistration = inboxRegistrations[inboxId],
-                  let consumer = inboxRegistration.mailboxStream.consumers[consumerId.rawValue] else {
-                throw MailboxSyncError.consumerNotFound
-            }
-            guard consumer.state == .active else {
-                throw MailboxSyncError.consumerRevoked
-            }
-            guard consumer.consumerSigningPublicKey.count
-                    == OQSSignatureVerifier.mlDSA65PublicKeyBytes else {
-                throw MailboxSyncError.consumerCredentialMissing
-            }
-            let stream = inboxRegistration.mailboxStream
-            guard stream.cursorAuthenticationKey.count == 32 else {
-                throw MailboxSyncError.invalidCursor
-            }
-            let startSequence: UInt64
-            if let cursor {
-                guard let decoded = MailboxCursorAuthenticator.sequence(
-                    from: cursor,
-                    inboxId: inboxId,
-                    consumerId: consumerId,
-                    keyData: stream.cursorAuthenticationKey
-                ) else {
-                    throw MailboxSyncError.invalidCursor
-                }
-                startSequence = decoded
-            } else {
-                startSequence = consumer.committedSequence
-            }
-            guard startSequence >= stream.retentionFloor else {
-                throw MailboxSyncError.cursorExpired(retentionFloor: stream.retentionFloor)
-            }
-            guard startSequence >= consumer.committedSequence else {
-                throw MailboxSyncError.cursorRollback
-            }
-            guard startSequence <= stream.highWatermark else {
-                throw MailboxSyncError.invalidCursor
-            }
-
-            let count = max(1, min(maxCount ?? 100, maxMailboxSyncPage))
-            let eligible = mailboxes[inboxId, default: []]
-                .filter { $0.sequence > startSequence }
-                .sorted { $0.sequence < $1.sequence }
-            let selected = Array(eligible.prefix(count))
-            let events = selected.map {
-                SequencedEnvelope(sequence: $0.sequence, envelope: $0.envelope, storedAt: $0.storedAt)
-            }
-            let nextSequence = events.last?.sequence ?? startSequence
-            return MailboxSyncBatch(
-                events: events,
-                nextCursor: MailboxCursorAuthenticator.make(
-                    inboxId: inboxId,
-                    consumerId: consumerId,
-                    sequence: nextSequence,
-                    keyData: stream.cursorAuthenticationKey
-                ),
-                nextSequence: nextSequence,
-                highWatermark: stream.highWatermark,
-                retentionFloor: stream.retentionFloor,
-                hasMore: eligible.count > selected.count
-            )
-        }
-    }
-
-    @discardableResult
-    func commitMailboxCursor(
-        inboxId: String,
-        consumerId: MailboxConsumerId,
-        cursor: MailboxCursor,
-        sequence: UInt64
-    ) throws -> MailboxConsumerRegistration {
-        try performSync {
-            guard consumerId.isStructurallyValid else {
-                throw MailboxSyncError.invalidConsumer
-            }
-            guard var inboxRegistration = inboxRegistrations[inboxId],
-                  var consumer = inboxRegistration.mailboxStream.consumers[consumerId.rawValue] else {
-                throw MailboxSyncError.consumerNotFound
-            }
-            guard consumer.state == .active else {
-                throw MailboxSyncError.consumerRevoked
-            }
-            guard consumer.consumerSigningPublicKey.count
-                    == OQSSignatureVerifier.mlDSA65PublicKeyBytes else {
-                throw MailboxSyncError.consumerCredentialMissing
-            }
-            guard inboxRegistration.mailboxStream.cursorAuthenticationKey.count == 32 else {
-                throw MailboxSyncError.invalidCursor
-            }
-            guard let authenticatedSequence = MailboxCursorAuthenticator.sequence(
-                from: cursor,
-                inboxId: inboxId,
-                consumerId: consumerId,
-                keyData: inboxRegistration.mailboxStream.cursorAuthenticationKey
-            ), authenticatedSequence == sequence else {
-                throw MailboxSyncError.invalidCursor
-            }
-            guard sequence >= consumer.committedSequence else {
-                throw MailboxSyncError.cursorRollback
-            }
-            guard sequence >= inboxRegistration.mailboxStream.retentionFloor else {
-                throw MailboxSyncError.cursorExpired(
-                    retentionFloor: inboxRegistration.mailboxStream.retentionFloor
-                )
-            }
-            guard sequence <= inboxRegistration.mailboxStream.highWatermark else {
-                throw MailboxSyncError.invalidCursor
-            }
-            consumer.committedSequence = sequence
-            inboxRegistration.mailboxStream.consumers[consumerId.rawValue] = consumer
-            inboxRegistrations[inboxId] = inboxRegistration
-            advanceMailboxRetentionFloorLocked(inboxId: inboxId)
-            try saveLocked()
-            return consumer
-        }
-    }
-
-    @discardableResult
-    func revokeMailboxConsumer(
-        inboxId: String,
-        consumerId: MailboxConsumerId,
-        now: Date = Date()
-    ) throws -> MailboxConsumerRegistration {
-        try performSync {
-            guard consumerId.isStructurallyValid, now.timeIntervalSince1970.isFinite else {
-                throw MailboxSyncError.invalidConsumer
-            }
-            guard var inboxRegistration = inboxRegistrations[inboxId],
-                  var consumer = inboxRegistration.mailboxStream.consumers[consumerId.rawValue] else {
-                throw MailboxSyncError.consumerNotFound
-            }
-            if consumer.state == .revoked {
-                return consumer
-            }
-            consumer.state = .revoked
-            consumer.revokedAt = now
-            inboxRegistration.mailboxStream.consumers[consumerId.rawValue] = consumer
-            inboxRegistrations[inboxId] = inboxRegistration
-            advanceMailboxRetentionFloorLocked(inboxId: inboxId)
-            try saveLocked()
-            return consumer
-        }
-    }
-
-    func stats() -> (mailboxes: Int, messages: Int) {
-        performSync {
-            let messageCount = mailboxes.values.reduce(0) { $0 + $1.count }
-            return (mailboxes.count, messageCount)
-        }
-    }
 
     func registerFederationNode(_ request: FederationNodeRegistrationRequest) throws -> FederationNodeRecord {
         try performSync {
@@ -1450,102 +725,26 @@ final class RelayStore {
         }
     }
 
-    func consumeActorProofNonce(
-        fingerprint: String,
-        nonce: UUID,
-        now: Date = Date(),
-        maxAgeSeconds: TimeInterval = 300
-    ) throws -> Bool {
-        performSync {
-            let normalizedFingerprint = fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalizedFingerprint.isEmpty else {
-                return false
-            }
-            let retentionWindow = max(30, maxAgeSeconds)
-            let expirationCutoff = now.addingTimeInterval(-retentionWindow)
-            actorProofReplayCache = actorProofReplayCache.filter { $0.value > expirationCutoff }
-            let key = "\(normalizedFingerprint):\(nonce.uuidString.lowercased())"
-            guard actorProofReplayCache[key] == nil else {
-                return false
-            }
-            // Unexpired nonces are never evicted under pressure. Failing
-            // closed preserves replay protection during saturation.
-            guard actorProofReplayCache.count < maxActorProofReplayEntries else {
-                return false
-            }
-            actorProofReplayCache[key] = now
-            return true
-        }
-    }
-
-    private func nextMailboxSequenceLocked(inboxId: String) throws -> UInt64 {
-        let storedNext = try nextSequence(after: mailboxes[inboxId, default: []])
-        var candidate = storedNext
-        if let streamNext = inboxRegistrations[inboxId]?.mailboxStream.nextSequence {
-            candidate = max(candidate, streamNext)
-        }
-        guard candidate > 0, candidate < UInt64.max else {
-            throw MailboxSyncError.sequenceOverflow
-        }
-        if var registration = inboxRegistrations[inboxId] {
-            registration.mailboxStream.nextSequence = candidate + 1
-            inboxRegistrations[inboxId] = registration
-        }
-        return candidate
-    }
-
-    private func nextSequence(after records: [StoredEnvelope]) throws -> UInt64 {
-        guard let maximum = records.map(\.sequence).max() else { return 1 }
-        guard maximum < UInt64.max else {
-            throw MailboxSyncError.sequenceOverflow
-        }
-        return max(1, maximum + 1)
-    }
-
-    private func advanceMailboxRetentionFloorLocked(inboxId: String) {
-        guard var registration = inboxRegistrations[inboxId] else { return }
-        let activeConsumers = registration.mailboxStream.consumers.values.filter { $0.state == .active }
-        guard let newFloor = activeConsumers.map(\.committedSequence).min(),
-              newFloor > registration.mailboxStream.retentionFloor else {
-            return
-        }
-        registration.mailboxStream.retentionFloor = newFloor
-        inboxRegistrations[inboxId] = registration
-        let retained = mailboxes[inboxId, default: []].filter { $0.sequence > newFloor }
-        if retained.isEmpty {
-            mailboxes.removeValue(forKey: inboxId)
-        } else {
-            mailboxes[inboxId] = retained
-        }
-    }
 
     private func validateCurrentSnapshot(_ snapshot: RelayStoreSnapshot) throws {
-        guard snapshot.opaqueRouteRuntimeV2.isStructurallyValid,
-              snapshot.inboxRegistrations.allSatisfy({ inboxId, registration in
-                  InboxAddress.isValid(inboxId)
-                      && !registration.accessPublicKey.isEmpty
-                      && registration.registeredAt.timeIntervalSince1970.isFinite
-                      && registration.routeMutationScope.isValidRouteMutationScope
-                      && registration.mailboxStream.retentionFloor
-                          <= registration.mailboxStream.highWatermark
+        guard snapshot.version == RelayStoreSnapshot.schemaVersion,
+              snapshot.opaqueRouteRuntimeV2.isStructurallyValid,
+              snapshot.rendezvousRoutesV2.allSatisfy({ key, record in
+                  Data(base64Encoded: key)?.count == SHA256.byteCount
+                      && record.isStructurallyValid
               }),
-              snapshot.mailboxes.allSatisfy({ inboxId, records in
-                  guard let registration = snapshot.inboxRegistrations[inboxId] else {
-                      return false
+              snapshot.attachments.allSatisfy({ _, records in
+                  records.allSatisfy {
+                      $0.chunkIndex >= 0
+                          && $0.storedAt.timeIntervalSince1970.isFinite
+                          && $0.expiresAt.timeIntervalSince1970.isFinite
+                          && $0.expiresAt >= $0.storedAt
+                          && (($0.payload != nil) != ($0.external != nil))
                   }
-                  var previous = registration.mailboxStream.retentionFloor
-                  var envelopeIds = Set<UUID>()
-                  for record in records {
-                      guard record.sequence > previous,
-                            record.sequence <= registration.mailboxStream.highWatermark,
-                            record.envelope.isStructurallyValid,
-                            record.storedAt.timeIntervalSince1970.isFinite,
-                            envelopeIds.insert(record.envelope.id).inserted else {
-                          return false
-                      }
-                      previous = record.sequence
-                  }
-                  return true
+              }),
+              snapshot.federationNodes.allSatisfy({ _, record in
+                  record.lastHeartbeatAt.timeIntervalSince1970.isFinite
+                      && record.expiresAt.timeIntervalSince1970.isFinite
               }) else {
             throw RelayStorePersistenceError.invalidCurrentState
         }
@@ -1569,7 +768,6 @@ final class RelayStore {
                 persistenceFailuresRemainingForTesting -= 1
                 throw RelayStorePersistenceError.injectedFailure
             }
-            enforceLimitsLocked()
             pruneAttachmentsLocked(now: Date())
             let snapshot = currentSnapshot()
             try validateCurrentSnapshot(snapshot)
@@ -1582,51 +780,31 @@ final class RelayStore {
     }
 
     private func applySnapshot(_ snapshot: RelayStoreSnapshot) {
-        mailboxes = snapshot.mailboxes
-        inboxRegistrations = snapshot.inboxRegistrations
-        inboxRetirements = snapshot.inboxRetirements
-        inboxRouteCapabilities = snapshot.inboxRouteCapabilities
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
         opaqueRouteRuntimeV2 = snapshot.opaqueRouteRuntimeV2
         attachments = snapshot.attachments
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
-        actorProofReplayCache = snapshot.actorProofReplayCache.filter {
-            $0.value > Date().addingTimeInterval(-300)
-        }
-        enforceLimitsLocked()
         pruneAttachmentsLocked(now: Date())
         pruneFederationNodesLocked(now: Date())
-        enforceLoadedInboxRetirementsLocked()
-        normalizeInboxRouteCapabilitiesAfterLoadLocked()
         normalizeRendezvousRoutesV2AfterLoadLocked()
     }
 
     private func restoreSnapshot(_ snapshot: RelayStoreSnapshot) {
-        mailboxes = snapshot.mailboxes
-        inboxRegistrations = snapshot.inboxRegistrations
-        inboxRetirements = snapshot.inboxRetirements
-        inboxRouteCapabilities = snapshot.inboxRouteCapabilities
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
         opaqueRouteRuntimeV2 = snapshot.opaqueRouteRuntimeV2
         attachments = snapshot.attachments
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
-        actorProofReplayCache = snapshot.actorProofReplayCache
     }
 
     private func currentSnapshot() -> RelayStoreSnapshot {
         RelayStoreSnapshot(
-            mailboxes: mailboxes,
-            inboxRegistrations: inboxRegistrations,
-            inboxRetirements: inboxRetirements,
-            inboxRouteCapabilities: inboxRouteCapabilities,
             rendezvousRoutesV2: rendezvousRoutesV2,
             opaqueRouteRuntimeV2: opaqueRouteRuntimeV2,
             attachments: attachments,
             federationNodes: federationNodes,
-            coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys,
-            actorProofReplayCache: actorProofReplayCache
+            coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys
         )
     }
 
@@ -1653,107 +831,6 @@ final class RelayStore {
         }
     }
 
-    private func isInboxRetiredLocked(inboxId: String, now: Date) -> Bool {
-        _ = now
-        return inboxRetirements[inboxId] != nil
-    }
-
-    private func enforceLoadedInboxRetirementsLocked() {
-        for inboxId in Array(inboxRetirements.keys) {
-            mailboxes.removeValue(forKey: inboxId)
-            inboxRegistrations.removeValue(forKey: inboxId)
-            inboxRouteCapabilities = inboxRouteCapabilities.filter { $0.value.inboxId != inboxId }
-        }
-    }
-
-    private func inboxRouteCapabilityKey(_ capability: InboxRouteCapabilityV2) -> String {
-        capability.relayRegistryDigest.base64EncodedString()
-    }
-
-    private func evictOldestRevokedInboxRouteCapabilityIfAtLimitLocked(inboxId: String) {
-        let revokedForInbox = inboxRouteCapabilities
-            .filter { $0.value.inboxId == inboxId && $0.value.revokedAt != nil }
-            .sorted {
-                ($0.value.revokedAt ?? $0.value.createdAt)
-                    < ($1.value.revokedAt ?? $1.value.createdAt)
-            }
-        if revokedForInbox.count >= maxRevokedInboxRouteCapabilitiesPerInbox,
-           let oldest = revokedForInbox.first?.key {
-            inboxRouteCapabilities.removeValue(forKey: oldest)
-        }
-    }
-
-    private func makeRoomForInboxRouteCapabilityRecordLocked(
-        inboxId: String,
-        addingRevokedRecord: Bool
-    ) throws {
-        if addingRevokedRecord {
-            evictOldestRevokedInboxRouteCapabilityIfAtLimitLocked(inboxId: inboxId)
-        }
-        while inboxRouteCapabilities.count >= maxInboxRouteCapabilityRecords {
-            guard let oldestRevoked = inboxRouteCapabilities
-                .filter({ $0.value.revokedAt != nil })
-                .min(by: {
-                    ($0.value.revokedAt ?? $0.value.createdAt)
-                        < ($1.value.revokedAt ?? $1.value.createdAt)
-                })?.key else {
-                throw RelayStoreError.relayCapacityExceeded
-            }
-            inboxRouteCapabilities.removeValue(forKey: oldestRevoked)
-        }
-    }
-
-    private func normalizeInboxRouteCapabilitiesAfterLoadLocked() {
-        let valid = inboxRouteCapabilities.filter { key, record in
-            guard let digest = Data(base64Encoded: key),
-                  digest.count == SHA256.byteCount,
-                  InboxAddress.isValid(record.inboxId),
-                  inboxRegistrations[record.inboxId] != nil,
-                  inboxRetirements[record.inboxId] == nil,
-                  record.createdAt.timeIntervalSince1970.isFinite,
-                  record.revokedAt?.timeIntervalSince1970.isFinite ?? true,
-                  record.revokedAt.map({ $0 >= record.createdAt }) ?? true else {
-                return false
-            }
-            return true
-        }
-        var perInboxBounded: [String: InboxRouteCapabilityRecord] = [:]
-        for inboxId in Set(valid.values.map(\.inboxId)) {
-            let active = valid
-                .filter { $0.value.inboxId == inboxId && $0.value.revokedAt == nil }
-                .sorted { $0.value.createdAt > $1.value.createdAt }
-                .prefix(maxActiveInboxRouteCapabilitiesPerInbox)
-            let revoked = valid
-                .filter { $0.value.inboxId == inboxId && $0.value.revokedAt != nil }
-                .sorted {
-                    ($0.value.revokedAt ?? $0.value.createdAt)
-                        > ($1.value.revokedAt ?? $1.value.createdAt)
-                }
-                .prefix(maxRevokedInboxRouteCapabilitiesPerInbox)
-            for entry in active {
-                perInboxBounded[entry.key] = entry.value
-            }
-            for entry in revoked {
-                perInboxBounded[entry.key] = entry.value
-            }
-        }
-        let active = perInboxBounded
-            .filter { $0.value.revokedAt == nil }
-            .sorted { $0.value.createdAt > $1.value.createdAt }
-        let revoked = perInboxBounded
-            .filter { $0.value.revokedAt != nil }
-            .sorted {
-                ($0.value.revokedAt ?? $0.value.createdAt)
-                    > ($1.value.revokedAt ?? $1.value.createdAt)
-            }
-        inboxRouteCapabilities = [:]
-        for entry in active.prefix(maxInboxRouteCapabilityRecords) {
-            inboxRouteCapabilities[entry.key] = entry.value
-        }
-        for entry in revoked where inboxRouteCapabilities.count < maxInboxRouteCapabilityRecords {
-            inboxRouteCapabilities[entry.key] = entry.value
-        }
-    }
 
     private func boundedAttachmentTTL(_ ttlSeconds: Int?) -> TimeInterval {
         let requested = TimeInterval(ttlSeconds ?? Int(attachmentTTL))
@@ -1792,23 +869,6 @@ final class RelayStore {
         }
     }
 
-    private func enforceLimitsLocked() {
-        guard let maxInboxMessages else { return }
-        for (inboxId, messages) in mailboxes {
-            if messages.count > maxInboxMessages {
-                let removed = messages.dropLast(maxInboxMessages)
-                mailboxes[inboxId] = Array(messages.suffix(maxInboxMessages))
-                if var registration = inboxRegistrations[inboxId],
-                   let droppedThrough = removed.map(\.sequence).max() {
-                    registration.mailboxStream.retentionFloor = max(
-                        registration.mailboxStream.retentionFloor,
-                        droppedThrough
-                    )
-                    inboxRegistrations[inboxId] = registration
-                }
-            }
-        }
-    }
 
     private static func normalizeBuckets(primarySeconds: Int, scheduleSeconds: [Int]?) -> [TimeInterval] {
         var normalized = Set<Int>()
@@ -1824,23 +884,6 @@ final class RelayStore {
             .map(TimeInterval.init)
     }
 
-    private static func compactRevokedMailboxConsumers(
-        _ consumers: inout [String: MailboxConsumerRegistration],
-        maximumCount: Int,
-        reservingSlots: Int
-    ) {
-        while consumers.count + max(0, reservingSlots) > maximumCount {
-            guard let oldestRevokedId = consumers
-                .filter({ $0.value.state == .revoked })
-                .min(by: {
-                    ($0.value.revokedAt ?? $0.value.registeredAt)
-                        < ($1.value.revokedAt ?? $1.value.registeredAt)
-                })?.key else {
-                return
-            }
-            consumers.removeValue(forKey: oldestRevokedId)
-        }
-    }
 
     private static func fnv1a64<S: Sequence>(_ bytes: S) -> UInt64 where S.Element == UInt8 {
         var hash: UInt64 = 14695981039346656037
@@ -2067,197 +1110,39 @@ private struct RendezvousRelayRouteRecordV2: Codable {
 }
 
 private struct RelayStoreSnapshot: Codable {
-    let mailboxes: [String: [StoredEnvelope]]
-    let inboxRegistrations: [String: InboxRegistrationRecord]
-    let inboxRetirements: [String: InboxRetirementRecord]
-    let inboxRouteCapabilities: [String: InboxRouteCapabilityRecord]
+    static let schemaVersion = 1
+
+    let version: Int
     let rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2]
     let opaqueRouteRuntimeV2: OpaqueRouteRuntimeStateV2
     let attachments: [String: [AttachmentRecord]]
     let federationNodes: [String: FederationNodeRecord]
     let coordinatorPinnedPublicKeys: [String: Data]
-    let actorProofReplayCache: [String: Date]
 
     static let empty = RelayStoreSnapshot(
-        mailboxes: [:],
-        inboxRegistrations: [:],
-        inboxRetirements: [:],
-        inboxRouteCapabilities: [:],
+        version: schemaVersion,
         rendezvousRoutesV2: [:],
         opaqueRouteRuntimeV2: OpaqueRouteRuntimeStateV2(),
         attachments: [:],
         federationNodes: [:],
-        coordinatorPinnedPublicKeys: [:],
-        actorProofReplayCache: [:]
+        coordinatorPinnedPublicKeys: [:]
     )
 
     init(
-        mailboxes: [String: [StoredEnvelope]],
-        inboxRegistrations: [String: InboxRegistrationRecord] = [:],
-        inboxRetirements: [String: InboxRetirementRecord] = [:],
-        inboxRouteCapabilities: [String: InboxRouteCapabilityRecord] = [:],
-        rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:],
-        opaqueRouteRuntimeV2: OpaqueRouteRuntimeStateV2 = OpaqueRouteRuntimeStateV2(),
+        version: Int = schemaVersion,
+        rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2],
+        opaqueRouteRuntimeV2: OpaqueRouteRuntimeStateV2,
         attachments: [String: [AttachmentRecord]],
-        federationNodes: [String: FederationNodeRecord] = [:],
-        coordinatorPinnedPublicKeys: [String: Data] = [:],
-        actorProofReplayCache: [String: Date] = [:]
+        federationNodes: [String: FederationNodeRecord],
+        coordinatorPinnedPublicKeys: [String: Data]
     ) {
-        self.mailboxes = mailboxes
-        self.inboxRegistrations = inboxRegistrations
-        self.inboxRetirements = inboxRetirements
-        self.inboxRouteCapabilities = inboxRouteCapabilities
+        self.version = version
         self.rendezvousRoutesV2 = rendezvousRoutesV2
         self.opaqueRouteRuntimeV2 = opaqueRouteRuntimeV2
         self.attachments = attachments
         self.federationNodes = federationNodes
         self.coordinatorPinnedPublicKeys = coordinatorPinnedPublicKeys
-        self.actorProofReplayCache = actorProofReplayCache
     }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        mailboxes = try container.decode([String: [StoredEnvelope]].self, forKey: .mailboxes)
-        inboxRegistrations = try container.decode([String: InboxRegistrationRecord].self, forKey: .inboxRegistrations)
-        inboxRetirements = try container.decode(
-            [String: InboxRetirementRecord].self,
-            forKey: .inboxRetirements
-        )
-        inboxRouteCapabilities = try container.decode(
-            [String: InboxRouteCapabilityRecord].self,
-            forKey: .inboxRouteCapabilities
-        )
-        rendezvousRoutesV2 = try container.decode(
-            [String: RendezvousRelayRouteRecordV2].self,
-            forKey: .rendezvousRoutesV2
-        )
-        opaqueRouteRuntimeV2 = try container.decode(
-            OpaqueRouteRuntimeStateV2.self,
-            forKey: .opaqueRouteRuntimeV2
-        )
-        attachments = try container.decode([String: [AttachmentRecord]].self, forKey: .attachments)
-        federationNodes = try container.decode([String: FederationNodeRecord].self, forKey: .federationNodes)
-        coordinatorPinnedPublicKeys = try container.decode([String: Data].self, forKey: .coordinatorPinnedPublicKeys)
-        actorProofReplayCache = try container.decode([String: Date].self, forKey: .actorProofReplayCache)
-    }
-}
-
-private struct InboxRetirementRecord: Codable {
-    let retiredAt: Date
-    let requestDigest: Data
-}
-
-private struct InboxRouteCapabilityRecord: Codable {
-    let inboxId: String
-    let createdAt: Date
-    let revokedAt: Date?
-}
-
-struct InboxRegistrationRecord: Codable {
-    let accessPublicKey: Data
-    let registeredAt: Date
-    var mailboxStream: MailboxStreamState
-    let routeMutationScope: Data
-    var lastRouteMutationSequence: UInt64
-    var lastRouteMutationDigest: Data?
-
-    init(
-        accessPublicKey: Data,
-        registeredAt: Date,
-        mailboxStream: MailboxStreamState = MailboxStreamState(),
-        routeMutationScope: Data = InboxRegistrationRecord.generateRouteMutationScope(),
-        lastRouteMutationSequence: UInt64 = 0,
-        lastRouteMutationDigest: Data? = nil
-    ) {
-        self.accessPublicKey = accessPublicKey
-        self.registeredAt = registeredAt
-        self.mailboxStream = mailboxStream
-        self.routeMutationScope = routeMutationScope
-        self.lastRouteMutationSequence = lastRouteMutationSequence
-        self.lastRouteMutationDigest = lastRouteMutationDigest
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        accessPublicKey = try container.decode(Data.self, forKey: .accessPublicKey)
-        registeredAt = try container.decode(Date.self, forKey: .registeredAt)
-        mailboxStream = try container.decode(MailboxStreamState.self, forKey: .mailboxStream)
-        lastRouteMutationSequence = try container.decode(
-            UInt64.self,
-            forKey: .lastRouteMutationSequence
-        )
-        guard lastRouteMutationSequence
-                <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .lastRouteMutationSequence,
-                in: container,
-                debugDescription: "Route mutation sequence exceeds the protocol bound"
-            )
-        }
-        let decodedDigest = try container.decodeIfPresent(
-            Data.self,
-            forKey: .lastRouteMutationDigest
-        )
-        routeMutationScope = try container.decode(Data.self, forKey: .routeMutationScope)
-        guard routeMutationScope.isValidRouteMutationScope else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .routeMutationScope,
-                in: container,
-                debugDescription: "Invalid relay-local route mutation scope"
-            )
-        }
-        if lastRouteMutationSequence == 0 {
-            guard decodedDigest == nil else {
-                throw DecodingError.dataCorruptedError(
-                    forKey: .lastRouteMutationDigest,
-                    in: container,
-                    debugDescription: "Unexpected route mutation digest at sequence zero"
-                )
-            }
-            lastRouteMutationDigest = nil
-        } else {
-            guard let decodedDigest, decodedDigest.count == SHA256.byteCount else {
-                throw DecodingError.dataCorruptedError(
-                    forKey: .lastRouteMutationDigest,
-                    in: container,
-                    debugDescription: "Missing or invalid route mutation cursor digest"
-                )
-            }
-            lastRouteMutationDigest = decodedDigest
-        }
-    }
-
-    var routeMutationReceipt: InboxRegistrationReceiptV3 {
-        InboxRegistrationReceiptV3(
-            routeMutationScope: routeMutationScope,
-            nextRouteMutationSequence: CreateInboxRouteCapabilityRequest
-                .nextMutationSequence(after: lastRouteMutationSequence)
-        )
-    }
-
-    private static func generateRouteMutationScope() -> Data {
-        var generator = SystemRandomNumberGenerator()
-        while true {
-            let value = Data((0..<32).map { _ in
-                UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
-            })
-            if value.isValidRouteMutationScope {
-                return value
-            }
-        }
-    }
-}
-
-extension Data {
-    var isValidRouteMutationScope: Bool {
-        count == SHA256.byteCount && contains(where: { $0 != 0 })
-    }
-}
-
-private struct StoredEnvelope: Codable {
-    var sequence: UInt64
-    let envelope: Envelope
-    let storedAt: Date
 }
 
 private struct AttachmentRecord: Codable {
@@ -2295,615 +1180,175 @@ private enum SQLiteRelayStateStoreError: Error, CustomStringConvertible {
 }
 
 private enum SQLiteRelayStateStore {
-    private static let metaTableName = "relay_state_meta"
-    private static let currentSchemaKey = "noctweave_1_0_schema"
+    private static let tableName = "relay_runtime_state_v1"
+    private static let schemaVersion = RelayStoreSnapshot.schemaVersion
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     static func loadState(at url: URL) throws -> RelayStoreSnapshot? {
         let existedBeforeOpen = FileManager.default.fileExists(atPath: url.path)
-        var db: OpaquePointer?
-        try openDatabase(at: url, handle: &db)
-        defer { sqlite3_close(db) }
-        guard let db else { return nil }
+        var database: OpaquePointer?
+        try openDatabase(at: url, handle: &database)
+        defer { sqlite3_close(database) }
+        guard let database else { return nil }
 
-        try ensureSchema(in: db)
-        guard try hasCurrentState(in: db) else {
+        if existedBeforeOpen, try !tableExists(in: database) {
+            throw RelayStorePersistenceError.invalidCurrentState
+        }
+        try ensureSchema(in: database)
+        let sql = "SELECT schema_version, snapshot FROM \(tableName) WHERE singleton = 1;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            throw SQLiteRelayStateStoreError.prepare(lastError(in: database))
+        }
+        defer { sqlite3_finalize(statement) }
+
+        switch sqlite3_step(statement) {
+        case SQLITE_DONE:
             if existedBeforeOpen {
                 throw RelayStorePersistenceError.invalidCurrentState
             }
             return nil
+        case SQLITE_ROW:
+            guard sqlite3_column_int(statement, 0) == Int32(schemaVersion) else {
+                throw RelayStorePersistenceError.invalidCurrentState
+            }
+            let count = Int(sqlite3_column_bytes(statement, 1))
+            guard count > 0, let bytes = sqlite3_column_blob(statement, 1) else {
+                throw SQLiteRelayStateStoreError.corrupt("Missing runtime snapshot")
+            }
+            let data = Data(bytes: bytes, count: count)
+            let snapshot: RelayStoreSnapshot
+            do {
+                snapshot = try RelayCodec.decoder().decode(RelayStoreSnapshot.self, from: data)
+            } catch {
+                throw SQLiteRelayStateStoreError.corrupt("Runtime snapshot decoding failed")
+            }
+            guard snapshot.version == schemaVersion else {
+                throw RelayStorePersistenceError.invalidCurrentState
+            }
+            return snapshot
+        default:
+            throw SQLiteRelayStateStoreError.step(lastError(in: database))
         }
-        return RelayStoreSnapshot(
-            mailboxes: try loadMailboxes(in: db),
-            inboxRegistrations: try loadInboxRegistrations(in: db),
-            inboxRetirements: try loadInboxRetirements(in: db),
-            inboxRouteCapabilities: try loadInboxRouteCapabilities(in: db),
-            rendezvousRoutesV2: try loadRendezvousRoutesV2(in: db),
-            opaqueRouteRuntimeV2: try loadOpaqueRouteRuntimeV2(in: db),
-            attachments: try loadAttachments(in: db),
-            federationNodes: try loadFederationNodes(in: db),
-            coordinatorPinnedPublicKeys: try loadCoordinatorPinnedPublicKeys(in: db),
-            actorProofReplayCache: try loadActorProofReplayCache(in: db)
-        )
     }
 
     static func saveState(_ snapshot: RelayStoreSnapshot, at url: URL) throws {
-        var db: OpaquePointer?
-        try openDatabase(at: url, handle: &db)
-        defer { sqlite3_close(db) }
-        guard let db else { return }
+        guard snapshot.version == schemaVersion else {
+            throw RelayStorePersistenceError.invalidCurrentState
+        }
+        var database: OpaquePointer?
+        try openDatabase(at: url, handle: &database)
+        defer { sqlite3_close(database) }
+        guard let database else {
+            throw SQLiteRelayStateStoreError.openDatabase("Database handle unavailable")
+        }
 
-        try ensureSchema(in: db)
-        try execute("BEGIN IMMEDIATE TRANSACTION;", in: db)
+        try ensureSchema(in: database)
+        let data = try RelayCodec.encoder(sortedKeys: true).encode(snapshot)
+        try execute("BEGIN IMMEDIATE TRANSACTION;", in: database)
         do {
-            try clearNormalizedTables(in: db)
-            for (inboxId, records) in snapshot.mailboxes {
-                for (position, record) in records.enumerated() {
-                    try insertMailboxRecord(inboxId: inboxId, position: position, record: record, in: db)
-                }
+            let sql = """
+            INSERT INTO \(tableName) (singleton, schema_version, snapshot)
+            VALUES (1, ?, ?)
+            ON CONFLICT(singleton) DO UPDATE SET
+                schema_version = excluded.schema_version,
+                snapshot = excluded.snapshot;
+            """
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+                  let statement else {
+                throw SQLiteRelayStateStoreError.prepare(lastError(in: database))
             }
-            for (inboxId, record) in snapshot.inboxRegistrations {
-                try insertInboxRegistration(inboxId: inboxId, record: record, in: db)
+            defer { sqlite3_finalize(statement) }
+            guard sqlite3_bind_int(statement, 1, Int32(schemaVersion)) == SQLITE_OK else {
+                throw SQLiteRelayStateStoreError.bind(lastError(in: database))
             }
-            for (inboxId, record) in snapshot.inboxRetirements {
-                try insertInboxRetirement(inboxId: inboxId, record: record, in: db)
-            }
-            for (capabilityDigest, record) in snapshot.inboxRouteCapabilities {
-                try insertInboxRouteCapability(
-                    capabilityDigest: capabilityDigest,
-                    record: record,
-                    in: db
+            let bindResult = data.withUnsafeBytes { bytes in
+                sqlite3_bind_blob(
+                    statement,
+                    2,
+                    bytes.baseAddress,
+                    Int32(data.count),
+                    transient
                 )
             }
-            for (routeDigest, record) in snapshot.rendezvousRoutesV2 {
-                try insertRendezvousRouteV2(
-                    routeDigest: routeDigest,
-                    record: record,
-                    in: db
-                )
+            guard bindResult == SQLITE_OK else {
+                throw SQLiteRelayStateStoreError.bind(lastError(in: database))
             }
-            try insertOpaqueRouteRuntimeV2(snapshot.opaqueRouteRuntimeV2, in: db)
-            for (attachmentId, records) in snapshot.attachments {
-                for record in records {
-                    try insertAttachmentRecord(attachmentId: attachmentId, record: record, in: db)
-                }
+            guard sqlite3_step(statement) == SQLITE_DONE else {
+                throw SQLiteRelayStateStoreError.step(lastError(in: database))
             }
-            for (nodeKey, record) in snapshot.federationNodes {
-                try insertFederationNode(nodeKey: nodeKey, record: record, in: db)
-            }
-            for (coordinatorKey, publicKey) in snapshot.coordinatorPinnedPublicKeys {
-                try insertCoordinatorPinnedPublicKey(coordinatorKey: coordinatorKey, publicKey: publicKey, in: db)
-            }
-            for (cacheKey, consumedAt) in snapshot.actorProofReplayCache {
-                try insertActorProofReplayCacheEntry(cacheKey: cacheKey, consumedAt: consumedAt, in: db)
-            }
-            try insertMeta(key: currentSchemaKey, value: Data("1".utf8), in: db)
-            try execute("COMMIT;", in: db)
+            try execute("COMMIT;", in: database)
         } catch {
-            _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+            try? execute("ROLLBACK;", in: database)
             throw error
         }
     }
 
-    private static func loadMailboxes(in db: OpaquePointer) throws -> [String: [StoredEnvelope]] {
-        var mailboxes: [String: [StoredEnvelope]] = [:]
-        try queryRows("SELECT inbox_id, value FROM relay_mailbox_envelopes ORDER BY inbox_id, position;", in: db) { statement in
-            let inboxId = try readText(statement, column: 0, in: db)
-            let record = try decode(StoredEnvelope.self, from: readBlob(statement, column: 1))
-            mailboxes[inboxId, default: []].append(record)
-        }
-        return mailboxes
-    }
-
-    private static func loadInboxRegistrations(in db: OpaquePointer) throws -> [String: InboxRegistrationRecord] {
-        var registrations: [String: InboxRegistrationRecord] = [:]
-        try queryRows("SELECT inbox_id, value FROM relay_inbox_registrations;", in: db) { statement in
-            let inboxId = try readText(statement, column: 0, in: db)
-            registrations[inboxId] = try decode(InboxRegistrationRecord.self, from: readBlob(statement, column: 1))
-        }
-        return registrations
-    }
-
-    private static func loadInboxRetirements(in db: OpaquePointer) throws -> [String: InboxRetirementRecord] {
-        var retirements: [String: InboxRetirementRecord] = [:]
-        try queryRows("SELECT inbox_id, value FROM relay_inbox_retirements;", in: db) { statement in
-            let inboxId = try readText(statement, column: 0, in: db)
-            retirements[inboxId] = try decode(
-                InboxRetirementRecord.self,
-                from: readBlob(statement, column: 1)
-            )
-        }
-        return retirements
-    }
-
-    private static func loadInboxRouteCapabilities(
-        in db: OpaquePointer
-    ) throws -> [String: InboxRouteCapabilityRecord] {
-        var records: [String: InboxRouteCapabilityRecord] = [:]
-        try queryRows(
-            "SELECT capability_digest, value FROM relay_inbox_route_capabilities;",
-            in: db
-        ) { statement in
-            let digest = try readText(statement, column: 0, in: db)
-            records[digest] = try decode(
-                InboxRouteCapabilityRecord.self,
-                from: readBlob(statement, column: 1)
-            )
-        }
-        return records
-    }
-
-    private static func loadRendezvousRoutesV2(
-        in db: OpaquePointer
-    ) throws -> [String: RendezvousRelayRouteRecordV2] {
-        var records: [String: RendezvousRelayRouteRecordV2] = [:]
-        try queryRows(
-            "SELECT route_digest, value FROM relay_rendezvous_routes_v2;",
-            in: db
-        ) { statement in
-            let digest = try readText(statement, column: 0, in: db)
-            records[digest] = try decode(
-                RendezvousRelayRouteRecordV2.self,
-                from: readBlob(statement, column: 1)
-            )
-        }
-        guard records.count <= 100_000 else {
-            throw SQLiteRelayStateStoreError.corrupt("too many rendezvous route records")
-        }
-        return records
-    }
-
-    private static func loadOpaqueRouteRuntimeV2(
-        in db: OpaquePointer
-    ) throws -> OpaqueRouteRuntimeStateV2 {
-        var result: OpaqueRouteRuntimeStateV2?
-        try queryRows(
-            "SELECT value FROM relay_opaque_route_runtime_v2 WHERE state_key = 1;",
-            in: db
-        ) { statement in
-            guard result == nil else {
-                throw SQLiteRelayStateStoreError.corrupt("duplicate opaque route runtime state")
-            }
-            result = try decode(
-                OpaqueRouteRuntimeStateV2.self,
-                from: readBlob(statement, column: 0)
-            )
-        }
-        guard let result, result.isStructurallyValid else {
-            throw SQLiteRelayStateStoreError.corrupt("missing or invalid opaque route runtime state")
-        }
-        return result
-    }
-
-    private static func loadAttachments(in db: OpaquePointer) throws -> [String: [AttachmentRecord]] {
-        var attachments: [String: [AttachmentRecord]] = [:]
-        try queryRows("SELECT attachment_id, value FROM relay_attachment_chunks ORDER BY attachment_id, chunk_index;", in: db) { statement in
-            let attachmentId = try readText(statement, column: 0, in: db)
-            let record = try decode(AttachmentRecord.self, from: readBlob(statement, column: 1))
-            attachments[attachmentId, default: []].append(record)
-        }
-        return attachments
-    }
-
-    private static func loadFederationNodes(in db: OpaquePointer) throws -> [String: FederationNodeRecord] {
-        var nodes: [String: FederationNodeRecord] = [:]
-        try queryRows("SELECT node_key, value FROM relay_federation_nodes;", in: db) { statement in
-            let nodeKey = try readText(statement, column: 0, in: db)
-            nodes[nodeKey] = try decode(FederationNodeRecord.self, from: readBlob(statement, column: 1))
-        }
-        return nodes
-    }
-
-    private static func loadCoordinatorPinnedPublicKeys(in db: OpaquePointer) throws -> [String: Data] {
-        var keys: [String: Data] = [:]
-        try queryRows("SELECT coordinator_key, public_key FROM relay_coordinator_pinned_keys;", in: db) { statement in
-            let coordinatorKey = try readText(statement, column: 0, in: db)
-            let publicKey = try readBlob(statement, column: 1)
-            guard publicKey.count == 1_952 else {
-                throw SQLiteRelayStateStoreError.corrupt("invalid pinned coordinator public key")
-            }
-            keys[coordinatorKey] = publicKey
-        }
-        return keys
-    }
-
-    private static func loadActorProofReplayCache(in db: OpaquePointer) throws -> [String: Date] {
-        var cache: [String: Date] = [:]
-        try queryRows("SELECT cache_key, consumed_at FROM relay_actor_proof_replay_cache;", in: db) { statement in
-            let cacheKey = try readText(statement, column: 0, in: db)
-            let consumedAt = Date(timeIntervalSince1970: sqlite3_column_double(statement, 1))
-            cache[cacheKey] = consumedAt
-        }
-        return cache
-    }
-
-    private static func insertMailboxRecord(inboxId: String, position: Int, record: StoredEnvelope, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_mailbox_envelopes (inbox_id, position, envelope_id, stored_at, value) VALUES (?1, ?2, ?3, ?4, ?5);",
-            in: db
-        ) { statement in
-            try bindText(inboxId, to: 1, in: statement, db: db)
-            try bindInt(position, to: 2, in: statement, db: db)
-            try bindText(record.envelope.id.uuidString, to: 3, in: statement, db: db)
-            try bindDouble(record.storedAt.timeIntervalSince1970, to: 4, in: statement, db: db)
-            try bindBlob(encode(record), to: 5, in: statement, db: db)
-        }
-    }
-
-    private static func insertInboxRegistration(inboxId: String, record: InboxRegistrationRecord, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_inbox_registrations (inbox_id, registered_at, access_public_key, value) VALUES (?1, ?2, ?3, ?4);",
-            in: db
-        ) { statement in
-            try bindText(inboxId, to: 1, in: statement, db: db)
-            try bindDouble(record.registeredAt.timeIntervalSince1970, to: 2, in: statement, db: db)
-            try bindBlob(record.accessPublicKey, to: 3, in: statement, db: db)
-            try bindBlob(encode(record), to: 4, in: statement, db: db)
-        }
-    }
-
-    private static func insertInboxRetirement(
-        inboxId: String,
-        record: InboxRetirementRecord,
-        in db: OpaquePointer
-    ) throws {
-        try executePrepared(
-            "INSERT INTO relay_inbox_retirements (inbox_id, retired_at, request_digest, value) VALUES (?1, ?2, ?3, ?4);",
-            in: db
-        ) { statement in
-            try bindText(inboxId, to: 1, in: statement, db: db)
-            try bindDouble(record.retiredAt.timeIntervalSince1970, to: 2, in: statement, db: db)
-            try bindBlob(record.requestDigest, to: 3, in: statement, db: db)
-            try bindBlob(encode(record), to: 4, in: statement, db: db)
-        }
-    }
-
-    private static func insertInboxRouteCapability(
-        capabilityDigest: String,
-        record: InboxRouteCapabilityRecord,
-        in db: OpaquePointer
-    ) throws {
-        try executePrepared(
-            "INSERT INTO relay_inbox_route_capabilities (capability_digest, inbox_id, created_at, revoked_at, value) VALUES (?1, ?2, ?3, ?4, ?5);",
-            in: db
-        ) { statement in
-            try bindText(capabilityDigest, to: 1, in: statement, db: db)
-            try bindText(record.inboxId, to: 2, in: statement, db: db)
-            try bindDouble(record.createdAt.timeIntervalSince1970, to: 3, in: statement, db: db)
-            if let revokedAt = record.revokedAt {
-                try bindDouble(revokedAt.timeIntervalSince1970, to: 4, in: statement, db: db)
-            } else {
-                guard sqlite3_bind_null(statement, 4) == SQLITE_OK else {
-                    throw SQLiteRelayStateStoreError.bind(lastError(in: db))
-                }
-            }
-            try bindBlob(encode(record), to: 5, in: statement, db: db)
-        }
-    }
-
-    private static func insertRendezvousRouteV2(
-        routeDigest: String,
-        record: RendezvousRelayRouteRecordV2,
-        in db: OpaquePointer
-    ) throws {
-        try executePrepared(
-            "INSERT INTO relay_rendezvous_routes_v2 (route_digest, expires_at, retired_at, value) VALUES (?1, ?2, ?3, ?4);",
-            in: db
-        ) { statement in
-            try bindText(routeDigest, to: 1, in: statement, db: db)
-            try bindDouble(record.expiresAt.timeIntervalSince1970, to: 2, in: statement, db: db)
-            if let retiredAt = record.retiredAt {
-                try bindDouble(retiredAt.timeIntervalSince1970, to: 3, in: statement, db: db)
-            } else {
-                guard sqlite3_bind_null(statement, 3) == SQLITE_OK else {
-                    throw SQLiteRelayStateStoreError.bind(lastError(in: db))
-                }
-            }
-            try bindBlob(encode(record), to: 4, in: statement, db: db)
-        }
-    }
-
-    private static func insertOpaqueRouteRuntimeV2(
-        _ runtime: OpaqueRouteRuntimeStateV2,
-        in db: OpaquePointer
-    ) throws {
-        guard runtime.isStructurallyValid else {
-            throw SQLiteRelayStateStoreError.corrupt("invalid opaque route runtime state")
-        }
-        try executePrepared(
-            "INSERT INTO relay_opaque_route_runtime_v2 (state_key, route_count, value) VALUES (1, ?1, ?2);",
-            in: db
-        ) { statement in
-            try bindInt(runtime.routeCount, to: 1, in: statement, db: db)
-            try bindBlob(encode(runtime), to: 2, in: statement, db: db)
-        }
-    }
-
-    private static func insertAttachmentRecord(attachmentId: String, record: AttachmentRecord, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_attachment_chunks (attachment_id, chunk_index, stored_at, expires_at, value) VALUES (?1, ?2, ?3, ?4, ?5);",
-            in: db
-        ) { statement in
-            try bindText(attachmentId, to: 1, in: statement, db: db)
-            try bindInt(record.chunkIndex, to: 2, in: statement, db: db)
-            try bindDouble(record.storedAt.timeIntervalSince1970, to: 3, in: statement, db: db)
-            try bindDouble(record.expiresAt.timeIntervalSince1970, to: 4, in: statement, db: db)
-            try bindBlob(encode(record), to: 5, in: statement, db: db)
-        }
-    }
-
-    private static func insertFederationNode(nodeKey: String, record: FederationNodeRecord, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_federation_nodes (node_key, expires_at, value) VALUES (?1, ?2, ?3);",
-            in: db
-        ) { statement in
-            try bindText(nodeKey, to: 1, in: statement, db: db)
-            try bindDouble(record.expiresAt.timeIntervalSince1970, to: 2, in: statement, db: db)
-            try bindBlob(encode(record), to: 3, in: statement, db: db)
-        }
-    }
-
-    private static func insertCoordinatorPinnedPublicKey(coordinatorKey: String, publicKey: Data, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_coordinator_pinned_keys (coordinator_key, public_key) VALUES (?1, ?2);",
-            in: db
-        ) { statement in
-            try bindText(coordinatorKey, to: 1, in: statement, db: db)
-            try bindBlob(publicKey, to: 2, in: statement, db: db)
-        }
-    }
-
-    private static func insertActorProofReplayCacheEntry(cacheKey: String, consumedAt: Date, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_actor_proof_replay_cache (cache_key, consumed_at) VALUES (?1, ?2);",
-            in: db
-        ) { statement in
-            try bindText(cacheKey, to: 1, in: statement, db: db)
-            try bindDouble(consumedAt.timeIntervalSince1970, to: 2, in: statement, db: db)
-        }
-    }
-
-    private static func insertMeta(key: String, value: Data, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO \(metaTableName) (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
-            in: db
-        ) { statement in
-            try bindText(key, to: 1, in: statement, db: db)
-            try bindBlob(value, to: 2, in: statement, db: db)
-        }
-    }
-
-    private static func hasCurrentState(in db: OpaquePointer) throws -> Bool {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT value FROM \(metaTableName) WHERE key = ?1 LIMIT 1;", -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteRelayStateStoreError.prepare(lastError(in: db))
-        }
-        defer { sqlite3_finalize(statement) }
-        guard let statement else { return false }
-
-        try bindText(currentSchemaKey, to: 1, in: statement, db: db)
-        let step = sqlite3_step(statement)
-        if step == SQLITE_ROW {
-            return try readBlob(statement, column: 0) == Data("1".utf8)
-        }
-        if step == SQLITE_DONE {
-            return false
-        }
-        throw SQLiteRelayStateStoreError.step(lastError(in: db))
-    }
-
-    private static func clearNormalizedTables(in db: OpaquePointer) throws {
-        for table in [
-            "relay_mailbox_envelopes",
-            "relay_inbox_registrations",
-            "relay_inbox_retirements",
-            "relay_inbox_route_capabilities",
-            "relay_rendezvous_routes_v2",
-            "relay_opaque_route_runtime_v2",
-            "relay_attachment_chunks",
-            "relay_federation_nodes",
-            "relay_coordinator_pinned_keys",
-            "relay_actor_proof_replay_cache"
-        ] {
-            try execute("DELETE FROM \(table);", in: db)
-        }
-    }
-
     private static func openDatabase(at url: URL, handle: inout OpaquePointer?) throws {
-        let directory = url.deletingLastPathComponent()
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        }
-        let result = sqlite3_open(url.path, &handle)
-        guard result == SQLITE_OK else {
-            let message = handle.flatMap(lastError(in:)) ?? "Unknown error"
-            if handle != nil {
-                sqlite3_close(handle)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
+        guard sqlite3_open_v2(url.path, &handle, flags, nil) == SQLITE_OK,
+              let database = handle else {
+            let message = handle.flatMap { sqlite3_errmsg($0).map(String.init(cString:)) }
+                ?? "Unknown sqlite error"
+            if let opened = handle {
+                sqlite3_close(opened)
+                handle = nil
             }
             throw SQLiteRelayStateStoreError.openDatabase(message)
         }
+        sqlite3_busy_timeout(database, 5_000)
     }
 
-    private static func ensureSchema(in db: OpaquePointer) throws {
-        let sql = """
-        CREATE TABLE IF NOT EXISTS \(metaTableName) (
-            key TEXT PRIMARY KEY,
-            value BLOB NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS relay_mailbox_envelopes (
-            inbox_id TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            envelope_id TEXT NOT NULL,
-            stored_at REAL NOT NULL,
-            value BLOB NOT NULL,
-            PRIMARY KEY (inbox_id, position)
-        );
-        CREATE INDEX IF NOT EXISTS relay_mailbox_envelopes_inbox_idx ON relay_mailbox_envelopes(inbox_id);
-        CREATE TABLE IF NOT EXISTS relay_inbox_registrations (
-            inbox_id TEXT PRIMARY KEY,
-            registered_at REAL NOT NULL,
-            access_public_key BLOB NOT NULL,
-            value BLOB NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS relay_inbox_retirements (
-            inbox_id TEXT PRIMARY KEY,
-            retired_at REAL NOT NULL,
-            request_digest BLOB NOT NULL,
-            value BLOB NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS relay_inbox_route_capabilities (
-            capability_digest TEXT PRIMARY KEY,
-            inbox_id TEXT NOT NULL,
-            created_at REAL NOT NULL,
-            revoked_at REAL,
-            value BLOB NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS relay_inbox_route_capabilities_inbox_idx ON relay_inbox_route_capabilities(inbox_id);
-        CREATE TABLE IF NOT EXISTS relay_rendezvous_routes_v2 (
-            route_digest TEXT PRIMARY KEY,
-            expires_at REAL NOT NULL,
-            retired_at REAL,
-            value BLOB NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS relay_rendezvous_routes_v2_expiry_idx ON relay_rendezvous_routes_v2(expires_at);
-        CREATE TABLE IF NOT EXISTS relay_opaque_route_runtime_v2 (
-            state_key INTEGER PRIMARY KEY CHECK (state_key = 1),
-            route_count INTEGER NOT NULL CHECK (route_count >= 0),
-            value BLOB NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS relay_attachment_chunks (
-            attachment_id TEXT NOT NULL,
-            chunk_index INTEGER NOT NULL,
-            stored_at REAL NOT NULL,
-            expires_at REAL NOT NULL,
-            value BLOB NOT NULL,
-            PRIMARY KEY (attachment_id, chunk_index)
-        );
-        CREATE INDEX IF NOT EXISTS relay_attachment_chunks_expiry_idx ON relay_attachment_chunks(expires_at);
-        CREATE TABLE IF NOT EXISTS relay_federation_nodes (
-            node_key TEXT PRIMARY KEY,
-            expires_at REAL NOT NULL,
-            value BLOB NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS relay_coordinator_pinned_keys (
-            coordinator_key TEXT PRIMARY KEY,
-            public_key BLOB NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS relay_actor_proof_replay_cache (
-            cache_key TEXT PRIMARY KEY,
-            consumed_at REAL NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS relay_actor_proof_replay_cache_consumed_at_idx ON relay_actor_proof_replay_cache(consumed_at);
-        """
-        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
-            throw SQLiteRelayStateStoreError.execute(lastError(in: db))
-        }
+    private static func ensureSchema(in database: OpaquePointer) throws {
+        try execute(
+            """
+            CREATE TABLE IF NOT EXISTS \(tableName) (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                schema_version INTEGER NOT NULL CHECK (schema_version = \(schemaVersion)),
+                snapshot BLOB NOT NULL
+            );
+            """,
+            in: database
+        )
     }
 
-    private static func queryRows(
-        _ sql: String,
-        in db: OpaquePointer,
-        row: (OpaquePointer) throws -> Void
-    ) throws {
+    private static func tableExists(in database: OpaquePointer) throws -> Bool {
+        let sql = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1;"
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteRelayStateStoreError.prepare(lastError(in: db))
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            throw SQLiteRelayStateStoreError.prepare(lastError(in: database))
         }
         defer { sqlite3_finalize(statement) }
-        guard let statement else { return }
-
-        while true {
-            let step = sqlite3_step(statement)
-            if step == SQLITE_ROW {
-                try row(statement)
-            } else if step == SQLITE_DONE {
-                return
-            } else {
-                throw SQLiteRelayStateStoreError.step(lastError(in: db))
-            }
+        guard sqlite3_bind_text(statement, 1, tableName, -1, transient) == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.bind(lastError(in: database))
+        }
+        switch sqlite3_step(statement) {
+        case SQLITE_ROW:
+            return true
+        case SQLITE_DONE:
+            return false
+        default:
+            throw SQLiteRelayStateStoreError.step(lastError(in: database))
         }
     }
 
-    private static func executePrepared(
-        _ sql: String,
-        in db: OpaquePointer,
-        bindAndStep: (OpaquePointer) throws -> Void
-    ) throws {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw SQLiteRelayStateStoreError.prepare(lastError(in: db))
-        }
-        defer { sqlite3_finalize(statement) }
-        guard let statement else { return }
-
-        try bindAndStep(statement)
-        guard sqlite3_step(statement) == SQLITE_DONE else {
-            throw SQLiteRelayStateStoreError.step(lastError(in: db))
+    private static func execute(_ sql: String, in database: OpaquePointer) throws {
+        guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.execute(lastError(in: database))
         }
     }
 
-    private static func bindText(_ value: String, to index: Int32, in statement: OpaquePointer, db: OpaquePointer) throws {
-        guard sqlite3_bind_text(statement, index, value, -1, transient) == SQLITE_OK else {
-            throw SQLiteRelayStateStoreError.bind(lastError(in: db))
-        }
-    }
-
-    private static func bindInt(_ value: Int, to index: Int32, in statement: OpaquePointer, db: OpaquePointer) throws {
-        guard sqlite3_bind_int64(statement, index, sqlite3_int64(value)) == SQLITE_OK else {
-            throw SQLiteRelayStateStoreError.bind(lastError(in: db))
-        }
-    }
-
-    private static func bindDouble(_ value: Double, to index: Int32, in statement: OpaquePointer, db: OpaquePointer) throws {
-        guard sqlite3_bind_double(statement, index, value) == SQLITE_OK else {
-            throw SQLiteRelayStateStoreError.bind(lastError(in: db))
-        }
-    }
-
-    private static func bindBlob(_ value: Data, to index: Int32, in statement: OpaquePointer, db: OpaquePointer) throws {
-        let bindResult = value.withUnsafeBytes { buffer in
-            sqlite3_bind_blob(statement, index, buffer.baseAddress, Int32(buffer.count), transient)
-        }
-        guard bindResult == SQLITE_OK else {
-            throw SQLiteRelayStateStoreError.bind(lastError(in: db))
-        }
-    }
-
-    private static func readText(_ statement: OpaquePointer, column: Int32, in db: OpaquePointer) throws -> String {
-        guard let cString = sqlite3_column_text(statement, column) else {
-            throw SQLiteRelayStateStoreError.step(lastError(in: db))
-        }
-        return String(cString: cString)
-    }
-
-    private static func readBlob(_ statement: OpaquePointer, column: Int32) throws -> Data {
-        let byteCount = Int(sqlite3_column_bytes(statement, column))
-        guard byteCount > 0,
-              byteCount <= 32 * 1024 * 1024,
-              let bytes = sqlite3_column_blob(statement, column) else {
-            throw SQLiteRelayStateStoreError.corrupt("empty or oversized blob")
-        }
-        return Data(bytes: bytes, count: byteCount)
-    }
-
-    private static func encode<T: Encodable>(_ value: T) throws -> Data {
-        try RelayCodec.encoder().encode(value)
-    }
-
-    private static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
-        try RelayCodec.decoder().decode(type, from: data)
-    }
-
-    private static func execute(_ sql: String, in db: OpaquePointer) throws {
-        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
-            throw SQLiteRelayStateStoreError.execute(lastError(in: db))
-        }
-    }
-
-    private static func lastError(in db: OpaquePointer) -> String {
-        guard let cString = sqlite3_errmsg(db) else {
+    private static func lastError(in database: OpaquePointer) -> String {
+        guard let value = sqlite3_errmsg(database) else {
             return "Unknown sqlite error"
         }
-        return String(cString: cString)
+        return String(cString: value)
     }
 }

@@ -76,22 +76,12 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
         hiddenRetrievalEnabled: Bool,
         onionEnabled: Bool,
         mixnetEnabled: Bool,
-        opaqueRouteRuntimeEnabled: Bool = false,
+        opaqueRouteRuntimeEnabled: Bool = true,
         rendezvousTransportEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
-            RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .provisional),
-            RelayModuleCapabilityV2(
-                module: "nw.mailbox",
-                versions: [2],
-                status: .provisional,
-                limits: [
-                    "maxConsumers": UInt64(maximumEndpoints),
-                    "maxCursorBytes": UInt64(maximumCursorBytes),
-                    "maxPage": 256
-                ]
-            ),
-            RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .provisional)
+            RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .stable),
+            RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .stable)
         ]
         if attachmentsEnabled {
             modules.append(RelayModuleCapabilityV2(module: "nw.blobs", versions: [1], status: .stable))
@@ -138,7 +128,7 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                 RelayModuleCapabilityV2(
                     module: "nw.opaque-route",
                     versions: [2],
-                    status: .provisional,
+                    status: .stable,
                     limits: [
                         "cursorBytes": 68,
                         "maxPage": 256,

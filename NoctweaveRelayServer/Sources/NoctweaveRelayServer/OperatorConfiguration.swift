@@ -65,6 +65,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var curatedCoordinatorQuorum: Int?
     var curatedRequireSignedDirectory: Bool?
     var allowPrivateFederationEndpoints: Bool?
+    var opaqueRouteRuntimeEnabled: Bool
     var wakeMode: String
     var wakeMinPollSeconds: Int
     var wakeMaxPollSeconds: Int
@@ -122,6 +123,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         curatedCoordinatorQuorum = configuration.curatedCoordinatorQuorum
         curatedRequireSignedDirectory = configuration.curatedRequireSignedDirectory
         allowPrivateFederationEndpoints = configuration.allowPrivateFederationEndpoints
+        opaqueRouteRuntimeEnabled = configuration.isOpaqueRouteRuntimeEnabled
         wakeMode = configuration.wakeSupport?.mode.rawValue ?? "disabled"
         wakeMinPollSeconds = configuration.wakeSupport?.minPollIntervalSeconds ?? 60
         wakeMaxPollSeconds = configuration.wakeSupport?.maxPollIntervalSeconds ?? 300
@@ -267,7 +269,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             groupSecurityModel: groupSecurity,
             accessPassword: current.accessPassword,
             coordinatorRegistrationToken: current.coordinatorRegistrationToken,
-            federationForwardingAuthToken: current.federationForwardingAuthToken,
             federationCoordinatorEndpoints: coordinators,
             coordinatorHeartbeatSeconds: heartbeat,
             coordinatorDirectoryMaxStalenessSeconds: staleness,
@@ -283,7 +284,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             advertisedEndpoint: endpoint,
             federationAllowList: mode == .solo ? [] : allowList,
             allowPrivateFederationEndpoints: allowPrivateFederationEndpoints ?? current.allowPrivateFederationEndpoints,
-            requireInboxAccessControl: current.requireInboxAccessControl ?? true,
+            opaqueRouteRuntimeEnabled: opaqueRouteRuntimeEnabled,
             rendezvousTransportEnabled: current.isRendezvousTransportEnabled
         )
     }
@@ -315,7 +316,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             groupSecurityModel: config.groupSecurityModel,
             accessPassword: config.accessPassword,
             coordinatorRegistrationToken: config.coordinatorRegistrationToken,
-            federationForwardingAuthToken: config.federationForwardingAuthToken,
             federationCoordinatorEndpoints: config.federationCoordinatorEndpoints,
             coordinatorHeartbeatSeconds: config.coordinatorHeartbeatSeconds,
             coordinatorDirectoryMaxStalenessSeconds: config.coordinatorDirectoryMaxStalenessSeconds,
@@ -331,6 +331,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             advertisedEndpoint: config.advertisedEndpoint,
             federationAllowList: config.federationAllowList,
             allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints,
+            opaqueRouteRuntimeEnabled: config.opaqueRouteRuntimeEnabled,
             rendezvousTransportEnabled: config.rendezvousTransportEnabled
         )
         let updated = try validatedConfiguration(from: current)
@@ -369,6 +370,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.advertisedEndpoint = updated.advertisedEndpoint
         config.federationAllowList = updated.federationAllowList
         config.allowPrivateFederationEndpoints = updated.allowPrivateFederationEndpoints
+        config.opaqueRouteRuntimeEnabled = updated.isOpaqueRouteRuntimeEnabled
         config.rendezvousTransportEnabled = updated.isRendezvousTransportEnabled
     }
 

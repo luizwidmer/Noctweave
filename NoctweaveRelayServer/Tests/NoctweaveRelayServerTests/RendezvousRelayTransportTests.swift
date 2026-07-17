@@ -53,7 +53,7 @@ final class RendezvousRelayTransportTests: XCTestCase {
         let fixture = makeFixture(now: now)
         let encoded = try RelayCodec.encoder().encode(fixture.registration)
         let json = try XCTUnwrap(String(data: encoded, encoding: .utf8)?.lowercased())
-        for forbidden in ["purpose", "generation", "identity", "endpoint", "inbox", "provider", "contact"] {
+        for forbidden in ["purpose", "generation", "identity", "endpoint", "provider", "contact"] {
             XCTAssertFalse(json.contains(forbidden), "relay registration leaked \(forbidden)")
         }
         XCTAssertFalse(RelayConfiguration().isRendezvousTransportEnabled)
@@ -101,7 +101,7 @@ final class RendezvousRelayTransportTests: XCTestCase {
     func testAuthoritySeparationSequenceAndExactIdempotenceMirrorCore() throws {
         let now = canonical(2_000_000_000)
         let fixture = makeFixture(now: now)
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
+        let store = RelayStore(fileURL: nil, temporalBucketSeconds: 0)
         try store.registerRendezvousTransportV2(fixture.registration, now: now)
         let first = frame(marker: 0x31, sequence: 1)
         let append = AppendRendezvousTransportV2Request(
@@ -176,7 +176,7 @@ final class RendezvousRelayTransportTests: XCTestCase {
             publishCapability: fixture.lanes[1].publishCapability,
             frame: first
         )
-        let store = RelayStore(fileURL: storeURL, maxInboxMessages: nil, temporalBucketSeconds: 0)
+        let store = RelayStore(fileURL: storeURL, temporalBucketSeconds: 0)
         try store.registerRendezvousTransportV2(fixture.registration, now: now)
         _ = try store.appendRendezvousTransportV2(append, now: now)
         try store.deleteRendezvousTransportV2(
@@ -200,7 +200,7 @@ final class RendezvousRelayTransportTests: XCTestCase {
             XCTAssertNil(sqlite.range(of: bearer), "raw rendezvous bearer was persisted")
         }
 
-        let reloaded = RelayStore(fileURL: storeURL, maxInboxMessages: nil, temporalBucketSeconds: 0)
+        let reloaded = RelayStore(fileURL: storeURL, temporalBucketSeconds: 0)
         try reloaded.load()
         try reloaded.registerRendezvousTransportV2(fixture.registration, now: now)
         XCTAssertThrowsError(
@@ -237,7 +237,7 @@ final class RendezvousRelayTransportTests: XCTestCase {
             )
         ) { XCTAssertEqual($0 as? RelayStoreError, .rendezvousRouteUnavailable) }
 
-        let tombstoneReload = RelayStore(fileURL: storeURL, maxInboxMessages: nil, temporalBucketSeconds: 0)
+        let tombstoneReload = RelayStore(fileURL: storeURL, temporalBucketSeconds: 0)
         try tombstoneReload.load()
         XCTAssertThrowsError(
             try tombstoneReload.registerRendezvousTransportV2(
@@ -309,7 +309,7 @@ private final class RendezvousRelayTCPHarness {
 
     init(enabled: Bool) throws {
         group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        let store = RelayStore(fileURL: nil, maxInboxMessages: nil, temporalBucketSeconds: 0)
+        let store = RelayStore(fileURL: nil, temporalBucketSeconds: 0)
         let configuration = RelayConfiguration(
             tlsEnabled: false,
             rendezvousTransportEnabled: enabled

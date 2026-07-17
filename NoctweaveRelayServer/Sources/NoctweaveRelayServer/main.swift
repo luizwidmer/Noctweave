@@ -27,6 +27,7 @@ struct ServerConfig {
       --access-password <password>     Require relay client authentication
       --attachments-enabled <bool>     Enable or disable attachment chunks
       --attachment-storage <mode>      inline or ipfs
+      --opaque-route-runtime <bool>   Enable the direct-delivery runtime (default: true)
       --rendezvous-transport <bool>    Enable experimental identity-blind rendezvous transport
       --temporal-bucket-seconds <n>    Metadata timing bucket; 0 disables it
       --help, -h                       Show this help without starting a relay
@@ -53,7 +54,6 @@ struct ServerConfig {
     var adminToken: String?
     var dataDir: URL?
     var memoryOnly: Bool
-    var maxInboxMessages: Int?
     var maxMessageBytes: Int?
     var maxLineBytes: Int?
     var forwardingRequestTimeoutSeconds: Int
@@ -82,7 +82,6 @@ struct ServerConfig {
     var groupSecurityModel: GroupSecurityModel
     var accessPassword: String?
     var coordinatorRegistrationToken: String?
-    var federationForwardingAuthToken: String?
     var federationCoordinatorEndpoints: [RelayEndpoint]
     var coordinatorHeartbeatSeconds: Int
     var coordinatorDirectoryMaxStalenessSeconds: Int
@@ -98,6 +97,7 @@ struct ServerConfig {
     var advertisedEndpoint: RelayEndpoint?
     var federationAllowList: [RelayEndpoint]
     var allowPrivateFederationEndpoints: Bool
+    var opaqueRouteRuntimeEnabled: Bool
     var rendezvousTransportEnabled: Bool
 
     static func parse(
@@ -112,7 +112,6 @@ struct ServerConfig {
         var adminToken = environment["NOCTWEAVE_ADMIN_TOKEN"]
         var dataDir: URL? = URL(fileURLWithPath: "/data", isDirectory: true)
         var memoryOnly = false
-        var maxInboxMessages: Int? = 1000
         var maxMessageBytes: Int? = 512 * 1024
         var maxLineBytes: Int? = 640 * 1024
         var forwardingRequestTimeoutSeconds: Int = 8
@@ -168,7 +167,6 @@ struct ServerConfig {
         var groupSecurityModel: GroupSecurityModel = .mlsDerivedTree
         var accessPassword: String? = environment["NOCTWEAVE_RELAY_PASSWORD"]
         var coordinatorRegistrationToken: String? = environment["NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN"]
-        var federationForwardingAuthToken: String? = environment["NOCTWEAVE_FEDERATION_FORWARDING_TOKEN"]
         var federationCoordinatorEndpoints: [RelayEndpoint] = []
         var coordinatorHeartbeatSeconds: Int = 45
         var coordinatorDirectoryMaxStalenessSeconds: Int = 300
@@ -188,6 +186,10 @@ struct ServerConfig {
         var advertisedEndpoint: RelayEndpoint?
         var federationAllowList: [RelayEndpoint] = []
         var allowPrivateFederationEndpoints = false
+        var opaqueRouteRuntimeEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_OPAQUE_ROUTE_RUNTIME"] ?? "true",
+            defaultValue: true
+        )
         var rendezvousTransportEnabled = parseBoolFlag(
             environment["NOCTWEAVE_RENDEZVOUS_TRANSPORT"] ?? "false",
             defaultValue: false
@@ -219,10 +221,6 @@ struct ServerConfig {
                 }
             case "--memory-only":
                 memoryOnly = true
-            case "--max-inbox":
-                if let value = iterator.next(), let parsed = Int(value) {
-                    maxInboxMessages = parsed > 0 ? parsed : nil
-                }
             case "--max-message-bytes":
                 if let value = iterator.next(), let parsed = Int(value) {
                     maxMessageBytes = parsed > 0 ? parsed : 512 * 1024
@@ -423,8 +421,6 @@ struct ServerConfig {
                 accessPassword = iterator.next()
             case "--coordinator-registration-token":
                 coordinatorRegistrationToken = iterator.next()
-            case "--federation-forwarding-auth-token":
-                federationForwardingAuthToken = iterator.next()
             case "--federation-coordinator":
                 if let value = iterator.next() {
                     let entries = value.split(separator: ",").map { String($0) }
@@ -504,6 +500,12 @@ struct ServerConfig {
                 } else {
                     allowPrivateFederationEndpoints = true
                 }
+            case "--opaque-route-runtime":
+                if let value = iterator.next() {
+                    opaqueRouteRuntimeEnabled = parseBoolFlag(value, defaultValue: true)
+                } else {
+                    opaqueRouteRuntimeEnabled = true
+                }
             case "--rendezvous-transport":
                 if let value = iterator.next() {
                     rendezvousTransportEnabled = parseBoolFlag(value, defaultValue: true)
@@ -527,7 +529,6 @@ struct ServerConfig {
         port = min(max(port, 1), Int(UInt16.max))
         httpPort = httpPort.map { min(max($0, 1), Int(UInt16.max)) }
         adminPort = adminPort.map { min(max($0, 1), Int(UInt16.max)) }
-        maxInboxMessages = maxInboxMessages.map { min(max($0, 1), 1_000_000) }
         forwardingRequestTimeoutSeconds = min(max(forwardingRequestTimeoutSeconds, 1), 300)
         temporalBucketSeconds = min(max(temporalBucketSeconds, 0), maximumTemporalBucketSeconds)
         temporalBucketScheduleSeconds = Array(
@@ -627,7 +628,6 @@ struct ServerConfig {
             adminToken: adminToken,
             dataDir: dataDir,
             memoryOnly: memoryOnly,
-            maxInboxMessages: maxInboxMessages,
             maxMessageBytes: normalizedMaxMessageBytes,
             maxLineBytes: normalizedMaxLineBytes,
             forwardingRequestTimeoutSeconds: forwardingRequestTimeoutSeconds,
@@ -656,7 +656,6 @@ struct ServerConfig {
             groupSecurityModel: groupSecurityModel,
             accessPassword: accessPassword,
             coordinatorRegistrationToken: coordinatorRegistrationToken,
-            federationForwardingAuthToken: federationForwardingAuthToken,
             federationCoordinatorEndpoints: federationCoordinatorEndpoints,
             coordinatorHeartbeatSeconds: coordinatorHeartbeatSeconds,
             coordinatorDirectoryMaxStalenessSeconds: coordinatorDirectoryMaxStalenessSeconds,
@@ -672,6 +671,7 @@ struct ServerConfig {
             advertisedEndpoint: advertisedEndpoint,
             federationAllowList: federationAllowList,
             allowPrivateFederationEndpoints: allowPrivateFederationEndpoints,
+            opaqueRouteRuntimeEnabled: opaqueRouteRuntimeEnabled,
             rendezvousTransportEnabled: rendezvousTransportEnabled
         )
     }
@@ -816,7 +816,6 @@ if config.federationMode == .curated,
 for (label, secret, minimum) in [
     ("relay password", config.accessPassword, 12),
     ("coordinator registration token", config.coordinatorRegistrationToken, 16),
-    ("federation forwarding token", config.federationForwardingAuthToken, 16),
     ("admin token", config.adminToken, 16)
 ] {
     if let secret, !secret.isEmpty, !(minimum...4_096).contains(secret.utf8.count) {
@@ -866,7 +865,6 @@ case .ipfs:
 }
 let store = RelayStore(
     fileURL: fileURL,
-    maxInboxMessages: config.maxInboxMessages,
     attachmentBlobStore: attachmentBlobStore,
     temporalBucketSeconds: config.temporalBucketSeconds,
     temporalBucketScheduleSeconds: config.temporalBucketScheduleSeconds
@@ -910,7 +908,6 @@ var relayConfiguration = RelayConfiguration(
     groupSecurityModel: config.groupSecurityModel,
     accessPassword: config.accessPassword,
     coordinatorRegistrationToken: config.coordinatorRegistrationToken,
-    federationForwardingAuthToken: config.federationForwardingAuthToken,
     federationCoordinatorEndpoints: config.federationCoordinatorEndpoints,
     coordinatorHeartbeatSeconds: config.coordinatorHeartbeatSeconds,
     coordinatorDirectoryMaxStalenessSeconds: config.coordinatorDirectoryMaxStalenessSeconds,
@@ -926,6 +923,7 @@ var relayConfiguration = RelayConfiguration(
     advertisedEndpoint: config.advertisedEndpoint,
     federationAllowList: config.federationAllowList,
     allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints,
+    opaqueRouteRuntimeEnabled: config.opaqueRouteRuntimeEnabled,
     rendezvousTransportEnabled: config.rendezvousTransportEnabled
 )
 if relayConfiguration.kind == .coordinator {
@@ -1059,7 +1057,7 @@ do {
             "HTTP / WebSocket": config.httpPort.map { "\(config.host):\($0)" } ?? "Disabled",
             "Admin listener": "\(config.adminHost):\(adminPort)",
             "Message ceiling": "\(config.maxMessageBytes ?? 0) bytes",
-            "Inbox ceiling": config.maxInboxMessages.map(String.init) ?? "Disabled",
+            "Direct delivery": config.opaqueRouteRuntimeEnabled ? "Opaque route v2" : "Disabled",
             "Attachment backend": config.attachmentStorageMode.rawValue,
             "Secrets": "Environment / command line"
         ]
