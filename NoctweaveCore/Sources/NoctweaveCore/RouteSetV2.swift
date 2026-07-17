@@ -593,7 +593,7 @@ private struct RelationshipRouteSetSignaturePayloadV2: Codable {
     let issuedAt: Date
 }
 
-private extension RelayEndpoint {
+extension RelayEndpoint {
     var isStructurallyValidRelationshipRouteEndpointV2: Bool {
         let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedHost.isEmpty,

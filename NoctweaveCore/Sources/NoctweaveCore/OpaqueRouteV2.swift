@@ -1058,6 +1058,24 @@ public struct OpaqueReceiveRouteV2: Codable, Equatable {
         }
     }
 
+    /// Confirms that client-held bearer material belongs to this relay-safe
+    /// route projection without exposing any bearer bytes.
+    public func matches(
+        clientCapabilities: OpaqueRouteClientCapabilityMaterialV2
+    ) -> Bool {
+        isStructurallyValid
+            && clientCapabilities.isStructurallyValid
+            && clientCapabilities.routeID == routeID
+            && opaqueRouteCredentialDigest(.send, clientCapabilities.sendCapability.rawValue)
+                == sendCapabilityDigest
+            && opaqueRouteCredentialDigest(.read, clientCapabilities.readCredential.rawValue)
+                == readCredentialDigest
+            && opaqueRouteCredentialDigest(.renew, clientCapabilities.renewCapability.rawValue)
+                == renewCapabilityDigest
+            && opaqueRouteCredentialDigest(.teardown, clientCapabilities.teardownCapability.rawValue)
+                == teardownCapabilityDigest
+    }
+
     /// Creates or idempotently reconciles a route. A retained torn-down state
     /// is a tombstone: even the original create request cannot resurrect it.
     public static func creating(
