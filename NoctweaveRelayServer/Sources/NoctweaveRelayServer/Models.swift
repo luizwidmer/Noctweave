@@ -927,6 +927,7 @@ struct RelayConfiguration: Codable, Equatable {
                 hiddenRetrievalEnabled: advertisedHiddenRetrieval != nil,
                 onionEnabled: advertisedOnionTransport != nil,
                 mixnetEnabled: advertisedMixnetTransport != nil,
+                opaqueRouteRuntimeEnabled: opaqueRouteCapabilitiesEnabled,
                 rendezvousTransportEnabled: isRendezvousTransportEnabled
             ),
             groupCreationMode: .disabled,
@@ -2370,6 +2371,12 @@ struct RendezvousRelaySyncBatchV2: Codable, Equatable {
 }
 
 enum RelayRequestType: String, Codable {
+    case createOpaqueRouteV2
+    case renewOpaqueRouteV2
+    case teardownOpaqueRouteV2
+    case appendOpaqueRouteV2
+    case syncOpaqueRouteV2
+    case commitOpaqueRouteV2
     case deliver
     case registerInbox
     case retireInbox
@@ -2483,6 +2490,12 @@ struct ListOpenFederationDHTRecordsRequest: Codable, Equatable {
 struct RelayRequest: Codable, Equatable {
     let type: RelayRequestType
     let authToken: String?
+    let createOpaqueRouteV2: OpaqueRouteCreateSubmissionV2?
+    let renewOpaqueRouteV2: OpaqueRouteRenewSubmissionV2?
+    let teardownOpaqueRouteV2: OpaqueRouteTeardownSubmissionV2?
+    let appendOpaqueRouteV2: OpaqueRouteAppendSubmissionV2?
+    let syncOpaqueRouteV2: OpaqueRouteSyncSubmissionV2?
+    let commitOpaqueRouteV2: OpaqueRouteCommitSubmissionV2?
     let deliver: DeliverRequest?
     let registerInbox: RegisterInboxRequest?
     let retireInbox: RetireInboxRequest?
@@ -2507,6 +2520,12 @@ struct RelayRequest: Codable, Equatable {
     init(
         type: RelayRequestType,
         authToken: String? = nil,
+        createOpaqueRouteV2: OpaqueRouteCreateSubmissionV2? = nil,
+        renewOpaqueRouteV2: OpaqueRouteRenewSubmissionV2? = nil,
+        teardownOpaqueRouteV2: OpaqueRouteTeardownSubmissionV2? = nil,
+        appendOpaqueRouteV2: OpaqueRouteAppendSubmissionV2? = nil,
+        syncOpaqueRouteV2: OpaqueRouteSyncSubmissionV2? = nil,
+        commitOpaqueRouteV2: OpaqueRouteCommitSubmissionV2? = nil,
         deliver: DeliverRequest? = nil,
         registerInbox: RegisterInboxRequest? = nil,
         retireInbox: RetireInboxRequest? = nil,
@@ -2530,6 +2549,12 @@ struct RelayRequest: Codable, Equatable {
     ) {
         self.type = type
         self.authToken = authToken
+        self.createOpaqueRouteV2 = createOpaqueRouteV2
+        self.renewOpaqueRouteV2 = renewOpaqueRouteV2
+        self.teardownOpaqueRouteV2 = teardownOpaqueRouteV2
+        self.appendOpaqueRouteV2 = appendOpaqueRouteV2
+        self.syncOpaqueRouteV2 = syncOpaqueRouteV2
+        self.commitOpaqueRouteV2 = commitOpaqueRouteV2
         self.deliver = deliver
         self.registerInbox = registerInbox
         self.retireInbox = retireInbox
@@ -2554,6 +2579,30 @@ struct RelayRequest: Codable, Equatable {
 
     static func deliver(_ request: DeliverRequest) -> RelayRequest {
         RelayRequest(type: .deliver, deliver: request)
+    }
+
+    static func createOpaqueRouteV2(_ submission: OpaqueRouteCreateSubmissionV2) -> RelayRequest {
+        RelayRequest(type: .createOpaqueRouteV2, createOpaqueRouteV2: submission)
+    }
+
+    static func renewOpaqueRouteV2(_ submission: OpaqueRouteRenewSubmissionV2) -> RelayRequest {
+        RelayRequest(type: .renewOpaqueRouteV2, renewOpaqueRouteV2: submission)
+    }
+
+    static func teardownOpaqueRouteV2(_ submission: OpaqueRouteTeardownSubmissionV2) -> RelayRequest {
+        RelayRequest(type: .teardownOpaqueRouteV2, teardownOpaqueRouteV2: submission)
+    }
+
+    static func appendOpaqueRouteV2(_ submission: OpaqueRouteAppendSubmissionV2) -> RelayRequest {
+        RelayRequest(type: .appendOpaqueRouteV2, appendOpaqueRouteV2: submission)
+    }
+
+    static func syncOpaqueRouteV2(_ submission: OpaqueRouteSyncSubmissionV2) -> RelayRequest {
+        RelayRequest(type: .syncOpaqueRouteV2, syncOpaqueRouteV2: submission)
+    }
+
+    static func commitOpaqueRouteV2(_ submission: OpaqueRouteCommitSubmissionV2) -> RelayRequest {
+        RelayRequest(type: .commitOpaqueRouteV2, commitOpaqueRouteV2: submission)
     }
 
     static func registerInbox(_ request: RegisterInboxRequest) -> RelayRequest {
@@ -2674,6 +2723,12 @@ struct RelayRequest: Codable, Equatable {
         RelayRequest(
             type: type,
             authToken: token,
+            createOpaqueRouteV2: createOpaqueRouteV2,
+            renewOpaqueRouteV2: renewOpaqueRouteV2,
+            teardownOpaqueRouteV2: teardownOpaqueRouteV2,
+            appendOpaqueRouteV2: appendOpaqueRouteV2,
+            syncOpaqueRouteV2: syncOpaqueRouteV2,
+            commitOpaqueRouteV2: commitOpaqueRouteV2,
             deliver: deliver,
             registerInbox: registerInbox,
             retireInbox: retireInbox,
@@ -2780,6 +2835,10 @@ enum RelayResponseType: String, Codable {
     case mailboxSync
     case mailboxConsumer
     case rendezvousSyncV2
+    case opaqueRouteV2
+    case opaqueRouteAppendV2
+    case opaqueRouteSyncV2
+    case opaqueRouteCommitV2
     case attachment
     case info
     case federationNodes
@@ -2804,6 +2863,10 @@ struct RelayResponse: Codable, Equatable {
     let mailboxSync: MailboxSyncBatch?
     let mailboxConsumer: MailboxConsumerRegistration?
     let rendezvousSyncV2: RendezvousRelaySyncBatchV2?
+    let opaqueRouteV2: OpaqueReceiveRouteV2?
+    let opaqueRouteAppendV2: OpaqueRouteAppendReceiptV2?
+    let opaqueRouteSyncV2: OpaqueRouteSyncResponseV2?
+    let opaqueRouteCommitV2: OpaqueRouteCommitResponseV2?
     let attachment: AttachmentChunk?
     let relayInfo: RelayInfo?
     let federationNodes: [FederationNodeRecord]?
@@ -2819,6 +2882,10 @@ struct RelayResponse: Codable, Equatable {
         mailboxSync: MailboxSyncBatch? = nil,
         mailboxConsumer: MailboxConsumerRegistration? = nil,
         rendezvousSyncV2: RendezvousRelaySyncBatchV2? = nil,
+        opaqueRouteV2: OpaqueReceiveRouteV2? = nil,
+        opaqueRouteAppendV2: OpaqueRouteAppendReceiptV2? = nil,
+        opaqueRouteSyncV2: OpaqueRouteSyncResponseV2? = nil,
+        opaqueRouteCommitV2: OpaqueRouteCommitResponseV2? = nil,
         attachment: AttachmentChunk? = nil,
         relayInfo: RelayInfo? = nil,
         federationNodes: [FederationNodeRecord]? = nil,
@@ -2833,6 +2900,10 @@ struct RelayResponse: Codable, Equatable {
         self.mailboxSync = mailboxSync
         self.mailboxConsumer = mailboxConsumer
         self.rendezvousSyncV2 = rendezvousSyncV2
+        self.opaqueRouteV2 = opaqueRouteV2
+        self.opaqueRouteAppendV2 = opaqueRouteAppendV2
+        self.opaqueRouteSyncV2 = opaqueRouteSyncV2
+        self.opaqueRouteCommitV2 = opaqueRouteCommitV2
         self.attachment = attachment
         self.relayInfo = relayInfo
         self.federationNodes = federationNodes
@@ -2865,6 +2936,22 @@ struct RelayResponse: Codable, Equatable {
 
     static func rendezvousSyncV2(_ batch: RendezvousRelaySyncBatchV2) -> RelayResponse {
         RelayResponse(type: .rendezvousSyncV2, rendezvousSyncV2: batch)
+    }
+
+    static func opaqueRouteV2(_ route: OpaqueReceiveRouteV2) -> RelayResponse {
+        RelayResponse(type: .opaqueRouteV2, opaqueRouteV2: route)
+    }
+
+    static func opaqueRouteAppendV2(_ receipt: OpaqueRouteAppendReceiptV2) -> RelayResponse {
+        RelayResponse(type: .opaqueRouteAppendV2, opaqueRouteAppendV2: receipt)
+    }
+
+    static func opaqueRouteSyncV2(_ response: OpaqueRouteSyncResponseV2) -> RelayResponse {
+        RelayResponse(type: .opaqueRouteSyncV2, opaqueRouteSyncV2: response)
+    }
+
+    static func opaqueRouteCommitV2(_ response: OpaqueRouteCommitResponseV2) -> RelayResponse {
+        RelayResponse(type: .opaqueRouteCommitV2, opaqueRouteCommitV2: response)
     }
 
     static func attachment(_ chunk: AttachmentChunk) -> RelayResponse {

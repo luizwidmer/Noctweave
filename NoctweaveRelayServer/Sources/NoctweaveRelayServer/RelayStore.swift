@@ -58,6 +58,7 @@ final class RelayStore {
     /// Keyed by a domain-separated route-capability digest. Values contain
     /// only digests of lane authorities; raw bearer material is never stored.
     private var rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:]
+    private var opaqueRouteRuntimeV2 = OpaqueRouteRuntimeStateV2()
     private var attachments: [String: [AttachmentRecord]] = [:]
     private var federationNodes: [String: FederationNodeRecord] = [:]
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
@@ -169,6 +170,102 @@ final class RelayStore {
     func failNextPersistenceForTesting(_ count: Int = 1) {
         performSync {
             persistenceFailuresRemainingForTesting = max(0, count)
+        }
+    }
+
+    func createOpaqueRouteV2(
+        _ submission: OpaqueRouteCreateSubmissionV2,
+        confidentialTransport: Bool,
+        receivedAt: Date = Date()
+    ) throws -> OpaqueReceiveRouteV2 {
+        try performSync {
+            let route = try opaqueRouteRuntimeV2.create(
+                submission,
+                confidentialTransport: confidentialTransport,
+                receivedAt: receivedAt
+            )
+            try saveLocked()
+            return route
+        }
+    }
+
+    func renewOpaqueRouteV2(
+        _ submission: OpaqueRouteRenewSubmissionV2,
+        confidentialTransport: Bool,
+        receivedAt: Date = Date()
+    ) throws -> OpaqueReceiveRouteV2 {
+        try performSync {
+            let route = try opaqueRouteRuntimeV2.renew(
+                submission,
+                confidentialTransport: confidentialTransport,
+                receivedAt: receivedAt
+            )
+            try saveLocked()
+            return route
+        }
+    }
+
+    func teardownOpaqueRouteV2(
+        _ submission: OpaqueRouteTeardownSubmissionV2,
+        confidentialTransport: Bool,
+        receivedAt: Date = Date()
+    ) throws -> OpaqueReceiveRouteV2 {
+        try performSync {
+            let route = try opaqueRouteRuntimeV2.teardown(
+                submission,
+                confidentialTransport: confidentialTransport,
+                receivedAt: receivedAt
+            )
+            try saveLocked()
+            return route
+        }
+    }
+
+    func appendOpaqueRouteV2(
+        _ submission: OpaqueRouteAppendSubmissionV2,
+        confidentialTransport: Bool,
+        receivedAt: Date = Date()
+    ) throws -> OpaqueRouteAppendReceiptV2 {
+        try performSync {
+            let receipt = try opaqueRouteRuntimeV2.append(
+                submission,
+                confidentialTransport: confidentialTransport,
+                receivedAt: receivedAt
+            )
+            try saveLocked()
+            return receipt
+        }
+    }
+
+    func syncOpaqueRouteV2(
+        _ submission: OpaqueRouteSyncSubmissionV2,
+        confidentialTransport: Bool,
+        receivedAt: Date = Date()
+    ) throws -> OpaqueRouteSyncResponseV2 {
+        try performSync {
+            let response = try opaqueRouteRuntimeV2.sync(
+                submission,
+                confidentialTransport: confidentialTransport,
+                receivedAt: receivedAt
+            )
+            try saveLocked()
+            return response
+        }
+    }
+
+    func commitOpaqueRouteV2(
+        _ submission: OpaqueRouteCommitSubmissionV2,
+        confidentialTransport: Bool,
+        receivedAt: Date = Date()
+    ) throws -> OpaqueRouteCommitResponseV2 {
+        try performSync {
+            let response = try opaqueRouteRuntimeV2.commit(
+                submission,
+                confidentialTransport: confidentialTransport,
+                receivedAt: receivedAt
+            )
+            try saveLocked()
+            return response
         }
     }
 
@@ -1423,7 +1520,8 @@ final class RelayStore {
     }
 
     private func validateCurrentSnapshot(_ snapshot: RelayStoreSnapshot) throws {
-        guard snapshot.inboxRegistrations.allSatisfy({ inboxId, registration in
+        guard snapshot.opaqueRouteRuntimeV2.isStructurallyValid,
+              snapshot.inboxRegistrations.allSatisfy({ inboxId, registration in
                   InboxAddress.isValid(inboxId)
                       && !registration.accessPublicKey.isEmpty
                       && registration.registeredAt.timeIntervalSince1970.isFinite
@@ -1489,6 +1587,7 @@ final class RelayStore {
         inboxRetirements = snapshot.inboxRetirements
         inboxRouteCapabilities = snapshot.inboxRouteCapabilities
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
+        opaqueRouteRuntimeV2 = snapshot.opaqueRouteRuntimeV2
         attachments = snapshot.attachments
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
@@ -1509,6 +1608,7 @@ final class RelayStore {
         inboxRetirements = snapshot.inboxRetirements
         inboxRouteCapabilities = snapshot.inboxRouteCapabilities
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
+        opaqueRouteRuntimeV2 = snapshot.opaqueRouteRuntimeV2
         attachments = snapshot.attachments
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
@@ -1522,6 +1622,7 @@ final class RelayStore {
             inboxRetirements: inboxRetirements,
             inboxRouteCapabilities: inboxRouteCapabilities,
             rendezvousRoutesV2: rendezvousRoutesV2,
+            opaqueRouteRuntimeV2: opaqueRouteRuntimeV2,
             attachments: attachments,
             federationNodes: federationNodes,
             coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys,
@@ -1971,6 +2072,7 @@ private struct RelayStoreSnapshot: Codable {
     let inboxRetirements: [String: InboxRetirementRecord]
     let inboxRouteCapabilities: [String: InboxRouteCapabilityRecord]
     let rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2]
+    let opaqueRouteRuntimeV2: OpaqueRouteRuntimeStateV2
     let attachments: [String: [AttachmentRecord]]
     let federationNodes: [String: FederationNodeRecord]
     let coordinatorPinnedPublicKeys: [String: Data]
@@ -1982,6 +2084,7 @@ private struct RelayStoreSnapshot: Codable {
         inboxRetirements: [:],
         inboxRouteCapabilities: [:],
         rendezvousRoutesV2: [:],
+        opaqueRouteRuntimeV2: OpaqueRouteRuntimeStateV2(),
         attachments: [:],
         federationNodes: [:],
         coordinatorPinnedPublicKeys: [:],
@@ -1994,6 +2097,7 @@ private struct RelayStoreSnapshot: Codable {
         inboxRetirements: [String: InboxRetirementRecord] = [:],
         inboxRouteCapabilities: [String: InboxRouteCapabilityRecord] = [:],
         rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:],
+        opaqueRouteRuntimeV2: OpaqueRouteRuntimeStateV2 = OpaqueRouteRuntimeStateV2(),
         attachments: [String: [AttachmentRecord]],
         federationNodes: [String: FederationNodeRecord] = [:],
         coordinatorPinnedPublicKeys: [String: Data] = [:],
@@ -2004,6 +2108,7 @@ private struct RelayStoreSnapshot: Codable {
         self.inboxRetirements = inboxRetirements
         self.inboxRouteCapabilities = inboxRouteCapabilities
         self.rendezvousRoutesV2 = rendezvousRoutesV2
+        self.opaqueRouteRuntimeV2 = opaqueRouteRuntimeV2
         self.attachments = attachments
         self.federationNodes = federationNodes
         self.coordinatorPinnedPublicKeys = coordinatorPinnedPublicKeys
@@ -2025,6 +2130,10 @@ private struct RelayStoreSnapshot: Codable {
         rendezvousRoutesV2 = try container.decode(
             [String: RendezvousRelayRouteRecordV2].self,
             forKey: .rendezvousRoutesV2
+        )
+        opaqueRouteRuntimeV2 = try container.decode(
+            OpaqueRouteRuntimeStateV2.self,
+            forKey: .opaqueRouteRuntimeV2
         )
         attachments = try container.decode([String: [AttachmentRecord]].self, forKey: .attachments)
         federationNodes = try container.decode([String: FederationNodeRecord].self, forKey: .federationNodes)
@@ -2210,6 +2319,7 @@ private enum SQLiteRelayStateStore {
             inboxRetirements: try loadInboxRetirements(in: db),
             inboxRouteCapabilities: try loadInboxRouteCapabilities(in: db),
             rendezvousRoutesV2: try loadRendezvousRoutesV2(in: db),
+            opaqueRouteRuntimeV2: try loadOpaqueRouteRuntimeV2(in: db),
             attachments: try loadAttachments(in: db),
             federationNodes: try loadFederationNodes(in: db),
             coordinatorPinnedPublicKeys: try loadCoordinatorPinnedPublicKeys(in: db),
@@ -2252,6 +2362,7 @@ private enum SQLiteRelayStateStore {
                     in: db
                 )
             }
+            try insertOpaqueRouteRuntimeV2(snapshot.opaqueRouteRuntimeV2, in: db)
             for (attachmentId, records) in snapshot.attachments {
                 for record in records {
                     try insertAttachmentRecord(attachmentId: attachmentId, record: record, in: db)
@@ -2340,6 +2451,28 @@ private enum SQLiteRelayStateStore {
             throw SQLiteRelayStateStoreError.corrupt("too many rendezvous route records")
         }
         return records
+    }
+
+    private static func loadOpaqueRouteRuntimeV2(
+        in db: OpaquePointer
+    ) throws -> OpaqueRouteRuntimeStateV2 {
+        var result: OpaqueRouteRuntimeStateV2?
+        try queryRows(
+            "SELECT value FROM relay_opaque_route_runtime_v2 WHERE state_key = 1;",
+            in: db
+        ) { statement in
+            guard result == nil else {
+                throw SQLiteRelayStateStoreError.corrupt("duplicate opaque route runtime state")
+            }
+            result = try decode(
+                OpaqueRouteRuntimeStateV2.self,
+                from: readBlob(statement, column: 0)
+            )
+        }
+        guard let result, result.isStructurallyValid else {
+            throw SQLiteRelayStateStoreError.corrupt("missing or invalid opaque route runtime state")
+        }
+        return result
     }
 
     private static func loadAttachments(in db: OpaquePointer) throws -> [String: [AttachmentRecord]] {
@@ -2470,6 +2603,22 @@ private enum SQLiteRelayStateStore {
         }
     }
 
+    private static func insertOpaqueRouteRuntimeV2(
+        _ runtime: OpaqueRouteRuntimeStateV2,
+        in db: OpaquePointer
+    ) throws {
+        guard runtime.isStructurallyValid else {
+            throw SQLiteRelayStateStoreError.corrupt("invalid opaque route runtime state")
+        }
+        try executePrepared(
+            "INSERT INTO relay_opaque_route_runtime_v2 (state_key, route_count, value) VALUES (1, ?1, ?2);",
+            in: db
+        ) { statement in
+            try bindInt(runtime.routeCount, to: 1, in: statement, db: db)
+            try bindBlob(encode(runtime), to: 2, in: statement, db: db)
+        }
+    }
+
     private static func insertAttachmentRecord(attachmentId: String, record: AttachmentRecord, in db: OpaquePointer) throws {
         try executePrepared(
             "INSERT INTO relay_attachment_chunks (attachment_id, chunk_index, stored_at, expires_at, value) VALUES (?1, ?2, ?3, ?4, ?5);",
@@ -2550,6 +2699,7 @@ private enum SQLiteRelayStateStore {
             "relay_inbox_retirements",
             "relay_inbox_route_capabilities",
             "relay_rendezvous_routes_v2",
+            "relay_opaque_route_runtime_v2",
             "relay_attachment_chunks",
             "relay_federation_nodes",
             "relay_coordinator_pinned_keys",
@@ -2616,6 +2766,11 @@ private enum SQLiteRelayStateStore {
             value BLOB NOT NULL
         );
         CREATE INDEX IF NOT EXISTS relay_rendezvous_routes_v2_expiry_idx ON relay_rendezvous_routes_v2(expires_at);
+        CREATE TABLE IF NOT EXISTS relay_opaque_route_runtime_v2 (
+            state_key INTEGER PRIMARY KEY CHECK (state_key = 1),
+            route_count INTEGER NOT NULL CHECK (route_count >= 0),
+            value BLOB NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS relay_attachment_chunks (
             attachment_id TEXT NOT NULL,
             chunk_index INTEGER NOT NULL,

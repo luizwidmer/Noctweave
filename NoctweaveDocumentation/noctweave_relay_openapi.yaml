@@ -78,6 +78,18 @@ components:
           type: string
           maxLength: 4096
           description: Optional relay password or inter-relay forwarding token.
+        createOpaqueRouteV2:
+          $ref: "#/components/schemas/OpaqueRouteCreateSubmissionV2"
+        renewOpaqueRouteV2:
+          $ref: "#/components/schemas/OpaqueRouteRenewSubmissionV2"
+        teardownOpaqueRouteV2:
+          $ref: "#/components/schemas/OpaqueRouteTeardownSubmissionV2"
+        appendOpaqueRouteV2:
+          $ref: "#/components/schemas/OpaqueRouteAppendSubmissionV2"
+        syncOpaqueRouteV2:
+          $ref: "#/components/schemas/OpaqueRouteSyncSubmissionV2"
+        commitOpaqueRouteV2:
+          $ref: "#/components/schemas/OpaqueRouteCommitSubmissionV2"
         deliver:
           $ref: "#/components/schemas/DeliverRequest"
         fetch:
@@ -122,6 +134,12 @@ components:
     RelayRequestType:
       type: string
       enum:
+        - createOpaqueRouteV2
+        - renewOpaqueRouteV2
+        - teardownOpaqueRouteV2
+        - appendOpaqueRouteV2
+        - syncOpaqueRouteV2
+        - commitOpaqueRouteV2
         - deliver
         - registerInbox
         - retireInbox
@@ -168,6 +186,14 @@ components:
           $ref: "#/components/schemas/MailboxConsumerRegistration"
         rendezvousSyncV2:
           $ref: "#/components/schemas/RendezvousRelaySyncBatchV2"
+        opaqueRouteV2:
+          $ref: "#/components/schemas/OpaqueReceiveRouteV2"
+        opaqueRouteAppendV2:
+          $ref: "#/components/schemas/OpaqueRouteAppendReceiptV2"
+        opaqueRouteSyncV2:
+          $ref: "#/components/schemas/OpaqueRouteSyncResponseV2"
+        opaqueRouteCommitV2:
+          $ref: "#/components/schemas/OpaqueRouteCommitResponseV2"
         groupMessages:
           type: array
           items:
@@ -230,6 +256,10 @@ components:
         - mailboxSync
         - mailboxConsumer
         - rendezvousSyncV2
+        - opaqueRouteV2
+        - opaqueRouteAppendV2
+        - opaqueRouteSyncV2
+        - opaqueRouteCommitV2
         - groupMessages
         - announcements
         - pairRequests
@@ -243,6 +273,407 @@ components:
         - info
         - openFederationDHTRecords
         - error
+    OpaqueRouteOpaque32V2:
+      type: object
+      required: [rawValue]
+      properties:
+        rawValue:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+      additionalProperties: false
+    OpaqueRouteCursorV2:
+      type: object
+      required: [rawValue]
+      description: Relay-issued authenticated cursor. Clients treat it as an opaque 68-byte value.
+      properties:
+        rawValue:
+          type: string
+          contentEncoding: base64
+          minLength: 92
+          maxLength: 92
+      additionalProperties: false
+    OpaqueRouteAuthorizationProofV2:
+      type: object
+      required: [authority, nonce, operationDigest, authorizedAt, mac]
+      properties:
+        authority:
+          type: string
+          enum: [send, read, renew, teardown]
+        nonce:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        operationDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        authorizedAt:
+          type: string
+          format: date-time
+        mac:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+      additionalProperties: false
+    OpaqueRoutePolicyV2:
+      type: object
+      required: [paddingBucket, retentionBucket, quotaBucket, transportRequirement]
+      properties:
+        paddingBucket:
+          type: integer
+          enum: [4096, 16384, 65536]
+        retentionBucket:
+          type: integer
+          enum: [3600, 21600, 86400, 604800]
+        quotaBucket:
+          type: integer
+          enum: [64, 256, 1024]
+        transportRequirement:
+          type: string
+          const: confidentialAuthenticated
+      additionalProperties: false
+    OpaqueRouteLeaseV2:
+      type: object
+      required: [issuedAt, lastRenewedAt, expiresAt, renewalSequence, policy]
+      properties:
+        issuedAt:
+          type: string
+          format: date-time
+        lastRenewedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        renewalSequence:
+          type: integer
+          format: uint64
+          minimum: 0
+        policy:
+          $ref: "#/components/schemas/OpaqueRoutePolicyV2"
+      additionalProperties: false
+    OpaqueRouteCreateRequestV2:
+      type: object
+      required:
+        [version, routeID, sendCapabilityDigest, readCredentialDigest,
+         renewCapabilityDigest, teardownCapabilityDigest, lease, idempotencyKey, authorization]
+      properties:
+        version:
+          type: integer
+          const: 2
+        routeID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        sendCapabilityDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        readCredentialDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        renewCapabilityDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        teardownCapabilityDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        lease:
+          $ref: "#/components/schemas/OpaqueRouteLeaseV2"
+        idempotencyKey:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        authorization:
+          $ref: "#/components/schemas/OpaqueRouteAuthorizationProofV2"
+      additionalProperties: false
+    OpaqueRouteRenewRequestV2:
+      type: object
+      required:
+        [version, routeID, renewalSequence, previousTransitionDigest, newExpiry,
+         authorizedAt, idempotencyKey, authorization]
+      properties:
+        version:
+          type: integer
+          const: 2
+        routeID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        renewalSequence:
+          type: integer
+          format: uint64
+          minimum: 1
+        previousTransitionDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        newExpiry:
+          type: string
+          format: date-time
+        authorizedAt:
+          type: string
+          format: date-time
+        idempotencyKey:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        authorization:
+          $ref: "#/components/schemas/OpaqueRouteAuthorizationProofV2"
+      additionalProperties: false
+    OpaqueRouteTeardownRequestV2:
+      type: object
+      required:
+        [version, routeID, renewalSequence, previousTransitionDigest,
+         authorizedAt, idempotencyKey, authorization]
+      properties:
+        version:
+          type: integer
+          const: 2
+        routeID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        renewalSequence:
+          type: integer
+          format: uint64
+          minimum: 0
+        previousTransitionDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        authorizedAt:
+          type: string
+          format: date-time
+        idempotencyKey:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        authorization:
+          $ref: "#/components/schemas/OpaqueRouteAuthorizationProofV2"
+      additionalProperties: false
+    OpaqueRoutePacketV2:
+      type: object
+      required: [routeID, packetID, sealedFrame, authorization]
+      description: |
+        Fixed-size encrypted bytes. The relay validates only the outer fields,
+        proof, selected size bucket, limits, and ordering; it never decrypts or
+        interprets the sealed frame.
+      properties:
+        routeID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        packetID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        sealedFrame:
+          oneOf:
+            - type: string
+              contentEncoding: base64
+              minLength: 5464
+              maxLength: 5464
+            - type: string
+              contentEncoding: base64
+              minLength: 21848
+              maxLength: 21848
+            - type: string
+              contentEncoding: base64
+              minLength: 87384
+              maxLength: 87384
+        authorization:
+          $ref: "#/components/schemas/OpaqueRouteAuthorizationProofV2"
+      additionalProperties: false
+    OpaqueRouteSyncRequestV2:
+      type: object
+      required: [routeID, requestID, limit, authorization]
+      properties:
+        routeID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        requestID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        after:
+          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 256
+        authorization:
+          $ref: "#/components/schemas/OpaqueRouteAuthorizationProofV2"
+      additionalProperties: false
+    OpaqueRouteCommitRequestV2:
+      type: object
+      required: [routeID, requestID, cursor, authorization]
+      properties:
+        routeID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        requestID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        cursor:
+          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+        authorization:
+          $ref: "#/components/schemas/OpaqueRouteAuthorizationProofV2"
+      additionalProperties: false
+    OpaqueRouteCreateSubmissionV2:
+      type: object
+      required: [request, renewCapability]
+      properties:
+        request:
+          $ref: "#/components/schemas/OpaqueRouteCreateRequestV2"
+        renewCapability:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+      additionalProperties: false
+    OpaqueRouteRenewSubmissionV2:
+      type: object
+      required: [request, renewCapability]
+      properties:
+        request:
+          $ref: "#/components/schemas/OpaqueRouteRenewRequestV2"
+        renewCapability:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+      additionalProperties: false
+    OpaqueRouteTeardownSubmissionV2:
+      type: object
+      required: [request, teardownCapability]
+      properties:
+        request:
+          $ref: "#/components/schemas/OpaqueRouteTeardownRequestV2"
+        teardownCapability:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+      additionalProperties: false
+    OpaqueRouteAppendSubmissionV2:
+      type: object
+      required: [packet, sendCapability]
+      properties:
+        packet:
+          $ref: "#/components/schemas/OpaqueRoutePacketV2"
+        sendCapability:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+      additionalProperties: false
+    OpaqueRouteSyncSubmissionV2:
+      type: object
+      required: [request, readCredential]
+      properties:
+        request:
+          $ref: "#/components/schemas/OpaqueRouteSyncRequestV2"
+        readCredential:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+      additionalProperties: false
+    OpaqueRouteCommitSubmissionV2:
+      type: object
+      required: [request, readCredential]
+      properties:
+        request:
+          $ref: "#/components/schemas/OpaqueRouteCommitRequestV2"
+        readCredential:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+      additionalProperties: false
+    OpaqueReceiveRouteV2:
+      type: object
+      required:
+        [version, routeID, sendCapabilityDigest, readCredentialDigest,
+         renewCapabilityDigest, teardownCapabilityDigest, lease, status,
+         createdAt, creationIdempotencyKey, creationDigest,
+         lastIdempotencyKey, lastTransitionDigest]
+      properties:
+        version:
+          type: integer
+          const: 2
+        routeID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        sendCapabilityDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        readCredentialDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        renewCapabilityDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        teardownCapabilityDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        lease:
+          $ref: "#/components/schemas/OpaqueRouteLeaseV2"
+        status:
+          type: string
+          enum: [active, tornDown]
+        createdAt:
+          type: string
+          format: date-time
+        tornDownAt:
+          type: string
+          format: date-time
+        creationIdempotencyKey:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        creationDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        lastIdempotencyKey:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        lastTransitionDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+      additionalProperties: false
+    OpaqueRouteAppendReceiptV2:
+      type: object
+      required: [packetID, acceptedCursor, highWatermark]
+      properties:
+        packetID:
+          $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
+        acceptedCursor:
+          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+        highWatermark:
+          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+      additionalProperties: false
+    OpaqueRouteReceivedPacketV2:
+      type: object
+      required: [routeRevision, packet]
+      properties:
+        routeRevision:
+          type: integer
+          format: uint64
+          minimum: 0
+        packet:
+          $ref: "#/components/schemas/OpaqueRoutePacketV2"
+      additionalProperties: false
+    OpaqueRouteSyncResponseV2:
+      type: object
+      required: [packets, nextCursor, highWatermark, retentionFloor, hasMore]
+      properties:
+        packets:
+          type: array
+          maxItems: 256
+          items:
+            $ref: "#/components/schemas/OpaqueRouteReceivedPacketV2"
+        nextCursor:
+          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+        highWatermark:
+          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+        retentionFloor:
+          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+        hasMore:
+          type: boolean
+      additionalProperties: false
+    OpaqueRouteCommitResponseV2:
+      type: object
+      required: [committedCursor, highWatermark, retentionFloor]
+      properties:
+        committedCursor:
+          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+        highWatermark:
+          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+        retentionFloor:
+          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+      additionalProperties: false
     DeliverRequest:
       type: object
       description: |

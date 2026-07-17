@@ -76,6 +76,7 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
         hiddenRetrievalEnabled: Bool,
         onionEnabled: Bool,
         mixnetEnabled: Bool,
+        opaqueRouteRuntimeEnabled: Bool = false,
         rendezvousTransportEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
@@ -90,9 +91,6 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                     "maxPage": 256
                 ]
             ),
-            // Opaque routes are intentionally not advertised while their
-            // transport, expiry/rotation, and metadata activation gates are
-            // unresolved in the public client profile.
             RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .provisional)
         ]
         if attachmentsEnabled {
@@ -131,6 +129,22 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                         "maxLanes": 2,
                         "maxFramesPerLane": 32,
                         "maxCiphertextBytesPerLane": 2_097_152
+                    ]
+                )
+            )
+        }
+        if opaqueRouteRuntimeEnabled {
+            modules.append(
+                RelayModuleCapabilityV2(
+                    module: "nw.opaque-route",
+                    versions: [2],
+                    status: .provisional,
+                    limits: [
+                        "cursorBytes": 68,
+                        "maxPage": 256,
+                        "maxPacketBytes": 65_536,
+                        "maxPacketsPerRoute": 1_024,
+                        "maxRetentionSeconds": 604_800
                     ]
                 )
             )

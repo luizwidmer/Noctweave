@@ -441,6 +441,156 @@ final class RelayHandler: ChannelInboundHandler {
                     .error("Relay storage is unavailable")
                 )
             }
+        case .createOpaqueRouteV2:
+            guard relayConfiguration.opaqueRouteCapabilitiesEnabled else {
+                return context.eventLoop.makeSucceededFuture(.error("Opaque route runtime is disabled"))
+            }
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Opaque route runtime requires confidential transport")
+                )
+            }
+            guard let submission = request.createOpaqueRouteV2,
+                  submission.isStructurallyValid else {
+                return context.eventLoop.makeSucceededFuture(.error("Invalid opaque route request"))
+            }
+            do {
+                return context.eventLoop.makeSucceededFuture(
+                    .opaqueRouteV2(try store.createOpaqueRouteV2(
+                        submission,
+                        confidentialTransport: confidentialTransport
+                    ))
+                )
+            } catch {
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error))
+            }
+        case .renewOpaqueRouteV2:
+            guard relayConfiguration.opaqueRouteCapabilitiesEnabled else {
+                return context.eventLoop.makeSucceededFuture(.error("Opaque route runtime is disabled"))
+            }
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Opaque route runtime requires confidential transport")
+                )
+            }
+            guard let submission = request.renewOpaqueRouteV2,
+                  submission.isStructurallyValid else {
+                return context.eventLoop.makeSucceededFuture(.error("Invalid opaque route request"))
+            }
+            do {
+                return context.eventLoop.makeSucceededFuture(
+                    .opaqueRouteV2(try store.renewOpaqueRouteV2(
+                        submission,
+                        confidentialTransport: confidentialTransport
+                    ))
+                )
+            } catch {
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error))
+            }
+        case .teardownOpaqueRouteV2:
+            guard relayConfiguration.opaqueRouteCapabilitiesEnabled else {
+                return context.eventLoop.makeSucceededFuture(.error("Opaque route runtime is disabled"))
+            }
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Opaque route runtime requires confidential transport")
+                )
+            }
+            guard let submission = request.teardownOpaqueRouteV2,
+                  submission.isStructurallyValid else {
+                return context.eventLoop.makeSucceededFuture(.error("Invalid opaque route request"))
+            }
+            do {
+                return context.eventLoop.makeSucceededFuture(
+                    .opaqueRouteV2(try store.teardownOpaqueRouteV2(
+                        submission,
+                        confidentialTransport: confidentialTransport
+                    ))
+                )
+            } catch {
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error))
+            }
+        case .appendOpaqueRouteV2:
+            guard relayConfiguration.opaqueRouteCapabilitiesEnabled else {
+                return context.eventLoop.makeSucceededFuture(.error("Opaque route runtime is disabled"))
+            }
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Opaque route runtime requires confidential transport")
+                )
+            }
+            guard let submission = request.appendOpaqueRouteV2,
+                  submission.isStructurallyValid else {
+                return context.eventLoop.makeSucceededFuture(.error("Invalid opaque route request"))
+            }
+            do {
+                return context.eventLoop.makeSucceededFuture(
+                    .opaqueRouteAppendV2(try store.appendOpaqueRouteV2(
+                        submission,
+                        confidentialTransport: confidentialTransport
+                    ))
+                )
+            } catch {
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error))
+            }
+        case .syncOpaqueRouteV2:
+            guard relayConfiguration.opaqueRouteCapabilitiesEnabled else {
+                return context.eventLoop.makeSucceededFuture(.error("Opaque route runtime is disabled"))
+            }
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Opaque route runtime requires confidential transport")
+                )
+            }
+            guard let submission = request.syncOpaqueRouteV2,
+                  submission.isStructurallyValid else {
+                return context.eventLoop.makeSucceededFuture(.error("Invalid opaque route request"))
+            }
+            do {
+                return context.eventLoop.makeSucceededFuture(
+                    .opaqueRouteSyncV2(try store.syncOpaqueRouteV2(
+                        submission,
+                        confidentialTransport: confidentialTransport
+                    ))
+                )
+            } catch {
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error))
+            }
+        case .commitOpaqueRouteV2:
+            guard relayConfiguration.opaqueRouteCapabilitiesEnabled else {
+                return context.eventLoop.makeSucceededFuture(.error("Opaque route runtime is disabled"))
+            }
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return context.eventLoop.makeSucceededFuture(
+                    .error("Opaque route runtime requires confidential transport")
+                )
+            }
+            guard let submission = request.commitOpaqueRouteV2,
+                  submission.isStructurallyValid else {
+                return context.eventLoop.makeSucceededFuture(.error("Invalid opaque route request"))
+            }
+            do {
+                return context.eventLoop.makeSucceededFuture(
+                    .opaqueRouteCommitV2(try store.commitOpaqueRouteV2(
+                        submission,
+                        confidentialTransport: confidentialTransport
+                    ))
+                )
+            } catch {
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error))
+            }
         case .registerRendezvousTransportV2:
             guard relayConfiguration.isRendezvousTransportEnabled else {
                 return context.eventLoop.makeSucceededFuture(
@@ -999,6 +1149,49 @@ final class RelayHandler: ChannelInboundHandler {
             return .error("Attachment blob backend unavailable")
         default:
             return .error("Store error")
+        }
+    }
+
+    private func opaqueRouteErrorResponse(_ error: Error) -> RelayResponse {
+        switch error {
+        case OpaqueRouteRelayStoreV2Error.routeNotFound:
+            return .error("Opaque route not found")
+        case OpaqueRouteRelayStoreV2Error.invalidCursor:
+            return .error("Invalid opaque route cursor")
+        case OpaqueRouteRelayStoreV2Error.cursorExpired:
+            return .error("Opaque route cursor expired")
+        case OpaqueRouteRelayStoreV2Error.cursorAheadOfRoute:
+            return .error("Opaque route cursor is ahead of the route")
+        case OpaqueRouteRelayStoreV2Error.packetIdentifierConflict:
+            return .error("Opaque route packet identifier conflict")
+        case OpaqueRouteRelayStoreV2Error.requestIdentifierConflict:
+            return .error("Opaque route request identifier conflict")
+        case OpaqueRouteRelayStoreV2Error.routeQuotaExceeded:
+            return .error("Opaque route quota exceeded")
+        case OpaqueRouteRelayStoreV2Error.packetIdentifierLedgerExhausted,
+             OpaqueRouteRelayStoreV2Error.requestReceiptLedgerExhausted,
+             OpaqueRouteRelayStoreV2Error.sequenceExhausted,
+             OpaqueRouteRelayStoreV2Error.routeCapacityExceeded:
+            return .error("Opaque route capacity reached")
+        case OpaqueRouteV2Error.confidentialTransportRequired:
+            return .error("Opaque route runtime requires confidential transport")
+        case OpaqueRouteV2Error.invalidAuthorization,
+             OpaqueRouteV2Error.authorizationExpired,
+             OpaqueRouteV2Error.authorizationReplay:
+            return .error("Opaque route authorization rejected")
+        case OpaqueRouteV2Error.routeExpired:
+            return .error("Opaque route expired")
+        case OpaqueRouteV2Error.routeTornDown:
+            return .error("Opaque route is torn down")
+        case OpaqueRouteV2Error.idempotencyConflict,
+             OpaqueRouteV2Error.routeAlreadyExists,
+             OpaqueRouteV2Error.transitionFork:
+            return .error("Opaque route state conflict")
+        case OpaqueRouteV2Error.staleTransition,
+             OpaqueRouteV2Error.transitionOutOfOrder:
+            return .error("Opaque route transition order rejected")
+        default:
+            return .error("Invalid opaque route request")
         }
     }
 
