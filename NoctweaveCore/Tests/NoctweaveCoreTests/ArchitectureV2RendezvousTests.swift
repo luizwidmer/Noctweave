@@ -55,7 +55,7 @@ final class ArchitectureV2RendezvousTests: XCTestCase {
 
         for disabledPurpose in [
             RendezvousPurposeV2.endpointAdmission,
-            .relayMigration,
+            .routeRollover,
             .groupInvitation,
             .historyTransfer
         ] {

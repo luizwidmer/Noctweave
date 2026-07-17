@@ -48,7 +48,7 @@ public enum RendezvousV2Error: Error, Equatable {
 public enum RendezvousPurposeV2: String, Codable, Equatable, Hashable, CaseIterable {
     case contactPairing
     case endpointAdmission
-    case relayMigration
+    case routeRollover
     case groupInvitation
     case historyTransfer
 }
