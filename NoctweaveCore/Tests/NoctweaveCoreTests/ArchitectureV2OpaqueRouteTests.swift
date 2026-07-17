@@ -24,7 +24,7 @@ final class ArchitectureV2OpaqueRouteTests: XCTestCase {
         ]).count, 4)
         XCTAssertEqual(route.lease.policy.paddingBucket, .bytes16384)
         XCTAssertEqual(route.lease.policy.retentionBucket, .sixHours)
-        XCTAssertEqual(route.lease.policy.quotaBucket, .envelopes256)
+        XCTAssertEqual(route.lease.policy.quotaBucket, .packets256)
         XCTAssertEqual(route.lease.policy.maximumStoredBytes, 4_194_304)
         XCTAssertEqual(
             route.lease.policy.transportRequirement,
@@ -100,7 +100,7 @@ final class ArchitectureV2OpaqueRouteTests: XCTestCase {
             presentedRenewCapability: material.renewCapability,
             existing: route,
             confidentialTransport: true,
-            receivedAt: origin.addingTimeInterval(1)
+            receivedAt: origin.addingTimeInterval(600)
         )
         XCTAssertEqual(replay, route)
         XCTAssertEqual(route.creationDigest, request.transitionDigest)
@@ -375,7 +375,7 @@ final class ArchitectureV2OpaqueRouteTests: XCTestCase {
         )) { XCTAssertEqual($0 as? OpaqueRouteV2Error, .authorizationReplay) }
 
         let duplicateDigestJSON = Data("""
-        {"consumedDigests":["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="]}
+        {"entries":[{"digest":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","expiresAt":"2026-01-01T00:05:00Z"},{"digest":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","expiresAt":"2026-01-01T00:05:00Z"}],"observedAtHighWatermark":"2026-01-01T00:00:00Z"}
         """.utf8)
         XCTAssertThrowsError(try NoctweaveCoder.decode(
             OpaqueRouteAuthorizationReplayLedgerV2.self,
@@ -383,11 +383,55 @@ final class ArchitectureV2OpaqueRouteTests: XCTestCase {
         ))
     }
 
+    func testAuthorizationReplayLedgerPrunesOnlyAfterFreshnessWindow() throws {
+        let (material, route, _) = try makeRoute()
+        let firstDigest = digest("first-window")
+        let firstProof = try material.makeSendAuthorization(
+            operationDigest: firstDigest,
+            authorizedAt: origin.addingTimeInterval(10)
+        )
+        var ledger = OpaqueRouteAuthorizationReplayLedgerV2()
+
+        try route.authorizeSend(
+            firstProof,
+            operationDigest: firstDigest,
+            presentedCapability: material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(10),
+            replayLedger: &ledger
+        )
+        XCTAssertEqual(ledger.count, 1)
+
+        let secondDigest = digest("next-window")
+        let secondProof = try material.makeSendAuthorization(
+            operationDigest: secondDigest,
+            authorizedAt: origin.addingTimeInterval(311)
+        )
+        try route.authorizeSend(
+            secondProof,
+            operationDigest: secondDigest,
+            presentedCapability: material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(311),
+            replayLedger: &ledger
+        )
+        XCTAssertEqual(ledger.count, 1)
+
+        XCTAssertThrowsError(try route.authorizeSend(
+            firstProof,
+            operationDigest: firstDigest,
+            presentedCapability: material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(11),
+            replayLedger: &ledger
+        )) { XCTAssertEqual($0 as? OpaqueRouteV2Error, .authorizationExpired) }
+    }
+
     func testLeaseRejectsNonBucketAndUnboundedWireValues() throws {
         let policy = OpaqueRoutePolicyV2(
             paddingBucket: .bytes4096,
             retentionBucket: .oneHour,
-            quotaBucket: .envelopes64
+            quotaBucket: .packets64
         )
         XCTAssertThrowsError(try OpaqueRouteLeaseV2(
             issuedAt: origin,
@@ -418,7 +462,7 @@ final class ArchitectureV2OpaqueRouteTests: XCTestCase {
             policy: OpaqueRoutePolicyV2(
                 paddingBucket: .bytes16384,
                 retentionBucket: .sixHours,
-                quotaBucket: .envelopes256
+                quotaBucket: .packets256
             )
         )
     }

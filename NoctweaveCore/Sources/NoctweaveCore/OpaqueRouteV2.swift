@@ -284,9 +284,9 @@ public enum OpaqueRouteRetentionBucketV2: UInt32, Codable, CaseIterable {
 }
 
 public enum OpaqueRouteQuotaBucketV2: UInt32, Codable, CaseIterable {
-    case envelopes64 = 64
-    case envelopes256 = 256
-    case envelopes1024 = 1_024
+    case packets64 = 64
+    case packets256 = 256
+    case packets1024 = 1_024
 }
 
 public enum OpaqueRouteTransportRequirementV2: String, Codable, Equatable {
@@ -494,55 +494,110 @@ public struct OpaqueRouteAuthorizationProofV2: Codable, Equatable {
 }
 
 /// A fail-closed, bounded nonce ledger for send/read authorization proofs.
-/// Entries are never evicted: once full, the route must be rotated instead of
-/// making an old proof replayable again.
+///
+/// Proofs are retained through the complete authorization freshness window.
+/// After that point the proof can no longer pass freshness validation, so its
+/// replay digest can be pruned without making it usable again. The persisted
+/// high-water mark prevents a local wall-clock rollback from reopening a
+/// freshness window that this relay has already passed.
 public struct OpaqueRouteAuthorizationReplayLedgerV2: Codable, Equatable {
     public static let maximumEntries = 4_096
 
-    private var consumed: Set<Data> = []
+    private struct Entry: Codable, Equatable {
+        let digest: Data
+        let expiresAt: Date
+    }
+
+    private var entriesByDigest: [Data: Date] = [:]
+    private var observedAtHighWatermark: Date?
 
     private enum CodingKeys: String, CodingKey {
-        case consumedDigests
+        case entries
+        case observedAtHighWatermark
     }
 
     public init() {}
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        let digests = try container.decode([Data].self, forKey: .consumedDigests)
-        guard digests.count <= Self.maximumEntries,
-              digests.allSatisfy({ $0.count == NoctweaveOpaqueRoutesV2.digestBytes }),
-              Set(digests).count == digests.count else {
+        let entries = try container.decode([Entry].self, forKey: .entries)
+        let highWatermark = try container.decodeIfPresent(
+            Date.self,
+            forKey: .observedAtHighWatermark
+        )
+        guard entries.count <= Self.maximumEntries,
+              entries.allSatisfy({
+                  $0.digest.count == NoctweaveOpaqueRoutesV2.digestBytes
+                      && $0.expiresAt.timeIntervalSince1970.isFinite
+              }),
+              Set(entries.map(\.digest)).count == entries.count,
+              highWatermark?.timeIntervalSince1970.isFinite != false else {
             throw DecodingError.dataCorruptedError(
-                forKey: .consumedDigests,
+                forKey: .entries,
                 in: container,
-                debugDescription: "Opaque route replay ledger must contain unique 32-byte digests within the bounded capacity"
+                debugDescription: "Opaque route replay ledger must contain unique, bounded, finite entries"
             )
         }
-        consumed = Set(digests)
+        if let highWatermark,
+           entries.contains(where: { $0.expiresAt < highWatermark }) {
+            throw DecodingError.dataCorruptedError(
+                forKey: .entries,
+                in: container,
+                debugDescription: "Opaque route replay ledger contains entries older than its persisted time high-water mark"
+            )
+        }
+        entriesByDigest = Dictionary(
+            uniqueKeysWithValues: entries.map { ($0.digest, $0.expiresAt) }
+        )
+        observedAtHighWatermark = highWatermark
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
-        let deterministicDigests = consumed.sorted {
-            $0.lexicographicallyPrecedes($1)
+        let deterministicEntries = entriesByDigest.map {
+            Entry(digest: $0.key, expiresAt: $0.value)
+        }.sorted {
+            $0.digest.lexicographicallyPrecedes($1.digest)
         }
-        try container.encode(deterministicDigests, forKey: .consumedDigests)
+        try container.encode(deterministicEntries, forKey: .entries)
+        try container.encodeIfPresent(
+            observedAtHighWatermark,
+            forKey: .observedAtHighWatermark
+        )
     }
 
-    public var count: Int { consumed.count }
+    public var count: Int { entriesByDigest.count }
 
-    fileprivate mutating func consume(_ proof: OpaqueRouteAuthorizationProofV2) throws {
+    fileprivate mutating func monotonicTime(_ receivedAt: Date) throws -> Date {
+        guard receivedAt.timeIntervalSince1970.isFinite else {
+            throw OpaqueRouteV2Error.invalidRequest
+        }
+        let effectiveTime = max(receivedAt, observedAtHighWatermark ?? receivedAt)
+        observedAtHighWatermark = effectiveTime
+        entriesByDigest = entriesByDigest.filter { $0.value >= effectiveTime }
+        return effectiveTime
+    }
+
+    fileprivate mutating func consume(
+        _ proof: OpaqueRouteAuthorizationProofV2,
+        receivedAt: Date
+    ) throws {
         guard let digest = proof.replayDigest else {
             throw OpaqueRouteV2Error.invalidAuthorization
         }
-        guard !consumed.contains(digest) else {
+        guard entriesByDigest[digest] == nil else {
             throw OpaqueRouteV2Error.authorizationReplay
         }
-        guard consumed.count < Self.maximumEntries else {
+        guard entriesByDigest.count < Self.maximumEntries else {
             throw OpaqueRouteV2Error.authorizationLedgerExhausted
         }
-        consumed.insert(digest)
+        let expiresAt = proof.authorizedAt.addingTimeInterval(
+            NoctweaveOpaqueRoutesV2.maximumAuthorizationClockSkew
+        )
+        guard expiresAt.timeIntervalSince1970.isFinite, expiresAt >= receivedAt else {
+            throw OpaqueRouteV2Error.authorizationExpired
+        }
+        entriesByDigest[digest] = expiresAt
     }
 }
 
@@ -1020,7 +1075,6 @@ public struct OpaqueReceiveRouteV2: Codable, Equatable {
               receivedAt.timeIntervalSince1970.isFinite else {
             throw OpaqueRouteV2Error.invalidRequest
         }
-        try opaqueRouteValidateAuthorizationTime(request.authorization.authorizedAt, at: receivedAt)
         guard opaqueRouteCredentialDigest(.renew, presentedRenewCapability.rawValue)
                 == request.renewCapabilityDigest,
               request.authorization.verify(
@@ -1048,6 +1102,10 @@ public struct OpaqueReceiveRouteV2: Codable, Equatable {
             throw OpaqueRouteV2Error.routeAlreadyExists
         }
 
+        try opaqueRouteValidateAuthorizationTime(
+            request.authorization.authorizedAt,
+            at: receivedAt
+        )
         guard request.lease.isActive(at: receivedAt) else {
             throw OpaqueRouteV2Error.routeExpired
         }
@@ -1268,6 +1326,72 @@ public struct OpaqueReceiveRouteV2: Codable, Equatable {
         )
     }
 
+    /// Authenticates an exact append retry that the relay has already
+    /// durably accepted. Freshness and replay consumption are intentionally
+    /// omitted: the caller must first prove that the packet identifier and
+    /// complete operation digest match the retained accepted record.
+    public func authenticateAcceptedSendRetry(
+        _ proof: OpaqueRouteAuthorizationProofV2,
+        operationDigest: Data,
+        presentedCapability: RouteSendCapabilityV2,
+        confidentialTransport: Bool
+    ) throws {
+        try authenticateAcceptedRetry(
+            proof,
+            expectedAuthority: .send,
+            expectedCredentialDigest: sendCapabilityDigest,
+            presentedSecret: presentedCapability.rawValue,
+            operationDigest: operationDigest,
+            confidentialTransport: confidentialTransport
+        )
+    }
+
+    /// Authenticates an exact read/commit retry that the relay has already
+    /// durably answered. The retained request identifier and digest are the
+    /// idempotency boundary; this method cannot authorize a new operation.
+    public func authenticateAcceptedReadRetry(
+        _ proof: OpaqueRouteAuthorizationProofV2,
+        operationDigest: Data,
+        presentedCredential: RouteReadCredentialV2,
+        confidentialTransport: Bool
+    ) throws {
+        try authenticateAcceptedRetry(
+            proof,
+            expectedAuthority: .read,
+            expectedCredentialDigest: readCredentialDigest,
+            presentedSecret: presentedCredential.rawValue,
+            operationDigest: operationDigest,
+            confidentialTransport: confidentialTransport
+        )
+    }
+
+    private func authenticateAcceptedRetry(
+        _ proof: OpaqueRouteAuthorizationProofV2,
+        expectedAuthority: OpaqueRouteAuthorityV2,
+        expectedCredentialDigest: Data,
+        presentedSecret: Data,
+        operationDigest: Data,
+        confidentialTransport: Bool
+    ) throws {
+        guard confidentialTransport else {
+            throw OpaqueRouteV2Error.confidentialTransportRequired
+        }
+        guard isStructurallyValid, opaqueRouteIsValidDigest(operationDigest) else {
+            throw OpaqueRouteV2Error.invalidRequest
+        }
+        guard status == .active else { throw OpaqueRouteV2Error.routeTornDown }
+        guard opaqueRouteCredentialDigest(expectedAuthority, presentedSecret)
+                == expectedCredentialDigest,
+              proof.verify(
+                  expectedAuthority: expectedAuthority,
+                  routeID: routeID,
+                  operationDigest: operationDigest,
+                  secret: presentedSecret
+              ) else {
+            throw OpaqueRouteV2Error.invalidAuthorization
+        }
+    }
+
     private func authorizeUse(
         _ proof: OpaqueRouteAuthorizationProofV2,
         expectedAuthority: OpaqueRouteAuthorityV2,
@@ -1286,7 +1410,11 @@ public struct OpaqueReceiveRouteV2: Codable, Equatable {
         }
         guard status == .active else { throw OpaqueRouteV2Error.routeTornDown }
         guard lease.isActive(at: receivedAt) else { throw OpaqueRouteV2Error.routeExpired }
-        try opaqueRouteValidateAuthorizationTime(proof.authorizedAt, at: receivedAt)
+        let effectiveReceivedAt = try replayLedger.monotonicTime(receivedAt)
+        try opaqueRouteValidateAuthorizationTime(
+            proof.authorizedAt,
+            at: effectiveReceivedAt
+        )
         guard opaqueRouteCredentialDigest(expectedAuthority, presentedSecret)
                 == expectedCredentialDigest,
               proof.verify(
@@ -1297,7 +1425,7 @@ public struct OpaqueReceiveRouteV2: Codable, Equatable {
               ) else {
             throw OpaqueRouteV2Error.invalidAuthorization
         }
-        try replayLedger.consume(proof)
+        try replayLedger.consume(proof, receivedAt: effectiveReceivedAt)
     }
 }
 
