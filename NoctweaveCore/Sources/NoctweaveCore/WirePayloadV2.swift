@@ -239,7 +239,7 @@ public struct WirePayloadV2: Codable, Equatable {
         eventId: UUID,
         clientTransactionId: UUID,
         conversationId: String,
-        authorInstallationHandle: RelationshipInstallationHandle,
+        authorEndpointHandle: RelationshipEndpointHandle,
         createdAt: Date
     ) throws -> WirePayloadV2 {
         switch body {
@@ -252,7 +252,7 @@ public struct WirePayloadV2: Codable, Equatable {
                     id: eventId,
                     clientTransactionId: clientTransactionId,
                     conversationId: conversationId,
-                    authorInstallationHandle: authorInstallationHandle,
+                    authorEndpointHandle: authorEndpointHandle,
                     createdAt: createdAt,
                     kind: .application,
                     content: content
@@ -273,7 +273,7 @@ public struct WirePayloadV2: Codable, Equatable {
                     id: eventId,
                     clientTransactionId: clientTransactionId,
                     conversationId: conversationId,
-                    authorInstallationHandle: authorInstallationHandle,
+                    authorEndpointHandle: authorEndpointHandle,
                     createdAt: createdAt,
                     kind: .application,
                     content: content
@@ -309,7 +309,7 @@ public struct WirePayloadV2: Codable, Equatable {
         if let application {
             guard application.id == context.eventId,
                   application.conversationId == conversationId,
-                  application.authorInstallationHandle == context.senderInstallationHandle,
+                  application.authorEndpointHandle == context.senderEndpointHandle,
                   floor(application.createdAt.timeIntervalSince1970)
                     == floor(sentAt.timeIntervalSince1970) else {
                 throw WirePayloadV2Error.invalidApplicationEvent
@@ -464,7 +464,7 @@ public struct WirePayloadV2: Codable, Equatable {
             id: context.eventId,
             clientTransactionId: context.eventId,
             conversationId: conversationId,
-            authorInstallationHandle: context.senderInstallationHandle,
+            authorEndpointHandle: context.senderEndpointHandle,
             createdAt: receivedAt,
             kind: .control,
             content: auditContent

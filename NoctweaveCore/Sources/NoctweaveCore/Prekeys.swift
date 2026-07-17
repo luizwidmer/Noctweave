@@ -451,11 +451,6 @@ public struct PrekeyState: Codable, Equatable {
         )
     }
 
-    /// Compatibility accessor for code that explicitly wants the current key.
-    public func signedPrekeyKeyPair(now: Date = Date()) -> AgreementKeyPair? {
-        signedPrekeyKeyPair(id: signedPrekeyId, now: now)
-    }
-
     private var currentRetiredRecord: RetiredSignedPrekeyPrivateRecord {
         RetiredSignedPrekeyPrivateRecord(
             id: signedPrekeyId,

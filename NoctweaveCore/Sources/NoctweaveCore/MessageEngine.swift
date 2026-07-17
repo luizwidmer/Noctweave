@@ -5,17 +5,17 @@ public enum MessageEngine {
     public static func makeCertifiedContactOffer(
         identity: Identity,
         identityGenerationId: UUID,
-        localInstallation: LocalInstallationState,
-        installationManifest: InstallationManifest,
+        localEndpoint: LocalEndpointState,
+        endpointSetManifest: EndpointSetManifest,
         inboxId: String,
         relay: RelayEndpoint,
         inboxAccessPublicKey: Data? = nil,
         issuedAt: Date = Date()
     ) throws -> ContactOffer {
-        let endpoint = try CertifiedInstallationEndpoint.create(
+        let endpoint = try CertifiedGenerationEndpoint.create(
             identity: identity,
-            installation: localInstallation,
-            manifest: installationManifest,
+            endpoint: localEndpoint,
+            manifest: endpointSetManifest,
             issuedAt: issuedAt
         )
         return try ContactOffer.createCertified(
@@ -24,18 +24,18 @@ public enum MessageEngine {
             relay: relay,
             identity: identity,
             identityGenerationId: identityGenerationId,
-            installationManifest: installationManifest,
-            preferredInstallationEndpoint: endpoint,
+            endpointSetManifest: endpointSetManifest,
+            preferredGenerationEndpoint: endpoint,
             inboxAccessPublicKey: inboxAccessPublicKey
         )
     }
 
     public static func contact(from offer: ContactOffer) throws -> Contact {
         let offer = try offer.verified()
-        guard offer.version == CertifiedInstallationEndpoint.version,
+        guard offer.version == CertifiedGenerationEndpoint.version,
               offer.identityGenerationId != nil,
-              offer.installationCheckpoint != nil,
-              offer.preferredInstallationEndpoint != nil else {
+              offer.endpointSetCheckpoint != nil,
+              offer.preferredGenerationEndpoint != nil else {
             throw ContactOfferError.invalidStructure
         }
         return Contact(
@@ -45,27 +45,27 @@ public enum MessageEngine {
             signingPublicKey: offer.signingPublicKey,
             agreementPublicKey: offer.agreementPublicKey,
             identityGenerationId: offer.identityGenerationId,
-            installationCheckpoint: offer.installationCheckpoint,
-            preferredInstallationEndpoint: offer.preferredInstallationEndpoint,
+            endpointSetCheckpoint: offer.endpointSetCheckpoint,
+            preferredGenerationEndpoint: offer.preferredGenerationEndpoint,
             endpointAuthoritySigningPublicKey: offer.signingPublicKey
         )
     }
 
-    public static func createOutboundInstallationSession(
-        localInstallation: LocalInstallationState,
-        localEndpoint: CertifiedInstallationEndpoint,
-        pairwiseBinding: PairwiseInstallationBindingV4,
+    public static func createOutboundEndpointSession(
+        localEndpoint: LocalEndpointState,
+        localCertificate: CertifiedGenerationEndpoint,
+        pairwiseBinding: PairwiseEndpointBindingV4,
         contact: Contact,
         now: Date = Date()
     ) throws -> (conversation: Conversation, kemCiphertext: Data, prekey: PrekeyReference) {
-        let peerEndpoint = try contact.certifiedInstallationEndpoint()
+        let peerEndpoint = try contact.certifiedGenerationEndpoint()
         let negotiation = try pairwiseBinding.validatedNegotiation(
-            localEndpoint: localEndpoint,
+            localEndpoint: localCertificate,
             peerEndpoint: peerEndpoint
         )
-        guard localEndpoint.installationId == localInstallation.id,
-              localEndpoint.signingPublicKey == localInstallation.signingKey.publicKeyData,
-              localEndpoint.agreementPublicKey == localInstallation.agreementKey.publicKeyData,
+        guard localCertificate.endpointId == localEndpoint.id,
+              localCertificate.signingPublicKey == localEndpoint.signingKey.publicKeyData,
+              localCertificate.agreementPublicKey == localEndpoint.agreementKey.publicKeyData,
               pairwiseBinding.isStructurallyValid,
               peerEndpoint.prekeyBundle.isStructurallyValid(now: now) else {
             throw CryptoError.invalidPayload
@@ -83,24 +83,24 @@ public enum MessageEngine {
         defer { kemOutput.sharedSecret.secureWipe() }
         let endpointSession = DirectEndpointSessionIdentity(
             contactId: contact.id,
-            localInstallationId: localInstallation.id,
-            localInstallationHandle: pairwiseBinding.localInstallationHandle,
+            localEndpointId: localEndpoint.id,
+            localEndpointHandle: pairwiseBinding.localEndpointHandle,
             localCertificateReferenceDigest: pairwiseBinding.localCertificateReferenceDigest,
-            localManifestEpoch: localEndpoint.manifestEpoch,
-            peerInstallationId: peerEndpoint.installationId,
-            peerInstallationHandle: pairwiseBinding.peerInstallationHandle,
+            localManifestEpoch: localCertificate.manifestEpoch,
+            peerEndpointId: peerEndpoint.endpointId,
+            peerEndpointHandle: pairwiseBinding.peerEndpointHandle,
             peerCertificateReferenceDigest: pairwiseBinding.peerCertificateReferenceDigest,
             peerManifestEpoch: peerEndpoint.manifestEpoch
         )
         let conversation = conversationFromSharedSecret(
             sharedSecret: kemOutput.sharedSecret,
-            ourAgreementPublicKey: localInstallation.agreementKey.publicKeyData,
+            ourAgreementPublicKey: localEndpoint.agreementKey.publicKeyData,
             theirAgreementPublicKey: peerEndpoint.agreementPublicKey,
             contactId: contact.id,
             endpointSession: endpointSession,
             directV4Binding: pairwiseBinding,
             conversationId: conversationIdForEndpoints(
-                localEndpoint,
+                localCertificate,
                 peerEndpoint,
                 pairwiseBinding: pairwiseBinding
             )
@@ -112,31 +112,31 @@ public enum MessageEngine {
         )
     }
 
-    public static func createInboundInstallationSession(
-        localInstallation: LocalInstallationState,
-        localEndpoint: CertifiedInstallationEndpoint,
-        senderEndpoint: CertifiedInstallationEndpoint,
-        pairwiseBinding: PairwiseInstallationBindingV4,
+    public static func createInboundEndpointSession(
+        localEndpoint: LocalEndpointState,
+        localCertificate: CertifiedGenerationEndpoint,
+        senderEndpoint: CertifiedGenerationEndpoint,
+        pairwiseBinding: PairwiseEndpointBindingV4,
         contact: Contact,
         kemCiphertext: Data,
         prekey: PrekeyReference?,
         now: Date = Date()
     ) throws -> Conversation {
-        let expectedPeer = try contact.certifiedInstallationEndpoint()
+        let expectedPeer = try contact.certifiedGenerationEndpoint()
         let negotiation = try pairwiseBinding.validatedNegotiation(
-            localEndpoint: localEndpoint,
+            localEndpoint: localCertificate,
             peerEndpoint: senderEndpoint
         )
-        guard senderEndpoint.installationId == expectedPeer.installationId,
+        guard senderEndpoint.endpointId == expectedPeer.endpointId,
               senderEndpoint.signingPublicKey == expectedPeer.signingPublicKey,
               senderEndpoint.agreementPublicKey == expectedPeer.agreementPublicKey,
-              localEndpoint.installationId == localInstallation.id,
+              localCertificate.endpointId == localEndpoint.id,
               pairwiseBinding.isStructurallyValid,
               prekey?.kind == .signed,
               let prekeyId = prekey?.id,
-              let advertisedPrekey = localInstallation.prekeys.signedPrekey(id: prekeyId),
-              advertisedPrekey.verify(using: localInstallation.signingKey.publicKeyData),
-              let prekeyKey = localInstallation.prekeys.signedPrekeyKeyPair(
+              let advertisedPrekey = localEndpoint.prekeys.signedPrekey(id: prekeyId),
+              advertisedPrekey.verify(using: localEndpoint.signingKey.publicKeyData),
+              let prekeyKey = localEndpoint.prekeys.signedPrekeyKeyPair(
                   id: prekeyId,
                   now: now
               ) else {
@@ -151,24 +151,24 @@ public enum MessageEngine {
         defer { sharedSecret.secureWipe() }
         let endpointSession = DirectEndpointSessionIdentity(
             contactId: contact.id,
-            localInstallationId: localInstallation.id,
-            localInstallationHandle: pairwiseBinding.localInstallationHandle,
+            localEndpointId: localEndpoint.id,
+            localEndpointHandle: pairwiseBinding.localEndpointHandle,
             localCertificateReferenceDigest: pairwiseBinding.localCertificateReferenceDigest,
-            localManifestEpoch: localEndpoint.manifestEpoch,
-            peerInstallationId: senderEndpoint.installationId,
-            peerInstallationHandle: pairwiseBinding.peerInstallationHandle,
+            localManifestEpoch: localCertificate.manifestEpoch,
+            peerEndpointId: senderEndpoint.endpointId,
+            peerEndpointHandle: pairwiseBinding.peerEndpointHandle,
             peerCertificateReferenceDigest: pairwiseBinding.peerCertificateReferenceDigest,
             peerManifestEpoch: senderEndpoint.manifestEpoch
         )
         return conversationFromSharedSecret(
             sharedSecret: sharedSecret,
-            ourAgreementPublicKey: localInstallation.agreementKey.publicKeyData,
+            ourAgreementPublicKey: localEndpoint.agreementKey.publicKeyData,
             theirAgreementPublicKey: senderEndpoint.agreementPublicKey,
             contactId: contact.id,
             endpointSession: endpointSession,
             directV4Binding: pairwiseBinding,
             conversationId: conversationIdForEndpoints(
-                localEndpoint,
+                localCertificate,
                 senderEndpoint,
                 pairwiseBinding: pairwiseBinding
             )
@@ -181,7 +181,7 @@ public enum MessageEngine {
         theirAgreementPublicKey: Data,
         contactId: UUID,
         endpointSession: DirectEndpointSessionIdentity,
-        directV4Binding: PairwiseInstallationBindingV4,
+        directV4Binding: PairwiseEndpointBindingV4,
         conversationId: String
     ) -> Conversation {
         let (sendLabel, receiveLabel) = labelsForAgreement(
@@ -357,10 +357,10 @@ public enum MessageEngine {
         envelope: Envelope,
         contact: Contact,
         localIdentity: Identity,
-        localInstallation: LocalInstallationState,
-        localManifest: InstallationManifest,
-        localEndpoint: CertifiedInstallationEndpoint,
-        pairwiseBinding: PairwiseInstallationBindingV4,
+        localEndpoint: LocalEndpointState,
+        localManifest: EndpointSetManifest,
+        localCertificate: CertifiedGenerationEndpoint,
+        pairwiseBinding: PairwiseEndpointBindingV4,
         conversation: inout Conversation
     ) throws -> (body: MessageBody, messageKey: SymmetricKey) {
         var candidateConversation = conversation
@@ -368,9 +368,9 @@ public enum MessageEngine {
             envelope: envelope,
             contact: contact,
             localIdentity: localIdentity,
-            localInstallation: localInstallation,
-            localManifest: localManifest,
             localEndpoint: localEndpoint,
+            localManifest: localManifest,
+            localCertificate: localCertificate,
             pairwiseBinding: pairwiseBinding,
             conversation: &candidateConversation
         )
@@ -385,20 +385,20 @@ public enum MessageEngine {
         envelope: Envelope,
         contact: Contact,
         localIdentity: Identity,
-        localInstallation: LocalInstallationState,
-        localManifest: InstallationManifest,
-        localEndpoint: CertifiedInstallationEndpoint,
-        pairwiseBinding: PairwiseInstallationBindingV4,
+        localEndpoint: LocalEndpointState,
+        localManifest: EndpointSetManifest,
+        localCertificate: CertifiedGenerationEndpoint,
+        pairwiseBinding: PairwiseEndpointBindingV4,
         conversation: inout Conversation
     ) throws -> DirectV4DecryptionResultV2 {
-        let senderEndpoint = try contact.certifiedInstallationEndpoint()
-        _ = try localEndpoint.verified(
+        let senderEndpoint = try contact.certifiedGenerationEndpoint()
+        _ = try localCertificate.verified(
             identityPublicKey: localIdentity.signingKey.publicKeyData,
             manifest: localManifest,
-            now: localEndpoint.prekeyBundle.createdAt
+            now: localCertificate.prekeyBundle.createdAt
         )
         let negotiation = try pairwiseBinding.validatedNegotiation(
-            localEndpoint: localEndpoint,
+            localEndpoint: localCertificate,
             peerEndpoint: senderEndpoint
         )
         let negotiationDigest = try negotiation.digest()
@@ -406,36 +406,36 @@ public enum MessageEngine {
               let direct = envelope.authenticatedContext?.directV4,
               direct.cipherSuite == negotiation.cipherSuite,
               direct.negotiatedCapabilitiesDigest == negotiationDigest,
-              direct.recipientInstallationHandle == pairwiseBinding.localInstallationHandle,
-              direct.recipientManifestEpoch == localEndpoint.manifestEpoch,
+              direct.recipientEndpointHandle == pairwiseBinding.localEndpointHandle,
+              direct.recipientManifestEpoch == localCertificate.manifestEpoch,
               direct.recipientCertificateDigest
                 == pairwiseBinding.localCertificateReferenceDigest,
-              localEndpoint.identityGenerationId == localInstallation.identityGenerationId,
-              localEndpoint.installationId == localInstallation.id,
-              localEndpoint.signingPublicKey == localInstallation.signingKey.publicKeyData,
-              localEndpoint.agreementPublicKey == localInstallation.agreementKey.publicKeyData,
-              localEndpoint.isStructurallyValid(
-                  now: localEndpoint.prekeyBundle.createdAt
+              localCertificate.identityGenerationId == localEndpoint.identityGenerationId,
+              localCertificate.endpointId == localEndpoint.id,
+              localCertificate.signingPublicKey == localEndpoint.signingKey.publicKeyData,
+              localCertificate.agreementPublicKey == localEndpoint.agreementKey.publicKeyData,
+              localCertificate.isStructurallyValid(
+                  now: localCertificate.prekeyBundle.createdAt
               ),
-              direct.senderInstallationHandle == pairwiseBinding.peerInstallationHandle,
+              direct.senderEndpointHandle == pairwiseBinding.peerEndpointHandle,
               direct.senderCertificateDigest
                 == pairwiseBinding.peerCertificateReferenceDigest,
               direct.senderManifestEpoch == senderEndpoint.manifestEpoch,
-              envelope.senderFingerprint == pairwiseBinding.peerInstallationHandle.rawValue,
+              envelope.senderFingerprint == pairwiseBinding.peerEndpointHandle.rawValue,
               let endpointSession = conversation.endpointSession,
               endpointSession.contactId == contact.id,
-              endpointSession.localInstallationId == localInstallation.id,
-              endpointSession.localInstallationHandle == pairwiseBinding.localInstallationHandle,
+              endpointSession.localEndpointId == localEndpoint.id,
+              endpointSession.localEndpointHandle == pairwiseBinding.localEndpointHandle,
               endpointSession.localCertificateReferenceDigest
                 == pairwiseBinding.localCertificateReferenceDigest,
-              endpointSession.localManifestEpoch == localEndpoint.manifestEpoch,
-              endpointSession.peerInstallationId == senderEndpoint.installationId,
-              endpointSession.peerInstallationHandle == pairwiseBinding.peerInstallationHandle,
+              endpointSession.localManifestEpoch == localCertificate.manifestEpoch,
+              endpointSession.peerEndpointId == senderEndpoint.endpointId,
+              endpointSession.peerEndpointHandle == pairwiseBinding.peerEndpointHandle,
               endpointSession.peerCertificateReferenceDigest
                 == pairwiseBinding.peerCertificateReferenceDigest,
               endpointSession.peerManifestEpoch == senderEndpoint.manifestEpoch,
               conversation.id == conversationIdForEndpoints(
-                  localEndpoint,
+                  localCertificate,
                   senderEndpoint,
                   pairwiseBinding: pairwiseBinding
               ),
@@ -618,7 +618,7 @@ public enum MessageEngine {
     private static func deriveRootKey(
         sharedSecret: Data,
         priorRootKey: Data?,
-        directV4Binding: PairwiseInstallationBindingV4
+        directV4Binding: PairwiseEndpointBindingV4
     ) -> Data {
         let salt: Data
         if let priorRootKey, !priorRootKey.isEmpty {
@@ -639,15 +639,15 @@ public enum MessageEngine {
     }
 
     public static func conversationIdForEndpoints(
-        _ first: CertifiedInstallationEndpoint,
-        _ second: CertifiedInstallationEndpoint,
-        pairwiseBinding: PairwiseInstallationBindingV4
+        _ first: CertifiedGenerationEndpoint,
+        _ second: CertifiedGenerationEndpoint,
+        pairwiseBinding: PairwiseEndpointBindingV4
     ) -> String {
         let entries = [
-            Data(pairwiseBinding.localInstallationHandle.rawValue.utf8) + first.agreementPublicKey,
-            Data(pairwiseBinding.peerInstallationHandle.rawValue.utf8) + second.agreementPublicKey
+            Data(pairwiseBinding.localEndpointHandle.rawValue.utf8) + first.agreementPublicKey,
+            Data(pairwiseBinding.peerEndpointHandle.rawValue.utf8) + second.agreementPublicKey
         ].sorted { $0.lexicographicallyPrecedes($1) }
-        var combined = Data("Noctweave/direct-installation-conversation/v4".utf8)
+        var combined = Data("Noctweave/direct-endpoint-conversation/v4".utf8)
         combined.append(directV4SessionBindingData(pairwiseBinding))
         combined.append(entries[0])
         combined.append(entries[1])
@@ -669,7 +669,7 @@ public enum MessageEngine {
     }
 
     private static func directV4SessionBindingData(
-        _ binding: PairwiseInstallationBindingV4
+        _ binding: PairwiseEndpointBindingV4
     ) -> Data {
         directV4SessionBindingData(
             cipherSuite: binding.cipherSuite,
@@ -744,10 +744,10 @@ public enum MessageEngine {
               let direct = context.directV4,
               direct.isStructurallyValid,
               let session = conversation.endpointSession,
-              direct.senderInstallationHandle == session.localInstallationHandle,
+              direct.senderEndpointHandle == session.localEndpointHandle,
               direct.senderCertificateDigest == session.localCertificateReferenceDigest,
               direct.senderManifestEpoch == session.localManifestEpoch,
-              direct.recipientInstallationHandle == session.peerInstallationHandle,
+              direct.recipientEndpointHandle == session.peerEndpointHandle,
               direct.recipientCertificateDigest == session.peerCertificateReferenceDigest,
               direct.recipientManifestEpoch == session.peerManifestEpoch,
               conversation.sessionId == directV4SessionId(
@@ -770,7 +770,7 @@ public enum MessageEngine {
         }
         return try NoctweaveCoder.encode(
             DirectMessageAuthenticatedDataPayloadV4(
-                version: CertifiedInstallationEndpoint.version,
+                version: CertifiedGenerationEndpoint.version,
                 conversationId: conversationId,
                 sessionId: sessionId,
                 messageCounter: messageCounter,

@@ -1,8 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// Signed-state foundations for installation-aware groups. These types are
-/// intentionally not wired into the legacy relay-backed group runtime yet.
+/// Signed-state foundations for endpoint-aware groups.
 public enum NoctweaveSignedGroupV2 {
     public static let version = 2
     public static let experimentalProfile = GroupProtocolProfile.noctweavePQExperimentalV2
@@ -21,9 +20,9 @@ public enum SignedGroupV2Error: Error, Equatable {
     case unsupportedProfile
     case invalidContext
     case invalidManifest
-    case installationNotAuthorized
+    case endpointNotAuthorized
     case invalidAuthoritySignature
-    case invalidInstallationSignature
+    case invalidEndpointSignature
     case invalidClientSignature
     case invalidStateSignature
     case invalidCommitSignature
@@ -41,7 +40,7 @@ public enum SignedGroupV2Error: Error, Equatable {
 }
 
 /// An opaque client handle that is unique to one group. It deliberately does
-/// not reuse a relationship-scoped or globally stable installation identifier.
+/// not reuse a relationship-scoped or globally stable endpoint identifier.
 public struct GroupScopedClientHandleV2: RawRepresentable, Codable, Equatable, Hashable {
     public let rawValue: String
 
@@ -62,19 +61,6 @@ public struct GroupScopedClientHandleV2: RawRepresentable, Codable, Equatable, H
                 return GroupScopedClientHandleV2(rawValue: bytes.base64EncodedString())
             }
         }
-    }
-
-    /// Legacy source-compatible spelling. Endpoint inputs are intentionally
-    /// ignored so the resulting handle remains group-only and unlinkable.
-    public static func generate(
-        groupId: UUID,
-        installationId: UUID,
-        nonce: UUID = UUID()
-    ) -> GroupScopedClientHandleV2 {
-        _ = groupId
-        _ = installationId
-        _ = nonce
-        return generate()
     }
 
     public var isStructurallyValid: Bool {
@@ -393,7 +379,7 @@ public struct GroupSiblingClientConsentV2: Codable, Equatable {
 }
 
 /// A group-scoped client key package. The identity-generation signature
-/// authorizes the installation, the installation signature proves possession,
+/// authorizes the endpoint, the endpoint signature proves possession,
 /// and the group-client signature proves possession of the unlinkable group key.
 public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
     public let id: UUID
@@ -404,16 +390,16 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
     public let identityGenerationId: UUID
     public let manifestEpoch: UInt64
     public let manifestDigest: Data
-    public let installationId: UUID
-    public let installationSigningPublicKey: Data
-    public let installationAgreementPublicKey: Data
+    public let endpointId: UUID
+    public let endpointSigningPublicKey: Data
+    public let endpointAgreementPublicKey: Data
     public let groupSigningPublicKey: Data
     public let groupAgreementPublicKey: Data
     public let capabilities: ProtocolCapabilityManifest
     public let issuedAt: Date
     public let expiresAt: Date
     public let authoritySignature: Data
-    public let installationPossessionSignature: Data
+    public let endpointPossessionSignature: Data
     public let groupClientPossessionSignature: Data
 
     public init(
@@ -425,16 +411,16 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
         identityGenerationId: UUID,
         manifestEpoch: UInt64,
         manifestDigest: Data,
-        installationId: UUID,
-        installationSigningPublicKey: Data,
-        installationAgreementPublicKey: Data,
+        endpointId: UUID,
+        endpointSigningPublicKey: Data,
+        endpointAgreementPublicKey: Data,
         groupSigningPublicKey: Data,
         groupAgreementPublicKey: Data,
         capabilities: ProtocolCapabilityManifest,
         issuedAt: Date,
         expiresAt: Date,
         authoritySignature: Data,
-        installationPossessionSignature: Data,
+        endpointPossessionSignature: Data,
         groupClientPossessionSignature: Data
     ) {
         self.id = id
@@ -445,16 +431,16 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
         self.identityGenerationId = identityGenerationId
         self.manifestEpoch = manifestEpoch
         self.manifestDigest = manifestDigest
-        self.installationId = installationId
-        self.installationSigningPublicKey = installationSigningPublicKey
-        self.installationAgreementPublicKey = installationAgreementPublicKey
+        self.endpointId = endpointId
+        self.endpointSigningPublicKey = endpointSigningPublicKey
+        self.endpointAgreementPublicKey = endpointAgreementPublicKey
         self.groupSigningPublicKey = groupSigningPublicKey
         self.groupAgreementPublicKey = groupAgreementPublicKey
         self.capabilities = capabilities
         self.issuedAt = issuedAt
         self.expiresAt = expiresAt
         self.authoritySignature = authoritySignature
-        self.installationPossessionSignature = installationPossessionSignature
+        self.endpointPossessionSignature = endpointPossessionSignature
         self.groupClientPossessionSignature = groupClientPossessionSignature
     }
 
@@ -464,8 +450,8 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
         groupUserId: UUID,
         clientHandle: GroupScopedClientHandleV2,
         identity: Identity,
-        installation: LocalInstallationState,
-        manifest: InstallationManifest,
+        endpoint: LocalEndpointState,
+        manifest: EndpointSetManifest,
         groupSigningKey: SigningKeyPair,
         groupAgreementKey: AgreementKeyPair,
         issuedAt: Date = Date(),
@@ -476,12 +462,12 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
               issuedAt >= manifest.issuedAt,
               let manifestDigest = manifest.digest,
               manifest.verify(identityPublicKey: identity.signingKey.publicKeyData),
-              manifest.identityGenerationId == installation.identityGenerationId,
-              let record = manifest.installations.first(where: { $0.id == installation.id }),
+              manifest.identityGenerationId == endpoint.identityGenerationId,
+              let record = manifest.endpoints.first(where: { $0.id == endpoint.id }),
               record.isActive(at: issuedAt, manifestEpoch: manifest.epoch),
-              record.signingPublicKey == installation.signingKey.publicKeyData,
-              record.agreementPublicKey == installation.agreementKey.publicKeyData else {
-            throw SignedGroupV2Error.installationNotAuthorized
+              record.signingPublicKey == endpoint.signingKey.publicKeyData,
+              record.agreementPublicKey == endpoint.agreementKey.publicKeyData else {
+            throw SignedGroupV2Error.endpointNotAuthorized
         }
         let payload = GroupClientKeyPackagePayloadV2(
             version: NoctweaveSignedGroupV2.version,
@@ -489,12 +475,12 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
             groupId: groupId,
             groupUserId: groupUserId,
             clientHandle: clientHandle,
-            identityGenerationId: installation.identityGenerationId,
+            identityGenerationId: endpoint.identityGenerationId,
             manifestEpoch: manifest.epoch,
             manifestDigest: manifestDigest,
-            installationId: installation.id,
-            installationSigningPublicKey: installation.signingKey.publicKeyData,
-            installationAgreementPublicKey: installation.agreementKey.publicKeyData,
+            endpointId: endpoint.id,
+            endpointSigningPublicKey: endpoint.signingKey.publicKeyData,
+            endpointAgreementPublicKey: endpoint.agreementKey.publicKeyData,
             groupSigningPublicKey: groupSigningKey.publicKeyData,
             groupAgreementPublicKey: groupAgreementKey.publicKeyData,
             capabilities: record.capabilities,
@@ -505,8 +491,8 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
         let authoritySignature = try identity.signingKey.sign(
             try GroupKeyPackageAuthorityContextV2(payloadDigest: payloadDigest).signableData()
         )
-        let installationSignature = try installation.signingKey.sign(
-            try GroupKeyPackageInstallationContextV2(
+        let endpointSignature = try endpoint.signingKey.sign(
+            try GroupKeyPackageEndpointContextV2(
                 payloadDigest: payloadDigest,
                 authoritySignatureDigest: SignedGroupV2Hash.digest(authoritySignature)
             ).signableData()
@@ -515,7 +501,7 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
             try GroupKeyPackageClientContextV2(
                 payloadDigest: payloadDigest,
                 authoritySignatureDigest: SignedGroupV2Hash.digest(authoritySignature),
-                installationSignatureDigest: SignedGroupV2Hash.digest(installationSignature)
+                endpointSignatureDigest: SignedGroupV2Hash.digest(endpointSignature)
             ).signableData()
         )
         let package = GroupClientKeyPackageV2(
@@ -523,19 +509,19 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
             groupId: groupId,
             groupUserId: groupUserId,
             clientHandle: clientHandle,
-            identityGenerationId: installation.identityGenerationId,
+            identityGenerationId: endpoint.identityGenerationId,
             manifestEpoch: manifest.epoch,
             manifestDigest: manifestDigest,
-            installationId: installation.id,
-            installationSigningPublicKey: installation.signingKey.publicKeyData,
-            installationAgreementPublicKey: installation.agreementKey.publicKeyData,
+            endpointId: endpoint.id,
+            endpointSigningPublicKey: endpoint.signingKey.publicKeyData,
+            endpointAgreementPublicKey: endpoint.agreementKey.publicKeyData,
             groupSigningPublicKey: groupSigningKey.publicKeyData,
             groupAgreementPublicKey: groupAgreementKey.publicKeyData,
             capabilities: record.capabilities,
             issuedAt: issuedAt,
             expiresAt: expiresAt,
             authoritySignature: authoritySignature,
-            installationPossessionSignature: installationSignature,
+            endpointPossessionSignature: endpointSignature,
             groupClientPossessionSignature: groupClientSignature
         )
         guard package.isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
@@ -551,8 +537,8 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
         guard version == NoctweaveSignedGroupV2.version,
               clientHandle.isStructurallyValid,
               manifestDigest.count == 32,
-              SigningKeyPair.isValidPublicKey(installationSigningPublicKey),
-              AgreementKeyPair.isValidPublicKey(installationAgreementPublicKey),
+              SigningKeyPair.isValidPublicKey(endpointSigningPublicKey),
+              AgreementKeyPair.isValidPublicKey(endpointAgreementPublicKey),
               SigningKeyPair.isValidPublicKey(groupSigningPublicKey),
               AgreementKeyPair.isValidPublicKey(groupAgreementPublicKey),
               capabilities.isStructurallyValid,
@@ -562,21 +548,21 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
               expiresAt.timeIntervalSince(issuedAt)
                 <= NoctweaveSignedGroupV2.maximumKeyPackageLifetimeSeconds,
               authoritySignature.count == NoctweaveSignedGroupV2.signatureBytes,
-              installationPossessionSignature.count == NoctweaveSignedGroupV2.signatureBytes,
+              endpointPossessionSignature.count == NoctweaveSignedGroupV2.signatureBytes,
               groupClientPossessionSignature.count == NoctweaveSignedGroupV2.signatureBytes,
               let encoded = try? NoctweaveCoder.encode(self, sortedKeys: true),
               encoded.count <= NoctweaveSignedGroupV2.maximumKeyPackageBytes else {
             return false
         }
-        return installationSigningPublicKey != groupSigningPublicKey
-            && installationAgreementPublicKey != groupAgreementPublicKey
+        return endpointSigningPublicKey != groupSigningPublicKey
+            && endpointAgreementPublicKey != groupAgreementPublicKey
     }
 
     public func verified(
         forGroupId expectedGroupId: UUID,
         groupUserId expectedGroupUserId: UUID,
         identityPublicKey: Data,
-        manifest: InstallationManifest,
+        manifest: EndpointSetManifest,
         now: Date = Date()
     ) throws -> GroupClientKeyPackageV2 {
         guard isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
@@ -595,12 +581,12 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
               manifest.digest == manifestDigest else {
             throw SignedGroupV2Error.invalidManifest
         }
-        guard let record = manifest.installations.first(where: { $0.id == installationId }),
+        guard let record = manifest.endpoints.first(where: { $0.id == endpointId }),
               record.isActive(at: now, manifestEpoch: manifest.epoch),
-              record.signingPublicKey == installationSigningPublicKey,
-              record.agreementPublicKey == installationAgreementPublicKey,
+              record.signingPublicKey == endpointSigningPublicKey,
+              record.agreementPublicKey == endpointAgreementPublicKey,
               record.capabilities == capabilities else {
-            throw SignedGroupV2Error.installationNotAuthorized
+            throw SignedGroupV2Error.endpointNotAuthorized
         }
         let payloadDigest = try SignedGroupV2Hash.digest(payload)
         let authorityData = try GroupKeyPackageAuthorityContextV2(
@@ -613,21 +599,21 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
         ) else {
             throw SignedGroupV2Error.invalidAuthoritySignature
         }
-        let installationData = try GroupKeyPackageInstallationContextV2(
+        let endpointData = try GroupKeyPackageEndpointContextV2(
             payloadDigest: payloadDigest,
             authoritySignatureDigest: SignedGroupV2Hash.digest(authoritySignature)
         ).signableData()
         guard SigningKeyPair.verify(
-            signature: installationPossessionSignature,
-            data: installationData,
-            publicKeyData: installationSigningPublicKey
+            signature: endpointPossessionSignature,
+            data: endpointData,
+            publicKeyData: endpointSigningPublicKey
         ) else {
-            throw SignedGroupV2Error.invalidInstallationSignature
+            throw SignedGroupV2Error.invalidEndpointSignature
         }
         let clientData = try GroupKeyPackageClientContextV2(
             payloadDigest: payloadDigest,
             authoritySignatureDigest: SignedGroupV2Hash.digest(authoritySignature),
-            installationSignatureDigest: SignedGroupV2Hash.digest(installationPossessionSignature)
+            endpointSignatureDigest: SignedGroupV2Hash.digest(endpointPossessionSignature)
         ).signableData()
         guard SigningKeyPair.verify(
             signature: groupClientPossessionSignature,
@@ -649,9 +635,9 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
             identityGenerationId: identityGenerationId,
             manifestEpoch: manifestEpoch,
             manifestDigest: manifestDigest,
-            installationId: installationId,
-            installationSigningPublicKey: installationSigningPublicKey,
-            installationAgreementPublicKey: installationAgreementPublicKey,
+            endpointId: endpointId,
+            endpointSigningPublicKey: endpointSigningPublicKey,
+            endpointAgreementPublicKey: endpointAgreementPublicKey,
             groupSigningPublicKey: groupSigningPublicKey,
             groupAgreementPublicKey: groupAgreementPublicKey,
             capabilities: capabilities,
@@ -664,7 +650,7 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
 /// Local trust input used when accepting one client into a signed group.
 ///
 /// This value is deliberately not learned from the commit. The caller must
-/// supply the identity authority and latest trusted installation manifest from
+/// supply the identity authority and latest trusted endpoint manifest from
 /// an authenticated contact, invitation, continuity, or self-sync path. That
 /// prevents a commit author from inventing a different identity authority for
 /// an existing group user while still leaving the signed commit self-contained
@@ -672,12 +658,12 @@ public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
 public struct GroupClientAdmissionTrustV2: Equatable {
     public let groupUserId: UUID
     public let identityPublicKey: Data
-    public let currentManifest: InstallationManifest
+    public let currentManifest: EndpointSetManifest
 
     public init(
         groupUserId: UUID,
         identityPublicKey: Data,
-        currentManifest: InstallationManifest
+        currentManifest: EndpointSetManifest
     ) {
         self.groupUserId = groupUserId
         self.identityPublicKey = identityPublicKey
@@ -693,20 +679,20 @@ public struct GroupClientAdmissionTrustV2: Equatable {
 /// External trust required to create or accept the first signed group state.
 ///
 /// None of these values are learned from the candidate state. The caller pins
-/// the creator's identity authority, current installation manifest, and full
+/// the creator's identity authority, current endpoint manifest, and full
 /// group-scoped key package through an authenticated invitation, contact,
 /// continuity, or self-sync path. This prevents an epoch-one state from
 /// inventing the authority and client keys that are then used to verify itself.
 public struct GroupGenesisTrustV2: Equatable {
     public let creatorUserId: UUID
     public let identityPublicKey: Data
-    public let currentManifest: InstallationManifest
+    public let currentManifest: EndpointSetManifest
     public let creatorKeyPackage: GroupClientKeyPackageV2
 
     public init(
         creatorUserId: UUID,
         identityPublicKey: Data,
-        currentManifest: InstallationManifest,
+        currentManifest: EndpointSetManifest,
         creatorKeyPackage: GroupClientKeyPackageV2
     ) {
         self.creatorUserId = creatorUserId
@@ -2438,9 +2424,9 @@ private struct GroupClientKeyPackagePayloadV2: Encodable {
     let identityGenerationId: UUID
     let manifestEpoch: UInt64
     let manifestDigest: Data
-    let installationId: UUID
-    let installationSigningPublicKey: Data
-    let installationAgreementPublicKey: Data
+    let endpointId: UUID
+    let endpointSigningPublicKey: Data
+    let endpointAgreementPublicKey: Data
     let groupSigningPublicKey: Data
     let groupAgreementPublicKey: Data
     let capabilities: ProtocolCapabilityManifest
@@ -2454,8 +2440,8 @@ private struct GroupKeyPackageAuthorityContextV2: Encodable {
     func signableData() throws -> Data { try NoctweaveCoder.encode(self, sortedKeys: true) }
 }
 
-private struct GroupKeyPackageInstallationContextV2: Encodable {
-    let purpose = "Noctweave/group-client-key-package-installation-possession/v2"
+private struct GroupKeyPackageEndpointContextV2: Encodable {
+    let purpose = "Noctweave/group-client-key-package-endpoint-possession/v2"
     let payloadDigest: Data
     let authoritySignatureDigest: Data
     func signableData() throws -> Data { try NoctweaveCoder.encode(self, sortedKeys: true) }
@@ -2465,7 +2451,7 @@ private struct GroupKeyPackageClientContextV2: Encodable {
     let purpose = "Noctweave/group-client-key-package-group-possession/v2"
     let payloadDigest: Data
     let authoritySignatureDigest: Data
-    let installationSignatureDigest: Data
+    let endpointSignatureDigest: Data
     func signableData() throws -> Data { try NoctweaveCoder.encode(self, sortedKeys: true) }
 }
 

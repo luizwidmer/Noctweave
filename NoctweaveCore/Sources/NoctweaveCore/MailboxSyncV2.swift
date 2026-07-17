@@ -78,7 +78,7 @@ public struct MailboxSyncBatch: Codable, Equatable {
             && events.allSatisfy { $0.sequence > retentionFloor && $0.sequence <= highWatermark }
     }
 
-    /// Validates the relay batch against the installation's durable cursor
+    /// Validates the relay batch against the endpoint's durable cursor
     /// position. Internal ordering alone is insufficient: a relay could omit
     /// the first event after the cursor and still return an increasing page.
     public func isContiguous(after committedSequence: UInt64) -> Bool {

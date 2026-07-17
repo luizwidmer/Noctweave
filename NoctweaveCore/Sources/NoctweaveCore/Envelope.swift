@@ -11,9 +11,9 @@ public struct DirectMessageAuthenticatedContextV4: Codable, Equatable {
     public let cipherSuite: String
     public let negotiatedCapabilitiesDigest: Data
     public let eventId: UUID
-    public let senderInstallationHandle: RelationshipInstallationHandle
+    public let senderEndpointHandle: RelationshipEndpointHandle
     public let senderCertificateDigest: Data
-    public let recipientInstallationHandle: RelationshipInstallationHandle
+    public let recipientEndpointHandle: RelationshipEndpointHandle
     public let senderManifestEpoch: UInt64
     public let recipientManifestEpoch: UInt64
     public let recipientCertificateDigest: Data
@@ -22,34 +22,34 @@ public struct DirectMessageAuthenticatedContextV4: Codable, Equatable {
         cipherSuite: String,
         negotiatedCapabilitiesDigest: Data,
         eventId: UUID,
-        senderInstallationHandle: RelationshipInstallationHandle,
+        senderEndpointHandle: RelationshipEndpointHandle,
         senderCertificateDigest: Data,
-        recipientInstallationHandle: RelationshipInstallationHandle,
+        recipientEndpointHandle: RelationshipEndpointHandle,
         senderManifestEpoch: UInt64,
         recipientManifestEpoch: UInt64,
         recipientCertificateDigest: Data
     ) throws {
-        self.version = CertifiedInstallationEndpoint.version
+        self.version = CertifiedGenerationEndpoint.version
         self.payloadFormat = NoctweaveWirePayloadV2.directV4Format
         self.cipherSuite = cipherSuite
         self.negotiatedCapabilitiesDigest = negotiatedCapabilitiesDigest
         self.eventId = eventId
-        self.senderInstallationHandle = senderInstallationHandle
+        self.senderEndpointHandle = senderEndpointHandle
         self.senderCertificateDigest = senderCertificateDigest
-        self.recipientInstallationHandle = recipientInstallationHandle
+        self.recipientEndpointHandle = recipientEndpointHandle
         self.senderManifestEpoch = senderManifestEpoch
         self.recipientManifestEpoch = recipientManifestEpoch
         self.recipientCertificateDigest = recipientCertificateDigest
     }
 
     public var isStructurallyValid: Bool {
-        version == CertifiedInstallationEndpoint.version
+        version == CertifiedGenerationEndpoint.version
             && payloadFormat == NoctweaveWirePayloadV2.directV4Format
             && cipherSuite == DirectV4CipherSuite.identifier
             && negotiatedCapabilitiesDigest.count == 32
-            && senderInstallationHandle.isStructurallyValid
+            && senderEndpointHandle.isStructurallyValid
             && senderCertificateDigest.count == 32
-            && recipientInstallationHandle.isStructurallyValid
+            && recipientEndpointHandle.isStructurallyValid
             && recipientCertificateDigest.count == 32
     }
 }
@@ -118,9 +118,9 @@ public struct MessageAuthenticatedContext: Codable, Equatable {
 
     public static func directV4(
         eventId: UUID,
-        senderEndpoint: CertifiedInstallationEndpoint,
-        recipientEndpoint: CertifiedInstallationEndpoint,
-        pairwiseBinding: PairwiseInstallationBindingV4
+        senderEndpoint: CertifiedGenerationEndpoint,
+        recipientEndpoint: CertifiedGenerationEndpoint,
+        pairwiseBinding: PairwiseEndpointBindingV4
     ) throws -> MessageAuthenticatedContext {
         let negotiation = try pairwiseBinding.validatedNegotiation(
             localEndpoint: senderEndpoint,
@@ -136,9 +136,9 @@ public struct MessageAuthenticatedContext: Codable, Equatable {
                 cipherSuite: negotiation.cipherSuite,
                 negotiatedCapabilitiesDigest: try negotiation.digest(),
                 eventId: eventId,
-                senderInstallationHandle: pairwiseBinding.localInstallationHandle,
+                senderEndpointHandle: pairwiseBinding.localEndpointHandle,
                 senderCertificateDigest: pairwiseBinding.localCertificateReferenceDigest,
-                recipientInstallationHandle: pairwiseBinding.peerInstallationHandle,
+                recipientEndpointHandle: pairwiseBinding.peerEndpointHandle,
                 senderManifestEpoch: senderEndpoint.manifestEpoch,
                 recipientManifestEpoch: recipientEndpoint.manifestEpoch,
                 recipientCertificateDigest: pairwiseBinding.peerCertificateReferenceDigest
@@ -196,7 +196,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
             return false
         }
         if authenticatedContext?.purpose == .directV4 {
-            guard authenticatedContext?.directV4?.senderInstallationHandle.rawValue
+            guard authenticatedContext?.directV4?.senderEndpointHandle.rawValue
                     == senderFingerprint else {
                 return false
             }
@@ -240,7 +240,7 @@ public struct Envelope: Codable, Identifiable, Equatable {
                 guard context.group == nil,
                       let direct = context.directV4,
                       direct.isStructurallyValid,
-                      direct.senderInstallationHandle.rawValue == senderFingerprint else {
+                      direct.senderEndpointHandle.rawValue == senderFingerprint else {
                     return false
                 }
             }

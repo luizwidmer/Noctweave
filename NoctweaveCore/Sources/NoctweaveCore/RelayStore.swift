@@ -743,7 +743,7 @@ public actor RelayStore {
 
     /// Adds one opaque, independently revocable consumer to a mailbox stream.
     ///
-    /// New installations normally begin at the current high watermark and obtain
+    /// New endpoints normally begin at the current high watermark and obtain
     /// older history from encrypted self-sync. Tests, recovery tooling, and an
     /// explicitly authorized linking flow may request a retained earlier position.
     public func registerMailboxConsumer(
@@ -786,7 +786,7 @@ public actor RelayStore {
             }
             return existing.publicRegistration(consumerId: consumerId)
         }
-        if registration.streamState.isInstallationManaged {
+        if registration.streamState.isEndpointManaged {
             guard hasActiveBoundConsumer else {
                 throw MailboxSyncError.freshInboxRequired
             }
@@ -802,7 +802,7 @@ public actor RelayStore {
         let activeConsumerCount = registration.streamState.consumers.values.reduce(into: 0) {
             if $1.state == .active { $0 += 1 }
         }
-        guard activeConsumerCount < NoctweaveArchitectureV2.maximumInstallations else {
+        guard activeConsumerCount < NoctweaveArchitectureV2.maximumEndpoints else {
             throw MailboxSyncError.invalidConsumer
         }
         Self.compactRevokedMailboxConsumers(
@@ -825,7 +825,7 @@ public actor RelayStore {
             revokedAt: nil
         )
         registration.streamState.consumers[consumerId.rawValue] = consumer
-        registration.streamState.isInstallationManaged = true
+        registration.streamState.isEndpointManaged = true
         inboxRegistrations[inboxId] = registration
         try saveToDisk()
         return consumer.publicRegistration(consumerId: consumerId)
@@ -851,11 +851,11 @@ public actor RelayStore {
         return record.publicRegistration(consumerId: consumerId)
     }
 
-    /// Once a mailbox has entered installation-scoped synchronization, the
+    /// Once a mailbox has entered endpoint-scoped synchronization, the
     /// profile-wide legacy fetch/ack capability must never become a fallback.
     /// Revoking every consumer therefore does not reopen the legacy path.
     public func hasMailboxConsumerBindings(inboxId: String) -> Bool {
-        inboxRegistrations[inboxId]?.streamState.isInstallationManaged ?? false
+        inboxRegistrations[inboxId]?.streamState.isEndpointManaged ?? false
     }
 
     /// Returns the credential bound to a consumer, including a revoked one so
@@ -2033,25 +2033,25 @@ struct MailboxStreamState: Codable {
     var highWatermark: UInt64
     var retentionFloor: UInt64
     var consumers: [String: MailboxConsumerRecord]
-    var isInstallationManaged: Bool
+    var isEndpointManaged: Bool
 
     init(
         highWatermark: UInt64 = 0,
         retentionFloor: UInt64 = 0,
         consumers: [String: MailboxConsumerRecord] = [:],
-        isInstallationManaged: Bool = false
+        isEndpointManaged: Bool = false
     ) {
         self.highWatermark = highWatermark
         self.retentionFloor = min(retentionFloor, highWatermark)
         self.consumers = consumers
-        self.isInstallationManaged = isInstallationManaged || !consumers.isEmpty
+        self.isEndpointManaged = isEndpointManaged || !consumers.isEmpty
     }
 
     private enum CodingKeys: String, CodingKey {
         case highWatermark
         case retentionFloor
         case consumers
-        case isInstallationManaged
+        case isEndpointManaged
     }
 
     init(from decoder: Decoder) throws {
@@ -2062,12 +2062,12 @@ struct MailboxStreamState: Codable {
             [String: MailboxConsumerRecord].self,
             forKey: .consumers
         )
-        isInstallationManaged = try container.decode(
+        isEndpointManaged = try container.decode(
             Bool.self,
-            forKey: .isInstallationManaged
+            forKey: .isEndpointManaged
         )
         guard retentionFloor <= highWatermark,
-              isInstallationManaged || consumers.isEmpty,
+              isEndpointManaged || consumers.isEmpty,
               consumers.allSatisfy({ key, value in
                   MailboxConsumerId(rawValue: key).isStructurallyValid
                       && value.isStructurallyValid(highWatermark: highWatermark)

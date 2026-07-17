@@ -1,6 +1,10 @@
 # NoctweaveCore Public API Notes
 
-`NoctweaveCore` is the shared Swift package for protocol implementers and Noctyra tooling. The package is not yet source-stability frozen, but public APIs should now be treated as candidate library surface rather than app-private implementation detail. Compatibility expectations are defined in `noctweave_core_stability_policy.md`.
+`NoctweaveCore` is the shared Swift package for protocol implementers and Noctyra tooling. The package is not yet source-stability frozen, but public APIs should now be treated as candidate library surface rather than app-private implementation detail. Stability rules are defined in `noctweave_core_stability_policy.md`.
+
+Noctweave 1.0 is a clean protocol origin. Pre-1.0 persisted and wire formats
+are rejected; the production API does not carry decoders, upgrade paths, or
+runtime fallbacks for research-era state.
 
 The current pre-1.0 direction is documented in
 [`noctweave_architecture_revision_v2.md`](noctweave_architecture_revision_v2.md).
@@ -17,7 +21,7 @@ does not imply that a model is active on the relay wire.
 ## Client-Facing APIs
 
 - `HeadlessMessagingClient`: persistent headless identity, contact, send,
-  receive, register, contact-share, attachment, voice-message, and group
+  receive, register, contact-share, attachment, and voice-message
   workflows. Direct `receive(...)` uses an endpoint-owned mailbox consumer,
   ordered sync, and a cursor commit persisted after message state. The
   `acknowledge` argument controls whether that durable cursor is committed.
@@ -34,50 +38,42 @@ does not imply that a model is active on the relay wire.
   idempotency key, payload digest, and original sealed envelope. It does not
   authorize re-encryption or a new ratchet step.
 - `HeadlessIdentityChangeResult`: structured result for same-generation
-  authority rotation (the compatibility API calls it identity rotation) and
-  full identity-burn operations.
+  authority rotation and full identity-burn operations.
 - `HeadlessContinuityAudit` and `HeadlessContinuityAuditPurgeResult`: structured inspection and purge results for active-identity continuity events.
-- `HeadlessGroupSummary`, `HeadlessSentGroupMessage`, and `HeadlessReceivedGroupMessage`: sanitized headless group messaging results that do not expose serialized ratchet keys.
-- `GroupConversation.pendingAcknowledgements`: bounded legacy-group receipts
-  persisted with decrypted state so acknowledgement loss and restart do not
-  replay the group ratchet. The headless receiver applies backpressure at 512
-  unacknowledged receipts and clears them only after relay acknowledgement.
 - `HeadlessMessagingClient.rotateIdentity(preservingContinuityWith:)`: requires
   an explicit, bounded set of contact UUIDs; `[]` explicitly discloses the
   old-key-authenticated rotation statement to nobody. Only selected contacts
   receive continuity, unknown IDs fail closed, and a resumed durable rotation
   must use the exact same set. Rotation remains an in-generation authority
   change; use burn, not an empty rotation selection, when unlinkability and
-  route teardown are required. It fails with
-  `identityRotationBlockedByLegacyGroups` while active fingerprint-scoped
-  relay groups remain; endpoint-aware signed groups must replace or the
-  user must leave those groups before starting a new rotation.
+  route teardown are required.
 - `HeadlessSentAttachment` and `HeadlessFetchedAttachment`: headless direct/group attachment and voice-message transfer results.
 - `ClientState` and `ClientStateStore`: codable local state and optional platform encryption wrapper.
 - `Identity`, `IdentityProfile`, `Contact`, `Conversation`, and `Message`: core client state models. Production identity and key creation should use the throwing `generate(...)` APIs so unavailable PQ algorithms or entropy failures can be handled without terminating a process.
 - `MessageEngine`: direct-message session creation, encryption, decryption, root ratchet, and message appending.
-- `ContactOffer`, `ContactOfferCode`, and `ContactShare`: signed contact offers and password-protected contact packages.
+- `RendezvousOfferV2`, `PendingRendezvousOfferV2`, and `RendezvousSessionV2`:
+  one-use, expiring, purpose-bound PQ pairing foundations. Client pairing
+  integration remains unfinished.
 
 ## Architecture-v2 Swift APIs
 
 The following v2 foundations are active in persisted state or direct mailbox
 delivery. Multi-endpoint admission itself is deliberately not a public API yet:
 
-- `NoctweaveArchitectureV2`, `LocalInstallationState`, `InstallationRecord`,
-  and `InstallationManifest`: currently compatibility-named source types for a
-  generation-scoped local endpoint and signed endpoint set. They do not model
+- `NoctweaveArchitectureV2`, `LocalEndpointState`, `EndpointRecord`, and
+  `EndpointSetManifest`: source types for a generation-scoped local endpoint
+  and signed endpoint set. They do not model
   an account, durable device, or cross-generation registry. Admission and
   removal state machines are internal conformance models. Removal rekeys the
   local self-sync state and persists every unfinished route, mailbox, peer, and
   group cleanup obligation in `EndpointRemovalJournalV2`; manifest mutation
-  alone is never called completed revocation. `ClientStateStore` migrates
-  legacy profiles idempotently to one
-  independently keyed local endpoint, one `RelationshipStateV2` shell per
-  contact, and a local generation-scoped `SelfSyncLocalStateV2`.
-- `InstallationManifestCheckpointV4`, `CertifiedInstallationEndpoint`,
-  `EndpointSignedPrekeyPackageV4`, `PairwiseInstallationBindingV4`, and
-  `DirectEndpointSessionIdentity`: these
-  compatibility-named source types authenticate one preferred local endpoint
+  alone is never called completed removal. A new `ClientStateStore` profile
+  starts with one independently keyed local endpoint, one
+  `RelationshipStateV2` shell per contact, and local generation-scoped
+  `SelfSyncLocalStateV2`.
+- `EndpointSetCheckpointV4`, `CertifiedGenerationEndpoint`,
+  `EndpointSignedPrekeyPackageV4`, `PairwiseEndpointBindingV4`, and
+  `DirectEndpointSessionIdentity`: these source types authenticate one preferred local endpoint
   under a compact generation-authority-signed manifest checkpoint and endpoint
   possession signature. Pairwise relationship IDs are derived from both
   identity generations; relay-visible sender identifiers and certificate
@@ -94,8 +90,8 @@ delivery. Multi-endpoint admission itself is deliberately not a public API yet:
   session, registers the fresh local inbox/consumer before cutover, does not
   wait for any contact relay to accept the reset, and blocks new sends to each
   retained contact until that contact's reset is accepted.
-  `InstallationEndpointRevocationV4`
-  is a compatibility-named, identity-signed endpoint-key rejection record for
+  `EndpointRemovalProofV4`
+  is an identity-signed endpoint-key rejection record for
   an encrypted control update. Applying it blocks that peer endpoint but is not
   complete local endpoint removal; route, self-sync, group, and delivery
   cleanup must also finish. Its endpoint certificate remains pinned to the
@@ -105,9 +101,9 @@ delivery. Multi-endpoint admission itself is deliberately not a public API yet:
   Multi-endpoint publication, per-recipient fan-out, encrypted manifest
   update distribution, and delivery aggregation remain follow-up work; the
   presence of a multi-record local manifest does not imply those flows exist.
-- `LocalInstallationState.renewSignedPrekeyIfNeeded(at:)` rotates only the
+- `LocalEndpointState.renewSignedPrekeyIfNeeded(at:)` rotates only the
   preferred endpoint's short-lived bootstrap key during its two-day renewal
-  window. `CertifiedInstallationEndpoint.refreshingPrekeyPackage(using:at:)`
+  window. `CertifiedGenerationEndpoint.refreshingPrekeyPackage(using:at:)`
   publishes the replacement under the existing stable endpoint authorization.
   Prior private signed-prekey records are bounded to four and usable only until
   their authenticated expiry; established sessions are not rekeyed or reset.
@@ -128,9 +124,7 @@ delivery. Multi-endpoint admission itself is deliberately not a public API yet:
   First-consumer registration requires inbox-authority authorization and
   route-key possession. Later fresh consumers additionally require an
   active consumer's sponsorship. Sync and commit use only the bound
-  route key, while revocation remains authority-controlled. Legacy profiles
-  rotate an old endpoint-key-bound consumer through a persisted one-time
-  sponsor marker before revoking it.
+  route key, while consumer removal remains authority-controlled.
 - `MailboxRouteSponsorshipContext`,
   `HeadlessMessagingClient.mailboxRouteSponsorshipContext()`, and
   `sponsorMailboxRouteCredential(_:)`: let one already admitted endpoint
@@ -163,9 +157,8 @@ delivery. Multi-endpoint admission itself is deliberately not a public API yet:
   domain-separated event-history checkpoints, and local self-sync
   secret/progress state. The checkpoint commits the canonical removed prefix
   and cumulative count while retaining a recent event window, so capacity does
-  not silently drop history or permanently block append. Migration does not
-  convert a legacy inbox into a v2 route capability, and no self-sync transport
-  is implied.
+  not silently drop history or permanently block append. A relationship shell
+  does not by itself create a route capability or self-sync transport.
 - `ReadOnlyHistoryProjectionV2`, `SealedHistoryArchiveTransportV2`,
   `HistoryArchiveImportTrustV2`, and `HistoryArchiveImportLedgerV2`: the active
   local history-export/import boundary. `HistoryTransferV2.exportArchive(...)`
@@ -193,7 +186,7 @@ remain additive foundations rather than end-to-end active protocol paths:
 - `RelationshipRouteV2` and `RelationshipRouteSetV2`: signed,
   make-before-break relationship route state that can be retained in a
   `RelationshipStateV2` after verification. Contact import and headless relay
-  migration do not yet exchange route sets.
+  rotation do not yet exchange route sets.
 - `InboxRouteCapabilityV2`, `InboxRegistrationReceiptV3`,
   `CreateInboxRouteCapabilityRequest`, and
   `RevokeInboxRouteCapabilityRequest`: experimental relay-side opaque
@@ -224,13 +217,13 @@ remain additive foundations rather than end-to-end active protocol paths:
   `RendezvousSessionV2`: one-use, expiring, purpose-bound post-quantum contact
   rendezvous. Public offers disclose no generation, endpoint, inbox, account,
   provider, or recovery identifier. Only contact pairing is enabled; endpoint
-  admission, relay migration, group invitation, and history purposes fail
+  admission, route rotation, group invitation, and history purposes fail
   closed until each has its own complete state machine.
 - `GroupUser`, `GroupClientLeaf`, `GroupPermissionPolicy`,
   `GroupMembershipState`, and `GroupCryptoProvider`: endpoint-aware group
-  state and crypto boundary. The current relay-backed group workflow still uses
-  identity fingerprints and the explicit experimental Noctweave PQ group
-  profile.
+  state and crypto boundary. Relay-backed group delivery is not part of the
+  current 1.0 surface; the Noctweave PQ group provider remains explicitly
+  experimental.
 
 The Swift certified direct-v4 path actively uses these typed APIs:
 
@@ -255,7 +248,7 @@ The Swift certified direct-v4 path actively uses these typed APIs:
 payload projection used by the separately framed experimental group path. It
 is not a direct-message wire format. Direct-v4 binds the
 negotiated `nw.events` module version and resource limits into the messaging
-transcript. Unknown application types remain forward-compatible through their
+transcript. Unknown application types remain safely retainable through their
 authenticated fallback/disposition; security controls remain a closed,
 separate namespace.
 
@@ -292,9 +285,8 @@ endpoint signing keys and signed prekeys, authenticate pairwise opaque
 handles and relationship-blinded certificate references, and carry generic
 `WirePayloadV2` application events in an NPAD-v2 frame. Text and attachment
 projections are strict; unknown visible/silent application types retain their
-authenticated event and fallback/disposition. Persisted v2/v3 contacts
-remain on a separately decoded legacy identity-key path; there is no format
-probing or silent downgrade. This is intentionally bounded to one preferred
+authenticated event and fallback/disposition. Pre-v4 contacts and NPAD-v1
+direct frames are rejected; there is no format probing or downgrade. This is intentionally bounded to one preferred
 endpoint and does not yet implement multi-endpoint fan-out.
 
 The JavaScript client also includes encrypted local-first identity setup,
@@ -317,4 +309,4 @@ HTTP(S)/WebSocket URLs retain their standard or specified port.
 
 ## Stability Rules Before 1.0
 
-Public types may still change before the first stable release. Changes should be intentional, documented in the roadmap or protocol docs, and covered by tests when they affect wire format, state format, relay compatibility, CLI behavior, or headless client behavior. See `noctweave_core_stability_policy.md` for the full pre-1.0 and post-1.0 rules.
+Public types may still change before the first stable release. Changes should be intentional, documented in the roadmap or protocol docs, and covered by tests when they affect wire format, state format, relay behavior, CLI behavior, or headless client behavior. See `noctweave_core_stability_policy.md` for the full pre-1.0 and post-1.0 rules.

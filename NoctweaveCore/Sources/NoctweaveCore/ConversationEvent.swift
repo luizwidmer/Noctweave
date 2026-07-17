@@ -242,7 +242,7 @@ public struct ConversationEvent: Codable, Equatable, Identifiable {
     public let id: UUID
     public let clientTransactionId: UUID
     public let conversationId: String
-    public let authorInstallationHandle: RelationshipInstallationHandle
+    public let authorEndpointHandle: RelationshipEndpointHandle
     public let createdAt: Date
     public let kind: ConversationEventKind
     public let content: EncodedContent
@@ -253,7 +253,7 @@ public struct ConversationEvent: Codable, Equatable, Identifiable {
         id: UUID = UUID(),
         clientTransactionId: UUID = UUID(),
         conversationId: String,
-        authorInstallationHandle: RelationshipInstallationHandle,
+        authorEndpointHandle: RelationshipEndpointHandle,
         createdAt: Date = Date(),
         kind: ConversationEventKind,
         content: EncodedContent,
@@ -263,7 +263,7 @@ public struct ConversationEvent: Codable, Equatable, Identifiable {
         self.id = id
         self.clientTransactionId = clientTransactionId
         self.conversationId = conversationId
-        self.authorInstallationHandle = authorInstallationHandle
+        self.authorEndpointHandle = authorEndpointHandle
         self.createdAt = createdAt
         self.kind = kind
         self.content = content
@@ -280,7 +280,7 @@ public struct ConversationEvent: Codable, Equatable, Identifiable {
             && !conversationId.isEmpty
             && conversationId.utf8.count <= 256
             && !conversationId.containsUnsafeProtocolControl
-            && authorInstallationHandle.isStructurallyValid
+            && authorEndpointHandle.isStructurallyValid
             && createdAt.timeIntervalSince1970.isFinite
             && content.isStructurallyValid
             && createdAt >= Self.earliestCreatedAt
@@ -326,18 +326,18 @@ private extension String {
 
 public struct DeliveryStateRecord: Codable, Equatable {
     public let eventId: UUID
-    public let destinationInstallation: RelationshipInstallationHandle
+    public let destinationEndpoint: RelationshipEndpointHandle
     public var state: MessageDeliveryState
     public var updatedAt: Date
 
     public init(
         eventId: UUID,
-        destinationInstallation: RelationshipInstallationHandle,
+        destinationEndpoint: RelationshipEndpointHandle,
         state: MessageDeliveryState,
         updatedAt: Date = Date()
     ) {
         self.eventId = eventId
-        self.destinationInstallation = destinationInstallation
+        self.destinationEndpoint = destinationEndpoint
         self.state = state
         self.updatedAt = updatedAt
     }
@@ -354,7 +354,7 @@ public struct DeliveryStateRecord: Codable, Equatable {
     }
 
     public var isStructurallyValid: Bool {
-        destinationInstallation.isStructurallyValid
+        destinationEndpoint.isStructurallyValid
             && updatedAt.timeIntervalSince1970.isFinite
     }
 

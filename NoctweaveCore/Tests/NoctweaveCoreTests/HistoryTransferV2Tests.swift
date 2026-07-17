@@ -46,7 +46,7 @@ final class HistoryTransferV2Tests: XCTestCase {
 
         let control = ConversationEvent(
             conversationId: "conversation-1",
-            authorInstallationHandle: fixture.authorHandle,
+            authorEndpointHandle: fixture.authorHandle,
             createdAt: fixture.createdAt,
             kind: .control,
             content: try XCTUnwrap(EncodedContent.text("rotate"))
@@ -74,10 +74,10 @@ final class HistoryTransferV2Tests: XCTestCase {
         let visibleJSON = try XCTUnwrap(String(data: encoded, encoding: .utf8))
         let forbiddenVisibleValues = [
             fixture.identityGenerationId.uuidString,
-            fixture.senderInstallationId.uuidString,
-            fixture.recipientInstallationId.uuidString,
+            fixture.senderEndpointId.uuidString,
+            fixture.recipientEndpointId.uuidString,
             fixture.authorityKey.publicKeyData.base64EncodedString(),
-            fixture.senderInstallationKey.publicKeyData.base64EncodedString(),
+            fixture.senderEndpointKey.publicKeyData.base64EncodedString(),
             fixture.recipientAgreementKey.publicKeyData.base64EncodedString(),
             String(fixture.createdAt.timeIntervalSinceReferenceDate),
             String(fixture.expiresAt.timeIntervalSinceReferenceDate)
@@ -100,9 +100,9 @@ final class HistoryTransferV2Tests: XCTestCase {
         let secondTransport = try HistoryTransferV2.exportArchive(
             longerProjection,
             senderIdentityAuthorityKey: fixture.authorityKey,
-            senderInstallationId: fixture.senderInstallationId,
-            senderInstallationSigningKey: fixture.senderInstallationKey,
-            recipientInstallationId: fixture.recipientInstallationId,
+            senderEndpointId: fixture.senderEndpointId,
+            senderEndpointSigningKey: fixture.senderEndpointKey,
+            recipientEndpointId: fixture.recipientEndpointId,
             recipientAgreementPublicKey: fixture.recipientAgreementKey.publicKeyData,
             createdAt: fixture.createdAt,
             expiresAt: fixture.expiresAt
@@ -198,9 +198,9 @@ final class HistoryTransferV2Tests: XCTestCase {
             keyWrap: fixture.package.keyWrap,
             keyWrapDigest: fixture.package.keyWrapDigest,
             senderIdentityAuthorityPublicKey: fixture.package.senderIdentityAuthorityPublicKey,
-            senderInstallationSigningPublicKey: fixture.package.senderInstallationSigningPublicKey,
+            senderEndpointSigningPublicKey: fixture.package.senderEndpointSigningPublicKey,
             authoritySignature: fixture.package.authoritySignature,
-            installationPossessionSignature: fixture.package.installationPossessionSignature
+            endpointPossessionSignature: fixture.package.endpointPossessionSignature
         )
 
         XCTAssertThrowsError(
@@ -230,7 +230,7 @@ final class HistoryTransferV2Tests: XCTestCase {
         }
         XCTAssertTrue(ledger.receipts.isEmpty)
 
-        var possessionSignature = fixture.package.installationPossessionSignature
+        var possessionSignature = fixture.package.endpointPossessionSignature
         possessionSignature[possessionSignature.startIndex] ^= 0x01
         let forgedPossession = EncryptedHistoryArchiveV2(
             manifest: fixture.package.manifest,
@@ -239,9 +239,9 @@ final class HistoryTransferV2Tests: XCTestCase {
             keyWrap: fixture.package.keyWrap,
             keyWrapDigest: fixture.package.keyWrapDigest,
             senderIdentityAuthorityPublicKey: fixture.package.senderIdentityAuthorityPublicKey,
-            senderInstallationSigningPublicKey: fixture.package.senderInstallationSigningPublicKey,
+            senderEndpointSigningPublicKey: fixture.package.senderEndpointSigningPublicKey,
             authoritySignature: fixture.package.authoritySignature,
-            installationPossessionSignature: possessionSignature
+            endpointPossessionSignature: possessionSignature
         )
         XCTAssertThrowsError(
             try HistoryTransferV2.importInnerArchive(
@@ -252,7 +252,7 @@ final class HistoryTransferV2Tests: XCTestCase {
                 at: fixture.createdAt.addingTimeInterval(1)
             )
         ) { error in
-            XCTAssertEqual(error as? HistoryTransferV2Error, .invalidInstallationSignature)
+            XCTAssertEqual(error as? HistoryTransferV2Error, .invalidEndpointSignature)
         }
         XCTAssertTrue(ledger.receipts.isEmpty)
     }
@@ -298,9 +298,9 @@ final class HistoryTransferV2Tests: XCTestCase {
             changedProjection,
             archiveId: fixture.package.id,
             senderIdentityAuthorityKey: fixture.authorityKey,
-            senderInstallationId: fixture.senderInstallationId,
-            senderInstallationSigningKey: fixture.senderInstallationKey,
-            recipientInstallationId: fixture.recipientInstallationId,
+            senderEndpointId: fixture.senderEndpointId,
+            senderEndpointSigningKey: fixture.senderEndpointKey,
+            recipientEndpointId: fixture.recipientEndpointId,
             recipientAgreementPublicKey: fixture.recipientAgreementKey.publicKeyData,
             createdAt: fixture.createdAt,
             expiresAt: fixture.expiresAt
@@ -337,10 +337,10 @@ final class HistoryTransferV2Tests: XCTestCase {
         XCTAssertThrowsError(try CrossGenerationHistoryBridgeApprovalV2.create(
             sourceIdentityGenerationId: fixture.identityGenerationId,
             recipientIdentityGenerationId: fixture.identityGenerationId,
-            senderEndpointId: fixture.senderInstallationId,
-            recipientEndpointId: fixture.recipientInstallationId,
+            senderEndpointId: fixture.senderEndpointId,
+            recipientEndpointId: fixture.recipientEndpointId,
             senderIdentityAuthorityKey: fixture.authorityKey,
-            senderEndpointSigningKey: fixture.senderInstallationKey,
+            senderEndpointSigningKey: fixture.senderEndpointKey,
             recipientAgreementPublicKey: fixture.recipientAgreementKey.publicKeyData,
             issuedAt: fixture.createdAt,
             expiresAt: fixture.expiresAt
@@ -350,10 +350,10 @@ final class HistoryTransferV2Tests: XCTestCase {
         let approval = try CrossGenerationHistoryBridgeApprovalV2.create(
             sourceIdentityGenerationId: fixture.identityGenerationId,
             recipientIdentityGenerationId: recipientGenerationId,
-            senderEndpointId: fixture.senderInstallationId,
-            recipientEndpointId: fixture.recipientInstallationId,
+            senderEndpointId: fixture.senderEndpointId,
+            recipientEndpointId: fixture.recipientEndpointId,
             senderIdentityAuthorityKey: fixture.authorityKey,
-            senderEndpointSigningKey: fixture.senderInstallationKey,
+            senderEndpointSigningKey: fixture.senderEndpointKey,
             recipientAgreementPublicKey: fixture.recipientAgreementKey.publicKeyData,
             nonce: Data(repeating: 0x7a, count: 32),
             issuedAt: fixture.createdAt,
@@ -362,9 +362,9 @@ final class HistoryTransferV2Tests: XCTestCase {
         let transport = try HistoryTransferV2.exportCrossGenerationArchive(
             fixture.projection,
             senderIdentityAuthorityKey: fixture.authorityKey,
-            senderEndpointId: fixture.senderInstallationId,
-            senderEndpointSigningKey: fixture.senderInstallationKey,
-            recipientEndpointId: fixture.recipientInstallationId,
+            senderEndpointId: fixture.senderEndpointId,
+            senderEndpointSigningKey: fixture.senderEndpointKey,
+            recipientEndpointId: fixture.recipientEndpointId,
             recipientAgreementPublicKey: fixture.recipientAgreementKey.publicKeyData,
             approval: approval,
             createdAt: fixture.createdAt,
@@ -459,8 +459,8 @@ final class HistoryTransferV2Tests: XCTestCase {
             id: original.id,
             projectionId: original.projectionId,
             identityGenerationId: original.identityGenerationId,
-            createdByInstallationId: original.createdByInstallationId,
-            recipientInstallationId: original.recipientInstallationId,
+            createdByEndpointId: original.createdByEndpointId,
+            recipientEndpointId: original.recipientEndpointId,
             recipientAgreementPublicKeyDigest: original.recipientAgreementPublicKeyDigest,
             createdAt: original.createdAt,
             expiresAt: original.expiresAt,
@@ -480,9 +480,9 @@ final class HistoryTransferV2Tests: XCTestCase {
             keyWrap: fixture.package.keyWrap,
             keyWrapDigest: fixture.package.keyWrapDigest,
             senderIdentityAuthorityPublicKey: fixture.package.senderIdentityAuthorityPublicKey,
-            senderInstallationSigningPublicKey: fixture.package.senderInstallationSigningPublicKey,
+            senderEndpointSigningPublicKey: fixture.package.senderEndpointSigningPublicKey,
             authoritySignature: fixture.package.authoritySignature,
-            installationPossessionSignature: fixture.package.installationPossessionSignature
+            endpointPossessionSignature: fixture.package.endpointPossessionSignature
         )
         var ledger = HistoryArchiveImportLedgerV2()
 
@@ -520,13 +520,13 @@ private struct Fixture {
     let createdAt = Date(timeIntervalSince1970: 10_000)
     let expiresAt = Date(timeIntervalSince1970: 10_600)
     let identityGenerationId = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
-    let senderInstallationId = UUID(uuidString: "20000000-0000-0000-0000-000000000002")!
-    let recipientInstallationId = UUID(uuidString: "30000000-0000-0000-0000-000000000003")!
-    let authorHandle = RelationshipInstallationHandle(
+    let senderEndpointId = UUID(uuidString: "20000000-0000-0000-0000-000000000002")!
+    let recipientEndpointId = UUID(uuidString: "30000000-0000-0000-0000-000000000003")!
+    let authorHandle = RelationshipEndpointHandle(
         rawValue: Data(repeating: 0x41, count: 32).base64EncodedString()
     )
     let authorityKey: SigningKeyPair
-    let senderInstallationKey: SigningKeyPair
+    let senderEndpointKey: SigningKeyPair
     let recipientAgreementKey: AgreementKeyPair
     let projection: ReadOnlyHistoryProjectionV2
     let package: EncryptedHistoryArchiveV2
@@ -535,13 +535,13 @@ private struct Fixture {
 
     init() throws {
         authorityKey = try SigningKeyPair.generate()
-        senderInstallationKey = try SigningKeyPair.generate()
+        senderEndpointKey = try SigningKeyPair.generate()
         recipientAgreementKey = try AgreementKeyPair.generate()
         let event = HistoryEventProjectionV2(
             id: UUID(uuidString: "40000000-0000-0000-0000-000000000004")!,
             clientTransactionId: UUID(uuidString: "50000000-0000-0000-0000-000000000005")!,
             conversationId: "conversation-1",
-            authorInstallationHandle: authorHandle,
+            authorEndpointHandle: authorHandle,
             createdAt: createdAt,
             kind: .application,
             content: try XCTUnwrap(EncodedContent.text("historical hello"))
@@ -570,9 +570,9 @@ private struct Fixture {
             projection,
             archiveId: UUID(uuidString: "80000000-0000-0000-0000-000000000008")!,
             senderIdentityAuthorityKey: authorityKey,
-            senderInstallationId: senderInstallationId,
-            senderInstallationSigningKey: senderInstallationKey,
-            recipientInstallationId: recipientInstallationId,
+            senderEndpointId: senderEndpointId,
+            senderEndpointSigningKey: senderEndpointKey,
+            recipientEndpointId: recipientEndpointId,
             recipientAgreementPublicKey: recipientAgreementKey.publicKeyData,
             createdAt: createdAt,
             expiresAt: expiresAt
@@ -581,19 +581,19 @@ private struct Fixture {
             projection,
             archiveId: UUID(uuidString: "80000000-0000-0000-0000-000000000008")!,
             senderIdentityAuthorityKey: authorityKey,
-            senderInstallationId: senderInstallationId,
-            senderInstallationSigningKey: senderInstallationKey,
-            recipientInstallationId: recipientInstallationId,
+            senderEndpointId: senderEndpointId,
+            senderEndpointSigningKey: senderEndpointKey,
+            recipientEndpointId: recipientEndpointId,
             recipientAgreementPublicKey: recipientAgreementKey.publicKeyData,
             createdAt: createdAt,
             expiresAt: expiresAt
         )
         trust = HistoryArchiveImportTrustV2(
             identityGenerationId: identityGenerationId,
-            senderInstallationId: senderInstallationId,
-            recipientInstallationId: recipientInstallationId,
+            senderEndpointId: senderEndpointId,
+            recipientEndpointId: recipientEndpointId,
             senderIdentityAuthorityPublicKey: authorityKey.publicKeyData,
-            senderInstallationSigningPublicKey: senderInstallationKey.publicKeyData
+            senderEndpointSigningPublicKey: senderEndpointKey.publicKeyData
         )
     }
 
@@ -603,7 +603,7 @@ private struct Fixture {
             id: original.id,
             clientTransactionId: original.clientTransactionId,
             conversationId: original.conversationId,
-            authorInstallationHandle: original.authorInstallationHandle,
+            authorEndpointHandle: original.authorEndpointHandle,
             createdAt: original.createdAt,
             kind: original.kind,
             content: EncodedContent.text(text)!,

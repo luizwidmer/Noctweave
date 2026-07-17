@@ -154,9 +154,9 @@ final class EnvelopeWireFidelityTests: XCTestCase {
                   "cipherSuite":"nw.direct-v4.ml-kem-768.ml-dsa-65.hkdf-sha256.hmac-sha256.aes-256-gcm",
                   "negotiatedCapabilitiesDigest":"iIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIg=",
                   "eventId":"55555555-5555-5555-5555-555555555555",
-                  "senderInstallationHandle":"REREREREREREREREREREREREREREREREREREREREREQ=",
+                  "senderEndpointHandle":"REREREREREREREREREREREREREREREREREREREREREQ=",
                   "senderCertificateDigest":"VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVU=",
-                  "recipientInstallationHandle":"ZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmY=",
+                  "recipientEndpointHandle":"ZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmY=",
                   "senderManifestEpoch":4,
                   "recipientManifestEpoch":7,
                   "recipientCertificateDigest":"d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3c="
@@ -201,7 +201,7 @@ final class EnvelopeWireFidelityTests: XCTestCase {
         cipherSuite: String = "nw.direct-v4.ml-kem-768.ml-dsa-65.hkdf-sha256.hmac-sha256.aes-256-gcm",
         capabilitiesDigest: Data = Data(repeating: 0x88, count: 32)
     ) -> Envelope {
-        let senderHandle = RelationshipInstallationHandle(
+        let senderHandle = RelationshipEndpointHandle(
             rawValue: Data(repeating: 0x44, count: 32).base64EncodedString()
         )
         return Envelope(
@@ -219,9 +219,9 @@ final class EnvelopeWireFidelityTests: XCTestCase {
                     cipherSuite: cipherSuite,
                     negotiatedCapabilitiesDigest: capabilitiesDigest,
                     eventId: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
-                    senderInstallationHandle: senderHandle,
+                    senderEndpointHandle: senderHandle,
                     senderCertificateDigest: Data(repeating: 0x55, count: 32),
-                    recipientInstallationHandle: RelationshipInstallationHandle(
+                    recipientEndpointHandle: RelationshipEndpointHandle(
                         rawValue: Data(repeating: 0x66, count: 32).base64EncodedString()
                     ),
                     senderManifestEpoch: 4,

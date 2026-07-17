@@ -4,9 +4,9 @@ import XCTest
 final class RelationshipEventCompactionTests: XCTestCase {
     func testCheckpointCompactionIsDeterministicBoundedAndAppendableAfterRoundTrip() throws {
         let relationshipId = UUID()
-        let handle = RelationshipInstallationHandle.generate(
+        let handle = RelationshipEndpointHandle.generate(
             identityGenerationId: UUID(),
-            installationId: UUID(),
+            endpointId: UUID(),
             relationshipId: relationshipId,
             nonce: UUID()
         )
@@ -24,14 +24,14 @@ final class RelationshipEventCompactionTests: XCTestCase {
         var first = RelationshipStateV2(
             id: relationshipId,
             contactId: UUID(),
-            localInstallationHandle: handle,
+            localEndpointHandle: handle,
             conversationIds: [conversationId],
             createdAt: createdAt
         )
         var replay = RelationshipStateV2(
             id: relationshipId,
             contactId: first.contactId,
-            localInstallationHandle: handle,
+            localEndpointHandle: handle,
             conversationIds: [conversationId],
             createdAt: createdAt
         )
@@ -114,9 +114,9 @@ final class RelationshipEventCompactionTests: XCTestCase {
     func testCheckpointIsRelationshipBoundAndMalformedCheckpointFailsClosed() throws {
         let relationshipId = UUID()
         let otherRelationshipId = UUID()
-        let handle = RelationshipInstallationHandle.generate(
+        let handle = RelationshipEndpointHandle.generate(
             identityGenerationId: UUID(),
-            installationId: UUID(),
+            endpointId: UUID(),
             relationshipId: relationshipId,
             nonce: UUID()
         )
@@ -148,7 +148,7 @@ final class RelationshipEventCompactionTests: XCTestCase {
         let invalid = RelationshipStateV2(
             id: relationshipId,
             contactId: UUID(),
-            localInstallationHandle: handle,
+            localEndpointHandle: handle,
             conversationIds: [event.conversationId],
             events: [event],
             eventCheckpoint: malformed
@@ -160,14 +160,14 @@ final class RelationshipEventCompactionTests: XCTestCase {
 private func relationshipEvent(
     index: Int,
     conversationId: String,
-    handle: RelationshipInstallationHandle,
+    handle: RelationshipEndpointHandle,
     createdAt: Date
 ) throws -> ConversationEvent {
     ConversationEvent(
         id: UUID(),
         clientTransactionId: UUID(),
         conversationId: conversationId,
-        authorInstallationHandle: handle,
+        authorEndpointHandle: handle,
         createdAt: createdAt.addingTimeInterval(TimeInterval(index)),
         kind: .application,
         content: try XCTUnwrap(EncodedContent.text("event-\(index)"))

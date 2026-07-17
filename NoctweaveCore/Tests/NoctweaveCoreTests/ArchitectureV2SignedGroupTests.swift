@@ -4,18 +4,18 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ArchitectureV2SignedGroupTests: XCTestCase {
-    func testGroupClientKeyPackageBindsGroupIdentityInstallationAndGroupKeyPossession() throws {
+    func testGroupClientKeyPackageBindsGroupIdentityEndpointAndGroupKeyPossession() throws {
         let now = Date()
         let identityGenerationId = UUID()
         let identity = try Identity.generate(displayName: "Owner")
-        let installation = try LocalInstallationState.generate(
+        let endpoint = try LocalEndpointState.generate(
             identityGenerationId: identityGenerationId,
             createdAt: now.addingTimeInterval(-20)
         )
-        let manifest = try InstallationManifest.create(
+        let manifest = try EndpointSetManifest.create(
             identityGenerationId: identityGenerationId,
             epoch: 0,
-            installations: [installation.publicRecord(addedEpoch: 0)],
+            endpoints: [endpoint.publicRecord(addedEpoch: 0)],
             identity: identity,
             issuedAt: now.addingTimeInterval(-10)
         )
@@ -26,9 +26,9 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
         let package = try GroupClientKeyPackageV2.create(
             groupId: groupId,
             groupUserId: userId,
-            clientHandle: .generate(groupId: groupId, installationId: installation.id),
+            clientHandle: .generate(),
             identity: identity,
-            installation: installation,
+            endpoint: endpoint,
             manifest: manifest,
             groupSigningKey: groupSigningKey,
             groupAgreementKey: groupAgreementKey,
@@ -53,7 +53,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             XCTAssertEqual(error as? SignedGroupV2Error, .invalidContext)
         }
 
-        let tampered = copy(package, installationSignature: flipped(package.installationPossessionSignature))
+        let tampered = copy(package, endpointSignature: flipped(package.endpointPossessionSignature))
         XCTAssertThrowsError(try tampered.verified(
             forGroupId: groupId,
             groupUserId: userId,
@@ -61,7 +61,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             manifest: manifest,
             now: now
         )) { error in
-            XCTAssertEqual(error as? SignedGroupV2Error, .invalidInstallationSignature)
+            XCTAssertEqual(error as? SignedGroupV2Error, .invalidEndpointSignature)
         }
     }
 
@@ -657,8 +657,8 @@ private extension ArchitectureV2SignedGroupTests {
 
     struct Admission {
         let identity: Identity
-        let installation: LocalInstallationState
-        let manifest: InstallationManifest
+        let endpoint: LocalEndpointState
+        let manifest: EndpointSetManifest
         let package: GroupClientKeyPackageV2
         let projection: GroupClientAdmissionProjectionV2
         let packageLeaf: GroupClientLeafV2
@@ -895,14 +895,14 @@ private extension ArchitectureV2SignedGroupTests {
     ) throws -> Admission {
         let identityGenerationId = UUID()
         let identity = try Identity.generate(displayName: "Admitted user")
-        let installation = try LocalInstallationState.generate(
+        let endpoint = try LocalEndpointState.generate(
             identityGenerationId: identityGenerationId,
             createdAt: issuedAt.addingTimeInterval(-20)
         )
-        let manifest = try InstallationManifest.create(
+        let manifest = try EndpointSetManifest.create(
             identityGenerationId: identityGenerationId,
             epoch: 0,
-            installations: [installation.publicRecord(addedEpoch: 0)],
+            endpoints: [endpoint.publicRecord(addedEpoch: 0)],
             identity: identity,
             issuedAt: issuedAt.addingTimeInterval(-10)
         )
@@ -914,7 +914,7 @@ private extension ArchitectureV2SignedGroupTests {
             groupUserId: userId,
             clientHandle: resolvedClientHandle,
             identity: identity,
-            installation: installation,
+            endpoint: endpoint,
             manifest: manifest,
             groupSigningKey: groupSigningKey,
             groupAgreementKey: groupAgreementKey,
@@ -932,7 +932,7 @@ private extension ArchitectureV2SignedGroupTests {
         )
         return Admission(
             identity: identity,
-            installation: installation,
+            endpoint: endpoint,
             manifest: manifest,
             package: package,
             projection: projection,
@@ -1034,7 +1034,7 @@ private extension ArchitectureV2SignedGroupTests {
         groupUserId: UUID? = nil,
         clientHandle: GroupScopedClientHandleV2? = nil,
         authoritySignature: Data? = nil,
-        installationSignature: Data? = nil,
+        endpointSignature: Data? = nil,
         clientSignature: Data? = nil
     ) -> GroupClientKeyPackageV2 {
         GroupClientKeyPackageV2(
@@ -1045,17 +1045,17 @@ private extension ArchitectureV2SignedGroupTests {
             identityGenerationId: package.identityGenerationId,
             manifestEpoch: package.manifestEpoch,
             manifestDigest: package.manifestDigest,
-            installationId: package.installationId,
-            installationSigningPublicKey: package.installationSigningPublicKey,
-            installationAgreementPublicKey: package.installationAgreementPublicKey,
+            endpointId: package.endpointId,
+            endpointSigningPublicKey: package.endpointSigningPublicKey,
+            endpointAgreementPublicKey: package.endpointAgreementPublicKey,
             groupSigningPublicKey: package.groupSigningPublicKey,
             groupAgreementPublicKey: package.groupAgreementPublicKey,
             capabilities: package.capabilities,
             issuedAt: package.issuedAt,
             expiresAt: package.expiresAt,
             authoritySignature: authoritySignature ?? package.authoritySignature,
-            installationPossessionSignature:
-                installationSignature ?? package.installationPossessionSignature,
+            endpointPossessionSignature:
+                endpointSignature ?? package.endpointPossessionSignature,
             groupClientPossessionSignature:
                 clientSignature ?? package.groupClientPossessionSignature
         )

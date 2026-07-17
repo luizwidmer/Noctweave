@@ -18,7 +18,7 @@ public enum SelfSyncConvergenceV2Error: Error, Equatable {
 
 public enum SelfSyncExternalHandlingV2: Equatable {
     case conversationEvent(ConversationEvent)
-    case endpointManifest(InstallationManifest)
+    case endpointSetManifest(EndpointSetManifest)
     case relationshipRouteSet(RelationshipRouteSetV2)
     case groupCommit(SignedGroupCommitV2)
 }
@@ -177,8 +177,8 @@ public struct SelfSyncConvergenceProjectionV2: Codable, Equatable {
             return try applyPreference(update, stamp: stamp)
         case .conversationEvent(let event):
             return .requiresExternalHandling(.conversationEvent(event))
-        case .endpointManifest(let manifest):
-            return .requiresExternalHandling(.endpointManifest(manifest))
+        case .endpointSetManifest(let manifest):
+            return .requiresExternalHandling(.endpointSetManifest(manifest))
         case .relationshipRouteSet(let routeSet):
             return .requiresExternalHandling(.relationshipRouteSet(routeSet))
         case .groupCommit(let commit):

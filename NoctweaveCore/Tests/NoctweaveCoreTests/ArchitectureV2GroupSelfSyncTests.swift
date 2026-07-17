@@ -24,7 +24,7 @@ final class ArchitectureV2GroupSelfSyncTests: XCTestCase {
         XCTAssertTrue(policy.allows(.updatePolicy, for: .owner))
     }
 
-    func testRevokingOneGroupClientLeafPreservesSiblingInstallation() throws {
+    func testRevokingOneGroupClientLeafPreservesSiblingEndpoint() throws {
         let owner = GroupUser(id: UUID(), role: .owner, addedEpoch: 1)
         let member = GroupUser(id: UUID(), role: .member, addedEpoch: 1)
         let ownerLeaf = clientLeaf(userId: owner.id, marker: 1)
@@ -68,7 +68,7 @@ final class ArchitectureV2GroupSelfSyncTests: XCTestCase {
         GroupClientLeaf(
             id: UUID(),
             userId: userId,
-            installationHandle: RelationshipInstallationHandle(
+            endpointHandle: RelationshipEndpointHandle(
                 rawValue: Data(repeating: marker, count: 32).base64EncodedString()
             ),
             keyPackageDigest: Data(repeating: marker, count: 32),

@@ -54,7 +54,7 @@ public enum HistoryTransferV2Error: Error, Equatable {
     case ciphertextDigestMismatch
     case keyWrapDigestMismatch
     case invalidAuthoritySignature
-    case invalidInstallationSignature
+    case invalidEndpointSignature
     case crossGenerationApprovalRequired
     case invalidCrossGenerationApproval
     case decryptionFailed
@@ -73,7 +73,7 @@ public struct HistoryEventProjectionV2: Codable, Equatable, Identifiable {
     public let id: UUID
     public let clientTransactionId: UUID
     public let conversationId: String
-    public let authorInstallationHandle: RelationshipInstallationHandle
+    public let authorEndpointHandle: RelationshipEndpointHandle
     public let createdAt: Date
     public let kind: HistoryEventProjectionKindV2
     public let content: EncodedContent
@@ -84,7 +84,7 @@ public struct HistoryEventProjectionV2: Codable, Equatable, Identifiable {
         id: UUID,
         clientTransactionId: UUID,
         conversationId: String,
-        authorInstallationHandle: RelationshipInstallationHandle,
+        authorEndpointHandle: RelationshipEndpointHandle,
         createdAt: Date,
         kind: HistoryEventProjectionKindV2,
         content: EncodedContent,
@@ -94,7 +94,7 @@ public struct HistoryEventProjectionV2: Codable, Equatable, Identifiable {
         self.id = id
         self.clientTransactionId = clientTransactionId
         self.conversationId = conversationId
-        self.authorInstallationHandle = authorInstallationHandle
+        self.authorEndpointHandle = authorEndpointHandle
         self.createdAt = createdAt
         self.kind = kind
         self.content = content
@@ -115,7 +115,7 @@ public struct HistoryEventProjectionV2: Codable, Equatable, Identifiable {
             id: event.id,
             clientTransactionId: event.clientTransactionId,
             conversationId: event.conversationId,
-            authorInstallationHandle: event.authorInstallationHandle,
+            authorEndpointHandle: event.authorEndpointHandle,
             createdAt: event.createdAt,
             kind: projectedKind,
             content: event.content,
@@ -128,7 +128,7 @@ public struct HistoryEventProjectionV2: Codable, Equatable, Identifiable {
             && !conversationId.isEmpty
             && conversationId.utf8.count <= 256
             && conversationId.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
-            && authorInstallationHandle.isStructurallyValid
+            && authorEndpointHandle.isStructurallyValid
             && createdAt.timeIntervalSince1970.isFinite
             && content.isStructurallyValid
             && !(kind == .receipt && relation != nil)
@@ -219,7 +219,7 @@ public struct HistoryContactAliasV2: Codable, Equatable, Identifiable {
 
 /// The only plaintext accepted by the exporter and returned by the importer.
 ///
-/// Its schema has no identity or installation private keys, inbox authority, ratchet/root/chain
+/// Its schema has no identity or endpoint private keys, inbox authority, ratchet/root/chain
 /// state, reusable prekeys, self-sync key, app-lock material, routes, mailbox credentials, group
 /// leaves, or future-participation authorization.
 public struct ReadOnlyHistoryProjectionV2: Codable, Equatable, Identifiable {
@@ -473,9 +473,9 @@ public struct HistoryArchiveManifestV2: Codable, Equatable, Identifiable {
     public let id: UUID
     public let projectionId: UUID
     public let identityGenerationId: UUID
-    public let createdByInstallationId: UUID
+    public let createdByEndpointId: UUID
     public let recipientIdentityGenerationId: UUID
-    public let recipientInstallationId: UUID
+    public let recipientEndpointId: UUID
     public let recipientAgreementPublicKeyDigest: Data
     public let crossGenerationApprovalDigest: Data?
     public let scope: HistoryAccessScope
@@ -496,9 +496,9 @@ public struct HistoryArchiveManifestV2: Codable, Equatable, Identifiable {
         id: UUID,
         projectionId: UUID,
         identityGenerationId: UUID,
-        createdByInstallationId: UUID,
+        createdByEndpointId: UUID,
         recipientIdentityGenerationId: UUID? = nil,
-        recipientInstallationId: UUID,
+        recipientEndpointId: UUID,
         recipientAgreementPublicKeyDigest: Data,
         crossGenerationApprovalDigest: Data? = nil,
         scope: HistoryAccessScope = .readOnlyHistory,
@@ -518,9 +518,9 @@ public struct HistoryArchiveManifestV2: Codable, Equatable, Identifiable {
         self.id = id
         self.projectionId = projectionId
         self.identityGenerationId = identityGenerationId
-        self.createdByInstallationId = createdByInstallationId
+        self.createdByEndpointId = createdByEndpointId
         self.recipientIdentityGenerationId = recipientIdentityGenerationId ?? identityGenerationId
-        self.recipientInstallationId = recipientInstallationId
+        self.recipientEndpointId = recipientEndpointId
         self.recipientAgreementPublicKeyDigest = recipientAgreementPublicKeyDigest
         self.crossGenerationApprovalDigest = crossGenerationApprovalDigest
         self.scope = scope
@@ -602,11 +602,11 @@ public struct HistoryArchiveKeyWrapV2: Codable, Equatable {
     }
 }
 
-/// The signed inner archive. This object contains identity and installation metadata and must not
+/// The signed inner archive. This object contains identity and endpoint metadata and must not
 /// be sent directly over a transport. Seal it as `SealedHistoryArchiveTransportV2` first.
 ///
 /// Its two signatures have distinct purposes: the identity authority authorizes the handoff, then
-/// the sending installation proves possession over that exact authorization.
+/// the sending endpoint proves possession over that exact authorization.
 public struct EncryptedHistoryArchiveV2: Codable, Equatable, Identifiable {
     public var id: UUID { manifest.id }
     public let manifest: HistoryArchiveManifestV2
@@ -615,9 +615,9 @@ public struct EncryptedHistoryArchiveV2: Codable, Equatable, Identifiable {
     public let keyWrap: HistoryArchiveKeyWrapV2
     public let keyWrapDigest: Data
     public let senderIdentityAuthorityPublicKey: Data
-    public let senderInstallationSigningPublicKey: Data
+    public let senderEndpointSigningPublicKey: Data
     public let authoritySignature: Data
-    public let installationPossessionSignature: Data
+    public let endpointPossessionSignature: Data
 
     public init(
         manifest: HistoryArchiveManifestV2,
@@ -626,9 +626,9 @@ public struct EncryptedHistoryArchiveV2: Codable, Equatable, Identifiable {
         keyWrap: HistoryArchiveKeyWrapV2,
         keyWrapDigest: Data,
         senderIdentityAuthorityPublicKey: Data,
-        senderInstallationSigningPublicKey: Data,
+        senderEndpointSigningPublicKey: Data,
         authoritySignature: Data,
-        installationPossessionSignature: Data
+        endpointPossessionSignature: Data
     ) {
         self.manifest = manifest
         self.manifestDigest = manifestDigest
@@ -636,9 +636,9 @@ public struct EncryptedHistoryArchiveV2: Codable, Equatable, Identifiable {
         self.keyWrap = keyWrap
         self.keyWrapDigest = keyWrapDigest
         self.senderIdentityAuthorityPublicKey = senderIdentityAuthorityPublicKey
-        self.senderInstallationSigningPublicKey = senderInstallationSigningPublicKey
+        self.senderEndpointSigningPublicKey = senderEndpointSigningPublicKey
         self.authoritySignature = authoritySignature
-        self.installationPossessionSignature = installationPossessionSignature
+        self.endpointPossessionSignature = endpointPossessionSignature
     }
 
     public var isStructurallyValid: Bool {
@@ -650,12 +650,12 @@ public struct EncryptedHistoryArchiveV2: Codable, Equatable, Identifiable {
             && keyWrap.isStructurallyValid
             && keyWrapDigest.count == 32
             && SigningKeyPair.isValidPublicKey(senderIdentityAuthorityPublicKey)
-            && SigningKeyPair.isValidPublicKey(senderInstallationSigningPublicKey)
-            && senderIdentityAuthorityPublicKey != senderInstallationSigningPublicKey
+            && SigningKeyPair.isValidPublicKey(senderEndpointSigningPublicKey)
+            && senderIdentityAuthorityPublicKey != senderEndpointSigningPublicKey
             && !authoritySignature.isEmpty
             && authoritySignature.count <= NoctweaveHistoryTransferV2.maximumSignatureBytes
-            && !installationPossessionSignature.isEmpty
-            && installationPossessionSignature.count <= NoctweaveHistoryTransferV2.maximumSignatureBytes
+            && !endpointPossessionSignature.isEmpty
+            && endpointPossessionSignature.count <= NoctweaveHistoryTransferV2.maximumSignatureBytes
     }
 
     /// Low-level encoding used only as plaintext for the recipient-encrypted outer transport seal.
@@ -722,42 +722,42 @@ public struct SealedHistoryArchiveTransportV2: Codable, Equatable {
 public struct HistoryArchiveImportTrustV2: Equatable {
     public let identityGenerationId: UUID
     public let recipientIdentityGenerationId: UUID
-    public let senderInstallationId: UUID
-    public let recipientInstallationId: UUID
+    public let senderEndpointId: UUID
+    public let recipientEndpointId: UUID
     public let senderIdentityAuthorityPublicKey: Data
-    public let senderInstallationSigningPublicKey: Data
+    public let senderEndpointSigningPublicKey: Data
     let crossGenerationApprovalDigest: Data?
 
     public init(
         identityGenerationId: UUID,
-        senderInstallationId: UUID,
-        recipientInstallationId: UUID,
+        senderEndpointId: UUID,
+        recipientEndpointId: UUID,
         senderIdentityAuthorityPublicKey: Data,
-        senderInstallationSigningPublicKey: Data
+        senderEndpointSigningPublicKey: Data
     ) {
         self.identityGenerationId = identityGenerationId
         self.recipientIdentityGenerationId = identityGenerationId
-        self.senderInstallationId = senderInstallationId
-        self.recipientInstallationId = recipientInstallationId
+        self.senderEndpointId = senderEndpointId
+        self.recipientEndpointId = recipientEndpointId
         self.senderIdentityAuthorityPublicKey = senderIdentityAuthorityPublicKey
-        self.senderInstallationSigningPublicKey = senderInstallationSigningPublicKey
+        self.senderEndpointSigningPublicKey = senderEndpointSigningPublicKey
         self.crossGenerationApprovalDigest = nil
     }
 
     init(bridging approval: CrossGenerationHistoryBridgeApprovalV2) {
         identityGenerationId = approval.sourceIdentityGenerationId
         recipientIdentityGenerationId = approval.recipientIdentityGenerationId
-        senderInstallationId = approval.senderEndpointId
-        recipientInstallationId = approval.recipientEndpointId
+        senderEndpointId = approval.senderEndpointId
+        recipientEndpointId = approval.recipientEndpointId
         senderIdentityAuthorityPublicKey = approval.senderIdentityAuthorityPublicKey
-        senderInstallationSigningPublicKey = approval.senderEndpointSigningPublicKey
+        senderEndpointSigningPublicKey = approval.senderEndpointSigningPublicKey
         crossGenerationApprovalDigest = approval.digest
     }
 
     public var isStructurallyValid: Bool {
         SigningKeyPair.isValidPublicKey(senderIdentityAuthorityPublicKey)
-            && SigningKeyPair.isValidPublicKey(senderInstallationSigningPublicKey)
-            && senderIdentityAuthorityPublicKey != senderInstallationSigningPublicKey
+            && SigningKeyPair.isValidPublicKey(senderEndpointSigningPublicKey)
+            && senderIdentityAuthorityPublicKey != senderEndpointSigningPublicKey
             && (recipientIdentityGenerationId == identityGenerationId
                 ? crossGenerationApprovalDigest == nil
                 : crossGenerationApprovalDigest?.count == 32)
@@ -846,9 +846,9 @@ public enum HistoryTransferV2 {
         _ projection: ReadOnlyHistoryProjectionV2,
         archiveId: UUID = UUID(),
         senderIdentityAuthorityKey: SigningKeyPair,
-        senderInstallationId: UUID,
-        senderInstallationSigningKey: SigningKeyPair,
-        recipientInstallationId: UUID,
+        senderEndpointId: UUID,
+        senderEndpointSigningKey: SigningKeyPair,
+        recipientEndpointId: UUID,
         recipientAgreementPublicKey: Data,
         createdAt: Date = Date(),
         expiresAt: Date
@@ -857,9 +857,9 @@ public enum HistoryTransferV2 {
             projection,
             archiveId: archiveId,
             senderIdentityAuthorityKey: senderIdentityAuthorityKey,
-            senderInstallationId: senderInstallationId,
-            senderInstallationSigningKey: senderInstallationSigningKey,
-            recipientInstallationId: recipientInstallationId,
+            senderEndpointId: senderEndpointId,
+            senderEndpointSigningKey: senderEndpointSigningKey,
+            recipientEndpointId: recipientEndpointId,
             recipientAgreementPublicKey: recipientAgreementPublicKey,
             createdAt: createdAt,
             expiresAt: expiresAt
@@ -876,9 +876,9 @@ public enum HistoryTransferV2 {
         _ projection: ReadOnlyHistoryProjectionV2,
         archiveId: UUID = UUID(),
         senderIdentityAuthorityKey: SigningKeyPair,
-        senderInstallationId: UUID,
-        senderInstallationSigningKey: SigningKeyPair,
-        recipientInstallationId: UUID,
+        senderEndpointId: UUID,
+        senderEndpointSigningKey: SigningKeyPair,
+        recipientEndpointId: UUID,
         recipientAgreementPublicKey: Data,
         createdAt: Date = Date(),
         expiresAt: Date
@@ -887,10 +887,10 @@ public enum HistoryTransferV2 {
             projection,
             archiveId: archiveId,
             senderIdentityAuthorityKey: senderIdentityAuthorityKey,
-            senderInstallationId: senderInstallationId,
-            senderInstallationSigningKey: senderInstallationSigningKey,
+            senderEndpointId: senderEndpointId,
+            senderEndpointSigningKey: senderEndpointSigningKey,
             recipientIdentityGenerationId: projection.identityGenerationId,
-            recipientInstallationId: recipientInstallationId,
+            recipientEndpointId: recipientEndpointId,
             recipientAgreementPublicKey: recipientAgreementPublicKey,
             crossGenerationApproval: nil,
             createdAt: createdAt,
@@ -917,10 +917,10 @@ public enum HistoryTransferV2 {
             projection,
             archiveId: archiveId,
             senderIdentityAuthorityKey: senderIdentityAuthorityKey,
-            senderInstallationId: senderEndpointId,
-            senderInstallationSigningKey: senderEndpointSigningKey,
+            senderEndpointId: senderEndpointId,
+            senderEndpointSigningKey: senderEndpointSigningKey,
             recipientIdentityGenerationId: approval.recipientIdentityGenerationId,
-            recipientInstallationId: recipientEndpointId,
+            recipientEndpointId: recipientEndpointId,
             recipientAgreementPublicKey: recipientAgreementPublicKey,
             crossGenerationApproval: approval,
             createdAt: createdAt,
@@ -936,10 +936,10 @@ public enum HistoryTransferV2 {
         _ projection: ReadOnlyHistoryProjectionV2,
         archiveId: UUID,
         senderIdentityAuthorityKey: SigningKeyPair,
-        senderInstallationId: UUID,
-        senderInstallationSigningKey: SigningKeyPair,
+        senderEndpointId: UUID,
+        senderEndpointSigningKey: SigningKeyPair,
         recipientIdentityGenerationId: UUID,
-        recipientInstallationId: UUID,
+        recipientEndpointId: UUID,
         recipientAgreementPublicKey: Data,
         crossGenerationApproval: CrossGenerationHistoryBridgeApprovalV2?,
         createdAt: Date,
@@ -947,8 +947,8 @@ public enum HistoryTransferV2 {
     ) throws -> EncryptedHistoryArchiveV2 {
         guard projection.isStructurallyValid,
               SigningKeyPair.isValidPublicKey(senderIdentityAuthorityKey.publicKeyData),
-              SigningKeyPair.isValidPublicKey(senderInstallationSigningKey.publicKeyData),
-              senderIdentityAuthorityKey.publicKeyData != senderInstallationSigningKey.publicKeyData,
+              SigningKeyPair.isValidPublicKey(senderEndpointSigningKey.publicKeyData),
+              senderIdentityAuthorityKey.publicKeyData != senderEndpointSigningKey.publicKeyData,
               AgreementKeyPair.isValidPublicKey(recipientAgreementPublicKey),
               createdAt.timeIntervalSince1970.isFinite,
               expiresAt.timeIntervalSince1970.isFinite else {
@@ -971,12 +971,12 @@ public enum HistoryTransferV2 {
                   approval.verify(at: createdAt),
                   approval.sourceIdentityGenerationId == projection.identityGenerationId,
                   approval.recipientIdentityGenerationId == recipientIdentityGenerationId,
-                  approval.senderEndpointId == senderInstallationId,
-                  approval.recipientEndpointId == recipientInstallationId,
+                  approval.senderEndpointId == senderEndpointId,
+                  approval.recipientEndpointId == recipientEndpointId,
                   approval.senderIdentityAuthorityPublicKey
                     == senderIdentityAuthorityKey.publicKeyData,
                   approval.senderEndpointSigningPublicKey
-                    == senderInstallationSigningKey.publicKeyData,
+                    == senderEndpointSigningKey.publicKeyData,
                   approval.recipientAgreementPublicKeyDigest
                     == Data(SHA256.hash(data: recipientAgreementPublicKey)),
                   expiresAt <= approval.expiresAt,
@@ -1006,9 +1006,9 @@ public enum HistoryTransferV2 {
             archiveId: archiveId,
             projectionId: projection.id,
             identityGenerationId: projection.identityGenerationId,
-            createdByInstallationId: senderInstallationId,
+            createdByEndpointId: senderEndpointId,
             recipientIdentityGenerationId: recipientIdentityGenerationId,
-            recipientInstallationId: recipientInstallationId,
+            recipientEndpointId: recipientEndpointId,
             recipientAgreementPublicKeyDigest: recipientKeyDigest,
             crossGenerationApprovalDigest: crossGenerationApprovalDigest,
             createdAt: createdAt,
@@ -1034,9 +1034,9 @@ public enum HistoryTransferV2 {
             id: archiveId,
             projectionId: projection.id,
             identityGenerationId: projection.identityGenerationId,
-            createdByInstallationId: senderInstallationId,
+            createdByEndpointId: senderEndpointId,
             recipientIdentityGenerationId: recipientIdentityGenerationId,
-            recipientInstallationId: recipientInstallationId,
+            recipientEndpointId: recipientEndpointId,
             recipientAgreementPublicKeyDigest: recipientKeyDigest,
             crossGenerationApprovalDigest: crossGenerationApprovalDigest,
             createdAt: createdAt,
@@ -1059,7 +1059,7 @@ public enum HistoryTransferV2 {
             manifestDigest: manifestDigest,
             identityGenerationId: projection.identityGenerationId,
             recipientIdentityGenerationId: recipientIdentityGenerationId,
-            recipientInstallationId: recipientInstallationId,
+            recipientEndpointId: recipientEndpointId,
             recipientAgreementPublicKeyDigest: recipientKeyDigest,
             crossGenerationApprovalDigest: crossGenerationApprovalDigest,
             scope: .readOnlyHistory,
@@ -1087,10 +1087,10 @@ public enum HistoryTransferV2 {
             keyWrapDigest: keyWrapDigest,
             identityGenerationId: projection.identityGenerationId,
             recipientIdentityGenerationId: recipientIdentityGenerationId,
-            senderInstallationId: senderInstallationId,
+            senderEndpointId: senderEndpointId,
             senderIdentityAuthorityPublicKey: senderIdentityAuthorityKey.publicKeyData,
-            senderInstallationSigningPublicKey: senderInstallationSigningKey.publicKeyData,
-            recipientInstallationId: recipientInstallationId,
+            senderEndpointSigningPublicKey: senderEndpointSigningKey.publicKeyData,
+            recipientEndpointId: recipientEndpointId,
             recipientAgreementPublicKeyDigest: recipientKeyDigest,
             crossGenerationApprovalDigest: crossGenerationApprovalDigest,
             scope: .readOnlyHistory,
@@ -1098,12 +1098,12 @@ public enum HistoryTransferV2 {
         )
         let authorizationData = try NoctweaveCoder.encode(authorization, sortedKeys: true)
         let authoritySignature = try senderIdentityAuthorityKey.sign(authorizationData)
-        let possession = HistoryInstallationPossessionV2(
+        let possession = HistoryEndpointPossessionV2(
             authorizationDigest: Data(SHA256.hash(data: authorizationData)),
             authoritySignatureDigest: Data(SHA256.hash(data: authoritySignature))
         )
         let possessionData = try NoctweaveCoder.encode(possession, sortedKeys: true)
-        let installationSignature = try senderInstallationSigningKey.sign(possessionData)
+        let endpointSignature = try senderEndpointSigningKey.sign(possessionData)
         let package = EncryptedHistoryArchiveV2(
             manifest: manifest,
             manifestDigest: manifestDigest,
@@ -1111,9 +1111,9 @@ public enum HistoryTransferV2 {
             keyWrap: keyWrap,
             keyWrapDigest: keyWrapDigest,
             senderIdentityAuthorityPublicKey: senderIdentityAuthorityKey.publicKeyData,
-            senderInstallationSigningPublicKey: senderInstallationSigningKey.publicKeyData,
+            senderEndpointSigningPublicKey: senderEndpointSigningKey.publicKeyData,
             authoritySignature: authoritySignature,
-            installationPossessionSignature: installationSignature
+            endpointPossessionSignature: endpointSignature
         )
         guard package.isStructurallyValid else { throw HistoryTransferV2Error.invalidPackage }
         return package
@@ -1393,12 +1393,12 @@ public enum HistoryTransferV2 {
                 ? HistoryTransferV2Error.invalidPackage
                 : HistoryTransferV2Error.invalidCrossGenerationApproval
         }
-        guard package.manifest.createdByInstallationId == trust.senderInstallationId,
+        guard package.manifest.createdByEndpointId == trust.senderEndpointId,
               package.senderIdentityAuthorityPublicKey == trust.senderIdentityAuthorityPublicKey,
-              package.senderInstallationSigningPublicKey == trust.senderInstallationSigningPublicKey else {
+              package.senderEndpointSigningPublicKey == trust.senderEndpointSigningPublicKey else {
             throw HistoryTransferV2Error.unauthorizedSender
         }
-        guard package.manifest.recipientInstallationId == trust.recipientInstallationId,
+        guard package.manifest.recipientEndpointId == trust.recipientEndpointId,
               package.manifest.recipientAgreementPublicKeyDigest == Data(SHA256.hash(data: recipientAgreementKey.publicKeyData)) else {
             throw HistoryTransferV2Error.wrongRecipient
         }
@@ -1421,10 +1421,10 @@ public enum HistoryTransferV2 {
             keyWrapDigest: package.keyWrapDigest,
             identityGenerationId: package.manifest.identityGenerationId,
             recipientIdentityGenerationId: package.manifest.recipientIdentityGenerationId,
-            senderInstallationId: package.manifest.createdByInstallationId,
+            senderEndpointId: package.manifest.createdByEndpointId,
             senderIdentityAuthorityPublicKey: package.senderIdentityAuthorityPublicKey,
-            senderInstallationSigningPublicKey: package.senderInstallationSigningPublicKey,
-            recipientInstallationId: package.manifest.recipientInstallationId,
+            senderEndpointSigningPublicKey: package.senderEndpointSigningPublicKey,
+            recipientEndpointId: package.manifest.recipientEndpointId,
             recipientAgreementPublicKeyDigest: package.manifest.recipientAgreementPublicKeyDigest,
             crossGenerationApprovalDigest: package.manifest.crossGenerationApprovalDigest,
             scope: package.manifest.scope,
@@ -1438,17 +1438,17 @@ public enum HistoryTransferV2 {
         ) else {
             throw HistoryTransferV2Error.invalidAuthoritySignature
         }
-        let possession = HistoryInstallationPossessionV2(
+        let possession = HistoryEndpointPossessionV2(
             authorizationDigest: Data(SHA256.hash(data: authorizationData)),
             authoritySignatureDigest: Data(SHA256.hash(data: package.authoritySignature))
         )
         let possessionData = try NoctweaveCoder.encode(possession, sortedKeys: true)
         guard SigningKeyPair.verify(
-            signature: package.installationPossessionSignature,
+            signature: package.endpointPossessionSignature,
             data: possessionData,
-            publicKeyData: package.senderInstallationSigningPublicKey
+            publicKeyData: package.senderEndpointSigningPublicKey
         ) else {
-            throw HistoryTransferV2Error.invalidInstallationSignature
+            throw HistoryTransferV2Error.invalidEndpointSignature
         }
 
         let disposition = try ledger.disposition(for: package)
@@ -1457,7 +1457,7 @@ public enum HistoryTransferV2 {
             manifestDigest: package.manifestDigest,
             identityGenerationId: package.manifest.identityGenerationId,
             recipientIdentityGenerationId: package.manifest.recipientIdentityGenerationId,
-            recipientInstallationId: package.manifest.recipientInstallationId,
+            recipientEndpointId: package.manifest.recipientEndpointId,
             recipientAgreementPublicKeyDigest: package.manifest.recipientAgreementPublicKeyDigest,
             crossGenerationApprovalDigest: package.manifest.crossGenerationApprovalDigest,
             scope: package.manifest.scope,
@@ -1581,9 +1581,9 @@ private struct HistoryArchiveEncryptionContextV2: Encodable {
     let archiveId: UUID
     let projectionId: UUID
     let identityGenerationId: UUID
-    let createdByInstallationId: UUID
+    let createdByEndpointId: UUID
     let recipientIdentityGenerationId: UUID
-    let recipientInstallationId: UUID
+    let recipientEndpointId: UUID
     let recipientAgreementPublicKeyDigest: Data
     let crossGenerationApprovalDigest: Data?
     let scope = HistoryAccessScope.readOnlyHistory
@@ -1601,9 +1601,9 @@ private struct HistoryArchiveEncryptionContextV2: Encodable {
         archiveId: UUID,
         projectionId: UUID,
         identityGenerationId: UUID,
-        createdByInstallationId: UUID,
+        createdByEndpointId: UUID,
         recipientIdentityGenerationId: UUID,
-        recipientInstallationId: UUID,
+        recipientEndpointId: UUID,
         recipientAgreementPublicKeyDigest: Data,
         crossGenerationApprovalDigest: Data?,
         createdAt: Date,
@@ -1618,9 +1618,9 @@ private struct HistoryArchiveEncryptionContextV2: Encodable {
         self.archiveId = archiveId
         self.projectionId = projectionId
         self.identityGenerationId = identityGenerationId
-        self.createdByInstallationId = createdByInstallationId
+        self.createdByEndpointId = createdByEndpointId
         self.recipientIdentityGenerationId = recipientIdentityGenerationId
-        self.recipientInstallationId = recipientInstallationId
+        self.recipientEndpointId = recipientEndpointId
         self.recipientAgreementPublicKeyDigest = recipientAgreementPublicKeyDigest
         self.crossGenerationApprovalDigest = crossGenerationApprovalDigest
         self.createdAt = createdAt
@@ -1638,9 +1638,9 @@ private struct HistoryArchiveEncryptionContextV2: Encodable {
             archiveId: manifest.id,
             projectionId: manifest.projectionId,
             identityGenerationId: manifest.identityGenerationId,
-            createdByInstallationId: manifest.createdByInstallationId,
+            createdByEndpointId: manifest.createdByEndpointId,
             recipientIdentityGenerationId: manifest.recipientIdentityGenerationId,
-            recipientInstallationId: manifest.recipientInstallationId,
+            recipientEndpointId: manifest.recipientEndpointId,
             recipientAgreementPublicKeyDigest: manifest.recipientAgreementPublicKeyDigest,
             crossGenerationApprovalDigest: manifest.crossGenerationApprovalDigest,
             createdAt: manifest.createdAt,
@@ -1661,7 +1661,7 @@ private struct HistoryKeyWrapContextV2: Encodable {
     let manifestDigest: Data
     let identityGenerationId: UUID
     let recipientIdentityGenerationId: UUID
-    let recipientInstallationId: UUID
+    let recipientEndpointId: UUID
     let recipientAgreementPublicKeyDigest: Data
     let crossGenerationApprovalDigest: Data?
     let scope: HistoryAccessScope
@@ -1675,18 +1675,18 @@ private struct HistoryAuthorityAuthorizationV2: Encodable {
     let keyWrapDigest: Data
     let identityGenerationId: UUID
     let recipientIdentityGenerationId: UUID
-    let senderInstallationId: UUID
+    let senderEndpointId: UUID
     let senderIdentityAuthorityPublicKey: Data
-    let senderInstallationSigningPublicKey: Data
-    let recipientInstallationId: UUID
+    let senderEndpointSigningPublicKey: Data
+    let recipientEndpointId: UUID
     let recipientAgreementPublicKeyDigest: Data
     let crossGenerationApprovalDigest: Data?
     let scope: HistoryAccessScope
     let expiresAt: Date
 }
 
-private struct HistoryInstallationPossessionV2: Encodable {
-    let domain = "Noctweave/history-archive-installation-possession/v2"
+private struct HistoryEndpointPossessionV2: Encodable {
+    let domain = "Noctweave/history-archive-endpoint-possession/v2"
     let authorizationDigest: Data
     let authoritySignatureDigest: Data
 }

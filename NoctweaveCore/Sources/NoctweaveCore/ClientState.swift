@@ -58,17 +58,17 @@ public struct ClientState: Codable {
         set { updateActiveProfile { $0.prekeys = newValue } }
     }
 
-    public var localInstallation: LocalInstallationState? {
-        get { activeProfile.localInstallation }
-        set { updateActiveProfile { $0.localInstallation = newValue } }
+    public var localEndpoint: LocalEndpointState? {
+        get { activeProfile.localEndpoint }
+        set { updateActiveProfile { $0.localEndpoint = newValue } }
     }
 
-    public var installationManifest: InstallationManifest? {
-        get { activeProfile.installationManifest }
-        set { updateActiveProfile { $0.installationManifest = newValue } }
+    public var endpointSetManifest: EndpointSetManifest? {
+        get { activeProfile.endpointSetManifest }
+        set { updateActiveProfile { $0.endpointSetManifest = newValue } }
     }
 
-    public var issuedContactEndpointsV2: [CertifiedInstallationEndpoint] {
+    public var issuedContactEndpointsV2: [CertifiedGenerationEndpoint] {
         get { activeProfile.issuedContactEndpointsV2 }
         set {
             updateActiveProfile {
@@ -427,14 +427,14 @@ public struct ClientState: Codable {
         _ direct: DirectMessageAuthenticatedContextV4
     ) -> (
         contact: Contact,
-        localEndpoint: CertifiedInstallationEndpoint,
-        binding: PairwiseInstallationBindingV4
+        localEndpoint: CertifiedGenerationEndpoint,
+        binding: PairwiseEndpointBindingV4
     )? {
-        var matches: [(Contact, CertifiedInstallationEndpoint, PairwiseInstallationBindingV4)] = []
+        var matches: [(Contact, CertifiedGenerationEndpoint, PairwiseEndpointBindingV4)] = []
         for contact in contacts {
-            guard let peerEndpoint = try? contact.certifiedInstallationEndpoint() else { continue }
+            guard let peerEndpoint = try? contact.certifiedGenerationEndpoint() else { continue }
             for localEndpoint in issuedContactEndpointsV2 {
-                guard let binding = try? PairwiseInstallationBindingV4.derive(
+                guard let binding = try? PairwiseEndpointBindingV4.derive(
                     localIdentityGenerationId: localEndpoint.identityGenerationId,
                     localIdentitySigningPublicKey: localEndpoint.identityAuthorityPublicKey,
                     localEndpoint: localEndpoint,
@@ -442,10 +442,10 @@ public struct ClientState: Codable {
                     peerIdentitySigningPublicKey: peerEndpoint.identityAuthorityPublicKey,
                     peerEndpoint: peerEndpoint
                 ) else { continue }
-                if binding.peerInstallationHandle == direct.senderInstallationHandle,
+                if binding.peerEndpointHandle == direct.senderEndpointHandle,
                    binding.peerCertificateReferenceDigest == direct.senderCertificateDigest,
                    peerEndpoint.manifestEpoch == direct.senderManifestEpoch,
-                   binding.localInstallationHandle == direct.recipientInstallationHandle,
+                   binding.localEndpointHandle == direct.recipientEndpointHandle,
                    binding.localCertificateReferenceDigest == direct.recipientCertificateDigest,
                    localEndpoint.manifestEpoch == direct.recipientManifestEpoch {
                     matches.append((contact, localEndpoint, binding))
@@ -555,8 +555,8 @@ public struct ClientState: Codable {
         profile.prekeys = staged.prekeys
         profile.architectureVersion = NoctweaveArchitectureV2.version
         profile.identityGenerationId = staged.identityGenerationId
-        profile.localInstallation = staged.localInstallation
-        profile.installationManifest = staged.installationManifest
+        profile.localEndpoint = staged.localEndpoint
+        profile.endpointSetManifest = staged.endpointSetManifest
         profile.issuedContactEndpointsV2 = staged.issuedContactEndpointsV2
         profile.selfSyncV2 = staged.selfSync
         profile.inboxId = staged.inboxId
@@ -596,22 +596,22 @@ public struct ClientState: Codable {
         }
     }
 
-    public mutating func resignInstallationManifestAfterIdentityRotation(
+    public mutating func resignEndpointSetManifestAfterIdentityRotation(
         at date: Date = Date()
     ) throws {
         guard let index = identityProfiles.firstIndex(where: { $0.id == activeIdentityId }),
               let generationId = identityProfiles[index].identityGenerationId,
-              let localInstallation = identityProfiles[index].localInstallation,
-              let current = identityProfiles[index].installationManifest,
-              let localRecord = current.installations.first(where: {
-                  $0.id == localInstallation.id
+              let localEndpoint = identityProfiles[index].localEndpoint,
+              let current = identityProfiles[index].endpointSetManifest,
+              let localRecord = current.endpoints.first(where: {
+                  $0.id == localEndpoint.id
               }),
               current.isStructurallyValid,
               current.identityGenerationId == generationId,
-              localInstallation.identityGenerationId == generationId,
+              localEndpoint.identityGenerationId == generationId,
               localRecord.identityGenerationId == generationId,
-              localRecord.signingPublicKey == localInstallation.signingKey.publicKeyData,
-              localRecord.agreementPublicKey == localInstallation.agreementKey.publicKeyData,
+              localRecord.signingPublicKey == localEndpoint.signingKey.publicKeyData,
+              localRecord.agreementPublicKey == localEndpoint.agreementKey.publicKeyData,
               localRecord.isActive(at: date, manifestEpoch: current.epoch),
               date.timeIntervalSince1970.isFinite,
               date >= current.issuedAt,
@@ -619,11 +619,11 @@ public struct ClientState: Codable {
               current.epoch < UInt64.max else {
             throw IdentityProfileStateError.invalidCurrentState
         }
-        identityProfiles[index].installationManifest = try InstallationManifest.create(
+        identityProfiles[index].endpointSetManifest = try EndpointSetManifest.create(
             identityGenerationId: generationId,
             epoch: current.epoch + 1,
             previousManifestDigest: previousDigest,
-            installations: current.installations,
+            endpoints: current.endpoints,
             identity: identityProfiles[index].identity,
             issuedAt: date
         )
@@ -713,8 +713,8 @@ fileprivate extension ClientState {
             signingPublicKey: incoming.signingPublicKey,
             agreementPublicKey: incoming.agreementPublicKey,
             identityGenerationId: incoming.identityGenerationId,
-            installationCheckpoint: incoming.installationCheckpoint,
-            preferredInstallationEndpoint: incoming.preferredInstallationEndpoint,
+            endpointSetCheckpoint: incoming.endpointSetCheckpoint,
+            preferredGenerationEndpoint: incoming.preferredGenerationEndpoint,
             endpointAuthoritySigningPublicKey: incoming.endpointAuthoritySigningPublicKey,
             preferredEndpointRevocation: incoming.preferredEndpointRevocation
                 ?? existing.preferredEndpointRevocation,
@@ -794,12 +794,12 @@ private extension Conversation {
             endpointSession: endpointSession.map {
                 DirectEndpointSessionIdentity(
                     contactId: contactId,
-                    localInstallationId: $0.localInstallationId,
-                    localInstallationHandle: $0.localInstallationHandle,
+                    localEndpointId: $0.localEndpointId,
+                    localEndpointHandle: $0.localEndpointHandle,
                     localCertificateReferenceDigest: $0.localCertificateReferenceDigest,
                     localManifestEpoch: $0.localManifestEpoch,
-                    peerInstallationId: $0.peerInstallationId,
-                    peerInstallationHandle: $0.peerInstallationHandle,
+                    peerEndpointId: $0.peerEndpointId,
+                    peerEndpointHandle: $0.peerEndpointHandle,
                     peerCertificateReferenceDigest: $0.peerCertificateReferenceDigest,
                     peerManifestEpoch: $0.peerManifestEpoch
                 )

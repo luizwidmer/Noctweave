@@ -8,7 +8,7 @@ public enum RelayCapabilityStatusV2: String, Codable, Equatable, CaseIterable {
 }
 
 /// One relay-side protocol module. This is intentionally narrower than an
-/// installation capability manifest: relays advertise only operations they
+/// endpoint capability manifest: relays advertise only operations they
 /// actually terminate, never encrypted application semantics they cannot see.
 public struct RelayModuleCapabilityV2: Codable, Equatable {
     public let module: String
@@ -86,7 +86,7 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
                 versions: [2],
                 status: .provisional,
                 limits: [
-                    "maxConsumers": UInt64(NoctweaveArchitectureV2.maximumInstallations),
+                    "maxConsumers": UInt64(NoctweaveArchitectureV2.maximumEndpoints),
                     "maxCursorBytes": UInt64(NoctweaveArchitectureV2.maximumCursorBytes),
                     "maxPage": 256
                 ]

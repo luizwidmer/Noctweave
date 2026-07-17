@@ -17,14 +17,14 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         let accessKey = try XCTUnwrap(profile.inboxAccessKey)
         XCTAssertTrue(InboxAddress.isBound(profile.inboxId, to: accessKey.publicKeyData))
         XCTAssertNotEqual(
-            profile.localInstallation?.signingKey.publicKeyData,
+            profile.localEndpoint?.signingKey.publicKeyData,
             identity.signingKey.publicKeyData
         )
         XCTAssertNotEqual(
-            profile.localInstallation?.agreementKey.publicKeyData,
+            profile.localEndpoint?.agreementKey.publicKeyData,
             identity.agreementKey.publicKeyData
         )
-        XCTAssertEqual(profile.installationManifest?.activeInstallations.count, 1)
+        XCTAssertEqual(profile.endpointSetManifest?.activeEndpoints.count, 1)
     }
 
     func testClientStateDecoderRejectsOldOrMissingBaselineFields() throws {
@@ -56,14 +56,14 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         )
     }
 
-    func testRelationshipInstallationHandleMatchesJavaScriptVector() throws {
-        let handle = RelationshipInstallationHandle.generate(
+    func testRelationshipEndpointHandleMatchesJavaScriptVector() throws {
+        let handle = RelationshipEndpointHandle.generate(
             identityGenerationId: try XCTUnwrap(UUID(uuidString: "25D6B258-9C3D-43B9-A6AB-F654B3089B4B")),
-            installationId: try XCTUnwrap(UUID(uuidString: "A12AA310-613D-4F86-8F45-28DC0D410F9F")),
+            endpointId: try XCTUnwrap(UUID(uuidString: "A12AA310-613D-4F86-8F45-28DC0D410F9F")),
             relationshipId: try XCTUnwrap(UUID(uuidString: "4A2D4951-C0CA-4B9D-94A4-2DC80B4AE8E0")),
             nonce: try XCTUnwrap(UUID(uuidString: "E141680A-06A0-4E36-B2D7-5AE72B6013CD"))
         )
-        XCTAssertEqual(handle.rawValue, "DwJGzuzXU2cCN2GRkyDQbpsIX3FSSpgu/rH1/BrTskg=")
+        XCTAssertEqual(handle.rawValue, "03kx4/LQ+FBjGnQG/B/NTnX7Sj13lp5+O9NUKj2/ZBk=")
         XCTAssertTrue(handle.isStructurallyValid)
     }
 
@@ -123,37 +123,37 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         }
     }
 
-    func testInstallationManifestRejectsInvalidHistoryAndFutureInstallationEpochs() throws {
+    func testEndpointSetManifestRejectsInvalidHistoryAndFutureEndpointEpochs() throws {
         let issuedAt = Date(timeIntervalSince1970: 2_000)
         let identity = try Identity.generate(displayName: "Manifest invariants")
         let generationId = UUID()
-        let installation = try LocalInstallationState.generate(
+        let endpoint = try LocalEndpointState.generate(
             identityGenerationId: generationId,
             createdAt: issuedAt
         )
-        let record = installation.publicRecord(addedEpoch: 0)
+        let record = endpoint.publicRecord(addedEpoch: 0)
 
-        let rootWithParent = try InstallationManifest.create(
+        let rootWithParent = try EndpointSetManifest.create(
             identityGenerationId: generationId,
             epoch: 0,
             previousManifestDigest: Data(repeating: 1, count: 32),
-            installations: [record],
+            endpoints: [record],
             identity: identity,
             issuedAt: issuedAt
         )
         XCTAssertFalse(rootWithParent.isStructurallyValid)
         XCTAssertFalse(rootWithParent.verify(identityPublicKey: identity.signingKey.publicKeyData))
 
-        let updateWithoutParent = try InstallationManifest.create(
+        let updateWithoutParent = try EndpointSetManifest.create(
             identityGenerationId: generationId,
             epoch: 1,
-            installations: [record],
+            endpoints: [record],
             identity: identity,
             issuedAt: issuedAt
         )
         XCTAssertFalse(updateWithoutParent.isStructurallyValid)
 
-        let futureRecord = InstallationRecord(
+        let futureRecord = EndpointRecord(
             id: record.id,
             identityGenerationId: generationId,
             signingPublicKey: record.signingPublicKey,
@@ -162,30 +162,30 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             addedEpoch: 2,
             addedAt: issuedAt
         )
-        let futureAdd = try InstallationManifest.create(
+        let futureAdd = try EndpointSetManifest.create(
             identityGenerationId: generationId,
             epoch: 1,
             previousManifestDigest: Data(repeating: 2, count: 32),
-            installations: [futureRecord],
+            endpoints: [futureRecord],
             identity: identity,
             issuedAt: issuedAt
         )
         XCTAssertFalse(futureAdd.isStructurallyValid)
 
         let futureRevocation = try XCTUnwrap(record.revoked(epoch: 2, at: issuedAt))
-        let futureRevoke = try InstallationManifest.create(
+        let futureRevoke = try EndpointSetManifest.create(
             identityGenerationId: generationId,
             epoch: 1,
             previousManifestDigest: Data(repeating: 3, count: 32),
-            installations: [futureRevocation],
+            endpoints: [futureRevocation],
             identity: identity,
             issuedAt: issuedAt
         )
         XCTAssertFalse(futureRevoke.isStructurallyValid)
     }
 
-    func testArchitectureReadinessBindsLocalInstallationKeysToManifestRecord() throws {
-        let identity = try Identity.generate(displayName: "Installation binding")
+    func testArchitectureReadinessBindsLocalEndpointKeysToManifestRecord() throws {
+        let identity = try Identity.generate(displayName: "Endpoint binding")
         var profile = try makeCurrentIdentityProfile(
             identity: identity,
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
@@ -193,8 +193,8 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         )
         XCTAssertTrue(profile.isArchitectureV2Ready)
 
-        let original = try XCTUnwrap(profile.localInstallation)
-        profile.localInstallation = try LocalInstallationState.generate(
+        let original = try XCTUnwrap(profile.localEndpoint)
+        profile.localEndpoint = try LocalEndpointState.generate(
             identityGenerationId: original.identityGenerationId,
             id: original.id,
             createdAt: original.createdAt
@@ -222,14 +222,14 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         XCTAssertFalse(profile.isArchitectureV2Ready)
 
         profile.inboxId = originalInboxId
-        var endpoint = try XCTUnwrap(profile.localInstallation)
+        var endpoint = try XCTUnwrap(profile.localEndpoint)
         let routeKey = MailboxRouteCredentialV2.routeIdentifier(
             relay: relay,
             inboxId: originalInboxId
         )
         let unscoped = try MailboxRouteCredentialV2.generate()
         endpoint.mailboxCredentialsByRoute[routeKey] = unscoped
-        profile.localInstallation = endpoint
+        profile.localEndpoint = endpoint
         XCTAssertFalse(profile.isArchitectureV2Ready)
 
         let wrongInboxKey = try SigningKeyPair.generate()
@@ -241,57 +241,57 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         endpoint.mailboxCredentialsByRoute = [
             MailboxRouteCredentialV2.routeIdentifier(relay: relay, inboxId: wrongInbox): scopedWrong
         ]
-        profile.localInstallation = endpoint
+        profile.localEndpoint = endpoint
         XCTAssertFalse(profile.isArchitectureV2Ready)
     }
 
     func testMailboxCredentialsUseFreshKeysPerRoute() throws {
         let createdAt = Date(timeIntervalSince1970: 1_500)
-        var installation = try LocalInstallationState.generate(
+        var endpoint = try LocalEndpointState.generate(
             identityGenerationId: UUID(),
             createdAt: createdAt
         )
-        let firstRoute = try installation.ensureMailboxCredential(
+        let firstRoute = try endpoint.ensureMailboxCredential(
             for: "first-route",
             at: createdAt.addingTimeInterval(1)
         )
-        let secondRoute = try installation.ensureMailboxCredential(
+        let secondRoute = try endpoint.ensureMailboxCredential(
             for: "second-route",
             at: createdAt.addingTimeInterval(2)
         )
 
         XCTAssertNotEqual(
             firstRoute.signingKey.publicKeyData,
-            installation.signingKey.publicKeyData
+            endpoint.signingKey.publicKeyData
         )
         XCTAssertNotEqual(
             firstRoute.signingKey.publicKeyData,
             secondRoute.signingKey.publicKeyData
         )
-        XCTAssertTrue(installation.mailboxStateIsStructurallyValid)
+        XCTAssertTrue(endpoint.mailboxStateIsStructurallyValid)
 
         let decoded = try NoctweaveCoder.decode(
-            LocalInstallationState.self,
-            from: NoctweaveCoder.encode(installation, sortedKeys: true)
+            LocalEndpointState.self,
+            from: NoctweaveCoder.encode(endpoint, sortedKeys: true)
         )
         XCTAssertEqual(
             decoded.mailboxCredentialsByRoute,
-            installation.mailboxCredentialsByRoute
+            endpoint.mailboxCredentialsByRoute
         )
     }
 
     func testProfileAdmitsAndRemovesIndependentEndpointWithProofsAndHashChain() throws {
         let createdAt = Date(timeIntervalSince1970: 3_000)
-        let identity = try Identity.generate(displayName: "Installation lifecycle")
+        let identity = try Identity.generate(displayName: "Endpoint lifecycle")
         var profile = try makeCurrentIdentityProfile(
             identity: identity,
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
             prekeys: try PrekeyState.generate(identity: identity),
             createdAt: createdAt
         )
-        let root = try XCTUnwrap(profile.installationManifest)
+        let root = try XCTUnwrap(profile.endpointSetManifest)
         let rootDigest = try XCTUnwrap(root.digest)
-        let remote = try LocalInstallationState.generate(
+        let remote = try LocalEndpointState.generate(
             identityGenerationId: try XCTUnwrap(profile.identityGenerationId),
             createdAt: createdAt.addingTimeInterval(1)
         )
@@ -300,7 +300,7 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             to: &profile,
             at: createdAt.addingTimeInterval(2)
         )
-        let authorized = try XCTUnwrap(profile.installationManifest)
+        let authorized = try XCTUnwrap(profile.endpointSetManifest)
         XCTAssertEqual(authorized.epoch, 1)
         XCTAssertEqual(authorized.previousManifestDigest, rootDigest)
         XCTAssertEqual(profile.activeEndpoints.count, 2)
@@ -314,9 +314,9 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             XCTAssertEqual(error as? EndpointAdmissionV2Error, .replayed)
         }
 
-        let localInstallationId = try XCTUnwrap(profile.localInstallation?.id)
+        let localEndpointId = try XCTUnwrap(profile.localEndpoint?.id)
         XCTAssertNil(try profile.removeEndpoint(
-            localInstallationId,
+            localEndpointId,
             at: createdAt.addingTimeInterval(3)
         ))
         let removal = try XCTUnwrap(profile.removeEndpoint(
@@ -326,10 +326,10 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         XCTAssertTrue(removal.isStructurallyValid)
         XCTAssertTrue(removal.requiresExternalCleanup)
         XCTAssertFalse(removal.authorizesFutureParticipation)
-        let revoked = try XCTUnwrap(profile.installationManifest)
+        let revoked = try XCTUnwrap(profile.endpointSetManifest)
         XCTAssertEqual(revoked.epoch, 2)
         XCTAssertEqual(revoked.previousManifestDigest, authorized.digest)
-        XCTAssertEqual(profile.activeEndpoints.map(\.id), [localInstallationId])
+        XCTAssertEqual(profile.activeEndpoints.map(\.id), [localEndpointId])
         XCTAssertTrue(profile.isArchitectureV2Ready)
         XCTAssertNil(try profile.removeEndpoint(
             remote.id,
@@ -337,9 +337,9 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         ))
     }
 
-    func testRevokedInstallationsAreCheckpointedSoDeviceChurnDoesNotExhaustManifest() throws {
+    func testRevokedEndpointsAreCheckpointedSoDeviceChurnDoesNotExhaustManifest() throws {
         let createdAt = Date(timeIntervalSince1970: 4_000)
-        let identity = try Identity.generate(displayName: "Installation churn")
+        let identity = try Identity.generate(displayName: "Endpoint churn")
         var profile = try makeCurrentIdentityProfile(
             identity: identity,
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
@@ -347,9 +347,9 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             createdAt: createdAt
         )
 
-        for replacement in 0..<(NoctweaveArchitectureV2.maximumInstallations * 2) {
-            let manifest = try XCTUnwrap(profile.installationManifest)
-            let installation = try LocalInstallationState.generate(
+        for replacement in 0..<(NoctweaveArchitectureV2.maximumEndpoints * 2) {
+            let manifest = try XCTUnwrap(profile.endpointSetManifest)
+            let endpoint = try LocalEndpointState.generate(
                 identityGenerationId: try XCTUnwrap(profile.identityGenerationId),
                 createdAt: createdAt.addingTimeInterval(Double(replacement * 2 + 1))
             )
@@ -357,23 +357,23 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             let revocationDate = createdAt.addingTimeInterval(Double(replacement * 2 + 2))
 
             XCTAssertEqual(manifest.epoch, UInt64(replacement * 2))
-            try admitEndpoint(installation, to: &profile, at: additionDate)
-            XCTAssertEqual(profile.installationManifest?.installations.count, 2)
-            XCTAssertNotNil(try profile.removeEndpoint(installation.id, at: revocationDate))
+            try admitEndpoint(endpoint, to: &profile, at: additionDate)
+            XCTAssertEqual(profile.endpointSetManifest?.endpoints.count, 2)
+            XCTAssertNotNil(try profile.removeEndpoint(endpoint.id, at: revocationDate))
             XCTAssertEqual(profile.activeEndpoints.count, 1)
             XCTAssertTrue(profile.isArchitectureV2Ready)
         }
 
-        XCTAssertEqual(profile.installationManifest?.installations.count, 2)
+        XCTAssertEqual(profile.endpointSetManifest?.endpoints.count, 2)
         XCTAssertEqual(
-            profile.installationManifest?.epoch,
-            UInt64(NoctweaveArchitectureV2.maximumInstallations * 4)
+            profile.endpointSetManifest?.epoch,
+            UInt64(NoctweaveArchitectureV2.maximumEndpoints * 4)
         )
     }
 
-    func testExpiredInstallationsAreCheckpointedSoTheyCannotExhaustManifest() throws {
+    func testExpiredEndpointsAreCheckpointedSoTheyCannotExhaustManifest() throws {
         let createdAt = Date(timeIntervalSince1970: 4_500)
-        let identity = try Identity.generate(displayName: "Expiring installation churn")
+        let identity = try Identity.generate(displayName: "Expiring endpoint churn")
         var profile = try makeCurrentIdentityProfile(
             identity: identity,
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
@@ -382,27 +382,27 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         )
         let expiresAt = createdAt.addingTimeInterval(100)
 
-        for index in 1..<NoctweaveArchitectureV2.maximumInstallations {
-            let manifest = try XCTUnwrap(profile.installationManifest)
-            let installation = try LocalInstallationState.generate(
+        for index in 1..<NoctweaveArchitectureV2.maximumEndpoints {
+            let manifest = try XCTUnwrap(profile.endpointSetManifest)
+            let endpoint = try LocalEndpointState.generate(
                 identityGenerationId: try XCTUnwrap(profile.identityGenerationId),
                 createdAt: createdAt.addingTimeInterval(Double(index))
             )
             XCTAssertEqual(manifest.epoch, UInt64(index - 1))
             try admitEndpoint(
-                installation,
+                endpoint,
                 to: &profile,
                 at: createdAt.addingTimeInterval(Double(index)),
                 endpointExpiresAt: expiresAt
             )
         }
         XCTAssertEqual(
-            profile.installationManifest?.installations.count,
-            NoctweaveArchitectureV2.maximumInstallations
+            profile.endpointSetManifest?.endpoints.count,
+            NoctweaveArchitectureV2.maximumEndpoints
         )
 
-        let fullManifestDigest = try XCTUnwrap(profile.installationManifest?.digest)
-        let replacement = try LocalInstallationState.generate(
+        let fullManifestDigest = try XCTUnwrap(profile.endpointSetManifest?.digest)
+        let replacement = try LocalEndpointState.generate(
             identityGenerationId: try XCTUnwrap(profile.identityGenerationId),
             createdAt: expiresAt.addingTimeInterval(1)
         )
@@ -412,10 +412,10 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             at: expiresAt.addingTimeInterval(1)
         )
 
-        let checkpoint = try XCTUnwrap(profile.installationManifest)
+        let checkpoint = try XCTUnwrap(profile.endpointSetManifest)
         XCTAssertEqual(checkpoint.previousManifestDigest, fullManifestDigest)
-        XCTAssertEqual(checkpoint.installations.count, 2)
-        XCTAssertTrue(checkpoint.installations.contains(where: { $0.id == replacement.id }))
+        XCTAssertEqual(checkpoint.endpoints.count, 2)
+        XCTAssertTrue(checkpoint.endpoints.contains(where: { $0.id == replacement.id }))
         XCTAssertTrue(profile.isArchitectureV2Ready)
     }
 
@@ -428,7 +428,7 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             prekeys: try PrekeyState.generate(identity: identity),
             createdAt: createdAt
         )
-        let endpoint = try LocalInstallationState.generate(
+        let endpoint = try LocalEndpointState.generate(
             identityGenerationId: try XCTUnwrap(profile.identityGenerationId),
             createdAt: createdAt.addingTimeInterval(1)
         )
@@ -544,7 +544,7 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             prekeys: try PrekeyState.generate(identity: identity),
             createdAt: createdAt
         )
-        let endpoint = try LocalInstallationState.generate(
+        let endpoint = try LocalEndpointState.generate(
             identityGenerationId: try XCTUnwrap(profile.identityGenerationId),
             createdAt: createdAt.addingTimeInterval(1)
         )
@@ -589,12 +589,12 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         XCTAssertTrue(reloaded.isArchitectureV2Ready)
 
         var mutableReplacement = replacement
-        let localEndpoint = try XCTUnwrap(profile.localInstallation)
-        let manifest = try XCTUnwrap(profile.installationManifest)
+        let localEndpoint = try XCTUnwrap(profile.localEndpoint)
+        let manifest = try XCTUnwrap(profile.endpointSetManifest)
         let record = try mutableReplacement.sealEvent(
             sourceEndpointId: localEndpoint.id,
             manifestEpoch: manifest.epoch,
-            payload: .endpointManifest(manifest),
+            payload: .endpointSetManifest(manifest),
             sourceSigningKey: localEndpoint.signingKey,
             createdAt: createdAt.addingTimeInterval(5)
         )
@@ -610,10 +610,10 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             prekeys: try PrekeyState.generate(identity: identity),
             createdAt: createdAt
         )
-        let endpoint = try CertifiedInstallationEndpoint.create(
+        let endpoint = try CertifiedGenerationEndpoint.create(
             identity: identity,
-            installation: try XCTUnwrap(profile.localInstallation),
-            manifest: try XCTUnwrap(profile.installationManifest),
+            endpoint: try XCTUnwrap(profile.localEndpoint),
+            manifest: try XCTUnwrap(profile.endpointSetManifest),
             issuedAt: Date()
         )
         profile.issuedContactEndpointsV2 = [endpoint]
@@ -642,35 +642,35 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         var state = try makeCurrentClientState(identity: originalIdentity, relay: relay)
 
         let originalGeneration = try XCTUnwrap(state.identityGenerationId)
-        let originalInstallation = try XCTUnwrap(state.localInstallation)
-        let originalManifest = try XCTUnwrap(state.installationManifest)
+        let originalEndpoint = try XCTUnwrap(state.localEndpoint)
+        let originalManifest = try XCTUnwrap(state.endpointSetManifest)
         let originalDigest = try XCTUnwrap(originalManifest.digest)
 
         _ = try state.identity.rotateKeys()
         state.prekeys = try PrekeyState.generate(identity: state.identity)
-        try state.resignInstallationManifestAfterIdentityRotation(
+        try state.resignEndpointSetManifestAfterIdentityRotation(
             at: originalManifest.issuedAt.addingTimeInterval(1)
         )
 
-        let rotatedManifest = try XCTUnwrap(state.installationManifest)
+        let rotatedManifest = try XCTUnwrap(state.endpointSetManifest)
         XCTAssertEqual(state.identityGenerationId, originalGeneration)
-        XCTAssertEqual(state.localInstallation?.id, originalInstallation.id)
+        XCTAssertEqual(state.localEndpoint?.id, originalEndpoint.id)
         XCTAssertEqual(rotatedManifest.epoch, originalManifest.epoch + 1)
         XCTAssertEqual(rotatedManifest.previousManifestDigest, originalDigest)
         XCTAssertTrue(rotatedManifest.verify(identityPublicKey: state.identity.signingKey.publicKeyData))
         XCTAssertTrue(state.identityProfiles.first?.isArchitectureV2Ready == true)
-        XCTAssertThrowsError(try state.resignInstallationManifestAfterIdentityRotation(
+        XCTAssertThrowsError(try state.resignEndpointSetManifestAfterIdentityRotation(
             at: originalManifest.issuedAt
         )) { error in
             XCTAssertEqual(error as? IdentityProfileStateError, .invalidCurrentState)
         }
 
         XCTAssertEqual(state.identityGenerationId, originalGeneration)
-        XCTAssertEqual(state.localInstallation?.id, originalInstallation.id)
+        XCTAssertEqual(state.localEndpoint?.id, originalEndpoint.id)
     }
 
     private func admitEndpoint(
-        _ endpoint: LocalInstallationState,
+        _ endpoint: LocalEndpointState,
         to profile: inout IdentityProfile,
         at date: Date,
         endpointExpiresAt: Date? = nil
@@ -701,16 +701,16 @@ final class ArchitectureV2IdentityTests: XCTestCase {
     }
 
     private func copyEndpoint(
-        _ endpoint: CertifiedInstallationEndpoint,
+        _ endpoint: CertifiedGenerationEndpoint,
         authoritySignature: Data? = nil,
         possessionSignature: Data? = nil
-    ) -> CertifiedInstallationEndpoint {
-        CertifiedInstallationEndpoint(
+    ) -> CertifiedGenerationEndpoint {
+        CertifiedGenerationEndpoint(
             identityGenerationId: endpoint.identityGenerationId,
             identityAuthorityPublicKey: endpoint.identityAuthorityPublicKey,
             manifestEpoch: endpoint.manifestEpoch,
             manifestDigest: endpoint.manifestDigest,
-            installationId: endpoint.installationId,
+            endpointId: endpoint.endpointId,
             signingPublicKey: endpoint.signingPublicKey,
             agreementPublicKey: endpoint.agreementPublicKey,
             capabilities: endpoint.capabilities,

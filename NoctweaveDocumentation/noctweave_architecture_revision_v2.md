@@ -19,20 +19,19 @@ the current branch actually claims:
 
 | Area | Current status |
 | --- | --- |
-| State migration and endpoint records | Active. Legacy profiles migrate idempotently to one independently keyed local endpoint, signed generation-scoped endpoint set, per-contact relationship shells, and local self-sync secret/progress state. Fresh contact offers publish a compact signed checkpoint plus one preferred endpoint authorization; full peer sets and multi-endpoint fan-out are not published. |
+| Clean 1.0 state and endpoint records | Active. New profiles originate with one independently keyed local endpoint, signed generation-scoped endpoint set, per-contact relationship shells, and local signed self-sync state. Reusable contact-offer pairing is not the 1.0 rendezvous flow; full peer sets and multi-endpoint fan-out are not published. |
 | Certified direct endpoint | Active for one preferred endpoint in the Swift headless and JavaScript browser/Node reference paths. Direct-v4 envelopes use endpoint signing/prekeys, pairwise opaque sender/recipient handles, relationship-blinded certificate references, endpoint-keyed sessions, logical event IDs, and typed application content. Both paths strictly project text and attachments and preserve bounded unknown-content fallback/disposition; Swift additionally applies the closed rotation and burn/reset control set. Uncertified contacts and pre-v4 direct frames are rejected; neither implementation performs multi-endpoint fan-out yet. |
-| Direct mailbox synchronization | Active in the Swift headless client, in-process relay, and Linux relay. Consumers use fresh ML-DSA credentials per relay/inbox route; sequences, opaque cursors, commit/revoke, persistence, long polling, retention gating, legacy-gap normalization, and durable dead-letter progress are implemented. |
+| Direct mailbox synchronization | Active in the Swift headless client, in-process relay, and Linux relay. Consumers use fresh ML-DSA credentials per relay/inbox route; sequences, opaque cursors, commit/remove, persistence, long polling, retention gating, and durable dead-letter progress are implemented. |
 | Durable intents | Active for direct send and exact-envelope retry. Other intent kinds are bounded model surface only. |
-| Envelope identifier authentication | Active and wire-breaking. The direct envelope signature includes `id`; there is no legacy fallback verifier. |
-| Capabilities and typed event models | Relay `info` advertises bounded relay-terminated v2 modules. Swift and JavaScript direct-v4 deterministically negotiate required `nw.core`, `nw.endpoints`, `nw.events`, and `nw.prekeys` v2 capabilities. The exact PQ suite and canonical negotiated digest are bound into pairwise identifiers, root/session derivation, authenticated context, signatures, and shared vectors; missing modules, version gaps, reduced limits, and legacy fallback fail closed. |
-| Legacy fingerprint compatibility | Disabled by default in both relays. Pairing/discovery, fingerprint-keyed relay prekeys, every relay-backed legacy group operation, and destructive inbox-wide acknowledgement require the explicit `nw.compat.legacy-fingerprint` operator profile. Enabled relays advertise it as deprecated; direct-v4 never negotiates it. |
-| Route sets | Per-contact v2 relationship containers are persisted, and verified route snapshots have a bounded state-transition model. Relationship exchange and end-to-end relay migration are not wired. |
-| Self-sync and rendezvous | Local generation-scoped self-sync secret/progress state and encrypted seal/open primitives are persisted. The internal endpoint-removal model rotates the stream and durably journals every unfinished remote cleanup obligation. Publication, rendezvous, and multi-endpoint participation are not active protocol paths. |
-| Read-only history transfer | Active as a local Swift export/import and cryptographic-packaging API. The metadata-bearing signed inner archive is wrapped in a recipient-KEM outer transport seal with fixed size buckets; import is bounded, authorized, and replay-protected. Same-generation transfer is the default; cross-generation transfer requires a distinct expiring approval and remains inert. No default transfer adapter, managed history service, attachment-byte migration, or endpoint admission is implied. |
-| Endpoint-aware groups | Additive signed-state foundation: externally pinned one-owner genesis trust, group-scoped client handles, generation-authority/endpoint/client-possession key packages, package-authenticated client admission, full-state commits, roles/policies, bounded Welcomes, and a 128-active-leaf limit for the current O(n) PQ provider. The relay-backed group path still uses identity fingerprints; these V2 objects and their trusted-manifest distribution are not yet negotiated, persisted, delivered, or resumed by active clients/relays. |
-| Legacy group invitation parity | Active in the in-process and Linux relay implementations, including listing, idempotent inviting, accepting into a group-scoped profile, persistence, deletion cleanup, authorization, request/response wire coverage, and matching capacity enforcement. Active members plus unique pending invitees share a 256-entry group budget; each invitee retains at most 256 group invitations, with rejection instead of eviction. This remains part of the fingerprint-scoped compatibility group path, not endpoint-aware group admission. |
+| Envelope identifier authentication | Active and wire-breaking. The direct envelope signature includes `id`; there is no alternate fallback verifier. |
+| Capabilities and typed event models | Relay `info` advertises bounded relay-terminated v2 modules. Swift and JavaScript direct-v4 deterministically negotiate required `nw.core`, `nw.endpoints`, `nw.events`, and `nw.prekeys` v2 capabilities. The exact PQ suite and canonical negotiated digest are bound into pairwise identifiers, root/session derivation, authenticated context, signatures, and shared vectors; missing modules, version gaps, reduced limits, and alternate formats fail closed. |
+| Removed identity-bearing relay surfaces | Fingerprint-addressed pairing, relay prekey lookup, relay-backed groups, and destructive inbox-wide acknowledgement are outside the 1.0 relay surface. Git history, not production branches, retains their pre-1.0 record. |
+| Route sets | Per-contact v2 relationship containers are persisted, and verified route snapshots have a bounded state-transition model. Relationship exchange and end-to-end route rotation are not wired. |
+| Self-sync and rendezvous | Endpoint-signed, source-ordered, epoch-sealed self-sync records and one-use purpose-bound PQ rendezvous are implemented as bounded foundations. The identity-blind relay rendezvous transport is available when explicitly enabled. Client pairing publication, full projection integration, and multi-endpoint participation remain unfinished. |
+| Read-only history transfer | Active as a local Swift export/import and cryptographic-packaging API. The metadata-bearing signed inner archive is wrapped in a recipient-KEM outer transport seal with fixed size buckets; import is bounded, authorized, and replay-protected. Same-generation transfer is the default; cross-generation transfer requires a distinct expiring approval and remains inert. No default transfer adapter, managed history service, attachment-byte transfer, or endpoint admission is implied. |
+| Endpoint-aware groups | Additive signed-state foundation: externally pinned one-owner genesis trust, group-scoped client handles, generation-authority/endpoint/client-possession admission projections, full-state commits, roles/policies, bounded Welcomes, and a 128-active-leaf limit for the current O(n) PQ provider. Trusted-state distribution, private relay delivery, persistence, and restart integration remain unfinished. No fingerprint-addressed relay group path is retained. |
 
-This sequencing is deliberate: it permits migration without claiming that a
+This matrix distinguishes active paths from foundations without claiming that a
 public data type is already negotiated or transported by every client.
 
 ## 1. Identity Generations And Local Endpoints
@@ -85,8 +84,7 @@ does not upload a contact offer. Its explicit `registrationVersion = 2` proof
 binds only the inbox address, inbox-access public key, version, time, and nonce.
 The relay verifies address derivation and key possession, then persists no
 identity, contact, endpoint-set, endpoint-certificate, or prekey material. A
-missing discriminator is reserved for the pre-1.0 legacy verifier rather than
-being accepted as an implicit downgrade.
+missing or altered discriminator fails validation.
 
 Authority rotation retains the generation-scoped endpoint keys and the already
 pinned endpoint session; the encrypted continuity event authorizes the new
@@ -105,13 +103,6 @@ delivery cleanup must also finish. The endpoint certificate stays pinned to its
 issuing authority, while a later rejection record is verified with the
 contact's current continuity key so a verified authority rotation does not
 strand removal authority on a discarded secret.
-
-Until the signed endpoint-aware group path below replaces the active
-fingerprint-scoped handlers, starting authority rotation with an active legacy
-group fails closed. This is a deliberate migration boundary: changing the
-fingerprint would invalidate that group's membership and acknowledgement
-authority. An already-durable rotation journal may still be resumed so a crash
-cannot permanently wedge an identity mutation.
 
 Signed-prekey freshness is a bootstrap rule, not an established-session kill
 switch. Persisted endpoint certificates are revalidated against the signed
@@ -213,14 +204,9 @@ state implicitly. Consumers persist the numeric committed sequence beside the
 opaque cursor and reject a first-event, internal, empty-batch, or final-sequence
 gap before processing or committing a batch.
 
-Direct and group delivery use the envelope ID as the relay idempotency key.
-For groups, the immutable normalized original-recipient set is persisted beside
-the mutable pending-recipient set. Exact retries remain no-ops after partial
-legacy acknowledgement and restart, while payload, envelope-kind, or original
-recipient-set conflicts fail closed. This is internal relay state and does not
-change the delivery request wire shape. Legacy SQLite records without the
-immutable field seed it from their remaining pending recipients; previously
-acknowledged recipients are intentionally not inferred.
+Direct delivery uses the envelope ID as the relay idempotency key. Exact retries
+are no-ops only when the complete stored material matches; conflicting reuse
+fails closed.
 
 The Swift headless client and JavaScript reference client do not treat a bare
 historical envelope ID as sufficient proof that a newly fetched item is an
@@ -300,11 +286,10 @@ and product constraints:
 Activation therefore waits for relationship-scoped inboxes or an equivalently
 unlinkable queue design, bounded expiring route epochs with make-before-break
 renewal, realistic relationship/rotation limits, per-capability abuse controls,
-and a documented padding policy. The transitional inbox-addressed path remains
-until that complete private, purpose-bound exchange exists. A reusable delivery
-token must never be placed in a contact directory.
+and a documented padding policy. A reusable delivery token must never be placed
+in a contact directory.
 
-Migration is make-before-break:
+Route rotation is make-before-break:
 
 1. Register the new route and publish endpoint-signed prekeys.
 2. Send the route-set update through the existing authenticated relationship.
@@ -327,7 +312,7 @@ payload digest, bounded dependency list, retry count, error class, timestamps,
 and terminal result.
 
 The journal covers message fan-out, attachment finalization, endpoint-set
-changes, prekey rotation, route migration, group changes, and continuity
+changes, prekey rotation, route rotation, group changes, and continuity
 events. Dependency cycles, unbounded retry, and ambiguous terminal states fail
 closed.
 
@@ -354,8 +339,8 @@ it does not re-encrypt, advance the ratchet, or replace the signed envelope.
 
 ## 7. Encrypted Self-Sync And History Transfer
 
-Each migrated v2 profile maintains local secret/progress state for one hidden
-encrypted self-sync stream. The record model can carry immutable outbound event
+Each 1.0 profile maintains local secret/progress state for one hidden encrypted
+self-sync stream. Endpoint-signed, source-ordered records can carry immutable outbound event
 copies, endpoint-set and route manifests, selected relationship changes, group
 updates,
 consent, block and mute state, optional read markers, and user preferences.
@@ -420,7 +405,7 @@ endpoint-possession, and client-possession signed key package. Post-genesis comm
 then advance from that independently authenticated root.
 
 The existing group construction remains the experimental Noctweave PQ group
-profile and is not described as RFC 9420 compatible. Its active wire identifier
+profile and does not claim RFC 9420 conformance. Its active wire identifier
 is `noctweave-pq-group-experimental-2`, while the v2 provider model names it
 `nw.pq-group.experimental-2`. Any conforming MLS or future PQ MLS profile is
 negotiated under a distinct identifier and requires independent
@@ -429,26 +414,21 @@ interoperability evidence.
 The Core currently includes an isolated signed-state foundation for this
 future endpoint-aware path. It authenticates complete membership, role,
 policy, metadata-digest, epoch, transcript, author, provider-commit, and
-Welcome state, but it does not replace the deprecated opt-in
-fingerprint-scoped relay handlers or headless group client. The current O(n)
+Welcome state. No relay-backed group path is exposed by the 1.0 relay surface.
+The current O(n)
 experimental PQ provider is capped at 128 active endpoint leaves; the larger 4,096-leaf model bound
 is reserved for future providers with separately reviewed scaling behavior.
 
-An `addClient` or `addUser` commit carries exactly one complete
-`GroupClientKeyPackageV2`, and the commit signature covers that package. A
-verifier must supply the expected identity authority and the current trusted
-`InstallationManifest` (a compatibility-named endpoint-set manifest) from an
-authenticated contact, invitation, continuity,
-or self-sync path; neither value is accepted from the commit author. Admission
-checks the group ID, group-user ID, group-scoped client handle, package lifetime,
-manifest epoch and digest, active non-removed endpoint record, identity
-authority signature, endpoint-possession signature, and group-client-key
-possession signature. The added leaf is then derived from the verified package
-and must exactly match the sole proposed leaf addition. Arbitrary caller-authored
-leaf keys therefore cannot be attributed to another group user. Distribution
-and freshness tracking for these trusted manifests remains part of connecting
-the signed-state model to the active client workflow; it is not delegated to a
-relay.
+Before creating an `addClient` or `addUser` commit, the caller verifies a full
+`GroupClientKeyPackageV2` against an authenticated identity authority and
+current trusted `EndpointSetManifest`. The shared commit then carries one
+`GroupClientAdmissionProjectionV2`, not identity fingerprints, endpoint IDs,
+endpoint certificates, manifests, or contact evidence. The commit signature
+covers that projection, and the added leaf must exactly match it. Sibling
+endpoint admission additionally requires `GroupSiblingClientConsentV2` from an
+active group client belonging to that user. Trusted-state distribution and
+freshness tracking remain part of connecting this foundation to an active
+client workflow; they are not delegated to a relay.
 
 Role policy is also bounded by hierarchy rather than treated as unrestricted
 permission delegation. For a non-self role change, the actor must outrank the
@@ -457,15 +437,6 @@ A self-role change is permitted only as an explicit strict demotion. Even when
 `updatePolicy` is configured as `admin` or `everyone`, members and admins cannot
 rewrite equal or higher-privileged users or promote themselves, and every
 accepted state must retain at least one active owner.
-
-The legacy headless receiver is temporarily hardened with a persisted,
-512-entry pending-acknowledgement window. Each entry binds an envelope ID to a
-canonical envelope digest and is saved atomically with the advanced ratchet and
-local message. Exact refetches are deduplicated; ID conflicts and a full window
-fail closed. Destructive relay acknowledgements are retried idempotently after
-restart, and entries are cleared only after relay success plus a durable local
-save. This compatibility journal is not the future endpoint-scoped group
-delivery design.
 
 ## 9. Protocol Modules And Capabilities
 
@@ -481,7 +452,6 @@ The protocol keeps a descriptive catalog of versioned capability modules:
 - `nw.groups`
 - `nw.wake`
 - `nw.federation`
-- deprecated, relay-only `nw.compat.legacy-fingerprint`
 - optional `nw.privacy.*` modules
 
 Catalog membership is not a support claim. A default endpoint manifest
@@ -498,19 +468,21 @@ endpoint negotiation selects the four required shared v2 modules under fixed
 profile ceilings, authenticates the exact
 `nw.direct-v4.ml-kem-768.ml-dsa-65.hkdf-sha256.hmac-sha256.aes-256-gcm`
 suite plus a canonical 32-byte capability digest, and rejects missing modules,
-version gaps, altered limits, suite tampering, and legacy downgrade before
+version gaps, altered limits, suite tampering, and alternate-format downgrade before
 ratchet state commits. Optional module declarations never enter that direct-v4
 digest.
 
 Extension status is experimental, provisional, stable, or deprecated. Stable
 extensions require a normative specification, errors, examples, limits,
-migration behavior, and cross-language conformance vectors.
+state-transition behavior, and cross-language conformance vectors.
 
-## 10. Migration
+## 10. Clean 1.0 Baseline
 
-Legacy profiles are migrated locally into a new identity generation with one
-authorized local endpoint. The migration creates new endpoint keys and prekeys;
-it does not copy live ratchet state to a second endpoint.
+Noctweave 1.0 starts with current state. A new profile creates one disposable
+identity generation, one independently keyed local endpoint, fresh prekeys, a
+separate route credential, and signed generation-scoped self-sync state.
+Research-era profiles, wire messages, and relay records are unsupported input;
+they are not upgraded or retained behind runtime flags.
 
 Certified direct-v4 now requires `WirePayloadV2` in an NPAD-v2 frame. Text and
 attachment sends create distinct client-transaction and event identifiers and
@@ -521,28 +493,19 @@ decoder rejects. Direct-v4 negotiates only within its exact authenticated
 profile and has no fallback path. Security
 control messages never downgrade to custom application content.
 
-Legacy mailbox fetch and acknowledgement are compatibility routes only until
-the first v2 consumer binding. That transition is one-way: the relay rejects
-both inbox-authority data-access operations thereafter, including when all
-consumers are revoked. The first consumer registration binds a fresh
+Mailbox-v2 cursor synchronization is the only 1.0 mailbox state model. The
+first consumer registration binds a fresh
 route-scoped signing key with independent inbox-authority and possession
 proofs. It never publishes the endpoint signing key for a newly created
 route. Every later fresh binding also requires an active bound consumer's
 sponsor proof over the full registration; authority alone cannot add a
-consumer. Existing
-same-ID/same-key registration remains idempotent. A legacy keyless record can
-use the two-proof rebind only while no active bound sponsor exists. If all
+consumer. Existing same-ID/same-key registration remains idempotent. If all
 consumers are revoked, continuing requires a new inbox and identity generation.
 Only the bound route credential may sync or commit, while the inbox authority
 retains revoke power.
-Profiles that previously bound the endpoint key persist a new route
-credential first, use the old consumer once as sponsor, register the new
-consumer idempotently, revoke the old consumer, and only then clear the durable
-migration marker.
 Relays cap active consumers at 16, not lifetime registrations. They retain a
 bounded history of 64 active/revoked records and compact the oldest revoked
-tombstones during endpoint churn. A separately persisted compatibility-named
-flag keeps the legacy data path disabled even as history is compacted.
+tombstones during endpoint churn.
 
 The final relay rejects delivery to an unregistered destination, so a sender
 cannot allocate persistent mailboxes by guessing syntactically valid inbox
@@ -550,12 +513,8 @@ addresses. Registered inboxes still require relay-side quota and rate policy;
 future pairwise delivery capabilities can tighten admission without exposing
 sender identity to the relay.
 
-The legacy routes cannot represent multi-endpoint safety and are deprecated
-once v2 cursor sync is negotiated.
-
-State, wire, and SQLite migrations are versioned and idempotent. Corrupt or
-security-ambiguous records fail closed. Migration tests cover restart at every
-durable transition.
+Old or security-ambiguous state fails closed as unsupported. Git history is the
+record of pre-1.0 research state.
 
 ## 11. Acceptance Gates
 
@@ -566,10 +525,10 @@ The revision is complete only when:
 - one endpoint cannot consume another's delivery state;
 - cursor expiry and retention floors have deterministic recovery;
 - logical retries create one event and bounded delivery copies;
-- route migration never leaves both old and new routes invalid;
+- route rotation never leaves both old and new routes invalid;
 - group-client removal preserves sibling endpoints;
 - unknown application and control events follow their distinct rules;
 - all remote and persisted structures enforce fixed bounds;
 - `solo`, `manual`, `curated`, and `open` remain separate;
-- all public compatibility commands pass;
+- all public build, test, vector, and documentation checks pass;
 - security claims and remaining external review needs are documented honestly.

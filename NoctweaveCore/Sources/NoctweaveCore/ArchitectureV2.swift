@@ -3,7 +3,7 @@ import Foundation
 
 public enum NoctweaveArchitectureV2 {
     public static let version = 2
-    public static let maximumInstallations = 16
+    public static let maximumEndpoints = 16
     public static let maximumIssuedContactEndpoints = 64
     public static let maximumDeliveryStates = 4_096
     public static let maximumMailboxConsumerHistory = 64
@@ -355,7 +355,7 @@ public struct EndpointAdmissionCandidateV2: Codable, Equatable, Identifiable {
     }
 
     public init(
-        endpoint: LocalInstallationState,
+        endpoint: LocalEndpointState,
         capabilities: ProtocolCapabilityManifest = ProtocolCapabilityManifest(),
         expiresAt: Date? = nil
     ) {
@@ -376,8 +376,8 @@ public struct EndpointAdmissionCandidateV2: Codable, Equatable, Identifiable {
             && (expiresAt?.timeIntervalSince1970.isFinite ?? true)
     }
 
-    func installationRecord(addedEpoch: UInt64, addedAt: Date) -> InstallationRecord {
-        InstallationRecord(
+    func endpointRecord(addedEpoch: UInt64, addedAt: Date) -> EndpointRecord {
+        EndpointRecord(
             id: endpointId,
             identityGenerationId: identityGenerationId,
             signingPublicKey: signingPublicKey,
@@ -609,7 +609,7 @@ public struct EndpointAdmissionResponseV2: Codable, Equatable {
 
     public static func create(
         challenge: EndpointAdmissionChallengeV2,
-        endpoint: LocalInstallationState,
+        endpoint: LocalEndpointState,
         identityAuthorityPublicKey: Data,
         respondedAt: Date = Date()
     ) throws -> EndpointAdmissionResponseV2 {
@@ -764,7 +764,7 @@ private struct EndpointAdmissionResponseSignaturePayloadV2: Codable {
     }
 }
 
-public struct RelationshipInstallationHandle: RawRepresentable, Codable, Equatable, Hashable {
+public struct RelationshipEndpointHandle: RawRepresentable, Codable, Equatable, Hashable {
     public let rawValue: String
 
     public init(rawValue: String) {
@@ -773,16 +773,16 @@ public struct RelationshipInstallationHandle: RawRepresentable, Codable, Equatab
 
     public static func generate(
         identityGenerationId: UUID,
-        installationId: UUID,
+        endpointId: UUID,
         relationshipId: UUID,
         nonce: UUID = UUID()
-    ) -> RelationshipInstallationHandle {
-        var material = Data("Noctweave/relationship-installation-handle/v2".utf8)
+    ) -> RelationshipEndpointHandle {
+        var material = Data("Noctweave/relationship-endpoint-handle/v2".utf8)
         material.append(Data(identityGenerationId.uuidString.lowercased().utf8))
-        material.append(Data(installationId.uuidString.lowercased().utf8))
+        material.append(Data(endpointId.uuidString.lowercased().utf8))
         material.append(Data(relationshipId.uuidString.lowercased().utf8))
         material.append(Data(nonce.uuidString.lowercased().utf8))
-        return RelationshipInstallationHandle(
+        return RelationshipEndpointHandle(
             rawValue: Data(SHA256.hash(data: material)).base64EncodedString()
         )
     }
@@ -793,7 +793,7 @@ public struct RelationshipInstallationHandle: RawRepresentable, Codable, Equatab
     }
 }
 
-public struct InstallationRecord: Codable, Equatable, Identifiable {
+public struct EndpointRecord: Codable, Equatable, Identifiable {
     public let id: UUID
     public let identityGenerationId: UUID
     public let signingPublicKey: Data
@@ -863,9 +863,9 @@ public struct InstallationRecord: Codable, Equatable, Identifiable {
         }
     }
 
-    public func revoked(epoch: UInt64, at date: Date = Date()) -> InstallationRecord? {
+    public func revoked(epoch: UInt64, at date: Date = Date()) -> EndpointRecord? {
         guard revokedEpoch == nil, epoch > addedEpoch, date >= addedAt else { return nil }
-        return InstallationRecord(
+        return EndpointRecord(
             id: id,
             identityGenerationId: identityGenerationId,
             signingPublicKey: signingPublicKey,
@@ -880,7 +880,7 @@ public struct InstallationRecord: Codable, Equatable, Identifiable {
     }
 }
 
-public struct LocalInstallationState: Codable, Equatable, Identifiable {
+public struct LocalEndpointState: Codable, Equatable, Identifiable {
     public let id: UUID
     public let identityGenerationId: UUID
     public var signingKey: SigningKeyPair
@@ -890,7 +890,7 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
     public var committedSequencesByStream: [String: UInt64]
     public var pendingMailboxCommitsByStream: [String: PendingMailboxCursorCommit]
     public var mailboxCredentialsByRoute: [String: MailboxRouteCredentialV2]
-    public var relationshipHandles: [UUID: RelationshipInstallationHandle]
+    public var relationshipHandles: [UUID: RelationshipEndpointHandle]
     public let createdAt: Date
 
     public init(
@@ -903,7 +903,7 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
         committedSequencesByStream: [String: UInt64] = [:],
         pendingMailboxCommitsByStream: [String: PendingMailboxCursorCommit] = [:],
         mailboxCredentialsByRoute: [String: MailboxRouteCredentialV2] = [:],
-        relationshipHandles: [UUID: RelationshipInstallationHandle] = [:],
+        relationshipHandles: [UUID: RelationshipEndpointHandle] = [:],
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -923,21 +923,21 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
         identityGenerationId: UUID,
         id: UUID = UUID(),
         createdAt: Date = Date()
-    ) throws -> LocalInstallationState {
+    ) throws -> LocalEndpointState {
         let signingKey = try SigningKeyPair.generate()
         let agreementKey = try AgreementKeyPair.generate()
-        let installationIdentity = try Identity(
-            displayName: "Noctweave installation",
+        let endpointIdentity = try Identity(
+            displayName: "Noctweave endpoint",
             signingKey: signingKey,
             agreementKey: agreementKey,
             createdAt: createdAt
         )
-        return LocalInstallationState(
+        return LocalEndpointState(
             id: id,
             identityGenerationId: identityGenerationId,
             signingKey: signingKey,
             agreementKey: agreementKey,
-            prekeys: try PrekeyState.generate(identity: installationIdentity),
+            prekeys: try PrekeyState.generate(identity: endpointIdentity),
             createdAt: createdAt
         )
     }
@@ -946,8 +946,8 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
         addedEpoch: UInt64,
         capabilities: ProtocolCapabilityManifest = ProtocolCapabilityManifest(),
         expiresAt: Date? = nil
-    ) -> InstallationRecord {
-        InstallationRecord(
+    ) -> EndpointRecord {
+        EndpointRecord(
             id: id,
             identityGenerationId: identityGenerationId,
             signingPublicKey: signingKey.publicKeyData,
@@ -970,7 +970,7 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
         )
     }
 
-    public static func == (lhs: LocalInstallationState, rhs: LocalInstallationState) -> Bool {
+    public static func == (lhs: LocalEndpointState, rhs: LocalEndpointState) -> Bool {
         lhs.id == rhs.id
             && lhs.identityGenerationId == rhs.identityGenerationId
             && lhs.signingKey.privateKeyData == rhs.signingKey.privateKeyData
@@ -1024,7 +1024,7 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
             forKey: .mailboxCredentialsByRoute
         )
         relationshipHandles = try container.decode(
-            [UUID: RelationshipInstallationHandle].self,
+            [UUID: RelationshipEndpointHandle].self,
             forKey: .relationshipHandles
         )
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -1161,13 +1161,13 @@ public struct MailboxRouteCredentialV2: Codable, Equatable {
     }
 }
 
-public struct InstallationManifest: Codable, Equatable {
+public struct EndpointSetManifest: Codable, Equatable {
     public let version: Int
     public let identityGenerationId: UUID
     public let identityFingerprint: String
     public let epoch: UInt64
     public let previousManifestDigest: Data?
-    public let installations: [InstallationRecord]
+    public let endpoints: [EndpointRecord]
     public let issuedAt: Date
     public let signature: Data
 
@@ -1177,7 +1177,7 @@ public struct InstallationManifest: Codable, Equatable {
         identityFingerprint: String,
         epoch: UInt64,
         previousManifestDigest: Data?,
-        installations: [InstallationRecord],
+        endpoints: [EndpointRecord],
         issuedAt: Date,
         signature: Data
     ) {
@@ -1186,7 +1186,7 @@ public struct InstallationManifest: Codable, Equatable {
         self.identityFingerprint = identityFingerprint
         self.epoch = epoch
         self.previousManifestDigest = previousManifestDigest
-        self.installations = installations.sorted { $0.id.uuidString < $1.id.uuidString }
+        self.endpoints = endpoints.sorted { $0.id.uuidString < $1.id.uuidString }
         self.issuedAt = issuedAt
         self.signature = signature
     }
@@ -1195,33 +1195,33 @@ public struct InstallationManifest: Codable, Equatable {
         identityGenerationId: UUID,
         epoch: UInt64,
         previousManifestDigest: Data? = nil,
-        installations: [InstallationRecord],
+        endpoints: [EndpointRecord],
         identity: Identity,
         issuedAt: Date = Date()
-    ) throws -> InstallationManifest {
-        let ordered = installations.sorted { $0.id.uuidString < $1.id.uuidString }
-        let payload = InstallationManifestSignaturePayload(
+    ) throws -> EndpointSetManifest {
+        let ordered = endpoints.sorted { $0.id.uuidString < $1.id.uuidString }
+        let payload = EndpointSetManifestSignaturePayload(
             version: NoctweaveArchitectureV2.version,
             identityGenerationId: identityGenerationId,
             identityFingerprint: identity.fingerprint,
             epoch: epoch,
             previousManifestDigest: previousManifestDigest,
-            installations: ordered,
+            endpoints: ordered,
             issuedAt: issuedAt
         )
-        return InstallationManifest(
+        return EndpointSetManifest(
             identityGenerationId: identityGenerationId,
             identityFingerprint: identity.fingerprint,
             epoch: epoch,
             previousManifestDigest: previousManifestDigest,
-            installations: ordered,
+            endpoints: ordered,
             issuedAt: issuedAt,
             signature: try identity.signingKey.sign(NoctweaveCoder.encode(payload, sortedKeys: true))
         )
     }
 
-    public var activeInstallations: [InstallationRecord] {
-        installations.filter { $0.isActive(manifestEpoch: epoch) }
+    public var activeEndpoints: [EndpointRecord] {
+        endpoints.filter { $0.isActive(manifestEpoch: epoch) }
     }
 
     public var digest: Data? {
@@ -1244,63 +1244,63 @@ public struct InstallationManifest: Codable, Equatable {
             : previousManifestDigest?.count == 32
         return version == NoctweaveArchitectureV2.version
             && hasValidHistoryLink
-            && !installations.isEmpty
-            && installations.count <= NoctweaveArchitectureV2.maximumInstallations
-            && Set(installations.map(\.id)).count == installations.count
-            && Set(installations.map(\.signingPublicKey)).count == installations.count
-            && Set(installations.map(\.agreementPublicKey)).count == installations.count
-            && installations.allSatisfy { installation in
-                installation.identityGenerationId == identityGenerationId
-                    && installation.isStructurallyValid
-                    && installation.addedEpoch <= epoch
-                    && installation.addedAt <= issuedAt
-                    && installation.revokedEpoch.map { $0 <= epoch } ?? true
-                    && installation.revokedAt.map { $0 <= issuedAt } ?? true
+            && !endpoints.isEmpty
+            && endpoints.count <= NoctweaveArchitectureV2.maximumEndpoints
+            && Set(endpoints.map(\.id)).count == endpoints.count
+            && Set(endpoints.map(\.signingPublicKey)).count == endpoints.count
+            && Set(endpoints.map(\.agreementPublicKey)).count == endpoints.count
+            && endpoints.allSatisfy { endpoint in
+                endpoint.identityGenerationId == identityGenerationId
+                    && endpoint.isStructurallyValid
+                    && endpoint.addedEpoch <= epoch
+                    && endpoint.addedAt <= issuedAt
+                    && endpoint.revokedEpoch.map { $0 <= epoch } ?? true
+                    && endpoint.revokedAt.map { $0 <= issuedAt } ?? true
             }
             && issuedAt.timeIntervalSince1970.isFinite
             && signature.count == 3_309
     }
 
     func revoking(
-        installationId: UUID,
+        endpointId: UUID,
         identity: Identity,
         at date: Date = Date()
-    ) throws -> InstallationManifest? {
+    ) throws -> EndpointSetManifest? {
         guard verify(identityPublicKey: identity.signingKey.publicKeyData),
               date.timeIntervalSince1970.isFinite,
               date >= issuedAt,
               let digest,
               epoch < UInt64.max,
-              let index = installations.firstIndex(where: { $0.id == installationId }) else {
+              let index = endpoints.firstIndex(where: { $0.id == endpointId }) else {
             return nil
         }
-        if installations[index].revokedEpoch != nil {
+        if endpoints[index].revokedEpoch != nil {
             return self
         }
-        guard let revoked = installations[index].revoked(epoch: epoch + 1, at: date) else {
+        guard let revoked = endpoints[index].revoked(epoch: epoch + 1, at: date) else {
             return nil
         }
-        var updated = installations
+        var updated = endpoints
         updated[index] = revoked
-        let result = try InstallationManifest.create(
+        let result = try EndpointSetManifest.create(
             identityGenerationId: identityGenerationId,
             epoch: epoch + 1,
             previousManifestDigest: digest,
-            installations: updated,
+            endpoints: updated,
             identity: identity,
             issuedAt: date
         )
         return result.isStructurallyValid ? result : nil
     }
 
-    /// Authorizes one independently keyed installation in the next manifest
+    /// Authorizes one independently keyed endpoint in the next manifest
     /// epoch. Replaying the identical record is idempotent; reusing an ID or
     /// key for different material fails closed.
     func adding(
-        installation: InstallationRecord,
+        endpoint: EndpointRecord,
         identity: Identity,
         at date: Date = Date()
-    ) throws -> InstallationManifest? {
+    ) throws -> EndpointSetManifest? {
         guard verify(identityPublicKey: identity.signingKey.publicKeyData),
               date.timeIntervalSince1970.isFinite,
               date >= issuedAt,
@@ -1308,59 +1308,59 @@ public struct InstallationManifest: Codable, Equatable {
               epoch < UInt64.max else {
             return nil
         }
-        if let existing = installations.first(where: { $0.id == installation.id }) {
-            return existing == installation ? self : nil
+        if let existing = endpoints.first(where: { $0.id == endpoint.id }) {
+            return existing == endpoint ? self : nil
         }
-        let retained = installations.filter { record in
+        let retained = endpoints.filter { record in
             record.revokedEpoch == nil
                 && (record.expiresAt.map { $0 > date } ?? true)
         }
-        guard retained.count < NoctweaveArchitectureV2.maximumInstallations,
-              installation.isStructurallyValid,
-              installation.identityGenerationId == identityGenerationId,
-              installation.addedEpoch == epoch + 1,
-              installation.addedAt <= date,
-              installation.revokedEpoch == nil,
-              installation.revokedAt == nil,
-              !installations.contains(where: {
-                  $0.signingPublicKey == installation.signingPublicKey
-                      || $0.agreementPublicKey == installation.agreementPublicKey
+        guard retained.count < NoctweaveArchitectureV2.maximumEndpoints,
+              endpoint.isStructurallyValid,
+              endpoint.identityGenerationId == identityGenerationId,
+              endpoint.addedEpoch == epoch + 1,
+              endpoint.addedAt <= date,
+              endpoint.revokedEpoch == nil,
+              endpoint.revokedAt == nil,
+              !endpoints.contains(where: {
+                  $0.signingPublicKey == endpoint.signingPublicKey
+                      || $0.agreementPublicKey == endpoint.agreementPublicKey
               }) else {
             return nil
         }
-        let result = try InstallationManifest.create(
+        let result = try EndpointSetManifest.create(
             identityGenerationId: identityGenerationId,
             epoch: epoch + 1,
             previousManifestDigest: digest,
             // The previous digest commits removed records, so ordinary endpoint
             // replacement within this generation does not consume a permanent slot.
-            installations: retained + [installation],
+            endpoints: retained + [endpoint],
             identity: identity,
             issuedAt: date
         )
         return result.isStructurallyValid ? result : nil
     }
 
-    private var signaturePayload: InstallationManifestSignaturePayload {
-        InstallationManifestSignaturePayload(
+    private var signaturePayload: EndpointSetManifestSignaturePayload {
+        EndpointSetManifestSignaturePayload(
             version: version,
             identityGenerationId: identityGenerationId,
             identityFingerprint: identityFingerprint,
             epoch: epoch,
             previousManifestDigest: previousManifestDigest,
-            installations: installations,
+            endpoints: endpoints,
             issuedAt: issuedAt
         )
     }
 }
 
-private struct InstallationManifestSignaturePayload: Codable {
+private struct EndpointSetManifestSignaturePayload: Codable {
     let version: Int
     let identityGenerationId: UUID
     let identityFingerprint: String
     let epoch: UInt64
     let previousManifestDigest: Data?
-    let installations: [InstallationRecord]
+    let endpoints: [EndpointRecord]
     let issuedAt: Date
 }
 

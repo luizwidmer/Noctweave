@@ -943,7 +943,7 @@ final class RelayStore {
                 }
                 return existing
             }
-            if inboxRegistration.mailboxStream.isInstallationManaged {
+            if inboxRegistration.mailboxStream.isEndpointManaged {
                 guard hasActiveBoundConsumer else {
                     throw MailboxSyncError.freshInboxRequired
                 }
@@ -983,7 +983,7 @@ final class RelayStore {
                 registeredAt: now
             )
             inboxRegistration.mailboxStream.consumers[consumerId.rawValue] = registration
-            inboxRegistration.mailboxStream.isInstallationManaged = true
+            inboxRegistration.mailboxStream.isEndpointManaged = true
             inboxRegistrations[inboxId] = inboxRegistration
             try saveLocked()
             return registration
@@ -992,7 +992,7 @@ final class RelayStore {
 
     func hasMailboxConsumerBindings(inboxId: String) -> Bool {
         performSync {
-            inboxRegistrations[inboxId]?.mailboxStream.isInstallationManaged ?? false
+            inboxRegistrations[inboxId]?.mailboxStream.isEndpointManaged ?? false
         }
     }
 

@@ -46,7 +46,7 @@ struct RelayModuleCapabilityV2: Codable, Equatable {
 struct RelayCapabilityManifestV2: Codable, Equatable {
     static let architectureVersion = 2
     static let maximumModules = 64
-    static let maximumInstallations = 16
+    static let maximumEndpoints = 16
     static let maximumCursorBytes = 512
 
     let architectureVersion: Int
@@ -85,7 +85,7 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                 versions: [2],
                 status: .provisional,
                 limits: [
-                    "maxConsumers": UInt64(maximumInstallations),
+                    "maxConsumers": UInt64(maximumEndpoints),
                     "maxCursorBytes": UInt64(maximumCursorBytes),
                     "maxPage": 256
                 ]

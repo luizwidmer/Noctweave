@@ -38,7 +38,7 @@ final class InboxRegistrationV2Tests: XCTestCase {
         let json = String(decoding: data, as: UTF8.self)
         for forbidden in [
             "contactOffer", "displayName", "signingPublicKey", "agreementPublicKey",
-            "installationManifest", "endpointCertificate", "prekey"
+            "endpointSetManifest", "endpointCertificate", "prekey"
         ] {
             XCTAssertFalse(json.contains(forbidden), forbidden)
         }

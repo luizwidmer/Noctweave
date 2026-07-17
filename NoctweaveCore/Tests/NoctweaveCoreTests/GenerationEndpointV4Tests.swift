@@ -2,7 +2,7 @@ import CryptoKit
 import XCTest
 @testable import NoctweaveCore
 
-final class InstallationEndpointV4Tests: XCTestCase {
+final class GenerationEndpointV4Tests: XCTestCase {
     func testDirectV4ContactImportRejectsPreV4Offer() throws {
         let identity = try Identity.generate(displayName: "Pre-v4")
         let offer = try ContactOffer.create(
@@ -34,7 +34,7 @@ final class InstallationEndpointV4Tests: XCTestCase {
         let localEndpoint = directV4VectorEndpoint(vector.local, issuedAt: issuedAt)
         let peerEndpoint = directV4VectorEndpoint(vector.peer, issuedAt: issuedAt)
 
-        let binding = try PairwiseInstallationBindingV4.derive(
+        let binding = try PairwiseEndpointBindingV4.derive(
             localIdentityGenerationId: try XCTUnwrap(UUID(uuidString: vector.local.identityGenerationId)),
             localIdentitySigningPublicKey: Data(
                 repeating: UInt8(vector.local.identitySigningByte),
@@ -50,8 +50,8 @@ final class InstallationEndpointV4Tests: XCTestCase {
         )
 
         XCTAssertEqual(binding.relationshipId.uuidString, vector.expected.relationshipId)
-        XCTAssertEqual(binding.localInstallationHandle.rawValue, vector.expected.localInstallationHandle)
-        XCTAssertEqual(binding.peerInstallationHandle.rawValue, vector.expected.peerInstallationHandle)
+        XCTAssertEqual(binding.localEndpointHandle.rawValue, vector.expected.localEndpointHandle)
+        XCTAssertEqual(binding.peerEndpointHandle.rawValue, vector.expected.peerEndpointHandle)
         XCTAssertEqual(
             binding.localCertificateReferenceDigest.base64EncodedString(),
             vector.expected.localCertificateReferenceDigest
@@ -82,7 +82,7 @@ final class InstallationEndpointV4Tests: XCTestCase {
         )
         let aad = try NoctweaveCoder.encode(
             DirectV4AADVectorPayload(
-                version: CertifiedInstallationEndpoint.version,
+                version: CertifiedGenerationEndpoint.version,
                 conversationId: vector.wire.conversationId,
                 sessionId: vector.wire.sessionId,
                 messageCounter: vector.wire.messageCounter,
@@ -96,7 +96,7 @@ final class InstallationEndpointV4Tests: XCTestCase {
             id: try XCTUnwrap(UUID(uuidString: vector.wire.envelopeId)),
             conversationId: vector.wire.conversationId,
             sessionId: vector.wire.sessionId,
-            senderFingerprint: binding.localInstallationHandle.rawValue,
+            senderFingerprint: binding.localEndpointHandle.rawValue,
             sentAt: try XCTUnwrap(ISO8601DateFormatter().date(from: vector.wire.sentAt)),
             messageCounter: vector.wire.messageCounter,
             kemCiphertext: nil,
@@ -128,16 +128,16 @@ final class InstallationEndpointV4Tests: XCTestCase {
         let aliceCarol = try binding(local: alice, peer: carol)
 
         XCTAssertEqual(aliceBob.relationshipId, bobAlice.relationshipId)
-        XCTAssertEqual(aliceBob.localInstallationHandle, bobAlice.peerInstallationHandle)
-        XCTAssertEqual(aliceBob.peerInstallationHandle, bobAlice.localInstallationHandle)
+        XCTAssertEqual(aliceBob.localEndpointHandle, bobAlice.peerEndpointHandle)
+        XCTAssertEqual(aliceBob.peerEndpointHandle, bobAlice.localEndpointHandle)
         XCTAssertEqual(
             aliceBob.localCertificateReferenceDigest,
             bobAlice.peerCertificateReferenceDigest
         )
         XCTAssertNotEqual(aliceBob.relationshipId, aliceCarol.relationshipId)
         XCTAssertNotEqual(
-            aliceBob.localInstallationHandle,
-            aliceCarol.localInstallationHandle
+            aliceBob.localEndpointHandle,
+            aliceCarol.localEndpointHandle
         )
         XCTAssertNotEqual(
             aliceBob.localCertificateReferenceDigest,
@@ -162,7 +162,7 @@ final class InstallationEndpointV4Tests: XCTestCase {
             capabilities: missingEvents
         )
         XCTAssertThrowsError(
-            try PairwiseInstallationBindingV4.derive(
+            try PairwiseEndpointBindingV4.derive(
                 localIdentityGenerationId: local.identityGenerationId,
                 localIdentitySigningPublicKey: local.identityAuthorityPublicKey,
                 localEndpoint: local,
@@ -188,7 +188,7 @@ final class InstallationEndpointV4Tests: XCTestCase {
             capabilities: incompatibleEvents
         )
         XCTAssertThrowsError(
-            try PairwiseInstallationBindingV4.derive(
+            try PairwiseEndpointBindingV4.derive(
                 localIdentityGenerationId: local.identityGenerationId,
                 localIdentitySigningPublicKey: local.identityAuthorityPublicKey,
                 localEndpoint: local,
@@ -208,7 +208,7 @@ final class InstallationEndpointV4Tests: XCTestCase {
             issuedAt: issuedAt,
             capabilities: base
         )
-        let binding = try PairwiseInstallationBindingV4.derive(
+        let binding = try PairwiseEndpointBindingV4.derive(
             localIdentityGenerationId: local.identityGenerationId,
             localIdentitySigningPublicKey: local.identityAuthorityPublicKey,
             localEndpoint: local,
@@ -220,9 +220,9 @@ final class InstallationEndpointV4Tests: XCTestCase {
             cipherSuite: "nw.direct-v4.downgraded",
             negotiatedCapabilitiesDigest: binding.negotiatedCapabilitiesDigest,
             eventId: UUID(),
-            senderInstallationHandle: binding.localInstallationHandle,
+            senderEndpointHandle: binding.localEndpointHandle,
             senderCertificateDigest: binding.localCertificateReferenceDigest,
-            recipientInstallationHandle: binding.peerInstallationHandle,
+            recipientEndpointHandle: binding.peerEndpointHandle,
             senderManifestEpoch: local.manifestEpoch,
             recipientManifestEpoch: peer.manifestEpoch,
             recipientCertificateDigest: binding.peerCertificateReferenceDigest
@@ -292,7 +292,7 @@ final class InstallationEndpointV4Tests: XCTestCase {
         )
     }
 
-    func testDirectV4WireIsOpaqueAndSignedByInstallation() throws {
+    func testDirectV4WireIsOpaqueAndSignedByEndpoint() throws {
         let alice = try fixture("Alice")
         let bob = try fixture("Bob")
         let aliceOffer = try offer(alice)
@@ -302,9 +302,9 @@ final class InstallationEndpointV4Tests: XCTestCase {
         let aliceBob = try binding(local: alice, peer: bob)
         let bobAlice = try binding(local: bob, peer: alice)
 
-        let outbound = try MessageEngine.createOutboundInstallationSession(
-            localInstallation: alice.installation,
-            localEndpoint: alice.endpoint,
+        let outbound = try MessageEngine.createOutboundEndpointSession(
+            localEndpoint: alice.localEndpoint,
+            localCertificate: alice.endpoint,
             pairwiseBinding: aliceBob,
             contact: aliceContact
         )
@@ -320,15 +320,15 @@ final class InstallationEndpointV4Tests: XCTestCase {
         let event = ConversationEvent(
             id: eventId,
             conversationId: outboundConversation.id,
-            authorInstallationHandle: aliceBob.localInstallationHandle,
+            authorEndpointHandle: aliceBob.localEndpointHandle,
             createdAt: sentAt,
             kind: .application,
-            content: try XCTUnwrap(EncodedContent.text("installation signed"))
+            content: try XCTUnwrap(EncodedContent.text("endpoint signed"))
         )
         let envelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(event),
-            senderSigningKey: alice.installation.signingKey,
-            senderFingerprint: aliceBob.localInstallationHandle.rawValue,
+            senderSigningKey: alice.localEndpoint.signingKey,
+            senderFingerprint: aliceBob.localEndpointHandle.rawValue,
             conversation: &outboundConversation,
             kemCiphertext: outbound.kemCiphertext,
             prekey: outbound.prekey,
@@ -336,14 +336,14 @@ final class InstallationEndpointV4Tests: XCTestCase {
             sentAt: sentAt
         )
 
-        XCTAssertEqual(envelope.senderFingerprint, aliceBob.localInstallationHandle.rawValue)
+        XCTAssertEqual(envelope.senderFingerprint, aliceBob.localEndpointHandle.rawValue)
         XCTAssertEqual(context.directV4?.cipherSuite, DirectV4CipherSuite.identifier)
         XCTAssertEqual(
             context.directV4?.negotiatedCapabilitiesDigest,
             aliceBob.negotiatedCapabilitiesDigest
         )
         XCTAssertTrue(envelope.verifySignature(
-            publicSigningKey: alice.installation.signingKey.publicKeyData
+            publicSigningKey: alice.localEndpoint.signingKey.publicKeyData
         ))
         XCTAssertFalse(envelope.verifySignature(
             publicSigningKey: alice.identity.signingKey.publicKeyData
@@ -353,14 +353,14 @@ final class InstallationEndpointV4Tests: XCTestCase {
         let relayJSON = try XCTUnwrap(String(data: relayVisible, encoding: .utf8))
         for forbidden in [
             alice.identity.signingKey.publicKeyData.base64EncodedString(),
-            alice.installation.signingKey.publicKeyData.base64EncodedString(),
-            alice.installation.agreementKey.publicKeyData.base64EncodedString(),
+            alice.localEndpoint.signingKey.publicKeyData.base64EncodedString(),
+            alice.localEndpoint.agreementKey.publicKeyData.base64EncodedString(),
             alice.endpoint.prekeyBundle.signedPrekey.publicKey.base64EncodedString(),
-            alice.installation.id.uuidString,
-            alice.endpoint.identityGenerationId.uuidString,
+            alice.localEndpoint.id.uuidString,
+            alice.localEndpoint.identityGenerationId.uuidString,
             alice.identity.fingerprint,
             "prekeyBundle",
-            "installationManifest",
+            "endpointSetManifest",
             "identityAuthorityPublicKey",
             "signingPublicKey",
             "agreementPublicKey"
@@ -368,9 +368,9 @@ final class InstallationEndpointV4Tests: XCTestCase {
             XCTAssertFalse(relayJSON.contains(forbidden), "relay context leaked \(forbidden)")
         }
 
-        var inboundConversation = try MessageEngine.createInboundInstallationSession(
-            localInstallation: bob.installation,
-            localEndpoint: bob.endpoint,
+        var inboundConversation = try MessageEngine.createInboundEndpointSession(
+            localEndpoint: bob.localEndpoint,
+            localCertificate: bob.endpoint,
             senderEndpoint: alice.endpoint,
             pairwiseBinding: bobAlice,
             contact: bobContact,
@@ -381,13 +381,13 @@ final class InstallationEndpointV4Tests: XCTestCase {
             envelope: envelope,
             contact: bobContact,
             localIdentity: bob.identity,
-            localInstallation: bob.installation,
+            localEndpoint: bob.localEndpoint,
             localManifest: bob.manifest,
-            localEndpoint: bob.endpoint,
+            localCertificate: bob.endpoint,
             pairwiseBinding: bobAlice,
             conversation: &inboundConversation
         )
-        XCTAssertEqual(decrypted.body, .text("installation signed"))
+        XCTAssertEqual(decrypted.body, .text("endpoint signed"))
         XCTAssertEqual(context.directV4?.eventId, eventId)
     }
 
@@ -398,18 +398,18 @@ final class InstallationEndpointV4Tests: XCTestCase {
         let revokedAt = alice.manifest.issuedAt.addingTimeInterval(1)
         let revokedManifest = try XCTUnwrap(
             try alice.manifest.revoking(
-                installationId: alice.installation.id,
+                endpointId: alice.localEndpoint.id,
                 identity: alice.identity,
                 at: revokedAt
             )
         )
-        let revocation = try InstallationEndpointRevocationV4.create(
+        let revocation = try EndpointRemovalProofV4.create(
             endpoint: alice.endpoint,
             revokedManifest: revokedManifest,
             identity: alice.identity
         )
         XCTAssertTrue(bobContact.apply(endpointRevocation: revocation))
-        XCTAssertThrowsError(try bobContact.certifiedInstallationEndpoint())
+        XCTAssertThrowsError(try bobContact.certifiedGenerationEndpoint())
 
         let unrelated = try fixture("Mallory")
         let direct = try XCTUnwrap(
@@ -461,9 +461,9 @@ final class InstallationEndpointV4Tests: XCTestCase {
         let stored = try XCTUnwrap(storedEnvelopes.first)
         let maybeAliceState = try await alice.store.load()
         let aliceState = try XCTUnwrap(maybeAliceState)
-        let aliceInstallation = try XCTUnwrap(aliceState.localInstallation)
+        let aliceEndpoint = try XCTUnwrap(aliceState.localEndpoint)
         XCTAssertEqual(stored.authenticatedContext?.purpose, .directV4)
-        XCTAssertTrue(stored.verifySignature(publicSigningKey: aliceInstallation.signingKey.publicKeyData))
+        XCTAssertTrue(stored.verifySignature(publicSigningKey: aliceEndpoint.signingKey.publicKeyData))
         XCTAssertFalse(stored.verifySignature(publicSigningKey: aliceState.identity.signingKey.publicKeyData))
         XCTAssertEqual(stored.id, sent.envelopeId)
 
@@ -473,8 +473,8 @@ final class InstallationEndpointV4Tests: XCTestCase {
         let maybePersisted = try await restartedBob.store.load()
         let persisted = try XCTUnwrap(maybePersisted)
         let session = try XCTUnwrap(persisted.conversations.first?.endpointSession)
-        XCTAssertEqual(session.localInstallationId, persisted.localInstallation?.id)
-        XCTAssertEqual(session.peerInstallationHandle.rawValue, stored.senderFingerprint)
+        XCTAssertEqual(session.localEndpointId, persisted.localEndpoint?.id)
+        XCTAssertEqual(session.peerEndpointHandle.rawValue, stored.senderFingerprint)
     }
 }
 
@@ -482,7 +482,7 @@ private struct DirectV4PairwiseBindingVector: Decodable {
     struct Endpoint: Decodable {
         let identityGenerationId: String
         let identitySigningByte: Int
-        let installationId: String
+        let endpointId: String
         let endpointSigningByte: Int
         let endpointAgreementByte: Int
         let manifestEpoch: UInt64
@@ -494,7 +494,7 @@ private struct DirectV4PairwiseBindingVector: Decodable {
         static let localFixture = Endpoint(
             identityGenerationId: "11111111-2222-4333-8444-555555555555",
             identitySigningByte: 17,
-            installationId: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+            endpointId: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
             endpointSigningByte: 49,
             endpointAgreementByte: 65,
             manifestEpoch: 3,
@@ -507,7 +507,7 @@ private struct DirectV4PairwiseBindingVector: Decodable {
         static let peerFixture = Endpoint(
             identityGenerationId: "99999999-8888-4777-8666-555555555555",
             identitySigningByte: 34,
-            installationId: "BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF",
+            endpointId: "BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF",
             endpointSigningByte: 50,
             endpointAgreementByte: 66,
             manifestEpoch: 7,
@@ -520,8 +520,8 @@ private struct DirectV4PairwiseBindingVector: Decodable {
 
     struct Expected: Decodable {
         let relationshipId: String
-        let localInstallationHandle: String
-        let peerInstallationHandle: String
+        let localEndpointHandle: String
+        let peerEndpointHandle: String
         let localCertificateReferenceDigest: String
         let peerCertificateReferenceDigest: String
         let cipherSuite: String
@@ -563,9 +563,9 @@ private func directV4VectorEndpoint(
     _ value: DirectV4PairwiseBindingVector.Endpoint,
     issuedAt: Date,
     capabilities: ProtocolCapabilityManifest = ProtocolCapabilityManifest()
-) -> CertifiedInstallationEndpoint {
+) -> CertifiedGenerationEndpoint {
     let signature = Data(repeating: UInt8(value.signatureByte), count: 3_309)
-    return CertifiedInstallationEndpoint(
+    return CertifiedGenerationEndpoint(
         identityGenerationId: UUID(uuidString: value.identityGenerationId)!,
         identityAuthorityPublicKey: Data(
             repeating: UInt8(value.identitySigningByte),
@@ -573,7 +573,7 @@ private func directV4VectorEndpoint(
         ),
         manifestEpoch: value.manifestEpoch,
         manifestDigest: Data(repeating: UInt8(value.manifestDigestByte), count: 32),
-        installationId: UUID(uuidString: value.installationId)!,
+        endpointId: UUID(uuidString: value.endpointId)!,
         signingPublicKey: Data(repeating: UInt8(value.endpointSigningByte), count: 1_952),
         agreementPublicKey: Data(repeating: UInt8(value.endpointAgreementByte), count: 1_184),
         capabilities: capabilities,
@@ -619,33 +619,33 @@ private func replacingCapabilityModule(
 private struct EndpointFixture {
     let identity: Identity
     let generationId: UUID
-    let installation: LocalInstallationState
-    let manifest: InstallationManifest
-    let endpoint: CertifiedInstallationEndpoint
+    let localEndpoint: LocalEndpointState
+    let manifest: EndpointSetManifest
+    let endpoint: CertifiedGenerationEndpoint
     let relay: RelayEndpoint
 }
 
 private func fixture(_ name: String) throws -> EndpointFixture {
     let identity = try Identity.generate(displayName: name)
     let generationId = UUID()
-    let installation = try LocalInstallationState.generate(identityGenerationId: generationId)
-    let manifest = try InstallationManifest.create(
+    let localEndpoint = try LocalEndpointState.generate(identityGenerationId: generationId)
+    let manifest = try EndpointSetManifest.create(
         identityGenerationId: generationId,
         epoch: 0,
-        installations: [installation.publicRecord(addedEpoch: 0)],
+        endpoints: [localEndpoint.publicRecord(addedEpoch: 0)],
         identity: identity,
-        issuedAt: installation.createdAt
+        issuedAt: localEndpoint.createdAt
     )
     return EndpointFixture(
         identity: identity,
         generationId: generationId,
-        installation: installation,
+        localEndpoint: localEndpoint,
         manifest: manifest,
-        endpoint: try CertifiedInstallationEndpoint.create(
+        endpoint: try CertifiedGenerationEndpoint.create(
             identity: identity,
-            installation: installation,
+            endpoint: localEndpoint,
             manifest: manifest,
-            issuedAt: installation.createdAt
+            issuedAt: localEndpoint.createdAt
         ),
         relay: RelayEndpoint(host: "127.0.0.1", port: 9340)
     )
@@ -658,16 +658,16 @@ private func offer(_ fixture: EndpointFixture) throws -> ContactOffer {
         relay: fixture.relay,
         identity: fixture.identity,
         identityGenerationId: fixture.generationId,
-        installationManifest: fixture.manifest,
-        preferredInstallationEndpoint: fixture.endpoint
+        endpointSetManifest: fixture.manifest,
+        preferredGenerationEndpoint: fixture.endpoint
     )
 }
 
 private func binding(
     local: EndpointFixture,
     peer: EndpointFixture
-) throws -> PairwiseInstallationBindingV4 {
-    try PairwiseInstallationBindingV4.derive(
+) throws -> PairwiseEndpointBindingV4 {
+    try PairwiseEndpointBindingV4.derive(
         localIdentityGenerationId: local.generationId,
         localIdentitySigningPublicKey: local.identity.signingKey.publicKeyData,
         localEndpoint: local.endpoint,

@@ -141,7 +141,7 @@ public struct SelfSyncPreferenceUpdateV2: Codable, Equatable {
 /// group control state.
 public enum TypedSelfSyncPayloadV2: Codable, Equatable {
     case conversationEvent(ConversationEvent)
-    case endpointManifest(InstallationManifest)
+    case endpointSetManifest(EndpointSetManifest)
     case relationshipRouteSet(RelationshipRouteSetV2)
     case groupCommit(SignedGroupCommitV2)
     case consent(SelfSyncConsentUpdateV2)
@@ -152,7 +152,7 @@ public enum TypedSelfSyncPayloadV2: Codable, Equatable {
         switch self {
         case .conversationEvent(let event):
             return event.isStructurallyValid
-        case .endpointManifest(let manifest):
+        case .endpointSetManifest(let manifest):
             return manifest.isStructurallyValid
         case .relationshipRouteSet(let routeSet):
             return routeSet.isStructurallyValid
@@ -266,7 +266,7 @@ public struct SignedSelfSyncRecordV2: Codable, Equatable, Identifiable {
     }
 
     public func verify(
-        manifest: InstallationManifest,
+        manifest: EndpointSetManifest,
         identityPublicKey: Data
     ) -> Bool {
         guard isStructurallyValid,
@@ -274,7 +274,7 @@ public struct SignedSelfSyncRecordV2: Codable, Equatable, Identifiable {
               manifest.epoch == manifestEpoch,
               manifest.verify(identityPublicKey: identityPublicKey),
               createdAt >= manifest.issuedAt,
-              let source = manifest.installations.first(where: { $0.id == sourceEndpointId }),
+              let source = manifest.endpoints.first(where: { $0.id == sourceEndpointId }),
               source.isActive(at: createdAt, manifestEpoch: manifestEpoch),
               let encoded = try? NoctweaveCoder.encode(signaturePayload, sortedKeys: true) else {
             return false
@@ -375,7 +375,7 @@ public struct SelfSyncSourceChainV2: Codable, Equatable {
 
     public mutating func apply(
         _ record: SignedSelfSyncRecordV2,
-        manifest: InstallationManifest,
+        manifest: EndpointSetManifest,
         identityPublicKey: Data
     ) throws -> SelfSyncSourceApplyResultV2 {
         guard isStructurallyValid else { throw SignedSelfSyncV2Error.invalidStructure }
@@ -639,7 +639,7 @@ public struct SelfSyncEpochWelcomeV2: Codable, Equatable, Identifiable {
     }
 
     public func verify(
-        manifest: InstallationManifest,
+        manifest: EndpointSetManifest,
         identityPublicKey: Data,
         expectedRecipientEndpointId: UUID,
         now: Date = Date()
@@ -652,7 +652,7 @@ public struct SelfSyncEpochWelcomeV2: Codable, Equatable, Identifiable {
               identityGenerationId == manifest.identityGenerationId,
               manifestEpoch == manifest.epoch,
               manifest.verify(identityPublicKey: identityPublicKey),
-              let recipient = manifest.installations.first(where: { $0.id == recipientEndpointId }),
+              let recipient = manifest.endpoints.first(where: { $0.id == recipientEndpointId }),
               recipient.isActive(at: now, manifestEpoch: manifestEpoch),
               let encoded = try? NoctweaveCoder.encode(signaturePayload, sortedKeys: true) else {
             return false
@@ -765,7 +765,7 @@ public struct SealedSelfSyncEpochWelcomeV2: Codable, Equatable, Identifiable {
 
     public func open(
         recipientAgreementKey: AgreementKeyPair,
-        manifest: InstallationManifest,
+        manifest: EndpointSetManifest,
         identityPublicKey: Data,
         expectedRecipientEndpointId: UUID,
         now: Date = Date()
@@ -849,7 +849,7 @@ public struct SelfSyncWelcomeReplayLedgerV2: Codable, Equatable {
 
     public mutating func consume(
         _ welcome: SelfSyncEpochWelcomeV2,
-        manifest: InstallationManifest,
+        manifest: EndpointSetManifest,
         identityPublicKey: Data,
         expectedRecipientEndpointId: UUID,
         now: Date = Date()

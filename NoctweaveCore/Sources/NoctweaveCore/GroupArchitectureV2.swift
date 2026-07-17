@@ -295,11 +295,11 @@ public struct GroupUser: Codable, Equatable, Identifiable {
     }
 }
 
-/// One group leaf is one independently revocable installation endpoint.
+/// One group leaf is one independently revocable endpoint.
 public struct GroupClientLeaf: Codable, Equatable, Identifiable {
     public let id: UUID
     public let userId: UUID
-    public let installationHandle: RelationshipInstallationHandle
+    public let endpointHandle: RelationshipEndpointHandle
     public let keyPackageDigest: Data
     public let addedEpoch: UInt64
     public let removedEpoch: UInt64?
@@ -307,21 +307,21 @@ public struct GroupClientLeaf: Codable, Equatable, Identifiable {
     public init(
         id: UUID,
         userId: UUID,
-        installationHandle: RelationshipInstallationHandle,
+        endpointHandle: RelationshipEndpointHandle,
         keyPackageDigest: Data,
         addedEpoch: UInt64,
         removedEpoch: UInt64? = nil
     ) {
         self.id = id
         self.userId = userId
-        self.installationHandle = installationHandle
+        self.endpointHandle = endpointHandle
         self.keyPackageDigest = keyPackageDigest
         self.addedEpoch = addedEpoch
         self.removedEpoch = removedEpoch
     }
 
     public var isStructurallyValid: Bool {
-        installationHandle.isStructurallyValid
+        endpointHandle.isStructurallyValid
             && keyPackageDigest.count == 32
             && addedEpoch > 0
             && (removedEpoch.map { $0 > addedEpoch } ?? true)
@@ -338,7 +338,7 @@ public struct GroupClientLeaf: Codable, Equatable, Identifiable {
         return GroupClientLeaf(
             id: id,
             userId: userId,
-            installationHandle: installationHandle,
+            endpointHandle: endpointHandle,
             keyPackageDigest: keyPackageDigest,
             addedEpoch: addedEpoch,
             removedEpoch: epoch
@@ -409,7 +409,7 @@ public struct GroupMembershipState: Codable, Equatable, Identifiable {
               clientLeaves.count <= NoctweaveGroupArchitectureV2.maximumClientLeaves,
               Set(users.map(\.id)).count == users.count,
               Set(clientLeaves.map(\.id)).count == clientLeaves.count,
-              Set(clientLeaves.map(\.installationHandle)).count == clientLeaves.count,
+              Set(clientLeaves.map(\.endpointHandle)).count == clientLeaves.count,
               users.allSatisfy(\.isStructurallyValid),
               clientLeaves.allSatisfy(\.isStructurallyValid),
               permissions.isStructurallyValid,
@@ -744,10 +744,7 @@ public struct GroupCryptoOpenResultV2: Codable, Equatable {
     }
 }
 
-@available(*, deprecated, message: "Use GroupCryptoPreparedEpochV2")
-public typealias GroupCryptoCommitOutput = GroupCryptoPreparedEpochV2
-
-/// Cryptographic providers own epoch secrets and wire compatibility;
+/// Cryptographic providers own epoch secrets and wire encoding;
 /// membership policy stays above them. Every stateful operation returns the
 /// replacement state, making persistence-before-publication enforceable.
 public protocol GroupCryptoProvider {

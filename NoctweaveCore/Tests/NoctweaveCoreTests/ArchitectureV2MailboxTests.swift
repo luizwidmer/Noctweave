@@ -60,12 +60,12 @@ final class ArchitectureV2MailboxTests: XCTestCase {
         }
 
         let retainedConsumers = await store.mailboxConsumers(inboxId: inboxId)
-        let remainsInstallationManaged = await store.hasMailboxConsumerBindings(inboxId: inboxId)
+        let remainsEndpointManaged = await store.hasMailboxConsumerBindings(inboxId: inboxId)
         XCTAssertEqual(
             retainedConsumers.count,
             NoctweaveArchitectureV2.maximumMailboxConsumerHistory
         )
-        XCTAssertTrue(remainsInstallationManaged)
+        XCTAssertTrue(remainsEndpointManaged)
         let replacement = MailboxConsumerId.generate()
         let registered = try await store.registerMailboxConsumer(
             inboxId: inboxId,

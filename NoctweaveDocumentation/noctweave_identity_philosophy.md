@@ -1,6 +1,6 @@
 # Noctweave Identity Philosophy
 
-**Status:** normative design filter for all pre-1.0 architecture work
+**Status:** normative design filter for the 1.0 architecture
 
 Noctweave is not an account system with privacy features added around it. It is
 a private messaging protocol built from disposable identity generations,
@@ -53,10 +53,9 @@ allowed into the protocol.
 | Identity burn | Creation of an unrelated generation plus complete old-generation teardown. |
 | Authority rotation | A continuity-preserving key transition inside the same generation; it is not a privacy burn. |
 
-Some pre-1.0 source types still contain the compatibility word
-`Installation`. In protocol design and user-facing documentation, read that as
-**generation-scoped local endpoint**, never as a durable device attached to an
-account. Compatibility naming must not weaken the invariants above.
+Noctweave 1.0 starts from this model as a clean protocol origin. Pre-1.0
+research state, account-shaped terminology, and obsolete wire or persisted
+formats are rejected rather than carried into the production architecture.
 
 ## The Borrowing Filter
 
@@ -92,7 +91,7 @@ experimental extension, or left out.
   and explicit capability/ciphersuite negotiation bound into transcripts.
 - Durable mutation intents for crash-safe sends, route changes, endpoint-set
   changes, group commits, and burns.
-- Pairwise opaque routes with make-before-break migration, bounded overlap, and
+- Pairwise opaque routes with make-before-break rotation, bounded overlap, and
   authenticated retirement.
 - Explicit group roles and policies inside signed group state, with each local
   endpoint represented independently.
@@ -112,7 +111,7 @@ experimental extension, or left out.
 - Destructive single-consumer queues as the synchronization model, permanent
   relay history, or a required centralized history server.
 - Gossip-based broadcast delivery as the default direct-message transport.
-- Shared live ratchet state across endpoints or silent fallback to legacy
+- Shared live ratchet state across endpoints or fallback to obsolete
   ciphersuites and wire formats.
 - Calling a manifest-only endpoint removal "revocation" when routes, self-sync,
   group state, and delivery authority have not also been removed.

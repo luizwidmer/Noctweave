@@ -16,8 +16,8 @@ public struct ContactOffer: Codable, Equatable {
     public let agreementPublicKey: Data
     public let inboxAccessPublicKey: Data?
     public let identityGenerationId: UUID?
-    public let installationCheckpoint: InstallationManifestCheckpointV4?
-    public let preferredInstallationEndpoint: CertifiedInstallationEndpoint?
+    public let endpointSetCheckpoint: EndpointSetCheckpointV4?
+    public let preferredGenerationEndpoint: CertifiedGenerationEndpoint?
     public let fingerprint: String
     public let signature: Data
 
@@ -30,8 +30,8 @@ public struct ContactOffer: Codable, Equatable {
         agreementPublicKey: Data,
         inboxAccessPublicKey: Data? = nil,
         identityGenerationId: UUID? = nil,
-        installationCheckpoint: InstallationManifestCheckpointV4? = nil,
-        preferredInstallationEndpoint: CertifiedInstallationEndpoint? = nil,
+        endpointSetCheckpoint: EndpointSetCheckpointV4? = nil,
+        preferredGenerationEndpoint: CertifiedGenerationEndpoint? = nil,
         fingerprint: String,
         signature: Data
     ) {
@@ -43,8 +43,8 @@ public struct ContactOffer: Codable, Equatable {
         self.agreementPublicKey = agreementPublicKey
         self.inboxAccessPublicKey = inboxAccessPublicKey
         self.identityGenerationId = identityGenerationId
-        self.installationCheckpoint = installationCheckpoint
-        self.preferredInstallationEndpoint = preferredInstallationEndpoint
+        self.endpointSetCheckpoint = endpointSetCheckpoint
+        self.preferredGenerationEndpoint = preferredGenerationEndpoint
         self.fingerprint = fingerprint
         self.signature = signature
     }
@@ -67,8 +67,8 @@ public struct ContactOffer: Codable, Equatable {
             agreementPublicKey: agreementPublicKey,
             inboxAccessPublicKey: inboxAccessPublicKey,
             identityGenerationId: nil,
-            installationCheckpoint: nil,
-            preferredInstallationEndpoint: nil,
+            endpointSetCheckpoint: nil,
+            preferredGenerationEndpoint: nil,
             fingerprint: fingerprint
         )
         let signature = try signingKey.sign(unsigned.signableData())
@@ -81,8 +81,8 @@ public struct ContactOffer: Codable, Equatable {
             agreementPublicKey: unsigned.agreementPublicKey,
             inboxAccessPublicKey: unsigned.inboxAccessPublicKey,
             identityGenerationId: unsigned.identityGenerationId,
-            installationCheckpoint: unsigned.installationCheckpoint,
-            preferredInstallationEndpoint: unsigned.preferredInstallationEndpoint,
+            endpointSetCheckpoint: unsigned.endpointSetCheckpoint,
+            preferredGenerationEndpoint: unsigned.preferredGenerationEndpoint,
             fingerprint: unsigned.fingerprint,
             signature: signature
         )
@@ -94,20 +94,20 @@ public struct ContactOffer: Codable, Equatable {
         relay: RelayEndpoint,
         identity: Identity,
         identityGenerationId: UUID,
-        installationManifest: InstallationManifest,
-        preferredInstallationEndpoint: CertifiedInstallationEndpoint,
+        endpointSetManifest: EndpointSetManifest,
+        preferredGenerationEndpoint: CertifiedGenerationEndpoint,
         inboxAccessPublicKey: Data? = nil
     ) throws -> ContactOffer {
-        guard installationManifest.identityGenerationId == identityGenerationId,
-              preferredInstallationEndpoint.identityGenerationId == identityGenerationId,
-              (try? preferredInstallationEndpoint.verified(
+        guard endpointSetManifest.identityGenerationId == identityGenerationId,
+              preferredGenerationEndpoint.identityGenerationId == identityGenerationId,
+              (try? preferredGenerationEndpoint.verified(
                   identityPublicKey: identity.signingKey.publicKeyData,
-                  manifest: installationManifest
+                  manifest: endpointSetManifest
               )) != nil else {
             throw ContactOfferError.invalidStructure
         }
-        let installationCheckpoint = try InstallationManifestCheckpointV4.create(
-            manifest: installationManifest,
+        let endpointSetCheckpoint = try EndpointSetCheckpointV4.create(
+            manifest: endpointSetManifest,
             identity: identity
         )
         let unsigned = UnsignedContactOffer(
@@ -119,8 +119,8 @@ public struct ContactOffer: Codable, Equatable {
             agreementPublicKey: identity.agreementKey.publicKeyData,
             inboxAccessPublicKey: inboxAccessPublicKey,
             identityGenerationId: identityGenerationId,
-            installationCheckpoint: installationCheckpoint,
-            preferredInstallationEndpoint: preferredInstallationEndpoint,
+            endpointSetCheckpoint: endpointSetCheckpoint,
+            preferredGenerationEndpoint: preferredGenerationEndpoint,
             fingerprint: identity.fingerprint
         )
         return ContactOffer(
@@ -132,8 +132,8 @@ public struct ContactOffer: Codable, Equatable {
             agreementPublicKey: unsigned.agreementPublicKey,
             inboxAccessPublicKey: unsigned.inboxAccessPublicKey,
             identityGenerationId: unsigned.identityGenerationId,
-            installationCheckpoint: unsigned.installationCheckpoint,
-            preferredInstallationEndpoint: unsigned.preferredInstallationEndpoint,
+            endpointSetCheckpoint: unsigned.endpointSetCheckpoint,
+            preferredGenerationEndpoint: unsigned.preferredGenerationEndpoint,
             fingerprint: unsigned.fingerprint,
             signature: try identity.signingKey.sign(unsigned.signableData())
         )
@@ -176,8 +176,8 @@ public struct ContactOffer: Codable, Equatable {
             || (version == 3 && inboxAccessPublicKey != nil)
         let isCertified = version == 4
             && identityGenerationId != nil
-            && installationCheckpoint != nil
-            && preferredInstallationEndpoint != nil
+            && endpointSetCheckpoint != nil
+            && preferredGenerationEndpoint != nil
         guard (isLegacy || isCertified),
               !normalizedDisplayName.isEmpty,
               normalizedDisplayName.utf8.count <= 512,
@@ -199,20 +199,20 @@ public struct ContactOffer: Codable, Equatable {
         }
         if isLegacy {
             guard identityGenerationId == nil,
-                  installationCheckpoint == nil,
-                  preferredInstallationEndpoint == nil else {
+                  endpointSetCheckpoint == nil,
+                  preferredGenerationEndpoint == nil else {
                 return false
             }
         } else {
             guard let identityGenerationId,
-                  let installationCheckpoint,
-                  let preferredInstallationEndpoint,
-                  installationCheckpoint.identityGenerationId == identityGenerationId,
-                  preferredInstallationEndpoint.identityGenerationId == identityGenerationId,
-                  preferredInstallationEndpoint.manifestEpoch == installationCheckpoint.epoch,
-                  (try? preferredInstallationEndpoint.verified(
+                  let endpointSetCheckpoint,
+                  let preferredGenerationEndpoint,
+                  endpointSetCheckpoint.identityGenerationId == identityGenerationId,
+                  preferredGenerationEndpoint.identityGenerationId == identityGenerationId,
+                  preferredGenerationEndpoint.manifestEpoch == endpointSetCheckpoint.epoch,
+                  (try? preferredGenerationEndpoint.verified(
                       identityPublicKey: signingPublicKey,
-                      checkpoint: installationCheckpoint
+                      checkpoint: endpointSetCheckpoint
                   )) != nil else {
                 return false
             }
@@ -230,8 +230,8 @@ public struct ContactOffer: Codable, Equatable {
             agreementPublicKey: agreementPublicKey,
             inboxAccessPublicKey: inboxAccessPublicKey,
             identityGenerationId: identityGenerationId,
-            installationCheckpoint: installationCheckpoint,
-            preferredInstallationEndpoint: preferredInstallationEndpoint,
+            endpointSetCheckpoint: endpointSetCheckpoint,
+            preferredGenerationEndpoint: preferredGenerationEndpoint,
             fingerprint: fingerprint
         )
     }
@@ -272,8 +272,8 @@ private struct UnsignedContactOffer: Codable {
     let agreementPublicKey: Data
     let inboxAccessPublicKey: Data?
     let identityGenerationId: UUID?
-    let installationCheckpoint: InstallationManifestCheckpointV4?
-    let preferredInstallationEndpoint: CertifiedInstallationEndpoint?
+    let endpointSetCheckpoint: EndpointSetCheckpointV4?
+    let preferredGenerationEndpoint: CertifiedGenerationEndpoint?
     let fingerprint: String
 
     func signableData() throws -> Data {

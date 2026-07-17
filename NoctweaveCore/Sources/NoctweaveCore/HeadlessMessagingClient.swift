@@ -147,7 +147,7 @@ public enum HeadlessMessagingClientError: Error, Equatable {
     case stateAlreadyExists
     case missingState
     case missingInboxAccessKey
-    case missingInstallation
+    case missingEndpoint
     case identityMutationInProgress(String)
     case directOutboxFull(Int)
     case directDeliveryRequiresAction(UUID)
@@ -172,8 +172,8 @@ extension HeadlessMessagingClientError: LocalizedError {
             return "Headless client state was not found. Run `NoctweaveCLI init` first."
         case .missingInboxAccessKey:
             return "Headless client state is missing its inbox access key."
-        case .missingInstallation:
-            return "Headless client state is missing its architecture-v2 installation."
+        case .missingEndpoint:
+            return "Headless client state is missing its architecture-v2 endpoint."
         case .identityMutationInProgress(let detail):
             return "An identity mutation is already in progress: \(detail)"
         case .directOutboxFull(let maximum):
@@ -470,7 +470,7 @@ public actor HeadlessMessagingClient {
 
         let oldFingerprint = rotationContext.oldFingerprint
         let newFingerprint = state.identity.fingerprint
-        let mutationAt = max(Date(), state.installationManifest?.issuedAt ?? .distantPast)
+        let mutationAt = max(Date(), state.endpointSetManifest?.issuedAt ?? .distantPast)
         state.appendContinuityEvent(
             ContinuityEvent(
                 kind: .identityRotated,
@@ -480,15 +480,15 @@ public actor HeadlessMessagingClient {
             )
         )
         state.prekeys = try PrekeyState.generate(identity: state.identity)
-        try state.resignInstallationManifestAfterIdentityRotation(at: mutationAt)
+        try state.resignEndpointSetManifestAfterIdentityRotation(at: mutationAt)
 
         var notifications: [IdentityMutationNotificationV2] = []
         for contact in selectedContacts {
-            guard contact.usesCertifiedInstallationEndpoint,
-                  let installation = state.localInstallation else {
+            guard contact.usesCertifiedGenerationEndpoint,
+                  let endpoint = state.localEndpoint else {
                 throw HeadlessMessagingClientError.unsupportedInboundSession
             }
-            let peerEndpoint = try contact.certifiedInstallationEndpoint()
+            let peerEndpoint = try contact.certifiedGenerationEndpoint()
             let selected = try directSendEndpointContext(
                 contact: contact,
                 peerEndpoint: peerEndpoint,
@@ -503,9 +503,9 @@ public actor HeadlessMessagingClient {
             ) {
                 conversation = existing
             } else {
-                let session = try MessageEngine.createOutboundInstallationSession(
-                    localInstallation: installation,
-                    localEndpoint: selected.localEndpoint,
+                let session = try MessageEngine.createOutboundEndpointSession(
+                    localEndpoint: endpoint,
+                    localCertificate: selected.localEndpoint,
                     pairwiseBinding: selected.binding,
                     contact: contact
                 )
@@ -522,8 +522,8 @@ public actor HeadlessMessagingClient {
             )
             let envelope = try MessageEngine.encryptDirectV4(
                 wirePayload: .control(.identityRotation(rotationContext.rotation)),
-                senderSigningKey: installation.signingKey,
-                senderFingerprint: selected.binding.localInstallationHandle.rawValue,
+                senderSigningKey: endpoint.signingKey,
+                senderFingerprint: selected.binding.localEndpointHandle.rawValue,
                 conversation: &conversation,
                 kemCiphertext: kemCiphertext,
                 prekey: prekey,
@@ -551,7 +551,7 @@ public actor HeadlessMessagingClient {
                     id: envelope.id,
                     contactId: contact.id,
                     contactDisplayName: contact.displayName,
-                    signerPublicKey: installation.signingKey.publicKeyData
+                    signerPublicKey: endpoint.signingKey.publicKeyData
                 )
             )
         }
@@ -605,8 +605,8 @@ public actor HeadlessMessagingClient {
             relay: staged.relay,
             identity: staged.identity,
             identityGenerationId: staged.identityGenerationId,
-            installationManifest: staged.installationManifest,
-            preferredInstallationEndpoint: stagedEndpoint,
+            endpointSetManifest: staged.endpointSetManifest,
+            preferredGenerationEndpoint: stagedEndpoint,
             inboxAccessPublicKey: staged.inboxAccessKey.publicKeyData
         )
         let reset = try IdentityReset.create(
@@ -615,11 +615,11 @@ public actor HeadlessMessagingClient {
         )
         var notifications: [IdentityMutationNotificationV2] = []
         for contact in retainedContacts {
-            guard contact.usesCertifiedInstallationEndpoint,
-                  let installation = state.localInstallation else {
+            guard contact.usesCertifiedGenerationEndpoint,
+                  let endpoint = state.localEndpoint else {
                 throw HeadlessMessagingClientError.unsupportedInboundSession
             }
-            let peerEndpoint = try contact.certifiedInstallationEndpoint()
+            let peerEndpoint = try contact.certifiedGenerationEndpoint()
             let selected = try directSendEndpointContext(
                 contact: contact,
                 peerEndpoint: peerEndpoint,
@@ -634,9 +634,9 @@ public actor HeadlessMessagingClient {
             ) {
                 conversation = existing
             } else {
-                let session = try MessageEngine.createOutboundInstallationSession(
-                    localInstallation: installation,
-                    localEndpoint: selected.localEndpoint,
+                let session = try MessageEngine.createOutboundEndpointSession(
+                    localEndpoint: endpoint,
+                    localCertificate: selected.localEndpoint,
                     pairwiseBinding: selected.binding,
                     contact: contact
                 )
@@ -652,8 +652,8 @@ public actor HeadlessMessagingClient {
             )
             let envelope = try MessageEngine.encryptDirectV4(
                 wirePayload: .control(.identityReset(reset)),
-                senderSigningKey: installation.signingKey,
-                senderFingerprint: selected.binding.localInstallationHandle.rawValue,
+                senderSigningKey: endpoint.signingKey,
+                senderFingerprint: selected.binding.localEndpointHandle.rawValue,
                 conversation: &conversation,
                 kemCiphertext: kemCiphertext,
                 prekey: prekey,
@@ -673,7 +673,7 @@ public actor HeadlessMessagingClient {
                     id: envelope.id,
                     contactId: contact.id,
                     contactDisplayName: contact.displayName,
-                    signerPublicKey: installation.signingKey.publicKeyData,
+                    signerPublicKey: endpoint.signingKey.publicKeyData,
                     stagedDelivery: pending
                 )
             )
@@ -688,7 +688,7 @@ public actor HeadlessMessagingClient {
         var retirementRelaysByRoute = [
             Self.mailboxRouteKey(relay: state.relay, inboxId: state.inboxId): state.relay
         ]
-        for (routeKey, credential) in state.localInstallation?.mailboxCredentialsByRoute ?? [:] {
+        for (routeKey, credential) in state.localEndpoint?.mailboxCredentialsByRoute ?? [:] {
             if credential.inboxId == state.inboxId.lowercased(),
                let relay = credential.relay {
                 retirementRelaysByRoute[routeKey] = relay
@@ -850,11 +850,11 @@ public actor HeadlessMessagingClient {
         var kemCiphertext: Data?
         let eventId = UUID()
         let clientTransactionId = UUID()
-        guard contact.usesCertifiedInstallationEndpoint,
-              let installation = state.localInstallation else {
+        guard contact.usesCertifiedGenerationEndpoint,
+              let endpoint = state.localEndpoint else {
             throw HeadlessMessagingClientError.unsupportedInboundSession
         }
-        let peerEndpoint = try contact.certifiedInstallationEndpoint()
+        let peerEndpoint = try contact.certifiedGenerationEndpoint()
         let selected = try directSendEndpointContext(
             contact: contact,
             peerEndpoint: peerEndpoint,
@@ -867,9 +867,9 @@ public actor HeadlessMessagingClient {
         if let existing = state.conversation(for: contact.id, endpointSession: endpointSession) {
             conversation = existing
         } else {
-            let session = try MessageEngine.createOutboundInstallationSession(
-                localInstallation: installation,
-                localEndpoint: senderEndpoint,
+            let session = try MessageEngine.createOutboundEndpointSession(
+                localEndpoint: endpoint,
+                localCertificate: senderEndpoint,
                 pairwiseBinding: binding,
                 contact: contact
             )
@@ -891,15 +891,15 @@ public actor HeadlessMessagingClient {
             id: eventId,
             clientTransactionId: clientTransactionId,
             conversationId: conversation.id,
-            authorInstallationHandle: binding.localInstallationHandle,
+            authorEndpointHandle: binding.localEndpointHandle,
             createdAt: eventTimestamp,
             kind: .application,
             content: content
         )
         let envelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(event),
-            senderSigningKey: installation.signingKey,
-            senderFingerprint: binding.localInstallationHandle.rawValue,
+            senderSigningKey: endpoint.signingKey,
+            senderFingerprint: binding.localEndpointHandle.rawValue,
             conversation: &conversation,
             kemCiphertext: kemCiphertext,
             prekey: prekey,
@@ -983,11 +983,11 @@ public actor HeadlessMessagingClient {
         var prekey: PrekeyReference?
         let eventId = UUID()
         let clientTransactionId = UUID()
-        guard contact.usesCertifiedInstallationEndpoint,
-              let installation = state.localInstallation else {
+        guard contact.usesCertifiedGenerationEndpoint,
+              let endpoint = state.localEndpoint else {
             throw HeadlessMessagingClientError.unsupportedInboundSession
         }
-        let peerEndpoint = try contact.certifiedInstallationEndpoint()
+        let peerEndpoint = try contact.certifiedGenerationEndpoint()
         let selected = try directSendEndpointContext(
             contact: contact,
             peerEndpoint: peerEndpoint,
@@ -999,9 +999,9 @@ public actor HeadlessMessagingClient {
         if let existing = state.conversation(for: contact.id, endpointSession: endpointSession) {
             conversation = existing
         } else {
-            let session = try MessageEngine.createOutboundInstallationSession(
-                localInstallation: installation,
-                localEndpoint: senderEndpoint,
+            let session = try MessageEngine.createOutboundEndpointSession(
+                localEndpoint: endpoint,
+                localCertificate: senderEndpoint,
                 pairwiseBinding: binding,
                 contact: contact
             )
@@ -1042,15 +1042,15 @@ public actor HeadlessMessagingClient {
             id: eventId,
             clientTransactionId: clientTransactionId,
             conversationId: conversation.id,
-            authorInstallationHandle: binding.localInstallationHandle,
+            authorEndpointHandle: binding.localEndpointHandle,
             createdAt: eventTimestamp,
             kind: .application,
             content: content
         )
         let envelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(event),
-            senderSigningKey: installation.signingKey,
-            senderFingerprint: binding.localInstallationHandle.rawValue,
+            senderSigningKey: endpoint.signingKey,
+            senderFingerprint: binding.localEndpointHandle.rawValue,
             conversation: conversation,
             messageCounter: prepared.counter,
             messageKey: prepared.key,
@@ -1195,7 +1195,7 @@ public actor HeadlessMessagingClient {
         var state = try await loadState()
         let accessKey = try inboxAccessKey(from: state)
         let mailbox = try await ensureMailboxConsumer(state: &state, accessKey: accessKey)
-        if let pending = state.localInstallation?.pendingMailboxCommitsByStream[mailbox.routeKey] {
+        if let pending = state.localEndpoint?.pendingMailboxCommitsByStream[mailbox.routeKey] {
             try await finalizeMailboxCursorCommit(
                 pending,
                 state: &state,
@@ -1203,7 +1203,7 @@ public actor HeadlessMessagingClient {
                 routeKey: mailbox.routeKey
             )
         }
-        let committedCursor = state.localInstallation?.cursorsByStream[mailbox.routeKey]
+        let committedCursor = state.localEndpoint?.cursorsByStream[mailbox.routeKey]
         var sync = SyncMailboxRequest(
             inboxId: state.inboxId,
             consumerId: mailbox.consumerId,
@@ -1231,7 +1231,7 @@ public actor HeadlessMessagingClient {
               batch.isStructurallyValid else {
             throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
         }
-        guard let committedSequence = state.localInstallation?
+        guard let committedSequence = state.localEndpoint?
                 .committedSequencesByStream[mailbox.routeKey],
               batch.isContiguous(after: committedSequence) else {
             throw HeadlessMessagingClientError.relayRejected(
@@ -1266,15 +1266,15 @@ public actor HeadlessMessagingClient {
         }
 
         if acknowledge, !batch.events.isEmpty {
-            guard var installation = state.localInstallation else {
-                throw HeadlessMessagingClientError.missingInstallation
+            guard var endpoint = state.localEndpoint else {
+                throw HeadlessMessagingClientError.missingEndpoint
             }
             let pending = PendingMailboxCursorCommit(
                 cursor: batch.nextCursor,
                 sequence: batch.nextSequence
             )
-            installation.pendingMailboxCommitsByStream[mailbox.routeKey] = pending
-            state.localInstallation = installation
+            endpoint.pendingMailboxCommitsByStream[mailbox.routeKey] = pending
+            state.localEndpoint = endpoint
             try await store.save(state)
             try await finalizeMailboxCursorCommit(
                 pending,
@@ -1294,20 +1294,20 @@ public actor HeadlessMessagingClient {
     ) throws -> HeadlessReceivedMessage? {
         guard let direct = envelope.authenticatedContext?.directV4,
               let resolved = state.resolveCertifiedDirectContext(direct),
-              let installation = state.localInstallation,
-              let localManifest = state.installationManifest else {
+              let endpoint = state.localEndpoint,
+              let localManifest = state.endpointSetManifest else {
             throw HeadlessMessagingClientError.unsupportedInboundSession
         }
         var contact = resolved.contact
-        let peerEndpoint = try contact.certifiedInstallationEndpoint()
+        let peerEndpoint = try contact.certifiedGenerationEndpoint()
         let endpointSession = DirectEndpointSessionIdentity(
             contactId: contact.id,
-            localInstallationId: installation.id,
-            localInstallationHandle: resolved.binding.localInstallationHandle,
+            localEndpointId: endpoint.id,
+            localEndpointHandle: resolved.binding.localEndpointHandle,
             localCertificateReferenceDigest: resolved.binding.localCertificateReferenceDigest,
             localManifestEpoch: resolved.localEndpoint.manifestEpoch,
-            peerInstallationId: peerEndpoint.installationId,
-            peerInstallationHandle: resolved.binding.peerInstallationHandle,
+            peerEndpointId: peerEndpoint.endpointId,
+            peerEndpointHandle: resolved.binding.peerEndpointHandle,
             peerCertificateReferenceDigest: resolved.binding.peerCertificateReferenceDigest,
             peerManifestEpoch: peerEndpoint.manifestEpoch
         )
@@ -1319,9 +1319,9 @@ public actor HeadlessMessagingClient {
         if let previousConversation {
             conversation = previousConversation
         } else if let kemCiphertext = envelope.kemCiphertext {
-            conversation = try MessageEngine.createInboundInstallationSession(
-                localInstallation: installation,
-                localEndpoint: resolved.localEndpoint,
+            conversation = try MessageEngine.createInboundEndpointSession(
+                localEndpoint: endpoint,
+                localCertificate: resolved.localEndpoint,
                 senderEndpoint: peerEndpoint,
                 pairwiseBinding: resolved.binding,
                 contact: contact,
@@ -1332,7 +1332,7 @@ public actor HeadlessMessagingClient {
             throw HeadlessMessagingClientError.unsupportedInboundSession
         }
         // The direct-v4 context is useful for routing, but it is not trusted
-        // until the certified installation signature has been verified.
+        // until the certified endpoint signature has been verified.
         guard envelope.verifySignature(publicSigningKey: peerEndpoint.signingPublicKey) else {
             throw CryptoError.invalidSignature
         }
@@ -1358,17 +1358,17 @@ public actor HeadlessMessagingClient {
                 envelope: envelope,
                 contact: contact,
                 localIdentity: state.identity,
-                localInstallation: installation,
+                localEndpoint: endpoint,
                 localManifest: localManifest,
-                localEndpoint: resolved.localEndpoint,
+                localCertificate: resolved.localEndpoint,
                 pairwiseBinding: resolved.binding,
                 conversation: &conversation
             )
         } catch {
             guard let kemCiphertext = envelope.kemCiphertext else { throw error }
-            conversation = try MessageEngine.createInboundInstallationSession(
-                localInstallation: installation,
-                localEndpoint: resolved.localEndpoint,
+            conversation = try MessageEngine.createInboundEndpointSession(
+                localEndpoint: endpoint,
+                localCertificate: resolved.localEndpoint,
                 senderEndpoint: peerEndpoint,
                 pairwiseBinding: resolved.binding,
                 contact: contact,
@@ -1379,9 +1379,9 @@ public actor HeadlessMessagingClient {
                 envelope: envelope,
                 contact: contact,
                 localIdentity: state.identity,
-                localInstallation: installation,
+                localEndpoint: endpoint,
                 localManifest: localManifest,
-                localEndpoint: resolved.localEndpoint,
+                localCertificate: resolved.localEndpoint,
                 pairwiseBinding: resolved.binding,
                 conversation: &conversation
             )
@@ -1487,7 +1487,7 @@ public actor HeadlessMessagingClient {
     private func persistDirectEvent(
         _ event: ConversationEvent,
         contact: Contact,
-        binding: PairwiseInstallationBindingV4,
+        binding: PairwiseEndpointBindingV4,
         state: inout ClientState
     ) throws {
         guard event.isStructurallyValid else {
@@ -1496,8 +1496,8 @@ public actor HeadlessMessagingClient {
         if let index = state.relationshipsV2.firstIndex(where: {
             $0.id == binding.relationshipId && $0.contactId == contact.id
         }) {
-            guard state.localInstallation?.relationshipHandles[binding.relationshipId]
-                    == binding.localInstallationHandle else {
+            guard state.localEndpoint?.relationshipHandles[binding.relationshipId]
+                    == binding.localEndpointHandle else {
                 throw IdentityProfileStateError.invalidCurrentState
             }
             _ = state.relationshipsV2[index].includeConversationIds([event.conversationId])
@@ -1510,7 +1510,7 @@ public actor HeadlessMessagingClient {
         let relationship = RelationshipStateV2(
             id: binding.relationshipId,
             contactId: contact.id,
-            localInstallationHandle: binding.localInstallationHandle,
+            localEndpointHandle: binding.localEndpointHandle,
             conversationIds: [event.conversationId],
             events: [event]
         )
@@ -1519,16 +1519,16 @@ public actor HeadlessMessagingClient {
               !state.relationshipsV2.contains(where: { $0.id == binding.relationshipId }) else {
             throw IdentityProfileStateError.invalidCurrentState
         }
-        guard var installation = state.localInstallation,
-              installation.relationshipHandles[binding.relationshipId]
-                .map({ $0 == binding.localInstallationHandle }) ?? true else {
+        guard var endpoint = state.localEndpoint,
+              endpoint.relationshipHandles[binding.relationshipId]
+                .map({ $0 == binding.localEndpointHandle }) ?? true else {
             throw IdentityProfileStateError.invalidCurrentState
         }
-        installation.relationshipHandles[binding.relationshipId]
-            = binding.localInstallationHandle
+        endpoint.relationshipHandles[binding.relationshipId]
+            = binding.localEndpointHandle
         state.relationshipsV2.append(relationship)
         state.relationshipsV2.sort { $0.id.uuidString < $1.id.uuidString }
-        state.localInstallation = installation
+        state.localEndpoint = endpoint
     }
 
     private static func transportQuarantineReason(
@@ -1665,8 +1665,8 @@ public actor HeadlessMessagingClient {
         var state = try await loadState()
         let contact = try MessageEngine.contact(from: offer)
         state.upsert(contact: contact)
-        if let peerEndpoint = contact.preferredInstallationEndpoint {
-            let localEndpoint = try localEndpoint(state: &state)
+        if let peerEndpoint = contact.preferredGenerationEndpoint {
+            let localEndpoint = try certifiedLocalEndpoint(state: &state)
             let binding = try pairwiseBinding(
                 localEndpoint: localEndpoint,
                 contact: contact,
@@ -1675,19 +1675,19 @@ public actor HeadlessMessagingClient {
             if let existing = state.relationshipsV2.first(where: {
                 $0.id == binding.relationshipId && $0.contactId == contact.id
             }) {
-                guard existing.localInstallationHandle == binding.localInstallationHandle,
-                      state.localInstallation?.relationshipHandles[binding.relationshipId]
-                        == binding.localInstallationHandle else {
+                guard existing.localEndpointHandle == binding.localEndpointHandle,
+                      state.localEndpoint?.relationshipHandles[binding.relationshipId]
+                        == binding.localEndpointHandle else {
                     throw HeadlessMessagingClientError.relayRejected(
                         "Certified contact relationship does not match existing state"
                     )
                 }
             } else {
-                guard var installation = state.localInstallation,
+                guard var endpoint = state.localEndpoint,
                       !state.relationshipsV2.contains(where: {
                           $0.id == binding.relationshipId && $0.contactId != contact.id
                       }) else {
-                    throw HeadlessMessagingClientError.missingInstallation
+                    throw HeadlessMessagingClientError.missingEndpoint
                 }
                 if let shellIndex = state.relationshipsV2.firstIndex(where: {
                     $0.contactId == contact.id
@@ -1696,43 +1696,43 @@ public actor HeadlessMessagingClient {
                         && $0.eventCheckpoint == nil
                 }) {
                     let shell = state.relationshipsV2[shellIndex]
-                    guard installation.relationshipHandles[shell.id]
-                            == shell.localInstallationHandle,
-                          installation.relationshipHandles[binding.relationshipId]
-                            .map({ $0 == binding.localInstallationHandle }) ?? true else {
-                        throw HeadlessMessagingClientError.missingInstallation
+                    guard endpoint.relationshipHandles[shell.id]
+                            == shell.localEndpointHandle,
+                          endpoint.relationshipHandles[binding.relationshipId]
+                            .map({ $0 == binding.localEndpointHandle }) ?? true else {
+                        throw HeadlessMessagingClientError.missingEndpoint
                     }
                     let rebound = RelationshipStateV2(
                         id: binding.relationshipId,
                         contactId: contact.id,
-                        localInstallationHandle: binding.localInstallationHandle,
+                        localEndpointHandle: binding.localEndpointHandle,
                         conversationIds: shell.conversationIds,
                         createdAt: shell.createdAt
                     )
                     guard rebound.isStructurallyValid else {
-                        throw HeadlessMessagingClientError.missingInstallation
+                        throw HeadlessMessagingClientError.missingEndpoint
                     }
-                    installation.relationshipHandles.removeValue(forKey: shell.id)
-                    installation.relationshipHandles[binding.relationshipId]
-                        = binding.localInstallationHandle
+                    endpoint.relationshipHandles.removeValue(forKey: shell.id)
+                    endpoint.relationshipHandles[binding.relationshipId]
+                        = binding.localEndpointHandle
                     state.relationshipsV2[shellIndex] = rebound
                 } else {
                     guard state.relationshipsV2.count < 4_096,
-                          installation.relationshipHandles[binding.relationshipId] == nil else {
-                        throw HeadlessMessagingClientError.missingInstallation
+                          endpoint.relationshipHandles[binding.relationshipId] == nil else {
+                        throw HeadlessMessagingClientError.missingEndpoint
                     }
-                    installation.relationshipHandles[binding.relationshipId]
-                        = binding.localInstallationHandle
+                    endpoint.relationshipHandles[binding.relationshipId]
+                        = binding.localEndpointHandle
                     state.relationshipsV2.append(
                         RelationshipStateV2(
                             id: binding.relationshipId,
                             contactId: contact.id,
-                            localInstallationHandle: binding.localInstallationHandle
+                            localEndpointHandle: binding.localEndpointHandle
                         )
                     )
                 }
                 state.relationshipsV2.sort { $0.id.uuidString < $1.id.uuidString }
-                state.localInstallation = installation
+                state.localEndpoint = endpoint
             }
         }
         try await store.save(state)
@@ -1747,27 +1747,27 @@ public actor HeadlessMessagingClient {
         consumerKey: SigningKeyPair,
         routeKey: String
     ) {
-        guard var installation = state.localInstallation else {
-            throw HeadlessMessagingClientError.missingInstallation
+        guard var endpoint = state.localEndpoint else {
+            throw HeadlessMessagingClientError.missingEndpoint
         }
         let routeKey = Self.mailboxRouteKey(relay: state.relay, inboxId: state.inboxId)
-        let hadCredential = installation.mailboxCredentialsByRoute[routeKey] != nil
-        let credential = try installation.ensureMailboxCredential(
+        let hadCredential = endpoint.mailboxCredentialsByRoute[routeKey] != nil
+        let credential = try endpoint.ensureMailboxCredential(
             for: routeKey,
             relay: state.relay,
             inboxId: state.inboxId
         )
         if !hadCredential {
-            installation.cursorsByStream.removeValue(forKey: routeKey)
-            installation.pendingMailboxCommitsByStream.removeValue(forKey: routeKey)
-            state.localInstallation = installation
+            endpoint.cursorsByStream.removeValue(forKey: routeKey)
+            endpoint.pendingMailboxCommitsByStream.removeValue(forKey: routeKey)
+            state.localEndpoint = endpoint
             // Persist the route-specific ID and key before registration. If a
             // response or process is lost, the retry reuses the same tracked
             // credential instead of leaking another active consumer.
             try await store.save(state)
         }
 
-        let startingSequence = installation.committedSequencesByStream[routeKey] ?? 0
+        let startingSequence = endpoint.committedSequencesByStream[routeKey] ?? 0
         let request = try Self.makeMailboxConsumerRegistrationRequest(
             inboxId: state.inboxId,
             consumerId: credential.consumerId,
@@ -1788,8 +1788,8 @@ public actor HeadlessMessagingClient {
         }
         // The relay's idempotent registration response is the authoritative
         // recovery source after a lost response.
-        installation.committedSequencesByStream[routeKey] = registration.committedSequence
-        state.localInstallation = installation
+        endpoint.committedSequencesByStream[routeKey] = registration.committedSequence
+        state.localEndpoint = endpoint
         try await store.save(state)
         return (credential.consumerId, credential.signingKey, routeKey)
     }
@@ -1846,9 +1846,9 @@ public actor HeadlessMessagingClient {
             cursor: pending.cursor,
             sequence: pending.sequence
         )
-        guard let consumerKey = state.localInstallation?
+        guard let consumerKey = state.localEndpoint?
                 .mailboxCredentialsByRoute[routeKey]?.signingKey else {
-            throw HeadlessMessagingClientError.missingInstallation
+            throw HeadlessMessagingClientError.missingEndpoint
         }
         let proof = try Self.makeActorProof(signingKey: consumerKey) { actorProof in
             try request.signableData(for: actorProof)
@@ -1870,13 +1870,13 @@ public actor HeadlessMessagingClient {
               committed.committedSequence == pending.sequence else {
             throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
         }
-        guard var installation = state.localInstallation else {
-            throw HeadlessMessagingClientError.missingInstallation
+        guard var endpoint = state.localEndpoint else {
+            throw HeadlessMessagingClientError.missingEndpoint
         }
-        installation.cursorsByStream[routeKey] = pending.cursor
-        installation.committedSequencesByStream[routeKey] = pending.sequence
-        installation.pendingMailboxCommitsByStream.removeValue(forKey: routeKey)
-        state.localInstallation = installation
+        endpoint.cursorsByStream[routeKey] = pending.cursor
+        endpoint.committedSequencesByStream[routeKey] = pending.sequence
+        endpoint.pendingMailboxCommitsByStream.removeValue(forKey: routeKey)
+        state.localEndpoint = endpoint
         try await store.save(state)
     }
 
@@ -2336,10 +2336,10 @@ public actor HeadlessMessagingClient {
 
     private func contactOffer(for state: ClientState) throws -> ContactOffer {
         guard let generationId = state.identityGenerationId,
-              state.localInstallation != nil,
-              let manifest = state.installationManifest,
+              state.localEndpoint != nil,
+              let manifest = state.endpointSetManifest,
               let endpoint = state.issuedContactEndpointsV2.last else {
-            throw HeadlessMessagingClientError.missingInstallation
+            throw HeadlessMessagingClientError.missingEndpoint
         }
         return try ContactOffer.createCertified(
             displayName: state.identity.displayName,
@@ -2347,8 +2347,8 @@ public actor HeadlessMessagingClient {
             relay: state.relay,
             identity: state.identity,
             identityGenerationId: generationId,
-            installationManifest: manifest,
-            preferredInstallationEndpoint: endpoint,
+            endpointSetManifest: manifest,
+            preferredGenerationEndpoint: endpoint,
             inboxAccessPublicKey: state.inboxAccessKey?.publicKeyData
         )
     }
@@ -2358,8 +2358,8 @@ public actor HeadlessMessagingClient {
         inboxAccessPublicKey: Data?
     ) throws -> ContactOffer {
         guard let generationId = state.identityGenerationId,
-              let manifest = state.installationManifest else {
-            throw HeadlessMessagingClientError.missingInstallation
+              let manifest = state.endpointSetManifest else {
+            throw HeadlessMessagingClientError.missingEndpoint
         }
         let endpoint = try currentCertifiedEndpoint(state: &state)
         return try ContactOffer.createCertified(
@@ -2368,37 +2368,37 @@ public actor HeadlessMessagingClient {
             relay: state.relay,
             identity: state.identity,
             identityGenerationId: generationId,
-            installationManifest: manifest,
-            preferredInstallationEndpoint: endpoint,
+            endpointSetManifest: manifest,
+            preferredGenerationEndpoint: endpoint,
             inboxAccessPublicKey: inboxAccessPublicKey
         )
     }
 
-    private func localEndpoint(state: inout ClientState) throws -> CertifiedInstallationEndpoint {
+    private func certifiedLocalEndpoint(state: inout ClientState) throws -> CertifiedGenerationEndpoint {
         try currentCertifiedEndpoint(state: &state)
     }
 
     private func currentCertifiedEndpoint(
         state: inout ClientState,
         now: Date = Date()
-    ) throws -> CertifiedInstallationEndpoint {
-        guard var installation = state.localInstallation,
+    ) throws -> CertifiedGenerationEndpoint {
+        guard var endpoint = state.localEndpoint,
               let generationId = state.identityGenerationId,
-              let manifest = state.installationManifest,
-              installation.identityGenerationId == generationId else {
-            throw HeadlessMessagingClientError.missingInstallation
+              let manifest = state.endpointSetManifest,
+              endpoint.identityGenerationId == generationId else {
+            throw HeadlessMessagingClientError.missingEndpoint
         }
-        _ = try installation.renewSignedPrekeyIfNeeded(at: now)
-        state.localInstallation = installation
+        _ = try endpoint.renewSignedPrekeyIfNeeded(at: now)
+        state.localEndpoint = endpoint
 
         if let index = state.issuedContactEndpointsV2.lastIndex(where: {
             $0.identityGenerationId == generationId
                 && $0.identityAuthorityPublicKey == state.identity.signingKey.publicKeyData
                 && $0.manifestEpoch == manifest.epoch
                 && $0.manifestDigest == manifest.digest
-                && $0.installationId == installation.id
-                && $0.signingPublicKey == installation.signingKey.publicKeyData
-                && $0.agreementPublicKey == installation.agreementKey.publicKeyData
+                && $0.endpointId == endpoint.id
+                && $0.signingPublicKey == endpoint.signingKey.publicKeyData
+                && $0.agreementPublicKey == endpoint.agreementKey.publicKeyData
         }) {
             let current = state.issuedContactEndpointsV2[index]
             let isAuthorized = (try? current.verified(
@@ -2407,12 +2407,12 @@ public actor HeadlessMessagingClient {
                 now: current.prekeyBundle.createdAt
             )) != nil
             if isAuthorized {
-                if current.prekeyBundle.signedPrekey.id == installation.prekeys.signedPrekeyId,
+                if current.prekeyBundle.signedPrekey.id == endpoint.prekeys.signedPrekeyId,
                    current.isStructurallyValid(now: now) {
                     return current
                 }
                 let refreshed = try current.refreshingPrekeyPackage(
-                    using: installation,
+                    using: endpoint,
                     at: now
                 )
                 var endpoints = state.issuedContactEndpointsV2
@@ -2424,27 +2424,27 @@ public actor HeadlessMessagingClient {
 
         guard state.issuedContactEndpointsV2.count
                 < NoctweaveArchitectureV2.maximumIssuedContactEndpoints else {
-            throw HeadlessMessagingClientError.missingInstallation
+            throw HeadlessMessagingClientError.missingEndpoint
         }
-        let endpoint = try CertifiedInstallationEndpoint.create(
+        let certificate = try CertifiedGenerationEndpoint.create(
             identity: state.identity,
-            installation: installation,
+            endpoint: endpoint,
             manifest: manifest,
             issuedAt: now
         )
-        state.issuedContactEndpointsV2.append(endpoint)
-        return endpoint
+        state.issuedContactEndpointsV2.append(certificate)
+        return certificate
     }
 
     private func pairwiseBinding(
-        localEndpoint: CertifiedInstallationEndpoint,
+        localEndpoint: CertifiedGenerationEndpoint,
         contact: Contact,
-        peerEndpoint: CertifiedInstallationEndpoint
-    ) throws -> PairwiseInstallationBindingV4 {
+        peerEndpoint: CertifiedGenerationEndpoint
+    ) throws -> PairwiseEndpointBindingV4 {
         guard contact.identityGenerationId == peerEndpoint.identityGenerationId else {
             throw CryptoError.invalidPayload
         }
-        return try PairwiseInstallationBindingV4.derive(
+        return try PairwiseEndpointBindingV4.derive(
             localIdentityGenerationId: localEndpoint.identityGenerationId,
             localIdentitySigningPublicKey: localEndpoint.identityAuthorityPublicKey,
             localEndpoint: localEndpoint,
@@ -2456,53 +2456,53 @@ public actor HeadlessMessagingClient {
 
     private func directSendEndpointContext(
         contact: Contact,
-        peerEndpoint: CertifiedInstallationEndpoint,
+        peerEndpoint: CertifiedGenerationEndpoint,
         state: inout ClientState
     ) throws -> (
-        localEndpoint: CertifiedInstallationEndpoint,
-        binding: PairwiseInstallationBindingV4,
+        localEndpoint: CertifiedGenerationEndpoint,
+        binding: PairwiseEndpointBindingV4,
         endpointSession: DirectEndpointSessionIdentity
     ) {
-        guard let installation = state.localInstallation else {
-            throw HeadlessMessagingClientError.missingInstallation
+        guard let localEndpoint = state.localEndpoint else {
+            throw HeadlessMessagingClientError.missingEndpoint
         }
         if state.issuedContactEndpointsV2.isEmpty {
-            _ = try localEndpoint(state: &state)
+            _ = try certifiedLocalEndpoint(state: &state)
         }
         var fallback: (
-            CertifiedInstallationEndpoint,
-            PairwiseInstallationBindingV4,
+            CertifiedGenerationEndpoint,
+            PairwiseEndpointBindingV4,
             DirectEndpointSessionIdentity
         )?
-        for endpoint in state.issuedContactEndpointsV2.reversed() where
-            endpoint.identityGenerationId == installation.identityGenerationId
-                && endpoint.installationId == installation.id
-                && endpoint.signingPublicKey == installation.signingKey.publicKeyData
-                && endpoint.agreementPublicKey == installation.agreementKey.publicKeyData {
+        for certificate in state.issuedContactEndpointsV2.reversed() where
+            certificate.identityGenerationId == localEndpoint.identityGenerationId
+                && certificate.endpointId == localEndpoint.id
+                && certificate.signingPublicKey == localEndpoint.signingKey.publicKeyData
+                && certificate.agreementPublicKey == localEndpoint.agreementKey.publicKeyData {
             let binding = try pairwiseBinding(
-                localEndpoint: endpoint,
+                localEndpoint: certificate,
                 contact: contact,
                 peerEndpoint: peerEndpoint
             )
             let session = DirectEndpointSessionIdentity(
                 contactId: contact.id,
-                localInstallationId: installation.id,
-                localInstallationHandle: binding.localInstallationHandle,
+                localEndpointId: localEndpoint.id,
+                localEndpointHandle: binding.localEndpointHandle,
                 localCertificateReferenceDigest: binding.localCertificateReferenceDigest,
-                localManifestEpoch: endpoint.manifestEpoch,
-                peerInstallationId: peerEndpoint.installationId,
-                peerInstallationHandle: binding.peerInstallationHandle,
+                localManifestEpoch: certificate.manifestEpoch,
+                peerEndpointId: peerEndpoint.endpointId,
+                peerEndpointHandle: binding.peerEndpointHandle,
                 peerCertificateReferenceDigest: binding.peerCertificateReferenceDigest,
                 peerManifestEpoch: peerEndpoint.manifestEpoch
             )
             if state.conversation(for: contact.id, endpointSession: session) != nil {
-                return (endpoint, binding, session)
+                return (certificate, binding, session)
             }
             if fallback == nil {
-                fallback = (endpoint, binding, session)
+                fallback = (certificate, binding, session)
             }
         }
-        guard let fallback else { throw HeadlessMessagingClientError.missingInstallation }
+        guard let fallback else { throw HeadlessMessagingClientError.missingEndpoint }
         return fallback
     }
 

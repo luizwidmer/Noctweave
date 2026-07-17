@@ -4,27 +4,27 @@ import XCTest
 
 final class ArchitectureV2RouteIntentTests: XCTestCase {
     func testCapabilityRoutesRequireConfidentialTransportExceptLiteralLoopback() {
-        let handle = RelationshipInstallationHandle(
+        let handle = RelationshipEndpointHandle(
             rawValue: Data(repeating: 0x31, count: 32).base64EncodedString()
         )
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let insecureRemote = RelationshipRouteV2.active(
             id: routeId(byte: 0xE1),
-            installationHandle: handle,
+            endpointHandle: handle,
             relay: RelayEndpoint(host: "relay.example", port: 9340, useTLS: false),
             inboxCapability: capability(byte: 0xE2),
             at: now
         )
         let secureRemote = RelationshipRouteV2.active(
             id: routeId(byte: 0xE3),
-            installationHandle: handle,
+            endpointHandle: handle,
             relay: RelayEndpoint(host: "relay.example", port: 9340, useTLS: true),
             inboxCapability: capability(byte: 0xE4),
             at: now
         )
         let localDevelopment = RelationshipRouteV2.active(
             id: routeId(byte: 0xE5),
-            installationHandle: handle,
+            endpointHandle: handle,
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340, useTLS: false),
             inboxCapability: capability(byte: 0xE6),
             at: now
@@ -36,11 +36,11 @@ final class ArchitectureV2RouteIntentTests: XCTestCase {
     }
 
     func testDeliveryStateRequiresMonotonicStateAndProcessingTime() async throws {
-        let handle = RelationshipInstallationHandle(rawValue: Data(repeating: 0x31, count: 32).base64EncodedString())
+        let handle = RelationshipEndpointHandle(rawValue: Data(repeating: 0x31, count: 32).base64EncodedString())
         let start = Date(timeIntervalSince1970: 1_700_000_000)
         var record = DeliveryStateRecord(
             eventId: UUID(),
-            destinationInstallation: handle,
+            destinationEndpoint: handle,
             state: .locallyPersisted,
             updatedAt: start
         )
@@ -55,23 +55,23 @@ final class ArchitectureV2RouteIntentTests: XCTestCase {
     func testRouteRotationIsSignedIdempotentAndMakeBeforeBreak() throws {
         let signingKey = try SigningKeyPair.generate()
         let relationshipId = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
-        let handle = RelationshipInstallationHandle.generate(
+        let handle = RelationshipEndpointHandle.generate(
             identityGenerationId: UUID(uuidString: "10000000-0000-0000-0000-000000000002")!,
-            installationId: UUID(uuidString: "10000000-0000-0000-0000-000000000003")!,
+            endpointId: UUID(uuidString: "10000000-0000-0000-0000-000000000003")!,
             relationshipId: relationshipId,
             nonce: UUID(uuidString: "10000000-0000-0000-0000-000000000004")!
         )
         let start = Date(timeIntervalSince1970: 1_700_000_000)
         let oldRoute = RelationshipRouteV2.active(
             id: routeId(byte: 1),
-            installationHandle: handle,
+            endpointHandle: handle,
             relay: relay(host: "old-relay.example"),
             inboxCapability: capability(byte: 11),
             at: start
         )
         let initial = try RelationshipRouteSetV2.createInitial(
             relationshipId: relationshipId,
-            ownerInstallationHandle: handle,
+            ownerEndpointHandle: handle,
             route: oldRoute,
             signingKey: signingKey,
             issuedAt: start
@@ -83,7 +83,7 @@ final class ArchitectureV2RouteIntentTests: XCTestCase {
         let stagedAt = start.addingTimeInterval(10)
         let newRoute = RelationshipRouteV2.testing(
             id: routeId(byte: 2),
-            installationHandle: handle,
+            endpointHandle: handle,
             relay: relay(host: "new-relay.example"),
             inboxCapability: capability(byte: 12),
             at: stagedAt
@@ -148,30 +148,30 @@ final class ArchitectureV2RouteIntentTests: XCTestCase {
     func testRouteSetRejectsTamperingDuplicatesAndRouteIdReuse() throws {
         let signingKey = try SigningKeyPair.generate()
         let relationshipId = UUID(uuidString: "20000000-0000-0000-0000-000000000001")!
-        let handle = RelationshipInstallationHandle.generate(
+        let handle = RelationshipEndpointHandle.generate(
             identityGenerationId: UUID(uuidString: "20000000-0000-0000-0000-000000000002")!,
-            installationId: UUID(uuidString: "20000000-0000-0000-0000-000000000003")!,
+            endpointId: UUID(uuidString: "20000000-0000-0000-0000-000000000003")!,
             relationshipId: relationshipId,
             nonce: UUID(uuidString: "20000000-0000-0000-0000-000000000004")!
         )
         let start = Date(timeIntervalSince1970: 1_700_100_000)
         let route = RelationshipRouteV2.active(
             id: routeId(byte: 3),
-            installationHandle: handle,
+            endpointHandle: handle,
             relay: relay(host: "relay.example"),
             inboxCapability: capability(byte: 13),
             at: start
         )
         let original = try RelationshipRouteSetV2.createInitial(
             relationshipId: relationshipId,
-            ownerInstallationHandle: handle,
+            ownerEndpointHandle: handle,
             route: route,
             signingKey: signingKey,
             issuedAt: start
         )
         let tamperedRoute = RelationshipRouteV2.active(
             id: route.id,
-            installationHandle: handle,
+            endpointHandle: handle,
             relay: route.relay,
             inboxCapability: route.inboxCapability,
             priority: 1,
@@ -179,7 +179,7 @@ final class ArchitectureV2RouteIntentTests: XCTestCase {
         )
         let tampered = RelationshipRouteSetV2(
             relationshipId: relationshipId,
-            ownerInstallationHandle: handle,
+            ownerEndpointHandle: handle,
             revision: original.revision,
             previousDigest: original.previousDigest,
             routes: [tamperedRoute],
@@ -191,7 +191,7 @@ final class ArchitectureV2RouteIntentTests: XCTestCase {
 
         let duplicated = RelationshipRouteSetV2(
             relationshipId: relationshipId,
-            ownerInstallationHandle: handle,
+            ownerEndpointHandle: handle,
             revision: original.revision,
             previousDigest: original.previousDigest,
             routes: [route, route],
@@ -202,7 +202,7 @@ final class ArchitectureV2RouteIntentTests: XCTestCase {
 
         let reusedId = RelationshipRouteV2.testing(
             id: route.id,
-            installationHandle: handle,
+            endpointHandle: handle,
             relay: relay(host: "attacker.example"),
             inboxCapability: capability(byte: 14),
             at: start.addingTimeInterval(1)

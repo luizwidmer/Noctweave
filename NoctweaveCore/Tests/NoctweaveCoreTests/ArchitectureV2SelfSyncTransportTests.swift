@@ -294,26 +294,26 @@ final class ArchitectureV2SelfSyncTransportTests: XCTestCase {
     private func makeFixture() throws -> (
         identity: Identity,
         generationId: UUID,
-        source: LocalInstallationState,
-        recipient: LocalInstallationState,
-        manifest: InstallationManifest,
+        source: LocalEndpointState,
+        recipient: LocalEndpointState,
+        manifest: EndpointSetManifest,
         createdAt: Date
     ) {
         let createdAt = Date(timeIntervalSince1970: 1_000)
         let identity = try Identity.generate(displayName: "Signed self-sync")
         let generationId = UUID()
-        let source = try LocalInstallationState.generate(
+        let source = try LocalEndpointState.generate(
             identityGenerationId: generationId,
             createdAt: createdAt
         )
-        let recipient = try LocalInstallationState.generate(
+        let recipient = try LocalEndpointState.generate(
             identityGenerationId: generationId,
             createdAt: createdAt
         )
-        let manifest = try InstallationManifest.create(
+        let manifest = try EndpointSetManifest.create(
             identityGenerationId: generationId,
             epoch: 0,
-            installations: [
+            endpoints: [
                 source.publicRecord(addedEpoch: 0),
                 recipient.publicRecord(addedEpoch: 0)
             ],

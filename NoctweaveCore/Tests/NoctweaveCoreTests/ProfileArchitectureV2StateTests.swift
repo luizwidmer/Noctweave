@@ -113,19 +113,19 @@ final class ProfileArchitectureV2StateTests: XCTestCase {
             contacts: [contact],
             prekeys: try PrekeyState.generate(identity: identity)
         )
-        var installation = try XCTUnwrap(profile.localInstallation)
+        var endpoint = try XCTUnwrap(profile.localEndpoint)
         let relationshipId = UUID()
-        let installationHandle = RelationshipInstallationHandle.generate(
+        let endpointHandle = RelationshipEndpointHandle.generate(
             identityGenerationId: try XCTUnwrap(profile.identityGenerationId),
-            installationId: installation.id,
+            endpointId: endpoint.id,
             relationshipId: relationshipId
         )
-        installation.relationshipHandles[relationshipId] = installationHandle
-        profile.localInstallation = installation
+        endpoint.relationshipHandles[relationshipId] = endpointHandle
+        profile.localEndpoint = endpoint
         var relationship = RelationshipStateV2(
             id: relationshipId,
             contactId: contact.id,
-            localInstallationHandle: installationHandle
+            localEndpointHandle: endpointHandle
         )
         XCTAssertTrue(relationship.includeConversationIds(["conversation-v2"]))
         let now = Date(timeIntervalSince1970: 2_000)
@@ -133,7 +133,7 @@ final class ProfileArchitectureV2StateTests: XCTestCase {
         let content = try XCTUnwrap(EncodedContent.text("hello"))
         let event = ConversationEvent(
             conversationId: "conversation-v2",
-            authorInstallationHandle: relationship.localInstallationHandle,
+            authorEndpointHandle: relationship.localEndpointHandle,
             createdAt: now,
             kind: .application,
             content: content
@@ -143,36 +143,36 @@ final class ProfileArchitectureV2StateTests: XCTestCase {
         let route = RelationshipRouteV2.active(
             id: .generate(
                 relationshipId: relationship.id,
-                installationHandle: relationship.localInstallationHandle
+                endpointHandle: relationship.localEndpointHandle
             ),
-            installationHandle: relationship.localInstallationHandle,
+            endpointHandle: relationship.localEndpointHandle,
             relay: profile.relay,
             inboxCapability: .generate(),
             at: now
         )
         let routeSet = try RelationshipRouteSetV2.createInitial(
             relationshipId: relationship.id,
-            ownerInstallationHandle: relationship.localInstallationHandle,
+            ownerEndpointHandle: relationship.localEndpointHandle,
             route: route,
-            signingKey: installation.signingKey,
+            signingKey: endpoint.signingKey,
             issuedAt: now
         )
         XCTAssertTrue(
             relationship.upsertVerifiedRouteSet(
                 routeSet,
-                ownerSigningPublicKey: installation.signingKey.publicKeyData
+                ownerSigningPublicKey: endpoint.signingKey.publicKeyData
             )
         )
         profile.relationshipsV2 = [relationship]
 
         var selfSync = try XCTUnwrap(profile.selfSyncV2)
-        let manifest = try XCTUnwrap(profile.installationManifest)
+        let manifest = try XCTUnwrap(profile.endpointSetManifest)
         let selfSyncCreatedAt = manifest.issuedAt.addingTimeInterval(1)
         let record = try selfSync.sealEvent(
-            sourceEndpointId: installation.id,
+            sourceEndpointId: endpoint.id,
             manifestEpoch: manifest.epoch,
             payload: .conversationEvent(event),
-            sourceSigningKey: installation.signingKey,
+            sourceSigningKey: endpoint.signingKey,
             createdAt: selfSyncCreatedAt
         )
         let opened = try selfSync.openAndAdvance(

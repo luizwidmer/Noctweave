@@ -56,9 +56,9 @@ public struct IdentityMutationNotificationV2: Codable, Equatable, Identifiable {
 public struct StagedIdentityGenerationV2: Codable {
     public let identity: Identity
     public let identityGenerationId: UUID
-    public let localInstallation: LocalInstallationState
-    public let installationManifest: InstallationManifest
-    public let issuedContactEndpointsV2: [CertifiedInstallationEndpoint]
+    public let localEndpoint: LocalEndpointState
+    public let endpointSetManifest: EndpointSetManifest
+    public let issuedContactEndpointsV2: [CertifiedGenerationEndpoint]
     public let selfSync: SelfSyncLocalStateV2
     public let prekeys: PrekeyState
     public let inboxId: String
@@ -69,9 +69,9 @@ public struct StagedIdentityGenerationV2: Codable {
     public init(
         identity: Identity,
         identityGenerationId: UUID,
-        localInstallation: LocalInstallationState,
-        installationManifest: InstallationManifest,
-        issuedContactEndpointsV2: [CertifiedInstallationEndpoint] = [],
+        localEndpoint: LocalEndpointState,
+        endpointSetManifest: EndpointSetManifest,
+        issuedContactEndpointsV2: [CertifiedGenerationEndpoint] = [],
         selfSync: SelfSyncLocalStateV2,
         prekeys: PrekeyState,
         inboxId: String,
@@ -81,8 +81,8 @@ public struct StagedIdentityGenerationV2: Codable {
     ) {
         self.identity = identity
         self.identityGenerationId = identityGenerationId
-        self.localInstallation = localInstallation
-        self.installationManifest = installationManifest
+        self.localEndpoint = localEndpoint
+        self.endpointSetManifest = endpointSetManifest
         self.issuedContactEndpointsV2 = issuedContactEndpointsV2
         self.selfSync = selfSync
         self.prekeys = prekeys
@@ -99,38 +99,38 @@ public struct StagedIdentityGenerationV2: Codable {
     ) throws -> StagedIdentityGenerationV2 {
         let identity = try Identity.generate(displayName: displayName)
         let generationId = UUID()
-        var installation = try LocalInstallationState.generate(
+        var endpoint = try LocalEndpointState.generate(
             identityGenerationId: generationId,
             createdAt: createdAt
         )
         let inboxAccessKey = try SigningKeyPair.generate()
         let inboxId = InboxAddress.derived(from: inboxAccessKey.publicKeyData)
         let routeKey = Self.mailboxRouteKey(relay: relay, inboxId: inboxId)
-        _ = try installation.ensureMailboxCredential(
+        _ = try endpoint.ensureMailboxCredential(
             for: routeKey,
             relay: relay,
             inboxId: inboxId,
             at: createdAt
         )
-        let manifest = try InstallationManifest.create(
+        let manifest = try EndpointSetManifest.create(
             identityGenerationId: generationId,
             epoch: 0,
-            installations: [installation.publicRecord(addedEpoch: 0)],
+            endpoints: [endpoint.publicRecord(addedEpoch: 0)],
             identity: identity,
             issuedAt: createdAt
         )
-        let endpoint = try CertifiedInstallationEndpoint.create(
+        let certificate = try CertifiedGenerationEndpoint.create(
             identity: identity,
-            installation: installation,
+            endpoint: endpoint,
             manifest: manifest,
             issuedAt: createdAt
         )
         return StagedIdentityGenerationV2(
             identity: identity,
             identityGenerationId: generationId,
-            localInstallation: installation,
-            installationManifest: manifest,
-            issuedContactEndpointsV2: [endpoint],
+            localEndpoint: endpoint,
+            endpointSetManifest: manifest,
+            issuedContactEndpointsV2: [certificate],
             selfSync: SelfSyncLocalStateV2.generate(identityGenerationId: generationId),
             prekeys: try PrekeyState.generate(identity: identity),
             inboxId: inboxId,
@@ -144,29 +144,29 @@ public struct StagedIdentityGenerationV2: Codable {
         guard createdAt.timeIntervalSince1970.isFinite,
               InboxAddress.isValid(inboxId),
               InboxAddress.derived(from: inboxAccessKey.publicKeyData) == inboxId,
-              localInstallation.identityGenerationId == identityGenerationId,
-              installationManifest.identityGenerationId == identityGenerationId,
-              installationManifest.verify(identityPublicKey: identity.signingKey.publicKeyData),
+              localEndpoint.identityGenerationId == identityGenerationId,
+              endpointSetManifest.identityGenerationId == identityGenerationId,
+              endpointSetManifest.verify(identityPublicKey: identity.signingKey.publicKeyData),
               !issuedContactEndpointsV2.isEmpty,
               issuedContactEndpointsV2.count <= NoctweaveArchitectureV2.maximumIssuedContactEndpoints,
               issuedContactEndpointsV2.allSatisfy({ endpoint in
                   endpoint.identityGenerationId == identityGenerationId
-                      && endpoint.installationId == localInstallation.id
+                      && endpoint.endpointId == localEndpoint.id
                       && (try? endpoint.verified(
                           identityPublicKey: identity.signingKey.publicKeyData,
-                          manifest: installationManifest,
+                          manifest: endpointSetManifest,
                           now: endpoint.prekeyBundle.createdAt
                       )) != nil
               }),
               selfSync.identityGenerationId == identityGenerationId,
               selfSync.isStructurallyValid,
-              localInstallation.mailboxStateIsStructurallyValid,
+              localEndpoint.mailboxStateIsStructurallyValid,
               mailboxCredential?.isStructurallyValid == true,
-              let localRecord = installationManifest.activeInstallations.first(where: {
-                  $0.id == localInstallation.id
+              let localRecord = endpointSetManifest.activeEndpoints.first(where: {
+                  $0.id == localEndpoint.id
               }),
-              localRecord.signingPublicKey == localInstallation.signingKey.publicKeyData,
-              localRecord.agreementPublicKey == localInstallation.agreementKey.publicKeyData,
+              localRecord.signingPublicKey == localEndpoint.signingKey.publicKeyData,
+              localRecord.agreementPublicKey == localEndpoint.agreementKey.publicKeyData,
               (try? prekeys.bundle(identity: identity)) != nil else {
             return false
         }
@@ -182,7 +182,7 @@ public struct StagedIdentityGenerationV2: Codable {
     }
 
     public var mailboxCredential: MailboxRouteCredentialV2? {
-        localInstallation.mailboxCredentialsByRoute[mailboxRouteKey]
+        localEndpoint.mailboxCredentialsByRoute[mailboxRouteKey]
     }
 
     private static func mailboxRouteKey(relay: RelayEndpoint, inboxId: String) -> String {

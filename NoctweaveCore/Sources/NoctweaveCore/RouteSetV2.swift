@@ -16,12 +16,12 @@ public struct RelationshipRouteID: RawRepresentable, Codable, Equatable, Hashabl
 
     public static func generate(
         relationshipId: UUID,
-        installationHandle: RelationshipInstallationHandle,
+        endpointHandle: RelationshipEndpointHandle,
         nonce: UUID = UUID()
     ) -> RelationshipRouteID {
         var material = Data("Noctweave/relationship-route-id/v2".utf8)
         material.append(Data(relationshipId.uuidString.lowercased().utf8))
-        material.append(Data(installationHandle.rawValue.utf8))
+        material.append(Data(endpointHandle.rawValue.utf8))
         material.append(Data(nonce.uuidString.lowercased().utf8))
         return RelationshipRouteID(rawValue: Data(SHA256.hash(data: material)))
     }
@@ -134,7 +134,7 @@ public enum RelationshipRouteStateV2: String, Codable, Equatable, CaseIterable {
 
 public struct RelationshipRouteV2: Codable, Equatable, Identifiable {
     public let id: RelationshipRouteID
-    public let installationHandle: RelationshipInstallationHandle
+    public let endpointHandle: RelationshipEndpointHandle
     public let relay: RelayEndpoint
     public let inboxCapability: InboxRouteCapabilityV2
     public let priority: UInt16
@@ -146,7 +146,7 @@ public struct RelationshipRouteV2: Codable, Equatable, Identifiable {
 
     public init(
         id: RelationshipRouteID,
-        installationHandle: RelationshipInstallationHandle,
+        endpointHandle: RelationshipEndpointHandle,
         relay: RelayEndpoint,
         inboxCapability: InboxRouteCapabilityV2,
         priority: UInt16 = 100,
@@ -157,7 +157,7 @@ public struct RelationshipRouteV2: Codable, Equatable, Identifiable {
         revokedAt: Date? = nil
     ) {
         self.id = id
-        self.installationHandle = installationHandle
+        self.endpointHandle = endpointHandle
         self.relay = relay
         self.inboxCapability = inboxCapability
         self.priority = priority
@@ -170,7 +170,7 @@ public struct RelationshipRouteV2: Codable, Equatable, Identifiable {
 
     public static func active(
         id: RelationshipRouteID,
-        installationHandle: RelationshipInstallationHandle,
+        endpointHandle: RelationshipEndpointHandle,
         relay: RelayEndpoint,
         inboxCapability: InboxRouteCapabilityV2,
         priority: UInt16 = 100,
@@ -178,7 +178,7 @@ public struct RelationshipRouteV2: Codable, Equatable, Identifiable {
     ) -> RelationshipRouteV2 {
         RelationshipRouteV2(
             id: id,
-            installationHandle: installationHandle,
+            endpointHandle: endpointHandle,
             relay: relay,
             inboxCapability: inboxCapability,
             priority: priority,
@@ -190,7 +190,7 @@ public struct RelationshipRouteV2: Codable, Equatable, Identifiable {
 
     public static func testing(
         id: RelationshipRouteID,
-        installationHandle: RelationshipInstallationHandle,
+        endpointHandle: RelationshipEndpointHandle,
         relay: RelayEndpoint,
         inboxCapability: InboxRouteCapabilityV2,
         priority: UInt16 = 100,
@@ -198,7 +198,7 @@ public struct RelationshipRouteV2: Codable, Equatable, Identifiable {
     ) -> RelationshipRouteV2 {
         RelationshipRouteV2(
             id: id,
-            installationHandle: installationHandle,
+            endpointHandle: endpointHandle,
             relay: relay,
             inboxCapability: inboxCapability,
             priority: priority,
@@ -209,7 +209,7 @@ public struct RelationshipRouteV2: Codable, Equatable, Identifiable {
 
     public var isStructurallyValid: Bool {
         guard id.isStructurallyValid,
-              installationHandle.isStructurallyValid,
+              endpointHandle.isStructurallyValid,
               relay.isStructurallyValidRelationshipRouteEndpointV2,
               relay.isConfidentialCapabilityTransportV2,
               inboxCapability.isStructurallyValid,
@@ -244,7 +244,7 @@ public struct RelationshipRouteV2: Codable, Equatable, Identifiable {
     ) -> RelationshipRouteV2 {
         RelationshipRouteV2(
             id: id,
-            installationHandle: installationHandle,
+            endpointHandle: endpointHandle,
             relay: relay,
             inboxCapability: inboxCapability,
             priority: priority,
@@ -263,7 +263,7 @@ public struct RelationshipRouteV2: Codable, Equatable, Identifiable {
 public struct RelationshipRouteSetV2: Codable, Equatable {
     public let version: Int
     public let relationshipId: UUID
-    public let ownerInstallationHandle: RelationshipInstallationHandle
+    public let ownerEndpointHandle: RelationshipEndpointHandle
     public let revision: UInt64
     public let previousDigest: Data?
     public let routes: [RelationshipRouteV2]
@@ -273,7 +273,7 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
     public init(
         version: Int = NoctweaveArchitectureV2.version,
         relationshipId: UUID,
-        ownerInstallationHandle: RelationshipInstallationHandle,
+        ownerEndpointHandle: RelationshipEndpointHandle,
         revision: UInt64,
         previousDigest: Data?,
         routes: [RelationshipRouteV2],
@@ -282,7 +282,7 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
     ) {
         self.version = version
         self.relationshipId = relationshipId
-        self.ownerInstallationHandle = ownerInstallationHandle
+        self.ownerEndpointHandle = ownerEndpointHandle
         self.revision = revision
         self.previousDigest = previousDigest
         self.routes = routes.sorted(by: Self.routeOrdering)
@@ -292,13 +292,13 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
 
     public static func createInitial(
         relationshipId: UUID,
-        ownerInstallationHandle: RelationshipInstallationHandle,
+        ownerEndpointHandle: RelationshipEndpointHandle,
         route: RelationshipRouteV2,
         signingKey: SigningKeyPair,
         issuedAt: Date
     ) throws -> RelationshipRouteSetV2 {
         guard route.state == .active,
-              route.installationHandle == ownerInstallationHandle,
+              route.endpointHandle == ownerEndpointHandle,
               route.isStructurallyValid,
               issuedAt.timeIntervalSince1970.isFinite,
               issuedAt >= route.validFrom else {
@@ -306,7 +306,7 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
         }
         return try signed(
             relationshipId: relationshipId,
-            ownerInstallationHandle: ownerInstallationHandle,
+            ownerEndpointHandle: ownerEndpointHandle,
             revision: 1,
             previousDigest: nil,
             routes: [route],
@@ -317,13 +317,13 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
 
     public var isStructurallyValid: Bool {
         guard version == NoctweaveArchitectureV2.version,
-              ownerInstallationHandle.isStructurallyValid,
+              ownerEndpointHandle.isStructurallyValid,
               revision > 0,
               !routes.isEmpty,
               routes.count <= NoctweaveArchitectureV2.maximumRoutes,
               Set(routes.map(\.id)).count == routes.count,
               routes.allSatisfy({
-                  $0.installationHandle == ownerInstallationHandle
+                  $0.endpointHandle == ownerEndpointHandle
                       && $0.isStructurallyValid
                       && $0.validFrom <= issuedAt
                       && ($0.testedAt.map { $0 <= issuedAt } ?? true)
@@ -391,7 +391,7 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
         }
         guard route.state == .testing,
               route.testedAt == nil,
-              route.installationHandle == ownerInstallationHandle,
+              route.endpointHandle == ownerEndpointHandle,
               route.isStructurallyValid,
               route.validFrom >= self.issuedAt,
               route.validFrom <= issuedAt else {
@@ -525,7 +525,7 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
         }
         let result = try Self.signed(
             relationshipId: relationshipId,
-            ownerInstallationHandle: ownerInstallationHandle,
+            ownerEndpointHandle: ownerEndpointHandle,
             revision: revision + 1,
             previousDigest: digest,
             routes: routes,
@@ -537,7 +537,7 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
 
     private static func signed(
         relationshipId: UUID,
-        ownerInstallationHandle: RelationshipInstallationHandle,
+        ownerEndpointHandle: RelationshipEndpointHandle,
         revision: UInt64,
         previousDigest: Data?,
         routes: [RelationshipRouteV2],
@@ -548,7 +548,7 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
         let payload = RelationshipRouteSetSignaturePayloadV2(
             version: NoctweaveArchitectureV2.version,
             relationshipId: relationshipId,
-            ownerInstallationHandle: ownerInstallationHandle,
+            ownerEndpointHandle: ownerEndpointHandle,
             revision: revision,
             previousDigest: previousDigest,
             routes: ordered,
@@ -557,7 +557,7 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
         let encoded = try NoctweaveCoder.encode(payload, sortedKeys: true)
         return RelationshipRouteSetV2(
             relationshipId: relationshipId,
-            ownerInstallationHandle: ownerInstallationHandle,
+            ownerEndpointHandle: ownerEndpointHandle,
             revision: revision,
             previousDigest: previousDigest,
             routes: ordered,
@@ -570,7 +570,7 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
         RelationshipRouteSetSignaturePayloadV2(
             version: version,
             relationshipId: relationshipId,
-            ownerInstallationHandle: ownerInstallationHandle,
+            ownerEndpointHandle: ownerEndpointHandle,
             revision: revision,
             previousDigest: previousDigest,
             routes: routes,
@@ -586,7 +586,7 @@ public struct RelationshipRouteSetV2: Codable, Equatable {
 private struct RelationshipRouteSetSignaturePayloadV2: Codable {
     let version: Int
     let relationshipId: UUID
-    let ownerInstallationHandle: RelationshipInstallationHandle
+    let ownerEndpointHandle: RelationshipEndpointHandle
     let revision: UInt64
     let previousDigest: Data?
     let routes: [RelationshipRouteV2]

@@ -20,15 +20,15 @@ final class WirePayloadV2Tests: XCTestCase {
             id: eventId,
             clientTransactionId: transactionId,
             conversationId: outbound.id,
-            authorInstallationHandle: pair.aliceBob.localInstallationHandle,
+            authorEndpointHandle: pair.aliceBob.localEndpointHandle,
             createdAt: sentAt,
             kind: .application,
             content: try XCTUnwrap(EncodedContent.text("typed direct-v4"))
         )
         let envelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(event),
-            senderSigningKey: pair.alice.installation.signingKey,
-            senderFingerprint: pair.aliceBob.localInstallationHandle.rawValue,
+            senderSigningKey: pair.alice.localEndpoint.signingKey,
+            senderFingerprint: pair.aliceBob.localEndpointHandle.rawValue,
             conversation: &outbound,
             kemCiphertext: pair.outbound.kemCiphertext,
             prekey: pair.outbound.prekey,
@@ -42,9 +42,9 @@ final class WirePayloadV2Tests: XCTestCase {
             envelope: envelope,
             contact: pair.bobContact,
             localIdentity: pair.bob.identity,
-            localInstallation: pair.bob.installation,
+            localEndpoint: pair.bob.localEndpoint,
             localManifest: pair.bob.manifest,
-            localEndpoint: pair.bob.endpoint,
+            localCertificate: pair.bob.endpoint,
             pairwiseBinding: pair.bobAlice,
             conversation: &inbound
         )
@@ -57,13 +57,13 @@ final class WirePayloadV2Tests: XCTestCase {
     }
 
     func testKnownTextProfileMatchesJavaScriptDecoderExactly() throws {
-        let handle = RelationshipInstallationHandle(
+        let handle = RelationshipEndpointHandle(
             rawValue: Data(repeating: 0x4f, count: 32).base64EncodedString()
         )
         let makeEvent: (EncodedContent, EventRelation?) -> ConversationEvent = { content, relation in
             ConversationEvent(
                 conversationId: "conversation",
-                authorInstallationHandle: handle,
+                authorEndpointHandle: handle,
                 kind: .application,
                 content: content,
                 relation: relation
@@ -121,7 +121,7 @@ final class WirePayloadV2Tests: XCTestCase {
     }
 
     func testKnownAttachmentFallbackMatchesJavaScriptDecoderExactly() throws {
-        let handle = RelationshipInstallationHandle(
+        let handle = RelationshipEndpointHandle(
             rawValue: Data(repeating: 0x50, count: 32).base64EncodedString()
         )
         let expectedFallbacks = [
@@ -144,7 +144,7 @@ final class WirePayloadV2Tests: XCTestCase {
                 eventId: UUID(),
                 clientTransactionId: UUID(),
                 conversationId: "conversation",
-                authorInstallationHandle: handle,
+                authorEndpointHandle: handle,
                 createdAt: Date(timeIntervalSince1970: 20_001)
             )
 
@@ -152,7 +152,7 @@ final class WirePayloadV2Tests: XCTestCase {
             XCTAssertEqual(try wire.applicationProjection().body, .attachment(descriptor))
             let reply = ConversationEvent(
                 conversationId: "conversation",
-                authorInstallationHandle: handle,
+                authorEndpointHandle: handle,
                 createdAt: Date(timeIntervalSince1970: 20_001),
                 kind: .application,
                 content: try XCTUnwrap(wire.application?.content),
@@ -166,7 +166,7 @@ final class WirePayloadV2Tests: XCTestCase {
     }
 
     func testStandardRelationsReceiptsAndTombstonesMatchJavaScriptCanonicalPayloads() throws {
-        let handle = RelationshipInstallationHandle(
+        let handle = RelationshipEndpointHandle(
             rawValue: Data(repeating: 0x52, count: 32).base64EncodedString()
         )
         let target = try XCTUnwrap(UUID(uuidString: "11111111-2222-4333-8444-555555555555"))
@@ -175,7 +175,7 @@ final class WirePayloadV2Tests: XCTestCase {
         for kind in relationKinds {
             let event = ConversationEvent(
                 conversationId: "conversation",
-                authorInstallationHandle: handle,
+                authorEndpointHandle: handle,
                 createdAt: Date(timeIntervalSince1970: 21_100),
                 kind: .application,
                 content: try XCTUnwrap(EncodedContent.text("revised text")),
@@ -193,7 +193,7 @@ final class WirePayloadV2Tests: XCTestCase {
         XCTAssertEqual(reactionContent.fallbackText, "Reacted 👍 to a message")
         let reactionEvent = ConversationEvent(
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 21_101),
             kind: .application,
             content: reactionContent,
@@ -212,7 +212,7 @@ final class WirePayloadV2Tests: XCTestCase {
         XCTAssertEqual(retractionContent.fallbackText, RetractionContentV1.fallbackText)
         let retractionEvent = ConversationEvent(
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 21_102),
             kind: .application,
             content: retractionContent,
@@ -237,7 +237,7 @@ final class WirePayloadV2Tests: XCTestCase {
             )
             let receiptEvent = ConversationEvent(
                 conversationId: "conversation",
-                authorInstallationHandle: handle,
+                authorEndpointHandle: handle,
                 createdAt: Date(timeIntervalSince1970: 21_103),
                 kind: .receipt,
                 content: content
@@ -253,7 +253,7 @@ final class WirePayloadV2Tests: XCTestCase {
     }
 
     func testKnownRelationsAndReceiptsFailClosedForNoncanonicalOrCrossFamilyContent() throws {
-        let handle = RelationshipInstallationHandle(
+        let handle = RelationshipEndpointHandle(
             rawValue: Data(repeating: 0x53, count: 32).base64EncodedString()
         )
         let target = UUID()
@@ -264,7 +264,7 @@ final class WirePayloadV2Tests: XCTestCase {
         )
         let reactionEvent = ConversationEvent(
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 21_200),
             kind: .application,
             content: malformedReaction,
@@ -283,7 +283,7 @@ final class WirePayloadV2Tests: XCTestCase {
         ] {
             let mismatched = ConversationEvent(
                 conversationId: "conversation",
-                authorInstallationHandle: handle,
+                authorEndpointHandle: handle,
                 createdAt: Date(timeIntervalSince1970: 21_200),
                 kind: .application,
                 content: validReaction,
@@ -293,7 +293,7 @@ final class WirePayloadV2Tests: XCTestCase {
         }
         let spoofedReactionRelation = ConversationEvent(
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 21_200),
             kind: .application,
             content: try XCTUnwrap(EncodedContent.text("not a reaction")),
@@ -308,7 +308,7 @@ final class WirePayloadV2Tests: XCTestCase {
         ] {
             let mismatched = ConversationEvent(
                 conversationId: "conversation",
-                authorInstallationHandle: handle,
+                authorEndpointHandle: handle,
                 createdAt: Date(timeIntervalSince1970: 21_200),
                 kind: .application,
                 content: validRetraction,
@@ -318,7 +318,7 @@ final class WirePayloadV2Tests: XCTestCase {
         }
         let spoofedRetractionRelation = ConversationEvent(
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 21_200),
             kind: .application,
             content: try XCTUnwrap(EncodedContent.text("not a retraction")),
@@ -329,7 +329,7 @@ final class WirePayloadV2Tests: XCTestCase {
         let selfTargeting = ConversationEvent(
             id: target,
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 21_201),
             kind: .application,
             content: try XCTUnwrap(EncodedContent.text("invalid self edit")),
@@ -345,7 +345,7 @@ final class WirePayloadV2Tests: XCTestCase {
         )
         let invalidReceipt = ConversationEvent(
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 21_202),
             kind: .receipt,
             content: visibleReceipt
@@ -356,7 +356,7 @@ final class WirePayloadV2Tests: XCTestCase {
         XCTAssertNil(EncodedContent.retraction(reason: "bad\u{0000}reason"))
         let outOfRange = ConversationEvent(
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 4_102_444_801),
             kind: .application,
             content: try XCTUnwrap(EncodedContent.text("future"))
@@ -373,7 +373,7 @@ final class WirePayloadV2Tests: XCTestCase {
             ContentTypeId(authority: "example.app", name: "poll:spoof", major: 1)
                 .isStructurallyValid
         )
-        let handle = RelationshipInstallationHandle(
+        let handle = RelationshipEndpointHandle(
             rawValue: Data(repeating: 0x51, count: 32).base64EncodedString()
         )
         let unknownType = ContentTypeId(
@@ -384,7 +384,7 @@ final class WirePayloadV2Tests: XCTestCase {
         )
         let visibleEvent = ConversationEvent(
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 21_000),
             kind: .application,
             content: EncodedContent(
@@ -405,7 +405,7 @@ final class WirePayloadV2Tests: XCTestCase {
 
         let silentEvent = ConversationEvent(
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 21_001),
             kind: .application,
             content: EncodedContent(
@@ -442,8 +442,8 @@ final class WirePayloadV2Tests: XCTestCase {
         )
         let unknownEnvelope = try MessageEngine.encryptDirectV4(
             wirePayload: .control(unknown),
-            senderSigningKey: pair.alice.installation.signingKey,
-            senderFingerprint: pair.aliceBob.localInstallationHandle.rawValue,
+            senderSigningKey: pair.alice.localEndpoint.signingKey,
+            senderFingerprint: pair.aliceBob.localEndpointHandle.rawValue,
             conversation: &outbound,
             kemCiphertext: pair.outbound.kemCiphertext,
             prekey: pair.outbound.prekey,
@@ -454,9 +454,9 @@ final class WirePayloadV2Tests: XCTestCase {
             envelope: unknownEnvelope,
             contact: pair.bobContact,
             localIdentity: pair.bob.identity,
-            localInstallation: pair.bob.installation,
+            localEndpoint: pair.bob.localEndpoint,
             localManifest: pair.bob.manifest,
-            localEndpoint: pair.bob.endpoint,
+            localCertificate: pair.bob.endpoint,
             pairwiseBinding: pair.bobAlice,
             conversation: &inbound
         )
@@ -481,8 +481,8 @@ final class WirePayloadV2Tests: XCTestCase {
         )
         let malformedEnvelope = try MessageEngine.encryptDirectV4(
             wirePayload: .control(malformed),
-            senderSigningKey: pair.alice.installation.signingKey,
-            senderFingerprint: pair.aliceBob.localInstallationHandle.rawValue,
+            senderSigningKey: pair.alice.localEndpoint.signingKey,
+            senderFingerprint: pair.aliceBob.localEndpointHandle.rawValue,
             conversation: &outbound,
             authenticatedContext: malformedContext,
             sentAt: sentAt.addingTimeInterval(1)
@@ -493,9 +493,9 @@ final class WirePayloadV2Tests: XCTestCase {
                 envelope: malformedEnvelope,
                 contact: pair.bobContact,
                 localIdentity: pair.bob.identity,
-                localInstallation: pair.bob.installation,
+                localEndpoint: pair.bob.localEndpoint,
                 localManifest: pair.bob.manifest,
-                localEndpoint: pair.bob.endpoint,
+                localCertificate: pair.bob.endpoint,
                 pairwiseBinding: pair.bobAlice,
                 conversation: &inbound
             )
@@ -507,12 +507,12 @@ final class WirePayloadV2Tests: XCTestCase {
 
     func testGroupAndDirectPaddingFramesAreMutuallyIsolated() throws {
         let group = try PaddedMessagePlaintext.encodeGroupMessageBody(.text("group"))
-        let handle = RelationshipInstallationHandle(
+        let handle = RelationshipEndpointHandle(
             rawValue: Data(repeating: 0x61, count: 32).base64EncodedString()
         )
         let event = ConversationEvent(
             conversationId: "conversation",
-            authorInstallationHandle: handle,
+            authorEndpointHandle: handle,
             createdAt: Date(timeIntervalSince1970: 23_000),
             kind: .application,
             content: try XCTUnwrap(EncodedContent.text("typed"))
@@ -566,13 +566,13 @@ final class WirePayloadV2Tests: XCTestCase {
         let maybeBobState = try await bob.store.load()
         let aliceState = try XCTUnwrap(maybeAliceState)
         let bobState = try XCTUnwrap(maybeBobState)
-        let aliceInstallation = try XCTUnwrap(aliceState.localInstallation)
+        let aliceLocalEndpoint = try XCTUnwrap(aliceState.localEndpoint)
         let aliceGeneration = try XCTUnwrap(aliceState.identityGenerationId)
         let aliceEndpoint = try XCTUnwrap(aliceState.issuedContactEndpointsV2.last)
         let bobContact = try XCTUnwrap(aliceState.contacts.first)
-        let bobEndpoint = try bobContact.certifiedInstallationEndpoint()
+        let bobEndpoint = try bobContact.certifiedGenerationEndpoint()
         let bobGeneration = try XCTUnwrap(bobContact.identityGenerationId)
-        let aliceBob = try PairwiseInstallationBindingV4.derive(
+        let aliceBob = try PairwiseEndpointBindingV4.derive(
             localIdentityGenerationId: aliceGeneration,
             localIdentitySigningPublicKey: aliceState.identity.signingKey.publicKeyData,
             localEndpoint: aliceEndpoint,
@@ -580,9 +580,9 @@ final class WirePayloadV2Tests: XCTestCase {
             peerIdentitySigningPublicKey: bobContact.signingPublicKey,
             peerEndpoint: bobEndpoint
         )
-        let outboundSession = try MessageEngine.createOutboundInstallationSession(
-            localInstallation: aliceInstallation,
-            localEndpoint: aliceEndpoint,
+        let outboundSession = try MessageEngine.createOutboundEndpointSession(
+            localEndpoint: aliceLocalEndpoint,
+            localCertificate: aliceEndpoint,
             pairwiseBinding: aliceBob,
             contact: bobContact
         )
@@ -606,8 +606,8 @@ final class WirePayloadV2Tests: XCTestCase {
                     encodedPayload: Data("future-control".utf8)
                 )
             ),
-            senderSigningKey: aliceInstallation.signingKey,
-            senderFingerprint: aliceBob.localInstallationHandle.rawValue,
+            senderSigningKey: aliceLocalEndpoint.signingKey,
+            senderFingerprint: aliceBob.localEndpointHandle.rawValue,
             conversation: &outbound,
             kemCiphertext: outboundSession.kemCiphertext,
             prekey: outboundSession.prekey,
@@ -635,7 +635,7 @@ final class WirePayloadV2Tests: XCTestCase {
             id: unknownEventId,
             clientTransactionId: unknownTransactionId,
             conversationId: outbound.id,
-            authorInstallationHandle: aliceBob.localInstallationHandle,
+            authorEndpointHandle: aliceBob.localEndpointHandle,
             createdAt: eventAt,
             kind: .application,
             content: EncodedContent(
@@ -647,8 +647,8 @@ final class WirePayloadV2Tests: XCTestCase {
         )
         let applicationEnvelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(unknownEvent),
-            senderSigningKey: aliceInstallation.signingKey,
-            senderFingerprint: aliceBob.localInstallationHandle.rawValue,
+            senderSigningKey: aliceLocalEndpoint.signingKey,
+            senderFingerprint: aliceBob.localEndpointHandle.rawValue,
             conversation: &outbound,
             authenticatedContext: applicationContext,
             sentAt: eventAt
@@ -674,9 +674,9 @@ final class WirePayloadV2Tests: XCTestCase {
 private struct WireEndpointFixture {
     let identity: Identity
     let generationId: UUID
-    let installation: LocalInstallationState
-    let manifest: InstallationManifest
-    let endpoint: CertifiedInstallationEndpoint
+    let localEndpoint: LocalEndpointState
+    let manifest: EndpointSetManifest
+    let endpoint: CertifiedGenerationEndpoint
     let relay: RelayEndpoint
 }
 
@@ -685,14 +685,14 @@ private struct WirePairFixture {
     let bob: WireEndpointFixture
     let aliceContact: Contact
     let bobContact: Contact
-    let aliceBob: PairwiseInstallationBindingV4
-    let bobAlice: PairwiseInstallationBindingV4
+    let aliceBob: PairwiseEndpointBindingV4
+    let bobAlice: PairwiseEndpointBindingV4
     let outbound: (conversation: Conversation, kemCiphertext: Data, prekey: PrekeyReference)
 
     func inboundConversation() throws -> Conversation {
-        try MessageEngine.createInboundInstallationSession(
-            localInstallation: bob.installation,
-            localEndpoint: bob.endpoint,
+        try MessageEngine.createInboundEndpointSession(
+            localEndpoint: bob.localEndpoint,
+            localCertificate: bob.endpoint,
             senderEndpoint: alice.endpoint,
             pairwiseBinding: bobAlice,
             contact: bobContact,
@@ -709,9 +709,9 @@ private func makeWirePair() throws -> WirePairFixture {
     let bobContact = try MessageEngine.contact(from: makeWireOffer(alice))
     let aliceBob = try makeWireBinding(local: alice, peer: bob)
     let bobAlice = try makeWireBinding(local: bob, peer: alice)
-    let outbound = try MessageEngine.createOutboundInstallationSession(
-        localInstallation: alice.installation,
-        localEndpoint: alice.endpoint,
+    let outbound = try MessageEngine.createOutboundEndpointSession(
+        localEndpoint: alice.localEndpoint,
+        localCertificate: alice.endpoint,
         pairwiseBinding: aliceBob,
         contact: aliceContact
     )
@@ -729,24 +729,24 @@ private func makeWirePair() throws -> WirePairFixture {
 private func makeWireEndpoint(_ name: String) throws -> WireEndpointFixture {
     let identity = try Identity.generate(displayName: name)
     let generationId = UUID()
-    let installation = try LocalInstallationState.generate(identityGenerationId: generationId)
-    let manifest = try InstallationManifest.create(
+    let localEndpoint = try LocalEndpointState.generate(identityGenerationId: generationId)
+    let manifest = try EndpointSetManifest.create(
         identityGenerationId: generationId,
         epoch: 0,
-        installations: [installation.publicRecord(addedEpoch: 0)],
+        endpoints: [localEndpoint.publicRecord(addedEpoch: 0)],
         identity: identity,
-        issuedAt: installation.createdAt
+        issuedAt: localEndpoint.createdAt
     )
     return WireEndpointFixture(
         identity: identity,
         generationId: generationId,
-        installation: installation,
+        localEndpoint: localEndpoint,
         manifest: manifest,
-        endpoint: try CertifiedInstallationEndpoint.create(
+        endpoint: try CertifiedGenerationEndpoint.create(
             identity: identity,
-            installation: installation,
+            endpoint: localEndpoint,
             manifest: manifest,
-            issuedAt: installation.createdAt
+            issuedAt: localEndpoint.createdAt
         ),
         relay: RelayEndpoint(host: "127.0.0.1", port: 9340)
     )
@@ -759,16 +759,16 @@ private func makeWireOffer(_ fixture: WireEndpointFixture) throws -> ContactOffe
         relay: fixture.relay,
         identity: fixture.identity,
         identityGenerationId: fixture.generationId,
-        installationManifest: fixture.manifest,
-        preferredInstallationEndpoint: fixture.endpoint
+        endpointSetManifest: fixture.manifest,
+        preferredGenerationEndpoint: fixture.endpoint
     )
 }
 
 private func makeWireBinding(
     local: WireEndpointFixture,
     peer: WireEndpointFixture
-) throws -> PairwiseInstallationBindingV4 {
-    try PairwiseInstallationBindingV4.derive(
+) throws -> PairwiseEndpointBindingV4 {
+    try PairwiseEndpointBindingV4.derive(
         localIdentityGenerationId: local.generationId,
         localIdentitySigningPublicKey: local.identity.signingKey.publicKeyData,
         localEndpoint: local.endpoint,

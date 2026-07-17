@@ -12,7 +12,7 @@ final class EndpointPrekeyRotationTests: XCTestCase {
         let original = local.endpoint
         let originalPrekey = original.prekeyBundle.signedPrekey
         let originalAuthorizationDigest = try XCTUnwrap(original.authorizationDigest)
-        let originalBinding = try PairwiseInstallationBindingV4.derive(
+        let originalBinding = try PairwiseEndpointBindingV4.derive(
             localIdentityGenerationId: local.generationId,
             localIdentitySigningPublicKey: local.identity.signingKey.publicKeyData,
             localEndpoint: original,
@@ -21,16 +21,16 @@ final class EndpointPrekeyRotationTests: XCTestCase {
             peerEndpoint: peer.endpoint
         )
 
-        XCTAssertTrue(try local.installation.renewSignedPrekeyIfNeeded(at: now))
-        XCTAssertEqual(local.installation.prekeys.retiredSignedPrekeys.count, 1)
-        XCTAssertNotEqual(local.installation.prekeys.signedPrekeyId, originalPrekey.id)
-        XCTAssertNotNil(local.installation.prekeys.signedPrekeyKeyPair(
+        XCTAssertTrue(try local.localEndpoint.renewSignedPrekeyIfNeeded(at: now))
+        XCTAssertEqual(local.localEndpoint.prekeys.retiredSignedPrekeys.count, 1)
+        XCTAssertNotEqual(local.localEndpoint.prekeys.signedPrekeyId, originalPrekey.id)
+        XCTAssertNotNil(local.localEndpoint.prekeys.signedPrekeyKeyPair(
             id: originalPrekey.id,
             now: now
         ))
         let persistedPrekeys = try NoctweaveCoder.decode(
             PrekeyState.self,
-            from: NoctweaveCoder.encode(local.installation.prekeys)
+            from: NoctweaveCoder.encode(local.localEndpoint.prekeys)
         )
         XCTAssertNotNil(persistedPrekeys.signedPrekeyKeyPair(
             id: originalPrekey.id,
@@ -38,7 +38,7 @@ final class EndpointPrekeyRotationTests: XCTestCase {
         ))
 
         let refreshed = try original.refreshingPrekeyPackage(
-            using: local.installation,
+            using: local.localEndpoint,
             at: now
         )
         XCTAssertEqual(refreshed.authorizationDigest, originalAuthorizationDigest)
@@ -51,7 +51,7 @@ final class EndpointPrekeyRotationTests: XCTestCase {
             now: now
         ))
 
-        let refreshedBinding = try PairwiseInstallationBindingV4.derive(
+        let refreshedBinding = try PairwiseEndpointBindingV4.derive(
             localIdentityGenerationId: local.generationId,
             localIdentitySigningPublicKey: local.identity.signingKey.publicKeyData,
             localEndpoint: refreshed,
@@ -61,12 +61,12 @@ final class EndpointPrekeyRotationTests: XCTestCase {
         )
         XCTAssertEqual(refreshedBinding, originalBinding)
 
-        XCTAssertNil(local.installation.prekeys.signedPrekeyKeyPair(
+        XCTAssertNil(local.localEndpoint.prekeys.signedPrekeyKeyPair(
             id: originalPrekey.id,
             now: originalPrekey.expiresAt
         ))
-        local.installation.prekeys.pruneExpiredSignedPrekeys(now: originalPrekey.expiresAt)
-        XCTAssertTrue(local.installation.prekeys.retiredSignedPrekeys.isEmpty)
+        local.localEndpoint.prekeys.pruneExpiredSignedPrekeys(now: originalPrekey.expiresAt)
+        XCTAssertTrue(local.localEndpoint.prekeys.retiredSignedPrekeys.isEmpty)
     }
 
     func testFreshPrekeyDoesNotRotateAndTamperedOrExpiredPackageFailsClosed() throws {
@@ -74,15 +74,15 @@ final class EndpointPrekeyRotationTests: XCTestCase {
         var fixture = try endpointFixture(name: "Alice", prekeyIssuedAt: now)
         let endpoint = fixture.endpoint
 
-        XCTAssertFalse(try fixture.installation.renewSignedPrekeyIfNeeded(at: now))
-        XCTAssertTrue(fixture.installation.prekeys.retiredSignedPrekeys.isEmpty)
+        XCTAssertFalse(try fixture.localEndpoint.renewSignedPrekeyIfNeeded(at: now))
+        XCTAssertTrue(fixture.localEndpoint.prekeys.retiredSignedPrekeys.isEmpty)
 
-        let tampered = CertifiedInstallationEndpoint(
+        let tampered = CertifiedGenerationEndpoint(
             identityGenerationId: endpoint.identityGenerationId,
             identityAuthorityPublicKey: endpoint.identityAuthorityPublicKey,
             manifestEpoch: endpoint.manifestEpoch,
             manifestDigest: endpoint.manifestDigest,
-            installationId: endpoint.installationId,
+            endpointId: endpoint.endpointId,
             signingPublicKey: endpoint.signingPublicKey,
             agreementPublicKey: endpoint.agreementPublicKey,
             capabilities: endpoint.capabilities,
@@ -106,9 +106,9 @@ final class EndpointPrekeyRotationTests: XCTestCase {
 private struct EndpointPrekeyRotationFixture {
     let identity: Identity
     let generationId: UUID
-    var installation: LocalInstallationState
-    let manifest: InstallationManifest
-    let endpoint: CertifiedInstallationEndpoint
+    var localEndpoint: LocalEndpointState
+    let manifest: EndpointSetManifest
+    let endpoint: CertifiedGenerationEndpoint
 }
 
 private func endpointFixture(
@@ -125,7 +125,7 @@ private func endpointFixture(
         signingKey: endpointSigning,
         issuedAt: prekeyIssuedAt
     )
-    let installation = LocalInstallationState(
+    let localEndpoint = LocalEndpointState(
         id: UUID(),
         identityGenerationId: generationId,
         signingKey: endpointSigning,
@@ -141,21 +141,21 @@ private func endpointFixture(
         ),
         createdAt: prekeyIssuedAt
     )
-    let manifest = try InstallationManifest.create(
+    let manifest = try EndpointSetManifest.create(
         identityGenerationId: generationId,
         epoch: 0,
-        installations: [installation.publicRecord(addedEpoch: 0)],
+        endpoints: [localEndpoint.publicRecord(addedEpoch: 0)],
         identity: identity,
         issuedAt: prekeyIssuedAt
     )
     return EndpointPrekeyRotationFixture(
         identity: identity,
         generationId: generationId,
-        installation: installation,
+        localEndpoint: localEndpoint,
         manifest: manifest,
-        endpoint: try CertifiedInstallationEndpoint.create(
+        endpoint: try CertifiedGenerationEndpoint.create(
             identity: identity,
-            installation: installation,
+            endpoint: localEndpoint,
             manifest: manifest,
             issuedAt: Date()
         )

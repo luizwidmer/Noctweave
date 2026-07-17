@@ -5,9 +5,9 @@ public struct IdentityProfile: Codable, Identifiable {
     public let id: UUID
     public var architectureVersion: Int
     public var identityGenerationId: UUID?
-    public var localInstallation: LocalInstallationState?
-    public var installationManifest: InstallationManifest?
-    public var issuedContactEndpointsV2: [CertifiedInstallationEndpoint]
+    public var localEndpoint: LocalEndpointState?
+    public var endpointSetManifest: EndpointSetManifest?
+    public var issuedContactEndpointsV2: [CertifiedGenerationEndpoint]
     public var deliveryStates: [DeliveryStateRecord]
     public var inboundEnvelopeReceiptsV2: [InboundEnvelopeReceiptV2]
     public var quarantinedTransportEnvelopesV2: [QuarantinedTransportEnvelopeV2]
@@ -37,9 +37,9 @@ public struct IdentityProfile: Codable, Identifiable {
     private init(
         id: UUID = UUID(),
         identityGenerationId: UUID,
-        localInstallation: LocalInstallationState,
-        installationManifest: InstallationManifest,
-        issuedContactEndpointsV2: [CertifiedInstallationEndpoint] = [],
+        localEndpoint: LocalEndpointState,
+        endpointSetManifest: EndpointSetManifest,
+        issuedContactEndpointsV2: [CertifiedGenerationEndpoint] = [],
         deliveryStates: [DeliveryStateRecord] = [],
         inboundEnvelopeReceiptsV2: [InboundEnvelopeReceiptV2] = [],
         quarantinedTransportEnvelopesV2: [QuarantinedTransportEnvelopeV2] = [],
@@ -69,8 +69,8 @@ public struct IdentityProfile: Codable, Identifiable {
         self.id = id
         self.architectureVersion = NoctweaveArchitectureV2.version
         self.identityGenerationId = identityGenerationId
-        self.localInstallation = localInstallation
-        self.installationManifest = installationManifest
+        self.localEndpoint = localEndpoint
+        self.endpointSetManifest = endpointSetManifest
         self.issuedContactEndpointsV2 = issuedContactEndpointsV2
         self.deliveryStates = deliveryStates
         self.inboundEnvelopeReceiptsV2 = inboundEnvelopeReceiptsV2
@@ -116,22 +116,22 @@ public struct IdentityProfile: Codable, Identifiable {
             throw IdentityProfileStateError.invalidCurrentState
         }
         let generationId = UUID()
-        let localInstallation = try LocalInstallationState.generate(
+        let localEndpoint = try LocalEndpointState.generate(
             identityGenerationId: generationId,
             createdAt: createdAt
         )
-        let manifest = try InstallationManifest.create(
+        let manifest = try EndpointSetManifest.create(
             identityGenerationId: generationId,
             epoch: 0,
-            installations: [localInstallation.publicRecord(addedEpoch: 0)],
+            endpoints: [localEndpoint.publicRecord(addedEpoch: 0)],
             identity: identity,
             issuedAt: createdAt
         )
         let profile = IdentityProfile(
             id: id,
             identityGenerationId: generationId,
-            localInstallation: localInstallation,
-            installationManifest: manifest,
+            localEndpoint: localEndpoint,
+            endpointSetManifest: manifest,
             selfSyncV2: SelfSyncLocalStateV2.generate(identityGenerationId: generationId),
             identity: identity,
             inboxId: InboxAddress.derived(from: inboxAccessKey.publicKeyData),
@@ -151,8 +151,8 @@ public struct IdentityProfile: Codable, Identifiable {
         case id
         case architectureVersion
         case identityGenerationId
-        case localInstallation
-        case installationManifest
+        case localEndpoint
+        case endpointSetManifest
         case issuedContactEndpointsV2
         case deliveryStates
         case inboundEnvelopeReceiptsV2
@@ -193,13 +193,13 @@ public struct IdentityProfile: Codable, Identifiable {
             )
         }
         identityGenerationId = try container.decode(UUID.self, forKey: .identityGenerationId)
-        localInstallation = try container.decode(LocalInstallationState.self, forKey: .localInstallation)
-        installationManifest = try container.decode(
-            InstallationManifest.self,
-            forKey: .installationManifest
+        localEndpoint = try container.decode(LocalEndpointState.self, forKey: .localEndpoint)
+        endpointSetManifest = try container.decode(
+            EndpointSetManifest.self,
+            forKey: .endpointSetManifest
         )
         issuedContactEndpointsV2 = try container.decode(
-            [CertifiedInstallationEndpoint].self,
+            [CertifiedGenerationEndpoint].self,
             forKey: .issuedContactEndpointsV2
         )
         deliveryStates = try container.decode([DeliveryStateRecord].self, forKey: .deliveryStates)
@@ -263,26 +263,26 @@ public struct IdentityProfile: Codable, Identifiable {
     public var isArchitectureV2Ready: Bool {
         guard architectureVersion == NoctweaveArchitectureV2.version,
               let identityGenerationId,
-              let localInstallation,
-              let installationManifest,
+              let localEndpoint,
+              let endpointSetManifest,
               let inboxAccessKey,
               InboxAddress.isBound(inboxId, to: inboxAccessKey.publicKeyData),
-              let localRecord = installationManifest.activeInstallations.first(where: {
-                  $0.id == localInstallation.id
+              let localRecord = endpointSetManifest.activeEndpoints.first(where: {
+                  $0.id == localEndpoint.id
               }) else {
             return false
         }
-        return localInstallation.identityGenerationId == identityGenerationId
-            && localInstallation.prekeys.retainedSignedPrekeysAreStructurallyValid(
-                using: localInstallation.signingKey.publicKeyData
+        return localEndpoint.identityGenerationId == identityGenerationId
+            && localEndpoint.prekeys.retainedSignedPrekeysAreStructurallyValid(
+                using: localEndpoint.signingKey.publicKeyData
             )
-            && localInstallation.mailboxStateIsStructurallyValid
-            && mailboxReachabilityIsGenerationScoped(localInstallation)
-            && installationManifest.identityGenerationId == identityGenerationId
-            && installationManifest.verify(identityPublicKey: identity.signingKey.publicKeyData)
-            && localRecord.identityGenerationId == localInstallation.identityGenerationId
-            && localRecord.signingPublicKey == localInstallation.signingKey.publicKeyData
-            && localRecord.agreementPublicKey == localInstallation.agreementKey.publicKeyData
+            && localEndpoint.mailboxStateIsStructurallyValid
+            && mailboxReachabilityIsGenerationScoped(localEndpoint)
+            && endpointSetManifest.identityGenerationId == identityGenerationId
+            && endpointSetManifest.verify(identityPublicKey: identity.signingKey.publicKeyData)
+            && localRecord.identityGenerationId == localEndpoint.identityGenerationId
+            && localRecord.signingPublicKey == localEndpoint.signingKey.publicKeyData
+            && localRecord.agreementPublicKey == localEndpoint.agreementKey.publicKeyData
             && issuedContactEndpointsV2.count <= NoctweaveArchitectureV2.maximumIssuedContactEndpoints
             && Set(issuedContactEndpointsV2.compactMap(\.digest)).count
                 == issuedContactEndpointsV2.count
@@ -292,13 +292,13 @@ public struct IdentityProfile: Codable, Identifiable {
                 issuedEndpointIsAuthorized(
                     $0,
                     identityGenerationId: identityGenerationId,
-                    localInstallation: localInstallation,
-                    endpointSet: installationManifest
+                    localEndpoint: localEndpoint,
+                    endpointSet: endpointSetManifest
                 )
             }
             && deliveryStates.count <= NoctweaveArchitectureV2.maximumDeliveryStates
             && Set(deliveryStates.map {
-                "\($0.eventId.uuidString.lowercased())|\($0.destinationInstallation.rawValue)"
+                "\($0.eventId.uuidString.lowercased())|\($0.destinationEndpoint.rawValue)"
             }).count == deliveryStates.count
             && deliveryStates.allSatisfy(\.isStructurallyValid)
             && selfSyncV2?.identityGenerationId == identityGenerationId
@@ -321,8 +321,8 @@ public struct IdentityProfile: Codable, Identifiable {
             && endpointRemovalJournalsV2.allSatisfy { journal in
                 journal.isStructurallyValid
                     && journal.result.identityGenerationId == identityGenerationId
-                    && journal.result.endpointSetEpoch <= installationManifest.epoch
-                    && !installationManifest.activeInstallations.contains(where: {
+                    && journal.result.endpointSetEpoch <= endpointSetManifest.epoch
+                    && !endpointSetManifest.activeEndpoints.contains(where: {
                         $0.id == journal.result.removedEndpointId
                     })
             }
@@ -332,14 +332,14 @@ public struct IdentityProfile: Codable, Identifiable {
             && Set(relationshipsV2.map(\.id)).count == relationshipsV2.count
             && relationshipsV2.allSatisfy { relationship in
                 relationship.isStructurallyValid
-                    && localInstallation.relationshipHandles[relationship.id]
-                        == relationship.localInstallationHandle
+                    && localEndpoint.relationshipHandles[relationship.id]
+                        == relationship.localEndpointHandle
             }
     }
 
     /// Every live route credential must name its exact relay/inbox route.
     private func mailboxReachabilityIsGenerationScoped(
-        _ endpoint: LocalInstallationState
+        _ endpoint: LocalEndpointState
     ) -> Bool {
         endpoint.mailboxCredentialsByRoute.allSatisfy { routeKey, credential in
             credential.relay != nil
@@ -425,8 +425,8 @@ public struct IdentityProfile: Codable, Identifiable {
         }
     }
 
-    var activeEndpoints: [InstallationRecord] {
-        installationManifest?.activeInstallations ?? []
+    var activeEndpoints: [EndpointRecord] {
+        endpointSetManifest?.activeEndpoints ?? []
     }
 
     /// Issues one short-lived, generation- and endpoint-set-scoped challenge.
@@ -440,13 +440,13 @@ public struct IdentityProfile: Codable, Identifiable {
     ) throws -> PendingEndpointAdmissionV2 {
         guard isArchitectureV2Ready,
               let generationId = identityGenerationId,
-              let endpointSet = installationManifest else {
+              let endpointSet = endpointSetManifest else {
             throw EndpointAdmissionV2Error.invalidChallenge
         }
         guard candidate.identityGenerationId == generationId else {
             throw EndpointAdmissionV2Error.wrongIdentityGeneration
         }
-        guard !endpointSet.installations.contains(where: {
+        guard !endpointSet.endpoints.contains(where: {
             $0.id == candidate.endpointId
                 || $0.signingPublicKey == candidate.signingPublicKey
                 || $0.agreementPublicKey == candidate.agreementPublicKey
@@ -473,7 +473,7 @@ public struct IdentityProfile: Codable, Identifiable {
     ) throws {
         guard isArchitectureV2Ready,
               let generationId = identityGenerationId,
-              let current = installationManifest else {
+              let current = endpointSetManifest else {
             throw EndpointAdmissionV2Error.invalidChallenge
         }
         let challenge = pending.challenge
@@ -483,7 +483,7 @@ public struct IdentityProfile: Codable, Identifiable {
         }
         guard current.epoch == challenge.endpointSetEpoch else {
             if current.epoch > challenge.endpointSetEpoch
-                || current.installations.contains(where: { $0.id == response.endpointId }) {
+                || current.endpoints.contains(where: { $0.id == response.endpointId }) {
                 throw EndpointAdmissionV2Error.replayed
             }
             throw EndpointAdmissionV2Error.staleEndpointSet
@@ -496,18 +496,18 @@ public struct IdentityProfile: Codable, Identifiable {
         guard current.epoch < UInt64.max else {
             throw EndpointAdmissionV2Error.staleEndpointSet
         }
-        let record = challenge.candidate.installationRecord(
+        let record = challenge.candidate.endpointRecord(
             addedEpoch: current.epoch + 1,
             addedAt: date
         )
         guard let updated = try current.adding(
-            installation: record,
+            endpoint: record,
             identity: identity,
             at: date
         ), updated != current else {
             throw EndpointAdmissionV2Error.invalidCandidate
         }
-        installationManifest = updated
+        endpointSetManifest = updated
     }
 
     /// Removes a non-local endpoint, advances the signed endpoint set, and
@@ -523,12 +523,12 @@ public struct IdentityProfile: Codable, Identifiable {
               date.timeIntervalSince1970.isFinite,
               endpointRemovalJournalsV2.count
                 < NoctweaveArchitectureV2.maximumPendingEndpointRemovals,
-              endpointId != localInstallation?.id,
+              endpointId != localEndpoint?.id,
               let generationId = identityGenerationId,
-              let current = installationManifest,
-              current.activeInstallations.contains(where: { $0.id == endpointId }),
+              let current = endpointSetManifest,
+              current.activeEndpoints.contains(where: { $0.id == endpointId }),
               let updated = try current.revoking(
-                  installationId: endpointId,
+                  endpointId: endpointId,
                   identity: identity,
                   at: date
               ),
@@ -547,7 +547,7 @@ public struct IdentityProfile: Codable, Identifiable {
             )
         }
         let selfSyncDigest = replacementSelfSync.epochCommitmentDigest
-        let remainingIds = updated.activeInstallations.map(\.id)
+        let remainingIds = updated.activeEndpoints.map(\.id)
         let obligations = EndpointRemovalCleanupKindV2.allCases.map { kind in
             EndpointRemovalCleanupObligationV2(
                 identityGenerationId: generationId,
@@ -571,7 +571,7 @@ public struct IdentityProfile: Codable, Identifiable {
         guard result.isStructurallyValid else {
             throw IdentityProfileStateError.invalidCurrentState
         }
-        installationManifest = updated
+        endpointSetManifest = updated
         selfSyncV2 = replacementSelfSync
         endpointRemovalJournalsV2.append(
             EndpointRemovalJournalV2(result: result, createdAt: date)
@@ -611,19 +611,19 @@ public struct IdentityProfile: Codable, Identifiable {
     }
 
     private func issuedEndpointIsAuthorized(
-        _ endpoint: CertifiedInstallationEndpoint,
+        _ endpoint: CertifiedGenerationEndpoint,
         identityGenerationId: UUID,
-        localInstallation: LocalInstallationState,
-        endpointSet: InstallationManifest
+        localEndpoint: LocalEndpointState,
+        endpointSet: EndpointSetManifest
     ) -> Bool {
         guard endpoint.identityGenerationId == identityGenerationId,
-              endpoint.installationId == localInstallation.id,
-              endpoint.signingPublicKey == localInstallation.signingKey.publicKeyData,
-              endpoint.agreementPublicKey == localInstallation.agreementKey.publicKeyData,
+              endpoint.endpointId == localEndpoint.id,
+              endpoint.signingPublicKey == localEndpoint.signingKey.publicKeyData,
+              endpoint.agreementPublicKey == localEndpoint.agreementKey.publicKeyData,
               endpoint.manifestEpoch <= endpointSet.epoch,
               endpoint.isStructurallyValid(now: endpoint.prekeyBundle.createdAt),
-              let currentRecord = endpointSet.installations.first(where: {
-                  $0.id == endpoint.installationId
+              let currentRecord = endpointSet.endpoints.first(where: {
+                  $0.id == endpoint.endpointId
               }),
               currentRecord.isActive(at: endpointSet.issuedAt, manifestEpoch: endpointSet.epoch),
               currentRecord.signingPublicKey == endpoint.signingPublicKey,

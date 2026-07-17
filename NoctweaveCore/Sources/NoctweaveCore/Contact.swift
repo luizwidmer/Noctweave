@@ -8,10 +8,10 @@ public struct Contact: Codable, Identifiable, Equatable {
     public var signingPublicKey: Data
     public var agreementPublicKey: Data
     public var identityGenerationId: UUID?
-    public var installationCheckpoint: InstallationManifestCheckpointV4?
-    public var preferredInstallationEndpoint: CertifiedInstallationEndpoint?
+    public var endpointSetCheckpoint: EndpointSetCheckpointV4?
+    public var preferredGenerationEndpoint: CertifiedGenerationEndpoint?
     public var endpointAuthoritySigningPublicKey: Data?
-    public var preferredEndpointRevocation: InstallationEndpointRevocationV4?
+    public var preferredEndpointRevocation: EndpointRemovalProofV4?
     public var rotationCounter: UInt64
     public var allowIdentityReset: Bool
     public var trustAssertions: [ContactTrustAssertion]
@@ -24,10 +24,10 @@ public struct Contact: Codable, Identifiable, Equatable {
         signingPublicKey: Data,
         agreementPublicKey: Data,
         identityGenerationId: UUID? = nil,
-        installationCheckpoint: InstallationManifestCheckpointV4? = nil,
-        preferredInstallationEndpoint: CertifiedInstallationEndpoint? = nil,
+        endpointSetCheckpoint: EndpointSetCheckpointV4? = nil,
+        preferredGenerationEndpoint: CertifiedGenerationEndpoint? = nil,
         endpointAuthoritySigningPublicKey: Data? = nil,
-        preferredEndpointRevocation: InstallationEndpointRevocationV4? = nil,
+        preferredEndpointRevocation: EndpointRemovalProofV4? = nil,
         rotationCounter: UInt64 = 0,
         allowIdentityReset: Bool = false,
         trustAssertions: [ContactTrustAssertion] = []
@@ -39,8 +39,8 @@ public struct Contact: Codable, Identifiable, Equatable {
         self.signingPublicKey = signingPublicKey
         self.agreementPublicKey = agreementPublicKey
         self.identityGenerationId = identityGenerationId
-        self.installationCheckpoint = installationCheckpoint
-        self.preferredInstallationEndpoint = preferredInstallationEndpoint
+        self.endpointSetCheckpoint = endpointSetCheckpoint
+        self.preferredGenerationEndpoint = preferredGenerationEndpoint
         self.endpointAuthoritySigningPublicKey = endpointAuthoritySigningPublicKey
         self.preferredEndpointRevocation = preferredEndpointRevocation
         self.rotationCounter = rotationCounter
@@ -56,8 +56,8 @@ public struct Contact: Codable, Identifiable, Equatable {
         case signingPublicKey
         case agreementPublicKey
         case identityGenerationId
-        case installationCheckpoint
-        case preferredInstallationEndpoint
+        case endpointSetCheckpoint
+        case preferredGenerationEndpoint
         case endpointAuthoritySigningPublicKey
         case preferredEndpointRevocation
         case rotationCounter
@@ -74,20 +74,20 @@ public struct Contact: Codable, Identifiable, Equatable {
         signingPublicKey = try container.decode(Data.self, forKey: .signingPublicKey)
         agreementPublicKey = try container.decode(Data.self, forKey: .agreementPublicKey)
         identityGenerationId = try container.decodeIfPresent(UUID.self, forKey: .identityGenerationId)
-        installationCheckpoint = try container.decodeIfPresent(
-            InstallationManifestCheckpointV4.self,
-            forKey: .installationCheckpoint
+        endpointSetCheckpoint = try container.decodeIfPresent(
+            EndpointSetCheckpointV4.self,
+            forKey: .endpointSetCheckpoint
         )
-        preferredInstallationEndpoint = try container.decodeIfPresent(
-            CertifiedInstallationEndpoint.self,
-            forKey: .preferredInstallationEndpoint
+        preferredGenerationEndpoint = try container.decodeIfPresent(
+            CertifiedGenerationEndpoint.self,
+            forKey: .preferredGenerationEndpoint
         )
         endpointAuthoritySigningPublicKey = try container.decodeIfPresent(
             Data.self,
             forKey: .endpointAuthoritySigningPublicKey
         )
         preferredEndpointRevocation = try container.decodeIfPresent(
-            InstallationEndpointRevocationV4.self,
+            EndpointRemovalProofV4.self,
             forKey: .preferredEndpointRevocation
         )
         rotationCounter = try container.decodeIfPresent(UInt64.self, forKey: .rotationCounter) ?? 0
@@ -104,8 +104,8 @@ public struct Contact: Codable, Identifiable, Equatable {
         try container.encode(signingPublicKey, forKey: .signingPublicKey)
         try container.encode(agreementPublicKey, forKey: .agreementPublicKey)
         try container.encodeIfPresent(identityGenerationId, forKey: .identityGenerationId)
-        try container.encodeIfPresent(installationCheckpoint, forKey: .installationCheckpoint)
-        try container.encodeIfPresent(preferredInstallationEndpoint, forKey: .preferredInstallationEndpoint)
+        try container.encodeIfPresent(endpointSetCheckpoint, forKey: .endpointSetCheckpoint)
+        try container.encodeIfPresent(preferredGenerationEndpoint, forKey: .preferredGenerationEndpoint)
         try container.encodeIfPresent(endpointAuthoritySigningPublicKey, forKey: .endpointAuthoritySigningPublicKey)
         try container.encodeIfPresent(preferredEndpointRevocation, forKey: .preferredEndpointRevocation)
         try container.encode(rotationCounter, forKey: .rotationCounter)
@@ -117,39 +117,39 @@ public struct Contact: Codable, Identifiable, Equatable {
         CryptoBox.fingerprint(for: signingPublicKey)
     }
 
-    public var usesCertifiedInstallationEndpoint: Bool {
+    public var usesCertifiedGenerationEndpoint: Bool {
         identityGenerationId != nil
-            && installationCheckpoint != nil
-            && preferredInstallationEndpoint != nil
+            && endpointSetCheckpoint != nil
+            && preferredGenerationEndpoint != nil
             && endpointAuthoritySigningPublicKey != nil
     }
 
     /// Verifies the immutable endpoint authorization without applying the
     /// signed-prekey freshness window. Prekey age is a bootstrap concern; an
     /// already established endpoint session must remain usable until revoked.
-    public func certifiedInstallationEndpoint() throws -> CertifiedInstallationEndpoint {
+    public func certifiedGenerationEndpoint() throws -> CertifiedGenerationEndpoint {
         guard let identityGenerationId,
-              let installationCheckpoint,
-              let preferredInstallationEndpoint,
+              let endpointSetCheckpoint,
+              let preferredGenerationEndpoint,
               let endpointAuthoritySigningPublicKey,
-              preferredInstallationEndpoint.identityGenerationId == identityGenerationId else {
-            throw CertifiedInstallationEndpointError.invalidStructure
+              preferredGenerationEndpoint.identityGenerationId == identityGenerationId else {
+            throw CertifiedGenerationEndpointError.invalidStructure
         }
         if preferredEndpointRevocation?.verify(
-            endpoint: preferredInstallationEndpoint,
+            endpoint: preferredGenerationEndpoint,
             identityPublicKey: signingPublicKey
         ) == true {
-            throw CertifiedInstallationEndpointError.installationNotAuthorized
+            throw CertifiedGenerationEndpointError.endpointNotAuthorized
         }
-        return try preferredInstallationEndpoint.verified(
+        return try preferredGenerationEndpoint.verified(
             identityPublicKey: endpointAuthoritySigningPublicKey,
-            checkpoint: installationCheckpoint,
-            now: preferredInstallationEndpoint.prekeyBundle.createdAt
+            checkpoint: endpointSetCheckpoint,
+            now: preferredGenerationEndpoint.prekeyBundle.createdAt
         )
     }
 
-    public mutating func apply(endpointRevocation: InstallationEndpointRevocationV4) -> Bool {
-        guard let endpoint = preferredInstallationEndpoint,
+    public mutating func apply(endpointRevocation: EndpointRemovalProofV4) -> Bool {
+        guard let endpoint = preferredGenerationEndpoint,
               endpointAuthoritySigningPublicKey != nil,
               // The endpoint certificate remains pinned to the authority that
               // issued it, while revocation follows the contact's current
@@ -192,9 +192,9 @@ public struct Contact: Codable, Identifiable, Equatable {
         signingPublicKey = offer.signingPublicKey
         agreementPublicKey = offer.agreementPublicKey
         identityGenerationId = offer.identityGenerationId
-        installationCheckpoint = offer.installationCheckpoint
-        preferredInstallationEndpoint = offer.preferredInstallationEndpoint
-        endpointAuthoritySigningPublicKey = offer.preferredInstallationEndpoint == nil
+        endpointSetCheckpoint = offer.endpointSetCheckpoint
+        preferredGenerationEndpoint = offer.preferredGenerationEndpoint
+        endpointAuthoritySigningPublicKey = offer.preferredGenerationEndpoint == nil
             ? nil
             : offer.signingPublicKey
         preferredEndpointRevocation = nil

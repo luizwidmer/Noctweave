@@ -1,8 +1,9 @@
 # Noctweave Protocol Wire Format And Test Vectors
 
-The architecture-v2 migration is intentionally wire-breaking while Noctweave
-is pre-1.0. The current implementation status and remaining additive model work
-are tracked in [Noctweave Architecture Revision v2](noctweave_architecture_revision_v2.md).
+Noctweave 1.0 treats architecture v2 as a clean protocol origin. Pre-1.0 wire
+and persisted formats are rejected rather than decoded, upgraded, or retained
+as runtime fallbacks. Current implementation status and remaining additive
+work are tracked in [Noctweave Architecture Revision v2](noctweave_architecture_revision_v2.md).
 
 Noctweave Protocol wire messages are JSON encoded with the shared `NoctweaveCoder` rules:
 
@@ -28,24 +29,21 @@ Every relay request has this outer shape:
 Request types currently implemented by `RelayRequestType`:
 
 ```text
-deliver, registerInbox, fetch, acknowledgeMessages,
+deliver, registerInbox, retireInbox,
+createInboxRouteCapability, revokeInboxRouteCapability,
+registerRendezvousTransportV2, appendRendezvousTransportV2,
+syncRendezvousTransportV2, deleteRendezvousTransportV2,
 registerMailboxConsumer, syncMailbox, commitMailboxCursor,
 revokeMailboxConsumer,
-deliverGroupMessage, fetchGroupMessages, acknowledgeGroupMessages,
-health, info, announce, listAnnouncements, sendPairRequest,
-fetchPairRequests, uploadAttachment, fetchAttachment, uploadPrekeys,
-fetchPrekeyBundle, createGroup, getGroup, listGroups, listGroupInvitations,
-inviteGroupMembers, updateGroup, deleteGroup, requestGroupJoin,
-listGroupJoinRequests, approveGroupJoin,
-rejectGroupJoin, registerFederationNode, listFederationNodes,
+health, info, uploadAttachment, fetchAttachment,
+registerFederationNode, listFederationNodes,
 publishOpenFederationDHTRecord, listOpenFederationDHTRecords
 ```
 
-Both the in-process and Linux relays implement the listed compatibility group
-invitation operations and the `groupInvitations` response, with authorization,
-persistence, acceptance, and deletion-cleanup coverage. These operations remain
-fingerprint-scoped group compatibility behavior; they are not the additive
-endpoint-aware group-client admission protocol.
+Fingerprint-addressed pairing, prekey lookup, group operations, and destructive
+inbox-wide acknowledgement are not part of the 1.0 relay request surface.
+Endpoint-aware groups remain a crypto/state boundary until their full private
+delivery path is connected.
 
 ### Privacy-minimized inbox registration v2
 
@@ -58,9 +56,8 @@ the proof fields themselves remain in `accessProof` on the outer request.
 ```
 
 The Core and Linux relay suites assert these exact bytes. Removing or changing
-the discriminator changes the signed payload. A missing discriminator selects
-only the legacy contact-offer-bound decoder and cannot validate a v2 proof.
-Relays reject any v2 request carrying `contactOffer`.
+the discriminator changes the signed payload and fails validation. Relays
+reject any v2 request carrying `contactOffer`.
 
 ## Relay Response Shape
 
@@ -73,10 +70,8 @@ Relays reject any v2 request carrying `contactOffer`.
 Response types currently implemented by `RelayResponseType`:
 
 ```text
-ok, delivered, messages, mailboxSync, mailboxConsumer, groupMessages,
-announcements, pairRequests,
-attachment, prekeyBundle, group, groups, groupInvitations, groupJoinRequests,
-federationNodes, info, openFederationDHTRecords, error
+ok, delivered, mailboxSync, mailboxConsumer, rendezvousSyncV2,
+attachment, federationNodes, info, openFederationDHTRecords, error
 ```
 
 An `info` response includes a bounded `protocolCapabilities` manifest for
@@ -90,7 +85,7 @@ application event semantics or authorize a client to downgrade them.
 The direct-message headless client and both reference relays implement an
 ordered mailbox stream with one independent consumer per relay route. A
 `MailboxConsumerId` is an opaque 32-byte handle; it is not an identity or a
-globally reusable installation ID.
+globally reusable endpoint ID.
 
 The wire lifecycle is:
 
@@ -123,9 +118,7 @@ the complete registration, including sponsor ID and starting sequence.
 verified against that persisted key. `revokeMailboxConsumer` requires only the
 inbox authority. Canonical payloads bind their distinct operation/role name,
 inbox and consumer IDs, relevant cursor/page fields, timestamp, and nonce.
-An idempotent same-ID/same-key registration cannot replace its bound key. A
-persisted keyless consumer requires active sponsorship whenever an active bound
-consumer exists; its two-proof migration exception is otherwise narrow. Once
+An idempotent same-ID/same-key registration cannot replace its bound key. Once
 all consumers are revoked, authority-only registration cannot recover the
 mailbox; clients create a new inbox and identity generation.
 The reference relays allow at most 16 active consumers, retain at most 64
@@ -186,10 +179,8 @@ transcripts use those same string values. JavaScript may wrap identifiers in
 local UI models, but request, response, and canonical signing bytes must use
 the string wire form.
 
-The legacy `fetch` and `acknowledgeMessages` operations remain compatibility
-routes for single-consumer clients. They cannot express independent endpoint
-progress and must not be used as a multi-endpoint synchronization
-layer. New integrations should use the four mailbox-consumer operations.
+The 1.0 synchronization surface is the four mailbox-consumer operations above.
+It has no destructive inbox-wide acknowledgement fallback.
 
 ## Certified Direct-v4 Endpoint And Payload
 
@@ -228,8 +219,8 @@ ID. The authenticated `directV4` context contains:
 version=4, payloadFormat=nw.wire-payload.v2,
 cipherSuite=nw.direct-v4.ml-kem-768.ml-dsa-65.hkdf-sha256.hmac-sha256.aes-256-gcm,
 negotiatedCapabilitiesDigest, eventId,
-senderInstallationHandle, senderCertificateDigest,
-recipientInstallationHandle, senderManifestEpoch,
+senderEndpointHandle, senderCertificateDigest,
+recipientEndpointHandle, senderManifestEpoch,
 recipientManifestEpoch, recipientCertificateDigest
 ```
 
@@ -240,7 +231,7 @@ must derive the same 32 bytes; a missing module, version gap, reduced required
 limit, suite mismatch, or changed digest fails closed before session use.
 
 The two handle fields encode as canonical base64 strings. This is the Swift
-single-value `Codable` representation of `RelationshipInstallationHandle`, not
+single-value `Codable` representation of `RelationshipEndpointHandle`, not
 an object containing `rawValue`.
 
 AES-256-GCM authenticated data is canonical sorted-key JSON over:
@@ -253,8 +244,7 @@ The encrypted plaintext begins with the NPAD-v2 (`NPAD` plus version byte `02`)
 frame and contains a `WirePayloadV2`. JavaScript currently emits the standard
 text application event; Swift additionally supports its documented typed
 application/control projections. Direct messaging has no NPAD-v1 decoder or
-format probe. Pre-v4 contact offers are rejected as unsupported input rather
-than migrated into an identity-key session.
+format probe. Pre-v4 contact offers are rejected as unsupported input.
 
 [`test_vectors/direct_v4_pairwise_binding.json`](test_vectors/direct_v4_pairwise_binding.json)
 is consumed by both Swift and JavaScript tests. It fixes pairwise relationship
@@ -280,13 +270,8 @@ different bytes or a reused envelope under a different logical event fails
 before mailbox cursor advancement. Relays and retry code must preserve the
 original ID; they may not generate a replacement around existing ciphertext.
 
-This changed the signature transcript from the earlier pre-1.0 format, which
-did not include `id`. There is no ambiguous fallback verifier: current clients
-reject old signatures, and old clients reject current signatures. Deploy
-matching senders and receivers together. Before a cutover, drain or explicitly
-discard old sealed outboxes; raw legacy envelopes cannot be made current by
-rewriting their IDs. Already projected local message history can remain local
-because it is not re-verified as an inbound envelope.
+There is no alternate verifier that omits `id`; any such signature is invalid
+for Noctweave 1.0.
 
 ## Group Application Envelope V2 Transcript
 
@@ -307,12 +292,10 @@ ciphertextByteCount, authenticationTagByteCount
 ```
 
 GCM authenticates the ciphertext and tag themselves; ML-DSA authenticates the
-complete payload as well as all visible routing/security fields. A relay checks
-that profile, suite, epoch, and transcript match its signed group descriptor,
-then stores the opaque ciphertext without receiving the message key or
-plaintext. There is no `experimental-1` decode/verify fallback. This profile
-bump is a breaking pre-1.0 cutover and queued old group envelopes must be
-drained or discarded before deployment.
+complete payload as well as all visible routing/security fields. There is no
+`experimental-1` decode/verify fallback. This transcript belongs to the
+experimental group crypto/state foundation; relay delivery is not yet a 1.0
+group surface.
 
 ## Minimal Test Vectors
 
@@ -357,36 +340,6 @@ Expected response type:
 ```json
 {"type":"info"}
 ```
-
-### Legacy Fetch Request Skeleton
-
-JSON:
-
-```json
-{
-  "type": "fetch",
-  "fetch": {
-    "inboxId": "noctyra1exampleinbox",
-    "maxCount": 10,
-    "longPollTimeoutSeconds": 0,
-    "accessProof": {
-      "fingerprint": "BASE64_FINGERPRINT",
-      "publicSigningKey": "BASE64_ML_DSA_PUBLIC_KEY",
-      "signedAt": "2026-07-16T12:00:00Z",
-      "nonce": "01234567-89ab-cdef-8123-456789abcdef",
-      "signature": "BASE64_ML_DSA_SIGNATURE"
-    }
-  }
-}
-```
-
-Registered inbox fetches require an inbox-bound `accessProof`. The reference
-relay fails closed when an inbox is unregistered, the access key is not bound to
-the inbox address, the proof is missing or malformed, or its nonce is replayed.
-This vector documents compatibility framing only. Once any architecture-v2
-consumer has been registered, both legacy fetch and legacy acknowledgement are
-permanently disabled for that inbox so a removed generation-scoped endpoint
-cannot bypass its consumer state with a copied inbox authority key.
 
 ## Cryptographic Test Coverage
 

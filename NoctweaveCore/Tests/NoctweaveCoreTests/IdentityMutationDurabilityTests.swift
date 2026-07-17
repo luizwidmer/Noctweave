@@ -171,7 +171,7 @@ final class IdentityMutationDurabilityTests: XCTestCase {
         let oldFingerprint = oldState.identity.fingerprint
         let oldInboxId = oldState.inboxId
         let oldConsumerId = try XCTUnwrap(
-            oldState.localInstallation?.mailboxCredentialsByRoute.values.first?.consumerId
+            oldState.localEndpoint?.mailboxCredentialsByRoute.values.first?.consumerId
         )
 
         server?.stop()
@@ -321,7 +321,7 @@ final class IdentityMutationDurabilityTests: XCTestCase {
         XCTAssertNil(final.identityMutationV2)
         let retainedContactId = try XCTUnwrap(final.contacts.first?.id)
         XCTAssertTrue(final.relationshipsV2.isEmpty)
-        XCTAssertTrue(final.localInstallation?.relationshipHandles.isEmpty == true)
+        XCTAssertTrue(final.localEndpoint?.relationshipHandles.isEmpty == true)
 
         let postBurn = try await restartedAlice.sendText(
             to: "Bob",
@@ -336,8 +336,8 @@ final class IdentityMutationDurabilityTests: XCTestCase {
         }))
         XCTAssertEqual(rebound.events.last?.id, postBurnEventId)
         XCTAssertEqual(
-            reboundState.localInstallation?.relationshipHandles[rebound.id],
-            rebound.localInstallationHandle
+            reboundState.localEndpoint?.relationshipHandles[rebound.id],
+            rebound.localEndpointHandle
         )
         XCTAssertTrue(reboundState.identityProfiles.first?.isArchitectureV2Ready == true)
     }
@@ -372,14 +372,14 @@ final class IdentityMutationDurabilityTests: XCTestCase {
         var oldState = try await awaitState(client)
         let oldInboxId = oldState.inboxId
         let oldInboxPrivateKey = try XCTUnwrap(oldState.inboxAccessKey?.privateKeyData)
-        var endpointState = try XCTUnwrap(oldState.localInstallation)
+        var endpointState = try XCTUnwrap(oldState.localEndpoint)
         let secondaryRouteKey = "\(secondaryEndpoint.transport.rawValue):0:\(secondaryEndpoint.host):\(secondaryEndpoint.port):\(oldInboxId.lowercased())"
         let secondaryCredential = try endpointState.ensureMailboxCredential(
             for: secondaryRouteKey,
             relay: secondaryEndpoint,
             inboxId: oldInboxId
         )
-        oldState.localInstallation = endpointState
+        oldState.localEndpoint = endpointState
         try await client.store.save(oldState)
         let accessKey = try XCTUnwrap(oldState.inboxAccessKey)
         try await secondaryStore.registerInbox(

@@ -153,7 +153,7 @@ final class ArchitectureV2HeadlessTests: XCTestCase {
         let maybePreparedBobState = try await bob.store.load()
         let preparedBobState = try XCTUnwrap(maybePreparedBobState)
         let preparedConsumerId = try XCTUnwrap(
-            preparedBobState.localInstallation?.mailboxCredentialsByRoute.values.first?.consumerId
+            preparedBobState.localEndpoint?.mailboxCredentialsByRoute.values.first?.consumerId
         )
 
         // A saturated outbox attempt counter cannot overflow during retry; the
@@ -181,7 +181,7 @@ final class ArchitectureV2HeadlessTests: XCTestCase {
         )
         XCTAssertEqual(persistedInboundEvent, persistedOutboundEvent)
         XCTAssertEqual(
-            recoveredBobState.localInstallation?.mailboxCredentialsByRoute.values.first?.consumerId,
+            recoveredBobState.localEndpoint?.mailboxCredentialsByRoute.values.first?.consumerId,
             preparedConsumerId
         )
         let emptyReplay = try await bob.receive(maxCount: 10)

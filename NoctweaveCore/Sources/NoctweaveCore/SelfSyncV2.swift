@@ -59,7 +59,7 @@ public struct EndpointRemovalCleanupObligationV2: Codable, Equatable, Identifiab
     public var isStructurallyValid: Bool {
         endpointSetDigest.count == 32
             && replacementSelfSyncStreamDigest.count == 32
-            && remainingEndpointIds.count <= NoctweaveArchitectureV2.maximumInstallations
+            && remainingEndpointIds.count <= NoctweaveArchitectureV2.maximumEndpoints
             && Set(remainingEndpointIds).count == remainingEndpointIds.count
             && !remainingEndpointIds.contains(removedEndpointId)
             && createdAt.timeIntervalSince1970.isFinite

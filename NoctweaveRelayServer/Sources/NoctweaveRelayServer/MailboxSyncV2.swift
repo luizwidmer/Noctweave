@@ -150,20 +150,20 @@ struct MailboxStreamState: Codable, Equatable {
     var nextSequence: UInt64
     var retentionFloor: UInt64
     var consumers: [String: MailboxConsumerRegistration]
-    var isInstallationManaged: Bool
+    var isEndpointManaged: Bool
     let cursorAuthenticationKey: Data
 
     init(
         nextSequence: UInt64 = 1,
         retentionFloor: UInt64 = 0,
         consumers: [String: MailboxConsumerRegistration] = [:],
-        isInstallationManaged: Bool = false,
+        isEndpointManaged: Bool = false,
         cursorAuthenticationKey: Data = MailboxStreamState.generateAuthenticationKey()
     ) {
         self.nextSequence = max(1, nextSequence)
         self.retentionFloor = retentionFloor
         self.consumers = consumers
-        self.isInstallationManaged = isInstallationManaged || !consumers.isEmpty
+        self.isEndpointManaged = isEndpointManaged || !consumers.isEmpty
         self.cursorAuthenticationKey = cursorAuthenticationKey
     }
 
@@ -171,7 +171,7 @@ struct MailboxStreamState: Codable, Equatable {
         case nextSequence
         case retentionFloor
         case consumers
-        case isInstallationManaged
+        case isEndpointManaged
         case cursorAuthenticationKey
     }
 
@@ -183,9 +183,9 @@ struct MailboxStreamState: Codable, Equatable {
             [String: MailboxConsumerRegistration].self,
             forKey: .consumers
         )
-        isInstallationManaged = try container.decode(
+        isEndpointManaged = try container.decode(
             Bool.self,
-            forKey: .isInstallationManaged
+            forKey: .isEndpointManaged
         )
         cursorAuthenticationKey = try container.decode(
             Data.self,
@@ -194,7 +194,7 @@ struct MailboxStreamState: Codable, Equatable {
         guard nextSequence > 0,
               retentionFloor < nextSequence,
               cursorAuthenticationKey.count == SHA256.byteCount,
-              isInstallationManaged || consumers.isEmpty,
+              isEndpointManaged || consumers.isEmpty,
               consumers.allSatisfy({ key, value in
                   key == value.consumerId.rawValue
                       && value.committedSequence < nextSequence

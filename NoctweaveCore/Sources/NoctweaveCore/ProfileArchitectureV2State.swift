@@ -92,14 +92,14 @@ public enum RelationshipEventCheckpointError: Error, Equatable {
     case countOverflow
 }
 
-/// Installation-aware state for one pairwise relationship. Legacy inbox
+/// Endpoint-aware state for one pairwise relationship. Legacy inbox
 /// addresses are deliberately not promoted into v2 route capabilities: route
 /// sets remain empty until an authenticated v2 route advertisement is learned.
 public struct RelationshipStateV2: Codable, Equatable, Identifiable {
     public let version: Int
     public let id: UUID
     public let contactId: UUID
-    public let localInstallationHandle: RelationshipInstallationHandle
+    public let localEndpointHandle: RelationshipEndpointHandle
     public private(set) var conversationIds: [String]
     public private(set) var routeSets: [RelationshipRouteSetV2]
     public private(set) var events: [ConversationEvent]
@@ -110,7 +110,7 @@ public struct RelationshipStateV2: Codable, Equatable, Identifiable {
         version: Int = NoctweaveArchitectureV2.version,
         id: UUID = UUID(),
         contactId: UUID,
-        localInstallationHandle: RelationshipInstallationHandle,
+        localEndpointHandle: RelationshipEndpointHandle,
         conversationIds: [String] = [],
         routeSets: [RelationshipRouteSetV2] = [],
         events: [ConversationEvent] = [],
@@ -120,10 +120,10 @@ public struct RelationshipStateV2: Codable, Equatable, Identifiable {
         self.version = version
         self.id = id
         self.contactId = contactId
-        self.localInstallationHandle = localInstallationHandle
+        self.localEndpointHandle = localEndpointHandle
         self.conversationIds = Array(Set(conversationIds)).sorted()
         self.routeSets = routeSets.sorted {
-            $0.ownerInstallationHandle.rawValue < $1.ownerInstallationHandle.rawValue
+            $0.ownerEndpointHandle.rawValue < $1.ownerEndpointHandle.rawValue
         }
         self.events = events
         self.eventCheckpoint = eventCheckpoint
@@ -132,15 +132,15 @@ public struct RelationshipStateV2: Codable, Equatable, Identifiable {
 
     public var isStructurallyValid: Bool {
         version == NoctweaveArchitectureV2.version
-            && localInstallationHandle.isStructurallyValid
+            && localEndpointHandle.isStructurallyValid
             && createdAt.timeIntervalSince1970.isFinite
             && conversationIds.count <= 64
             && Set(conversationIds).count == conversationIds.count
             && conversationIds.allSatisfy {
                 !$0.isEmpty && $0.utf8.count <= 256
             }
-            && routeSets.count <= NoctweaveArchitectureV2.maximumInstallations * 2
-            && Set(routeSets.map(\.ownerInstallationHandle)).count == routeSets.count
+            && routeSets.count <= NoctweaveArchitectureV2.maximumEndpoints * 2
+            && Set(routeSets.map(\.ownerEndpointHandle)).count == routeSets.count
             && routeSets.allSatisfy {
                 $0.relationshipId == id && $0.isStructurallyValid
             }
@@ -168,8 +168,8 @@ public struct RelationshipStateV2: Codable, Equatable, Identifiable {
     }
 
     /// Persists only structurally valid, cryptographically verified route
-    /// snapshots. Binding the supplied installation key to the peer identity
-    /// remains the caller's authenticated installation-manifest check.
+    /// snapshots. Binding the supplied endpoint key to the peer identity
+    /// remains the caller's authenticated endpoint-manifest check.
     @discardableResult
     public mutating func upsertVerifiedRouteSet(
         _ routeSet: RelationshipRouteSetV2,
@@ -180,7 +180,7 @@ public struct RelationshipStateV2: Codable, Equatable, Identifiable {
             return false
         }
         if let index = routeSets.firstIndex(where: {
-            $0.ownerInstallationHandle == routeSet.ownerInstallationHandle
+            $0.ownerEndpointHandle == routeSet.ownerEndpointHandle
         }) {
             let current = routeSets[index]
             if current == routeSet { return true }
@@ -191,13 +191,13 @@ public struct RelationshipStateV2: Codable, Equatable, Identifiable {
             }
             routeSets[index] = routeSet
         } else {
-            guard routeSets.count < NoctweaveArchitectureV2.maximumInstallations * 2 else {
+            guard routeSets.count < NoctweaveArchitectureV2.maximumEndpoints * 2 else {
                 return false
             }
             routeSets.append(routeSet)
         }
         routeSets.sort {
-            $0.ownerInstallationHandle.rawValue < $1.ownerInstallationHandle.rawValue
+            $0.ownerEndpointHandle.rawValue < $1.ownerEndpointHandle.rawValue
         }
         return true
     }
@@ -347,7 +347,7 @@ public struct SelfSyncLocalStateV2: Codable, Equatable {
             && nextSourceSequence > 0
             && ((nextSourceSequence == 1 && lastSourceDigest == nil)
                 || (nextSourceSequence > 1 && lastSourceDigest?.count == 32))
-            && appliedSourceChains.count <= NoctweaveArchitectureV2.maximumInstallations
+            && appliedSourceChains.count <= NoctweaveArchitectureV2.maximumEndpoints
             && Set(sourceIds).count == sourceIds.count
             && appliedSourceChains.allSatisfy {
                 $0.identityGenerationId == identityGenerationId && $0.isStructurallyValid
@@ -412,7 +412,7 @@ public struct SelfSyncLocalStateV2: Codable, Equatable {
     /// candidate state, and any application projection in one transaction.
     public mutating func openAndAdvance(
         _ sealed: SealedSelfSyncRecordV2,
-        manifest: InstallationManifest,
+        manifest: EndpointSetManifest,
         identityPublicKey: Data
     ) throws -> SelfSyncReceiveResultV2 {
         guard isStructurallyValid else {
@@ -433,7 +433,7 @@ public struct SelfSyncLocalStateV2: Codable, Equatable {
                 sourceEndpointId: record.sourceEndpointId
             )
         if index == nil,
-           appliedSourceChains.count >= NoctweaveArchitectureV2.maximumInstallations {
+           appliedSourceChains.count >= NoctweaveArchitectureV2.maximumEndpoints {
             throw SelfSyncLocalStateV2Error.sourceCapacityReached
         }
         let result = try candidate.apply(

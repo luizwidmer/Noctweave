@@ -12,16 +12,16 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
         let bobAlice = try lifecycleBinding(local: bob, peer: alice)
         let bootstrapAt = max(alice.endpoint.issuedAt, bob.endpoint.issuedAt)
 
-        let outbound = try MessageEngine.createOutboundInstallationSession(
-            localInstallation: alice.installation,
-            localEndpoint: alice.endpoint,
+        let outbound = try MessageEngine.createOutboundEndpointSession(
+            localEndpoint: alice.localEndpoint,
+            localCertificate: alice.endpoint,
             pairwiseBinding: aliceBob,
             contact: aliceContact,
             now: bootstrapAt
         )
-        var inboundConversation = try MessageEngine.createInboundInstallationSession(
-            localInstallation: bob.installation,
-            localEndpoint: bob.endpoint,
+        var inboundConversation = try MessageEngine.createInboundEndpointSession(
+            localEndpoint: bob.localEndpoint,
+            localCertificate: bob.endpoint,
             senderEndpoint: alice.endpoint,
             pairwiseBinding: bobAlice,
             contact: bobContact,
@@ -31,19 +31,19 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
         )
 
         let afterExpiry = bootstrapAt.addingTimeInterval(PrekeyBundle.maximumAge + 1)
-        XCTAssertNoThrow(try aliceContact.certifiedInstallationEndpoint())
-        XCTAssertThrowsError(try MessageEngine.createOutboundInstallationSession(
-            localInstallation: alice.installation,
-            localEndpoint: alice.endpoint,
+        XCTAssertNoThrow(try aliceContact.certifiedGenerationEndpoint())
+        XCTAssertThrowsError(try MessageEngine.createOutboundEndpointSession(
+            localEndpoint: alice.localEndpoint,
+            localCertificate: alice.endpoint,
             pairwiseBinding: aliceBob,
             contact: aliceContact,
             now: afterExpiry
         )) { error in
             XCTAssertEqual(error as? CryptoError, .invalidPayload)
         }
-        XCTAssertThrowsError(try MessageEngine.createInboundInstallationSession(
-            localInstallation: bob.installation,
-            localEndpoint: bob.endpoint,
+        XCTAssertThrowsError(try MessageEngine.createInboundEndpointSession(
+            localEndpoint: bob.localEndpoint,
+            localCertificate: bob.endpoint,
             senderEndpoint: alice.endpoint,
             pairwiseBinding: bobAlice,
             contact: bobContact,
@@ -67,15 +67,15 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
         let event = ConversationEvent(
             id: try XCTUnwrap(context.directV4?.eventId),
             conversationId: outboundConversation.id,
-            authorInstallationHandle: aliceBob.localInstallationHandle,
+            authorEndpointHandle: aliceBob.localEndpointHandle,
             createdAt: sentAt,
             kind: .application,
             content: try XCTUnwrap(EncodedContent.text("established session survives prekey age"))
         )
         let envelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(event),
-            senderSigningKey: alice.installation.signingKey,
-            senderFingerprint: aliceBob.localInstallationHandle.rawValue,
+            senderSigningKey: alice.localEndpoint.signingKey,
+            senderFingerprint: aliceBob.localEndpointHandle.rawValue,
             conversation: &outboundConversation,
             kemCiphertext: outbound.kemCiphertext,
             prekey: outbound.prekey,
@@ -86,9 +86,9 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
             envelope: envelope,
             contact: bobContact,
             localIdentity: bob.identity,
-            localInstallation: bob.installation,
+            localEndpoint: bob.localEndpoint,
             localManifest: bob.manifest,
-            localEndpoint: bob.endpoint,
+            localCertificate: bob.endpoint,
             pairwiseBinding: bobAlice,
             conversation: &inboundConversation
         )
@@ -103,20 +103,20 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
         XCTAssertTrue(contact.apply(rotation: rotation))
 
         let rotatedAt = original.manifest.issuedAt.addingTimeInterval(1)
-        let rotatedManifest = try InstallationManifest.create(
+        let rotatedManifest = try EndpointSetManifest.create(
             identityGenerationId: original.generationId,
             epoch: original.manifest.epoch + 1,
             previousManifestDigest: try XCTUnwrap(original.manifest.digest),
-            installations: original.manifest.installations,
+            endpoints: original.manifest.endpoints,
             identity: rotatedIdentity,
             issuedAt: rotatedAt
         )
         let revokedManifest = try XCTUnwrap(try rotatedManifest.revoking(
-            installationId: original.installation.id,
+            endpointId: original.localEndpoint.id,
             identity: rotatedIdentity,
             at: rotatedAt.addingTimeInterval(1)
         ))
-        let revocation = try InstallationEndpointRevocationV4.create(
+        let revocation = try EndpointRemovalProofV4.create(
             endpoint: original.endpoint,
             revokedManifest: revokedManifest,
             identity: rotatedIdentity
@@ -127,10 +127,10 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
             Contact.self,
             from: NoctweaveCoder.encode(contact, sortedKeys: true)
         )
-        XCTAssertThrowsError(try reloaded.certifiedInstallationEndpoint()) { error in
+        XCTAssertThrowsError(try reloaded.certifiedGenerationEndpoint()) { error in
             XCTAssertEqual(
-                error as? CertifiedInstallationEndpointError,
-                .installationNotAuthorized
+                error as? CertifiedGenerationEndpointError,
+                .endpointNotAuthorized
             )
         }
     }
@@ -273,33 +273,33 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
 private struct LifecycleEndpointFixture {
     let identity: Identity
     let generationId: UUID
-    let installation: LocalInstallationState
-    let manifest: InstallationManifest
-    let endpoint: CertifiedInstallationEndpoint
+    let localEndpoint: LocalEndpointState
+    let manifest: EndpointSetManifest
+    let endpoint: CertifiedGenerationEndpoint
     let relay: RelayEndpoint
 }
 
 private func lifecycleEndpointFixture(_ name: String) throws -> LifecycleEndpointFixture {
     let identity = try Identity.generate(displayName: name)
     let generationId = UUID()
-    let installation = try LocalInstallationState.generate(identityGenerationId: generationId)
-    let manifest = try InstallationManifest.create(
+    let localEndpoint = try LocalEndpointState.generate(identityGenerationId: generationId)
+    let manifest = try EndpointSetManifest.create(
         identityGenerationId: generationId,
         epoch: 0,
-        installations: [installation.publicRecord(addedEpoch: 0)],
+        endpoints: [localEndpoint.publicRecord(addedEpoch: 0)],
         identity: identity,
-        issuedAt: installation.createdAt
+        issuedAt: localEndpoint.createdAt
     )
     return LifecycleEndpointFixture(
         identity: identity,
         generationId: generationId,
-        installation: installation,
+        localEndpoint: localEndpoint,
         manifest: manifest,
-        endpoint: try CertifiedInstallationEndpoint.create(
+        endpoint: try CertifiedGenerationEndpoint.create(
             identity: identity,
-            installation: installation,
+            endpoint: localEndpoint,
             manifest: manifest,
-            issuedAt: installation.createdAt
+            issuedAt: localEndpoint.createdAt
         ),
         relay: RelayEndpoint(host: "127.0.0.1", port: 9340)
     )
@@ -312,16 +312,16 @@ private func lifecycleOffer(_ fixture: LifecycleEndpointFixture) throws -> Conta
         relay: fixture.relay,
         identity: fixture.identity,
         identityGenerationId: fixture.generationId,
-        installationManifest: fixture.manifest,
-        preferredInstallationEndpoint: fixture.endpoint
+        endpointSetManifest: fixture.manifest,
+        preferredGenerationEndpoint: fixture.endpoint
     )
 }
 
 private func lifecycleBinding(
     local: LifecycleEndpointFixture,
     peer: LifecycleEndpointFixture
-) throws -> PairwiseInstallationBindingV4 {
-    try PairwiseInstallationBindingV4.derive(
+) throws -> PairwiseEndpointBindingV4 {
+    try PairwiseEndpointBindingV4.derive(
         localIdentityGenerationId: local.generationId,
         localIdentitySigningPublicKey: local.identity.signingKey.publicKeyData,
         localEndpoint: local.endpoint,

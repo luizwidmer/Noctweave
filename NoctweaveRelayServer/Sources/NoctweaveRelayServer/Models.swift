@@ -1366,7 +1366,7 @@ enum MessageAuthenticatedContextPurpose: String, Codable, Equatable {
     case directV4
 }
 
-struct RelationshipInstallationHandle: RawRepresentable, Codable, Equatable {
+struct RelationshipEndpointHandle: RawRepresentable, Codable, Equatable {
     let rawValue: String
 
     init(rawValue: String) {
@@ -1383,9 +1383,9 @@ struct DirectMessageAuthenticatedContextV4: Codable, Equatable {
     let cipherSuite: String
     let negotiatedCapabilitiesDigest: Data
     let eventId: UUID
-    let senderInstallationHandle: RelationshipInstallationHandle
+    let senderEndpointHandle: RelationshipEndpointHandle
     let senderCertificateDigest: Data
-    let recipientInstallationHandle: RelationshipInstallationHandle
+    let recipientEndpointHandle: RelationshipEndpointHandle
     let senderManifestEpoch: UInt64
     let recipientManifestEpoch: UInt64
     let recipientCertificateDigest: Data
@@ -1495,11 +1495,11 @@ struct Envelope: Codable, Equatable {
                       direct.cipherSuite
                         == "nw.direct-v4.ml-kem-768.ml-dsa-65.hkdf-sha256.hmac-sha256.aes-256-gcm",
                       direct.negotiatedCapabilitiesDigest.count == 32,
-                      Self.isCanonicalFingerprint(direct.senderInstallationHandle.rawValue),
+                      Self.isCanonicalFingerprint(direct.senderEndpointHandle.rawValue),
                       direct.senderCertificateDigest.count == 32,
-                      Self.isCanonicalFingerprint(direct.recipientInstallationHandle.rawValue),
+                      Self.isCanonicalFingerprint(direct.recipientEndpointHandle.rawValue),
                       direct.recipientCertificateDigest.count == 32,
-                      direct.senderInstallationHandle.rawValue == senderFingerprint else {
+                      direct.senderEndpointHandle.rawValue == senderFingerprint else {
                     return false
                 }
             }

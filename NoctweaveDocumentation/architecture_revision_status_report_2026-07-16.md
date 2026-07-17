@@ -8,10 +8,10 @@
 
 **Implementation commit:** `9ebece0`
 
-**Status:** public compatibility baseline green; integration and independent
+**Status:** recorded public verification baseline green; integration and independent
 security-review gates remain
 
-This report is the durable handoff for the pre-1.0 architecture revision. It
+This report is the durable handoff for the 1.0 architecture revision. It
 summarizes what changed, which earlier assumptions were replaced, how the
 active paths now behave, and what remains before Noctweave can call the
 revision complete or production-audited.
@@ -51,7 +51,7 @@ The largest functional changes are:
 - capability honesty: unfinished or misleading paths are disabled or omitted
   from advertisements.
 
-The branch has a **fully green public compatibility baseline**. Both SwiftPM
+The branch has a **fully green recorded public verification baseline**. Both SwiftPM
 packages build, all 559 Swift tests pass except one intentional platform skip,
 the JavaScript suite passes, desktop type-checking passes, and the aggregate
 repository harness completes successfully. This proves repository consistency;
@@ -91,16 +91,16 @@ The invariants are now explicit:
 - Opaque labels do not erase metadata. Relay-visible correlation and timing
   limits are documented rather than hidden behind naming.
 
-Some source types still use the pre-correction word `Installation`. Those are
-compatibility names for generation-scoped local endpoints. They do not create a
-stable installation registry or device-recovery model.
+Noctweave 1.0 starts from the corrected model as a clean origin. Pre-1.0
+research state, account-shaped names, and obsolete wire or persisted formats
+are rejected rather than carried by production code.
 
 ## What Was Implemented
 
 ### 1. Identity generations and certified endpoints
 
-Legacy profiles migrate idempotently to a generation record with one freshly
-keyed local endpoint, a signed bounded endpoint-set manifest, relationship
+New 1.0 profiles originate with one freshly keyed local endpoint, a signed
+bounded endpoint-set manifest, relationship
 shells, route-local mailbox state, and local self-sync state. The endpoint has
 independent ML-DSA signing, ML-KEM agreement, and rotating signed-prekey
 material.
@@ -128,8 +128,8 @@ The pairwise relationship, endpoint certificates, endpoint signed prekeys,
 required module versions and limits, suite identifier, logical event ID,
 authenticated context, and envelope ID are transcript-bound. Missing modules,
 version gaps, altered limits, suite tampering, expired bootstrap prekeys, and
-legacy fallback fail closed. The signature now authenticates the delivery
-envelope ID; there is no compatibility verifier that accepts an unsigned ID.
+alternate formats fail closed. The signature now authenticates the delivery
+envelope ID; no verifier accepts an unsigned ID.
 
 Signed-prekey expiry prevents new bootstrap sessions but does not silently kill
 an already established endpoint-bound ratchet. Rotation republishes a fresh
@@ -164,8 +164,8 @@ ratchet storage, and receive metadata are durably committed. One consumer's
 progress does not destructively consume another consumer's delivery state.
 Long polling and streaming do not implicitly advance durable state.
 
-Consumers use fresh route-local ML-DSA credentials. The first v2 consumer
-binding permanently disables legacy inbox-authority fetch/ack access. Later
+Consumers use fresh route-local ML-DSA credentials. Inbox-authority
+fetch/ack is not part of the 1.0 synchronization surface. Later
 bindings require an active bound consumer sponsor, so an inbox authority alone
 cannot silently add readers. The relay enforces bounded active and historical
 consumer records, cursor retention, gap detection, and restart persistence.
@@ -262,10 +262,10 @@ except for literal loopback development.
 
 ### 9. Self-sync, history, and endpoint admission foundations
 
-The profile persists a generation-scoped self-sync secret and progress model,
-with bounded encrypted event seal/open and deterministic merge rules. The
-endpoint-removal model rotates self-sync authority and journals unfinished
-remote teardown. No transport currently publishes self-sync records.
+The profile persists generation-scoped signed self-sync state. Records are
+endpoint-signed, source-ordered, fixed-bucket sealed, replay-bounded, and
+verified against the current endpoint set; endpoint removal rotates the epoch.
+No client transport currently publishes self-sync records.
 
 The live profile-vault export was removed from JavaScript. A live
 `IdentityProfile` remains an unsafe transfer object because it contains
@@ -274,7 +274,7 @@ No active API clones that state into another endpoint.
 
 The endpoint-admission model is purpose-bound to one generation and requires
 identity-authority authorization plus possession proofs for the new endpoint's
-ML-DSA and ML-KEM keys. Its transport and complete lifecycle remain inactive.
+ML-DSA and ML-KEM keys. Its complete client lifecycle remains inactive.
 
 Read-only history transfer is implemented as a local Swift packaging API. It
 exports only inert application/receipt projections and safe metadata, encrypts
@@ -289,19 +289,15 @@ managed service or default transport is introduced.
 
 The new signed-state foundation distinguishes contact-level group users,
 endpoint-level group clients, and versioned crypto providers. It adds externally
-pinned genesis trust, full key-package possession proofs, signed complete-state
-commits, hierarchy-bounded roles and permissions, bounded Welcomes, and a
+pinned genesis trust, full key-package possession proofs, private
+`GroupClientAdmissionProjectionV2` commits, hierarchy-bounded roles and permissions, bounded Welcomes, and a
 128-active-leaf cap for the current O(n) provider.
 
 The current construction is explicitly named
-`noctweave-pq-group-experimental-2`; it is not claimed to be RFC 9420 MLS. The
-active relay-backed group workflow still uses the deprecated opt-in fingerprint
-compatibility path. The endpoint-aware objects are not yet negotiated,
-persisted, delivered, or resumed by active clients.
-
-The legacy path was nevertheless hardened with authenticated envelope digests,
-durable acknowledgement retry, invitation authorization, idempotent invite and
-accept flows, deletion cleanup, and matching Core/Linux capacity policy.
+`noctweave-pq-group-experimental-2`; it is not claimed to be RFC 9420 MLS.
+Identity and endpoint evidence is verified locally and omitted from the shared
+commit transcript. Relay delivery, persistence, negotiation, and restart
+recovery are not yet active.
 
 ### 11. Documentation, schemas, and conformance
 
@@ -334,8 +330,8 @@ gated and cannot be inferred from the existence of model types.
 | Inbox deletion or local abandonment as sufficient burn | Pre-signed multi-route retirement journal and relay non-resurrection tombstone. |
 | Unscoped bearer mutations | Relay-local scope plus monotonic, digest-chained route mutation v3; feature remains inactive pending privacy completion. |
 | Feature model existence treated as support | Explicit capability negotiation and honest default advertisements. |
-| Fingerprint-scoped relay APIs enabled by default | Disabled opt-in deprecated compatibility profile. |
-| Group members identified only by user fingerprint | Signed endpoint-client foundation with provider boundary, roles, and policy; active migration still pending. |
+| Fingerprint-scoped pairing, prekey, group, and acknowledgement relay APIs | Removed from the 1.0 relay surface. |
+| Group members identified only by user fingerprint | Signed endpoint-client foundation with provider boundary, roles, and policy; active integration still pending. |
 | History backup carrying live authority | Inert, recipient-encrypted, replay-protected read-only projection only. |
 | Silent bounded-history eviction | Chained event checkpoint compaction. |
 
@@ -347,7 +343,7 @@ gated and cannot be inferred from the existence of model types.
    local endpoint signing/agreement keys, route-consumer key, self-sync secret,
    and endpoint signed-prekey package.
 2. Register the inbox with privacy-minimized registration v2.
-3. Bind the first route consumer and persist the one-way mailbox-v2 migration.
+3. Bind the first route consumer and persist its mailbox-v2 cursor state.
 4. Publish a contact offer containing only a compact generation checkpoint and
    one certified preferred endpoint.
 
@@ -359,8 +355,8 @@ gated and cannot be inferred from the existence of model types.
    IDs.
 3. Derive relationship-scoped endpoint handles and blinded certificate
    references.
-4. Initialize an endpoint-keyed direct-v4 ratchet; never probe or fall back to
-   the legacy wire.
+4. Initialize an endpoint-keyed direct-v4 ratchet; never probe an alternate
+   wire format.
 
 ### Send
 
@@ -401,17 +397,17 @@ gated and cannot be inferred from the existence of model types.
 | Area | Status | Important boundary |
 | --- | --- | --- |
 | Certified direct-v4 | Active | One preferred endpoint; no peer fan-out. |
-| Ordered mailbox v2 | Active | Route-consumer scoped; legacy access becomes permanently unavailable after binding. |
+| Ordered mailbox v2 | Active | Route-consumer scoped; no inbox-wide destructive acknowledgement path. |
 | Typed direct events and controls | Active | Generic application events; control mutations are a closed authenticated set. |
 | Direct outbox/intents | Active | Send and exact retry are wired; other intent kinds are models or partial journals. |
 | Identity burn/retirement | Active | Completed burn requires access to every old route's staged retirement. |
 | Prekey renewal | Active | Single-endpoint proactive publication path. |
 | Read-only history package | Local API active | No transfer adapter, attachment bytes, or authorization side effect. |
-| Self-sync | Foundation only | Persisted cryptographic/state model; no publication or rendezvous path. |
+| Self-sync | Foundation only | Signed, epoch-sealed cryptographic/state model; no client publication path. |
 | Multi-endpoint participation | Inactive | No complete admission, self-sync membership, fan-out, teardown, or group mapping. |
-| Relationship route sets | Foundation only | State transitions exist; exchange and migration are not wired. |
+| Relationship route sets | Foundation only | State transitions exist; exchange and route rotation are not wired. |
 | Opaque route capabilities | Disabled experimental foundation | Not advertised or used until metadata, scale, expiry, abuse, and padding issues are solved. |
-| Endpoint-aware groups | Foundation only | Signed model exists; active workflow remains deprecated fingerprint compatibility. |
+| Endpoint-aware groups | Foundation only | Signed model exists; relay delivery and active client workflow remain unwired. |
 | Custom PQ group provider | Experimental | Not RFC 9420 MLS and not independently audited. |
 | PIR/onion/mixnet/open discovery | Optional experimental modules | Not part of the stable direct-message core or a production anonymity claim. |
 
@@ -419,7 +415,7 @@ gated and cannot be inferred from the existence of model types.
 
 ### P0: architecture completion gates
 
-1. **Keep the full public compatibility suite green.** The following commands
+1. **Keep the full public verification suite green.** The following commands
    now pass and remain mandatory for every architecture milestone:
 
    ```sh
@@ -463,7 +459,7 @@ gated and cannot be inferred from the existence of model types.
    Then wire route-set exchange, testing, overlap, drain, and revocation into
    both clients. Do not advertise `nw.routes` before this gate passes.
 
-6. **Replace the active compatibility group path.** Connect authenticated
+6. **Complete the endpoint-aware group path.** Connect authenticated
    endpoint key-package distribution, trusted manifest freshness, group-client
    admission, Welcome delivery, per-endpoint delivery cursors, persistence,
    restart recovery, fan-out, sibling-preserving removal, and signed policy to
@@ -480,21 +476,20 @@ gated and cannot be inferred from the existence of model types.
    Add a third-party or independently implemented client/conformance runner.
    Until then, mark the revision and experimental group construction unaudited.
 
-9. **Finish the clean 1.0 naming and state baseline.** Rename remaining public
-   `Installation*` symbols to generation-scoped endpoint terminology and delete
-   obsolete profile, mailbox, direct, and group compatibility surfaces. Git
-   history is the record of the pre-1.0 formats; production code must not carry
-   aliases, migration windows, or downgrade paths for them.
+9. **Keep the clean 1.0 naming and state baseline closed.** Public APIs use
+   generation-scoped endpoint terminology. Git history is the record of the
+   pre-1.0 formats; production code must not carry aliases, upgrade windows, or
+   downgrade paths for them.
 
 ### P1: product and interoperability completion
 
 1. Add resumable direct/user-selected history transports, expiry/deletion UX,
-   and explicitly authorized attachment-byte migration. Keep imported history
+   and explicitly authorized attachment-byte transfer. Keep imported history
    inert and never bundle live authority.
 2. Generate Swift and TypeScript wire models from one normative schema, or
    adopt one strictly specified deterministic signing representation. Expand
    differential positive/negative vectors for unknown fields, canonical bytes,
-   migrations, and all security controls.
+   state rejection, and all security controls.
 3. Complete client projections and UX for replies, reactions, replacements,
    retractions, delivery/read events, unsupported content, consent, blocks,
    mutes, and message requests.
@@ -504,10 +499,10 @@ gated and cannot be inferred from the existence of model types.
    control-state mutation API.
 5. Add optional opaque wake/helper-mailbox adapters without making vendor push
    or a central helper service mandatory.
-6. Add operator migration tooling, backup/restore tests, mailbox/consumer/route
+6. Add operator deployment tooling, backup/restore tests, mailbox/consumer/route
    observability that does not log secrets, and explicit quota/retention
    guidance for the new storage model.
-7. Add active route migration and redundant-route UX with an honest warning
+7. Add active route rotation and redundant-route UX with an honest warning
    that redundancy increases traffic and metadata exposure.
 
 ### P1: release engineering gates
@@ -535,15 +530,14 @@ gated and cannot be inferred from the existence of model types.
 ## Known Limitations and Residual Risks
 
 - The active direct path supports one preferred endpoint only.
-- Internal compatibility naming can still suggest an account/device model if
-  read without the philosophy specification.
-- The transitional inbox-addressed delivery path lets the final relay observe
+- Account-shaped language must not re-enter public APIs or protocol models.
+- The current inbox-addressed delivery path lets the final relay observe
   generation-level timing and volume.
 - Opaque capability labels alone do not prevent the final relay from linking
   capabilities that terminate at one inbox; that feature remains disabled.
 - Reusable contact offers can be correlated by recipients until rendezvous
   pairing replaces them.
-- The self-sync, route migration, endpoint-aware group, and full endpoint
+- The self-sync, route rotation, endpoint-aware group, and full endpoint
   lifecycle models are not complete active workflows.
 - The custom PQ group protocol and direct/group cryptographic state machines
   have not received a fresh independent audit or side-channel review.
@@ -577,11 +571,11 @@ changes:
 Call the next milestone **Architecture Revision Stabilization** and keep it
 strictly ordered:
 
-1. Freeze endpoint terminology and the migration contract.
+1. Freeze endpoint terminology and the clean 1.0 state contract.
 2. Replace reusable pairing with purpose-bound rendezvous.
-3. Complete private relationship routes and make-before-break migration.
+3. Complete private relationship routes and make-before-break rotation.
 4. Complete signed self-sync and the same-generation endpoint lifecycle.
-5. Replace the fingerprint compatibility group workflow.
+5. Complete the private endpoint-aware group workflow.
 6. Run independent interoperability and security review.
 7. Finish CI, coverage, benchmarks, container scans, and signed-release
    evidence.

@@ -7,7 +7,7 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
     func testPrivacyProjectionDoesNotCommitEndpointEvidence() throws {
         let fixture = try makeGenesis()
         let localGenerationId = UUID()
-        let localEndpoint = try LocalInstallationState.generate(
+        let localEndpoint = try LocalEndpointState.generate(
             identityGenerationId: localGenerationId,
             createdAt: fixture.state.signedAt.addingTimeInterval(-20)
         )
@@ -22,10 +22,10 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
                 )
             ]
         )
-        let localManifest = try InstallationManifest.create(
+        let localManifest = try EndpointSetManifest.create(
             identityGenerationId: localGenerationId,
             epoch: 0,
-            installations: [localEndpoint.publicRecord(
+            endpoints: [localEndpoint.publicRecord(
                 addedEpoch: 0,
                 capabilities: localCapabilities
             )],
@@ -74,7 +74,7 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
         XCTAssertNotNil(commit.admissionProjection)
         XCTAssertFalse(serialized.contains("\"addedkeypackage\""))
         XCTAssertFalse(serialized.contains("identitygenerationid"))
-        XCTAssertFalse(serialized.contains("installationid"))
+        XCTAssertFalse(serialized.contains("endpointid"))
         XCTAssertFalse(serialized.contains("manifestdigest"))
         XCTAssertFalse(serialized.contains(localGenerationId.uuidString.lowercased()))
         XCTAssertFalse(serialized.contains(localEndpoint.id.uuidString.lowercased()))
@@ -336,14 +336,14 @@ private extension ArchitectureV2GroupBoundaryTests {
         let owner = GroupUser(id: UUID(), role: .owner, addedEpoch: 1)
         let identityGenerationId = UUID()
         let identity = try Identity.generate(displayName: "Ephemeral group creator")
-        let endpoint = try LocalInstallationState.generate(
+        let endpoint = try LocalEndpointState.generate(
             identityGenerationId: identityGenerationId,
             createdAt: signedAt.addingTimeInterval(-20)
         )
-        let manifest = try InstallationManifest.create(
+        let manifest = try EndpointSetManifest.create(
             identityGenerationId: identityGenerationId,
             epoch: 0,
-            installations: [endpoint.publicRecord(addedEpoch: 0)],
+            endpoints: [endpoint.publicRecord(addedEpoch: 0)],
             identity: identity,
             issuedAt: signedAt.addingTimeInterval(-10)
         )
@@ -353,7 +353,7 @@ private extension ArchitectureV2GroupBoundaryTests {
             groupUserId: owner.id,
             clientHandle: .generate(),
             identity: identity,
-            installation: endpoint,
+            endpoint: endpoint,
             manifest: manifest,
             groupSigningKey: ownerKey,
             groupAgreementKey: try AgreementKeyPair.generate(),

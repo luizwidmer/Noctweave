@@ -212,7 +212,7 @@ final class ArchitectureV2SelfSyncConvergenceTests: XCTestCase {
         XCTAssertEqual(projection, beforeReplay)
 
         let external = try emit(
-            .endpointManifest(fixture.manifest),
+            .endpointSetManifest(fixture.manifest),
             source: fixture.sourceA,
             sender: &sender,
             receiver: &receiver,
@@ -221,7 +221,7 @@ final class ArchitectureV2SelfSyncConvergenceTests: XCTestCase {
         ).result
         XCTAssertEqual(
             try projection.apply(external),
-            .requiresExternalHandling(.endpointManifest(fixture.manifest))
+            .requiresExternalHandling(.endpointSetManifest(fixture.manifest))
         )
         XCTAssertEqual(projection, beforeReplay)
 
@@ -290,9 +290,9 @@ final class ArchitectureV2SelfSyncConvergenceTests: XCTestCase {
     private typealias Fixture = (
         identity: Identity,
         generationId: UUID,
-        sourceA: LocalInstallationState,
-        sourceB: LocalInstallationState,
-        manifest: InstallationManifest,
+        sourceA: LocalEndpointState,
+        sourceB: LocalEndpointState,
+        manifest: EndpointSetManifest,
         localState: SelfSyncLocalStateV2,
         createdAt: Date
     )
@@ -300,18 +300,18 @@ final class ArchitectureV2SelfSyncConvergenceTests: XCTestCase {
     private func makeFixture(generationId: UUID = UUID()) throws -> Fixture {
         let createdAt = Date(timeIntervalSince1970: 10_000)
         let identity = try Identity.generate(displayName: "Self-sync convergence")
-        let sourceA = try LocalInstallationState.generate(
+        let sourceA = try LocalEndpointState.generate(
             identityGenerationId: generationId,
             createdAt: createdAt
         )
-        let sourceB = try LocalInstallationState.generate(
+        let sourceB = try LocalEndpointState.generate(
             identityGenerationId: generationId,
             createdAt: createdAt
         )
-        let manifest = try InstallationManifest.create(
+        let manifest = try EndpointSetManifest.create(
             identityGenerationId: generationId,
             epoch: 0,
-            installations: [
+            endpoints: [
                 sourceA.publicRecord(addedEpoch: 0),
                 sourceB.publicRecord(addedEpoch: 0)
             ],
@@ -335,7 +335,7 @@ final class ArchitectureV2SelfSyncConvergenceTests: XCTestCase {
 
     private func emit(
         _ payload: TypedSelfSyncPayloadV2,
-        source: LocalInstallationState,
+        source: LocalEndpointState,
         sender: inout SelfSyncLocalStateV2,
         receiver: inout SelfSyncLocalStateV2,
         fixture: Fixture,

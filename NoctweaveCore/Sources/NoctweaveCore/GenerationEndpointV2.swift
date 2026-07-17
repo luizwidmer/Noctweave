@@ -1,10 +1,10 @@
 import CryptoKit
 import Foundation
 
-public enum CertifiedInstallationEndpointError: Error, Equatable {
+public enum CertifiedGenerationEndpointError: Error, Equatable {
     case invalidStructure
     case invalidManifest
-    case installationNotAuthorized
+    case endpointNotAuthorized
     case invalidAuthoritySignature
     case invalidPossessionSignature
     case invalidPrekeyPackageSignature
@@ -147,7 +147,7 @@ public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
             module: "nw.endpoints",
             supportedVersions: [2],
             // Direct-v4 currently sends to one certified preferred endpoint.
-            // The 16-entry installation-manifest bound is only a structural
+            // The 16-entry endpoint-manifest bound is only a structural
             // storage ceiling, not negotiated multi-endpoint delivery support.
             limitCeilings: ["maxActiveEndpoints": 1],
             minimumLimits: ["maxActiveEndpoints": 1]
@@ -186,7 +186,7 @@ public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
     ]
 }
 
-public struct InstallationManifestCheckpointV4: Codable, Equatable {
+public struct EndpointSetCheckpointV4: Codable, Equatable {
     public let version: Int
     public let identityGenerationId: UUID
     public let identityFingerprint: String
@@ -196,22 +196,22 @@ public struct InstallationManifestCheckpointV4: Codable, Equatable {
     public let signature: Data
 
     public static func create(
-        manifest: InstallationManifest,
+        manifest: EndpointSetManifest,
         identity: Identity
-    ) throws -> InstallationManifestCheckpointV4 {
+    ) throws -> EndpointSetCheckpointV4 {
         guard manifest.verify(identityPublicKey: identity.signingKey.publicKeyData),
               let digest = manifest.digest else {
-            throw CertifiedInstallationEndpointError.invalidManifest
+            throw CertifiedGenerationEndpointError.invalidManifest
         }
-        let payload = InstallationManifestCheckpointPayloadV4(
-            version: CertifiedInstallationEndpoint.version,
+        let payload = EndpointSetCheckpointPayloadV4(
+            version: CertifiedGenerationEndpoint.version,
             identityGenerationId: manifest.identityGenerationId,
             identityFingerprint: identity.fingerprint,
             epoch: manifest.epoch,
             manifestDigest: digest,
             issuedAt: manifest.issuedAt
         )
-        return InstallationManifestCheckpointV4(
+        return EndpointSetCheckpointV4(
             version: payload.version,
             identityGenerationId: payload.identityGenerationId,
             identityFingerprint: payload.identityFingerprint,
@@ -223,7 +223,7 @@ public struct InstallationManifestCheckpointV4: Codable, Equatable {
     }
 
     public func verify(identityPublicKey: Data) -> Bool {
-        guard version == CertifiedInstallationEndpoint.version,
+        guard version == CertifiedGenerationEndpoint.version,
               identityFingerprint == CryptoBox.fingerprint(for: identityPublicKey),
               manifestDigest.count == 32,
               issuedAt.timeIntervalSince1970.isFinite,
@@ -238,8 +238,8 @@ public struct InstallationManifestCheckpointV4: Codable, Equatable {
         )
     }
 
-    private var payload: InstallationManifestCheckpointPayloadV4 {
-        InstallationManifestCheckpointPayloadV4(
+    private var payload: EndpointSetCheckpointPayloadV4 {
+        EndpointSetCheckpointPayloadV4(
             version: version,
             identityGenerationId: identityGenerationId,
             identityFingerprint: identityFingerprint,
@@ -254,9 +254,9 @@ public struct InstallationManifestCheckpointV4: Codable, Equatable {
 /// preferred endpoint without publishing the full endpoint-set graph. This is
 /// a peer invalidation record, not proof that local route, self-sync, group,
 /// and retained-key teardown obligations have completed.
-public struct InstallationEndpointRevocationV4: Codable, Equatable {
+public struct EndpointRemovalProofV4: Codable, Equatable {
     public let identityGenerationId: UUID
-    public let installationId: UUID
+    public let endpointId: UUID
     public let certificateDigest: Data
     public let manifestEpoch: UInt64
     public let manifestDigest: Data
@@ -264,32 +264,32 @@ public struct InstallationEndpointRevocationV4: Codable, Equatable {
     public let signature: Data
 
     public static func create(
-        endpoint: CertifiedInstallationEndpoint,
-        revokedManifest: InstallationManifest,
+        endpoint: CertifiedGenerationEndpoint,
+        revokedManifest: EndpointSetManifest,
         identity: Identity
-    ) throws -> InstallationEndpointRevocationV4 {
+    ) throws -> EndpointRemovalProofV4 {
         guard revokedManifest.verify(identityPublicKey: identity.signingKey.publicKeyData),
               revokedManifest.identityGenerationId == endpoint.identityGenerationId,
               revokedManifest.epoch > endpoint.manifestEpoch,
-              let record = revokedManifest.installations.first(where: {
-                  $0.id == endpoint.installationId
+              let record = revokedManifest.endpoints.first(where: {
+                  $0.id == endpoint.endpointId
               }),
               record.revokedEpoch != nil,
               let certificateDigest = endpoint.authorizationDigest,
               let manifestDigest = revokedManifest.digest else {
-            throw CertifiedInstallationEndpointError.invalidManifest
+            throw CertifiedGenerationEndpointError.invalidManifest
         }
-        let payload = InstallationEndpointRevocationPayloadV4(
+        let payload = EndpointRemovalProofPayloadV4(
             identityGenerationId: endpoint.identityGenerationId,
-            installationId: endpoint.installationId,
+            endpointId: endpoint.endpointId,
             certificateDigest: certificateDigest,
             manifestEpoch: revokedManifest.epoch,
             manifestDigest: manifestDigest,
             issuedAt: revokedManifest.issuedAt
         )
-        return InstallationEndpointRevocationV4(
+        return EndpointRemovalProofV4(
             identityGenerationId: payload.identityGenerationId,
-            installationId: payload.installationId,
+            endpointId: payload.endpointId,
             certificateDigest: payload.certificateDigest,
             manifestEpoch: payload.manifestEpoch,
             manifestDigest: payload.manifestDigest,
@@ -299,11 +299,11 @@ public struct InstallationEndpointRevocationV4: Codable, Equatable {
     }
 
     public func verify(
-        endpoint: CertifiedInstallationEndpoint,
+        endpoint: CertifiedGenerationEndpoint,
         identityPublicKey: Data
     ) -> Bool {
         guard endpoint.identityGenerationId == identityGenerationId,
-              endpoint.installationId == installationId,
+              endpoint.endpointId == endpointId,
               endpoint.authorizationDigest == certificateDigest,
               manifestEpoch > endpoint.manifestEpoch,
               manifestDigest.count == 32,
@@ -319,10 +319,10 @@ public struct InstallationEndpointRevocationV4: Codable, Equatable {
         )
     }
 
-    private var payload: InstallationEndpointRevocationPayloadV4 {
-        InstallationEndpointRevocationPayloadV4(
+    private var payload: EndpointRemovalProofPayloadV4 {
+        EndpointRemovalProofPayloadV4(
             identityGenerationId: identityGenerationId,
-            installationId: installationId,
+            endpointId: endpointId,
             certificateDigest: certificateDigest,
             manifestEpoch: manifestEpoch,
             manifestDigest: manifestDigest,
@@ -364,7 +364,7 @@ public struct EndpointSignedPrekeyPackageV4: Codable, Equatable {
               bundle.oneTimePrekeys.allSatisfy({
                   $0.verify(using: endpointSigningKey.publicKeyData)
               }) else {
-            throw CertifiedInstallationEndpointError.invalidStructure
+            throw CertifiedGenerationEndpointError.invalidStructure
         }
         let unsigned = EndpointSignedPrekeyPackagePayloadV4(
             endpointAuthorizationDigest: endpointAuthorizationDigest,
@@ -411,20 +411,20 @@ public struct EndpointSignedPrekeyPackageV4: Codable, Equatable {
     }
 }
 
-/// Compatibility-named generation-scoped endpoint authorization projected into
-/// pairwise handles and relationship-blinded references before direct use. The
+/// Generation-scoped endpoint authorization projected into pairwise handles
+/// and relationship-blinded references before direct use. The
 /// disposable identity-generation key authorizes one endpoint and that
 /// endpoint's local key proves possession; neither is a durable device,
 /// account, recovery authority, or global endpoint registry. Contact offers
 /// carry a compact signed generation checkpoint.
-public struct CertifiedInstallationEndpoint: Codable, Equatable {
+public struct CertifiedGenerationEndpoint: Codable, Equatable {
     public static let version = 4
 
     public let identityGenerationId: UUID
     public let identityAuthorityPublicKey: Data
     public let manifestEpoch: UInt64
     public let manifestDigest: Data
-    public let installationId: UUID
+    public let endpointId: UUID
     public let signingPublicKey: Data
     public let agreementPublicKey: Data
     public let capabilities: ProtocolCapabilityManifest
@@ -439,7 +439,7 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
         identityAuthorityPublicKey: Data,
         manifestEpoch: UInt64,
         manifestDigest: Data,
-        installationId: UUID,
+        endpointId: UUID,
         signingPublicKey: Data,
         agreementPublicKey: Data,
         capabilities: ProtocolCapabilityManifest,
@@ -453,7 +453,7 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
         self.identityAuthorityPublicKey = identityAuthorityPublicKey
         self.manifestEpoch = manifestEpoch
         self.manifestDigest = manifestDigest
-        self.installationId = installationId
+        self.endpointId = endpointId
         self.signingPublicKey = signingPublicKey
         self.agreementPublicKey = agreementPublicKey
         self.capabilities = capabilities
@@ -466,25 +466,25 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
 
     public static func create(
         identity: Identity,
-        installation: LocalInstallationState,
-        manifest: InstallationManifest,
+        endpoint: LocalEndpointState,
+        manifest: EndpointSetManifest,
         issuedAt: Date = Date()
-    ) throws -> CertifiedInstallationEndpoint {
+    ) throws -> CertifiedGenerationEndpoint {
         guard let manifestDigest = manifest.digest,
               manifest.verify(identityPublicKey: identity.signingKey.publicKeyData),
-              manifest.identityGenerationId == installation.identityGenerationId,
-              let record = manifest.activeInstallations.first(where: { $0.id == installation.id }),
-              record.signingPublicKey == installation.signingKey.publicKeyData,
-              record.agreementPublicKey == installation.agreementKey.publicKeyData else {
-            throw CertifiedInstallationEndpointError.installationNotAuthorized
+              manifest.identityGenerationId == endpoint.identityGenerationId,
+              let record = manifest.activeEndpoints.first(where: { $0.id == endpoint.id }),
+              record.signingPublicKey == endpoint.signingKey.publicKeyData,
+              record.agreementPublicKey == endpoint.agreementKey.publicKeyData else {
+            throw CertifiedGenerationEndpointError.endpointNotAuthorized
         }
-        let installationIdentity = try Identity(
-            displayName: "Noctweave installation",
-            signingKey: installation.signingKey,
-            agreementKey: installation.agreementKey,
-            createdAt: installation.createdAt
+        let endpointIdentity = try Identity(
+            displayName: "Noctweave endpoint",
+            signingKey: endpoint.signingKey,
+            agreementKey: endpoint.agreementKey,
+            createdAt: endpoint.createdAt
         )
-        let completeBundle = try installation.prekeys.bundle(identity: installationIdentity)
+        let completeBundle = try endpoint.prekeys.bundle(identity: endpointIdentity)
         // Reusable contact offers advertise only the rotation-friendly signed
         // prekey. One-time prekeys require an atomic relay claim API and must
         // not be copied into a shareable code where multiple peers can race.
@@ -494,24 +494,24 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
             oneTimePrekeys: [],
             createdAt: completeBundle.createdAt
         )
-        let payload = CertifiedInstallationEndpointPayload(
+        let payload = CertifiedGenerationEndpointPayload(
             version: version,
-            identityGenerationId: installation.identityGenerationId,
+            identityGenerationId: endpoint.identityGenerationId,
             identityAuthorityPublicKey: identity.signingKey.publicKeyData,
             manifestEpoch: manifest.epoch,
             manifestDigest: manifestDigest,
-            installationId: installation.id,
-            signingPublicKey: installation.signingKey.publicKeyData,
-            agreementPublicKey: installation.agreementKey.publicKeyData,
+            endpointId: endpoint.id,
+            signingPublicKey: endpoint.signingKey.publicKeyData,
+            agreementPublicKey: endpoint.agreementKey.publicKeyData,
             capabilities: record.capabilities,
             issuedAt: issuedAt
         )
         let authoritySignature = try identity.signingKey.sign(payload.signableData())
-        let possessionPayload = CertifiedInstallationEndpointPossessionPayload(
+        let possessionPayload = CertifiedGenerationEndpointPossessionPayload(
             endpoint: payload,
             authoritySignature: authoritySignature
         )
-        let possessionSignature = try installation.signingKey.sign(
+        let possessionSignature = try endpoint.signingKey.sign(
             possessionPayload.signableData()
         )
         guard let authorizationDigest = authorizationDigest(
@@ -519,21 +519,21 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
             authoritySignature: authoritySignature,
             possessionSignature: possessionSignature
         ) else {
-            throw CertifiedInstallationEndpointError.invalidStructure
+            throw CertifiedGenerationEndpointError.invalidStructure
         }
         let signedPackage = try EndpointSignedPrekeyPackageV4.create(
             endpointAuthorizationDigest: authorizationDigest,
             bundle: prekeyBundle,
-            endpointSigningKey: installation.signingKey
+            endpointSigningKey: endpoint.signingKey
         )
-        return CertifiedInstallationEndpoint(
-            identityGenerationId: installation.identityGenerationId,
+        return CertifiedGenerationEndpoint(
+            identityGenerationId: endpoint.identityGenerationId,
             identityAuthorityPublicKey: identity.signingKey.publicKeyData,
             manifestEpoch: manifest.epoch,
             manifestDigest: manifestDigest,
-            installationId: installation.id,
-            signingPublicKey: installation.signingKey.publicKeyData,
-            agreementPublicKey: installation.agreementKey.publicKeyData,
+            endpointId: endpoint.id,
+            signingPublicKey: endpoint.signingKey.publicKeyData,
+            agreementPublicKey: endpoint.agreementKey.publicKeyData,
             capabilities: record.capabilities,
             prekeyBundle: prekeyBundle,
             prekeyPackageSignature: signedPackage.signature,
@@ -578,7 +578,7 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
               ) else {
             return false
         }
-        let possession = CertifiedInstallationEndpointPossessionPayload(
+        let possession = CertifiedGenerationEndpointPossessionPayload(
             endpoint: payload,
             authoritySignature: authoritySignature
         )
@@ -593,23 +593,23 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
     /// Replaces only the endpoint-signed prekey package. Stable generation
     /// authorization and endpoint-possession proofs are preserved verbatim.
     public func refreshingPrekeyPackage(
-        using installation: LocalInstallationState,
+        using endpoint: LocalEndpointState,
         at date: Date = Date()
-    ) throws -> CertifiedInstallationEndpoint {
-        guard installation.id == installationId,
-              installation.identityGenerationId == identityGenerationId,
-              installation.signingKey.publicKeyData == signingPublicKey,
-              installation.agreementKey.publicKeyData == agreementPublicKey,
+    ) throws -> CertifiedGenerationEndpoint {
+        guard endpoint.id == endpointId,
+              endpoint.identityGenerationId == identityGenerationId,
+              endpoint.signingKey.publicKeyData == signingPublicKey,
+              endpoint.agreementKey.publicKeyData == agreementPublicKey,
               let authorizationDigest else {
-            throw CertifiedInstallationEndpointError.installationNotAuthorized
+            throw CertifiedGenerationEndpointError.endpointNotAuthorized
         }
         let endpointIdentity = try Identity(
             displayName: "Noctweave endpoint",
-            signingKey: installation.signingKey,
-            agreementKey: installation.agreementKey,
-            createdAt: installation.createdAt
+            signingKey: endpoint.signingKey,
+            agreementKey: endpoint.agreementKey,
+            createdAt: endpoint.createdAt
         )
-        let completeBundle = try installation.prekeys.bundle(
+        let completeBundle = try endpoint.prekeys.bundle(
             identity: endpointIdentity,
             createdAt: date
         )
@@ -622,14 +622,14 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
         let package = try EndpointSignedPrekeyPackageV4.create(
             endpointAuthorizationDigest: authorizationDigest,
             bundle: bundle,
-            endpointSigningKey: installation.signingKey
+            endpointSigningKey: endpoint.signingKey
         )
-        return CertifiedInstallationEndpoint(
+        return CertifiedGenerationEndpoint(
             identityGenerationId: identityGenerationId,
             identityAuthorityPublicKey: identityAuthorityPublicKey,
             manifestEpoch: manifestEpoch,
             manifestDigest: manifestDigest,
-            installationId: installationId,
+            endpointId: endpointId,
             signingPublicKey: signingPublicKey,
             agreementPublicKey: agreementPublicKey,
             capabilities: capabilities,
@@ -647,24 +647,24 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
 
     public func verified(
         identityPublicKey: Data,
-        manifest: InstallationManifest,
+        manifest: EndpointSetManifest,
         now: Date = Date()
-    ) throws -> CertifiedInstallationEndpoint {
+    ) throws -> CertifiedGenerationEndpoint {
         guard isStructurallyValid(now: now) else {
-            throw CertifiedInstallationEndpointError.invalidStructure
+            throw CertifiedGenerationEndpointError.invalidStructure
         }
         guard manifest.verify(identityPublicKey: identityPublicKey),
               identityAuthorityPublicKey == identityPublicKey,
               manifest.identityGenerationId == identityGenerationId,
               manifest.epoch == manifestEpoch,
               manifest.digest == manifestDigest else {
-            throw CertifiedInstallationEndpointError.invalidManifest
+            throw CertifiedGenerationEndpointError.invalidManifest
         }
-        guard let record = manifest.activeInstallations.first(where: { $0.id == installationId }),
+        guard let record = manifest.activeEndpoints.first(where: { $0.id == endpointId }),
               record.signingPublicKey == signingPublicKey,
               record.agreementPublicKey == agreementPublicKey,
               record.capabilities == capabilities else {
-            throw CertifiedInstallationEndpointError.installationNotAuthorized
+            throw CertifiedGenerationEndpointError.endpointNotAuthorized
         }
         guard let authorityData = try? payload.signableData(),
               SigningKeyPair.verify(
@@ -672,9 +672,9 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
                   data: authorityData,
                   publicKeyData: identityPublicKey
               ) else {
-            throw CertifiedInstallationEndpointError.invalidAuthoritySignature
+            throw CertifiedGenerationEndpointError.invalidAuthoritySignature
         }
-        let possession = CertifiedInstallationEndpointPossessionPayload(
+        let possession = CertifiedGenerationEndpointPossessionPayload(
             endpoint: payload,
             authoritySignature: authoritySignature
         )
@@ -684,25 +684,25 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
                   data: possessionData,
                   publicKeyData: signingPublicKey
               ) else {
-            throw CertifiedInstallationEndpointError.invalidPossessionSignature
+            throw CertifiedGenerationEndpointError.invalidPossessionSignature
         }
         return self
     }
 
     public func verified(
         identityPublicKey: Data,
-        checkpoint: InstallationManifestCheckpointV4,
+        checkpoint: EndpointSetCheckpointV4,
         now: Date = Date()
-    ) throws -> CertifiedInstallationEndpoint {
+    ) throws -> CertifiedGenerationEndpoint {
         guard isStructurallyValid(now: now) else {
-            throw CertifiedInstallationEndpointError.invalidStructure
+            throw CertifiedGenerationEndpointError.invalidStructure
         }
         guard identityAuthorityPublicKey == identityPublicKey,
               checkpoint.verify(identityPublicKey: identityPublicKey),
               checkpoint.identityGenerationId == identityGenerationId,
               checkpoint.epoch == manifestEpoch,
               checkpoint.manifestDigest == manifestDigest else {
-            throw CertifiedInstallationEndpointError.invalidManifest
+            throw CertifiedGenerationEndpointError.invalidManifest
         }
         guard let authorityData = try? payload.signableData(),
               SigningKeyPair.verify(
@@ -710,9 +710,9 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
                   data: authorityData,
                   publicKeyData: identityPublicKey
               ) else {
-            throw CertifiedInstallationEndpointError.invalidAuthoritySignature
+            throw CertifiedGenerationEndpointError.invalidAuthoritySignature
         }
-        let possession = CertifiedInstallationEndpointPossessionPayload(
+        let possession = CertifiedGenerationEndpointPossessionPayload(
             endpoint: payload,
             authoritySignature: authoritySignature
         )
@@ -722,7 +722,7 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
                   data: possessionData,
                   publicKeyData: signingPublicKey
               ) else {
-            throw CertifiedInstallationEndpointError.invalidPossessionSignature
+            throw CertifiedGenerationEndpointError.invalidPossessionSignature
         }
         return self
     }
@@ -747,14 +747,14 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
         return true
     }
 
-    private var payload: CertifiedInstallationEndpointPayload {
-        CertifiedInstallationEndpointPayload(
+    private var payload: CertifiedGenerationEndpointPayload {
+        CertifiedGenerationEndpointPayload(
             version: Self.version,
             identityGenerationId: identityGenerationId,
             identityAuthorityPublicKey: identityAuthorityPublicKey,
             manifestEpoch: manifestEpoch,
             manifestDigest: manifestDigest,
-            installationId: installationId,
+            endpointId: endpointId,
             signingPublicKey: signingPublicKey,
             agreementPublicKey: agreementPublicKey,
             capabilities: capabilities,
@@ -763,11 +763,11 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
     }
 
     private static func authorizationDigest(
-        payload: CertifiedInstallationEndpointPayload,
+        payload: CertifiedGenerationEndpointPayload,
         authoritySignature: Data,
         possessionSignature: Data
     ) -> Data? {
-        let reference = CertifiedInstallationEndpointAuthorizationReference(
+        let reference = CertifiedGenerationEndpointAuthorizationReference(
             endpoint: payload,
             authoritySignature: authoritySignature,
             possessionSignature: possessionSignature
@@ -781,40 +781,40 @@ public struct CertifiedInstallationEndpoint: Codable, Equatable {
 
 public struct DirectEndpointSessionIdentity: Codable, Equatable, Hashable {
     public let contactId: UUID
-    public let localInstallationId: UUID
-    public let localInstallationHandle: RelationshipInstallationHandle
+    public let localEndpointId: UUID
+    public let localEndpointHandle: RelationshipEndpointHandle
     public let localCertificateReferenceDigest: Data
     public let localManifestEpoch: UInt64
-    public let peerInstallationId: UUID
-    public let peerInstallationHandle: RelationshipInstallationHandle
+    public let peerEndpointId: UUID
+    public let peerEndpointHandle: RelationshipEndpointHandle
     public let peerCertificateReferenceDigest: Data
     public let peerManifestEpoch: UInt64
 
     public init(
         contactId: UUID,
-        localInstallationId: UUID,
-        localInstallationHandle: RelationshipInstallationHandle,
+        localEndpointId: UUID,
+        localEndpointHandle: RelationshipEndpointHandle,
         localCertificateReferenceDigest: Data,
         localManifestEpoch: UInt64,
-        peerInstallationId: UUID,
-        peerInstallationHandle: RelationshipInstallationHandle,
+        peerEndpointId: UUID,
+        peerEndpointHandle: RelationshipEndpointHandle,
         peerCertificateReferenceDigest: Data,
         peerManifestEpoch: UInt64
     ) {
         self.contactId = contactId
-        self.localInstallationId = localInstallationId
-        self.localInstallationHandle = localInstallationHandle
+        self.localEndpointId = localEndpointId
+        self.localEndpointHandle = localEndpointHandle
         self.localCertificateReferenceDigest = localCertificateReferenceDigest
         self.localManifestEpoch = localManifestEpoch
-        self.peerInstallationId = peerInstallationId
-        self.peerInstallationHandle = peerInstallationHandle
+        self.peerEndpointId = peerEndpointId
+        self.peerEndpointHandle = peerEndpointHandle
         self.peerCertificateReferenceDigest = peerCertificateReferenceDigest
         self.peerManifestEpoch = peerManifestEpoch
     }
 
     public var isStructurallyValid: Bool {
-        localInstallationHandle.isStructurallyValid
-            && peerInstallationHandle.isStructurallyValid
+        localEndpointHandle.isStructurallyValid
+            && peerEndpointHandle.isStructurallyValid
             && localCertificateReferenceDigest.count == 32
             && peerCertificateReferenceDigest.count == 32
     }
@@ -827,10 +827,10 @@ public struct DirectEndpointSessionIdentity: Codable, Equatable, Hashable {
 /// change that reference. One bounded generation gets stable sessions, while
 /// the same endpoint has unlinkable handles per contact and burn changes all
 /// generation-derived values.
-public struct PairwiseInstallationBindingV4: Codable, Equatable {
+public struct PairwiseEndpointBindingV4: Codable, Equatable {
     public let relationshipId: UUID
-    public let localInstallationHandle: RelationshipInstallationHandle
-    public let peerInstallationHandle: RelationshipInstallationHandle
+    public let localEndpointHandle: RelationshipEndpointHandle
+    public let peerEndpointHandle: RelationshipEndpointHandle
     public let localCertificateReferenceDigest: Data
     public let peerCertificateReferenceDigest: Data
     public let cipherSuite: String
@@ -838,16 +838,16 @@ public struct PairwiseInstallationBindingV4: Codable, Equatable {
 
     public init(
         relationshipId: UUID,
-        localInstallationHandle: RelationshipInstallationHandle,
-        peerInstallationHandle: RelationshipInstallationHandle,
+        localEndpointHandle: RelationshipEndpointHandle,
+        peerEndpointHandle: RelationshipEndpointHandle,
         localCertificateReferenceDigest: Data,
         peerCertificateReferenceDigest: Data,
         cipherSuite: String,
         negotiatedCapabilitiesDigest: Data
     ) {
         self.relationshipId = relationshipId
-        self.localInstallationHandle = localInstallationHandle
-        self.peerInstallationHandle = peerInstallationHandle
+        self.localEndpointHandle = localEndpointHandle
+        self.peerEndpointHandle = peerEndpointHandle
         self.localCertificateReferenceDigest = localCertificateReferenceDigest
         self.peerCertificateReferenceDigest = peerCertificateReferenceDigest
         self.cipherSuite = cipherSuite
@@ -857,11 +857,11 @@ public struct PairwiseInstallationBindingV4: Codable, Equatable {
     public static func derive(
         localIdentityGenerationId: UUID,
         localIdentitySigningPublicKey: Data,
-        localEndpoint: CertifiedInstallationEndpoint,
+        localEndpoint: CertifiedGenerationEndpoint,
         peerIdentityGenerationId: UUID,
         peerIdentitySigningPublicKey: Data,
-        peerEndpoint: CertifiedInstallationEndpoint
-    ) throws -> PairwiseInstallationBindingV4 {
+        peerEndpoint: CertifiedGenerationEndpoint
+    ) throws -> PairwiseEndpointBindingV4 {
         guard localEndpoint.identityGenerationId == localIdentityGenerationId,
               peerEndpoint.identityGenerationId == peerIdentityGenerationId,
               SigningKeyPair.isValidPublicKey(localIdentitySigningPublicKey),
@@ -892,14 +892,14 @@ public struct PairwiseInstallationBindingV4: Codable, Equatable {
             relationshipDigest[8], relationshipDigest[9], relationshipDigest[10], relationshipDigest[11],
             relationshipDigest[12], relationshipDigest[13], relationshipDigest[14], relationshipDigest[15]
         ))
-        return PairwiseInstallationBindingV4(
+        return PairwiseEndpointBindingV4(
             relationshipId: relationshipId,
-            localInstallationHandle: installationHandle(
+            localEndpointHandle: endpointHandle(
                 relationshipId: relationshipId,
                 generationId: localIdentityGenerationId,
                 endpoint: localEndpoint
             ),
-            peerInstallationHandle: installationHandle(
+            peerEndpointHandle: endpointHandle(
                 relationshipId: relationshipId,
                 generationId: peerIdentityGenerationId,
                 endpoint: peerEndpoint
@@ -918,8 +918,8 @@ public struct PairwiseInstallationBindingV4: Codable, Equatable {
     }
 
     public var isStructurallyValid: Bool {
-        localInstallationHandle.isStructurallyValid
-            && peerInstallationHandle.isStructurallyValid
+        localEndpointHandle.isStructurallyValid
+            && peerEndpointHandle.isStructurallyValid
             && localCertificateReferenceDigest.count == 32
             && peerCertificateReferenceDigest.count == 32
             && cipherSuite == DirectV4CipherSuite.identifier
@@ -927,8 +927,8 @@ public struct PairwiseInstallationBindingV4: Codable, Equatable {
     }
 
     public func validatedNegotiation(
-        localEndpoint: CertifiedInstallationEndpoint,
-        peerEndpoint: CertifiedInstallationEndpoint
+        localEndpoint: CertifiedGenerationEndpoint,
+        peerEndpoint: CertifiedGenerationEndpoint
     ) throws -> DirectV4NegotiatedCapabilityManifest {
         let negotiation = try DirectV4NegotiatedCapabilityManifest.negotiate(
             local: localEndpoint.capabilities,
@@ -946,17 +946,17 @@ public struct PairwiseInstallationBindingV4: Codable, Equatable {
         Data(generationId.uuidString.lowercased().utf8)
     }
 
-    private static func installationHandle(
+    private static func endpointHandle(
         relationshipId: UUID,
         generationId: UUID,
-        endpoint: CertifiedInstallationEndpoint
-    ) -> RelationshipInstallationHandle {
-        var material = Data("Noctweave/pairwise-installation-handle/v4".utf8)
+        endpoint: CertifiedGenerationEndpoint
+    ) -> RelationshipEndpointHandle {
+        var material = Data("Noctweave/pairwise-endpoint-handle/v4".utf8)
         material.append(Data(relationshipId.uuidString.lowercased().utf8))
         material.append(Data(generationId.uuidString.lowercased().utf8))
-        material.append(Data(endpoint.installationId.uuidString.lowercased().utf8))
+        material.append(Data(endpoint.endpointId.uuidString.lowercased().utf8))
         material.append(endpoint.signingPublicKey)
-        return RelationshipInstallationHandle(
+        return RelationshipEndpointHandle(
             rawValue: Data(SHA256.hash(data: material)).base64EncodedString()
         )
     }
@@ -972,13 +972,13 @@ public struct PairwiseInstallationBindingV4: Codable, Equatable {
     }
 }
 
-private struct CertifiedInstallationEndpointPayload: Codable {
+private struct CertifiedGenerationEndpointPayload: Codable {
     let version: Int
     let identityGenerationId: UUID
     let identityAuthorityPublicKey: Data
     let manifestEpoch: UInt64
     let manifestDigest: Data
-    let installationId: UUID
+    let endpointId: UUID
     let signingPublicKey: Data
     let agreementPublicKey: Data
     let capabilities: ProtocolCapabilityManifest
@@ -989,8 +989,8 @@ private struct CertifiedInstallationEndpointPayload: Codable {
     }
 }
 
-private struct CertifiedInstallationEndpointAuthorizationReference: Codable {
-    let endpoint: CertifiedInstallationEndpointPayload
+private struct CertifiedGenerationEndpointAuthorizationReference: Codable {
+    let endpoint: CertifiedGenerationEndpointPayload
     let authoritySignature: Data
     let possessionSignature: Data
 }
@@ -1005,7 +1005,7 @@ private struct EndpointSignedPrekeyPackagePayloadV4: Encodable {
     }
 }
 
-private struct InstallationManifestCheckpointPayloadV4: Codable {
+private struct EndpointSetCheckpointPayloadV4: Codable {
     let version: Int
     let identityGenerationId: UUID
     let identityFingerprint: String
@@ -1018,9 +1018,9 @@ private struct InstallationManifestCheckpointPayloadV4: Codable {
     }
 }
 
-private struct InstallationEndpointRevocationPayloadV4: Codable {
+private struct EndpointRemovalProofPayloadV4: Codable {
     let identityGenerationId: UUID
-    let installationId: UUID
+    let endpointId: UUID
     let certificateDigest: Data
     let manifestEpoch: UInt64
     let manifestDigest: Data
@@ -1031,9 +1031,9 @@ private struct InstallationEndpointRevocationPayloadV4: Codable {
     }
 }
 
-private struct CertifiedInstallationEndpointPossessionPayload: Encodable {
-    let purpose = "Noctweave/certified-installation-endpoint-possession/v4"
-    let endpoint: CertifiedInstallationEndpointPayload
+private struct CertifiedGenerationEndpointPossessionPayload: Encodable {
+    let purpose = "Noctweave/certified-generation-endpoint-possession/v4"
+    let endpoint: CertifiedGenerationEndpointPayload
     let authoritySignature: Data
 
     func signableData() throws -> Data {

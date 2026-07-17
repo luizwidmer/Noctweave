@@ -4,7 +4,7 @@
   "local": {
     "identityGenerationId": "11111111-2222-4333-8444-555555555555",
     "identitySigningByte": 17,
-    "installationId": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
+    "endpointId": "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE",
     "endpointSigningByte": 49,
     "endpointAgreementByte": 65,
     "manifestEpoch": 3,
@@ -16,7 +16,7 @@
   "peer": {
     "identityGenerationId": "99999999-8888-4777-8666-555555555555",
     "identitySigningByte": 34,
-    "installationId": "BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF",
+    "endpointId": "BBBBBBBB-CCCC-4DDD-8EEE-FFFFFFFFFFFF",
     "endpointSigningByte": 50,
     "endpointAgreementByte": 66,
     "manifestEpoch": 7,
@@ -29,7 +29,7 @@
     "eventId": "ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF",
     "envelopeId": "12345678-90AB-4CDE-8FAB-1234567890AB",
     "clientTransactionId": "FEDCBAFE-DCBA-4FED-8CBA-FEDCBAFEDCBA",
-    "conversationId": "xGp3JirnVSdSveM/PmczrBo6YssEpkJc0448AItXGFs=",
+    "conversationId": "DnXiN9wBuD8u43GZED1COBdBpGgQpNUg7d5g25OAT6s=",
     "sessionId": "c2Vzc2lvbi12NC12ZWN0b3I=",
     "sentAt": "2026-07-16T12:34:56Z",
     "messageCounter": 5,
@@ -37,15 +37,15 @@
     "ciphertextByte": 178,
     "ciphertextCount": 512,
     "tagByte": 195,
-    "aadCanonicalBase64": "eyJjb250ZXh0Ijp7ImRpcmVjdFY0Ijp7ImNpcGhlclN1aXRlIjoibncuZGlyZWN0LXY0Lm1sLWtlbS03NjgubWwtZHNhLTY1LmhrZGYtc2hhMjU2LmhtYWMtc2hhMjU2LmFlcy0yNTYtZ2NtIiwiZXZlbnRJZCI6IkFCQ0RFRkFCLUNERUYtNEFCQy04REVGLUFCQ0RFRkFCQ0RFRiIsIm5lZ290aWF0ZWRDYXBhYmlsaXRpZXNEaWdlc3QiOiIwXC9qOThxS0V2a2Z2YkxXV2RNUmtrUytJS1VnaWRLc3FEVHY1bjNoYUdEVT0iLCJwYXlsb2FkRm9ybWF0Ijoibncud2lyZS1wYXlsb2FkLnYyIiwicmVjaXBpZW50Q2VydGlmaWNhdGVEaWdlc3QiOiI4b3RBM1pLa1NrcDRnMklrcW5GWlNVUHBrNkpUcTc2cmdUMUtZdE5rNFhBPSIsInJlY2lwaWVudEluc3RhbGxhdGlvbkhhbmRsZSI6IjNoMU5XekhVUThjVVFcL2NzRzJPVW42c0JPUWFyT2NOUFBoUllhaU5aZGhZPSIsInJlY2lwaWVudE1hbmlmZXN0RXBvY2giOjcsInNlbmRlckNlcnRpZmljYXRlRGlnZXN0IjoiWWVaaTgzZVlBN2ZpdUhrTGhHWUdNQUtMbDNnTXQzNFF4c0I5MTc5UjdXND0iLCJzZW5kZXJJbnN0YWxsYXRpb25IYW5kbGUiOiJmNzVKWnc5ZWVMRjNPa2QxQXNXSWxkZTUwZWc3MUdyU0tHRG1MdHB5T2ZVPSIsInNlbmRlck1hbmlmZXN0RXBvY2giOjMsInZlcnNpb24iOjR9LCJwdXJwb3NlIjoiZGlyZWN0VjQifSwiY29udmVyc2F0aW9uSWQiOiJ4R3AzSmlyblZTZFN2ZU1cL1BtY3pyQm82WXNzRXBrSmMwNDQ4QUl0WEdGcz0iLCJtZXNzYWdlQ291bnRlciI6NSwic2Vzc2lvbklkIjoiYzJWemMybHZiaTEyTkMxMlpXTjBiM0k9IiwidmVyc2lvbiI6NH0=",
-    "signatureCanonicalSHA256": "uU7oeVLA7c8h9gVDVKBdzQgsLfSaOe81T0bCmSWVkqc="
+    "aadCanonicalBase64": "eyJjb250ZXh0Ijp7ImRpcmVjdFY0Ijp7ImNpcGhlclN1aXRlIjoibncuZGlyZWN0LXY0Lm1sLWtlbS03NjgubWwtZHNhLTY1LmhrZGYtc2hhMjU2LmhtYWMtc2hhMjU2LmFlcy0yNTYtZ2NtIiwiZXZlbnRJZCI6IkFCQ0RFRkFCLUNERUYtNEFCQy04REVGLUFCQ0RFRkFCQ0RFRiIsIm5lZ290aWF0ZWRDYXBhYmlsaXRpZXNEaWdlc3QiOiIwXC9qOThxS0V2a2Z2YkxXV2RNUmtrUytJS1VnaWRLc3FEVHY1bjNoYUdEVT0iLCJwYXlsb2FkRm9ybWF0Ijoibncud2lyZS1wYXlsb2FkLnYyIiwicmVjaXBpZW50Q2VydGlmaWNhdGVEaWdlc3QiOiJ5anlxbEdRUERvUkpkcHpPQjBSaXYwUjhWSmN5RWN3S3JybGZLUkUxa0ZFPSIsInJlY2lwaWVudEVuZHBvaW50SGFuZGxlIjoiOUhYZGREaHFubXJNU1ZRU0tNeWdSV1pGWTFNT01mRk93eUlkOHFSTlBDTT0iLCJyZWNpcGllbnRNYW5pZmVzdEVwb2NoIjo3LCJzZW5kZXJDZXJ0aWZpY2F0ZURpZ2VzdCI6IjhSRzhnSmFKOTVpUTRFUFVKd05nTXYyd0R0WW9saWtkUzc0ZUhocmszZVk9Iiwic2VuZGVyRW5kcG9pbnRIYW5kbGUiOiJlNGtVbm1Sbll2Zld3QXNQajhlNkJpVzEzcEJCTWN3R0Z1XC9LVlFQSzNlRT0iLCJzZW5kZXJNYW5pZmVzdEVwb2NoIjozLCJ2ZXJzaW9uIjo0fSwicHVycG9zZSI6ImRpcmVjdFY0In0sImNvbnZlcnNhdGlvbklkIjoiRG5YaU45d0J1RDh1NDNHWkVEMUNPQmRCcEdnUXBOVWc3ZDVnMjVPQVQ2cz0iLCJtZXNzYWdlQ291bnRlciI6NSwic2Vzc2lvbklkIjoiYzJWemMybHZiaTEyTkMxMlpXTjBiM0k9IiwidmVyc2lvbiI6NH0=",
+    "signatureCanonicalSHA256": "acYH4bo5//vWEdQogEpjh4YvvVBeja4u3sbP5oPFHFw="
   },
   "expected": {
     "relationshipId": "6C9FE7D7-2121-B4D0-1555-35A968EFA20D",
-    "localInstallationHandle": "f75JZw9eeLF3Okd1AsWIlde50eg71GrSKGDmLtpyOfU=",
-    "peerInstallationHandle": "3h1NWzHUQ8cUQ/csG2OUn6sBOQarOcNPPhRYaiNZdhY=",
-    "localCertificateReferenceDigest": "YeZi83eYA7fiuHkLhGYGMAKLl3gMt34QxsB9179R7W4=",
-    "peerCertificateReferenceDigest": "8otA3ZKkSkp4g2IkqnFZSUPpk6JTq76rgT1KYtNk4XA=",
+    "localEndpointHandle": "e4kUnmRnYvfWwAsPj8e6BiW13pBBMcwGFu/KVQPK3eE=",
+    "peerEndpointHandle": "9HXddDhqnmrMSVQSKMygRWZFY1MOMfFOwyId8qRNPCM=",
+    "localCertificateReferenceDigest": "8RG8gJaJ95iQ4EPUJwNgMv2wDtYolikdS74eHhrk3eY=",
+    "peerCertificateReferenceDigest": "yjyqlGQPDoRJdpzOB0Riv0R8VJcyEcwKrrlfKRE1kFE=",
     "cipherSuite": "nw.direct-v4.ml-kem-768.ml-dsa-65.hkdf-sha256.hmac-sha256.aes-256-gcm",
     "negotiatedCapabilitiesDigest": "0/j98qKEvkfvbLWWdMRkkS+IKUgidKsqDTv5n3haGDU="
   }
