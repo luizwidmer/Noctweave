@@ -186,14 +186,12 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
         XCTAssertTrue(contiguous.isContiguous(after: 0))
     }
 
-    func testV2DecodeRejectsIntentOverflowWithoutTruncatingClientStateSetter() throws {
+    func testCurrentEncoderRejectsIntentOverflowWithoutTruncatingClientStateSetter() throws {
         let identity = try Identity.generate(displayName: "Intent bounds")
-        var state = ClientState(
+        var state = try makeCurrentClientState(
             identity: identity,
-            relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
-            inboxId: InboxAddress.generate()
+            relay: RelayEndpoint(host: "127.0.0.1", port: 9340)
         )
-        _ = try state.migrateToArchitectureV2()
         let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
         let intents = (0...NoctweaveArchitectureV2.maximumProtocolIntents).map { index in
             ProtocolIntentV2.prepare(
@@ -209,55 +207,9 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
             state.protocolIntents.count,
             NoctweaveArchitectureV2.maximumProtocolIntents + 1
         )
-        let encoded = try NoctweaveCoder.encode(state, sortedKeys: true)
-        XCTAssertThrowsError(try NoctweaveCoder.decode(ClientState.self, from: encoded))
-    }
-
-    func testLegacyMigrationPreservesExactPendingCiphertextAndNonterminalIntent() throws {
-        let identity = try Identity.generate(displayName: "Legacy durable outbox")
-        let queuedAt = Date(timeIntervalSince1970: 1_700_100_000)
-        let existingPending = lifecyclePendingDelivery(counter: 10, queuedAt: queuedAt)
-        let missingIntentPending = lifecyclePendingDelivery(counter: 11, queuedAt: queuedAt)
-        let encodedEnvelope = try NoctweaveCoder.encode(
-            existingPending.envelope,
-            sortedKeys: true
-        )
-        let existingIntent = ProtocolIntentV2.prepare(
-            id: existingPending.id,
-            kind: .sendEvent,
-            targetIdentifier: Data(existingPending.contactId.uuidString.lowercased().utf8),
-            payloadDigest: Data(SHA256.hash(data: encodedEnvelope)),
-            createdAt: existingPending.queuedAt
-        )
-        var profile = IdentityProfile(
-            protocolIntents: [existingIntent],
-            identity: identity,
-            inboxId: InboxAddress.generate(),
-            relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
-            pendingDirectDeliveries: [existingPending, missingIntentPending],
-            prekeys: try PrekeyState.generate(identity: identity),
-            createdAt: queuedAt
-        )
-
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
-        XCTAssertEqual(profile.pendingDirectDeliveries, [existingPending, missingIntentPending])
-        XCTAssertEqual(
-            profile.protocolIntents.first(where: { $0.id == existingPending.id }),
-            existingIntent
-        )
-        let repaired = try XCTUnwrap(
-            profile.protocolIntents.first(where: { $0.id == missingIntentPending.id })
-        )
-        XCTAssertEqual(repaired.kind, .sendEvent)
-        XCTAssertFalse(repaired.state.isTerminal)
-        XCTAssertTrue(profile.isArchitectureV2Ready)
-
-        let reloaded = try NoctweaveCoder.decode(
-            IdentityProfile.self,
-            from: NoctweaveCoder.encode(profile, sortedKeys: true)
-        )
-        XCTAssertEqual(reloaded.pendingDirectDeliveries, profile.pendingDirectDeliveries)
-        XCTAssertEqual(reloaded.protocolIntents, profile.protocolIntents)
+        XCTAssertThrowsError(try NoctweaveCoder.encode(state, sortedKeys: true)) { error in
+            XCTAssertEqual(error as? ClientStateError, .invalidCurrentState)
+        }
     }
 
     func testDirectSendBackpressurePreservesFullIntentJournal() async throws {

@@ -92,7 +92,7 @@ final class InboxRouteCapabilityRelayTests: XCTestCase {
         )
     }
 
-    func testRegistrationCursorDecoderMigratesOnlyTrueLegacyState() throws {
+    func testRegistrationCursorDecoderRejectsIncompleteState() throws {
         let scope = Data(repeating: 0xA5, count: 32)
         let digest = Data(repeating: 0xB6, count: 32)
         let current = InboxRegistrationRecord(
@@ -136,15 +136,7 @@ final class InboxRouteCapabilityRelayTests: XCTestCase {
             )
         )
 
-        let legacy = InboxRegistrationRecord(
-            accessPublicKey: Data([0x02]),
-            registeredAt: Date(timeIntervalSince1970: 1_001)
-        )
-        var legacyObject = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: RelayCodec.encoder().encode(legacy))
-                as? [String: Any]
-        )
-        var explicitNullScope = legacyObject
+        var explicitNullScope = missingScope
         explicitNullScope["routeMutationScope"] = NSNull()
         XCTAssertThrowsError(
             try RelayCodec.decoder().decode(
@@ -152,16 +144,6 @@ final class InboxRouteCapabilityRelayTests: XCTestCase {
                 from: JSONSerialization.data(withJSONObject: explicitNullScope)
             )
         )
-        legacyObject.removeValue(forKey: "routeMutationScope")
-        legacyObject.removeValue(forKey: "lastRouteMutationSequence")
-        legacyObject.removeValue(forKey: "lastRouteMutationDigest")
-        let migrated = try RelayCodec.decoder().decode(
-            InboxRegistrationRecord.self,
-            from: JSONSerialization.data(withJSONObject: legacyObject)
-        )
-        XCTAssertTrue(migrated.routeMutationScope.isValidRouteMutationScope)
-        XCTAssertEqual(migrated.lastRouteMutationSequence, 0)
-        XCTAssertNil(migrated.lastRouteMutationDigest)
     }
 
     func testFederationPreservesCapabilityOnlyDeliveryShape() throws {

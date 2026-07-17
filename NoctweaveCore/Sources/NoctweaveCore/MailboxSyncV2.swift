@@ -99,10 +99,8 @@ public enum MailboxConsumerState: String, Codable, Equatable {
 public struct MailboxConsumerRegistration: Codable, Equatable {
     public let consumerId: MailboxConsumerId
     /// The relay/inbox-route signing key authorized to sync and commit this
-    /// consumer. `nil` is accepted only while decoding a pre-credential v2
-    /// relay snapshot; those records fail closed until the inbox authority and
-    /// the route credential jointly re-register the same consumer identifier.
-    public let consumerSigningPublicKey: Data?
+    /// consumer. Current state never contains an unbound consumer.
+    public let consumerSigningPublicKey: Data
     public let state: MailboxConsumerState
     public let committedSequence: UInt64
     public let registeredAt: Date
@@ -110,7 +108,7 @@ public struct MailboxConsumerRegistration: Codable, Equatable {
 
     public init(
         consumerId: MailboxConsumerId,
-        consumerSigningPublicKey: Data?,
+        consumerSigningPublicKey: Data,
         state: MailboxConsumerState = .active,
         committedSequence: UInt64,
         registeredAt: Date = Date(),
@@ -126,7 +124,7 @@ public struct MailboxConsumerRegistration: Codable, Equatable {
 
     public var isStructurallyValid: Bool {
         guard consumerId.isStructurallyValid,
-              consumerSigningPublicKey.map(SigningKeyPair.isValidPublicKey) == true,
+              SigningKeyPair.isValidPublicKey(consumerSigningPublicKey),
               registeredAt.timeIntervalSince1970.isFinite,
               revokedAt?.timeIntervalSince1970.isFinite ?? true else {
             return false

@@ -146,18 +146,18 @@ final class ArchitectureV2HeadlessTests: XCTestCase {
         XCTAssertEqual(failedState.protocolIntents.first { $0.id == pendingId }?.state, .prepared)
 
         // A registration attempt that cannot reach the relay must still durably
-        // reserve its opaque consumer id so restart replays the same id.
+        // reserve its route-scoped credential so restart replays the same ID.
         await expectAsyncThrow {
             _ = try await bob.receive(maxCount: 10)
         }
         let maybePreparedBobState = try await bob.store.load()
         let preparedBobState = try XCTUnwrap(maybePreparedBobState)
         let preparedConsumerId = try XCTUnwrap(
-            preparedBobState.localInstallation?.mailboxConsumerIdsByRoute.values.first
+            preparedBobState.localInstallation?.mailboxCredentialsByRoute.values.first?.consumerId
         )
 
-        // Corrupted or legacy outbox counters cannot overflow during retry; the
-        // v2 intent remains the authoritative retry bound.
+        // A saturated outbox attempt counter cannot overflow during retry; the
+        // protocol intent remains the authoritative retry bound.
         failedState.pendingDirectDeliveries[0].attemptCount = Int.max
         try await alice.store.save(failedState)
 
@@ -181,7 +181,7 @@ final class ArchitectureV2HeadlessTests: XCTestCase {
         )
         XCTAssertEqual(persistedInboundEvent, persistedOutboundEvent)
         XCTAssertEqual(
-            recoveredBobState.localInstallation?.mailboxConsumerIdsByRoute.values.first,
+            recoveredBobState.localInstallation?.mailboxCredentialsByRoute.values.first?.consumerId,
             preparedConsumerId
         )
         let emptyReplay = try await bob.receive(maxCount: 10)

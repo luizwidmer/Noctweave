@@ -236,10 +236,11 @@ public actor HeadlessMessagingClient {
         }
         let identity = try Identity.generate(displayName: displayName)
         let inboxAccessKey = try SigningKeyPair.generate()
-        let inboxId = InboxAddress.derived(from: inboxAccessKey.publicKeyData)
-        var state = ClientState(identity: identity, relay: relay, inboxId: inboxId)
-        state.inboxAccessKey = inboxAccessKey
-        try state.migrateToArchitectureV2()
+        var state = try ClientState(
+            identity: identity,
+            relay: relay,
+            inboxAccessKey: inboxAccessKey
+        )
         state.relayServers = [
             RelayServerRecord(
                 name: relay.host,
@@ -564,7 +565,7 @@ public actor HeadlessMessagingClient {
             createdAt: mutationAt
         )
         guard journal.isStructurallyValid else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         state.identityMutationV2 = journal
         // This is the rollback boundary: the new identity, manifest, sessions,
@@ -596,7 +597,7 @@ public actor HeadlessMessagingClient {
             relay: state.relay
         )
         guard let stagedEndpoint = staged.issuedContactEndpointsV2.first else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         let newOffer = try ContactOffer.createCertified(
             displayName: staged.identity.displayName,
@@ -691,11 +692,6 @@ public actor HeadlessMessagingClient {
             if credential.inboxId == state.inboxId.lowercased(),
                let relay = credential.relay {
                 retirementRelaysByRoute[routeKey] = relay
-            } else if let parsed = Self.parseMailboxRouteKey(routeKey),
-                      parsed.inboxId == state.inboxId.lowercased() {
-                // Pre-scope migration fallback. It preserves route teardown,
-                // while newly written credentials retain the exact endpoint.
-                retirementRelaysByRoute[routeKey] = parsed.relay
             }
         }
         let pendingRetirements = retirementRelaysByRoute
@@ -715,7 +711,7 @@ public actor HeadlessMessagingClient {
             createdAt: staged.createdAt
         )
         guard journal.isStructurallyValid else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         state.identityMutationV2 = journal
         // No external state has changed yet; a failed save leaves the old
@@ -1502,52 +1498,12 @@ public actor HeadlessMessagingClient {
         }) {
             guard state.localInstallation?.relationshipHandles[binding.relationshipId]
                     == binding.localInstallationHandle else {
-                throw IdentityProfileMigrationError.invalidV2State
+                throw IdentityProfileStateError.invalidCurrentState
             }
             _ = state.relationshipsV2[index].includeConversationIds([event.conversationId])
             guard state.relationshipsV2[index].appendEvent(event) else {
-                throw IdentityProfileMigrationError.invalidV2State
+                throw IdentityProfileStateError.invalidCurrentState
             }
-            return
-        }
-
-        // A local migration or burn may leave an empty backfill shell. Rebind
-        // only such a shell; a peer burn starts a new generation-scoped
-        // relationship beside the retained historical relationship below.
-        if let shellIndex = state.relationshipsV2.firstIndex(where: {
-            $0.contactId == contact.id
-                && $0.events.isEmpty
-                && $0.routeSets.isEmpty
-                && $0.eventCheckpoint == nil
-        }) {
-            let shell = state.relationshipsV2[shellIndex]
-            guard !state.relationshipsV2.contains(where: {
-                      $0.id == binding.relationshipId && $0.contactId != contact.id
-                  }),
-                  var installation = state.localInstallation,
-                  installation.relationshipHandles[shell.id]
-                    == shell.localInstallationHandle else {
-                throw IdentityProfileMigrationError.invalidV2State
-            }
-            let rebound = RelationshipStateV2(
-                id: binding.relationshipId,
-                contactId: contact.id,
-                localInstallationHandle: binding.localInstallationHandle,
-                conversationIds: shell.conversationIds + [event.conversationId],
-                events: [event],
-                createdAt: shell.createdAt
-            )
-            guard rebound.isStructurallyValid,
-                  installation.relationshipHandles[binding.relationshipId]
-                    .map({ $0 == binding.localInstallationHandle }) ?? true else {
-                throw IdentityProfileMigrationError.invalidV2State
-            }
-            installation.relationshipHandles.removeValue(forKey: shell.id)
-            installation.relationshipHandles[binding.relationshipId]
-                = binding.localInstallationHandle
-            state.relationshipsV2[shellIndex] = rebound
-            state.relationshipsV2.sort { $0.id.uuidString < $1.id.uuidString }
-            state.localInstallation = installation
             return
         }
 
@@ -1561,12 +1517,12 @@ public actor HeadlessMessagingClient {
         guard relationship.isStructurallyValid,
               state.relationshipsV2.count < 4_096,
               !state.relationshipsV2.contains(where: { $0.id == binding.relationshipId }) else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         guard var installation = state.localInstallation,
               installation.relationshipHandles[binding.relationshipId]
                 .map({ $0 == binding.localInstallationHandle }) ?? true else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         installation.relationshipHandles[binding.relationshipId]
             = binding.localInstallationHandle
@@ -1796,7 +1752,7 @@ public actor HeadlessMessagingClient {
         }
         let routeKey = Self.mailboxRouteKey(relay: state.relay, inboxId: state.inboxId)
         let hadCredential = installation.mailboxCredentialsByRoute[routeKey] != nil
-        var credential = try installation.ensureMailboxCredential(
+        let credential = try installation.ensureMailboxCredential(
             for: routeKey,
             relay: state.relay,
             inboxId: state.inboxId
@@ -1812,58 +1768,17 @@ public actor HeadlessMessagingClient {
         }
 
         let startingSequence = installation.committedSequencesByStream[routeKey] ?? 0
-        var request = try Self.makeMailboxConsumerRegistrationRequest(
+        let request = try Self.makeMailboxConsumerRegistrationRequest(
             inboxId: state.inboxId,
             consumerId: credential.consumerId,
             startingSequence: startingSequence,
             authorityKey: accessKey,
-            consumerKey: credential.signingKey,
-            sponsorConsumerId: credential.legacySponsorConsumerId,
-            sponsorKey: credential.legacySponsorConsumerId == nil ? nil : installation.signingKey
+            consumerKey: credential.signingKey
         )
-        var response = try await relayClient(for: state.relay).send(
+        let response = try await relayClient(for: state.relay).send(
             .registerMailboxConsumer(request),
             timeout: timeout
         )
-        if response.type != .mailboxConsumer,
-           let legacyConsumerId = credential.legacySponsorConsumerId {
-            // Profiles written before route-scoped credentials used the
-            // installation key directly. Bind/replay that legacy consumer,
-            // then use it once as the authenticated sponsor for a fresh route
-            // key. A lost response is safe: registration and revocation are
-            // idempotent, and the migration marker remains durable.
-            let legacyRequest = try Self.makeMailboxConsumerRegistrationRequest(
-                inboxId: state.inboxId,
-                consumerId: legacyConsumerId,
-                startingSequence: startingSequence,
-                authorityKey: accessKey,
-                consumerKey: installation.signingKey
-            )
-            let legacyResponse = try await relayClient(for: state.relay).send(
-                .registerMailboxConsumer(legacyRequest),
-                timeout: timeout
-            )
-            guard legacyResponse.type == .mailboxConsumer,
-                  legacyResponse.mailboxConsumer?.consumerId == legacyConsumerId,
-                  legacyResponse.mailboxConsumer?.state == .active else {
-                throw HeadlessMessagingClientError.relayRejected(
-                    Self.redactedRelayRejection(legacyResponse)
-                )
-            }
-            request = try Self.makeMailboxConsumerRegistrationRequest(
-                inboxId: state.inboxId,
-                consumerId: credential.consumerId,
-                startingSequence: startingSequence,
-                authorityKey: accessKey,
-                consumerKey: credential.signingKey,
-                sponsorConsumerId: legacyConsumerId,
-                sponsorKey: installation.signingKey
-            )
-            response = try await relayClient(for: state.relay).send(
-                .registerMailboxConsumer(request),
-                timeout: timeout
-            )
-        }
         guard response.type == .mailboxConsumer,
               let registration = response.mailboxConsumer,
               registration.consumerId == credential.consumerId,
@@ -1871,22 +1786,8 @@ public actor HeadlessMessagingClient {
               registration.state == .active else {
             throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
         }
-        if let legacyConsumerId = credential.legacySponsorConsumerId {
-            try await revokeMailboxConsumer(
-                inboxId: state.inboxId,
-                relay: state.relay,
-                accessKey: accessKey,
-                consumerId: legacyConsumerId
-            )
-            try installation.completeMailboxCredentialMigration(for: routeKey)
-            guard let completedCredential = installation.mailboxCredentialsByRoute[routeKey] else {
-                throw HeadlessMessagingClientError.missingInstallation
-            }
-            credential = completedCredential
-        }
-        // The relay's idempotent registration response is also the recovery
-        // source for profiles written before committed sequence tracking was
-        // persisted locally.
+        // The relay's idempotent registration response is the authoritative
+        // recovery source after a lost response.
         installation.committedSequencesByStream[routeKey] = registration.committedSequence
         state.localInstallation = installation
         try await store.save(state)
@@ -1917,7 +1818,7 @@ public actor HeadlessMessagingClient {
 
     private func retireInbox(_ retirement: PendingInboxRetirementV2) async throws {
         guard retirement.isStructurallyValid else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         let response = try await relayClient(for: retirement.relay).send(
             .retireInbox(retirement.request),
@@ -2197,7 +2098,7 @@ public actor HeadlessMessagingClient {
     ) throws {
         guard dependencies.count <= NoctweaveArchitectureV2.maximumIntentDependencies,
               pending.envelope.isStructurallyValid else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         let encoded = try NoctweaveCoder.encode(pending.envelope, sortedKeys: true)
         let digest = Data(SHA256.hash(data: encoded))
@@ -2207,7 +2108,7 @@ public actor HeadlessMessagingClient {
                   !existing.state.isTerminal,
                   existing.targetIdentifier == target,
                   existing.payloadDigest == digest else {
-                throw IdentityProfileMigrationError.invalidV2State
+                throw IdentityProfileStateError.invalidCurrentState
             }
             return
         }
@@ -2232,13 +2133,13 @@ public actor HeadlessMessagingClient {
                 return $0.updatedAt < $1.updatedAt
             }
         guard prunable.count >= requiredPruneCount else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         let prunedIds = Set(prunable.prefix(requiredPruneCount).map(\.id))
         state.protocolIntents.removeAll { prunedIds.contains($0.id) }
         guard state.protocolIntents.count
                 < NoctweaveArchitectureV2.maximumProtocolIntents else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         let intent = ProtocolIntentV2.prepare(
             id: pending.id,
@@ -2249,7 +2150,7 @@ public actor HeadlessMessagingClient {
             createdAt: pending.queuedAt
         )
         guard intent.isStructurallyValid else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         state.protocolIntents.append(intent)
     }
@@ -2273,7 +2174,7 @@ public actor HeadlessMessagingClient {
     /// application sends to race the cutover. After the immediate local
     /// cutover, each retained relationship remains blocked only until its exact
     /// continuity ciphertext has reached the relay and its intent is durable.
-    /// Rotation uses the same per-contact rule so legacy peers cannot observe a
+    /// Rotation uses the same per-contact rule so peers cannot observe a
     /// new identity key before the signed continuity notice.
     private func requireContinuityDeliveryReady(
         for contact: Contact,
@@ -2315,17 +2216,17 @@ public actor HeadlessMessagingClient {
         guard var journal = state.identityMutationV2,
               journal.id == originalJournal.id,
               journal.kind == .burn else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
 
         if journal.phase == .prepared {
             guard let staged = journal.stagedBurn else {
-                throw IdentityProfileMigrationError.invalidV2State
+                throw IdentityProfileStateError.invalidCurrentState
             }
             try await registerStagedIdentityRoute(staged)
             let transitionAt = max(Date(), journal.updatedAt)
             guard journal.markNewRouteReady(at: transitionAt) else {
-                throw IdentityProfileMigrationError.invalidV2State
+                throw IdentityProfileStateError.invalidCurrentState
             }
             state.identityMutationV2 = journal
             // Replaying a lost response reuses the staged inbox and consumer;
@@ -2339,7 +2240,7 @@ public actor HeadlessMessagingClient {
             // The old identity remains active on disk until this atomic save.
             try await store.save(state)
             guard let updatedJournal = state.identityMutationV2 else {
-                throw IdentityProfileMigrationError.invalidV2State
+                throw IdentityProfileStateError.invalidCurrentState
             }
             journal = updatedJournal
         }
@@ -2356,7 +2257,7 @@ public actor HeadlessMessagingClient {
                         routeIdentifier: retirement.routeIdentifier,
                         at: transitionAt
                     ) else {
-                        throw IdentityProfileMigrationError.invalidV2State
+                        throw IdentityProfileStateError.invalidCurrentState
                     }
                     state.identityMutationV2 = journal
                     try await store.save(state)
@@ -2377,7 +2278,7 @@ public actor HeadlessMessagingClient {
     ) async throws {
         guard staged.isStructurallyValid,
               let credential = staged.mailboxCredential else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         var inboxRequest = RegisterInboxRequest.privacyMinimizedV2(
             inboxId: staged.inboxId,
@@ -2840,33 +2741,6 @@ public actor HeadlessMessagingClient {
 
     private static func mailboxRouteKey(relay: RelayEndpoint, inboxId: String) -> String {
         "\(relay.transport.rawValue):\(relay.useTLS ? 1 : 0):\(relay.host.lowercased()):\(relay.port):\(inboxId.lowercased())"
-    }
-
-    /// Migration parser for route keys written before credentials retained the
-    /// exact relay endpoint. Hosts may be IPv6, so parse fixed fields from both
-    /// ends and join the middle segments back into the host.
-    private static func parseMailboxRouteKey(
-        _ routeKey: String
-    ) -> (relay: RelayEndpoint, inboxId: String)? {
-        let fields = routeKey.split(separator: ":", omittingEmptySubsequences: false)
-        guard fields.count >= 5,
-              let transport = RelayEndpointTransport(rawValue: String(fields[0])),
-              fields[1] == "0" || fields[1] == "1",
-              let port = UInt16(fields[fields.count - 2]) else {
-            return nil
-        }
-        let host = fields[2..<(fields.count - 2)].joined(separator: ":")
-        let inboxId = String(fields[fields.count - 1])
-        guard !host.isEmpty, InboxAddress.isValid(inboxId) else { return nil }
-        return (
-            RelayEndpoint(
-                host: host,
-                port: port,
-                useTLS: fields[1] == "1",
-                transport: transport
-            ),
-            inboxId.lowercased()
-        )
     }
 
     private static func makeActorProof(

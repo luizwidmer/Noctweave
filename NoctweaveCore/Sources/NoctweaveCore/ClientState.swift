@@ -200,13 +200,9 @@ public struct ClientState: Codable {
     }
 
     public init(
-        schemaVersion: Int = 1,
         identity: Identity,
         relay: RelayEndpoint,
-        inboxId: String,
-        contacts: [Contact] = [],
-        conversations: [Conversation] = [],
-        groups: [GroupConversation] = [],
+        inboxAccessKey: SigningKeyPair,
         relayServers: [RelayServerRecord] = [],
         selectedRelayId: UUID? = nil,
         masterServerSources: [MasterServerSource] = [],
@@ -219,11 +215,18 @@ public struct ClientState: Codable {
         hasCompletedOnboarding: Bool = true,
         hasAcceptedPrivacyPolicy: Bool = true,
         hasAcceptedTermsOfUse: Bool = true,
-        prekeys: PrekeyState? = nil,
-        identityProfiles: [IdentityProfile]? = nil,
-        activeIdentityId: UUID? = nil
-    ) {
-        self.schemaVersion = schemaVersion
+        prekeys: PrekeyState? = nil
+    ) throws {
+        let profile = try IdentityProfile.create(
+            identity: identity,
+            relay: relay,
+            inboxAccessKey: inboxAccessKey,
+            selectedRelayId: selectedRelayId,
+            prekeys: prekeys
+        )
+        self.schemaVersion = NoctweaveArchitectureV2.version
+        self.identityProfiles = [profile]
+        self.activeIdentityId = profile.id
         self.relayServers = relayServers
         self.masterServerSources = masterServerSources
         self.insecurePairing = insecurePairing
@@ -235,45 +238,27 @@ public struct ClientState: Codable {
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.hasAcceptedPrivacyPolicy = hasAcceptedPrivacyPolicy
         self.hasAcceptedTermsOfUse = hasAcceptedTermsOfUse
-        if let identityProfiles, !identityProfiles.isEmpty {
-            self.identityProfiles = identityProfiles
-            self.activeIdentityId = activeIdentityId ?? identityProfiles[0].id
-        } else {
-            let resolvedPrekeys = prekeys ?? (try? PrekeyState.generate(identity: identity)) ?? PrekeyState(
-                signedPrekeyId: UUID(),
-                signedPrekeyPublicKey: Data(),
-                signedPrekeyPrivateKey: Data(),
-                signedPrekeySignature: Data(),
-                signedPrekeyIssuedAt: Date(),
-                oneTimePrekeys: []
-            )
-            let profile = IdentityProfile(
-                identity: identity,
-                inboxId: inboxId,
-                relay: relay,
-                contacts: contacts,
-                conversations: conversations,
-                groups: groups,
-                selectedRelayId: selectedRelayId,
-                prekeys: resolvedPrekeys
-            )
-            self.identityProfiles = [profile]
-            self.activeIdentityId = profile.id
-        }
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
-        relayServers = try container.decodeIfPresent([RelayServerRecord].self, forKey: .relayServers) ?? []
-        masterServerSources = try container.decodeIfPresent([MasterServerSource].self, forKey: .masterServerSources) ?? []
-        insecurePairing = try container.decodeIfPresent(InsecurePairingSettings.self, forKey: .insecurePairing) ?? InsecurePairingSettings()
-        appearance = try container.decodeIfPresent(AppearanceSettings.self, forKey: .appearance) ?? AppearanceSettings()
-        privacy = try container.decodeIfPresent(PrivacySettings.self, forKey: .privacy) ?? PrivacySettings()
-        appLock = try container.decodeIfPresent(AppLockSettings.self, forKey: .appLock) ?? AppLockSettings()
-        chatList = try container.decodeIfPresent(ChatListSettings.self, forKey: .chatList) ?? ChatListSettings()
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == NoctweaveArchitectureV2.version else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .schemaVersion,
+                in: container,
+                debugDescription: "Unsupported client state schema"
+            )
+        }
+        relayServers = try container.decode([RelayServerRecord].self, forKey: .relayServers)
+        masterServerSources = try container.decode([MasterServerSource].self, forKey: .masterServerSources)
+        insecurePairing = try container.decode(InsecurePairingSettings.self, forKey: .insecurePairing)
+        appearance = try container.decode(AppearanceSettings.self, forKey: .appearance)
+        privacy = try container.decode(PrivacySettings.self, forKey: .privacy)
+        appLock = try container.decode(AppLockSettings.self, forKey: .appLock)
+        chatList = try container.decode(ChatListSettings.self, forKey: .chatList)
         relayCertificatePins = Self.sanitizedRelayCertificatePins(
-            try container.decodeIfPresent([RelayCertificatePinRecord].self, forKey: .relayCertificatePins) ?? []
+            try container.decode([RelayCertificatePinRecord].self, forKey: .relayCertificatePins)
         )
         hasCompletedOnboarding = try container.decode(Bool.self, forKey: .hasCompletedOnboarding)
         hasAcceptedPrivacyPolicy = try container.decode(Bool.self, forKey: .hasAcceptedPrivacyPolicy)
@@ -287,10 +272,20 @@ public struct ClientState: Codable {
             )
         }
         identityProfiles = profiles
-        activeIdentityId = try container.decodeIfPresent(UUID.self, forKey: .activeIdentityId) ?? profiles[0].id
+        activeIdentityId = try container.decode(UUID.self, forKey: .activeIdentityId)
+        guard isCurrentBaselineValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .identityProfiles,
+                in: container,
+                debugDescription: "Invalid current client state"
+            )
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
+        guard isCurrentBaselineValid else {
+            throw ClientStateError.invalidCurrentState
+        }
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(schemaVersion, forKey: .schemaVersion)
         try container.encode(identityProfiles, forKey: .identityProfiles)
@@ -308,19 +303,12 @@ public struct ClientState: Codable {
         try container.encode(hasAcceptedTermsOfUse, forKey: .hasAcceptedTermsOfUse)
     }
 
-    @discardableResult
-    public mutating func migrateToArchitectureV2() throws -> Bool {
-        guard schemaVersion == 1 || schemaVersion == NoctweaveArchitectureV2.version else {
-            throw ClientStateMigrationError.unsupportedVersion(schemaVersion)
-        }
-        var changed = schemaVersion != NoctweaveArchitectureV2.version
-        for index in identityProfiles.indices {
-            if try identityProfiles[index].migrateToArchitectureV2() {
-                changed = true
-            }
-        }
-        schemaVersion = NoctweaveArchitectureV2.version
-        return changed
+    public var isCurrentBaselineValid: Bool {
+        schemaVersion == NoctweaveArchitectureV2.version
+            && !identityProfiles.isEmpty
+            && Set(identityProfiles.map(\.id)).count == identityProfiles.count
+            && identityProfiles.contains(where: { $0.id == activeIdentityId })
+            && identityProfiles.allSatisfy(\.isArchitectureV2Ready)
     }
 
     private static func sanitizedRelayCertificatePins(
@@ -553,12 +541,12 @@ public struct ClientState: Codable {
               staged.isStructurallyValid,
               date.timeIntervalSince1970.isFinite,
               date >= journal.updatedAt else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         let stagedDeliveries = journal.notifications.compactMap(\.stagedDelivery)
         guard stagedDeliveries.count == journal.notifications.count,
               Set(stagedDeliveries.map(\.id)).count == stagedDeliveries.count else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
 
         let retainedContactIds = Set(journal.notifications.map(\.contactId))
@@ -599,14 +587,12 @@ public struct ClientState: Codable {
         // generation must not retain a general old-to-new audit link.
         profile.continuityEvents.removeAll()
         guard journal.markCutoverComplete(at: date) else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         profile.identityMutationV2 = journal
-        _ = profile.backfillArchitectureV2ProfileState()
         identityProfiles[index] = profile
-        schemaVersion = NoctweaveArchitectureV2.version
         guard identityProfiles[index].isArchitectureV2Ready else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
     }
 
@@ -631,7 +617,7 @@ public struct ClientState: Codable {
               date >= current.issuedAt,
               let previousDigest = current.digest,
               current.epoch < UInt64.max else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         identityProfiles[index].installationManifest = try InstallationManifest.create(
             identityGenerationId: generationId,
@@ -644,14 +630,16 @@ public struct ClientState: Codable {
     }
 }
 
-public enum ClientStateMigrationError: Error, Equatable {
-    case unsupportedVersion(Int)
-    case missingActiveProfile
+public enum ClientStateError: Error, Equatable {
+    case invalidCurrentState
 }
 
 fileprivate extension ClientState {
     func activeProfileIndex() -> Int {
-        identityProfiles.firstIndex(where: { $0.id == activeIdentityId }) ?? 0
+        guard let index = identityProfiles.firstIndex(where: { $0.id == activeIdentityId }) else {
+            preconditionFailure("Client state has no active current-generation profile")
+        }
+        return index
     }
 
     var activeProfile: IdentityProfile {

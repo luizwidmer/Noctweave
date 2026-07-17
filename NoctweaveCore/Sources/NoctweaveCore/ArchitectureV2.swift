@@ -39,11 +39,6 @@ public enum NoctweaveArchitectureV2 {
 /// compacted out, an old replay is decrypted again and rejected by the ratchet
 /// instead of being skipped without verification.
 public struct InboundEnvelopeReceiptV2: Codable, Equatable, Identifiable {
-    /// Sentinel used only when decoding the pre-scope architecture-v2 cache.
-    /// Legacy entries remain useful for exact envelope replay, but do not claim
-    /// a globally unique logical event ID across unrelated relationships.
-    public static let legacyUnscopedSourceId = UUID(uuidString: "00000000-0000-0000-0000-000000000000")!
-
     public var id: UUID { envelopeId }
     public let sourceScopeId: UUID
     public let logicalEventId: UUID
@@ -86,8 +81,7 @@ public struct InboundEnvelopeReceiptV2: Codable, Equatable, Identifiable {
     ) -> Bool {
         self.logicalEventId == logicalEventId
             && self.envelopeId == envelopeId
-            && (self.sourceScopeId == sourceScopeId
-                || self.sourceScopeId == Self.legacyUnscopedSourceId)
+            && self.sourceScopeId == sourceScopeId
             && self.envelopeDigest == envelopeDigest
     }
 
@@ -101,8 +95,7 @@ public struct InboundEnvelopeReceiptV2: Codable, Equatable, Identifiable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        sourceScopeId = try container.decodeIfPresent(UUID.self, forKey: .sourceScopeId)
-            ?? Self.legacyUnscopedSourceId
+        sourceScopeId = try container.decode(UUID.self, forKey: .sourceScopeId)
         logicalEventId = try container.decode(UUID.self, forKey: .logicalEventId)
         envelopeId = try container.decode(UUID.self, forKey: .envelopeId)
         envelopeDigest = try container.decode(Data.self, forKey: .envelopeDigest)
@@ -897,10 +890,6 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
     public var committedSequencesByStream: [String: UInt64]
     public var pendingMailboxCommitsByStream: [String: PendingMailboxCursorCommit]
     public var mailboxCredentialsByRoute: [String: MailboxRouteCredentialV2]
-    /// Compatibility index for pre-route-credential profiles. New code keeps
-    /// this synchronized with `mailboxCredentialsByRoute` while an old bound
-    /// consumer is migrated through an authenticated sponsor rotation.
-    public var mailboxConsumerIdsByRoute: [String: MailboxConsumerId]
     public var relationshipHandles: [UUID: RelationshipInstallationHandle]
     public let createdAt: Date
 
@@ -914,7 +903,6 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
         committedSequencesByStream: [String: UInt64] = [:],
         pendingMailboxCommitsByStream: [String: PendingMailboxCursorCommit] = [:],
         mailboxCredentialsByRoute: [String: MailboxRouteCredentialV2] = [:],
-        mailboxConsumerIdsByRoute: [String: MailboxConsumerId] = [:],
         relationshipHandles: [UUID: RelationshipInstallationHandle] = [:],
         createdAt: Date = Date()
     ) {
@@ -927,7 +915,6 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
         self.committedSequencesByStream = committedSequencesByStream
         self.pendingMailboxCommitsByStream = pendingMailboxCommitsByStream
         self.mailboxCredentialsByRoute = mailboxCredentialsByRoute
-        self.mailboxConsumerIdsByRoute = mailboxConsumerIdsByRoute
         self.relationshipHandles = relationshipHandles
         self.createdAt = createdAt
     }
@@ -995,7 +982,6 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
             && lhs.committedSequencesByStream == rhs.committedSequencesByStream
             && lhs.pendingMailboxCommitsByStream == rhs.pendingMailboxCommitsByStream
             && lhs.mailboxCredentialsByRoute == rhs.mailboxCredentialsByRoute
-            && lhs.mailboxConsumerIdsByRoute == rhs.mailboxConsumerIdsByRoute
             && lhs.relationshipHandles == rhs.relationshipHandles
             && lhs.createdAt == rhs.createdAt
     }
@@ -1010,7 +996,6 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
         case committedSequencesByStream
         case pendingMailboxCommitsByStream
         case mailboxCredentialsByRoute
-        case mailboxConsumerIdsByRoute
         case relationshipHandles
         case createdAt
     }
@@ -1022,36 +1007,37 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
         signingKey = try container.decode(SigningKeyPair.self, forKey: .signingKey)
         agreementKey = try container.decode(AgreementKeyPair.self, forKey: .agreementKey)
         prekeys = try container.decode(PrekeyState.self, forKey: .prekeys)
-        cursorsByStream = try container.decodeIfPresent(
+        cursorsByStream = try container.decode(
             [String: MailboxCursor].self,
             forKey: .cursorsByStream
-        ) ?? [:]
-        committedSequencesByStream = try container.decodeIfPresent(
+        )
+        committedSequencesByStream = try container.decode(
             [String: UInt64].self,
             forKey: .committedSequencesByStream
-        ) ?? [:]
-        pendingMailboxCommitsByStream = try container.decodeIfPresent(
+        )
+        pendingMailboxCommitsByStream = try container.decode(
             [String: PendingMailboxCursorCommit].self,
             forKey: .pendingMailboxCommitsByStream
-        ) ?? [:]
-        mailboxCredentialsByRoute = try container.decodeIfPresent(
+        )
+        mailboxCredentialsByRoute = try container.decode(
             [String: MailboxRouteCredentialV2].self,
             forKey: .mailboxCredentialsByRoute
-        ) ?? [:]
-        mailboxConsumerIdsByRoute = try container.decodeIfPresent(
-            [String: MailboxConsumerId].self,
-            forKey: .mailboxConsumerIdsByRoute
-        ) ?? [:]
-        relationshipHandles = try container.decodeIfPresent(
+        )
+        relationshipHandles = try container.decode(
             [UUID: RelationshipInstallationHandle].self,
             forKey: .relationshipHandles
-        ) ?? [:]
+        )
         createdAt = try container.decode(Date.self, forKey: .createdAt)
+        guard mailboxStateIsStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .mailboxCredentialsByRoute,
+                in: container,
+                debugDescription: "Invalid current mailbox endpoint state"
+            )
+        }
     }
 
-    /// Returns a fresh per-route credential. Profiles written before route
-    /// credentials retain their former consumer only as a one-time sponsor;
-    /// the installation signing key is never used for a newly created route.
+    /// Returns a fresh credential bound to exactly one relay/inbox route.
     public mutating func ensureMailboxCredential(
         for routeKey: String,
         relay: RelayEndpoint? = nil,
@@ -1066,8 +1052,7 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
             throw CryptoError.invalidPayload
         }
         if var existing = mailboxCredentialsByRoute[routeKey] {
-            guard existing.isStructurallyValid,
-                  mailboxConsumerIdsByRoute[routeKey] == existing.consumerId else {
+            guard existing.isStructurallyValid else {
                 throw CryptoError.invalidPayload
             }
             if let relay, let inboxId {
@@ -1090,41 +1075,22 @@ public struct LocalInstallationState: Codable, Equatable, Identifiable {
         let credential = try MailboxRouteCredentialV2.generate(
             relay: relay,
             inboxId: inboxId,
-            legacySponsorConsumerId: mailboxConsumerIdsByRoute[routeKey],
             createdAt: date
         )
         guard credential.routeIdentifier.map({ $0 == routeKey }) ?? true else {
             throw CryptoError.invalidPayload
         }
         mailboxCredentialsByRoute[routeKey] = credential
-        mailboxConsumerIdsByRoute[routeKey] = credential.consumerId
         return credential
     }
 
-    public mutating func completeMailboxCredentialMigration(for routeKey: String) throws {
-        guard var credential = mailboxCredentialsByRoute[routeKey],
-              credential.isStructurallyValid else {
-            throw CryptoError.invalidPayload
-        }
-        credential.legacySponsorConsumerId = nil
-        mailboxCredentialsByRoute[routeKey] = credential
-        mailboxConsumerIdsByRoute[routeKey] = credential.consumerId
-    }
-
     public var mailboxStateIsStructurallyValid: Bool {
-        mailboxConsumerIdsByRoute.count <= NoctweaveArchitectureV2.maximumRoutes
-            && mailboxCredentialsByRoute.count <= NoctweaveArchitectureV2.maximumRoutes
-            && mailboxConsumerIdsByRoute.allSatisfy { routeKey, consumerId in
-                !routeKey.isEmpty
-                    && routeKey.utf8.count <= 1_024
-                    && consumerId.isStructurallyValid
-            }
+        mailboxCredentialsByRoute.count <= NoctweaveArchitectureV2.maximumRoutes
             && mailboxCredentialsByRoute.allSatisfy { routeKey, credential in
                 !routeKey.isEmpty
                     && routeKey.utf8.count <= 1_024
                     && credential.isStructurallyValid
                     && (credential.routeIdentifier.map { $0 == routeKey } ?? true)
-                    && mailboxConsumerIdsByRoute[routeKey] == credential.consumerId
             }
     }
 }
@@ -1137,7 +1103,6 @@ public struct MailboxRouteCredentialV2: Codable, Equatable {
     public let signingKey: SigningKeyPair
     public var relay: RelayEndpoint?
     public var inboxId: String?
-    public var legacySponsorConsumerId: MailboxConsumerId?
     public let createdAt: Date
 
     public init(
@@ -1145,21 +1110,18 @@ public struct MailboxRouteCredentialV2: Codable, Equatable {
         signingKey: SigningKeyPair,
         relay: RelayEndpoint? = nil,
         inboxId: String? = nil,
-        legacySponsorConsumerId: MailboxConsumerId? = nil,
         createdAt: Date = Date()
     ) {
         self.consumerId = consumerId
         self.signingKey = signingKey
         self.relay = relay
         self.inboxId = inboxId?.lowercased()
-        self.legacySponsorConsumerId = legacySponsorConsumerId
         self.createdAt = createdAt
     }
 
     public static func generate(
         relay: RelayEndpoint? = nil,
         inboxId: String? = nil,
-        legacySponsorConsumerId: MailboxConsumerId? = nil,
         createdAt: Date = Date()
     ) throws -> MailboxRouteCredentialV2 {
         MailboxRouteCredentialV2(
@@ -1167,7 +1129,6 @@ public struct MailboxRouteCredentialV2: Codable, Equatable {
             signingKey: try SigningKeyPair.generate(),
             relay: relay,
             inboxId: inboxId,
-            legacySponsorConsumerId: legacySponsorConsumerId,
             createdAt: createdAt
         )
     }
@@ -1178,8 +1139,6 @@ public struct MailboxRouteCredentialV2: Codable, Equatable {
             && ((relay == nil) == (inboxId == nil))
             && (relay.map { !$0.host.isEmpty } ?? true)
             && (inboxId.map(InboxAddress.isValid) ?? true)
-            && legacySponsorConsumerId?.isStructurallyValid != false
-            && legacySponsorConsumerId != consumerId
             && createdAt.timeIntervalSince1970.isFinite
     }
 
@@ -1198,7 +1157,6 @@ public struct MailboxRouteCredentialV2: Codable, Equatable {
             && lhs.signingKey.publicKeyData == rhs.signingKey.publicKeyData
             && lhs.relay == rhs.relay
             && lhs.inboxId == rhs.inboxId
-            && lhs.legacySponsorConsumerId == rhs.legacySponsorConsumerId
             && lhs.createdAt == rhs.createdAt
     }
 }

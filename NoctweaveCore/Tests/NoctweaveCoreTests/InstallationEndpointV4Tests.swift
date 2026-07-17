@@ -420,13 +420,11 @@ final class InstallationEndpointV4Tests: XCTestCase {
                 pairwiseBinding: try binding(local: unrelated, peer: bob)
             ).directV4
         )
-        var state = ClientState(
+        var state = try makeCurrentClientState(
             identity: bob.identity,
-            relay: bob.relay,
-            inboxId: "legacy-test",
-            contacts: [bobContact]
+            relay: bob.relay
         )
-        try state.migrateToArchitectureV2()
+        state.contacts = [bobContact]
         XCTAssertNil(state.resolveCertifiedDirectContext(direct))
     }
 

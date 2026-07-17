@@ -4155,12 +4155,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let fileURL = temp.appendingPathComponent("state.json")
         let store = ClientStateStore(fileURL: fileURL, useEncryption: false)
 
-        var state = ClientState(
+        let state = try makeCurrentClientState(
             identity: Identity(displayName: "Alice"),
-            relay: RelayEndpoint(host: "localhost", port: 9339),
-            inboxId: "inbox"
+            relay: RelayEndpoint(host: "localhost", port: 9339)
         )
-        _ = try state.migrateToArchitectureV2()
 
         try await store.save(state)
         let loaded = try await store.load()
@@ -4174,12 +4172,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let fileURL = temp.appendingPathComponent("state.json")
         let store = ClientStateStore(fileURL: fileURL, useEncryption: true)
 
-        var state = ClientState(
+        let state = try makeCurrentClientState(
             identity: Identity(displayName: "Alice"),
-            relay: RelayEndpoint(host: "localhost", port: 9339),
-            inboxId: "inbox"
+            relay: RelayEndpoint(host: "localhost", port: 9339)
         )
-        _ = try state.migrateToArchitectureV2()
 
         try await store.save(state)
         let rawData = try Data(contentsOf: fileURL)
@@ -4202,12 +4198,10 @@ final class NoctweaveCoreTests: XCTestCase {
         let fileURL = temp.appendingPathComponent("state.json")
         let key = SymmetricKey(data: Data(repeating: 0xA7, count: 32))
         let store = ClientStateStore(fileURL: fileURL, useEncryption: true, encryptionKey: key)
-        var state = ClientState(
+        let state = try makeCurrentClientState(
             identity: Identity(displayName: "Portable Key"),
-            relay: RelayEndpoint(host: "localhost", port: 9339),
-            inboxId: "portable-inbox"
+            relay: RelayEndpoint(host: "localhost", port: 9339)
         )
-        _ = try state.migrateToArchitectureV2()
 
         try await store.save(state)
         let raw = try Data(contentsOf: fileURL)
@@ -4248,20 +4242,18 @@ final class NoctweaveCoreTests: XCTestCase {
     }
 
     func testPrivacyDefaultsToSecureTyping() throws {
-        let state = ClientState(
+        let state = try makeCurrentClientState(
             identity: Identity(displayName: "Alice"),
-            relay: RelayEndpoint(host: "localhost", port: 9339),
-            inboxId: "inbox"
+            relay: RelayEndpoint(host: "localhost", port: 9339)
         )
         XCTAssertTrue(state.privacy.secureTypingEnabled)
         XCTAssertTrue(state.privacy.useSecureCameraCapture)
     }
 
     func testPrivacySettingsPersist() throws {
-        var state = ClientState(
+        var state = try makeCurrentClientState(
             identity: Identity(displayName: "Alice"),
-            relay: RelayEndpoint(host: "localhost", port: 9339),
-            inboxId: "inbox"
+            relay: RelayEndpoint(host: "localhost", port: 9339)
         )
         state.privacy.secureTypingEnabled = false
         state.privacy.useSecureCameraCapture = true
@@ -4290,10 +4282,10 @@ final class NoctweaveCoreTests: XCTestCase {
             pinnedAt: Date(timeIntervalSince1970: 1_800_000_000),
             origin: .manual
         )
-        let state = ClientState(
+        let state = try ClientState(
             identity: Identity(displayName: "Alice"),
             relay: RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http),
-            inboxId: "inbox",
+            inboxAccessKey: SigningKeyPair.generate(),
             relayCertificatePins: [invalid, valid]
         )
 
@@ -5607,10 +5599,10 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(message.body, "hello")
     }
 
-    func testClientStateUpsertContactDeduplicatesAndRemapsReferences() {
+    func testClientStateUpsertContactDeduplicatesAndRemapsReferences() throws {
         let identity = Identity(displayName: "Owner")
         let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
-        var state = ClientState(identity: identity, relay: relay, inboxId: "owner-inbox")
+        var state = try makeCurrentClientState(identity: identity, relay: relay)
 
         let peerIdentity = Identity(displayName: "Peer")
         let sharedSigning = peerIdentity.signingKey.publicKeyData
@@ -5668,10 +5660,10 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(state.groups[0].memberContactIds, [primaryId])
     }
 
-    func testClientStateUpsertContactMatchesByAddressWhenFingerprintChanges() {
+    func testClientStateUpsertContactMatchesByAddressWhenFingerprintChanges() throws {
         let identity = Identity(displayName: "Owner")
         let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
-        var state = ClientState(identity: identity, relay: relay, inboxId: "owner-inbox")
+        var state = try makeCurrentClientState(identity: identity, relay: relay)
 
         let oldIdentity = Identity(displayName: "Peer")
         let newIdentity = Identity(displayName: "Peer")
@@ -5706,11 +5698,11 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(state.conversations[0].contactId, contactId)
     }
 
-    func testClientStateMergeUpsertConversationPreservesConcurrentMessages() {
+    func testClientStateMergeUpsertConversationPreservesConcurrentMessages() throws {
         let identity = Identity(displayName: "Owner")
         let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
         let contactId = UUID()
-        var state = ClientState(identity: identity, relay: relay, inboxId: "owner-inbox")
+        var state = try makeCurrentClientState(identity: identity, relay: relay)
 
         let received = Message(
             id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
@@ -5744,11 +5736,11 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(state.conversations[0].sendChain.counter, 3)
     }
 
-    func testClientStateMergeUpsertGroupPreservesConcurrentMessages() {
+    func testClientStateMergeUpsertGroupPreservesConcurrentMessages() throws {
         let identity = Identity(displayName: "Owner")
         let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
         let groupId = UUID()
-        var state = ClientState(identity: identity, relay: relay, inboxId: "owner-inbox")
+        var state = try makeCurrentClientState(identity: identity, relay: relay)
 
         let received = Message(
             id: UUID(uuidString: "CCCCCCCC-DDDD-EEEE-FFFF-AAAAAAAAAAAA")!,
@@ -5806,10 +5798,9 @@ final class NoctweaveCoreTests: XCTestCase {
             unreadCount: 1,
             createdAt: Date(timeIntervalSince1970: 50)
         )
-        var state = ClientState(
+        var state = try makeCurrentClientState(
             identity: identity,
-            relay: relay,
-            inboxId: "inbox"
+            relay: relay
         )
         state.groups = [group]
 

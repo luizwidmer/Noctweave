@@ -822,19 +822,14 @@ public final class RelayServer {
             let activeBoundConsumers = await store.mailboxConsumers(inboxId: registration.inboxId)
                 .filter {
                     $0.state == .active
-                        && $0.consumerSigningPublicKey.map(SigningKeyPair.isValidPublicKey) == true
+                        && SigningKeyPair.isValidPublicKey($0.consumerSigningPublicKey)
                 }
             let isManaged = await store.hasMailboxConsumerBindings(inboxId: registration.inboxId)
-            let requiresSponsor: Bool
-            if let existingConsumer {
-                requiresSponsor = existingConsumer.state == .active
-                    && existingConsumer.consumerSigningPublicKey == nil
-                    && !activeBoundConsumers.isEmpty
-            } else {
+            let requiresSponsor = existingConsumer == nil && isManaged
+            if existingConsumer == nil {
                 guard !isManaged || !activeBoundConsumers.isEmpty else {
                     return mailboxSyncErrorResponse(MailboxSyncError.freshInboxRequired)
                 }
-                requiresSponsor = isManaged
             }
             if requiresSponsor {
                 guard let sponsorConsumerId = registration.sponsorConsumerId,

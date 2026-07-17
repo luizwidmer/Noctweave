@@ -1,8 +1,30 @@
 import Foundation
+#if canImport(SQLite3)
+import SQLite3
+#else
+import CSQLite
+#endif
 import XCTest
 @testable import NoctweaveRelayServer
 
 final class RelayStorePersistenceAtomicityTests: XCTestCase {
+    func testExistingUnmarkedSQLiteStoreIsRejected() throws {
+        let fixture = try makeLinuxPersistentRelayFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(fixture.storeURL.path, &database), SQLITE_OK)
+        XCTAssertEqual(sqlite3_close(database), SQLITE_OK)
+
+        let store = RelayStore(
+            fileURL: fixture.storeURL,
+            maxInboxMessages: nil,
+            temporalBucketSeconds: 0
+        )
+        XCTAssertThrowsError(try store.load()) { error in
+            XCTAssertEqual(error as? RelayStorePersistenceError, .invalidCurrentState)
+        }
+    }
+
     func testFailedDirectDeliveryRollsBackThenExactRetryPersistsWithoutSequenceGap() throws {
         let fixture = try makeLinuxPersistentRelayFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }

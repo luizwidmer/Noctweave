@@ -613,22 +613,17 @@ final class RelayHandler: ChannelInboundHandler {
             let activeBoundConsumers = store.mailboxConsumers(inboxId: registration.inboxId)
                 .filter {
                     $0.state == .active
-                        && $0.consumerSigningPublicKey?.count
+                        && $0.consumerSigningPublicKey.count
                             == OQSSignatureVerifier.mlDSA65PublicKeyBytes
                 }
             let isManaged = store.hasMailboxConsumerBindings(inboxId: registration.inboxId)
-            let requiresSponsor: Bool
-            if let existingConsumer {
-                requiresSponsor = existingConsumer.state == .active
-                    && existingConsumer.consumerSigningPublicKey == nil
-                    && !activeBoundConsumers.isEmpty
-            } else {
+            let requiresSponsor = existingConsumer == nil && isManaged
+            if existingConsumer == nil {
                 guard !isManaged || !activeBoundConsumers.isEmpty else {
                     return context.eventLoop.makeSucceededFuture(
                         mailboxSyncErrorResponse(MailboxSyncError.freshInboxRequired)
                     )
                 }
-                requiresSponsor = isManaged
             }
             if requiresSponsor {
                 guard let sponsorConsumerId = registration.sponsorConsumerId,

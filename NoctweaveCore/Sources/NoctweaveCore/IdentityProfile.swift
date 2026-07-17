@@ -34,12 +34,11 @@ public struct IdentityProfile: Codable, Identifiable {
     public var archivedAt: Date?
     public let createdAt: Date
 
-    public init(
+    private init(
         id: UUID = UUID(),
-        architectureVersion: Int = 1,
-        identityGenerationId: UUID? = nil,
-        localInstallation: LocalInstallationState? = nil,
-        installationManifest: InstallationManifest? = nil,
+        identityGenerationId: UUID,
+        localInstallation: LocalInstallationState,
+        installationManifest: InstallationManifest,
         issuedContactEndpointsV2: [CertifiedInstallationEndpoint] = [],
         deliveryStates: [DeliveryStateRecord] = [],
         inboundEnvelopeReceiptsV2: [InboundEnvelopeReceiptV2] = [],
@@ -48,11 +47,11 @@ public struct IdentityProfile: Codable, Identifiable {
         protocolIntents: [ProtocolIntentV2] = [],
         endpointRemovalJournalsV2: [EndpointRemovalJournalV2] = [],
         relationshipsV2: [RelationshipStateV2] = [],
-        selfSyncV2: SelfSyncLocalStateV2? = nil,
+        selfSyncV2: SelfSyncLocalStateV2,
         identityMutationV2: IdentityMutationJournalV2? = nil,
         identity: Identity,
         inboxId: String,
-        inboxAccessKey: SigningKeyPair? = nil,
+        inboxAccessKey: SigningKeyPair,
         relay: RelayEndpoint,
         contacts: [Contact] = [],
         conversations: [Conversation] = [],
@@ -68,23 +67,15 @@ public struct IdentityProfile: Codable, Identifiable {
         createdAt: Date = Date()
     ) {
         self.id = id
-        self.architectureVersion = architectureVersion
+        self.architectureVersion = NoctweaveArchitectureV2.version
         self.identityGenerationId = identityGenerationId
         self.localInstallation = localInstallation
         self.installationManifest = installationManifest
-        self.issuedContactEndpointsV2 = Array(
-            issuedContactEndpointsV2.suffix(NoctweaveArchitectureV2.maximumIssuedContactEndpoints)
-        )
+        self.issuedContactEndpointsV2 = issuedContactEndpointsV2
         self.deliveryStates = deliveryStates
         self.inboundEnvelopeReceiptsV2 = inboundEnvelopeReceiptsV2
-        self.quarantinedTransportEnvelopesV2 = Array(
-            quarantinedTransportEnvelopesV2.suffix(
-                NoctweaveArchitectureV2.maximumQuarantinedTransportEnvelopes
-            )
-        )
-        self.quarantinedControlEvents = Array(
-            quarantinedControlEvents.suffix(NoctweaveArchitectureV2.maximumQuarantinedControlEvents)
-        )
+        self.quarantinedTransportEnvelopesV2 = quarantinedTransportEnvelopesV2
+        self.quarantinedControlEvents = quarantinedControlEvents
         self.protocolIntents = protocolIntents
         self.endpointRemovalJournalsV2 = endpointRemovalJournalsV2
         self.relationshipsV2 = relationshipsV2
@@ -106,6 +97,54 @@ public struct IdentityProfile: Codable, Identifiable {
         self.isArchived = isArchived
         self.archivedAt = archivedAt
         self.createdAt = createdAt
+    }
+
+    /// Creates a complete current-generation profile in one throwing
+    /// operation. Cryptographic generation failures are propagated; no empty
+    /// key or partially initialized profile is ever returned.
+    public static func create(
+        id: UUID = UUID(),
+        identity: Identity,
+        relay: RelayEndpoint,
+        inboxAccessKey: SigningKeyPair,
+        selectedRelayId: UUID? = nil,
+        prekeys: PrekeyState? = nil,
+        createdAt: Date = Date()
+    ) throws -> IdentityProfile {
+        guard createdAt.timeIntervalSince1970.isFinite,
+              SigningKeyPair.isValidPublicKey(inboxAccessKey.publicKeyData) else {
+            throw IdentityProfileStateError.invalidCurrentState
+        }
+        let generationId = UUID()
+        let localInstallation = try LocalInstallationState.generate(
+            identityGenerationId: generationId,
+            createdAt: createdAt
+        )
+        let manifest = try InstallationManifest.create(
+            identityGenerationId: generationId,
+            epoch: 0,
+            installations: [localInstallation.publicRecord(addedEpoch: 0)],
+            identity: identity,
+            issuedAt: createdAt
+        )
+        let profile = IdentityProfile(
+            id: id,
+            identityGenerationId: generationId,
+            localInstallation: localInstallation,
+            installationManifest: manifest,
+            selfSyncV2: SelfSyncLocalStateV2.generate(identityGenerationId: generationId),
+            identity: identity,
+            inboxId: InboxAddress.derived(from: inboxAccessKey.publicKeyData),
+            inboxAccessKey: inboxAccessKey,
+            relay: relay,
+            selectedRelayId: selectedRelayId,
+            prekeys: try prekeys ?? PrekeyState.generate(identity: identity),
+            createdAt: createdAt
+        )
+        guard profile.isArchitectureV2Ready else {
+            throw IdentityProfileStateError.invalidCurrentState
+        }
+        return profile
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -145,102 +184,78 @@ public struct IdentityProfile: Codable, Identifiable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
-        architectureVersion = try container.decodeIfPresent(Int.self, forKey: .architectureVersion) ?? 1
-        identityGenerationId = try container.decodeIfPresent(UUID.self, forKey: .identityGenerationId)
-        localInstallation = try container.decodeIfPresent(LocalInstallationState.self, forKey: .localInstallation)
-        installationManifest = try container.decodeIfPresent(
+        architectureVersion = try container.decode(Int.self, forKey: .architectureVersion)
+        guard architectureVersion == NoctweaveArchitectureV2.version else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .architectureVersion,
+                in: container,
+                debugDescription: "Unsupported identity profile schema"
+            )
+        }
+        identityGenerationId = try container.decode(UUID.self, forKey: .identityGenerationId)
+        localInstallation = try container.decode(LocalInstallationState.self, forKey: .localInstallation)
+        installationManifest = try container.decode(
             InstallationManifest.self,
             forKey: .installationManifest
         )
-        issuedContactEndpointsV2 = Array(
-            (try container.decodeIfPresent(
-                [CertifiedInstallationEndpoint].self,
-                forKey: .issuedContactEndpointsV2
-            ) ?? []).suffix(NoctweaveArchitectureV2.maximumIssuedContactEndpoints)
+        issuedContactEndpointsV2 = try container.decode(
+            [CertifiedInstallationEndpoint].self,
+            forKey: .issuedContactEndpointsV2
         )
-        deliveryStates = try container.decodeIfPresent([DeliveryStateRecord].self, forKey: .deliveryStates) ?? []
-        inboundEnvelopeReceiptsV2 = try container.decodeIfPresent(
+        deliveryStates = try container.decode([DeliveryStateRecord].self, forKey: .deliveryStates)
+        inboundEnvelopeReceiptsV2 = try container.decode(
             [InboundEnvelopeReceiptV2].self,
             forKey: .inboundEnvelopeReceiptsV2
-        ) ?? []
-        quarantinedTransportEnvelopesV2 = Array(
-            (try container.decodeIfPresent(
-                [QuarantinedTransportEnvelopeV2].self,
-                forKey: .quarantinedTransportEnvelopesV2
-            ) ?? []).suffix(NoctweaveArchitectureV2.maximumQuarantinedTransportEnvelopes)
         )
-        quarantinedControlEvents = Array(
-            (try container.decodeIfPresent(
-                [QuarantinedControlEvent].self,
-                forKey: .quarantinedControlEvents
-            ) ?? []).suffix(NoctweaveArchitectureV2.maximumQuarantinedControlEvents)
+        quarantinedTransportEnvelopesV2 = try container.decode(
+            [QuarantinedTransportEnvelopeV2].self,
+            forKey: .quarantinedTransportEnvelopesV2
         )
-        protocolIntents = try container.decodeIfPresent(
+        quarantinedControlEvents = try container.decode(
+            [QuarantinedControlEvent].self,
+            forKey: .quarantinedControlEvents
+        )
+        protocolIntents = try container.decode(
             [ProtocolIntentV2].self,
             forKey: .protocolIntents
-        ) ?? []
-        endpointRemovalJournalsV2 = try container.decodeIfPresent(
+        )
+        endpointRemovalJournalsV2 = try container.decode(
             [EndpointRemovalJournalV2].self,
             forKey: .endpointRemovalJournalsV2
-        ) ?? []
-        relationshipsV2 = try container.decodeIfPresent(
+        )
+        relationshipsV2 = try container.decode(
             [RelationshipStateV2].self,
             forKey: .relationshipsV2
-        ) ?? []
-        selfSyncV2 = try container.decodeIfPresent(SelfSyncLocalStateV2.self, forKey: .selfSyncV2)
+        )
+        selfSyncV2 = try container.decode(SelfSyncLocalStateV2.self, forKey: .selfSyncV2)
         identityMutationV2 = try container.decodeIfPresent(
             IdentityMutationJournalV2.self,
             forKey: .identityMutationV2
         )
         identity = try container.decode(Identity.self, forKey: .identity)
         inboxId = try container.decode(String.self, forKey: .inboxId)
-        inboxAccessKey = try container.decodeIfPresent(SigningKeyPair.self, forKey: .inboxAccessKey)
+        inboxAccessKey = try container.decode(SigningKeyPair.self, forKey: .inboxAccessKey)
         relay = try container.decode(RelayEndpoint.self, forKey: .relay)
-        contacts = try container.decodeIfPresent([Contact].self, forKey: .contacts) ?? []
-        conversations = try container.decodeIfPresent([Conversation].self, forKey: .conversations) ?? []
-        groups = try container.decodeIfPresent([GroupConversation].self, forKey: .groups) ?? []
-        pendingDirectDeliveries = try container.decodeIfPresent(
+        contacts = try container.decode([Contact].self, forKey: .contacts)
+        conversations = try container.decode([Conversation].self, forKey: .conversations)
+        groups = try container.decode([GroupConversation].self, forKey: .groups)
+        pendingDirectDeliveries = try container.decode(
             [PendingDirectDelivery].self,
             forKey: .pendingDirectDeliveries
-        ) ?? []
+        )
         selectedRelayId = try container.decodeIfPresent(UUID.self, forKey: .selectedRelayId)
         prekeys = try container.decode(PrekeyState.self, forKey: .prekeys)
-        continuityEvents = try container.decodeIfPresent([ContinuityEvent].self, forKey: .continuityEvents) ?? []
+        continuityEvents = try container.decode([ContinuityEvent].self, forKey: .continuityEvents)
         federationPolicy = try container.decodeIfPresent(FederationDescriptor.self, forKey: .federationPolicy)
-        locallyLeftRelayGroupIds = try container.decodeIfPresent([UUID].self, forKey: .locallyLeftRelayGroupIds) ?? []
-        isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+        locallyLeftRelayGroupIds = try container.decode([UUID].self, forKey: .locallyLeftRelayGroupIds)
+        isArchived = try container.decode(Bool.self, forKey: .isArchived)
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
-        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
-        if architectureVersion == NoctweaveArchitectureV2.version,
-           !durableDirectOutboxStateIsConsistent {
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        guard isArchitectureV2Ready else {
             throw DecodingError.dataCorruptedError(
-                forKey: .protocolIntents,
+                forKey: .architectureVersion,
                 in: container,
-                debugDescription: "Architecture-v2 durable direct outbox state is inconsistent"
-            )
-        }
-        if architectureVersion == NoctweaveArchitectureV2.version,
-           (deliveryStates.count > NoctweaveArchitectureV2.maximumDeliveryStates
-            || Set(deliveryStates.map {
-                "\($0.eventId.uuidString.lowercased())|\($0.destinationInstallation.rawValue)"
-            }).count != deliveryStates.count
-            || !deliveryStates.allSatisfy(\.isStructurallyValid)) {
-            throw DecodingError.dataCorruptedError(
-                forKey: .deliveryStates,
-                in: container,
-                debugDescription: "Architecture-v2 delivery state is inconsistent"
-            )
-        }
-        if architectureVersion == NoctweaveArchitectureV2.version,
-           (endpointRemovalJournalsV2.count
-                > NoctweaveArchitectureV2.maximumPendingEndpointRemovals
-            || Set(endpointRemovalJournalsV2.map(\.id)).count
-                != endpointRemovalJournalsV2.count
-            || !endpointRemovalJournalsV2.allSatisfy(\.isStructurallyValid)) {
-            throw DecodingError.dataCorruptedError(
-                forKey: .endpointRemovalJournalsV2,
-                in: container,
-                debugDescription: "Architecture-v2 endpoint removal journal is inconsistent"
+                debugDescription: "Invalid current identity profile state"
             )
         }
     }
@@ -320,34 +335,16 @@ public struct IdentityProfile: Codable, Identifiable {
                     && localInstallation.relationshipHandles[relationship.id]
                         == relationship.localInstallationHandle
             }
-            && contacts.allSatisfy { contact in
-                relationshipsV2.contains { $0.contactId == contact.id }
-            }
     }
 
-    /// Every live route credential must name the exact relay/inbox route for
-    /// this generation. A single pre-credential consumer ID is allowed only as
-    /// the explicit migration marker for the current route; it cannot authorize
-    /// a different or reusable inbox.
+    /// Every live route credential must name its exact relay/inbox route.
     private func mailboxReachabilityIsGenerationScoped(
         _ endpoint: LocalInstallationState
     ) -> Bool {
-        let currentRoute = MailboxRouteCredentialV2.routeIdentifier(
-            relay: relay,
-            inboxId: inboxId
-        )
-        guard endpoint.mailboxCredentialsByRoute.allSatisfy({ routeKey, credential in
+        endpoint.mailboxCredentialsByRoute.allSatisfy { routeKey, credential in
             credential.relay != nil
                 && credential.inboxId?.lowercased() == inboxId.lowercased()
                 && credential.routeIdentifier == routeKey
-        }) else {
-            return false
-        }
-        return endpoint.mailboxConsumerIdsByRoute.allSatisfy { routeKey, consumerId in
-            if let credential = endpoint.mailboxCredentialsByRoute[routeKey] {
-                return credential.consumerId == consumerId
-            }
-            return routeKey == currentRoute
         }
     }
 
@@ -426,167 +423,6 @@ public struct IdentityProfile: Codable, Identifiable {
                 || intent.state == .permanentFailure
                 || pendingById[intent.id] != nil
         }
-    }
-
-    /// Reconciles the legacy v1 ciphertext outbox with the v2 intent journal.
-    /// It never drops pending ciphertext. Only terminal records that are not
-    /// referenced by pending sends, an identity mutation, or a live intent
-    /// dependency may be pruned to make bounded space.
-    private mutating func reconcileDurableDirectOutboxForMigration() throws -> Bool {
-        guard pendingDirectDeliveries.count
-                <= NoctweaveArchitectureV2.maximumPendingDirectDeliveries,
-              Set(pendingDirectDeliveries.map(\.id)).count == pendingDirectDeliveries.count,
-              Set(protocolIntents.map(\.id)).count == protocolIntents.count,
-              protocolIntents.allSatisfy(\.isStructurallyValid) else {
-            throw IdentityProfileMigrationError.invalidV2State
-        }
-
-        let pendingById = Dictionary(
-            uniqueKeysWithValues: pendingDirectDeliveries.map { ($0.id, $0) }
-        )
-        let pendingIds = Set(pendingById.keys)
-        let mutationIds = identityMutationV2?.notificationIds ?? []
-        let dependencyIds = Set(
-            protocolIntents
-                .filter { !$0.state.isTerminal }
-                .flatMap(\.dependencies)
-        )
-        let protectedIntentIds = pendingIds.union(mutationIds).union(dependencyIds)
-        guard protocolIntents.allSatisfy({ intent in
-            intent.kind != .sendEvent
-                || intent.state == .finalized
-                || intent.state == .permanentFailure
-                || pendingById[intent.id] != nil
-        }) else {
-            throw IdentityProfileMigrationError.invalidV2State
-        }
-
-        var missingIntents: [ProtocolIntentV2] = []
-        for pending in pendingDirectDeliveries {
-            guard pending.envelope.isStructurallyValid,
-                  pending.queuedAt.timeIntervalSince1970.isFinite,
-                  pending.attemptCount >= 0,
-                  pending.lastAttemptAt?.timeIntervalSince1970.isFinite ?? true,
-                  pending.lastAttemptAt.map({ $0 >= pending.queuedAt }) ?? true,
-                  let encoded = try? NoctweaveCoder.encode(
-                      pending.envelope,
-                      sortedKeys: true
-                  ) else {
-                throw IdentityProfileMigrationError.invalidV2State
-            }
-            let digest = Data(SHA256.hash(data: encoded))
-            let target = Data(pending.contactId.uuidString.lowercased().utf8)
-            if let existing = protocolIntents.first(where: { $0.id == pending.id }) {
-                guard existing.kind == .sendEvent,
-                      existing.state != .finalized,
-                      existing.targetIdentifier == target,
-                      existing.payloadDigest == digest else {
-                    throw IdentityProfileMigrationError.invalidV2State
-                }
-                continue
-            }
-            missingIntents.append(
-                ProtocolIntentV2.prepare(
-                    id: pending.id,
-                    kind: .sendEvent,
-                    targetIdentifier: target,
-                    payloadDigest: digest,
-                    createdAt: pending.queuedAt
-                )
-            )
-        }
-
-        let requiredPruneCount = max(
-            0,
-            protocolIntents.count + missingIntents.count
-                - NoctweaveArchitectureV2.maximumProtocolIntents
-        )
-        let prunable = protocolIntents
-            .filter { $0.state.isTerminal && !protectedIntentIds.contains($0.id) }
-            .sorted {
-                if $0.updatedAt == $1.updatedAt {
-                    return $0.id.uuidString < $1.id.uuidString
-                }
-                return $0.updatedAt < $1.updatedAt
-            }
-        guard prunable.count >= requiredPruneCount else {
-            throw IdentityProfileMigrationError.invalidV2State
-        }
-        let prunedIds = Set(prunable.prefix(requiredPruneCount).map(\.id))
-        if !prunedIds.isEmpty {
-            protocolIntents.removeAll { prunedIds.contains($0.id) }
-        }
-        protocolIntents.append(contentsOf: missingIntents)
-        let changed = !prunedIds.isEmpty || !missingIntents.isEmpty
-
-        guard durableDirectOutboxStateIsConsistent else {
-            throw IdentityProfileMigrationError.invalidV2State
-        }
-        return changed
-    }
-
-    /// Performs the one-time pre-1.0 migration from a shared identity endpoint
-    /// to an independently keyed local installation.
-    @discardableResult
-    public mutating func migrateToArchitectureV2() throws -> Bool {
-        var prunedExpiredPrekeys = false
-        if var installation = localInstallation {
-            let retainedCount = installation.prekeys.retiredSignedPrekeys.count
-            installation.prekeys.pruneExpiredSignedPrekeys()
-            if installation.prekeys.retiredSignedPrekeys.count != retainedCount {
-                localInstallation = installation
-                prunedExpiredPrekeys = true
-            }
-        }
-        if architectureVersion == NoctweaveArchitectureV2.version {
-            let backfilledState = backfillArchitectureV2ProfileState()
-            var changed = prunedExpiredPrekeys || backfilledState
-            if try reconcileDurableDirectOutboxForMigration() {
-                changed = true
-            }
-            guard isArchitectureV2Ready else { throw IdentityProfileMigrationError.invalidV2State }
-            return changed
-        }
-        guard architectureVersion == 1 else {
-            throw IdentityProfileMigrationError.unsupportedVersion(architectureVersion)
-        }
-        if let existingInboxAccessKey = inboxAccessKey {
-            guard InboxAddress.isBound(inboxId, to: existingInboxAccessKey.publicKeyData) else {
-                throw IdentityProfileMigrationError.invalidV2State
-            }
-        } else {
-            let generatedInboxAccessKey = try SigningKeyPair.generate()
-            inboxAccessKey = generatedInboxAccessKey
-            inboxId = InboxAddress.derived(from: generatedInboxAccessKey.publicKeyData)
-        }
-        let generationId = UUID()
-        let installation = try LocalInstallationState.generate(
-            identityGenerationId: generationId,
-            createdAt: createdAt
-        )
-        let manifest = try InstallationManifest.create(
-            identityGenerationId: generationId,
-            epoch: 0,
-            installations: [installation.publicRecord(addedEpoch: 0)],
-            identity: identity,
-            issuedAt: createdAt
-        )
-        architectureVersion = NoctweaveArchitectureV2.version
-        identityGenerationId = generationId
-        localInstallation = installation
-        installationManifest = manifest
-        issuedContactEndpointsV2 = []
-        endpointRemovalJournalsV2 = []
-        deliveryStates = Array(
-            deliveryStates.suffix(NoctweaveArchitectureV2.maximumDeliveryStates)
-        )
-        quarantinedControlEvents = Array(
-            quarantinedControlEvents.suffix(NoctweaveArchitectureV2.maximumQuarantinedControlEvents)
-        )
-        _ = backfillArchitectureV2ProfileState()
-        _ = try reconcileDurableDirectOutboxForMigration()
-        guard isArchitectureV2Ready else { throw IdentityProfileMigrationError.invalidV2State }
-        return true
     }
 
     var activeEndpoints: [InstallationRecord] {
@@ -733,7 +569,7 @@ public struct IdentityProfile: Codable, Identifiable {
             cleanupObligations: obligations
         )
         guard result.isStructurallyValid else {
-            throw IdentityProfileMigrationError.invalidV2State
+            throw IdentityProfileStateError.invalidCurrentState
         }
         installationManifest = updated
         selfSyncV2 = replacementSelfSync
@@ -774,58 +610,6 @@ public struct IdentityProfile: Codable, Identifiable {
         return true
     }
 
-    /// Adds v2-only local relationship and self-sync state without inventing
-    /// peer installations or translating a legacy inbox into a bearer route.
-    @discardableResult
-    mutating func backfillArchitectureV2ProfileState() -> Bool {
-        guard let generationId = identityGenerationId,
-              var installation = localInstallation else {
-            return false
-        }
-        var changed = false
-        if selfSyncV2 == nil {
-            selfSyncV2 = SelfSyncLocalStateV2.generate(identityGenerationId: generationId)
-            changed = true
-        }
-
-        let conversationsByContact = Dictionary(grouping: conversations, by: \.contactId)
-        for contact in contacts where !relationshipsV2.contains(where: { $0.contactId == contact.id }) {
-            let relationshipId = UUID()
-            let handle = RelationshipInstallationHandle.generate(
-                identityGenerationId: generationId,
-                installationId: installation.id,
-                relationshipId: relationshipId
-            )
-            relationshipsV2.append(
-                RelationshipStateV2(
-                    id: relationshipId,
-                    contactId: contact.id,
-                    localInstallationHandle: handle,
-                    conversationIds: conversationsByContact[contact.id, default: []].map(\.id),
-                    createdAt: createdAt
-                )
-            )
-            installation.relationshipHandles[relationshipId] = handle
-            changed = true
-        }
-
-        for index in relationshipsV2.indices {
-            let relationship = relationshipsV2[index]
-            if installation.relationshipHandles[relationship.id] == nil {
-                installation.relationshipHandles[relationship.id] = relationship.localInstallationHandle
-                changed = true
-            }
-            if relationshipsV2[index].includeConversationIds(
-                conversationsByContact[relationship.contactId, default: []].map(\.id)
-            ) {
-                changed = true
-            }
-        }
-        relationshipsV2.sort { $0.id.uuidString < $1.id.uuidString }
-        localInstallation = installation
-        return changed
-    }
-
     private func issuedEndpointIsAuthorized(
         _ endpoint: CertifiedInstallationEndpoint,
         identityGenerationId: UUID,
@@ -853,7 +637,6 @@ public struct IdentityProfile: Codable, Identifiable {
     }
 }
 
-public enum IdentityProfileMigrationError: Error, Equatable {
-    case unsupportedVersion(Int)
-    case invalidV2State
+public enum IdentityProfileStateError: Error, Equatable {
+    case invalidCurrentState
 }

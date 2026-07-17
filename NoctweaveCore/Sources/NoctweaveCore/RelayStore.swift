@@ -80,6 +80,7 @@ public actor RelayStore {
         }
         let sqliteURL = sqliteStoreURL(for: storeURL)
         if let snapshot = try SQLiteRelayStateStore.loadState(at: sqliteURL) {
+            try validateCurrentSnapshot(snapshot)
             applySnapshot(snapshot)
             lastDurableSnapshot = currentSnapshot()
         }
@@ -97,6 +98,7 @@ public actor RelayStore {
             pruneAttachments(now: Date())
             pruneFederationNodes(now: Date())
             let snapshot = currentSnapshot()
+            try validateCurrentSnapshot(snapshot)
             try SQLiteRelayStateStore.saveState(snapshot, at: sqliteStoreURL(for: storeURL))
             lastDurableSnapshot = snapshot
         } catch {
@@ -224,9 +226,6 @@ public actor RelayStore {
             guard existing.accessPublicKey == accessPublicKey else {
                 throw RelayStoreError.inboxAlreadyRegistered
             }
-            // Persist a relay-local scope synthesized while decoding a legacy
-            // registration before returning it to the caller.
-            try saveToDisk()
             return existing.routeMutationReceipt
         }
         guard inboxRegistrations.count + inboxRetirements.count < maxLifetimeInboxGenerations else {
@@ -768,7 +767,7 @@ public actor RelayStore {
         }
         let hasActiveBoundConsumer = registration.streamState.consumers.values.contains {
             $0.state == .active
-                && $0.consumerSigningPublicKey.map(SigningKeyPair.isValidPublicKey) == true
+                && SigningKeyPair.isValidPublicKey($0.consumerSigningPublicKey)
         }
         let sponsorIsActiveAndBound: Bool = {
             guard let sponsorConsumerId,
@@ -777,31 +776,13 @@ public actor RelayStore {
                 return false
             }
             return sponsor.state == .active
-                && sponsor.consumerSigningPublicKey.map(SigningKeyPair.isValidPublicKey) == true
+                && SigningKeyPair.isValidPublicKey(sponsor.consumerSigningPublicKey)
         }()
-        if var existing = registration.streamState.consumers[consumerId.rawValue] {
+        if let existing = registration.streamState.consumers[consumerId.rawValue] {
             guard existing.state == .active else { throw MailboxSyncError.consumerRevoked }
             guard existing.cursorKey.count == 32 else { throw MailboxSyncError.invalidCursor }
-            if let boundKey = existing.consumerSigningPublicKey {
-                guard boundKey == consumerSigningPublicKey else {
-                    throw MailboxSyncError.consumerSigningKeyMismatch
-                }
-            } else {
-                if hasActiveBoundConsumer {
-                    guard sponsorConsumerId != nil else {
-                        throw MailboxSyncError.consumerSponsorRequired
-                    }
-                    guard sponsorIsActiveAndBound else {
-                        throw MailboxSyncError.invalidConsumerSponsor
-                    }
-                }
-                // Secure migration for a legacy persisted consumer. The wire
-                // handler reaches this path only after validating authority,
-                // possession, and (when available) active-sponsor proofs.
-                existing.consumerSigningPublicKey = consumerSigningPublicKey
-                registration.streamState.consumers[consumerId.rawValue] = existing
-                inboxRegistrations[inboxId] = registration
-                try saveToDisk()
+            guard existing.consumerSigningPublicKey == consumerSigningPublicKey else {
+                throw MailboxSyncError.consumerSigningKeyMismatch
             }
             return existing.publicRegistration(consumerId: consumerId)
         }
@@ -828,22 +809,6 @@ public actor RelayStore {
             &registration.streamState.consumers,
             reservingSlots: 1
         )
-        if !registration.streamState.isInstallationManaged,
-           registration.streamState.consumers.isEmpty {
-            // Legacy acknowledgements delete arbitrary envelopes, so their
-            // original relay sequences may contain holes. Those positions
-            // have never been exposed through a v2 cursor. Normalize the
-            // retained backlog exactly once before the first consumer is
-            // activated so a cursor starting at zero can traverse it without
-            // fabricating a gap or discarding an unacknowledged envelope.
-            var retainedLegacyEnvelopes = mailboxes[inboxId, default: []]
-            for index in retainedLegacyEnvelopes.indices {
-                retainedLegacyEnvelopes[index].sequence = UInt64(index) + 1
-            }
-            mailboxes[inboxId] = retainedLegacyEnvelopes
-            registration.streamState.highWatermark = UInt64(retainedLegacyEnvelopes.count)
-            registration.streamState.retentionFloor = 0
-        }
         let start = startingSequence ?? registration.streamState.highWatermark
         guard start >= registration.streamState.retentionFloor else {
             throw MailboxSyncError.cursorExpired(retentionFloor: registration.streamState.retentionFloor)
@@ -895,20 +860,17 @@ public actor RelayStore {
 
     /// Returns the credential bound to a consumer, including a revoked one so
     /// a request can be authenticated before the state machine rejects it.
-    /// Legacy records without a bound key deliberately return `nil` and cannot
-    /// sync or commit until jointly re-authorized through registration.
     public func mailboxConsumerSigningPublicKey(
         inboxId: String,
         consumerId: MailboxConsumerId
     ) -> Data? {
         guard consumerId.isStructurallyValid,
-              let key = inboxRegistrations[inboxId]?
-                .streamState.consumers[consumerId.rawValue]?
-                .consumerSigningPublicKey,
-              SigningKeyPair.isValidPublicKey(key) else {
+              let consumer = inboxRegistrations[inboxId]?
+                .streamState.consumers[consumerId.rawValue],
+              SigningKeyPair.isValidPublicKey(consumer.consumerSigningPublicKey) else {
             return nil
         }
-        return key
+        return consumer.consumerSigningPublicKey
     }
 
     public func activeMailboxConsumerSigningPublicKey(
@@ -919,11 +881,10 @@ public actor RelayStore {
               let consumer = inboxRegistrations[inboxId]?
                 .streamState.consumers[consumerId.rawValue],
               consumer.state == .active,
-              let key = consumer.consumerSigningPublicKey,
-              SigningKeyPair.isValidPublicKey(key) else {
+              SigningKeyPair.isValidPublicKey(consumer.consumerSigningPublicKey) else {
             return nil
         }
-        return key
+        return consumer.consumerSigningPublicKey
     }
 
     public func syncMailbox(
@@ -940,7 +901,7 @@ public actor RelayStore {
             throw MailboxSyncError.consumerNotFound
         }
         guard consumer.state == .active else { throw MailboxSyncError.consumerRevoked }
-        guard consumer.consumerSigningPublicKey.map(SigningKeyPair.isValidPublicKey) == true else {
+        guard SigningKeyPair.isValidPublicKey(consumer.consumerSigningPublicKey) else {
             throw MailboxSyncError.consumerCredentialMissing
         }
         let stream = registration.streamState
@@ -957,13 +918,6 @@ public actor RelayStore {
                 key: consumer.cursorKey
             ) {
                 startSequence = decoded
-            } else if cursor == Self.legacyMailboxCursor(
-                inboxId: inboxId,
-                consumerId: consumerId,
-                sequence: consumer.committedSequence,
-                key: consumer.cursorKey
-            ) {
-                startSequence = consumer.committedSequence
             } else {
                 throw MailboxSyncError.invalidCursor
             }
@@ -1021,7 +975,7 @@ public actor RelayStore {
             throw MailboxSyncError.consumerNotFound
         }
         guard consumer.state == .active else { throw MailboxSyncError.consumerRevoked }
-        guard consumer.consumerSigningPublicKey.map(SigningKeyPair.isValidPublicKey) == true else {
+        guard SigningKeyPair.isValidPublicKey(consumer.consumerSigningPublicKey) else {
             throw MailboxSyncError.consumerCredentialMissing
         }
         guard consumer.cursorKey.count == 32 else { throw MailboxSyncError.invalidCursor }
@@ -1038,13 +992,7 @@ public actor RelayStore {
             consumerId: consumerId,
             key: consumer.cursorKey
         )
-        let acceptsLegacyCursor = cursor == Self.legacyMailboxCursor(
-            inboxId: inboxId,
-            consumerId: consumerId,
-            sequence: sequence,
-            key: consumer.cursorKey
-        )
-        guard authenticatedSequence == sequence || acceptsLegacyCursor else {
+        guard authenticatedSequence == sequence else {
             throw MailboxSyncError.invalidCursor
         }
         consumer.committedSequence = sequence
@@ -1185,24 +1133,6 @@ public actor RelayStore {
             return nil
         }
         return sequenceData.reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
-    }
-
-    /// Accepts cursor tokens issued by the first architecture-v2 preview so a
-    /// persisted post-decryption commit can finish during the pre-1.0 upgrade.
-    private static func legacyMailboxCursor(
-        inboxId: String,
-        consumerId: MailboxConsumerId,
-        sequence: UInt64,
-        key: Data
-    ) -> MailboxCursor {
-        MailboxCursor(
-            rawValue: mailboxCursorAuthenticationCode(
-                inboxId: inboxId,
-                consumerId: consumerId,
-                sequenceData: mailboxCursorSequenceData(sequence),
-                key: key
-            ).base64EncodedString()
-        )
     }
 
     private static func mailboxCursorAuthenticationCode(
@@ -1576,7 +1506,6 @@ public actor RelayStore {
         inboxRetirements = snapshot.inboxRetirements
         inboxRouteCapabilities = snapshot.inboxRouteCapabilities
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
-        normalizeMailboxStreamsAfterLoad()
         attachments = snapshot.attachments
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
@@ -1625,29 +1554,34 @@ public actor RelayStore {
         return base.appendingPathExtension("sqlite")
     }
 
-    private func normalizeMailboxStreamsAfterLoad() {
-        for inboxId in Array(mailboxes.keys) {
-            var previous: UInt64 = 0
-            var records = mailboxes[inboxId, default: []]
-            for index in records.indices {
-                if records[index].sequence <= previous {
-                    guard previous < UInt64.max else { break }
-                    records[index].sequence = previous + 1
-                }
-                previous = records[index].sequence
-            }
-            mailboxes[inboxId] = records
-            if var registration = inboxRegistrations[inboxId] {
-                registration.streamState.highWatermark = max(
-                    registration.streamState.highWatermark,
-                    previous
-                )
-                registration.streamState.retentionFloor = min(
-                    registration.streamState.retentionFloor,
-                    registration.streamState.highWatermark
-                )
-                inboxRegistrations[inboxId] = registration
-            }
+    private func validateCurrentSnapshot(_ snapshot: RelayStoreSnapshot) throws {
+        guard snapshot.inboxRegistrations.allSatisfy({ inboxId, registration in
+                  InboxAddress.isValid(inboxId)
+                      && !registration.accessPublicKey.isEmpty
+                      && registration.registeredAt.timeIntervalSince1970.isFinite
+                      && registration.routeMutationScope.isValidRouteMutationScope
+                      && registration.streamState.retentionFloor
+                          <= registration.streamState.highWatermark
+              }),
+              snapshot.mailboxes.allSatisfy({ inboxId, records in
+                  guard let registration = snapshot.inboxRegistrations[inboxId] else {
+                      return false
+                  }
+                  var previous = registration.streamState.retentionFloor
+                  var envelopeIds = Set<UUID>()
+                  for record in records {
+                      guard record.sequence > previous,
+                            record.sequence <= registration.streamState.highWatermark,
+                            record.envelope.isStructurallyValid,
+                            record.storedAt.timeIntervalSince1970.isFinite,
+                            envelopeIds.insert(record.envelope.id).inserted else {
+                          return false
+                      }
+                      previous = record.sequence
+                  }
+                  return true
+              }) else {
+            throw RelayStorePersistenceError.invalidCurrentState
         }
     }
 
@@ -1947,27 +1881,27 @@ private struct RelayStoreSnapshot: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        mailboxes = try container.decodeIfPresent([String: [StoredEnvelope]].self, forKey: .mailboxes) ?? [:]
-        inboxRegistrations = try container.decodeIfPresent([String: InboxRegistrationRecord].self, forKey: .inboxRegistrations) ?? [:]
-        inboxRetirements = try container.decodeIfPresent(
+        mailboxes = try container.decode([String: [StoredEnvelope]].self, forKey: .mailboxes)
+        inboxRegistrations = try container.decode([String: InboxRegistrationRecord].self, forKey: .inboxRegistrations)
+        inboxRetirements = try container.decode(
             [String: InboxRetirementRecord].self,
             forKey: .inboxRetirements
-        ) ?? [:]
-        inboxRouteCapabilities = try container.decodeIfPresent(
+        )
+        inboxRouteCapabilities = try container.decode(
             [String: InboxRouteCapabilityRecord].self,
             forKey: .inboxRouteCapabilities
-        ) ?? [:]
-        rendezvousRoutesV2 = try container.decodeIfPresent(
+        )
+        rendezvousRoutesV2 = try container.decode(
             [String: RendezvousRelayRouteRecordV2].self,
             forKey: .rendezvousRoutesV2
-        ) ?? [:]
-        attachments = try container.decodeIfPresent([String: [AttachmentRecord]].self, forKey: .attachments) ?? [:]
-        federationNodes = try container.decodeIfPresent([String: FederationNodeRecord].self, forKey: .federationNodes) ?? [:]
-        coordinatorPinnedPublicKeys = try container.decodeIfPresent([String: Data].self, forKey: .coordinatorPinnedPublicKeys) ?? [:]
-        actorProofReplayCache = try container.decodeIfPresent(
+        )
+        attachments = try container.decode([String: [AttachmentRecord]].self, forKey: .attachments)
+        federationNodes = try container.decode([String: FederationNodeRecord].self, forKey: .federationNodes)
+        coordinatorPinnedPublicKeys = try container.decode([String: Data].self, forKey: .coordinatorPinnedPublicKeys)
+        actorProofReplayCache = try container.decode(
             [String: Date].self,
             forKey: .actorProofReplayCache
-        ) ?? [:]
+        )
     }
 }
 
@@ -2010,12 +1944,11 @@ struct InboxRegistrationRecord: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         accessPublicKey = try container.decode(Data.self, forKey: .accessPublicKey)
         registeredAt = try container.decode(Date.self, forKey: .registeredAt)
-        streamState = try container.decodeIfPresent(MailboxStreamState.self, forKey: .streamState)
-            ?? MailboxStreamState()
-        lastRouteMutationSequence = try container.decodeIfPresent(
+        streamState = try container.decode(MailboxStreamState.self, forKey: .streamState)
+        lastRouteMutationSequence = try container.decode(
             UInt64.self,
             forKey: .lastRouteMutationSequence
-        ) ?? 0
+        )
         guard lastRouteMutationSequence
                 <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
             throw DecodingError.dataCorruptedError(
@@ -2028,35 +1961,13 @@ struct InboxRegistrationRecord: Codable {
             Data.self,
             forKey: .lastRouteMutationDigest
         )
-        let hasEncodedScope = container.contains(.routeMutationScope)
-        let decodedScope = try container.decodeIfPresent(Data.self, forKey: .routeMutationScope)
-        if hasEncodedScope {
-            guard let decodedScope else {
-                throw DecodingError.dataCorruptedError(
-                    forKey: .routeMutationScope,
-                    in: container,
-                    debugDescription: "Null relay-local route mutation scope"
-                )
-            }
-            guard decodedScope.isValidRouteMutationScope else {
-                throw DecodingError.dataCorruptedError(
-                    forKey: .routeMutationScope,
-                    in: container,
-                    debugDescription: "Invalid relay-local route mutation scope"
-                )
-            }
-            routeMutationScope = decodedScope
-        } else {
-            guard lastRouteMutationSequence == 0, decodedDigest == nil else {
-                throw DecodingError.dataCorruptedError(
-                    forKey: .routeMutationScope,
-                    in: container,
-                    debugDescription: "Missing route mutation scope for v3 cursor state"
-                )
-            }
-            // A pre-v3 registration with no cursor state receives a fresh,
-            // relay-local scope exactly once during migration.
-            routeMutationScope = Self.generateRouteMutationScope()
+        routeMutationScope = try container.decode(Data.self, forKey: .routeMutationScope)
+        guard routeMutationScope.isValidRouteMutationScope else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .routeMutationScope,
+                in: container,
+                debugDescription: "Invalid relay-local route mutation scope"
+            )
         }
         if lastRouteMutationSequence == 0 {
             guard decodedDigest == nil else {
@@ -2111,7 +2022,7 @@ private struct StoredEnvelope: Codable {
     let envelope: Envelope
     let storedAt: Date
 
-    init(sequence: UInt64 = 0, envelope: Envelope, storedAt: Date) {
+    init(sequence: UInt64, envelope: Envelope, storedAt: Date) {
         self.sequence = sequence
         self.envelope = envelope
         self.storedAt = storedAt
@@ -2145,19 +2056,28 @@ struct MailboxStreamState: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        highWatermark = try container.decodeIfPresent(UInt64.self, forKey: .highWatermark) ?? 0
-        retentionFloor = min(
-            try container.decodeIfPresent(UInt64.self, forKey: .retentionFloor) ?? 0,
-            highWatermark
-        )
-        consumers = try container.decodeIfPresent(
+        highWatermark = try container.decode(UInt64.self, forKey: .highWatermark)
+        retentionFloor = try container.decode(UInt64.self, forKey: .retentionFloor)
+        consumers = try container.decode(
             [String: MailboxConsumerRecord].self,
             forKey: .consumers
-        ) ?? [:]
-        isInstallationManaged = (try container.decodeIfPresent(
+        )
+        isInstallationManaged = try container.decode(
             Bool.self,
             forKey: .isInstallationManaged
-        ) ?? false) || !consumers.isEmpty
+        )
+        guard retentionFloor <= highWatermark,
+              isInstallationManaged || consumers.isEmpty,
+              consumers.allSatisfy({ key, value in
+                  MailboxConsumerId(rawValue: key).isStructurallyValid
+                      && value.isStructurallyValid(highWatermark: highWatermark)
+              }) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .consumers,
+                in: container,
+                debugDescription: "Invalid current mailbox stream state"
+            )
+        }
     }
 }
 
@@ -2165,9 +2085,27 @@ struct MailboxConsumerRecord: Codable {
     var state: MailboxConsumerState
     var committedSequence: UInt64
     let cursorKey: Data
-    var consumerSigningPublicKey: Data?
+    let consumerSigningPublicKey: Data
     let registeredAt: Date
     var revokedAt: Date?
+
+    func isStructurallyValid(highWatermark: UInt64) -> Bool {
+        guard committedSequence <= highWatermark,
+              cursorKey.count == SHA256.byteCount,
+              SigningKeyPair.isValidPublicKey(consumerSigningPublicKey),
+              registeredAt.timeIntervalSince1970.isFinite,
+              revokedAt?.timeIntervalSince1970.isFinite ?? true else {
+            return false
+        }
+        switch (state, revokedAt) {
+        case (.active, nil):
+            return true
+        case let (.revoked, .some(revokedAt)):
+            return revokedAt >= registeredAt
+        default:
+            return false
+        }
+    }
 
     func publicRegistration(consumerId: MailboxConsumerId) -> MailboxConsumerRegistration {
         MailboxConsumerRegistration(
@@ -2217,17 +2155,21 @@ private enum SQLiteRelayStateStoreError: Error, CustomStringConvertible {
 
 private enum SQLiteRelayStateStore {
     private static let metaTableName = "relay_state_meta"
-    private static let normalizedSchemaKey = "normalized_schema_v1"
+    private static let currentSchemaKey = "noctweave_1_0_schema"
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     static func loadState(at url: URL) throws -> RelayStoreSnapshot? {
+        let existedBeforeOpen = FileManager.default.fileExists(atPath: url.path)
         var db: OpaquePointer?
         try openDatabase(at: url, handle: &db)
         defer { sqlite3_close(db) }
         guard let db else { return nil }
 
         try ensureSchema(in: db)
-        guard try hasNormalizedState(in: db) else {
+        guard try hasCurrentState(in: db) else {
+            if existedBeforeOpen {
+                throw RelayStorePersistenceError.invalidCurrentState
+            }
             return nil
         }
         return RelayStoreSnapshot(
@@ -2296,7 +2238,7 @@ private enum SQLiteRelayStateStore {
                     in: db
                 )
             }
-            try insertMeta(key: normalizedSchemaKey, value: Data("1".utf8), in: db)
+            try insertMeta(key: currentSchemaKey, value: Data("1".utf8), in: db)
             try execute("COMMIT;", in: db)
         } catch {
             _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
@@ -2451,16 +2393,13 @@ private enum SQLiteRelayStateStore {
         in db: OpaquePointer
     ) throws {
         try executePrepared(
-            "INSERT INTO relay_inbox_retirements (inbox_id, retired_at, expires_at, request_digest, value) VALUES (?1, ?2, ?3, ?4, ?5);",
+            "INSERT INTO relay_inbox_retirements (inbox_id, retired_at, request_digest, value) VALUES (?1, ?2, ?3, ?4);",
             in: db
         ) { statement in
             try bindText(inboxId, to: 1, in: statement, db: db)
             try bindDouble(record.retiredAt.timeIntervalSince1970, to: 2, in: statement, db: db)
-            // `expires_at` is retained only for pre-1.0 SQLite schema
-            // compatibility. Retirement records never expire.
-            try bindDouble(Date.distantFuture.timeIntervalSince1970, to: 3, in: statement, db: db)
-            try bindBlob(record.requestDigest, to: 4, in: statement, db: db)
-            try bindBlob(encode(record), to: 5, in: statement, db: db)
+            try bindBlob(record.requestDigest, to: 3, in: statement, db: db)
+            try bindBlob(encode(record), to: 4, in: statement, db: db)
         }
     }
 
@@ -2567,18 +2506,18 @@ private enum SQLiteRelayStateStore {
         }
     }
 
-    private static func hasNormalizedState(in db: OpaquePointer) throws -> Bool {
+    private static func hasCurrentState(in db: OpaquePointer) throws -> Bool {
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT 1 FROM \(metaTableName) WHERE key = ?1 LIMIT 1;", -1, &statement, nil) == SQLITE_OK else {
+        guard sqlite3_prepare_v2(db, "SELECT value FROM \(metaTableName) WHERE key = ?1 LIMIT 1;", -1, &statement, nil) == SQLITE_OK else {
             throw SQLiteRelayStateStoreError.prepare(lastError(in: db))
         }
         defer { sqlite3_finalize(statement) }
         guard let statement else { return false }
 
-        try bindText(normalizedSchemaKey, to: 1, in: statement, db: db)
+        try bindText(currentSchemaKey, to: 1, in: statement, db: db)
         let step = sqlite3_step(statement)
         if step == SQLITE_ROW {
-            return true
+            return try readBlob(statement, column: 0) == Data("1".utf8)
         }
         if step == SQLITE_DONE {
             return false
@@ -2641,11 +2580,9 @@ private enum SQLiteRelayStateStore {
         CREATE TABLE IF NOT EXISTS relay_inbox_retirements (
             inbox_id TEXT PRIMARY KEY,
             retired_at REAL NOT NULL,
-            expires_at REAL NOT NULL,
             request_digest BLOB NOT NULL,
             value BLOB NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS relay_inbox_retirements_expiry_idx ON relay_inbox_retirements(expires_at);
         CREATE TABLE IF NOT EXISTS relay_inbox_route_capabilities (
             capability_digest TEXT PRIMARY KEY,
             inbox_id TEXT NOT NULL,
@@ -2836,4 +2773,5 @@ enum InboxRouteCapabilityMutationApplyResult: Equatable {
 
 enum RelayStorePersistenceError: Error {
     case injectedFailure
+    case invalidCurrentState
 }

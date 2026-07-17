@@ -170,7 +170,9 @@ final class IdentityMutationDurabilityTests: XCTestCase {
         let oldState = try await awaitState(alice)
         let oldFingerprint = oldState.identity.fingerprint
         let oldInboxId = oldState.inboxId
-        let oldConsumerId = try XCTUnwrap(oldState.localInstallation?.mailboxConsumerIdsByRoute.values.first)
+        let oldConsumerId = try XCTUnwrap(
+            oldState.localInstallation?.mailboxCredentialsByRoute.values.first?.consumerId
+        )
 
         server?.stop()
         server = nil
@@ -318,11 +320,8 @@ final class IdentityMutationDurabilityTests: XCTestCase {
         )
         XCTAssertNil(final.identityMutationV2)
         let retainedContactId = try XCTUnwrap(final.contacts.first?.id)
-        let backfilledShell = try XCTUnwrap(final.relationshipsV2.first(where: {
-            $0.contactId == retainedContactId
-        }))
-        XCTAssertTrue(backfilledShell.events.isEmpty)
-        XCTAssertTrue(backfilledShell.routeSets.isEmpty)
+        XCTAssertTrue(final.relationshipsV2.isEmpty)
+        XCTAssertTrue(final.localInstallation?.relationshipHandles.isEmpty == true)
 
         let postBurn = try await restartedAlice.sendText(
             to: "Bob",
@@ -333,15 +332,13 @@ final class IdentityMutationDurabilityTests: XCTestCase {
         let postBurnEventId = try XCTUnwrap(storedPostBurn.authenticatedContext?.directV4?.eventId)
         let reboundState = try await awaitState(restartedAlice)
         let rebound = try XCTUnwrap(reboundState.relationshipsV2.first(where: {
-            $0.contactId == backfilledShell.contactId
+            $0.contactId == retainedContactId
         }))
-        XCTAssertNotEqual(rebound.id, backfilledShell.id)
         XCTAssertEqual(rebound.events.last?.id, postBurnEventId)
         XCTAssertEqual(
             reboundState.localInstallation?.relationshipHandles[rebound.id],
             rebound.localInstallationHandle
         )
-        XCTAssertNil(reboundState.localInstallation?.relationshipHandles[backfilledShell.id])
         XCTAssertTrue(reboundState.identityProfiles.first?.isArchitectureV2Ready == true)
     }
 

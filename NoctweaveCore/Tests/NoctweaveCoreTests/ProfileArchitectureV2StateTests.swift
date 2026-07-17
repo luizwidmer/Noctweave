@@ -20,7 +20,7 @@ final class ProfileArchitectureV2StateTests: XCTestCase {
         XCTAssertThrowsError(try NoctweaveCoder.decode(SelfSyncLocalStateV2.self, from: legacy))
     }
 
-    func testLegacyInboundReplayReceiptDecodesAsEnvelopeOnlyScope() throws {
+    func testInboundReplayReceiptWithoutSourceScopeIsRejected() throws {
         let receipt = InboundEnvelopeReceiptV2(
             sourceScopeId: UUID(),
             logicalEventId: UUID(),
@@ -32,28 +32,20 @@ final class ProfileArchitectureV2StateTests: XCTestCase {
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
         object.removeValue(forKey: "sourceScopeId")
-        let legacy = try JSONSerialization.data(withJSONObject: object)
-        let decoded = try NoctweaveCoder.decode(
-            InboundEnvelopeReceiptV2.self,
-            from: legacy
-        )
+        let incomplete = try JSONSerialization.data(withJSONObject: object)
 
-        XCTAssertEqual(
-            decoded.sourceScopeId,
-            InboundEnvelopeReceiptV2.legacyUnscopedSourceId
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(InboundEnvelopeReceiptV2.self, from: incomplete)
         )
-        XCTAssertTrue(decoded.isStructurallyValid)
     }
 
     func testInboundReplayReceiptsScopeLogicalIdentifiersToRelationships() throws {
         let identity = try Identity.generate(displayName: "Local")
-        var profile = IdentityProfile(
+        var profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
             prekeys: try PrekeyState.generate(identity: identity)
         )
-        _ = try profile.migrateToArchitectureV2()
         let sharedLogicalId = UUID()
         let sharedEnvelopeId = UUID()
         let firstScope = UUID()
@@ -105,49 +97,6 @@ final class ProfileArchitectureV2StateTests: XCTestCase {
         XCTAssertFalse(profile.isArchitectureV2Ready)
     }
 
-    func testLegacyContactBackfillPersistsRelationshipWithoutFabricatingRoute() throws {
-        let identity = try Identity.generate(displayName: "Local")
-        let peer = try Identity.generate(displayName: "Peer")
-        let contact = Contact(
-            displayName: peer.displayName,
-            inboxId: InboxAddress.generate(),
-            relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
-            signingPublicKey: peer.signingKey.publicKeyData,
-            agreementPublicKey: peer.agreementKey.publicKeyData
-        )
-        var profile = IdentityProfile(
-            identity: identity,
-            inboxId: InboxAddress.generate(),
-            relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
-            contacts: [contact],
-            prekeys: try PrekeyState.generate(identity: identity),
-            createdAt: Date(timeIntervalSince1970: 1_000)
-        )
-
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
-        XCTAssertTrue(profile.isArchitectureV2Ready)
-        let relationship = try XCTUnwrap(profile.relationshipsV2.first)
-        let installation = try XCTUnwrap(profile.localInstallation)
-        XCTAssertEqual(relationship.contactId, contact.id)
-        XCTAssertEqual(
-            installation.relationshipHandles[relationship.id],
-            relationship.localInstallationHandle
-        )
-        XCTAssertTrue(relationship.routeSets.isEmpty)
-        XCTAssertTrue(relationship.events.isEmpty)
-        XCTAssertTrue(try XCTUnwrap(profile.selfSyncV2).isStructurallyValid)
-
-        let decoded = try NoctweaveCoder.decode(
-            IdentityProfile.self,
-            from: NoctweaveCoder.encode(profile)
-        )
-        XCTAssertTrue(decoded.isArchitectureV2Ready)
-        XCTAssertEqual(decoded.relationshipsV2.first?.id, relationship.id)
-        var idempotent = decoded
-        XCTAssertFalse(try idempotent.migrateToArchitectureV2())
-        XCTAssertEqual(idempotent.relationshipsV2.first?.id, relationship.id)
-    }
-
     func testVerifiedRouteEventAndSelfSyncProgressRoundTripInProfile() throws {
         let identity = try Identity.generate(displayName: "Local")
         let peer = try Identity.generate(displayName: "Peer")
@@ -158,16 +107,26 @@ final class ProfileArchitectureV2StateTests: XCTestCase {
             signingPublicKey: peer.signingKey.publicKeyData,
             agreementPublicKey: peer.agreementKey.publicKeyData
         )
-        var profile = IdentityProfile(
+        var profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: RelayEndpoint(host: "relay.example", port: 443, useTLS: true),
             contacts: [contact],
             prekeys: try PrekeyState.generate(identity: identity)
         )
-        _ = try profile.migrateToArchitectureV2()
-        let installation = try XCTUnwrap(profile.localInstallation)
-        var relationship = try XCTUnwrap(profile.relationshipsV2.first)
+        var installation = try XCTUnwrap(profile.localInstallation)
+        let relationshipId = UUID()
+        let installationHandle = RelationshipInstallationHandle.generate(
+            identityGenerationId: try XCTUnwrap(profile.identityGenerationId),
+            installationId: installation.id,
+            relationshipId: relationshipId
+        )
+        installation.relationshipHandles[relationshipId] = installationHandle
+        profile.localInstallation = installation
+        var relationship = RelationshipStateV2(
+            id: relationshipId,
+            contactId: contact.id,
+            localInstallationHandle: installationHandle
+        )
         XCTAssertTrue(relationship.includeConversationIds(["conversation-v2"]))
         let now = Date(timeIntervalSince1970: 2_000)
 

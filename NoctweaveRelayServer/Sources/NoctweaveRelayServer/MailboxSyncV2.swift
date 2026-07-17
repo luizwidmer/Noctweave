@@ -93,10 +93,7 @@ enum MailboxConsumerState: String, Codable, Equatable {
 
 struct MailboxConsumerRegistration: Codable, Equatable {
     let consumerId: MailboxConsumerId
-    /// Missing only for snapshots written before consumer credentials were
-    /// introduced. Such records cannot sync/commit until jointly rebound by
-    /// inbox authority and consumer possession proofs.
-    var consumerSigningPublicKey: Data?
+    let consumerSigningPublicKey: Data
     var state: MailboxConsumerState
     var committedSequence: UInt64
     let registeredAt: Date
@@ -104,7 +101,7 @@ struct MailboxConsumerRegistration: Codable, Equatable {
 
     init(
         consumerId: MailboxConsumerId,
-        consumerSigningPublicKey: Data?,
+        consumerSigningPublicKey: Data,
         state: MailboxConsumerState = .active,
         committedSequence: UInt64,
         registeredAt: Date = Date(),
@@ -120,7 +117,7 @@ struct MailboxConsumerRegistration: Codable, Equatable {
 
     var isStructurallyValid: Bool {
         guard consumerId.isStructurallyValid,
-              consumerSigningPublicKey?.count == OQSSignatureVerifier.mlDSA65PublicKeyBytes,
+              consumerSigningPublicKey.count == OQSSignatureVerifier.mlDSA65PublicKeyBytes,
               registeredAt.timeIntervalSince1970.isFinite,
               revokedAt?.timeIntervalSince1970.isFinite ?? true else {
             return false
@@ -180,20 +177,35 @@ struct MailboxStreamState: Codable, Equatable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        nextSequence = max(1, try container.decodeIfPresent(UInt64.self, forKey: .nextSequence) ?? 1)
-        retentionFloor = try container.decodeIfPresent(UInt64.self, forKey: .retentionFloor) ?? 0
-        consumers = try container.decodeIfPresent(
+        nextSequence = try container.decode(UInt64.self, forKey: .nextSequence)
+        retentionFloor = try container.decode(UInt64.self, forKey: .retentionFloor)
+        consumers = try container.decode(
             [String: MailboxConsumerRegistration].self,
             forKey: .consumers
-        ) ?? [:]
-        isInstallationManaged = (try container.decodeIfPresent(
+        )
+        isInstallationManaged = try container.decode(
             Bool.self,
             forKey: .isInstallationManaged
-        ) ?? false) || !consumers.isEmpty
-        cursorAuthenticationKey = try container.decodeIfPresent(
+        )
+        cursorAuthenticationKey = try container.decode(
             Data.self,
             forKey: .cursorAuthenticationKey
-        ) ?? MailboxStreamState.generateAuthenticationKey()
+        )
+        guard nextSequence > 0,
+              retentionFloor < nextSequence,
+              cursorAuthenticationKey.count == SHA256.byteCount,
+              isInstallationManaged || consumers.isEmpty,
+              consumers.allSatisfy({ key, value in
+                  key == value.consumerId.rawValue
+                      && value.committedSequence < nextSequence
+                      && value.isStructurallyValid
+              }) else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .consumers,
+                in: container,
+                debugDescription: "Invalid current mailbox stream state"
+            )
+        }
     }
 
     var highWatermark: UInt64 {

@@ -3,18 +3,15 @@ import CryptoKit
 @testable import NoctweaveCore
 
 final class ArchitectureV2IdentityTests: XCTestCase {
-    func testLegacyProfileMigratesToIndependentInstallationAndSignedManifest() throws {
-        let identity = try Identity.generate(displayName: "Architecture migration")
-        let prekeys = try PrekeyState.generate(identity: identity)
-        var profile = IdentityProfile(
+    func testFreshProfileIsCreatedCompleteWithoutMigration() throws {
+        let identity = try Identity.generate(displayName: "Current baseline")
+        let profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
-            prekeys: prekeys,
+            prekeys: try PrekeyState.generate(identity: identity),
             createdAt: Date(timeIntervalSince1970: 1_000)
         )
 
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
         XCTAssertTrue(profile.isArchitectureV2Ready)
         XCTAssertEqual(profile.architectureVersion, 2)
         let accessKey = try XCTUnwrap(profile.inboxAccessKey)
@@ -28,35 +25,35 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             identity.agreementKey.publicKeyData
         )
         XCTAssertEqual(profile.installationManifest?.activeInstallations.count, 1)
-        XCTAssertFalse(try profile.migrateToArchitectureV2())
     }
 
-    func testClientStateStoreMigratesLegacyStateOnceAndPersistsGeneration() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let stateURL = directory.appendingPathComponent("state.json")
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let identity = try Identity.generate(displayName: "Persisted migration")
-        let legacy = ClientState(
+    func testClientStateDecoderRejectsOldOrMissingBaselineFields() throws {
+        let identity = try Identity.generate(displayName: "Strict state")
+        let state = try makeCurrentClientState(
             identity: identity,
-            relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
-            inboxId: InboxAddress.generate()
+            relay: RelayEndpoint(host: "127.0.0.1", port: 9340)
         )
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try NoctweaveCoder.encode(legacy).write(to: stateURL, options: .atomic)
+        let encoded = try NoctweaveCoder.encode(state)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
 
-        let store = ClientStateStore(fileURL: stateURL, useEncryption: false)
-        let loadedFirst = try await store.load()
-        let first = try XCTUnwrap(loadedFirst)
-        let firstProfile = try XCTUnwrap(first.identityProfiles.first { $0.id == first.activeIdentityId })
-        let firstGeneration = try XCTUnwrap(firstProfile.identityGenerationId)
-        XCTAssertEqual(first.schemaVersion, 2)
-        XCTAssertTrue(firstProfile.isArchitectureV2Ready)
+        object["schemaVersion"] = 1
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(
+                ClientState.self,
+                from: JSONSerialization.data(withJSONObject: object)
+            )
+        )
 
-        let loadedSecond = try await store.load()
-        let second = try XCTUnwrap(loadedSecond)
-        let secondProfile = try XCTUnwrap(second.identityProfiles.first { $0.id == second.activeIdentityId })
-        XCTAssertEqual(secondProfile.identityGenerationId, firstGeneration)
-        XCTAssertEqual(secondProfile.localInstallation?.id, firstProfile.localInstallation?.id)
+        object["schemaVersion"] = NoctweaveArchitectureV2.version
+        var profiles = try XCTUnwrap(object["identityProfiles"] as? [[String: Any]])
+        profiles[0].removeValue(forKey: "selfSyncV2")
+        object["identityProfiles"] = profiles
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(
+                ClientState.self,
+                from: JSONSerialization.data(withJSONObject: object)
+            )
+        )
     }
 
     func testRelationshipInstallationHandleMatchesJavaScriptVector() throws {
@@ -189,13 +186,11 @@ final class ArchitectureV2IdentityTests: XCTestCase {
 
     func testArchitectureReadinessBindsLocalInstallationKeysToManifestRecord() throws {
         let identity = try Identity.generate(displayName: "Installation binding")
-        var profile = IdentityProfile(
+        var profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
             prekeys: try PrekeyState.generate(identity: identity)
         )
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
         XCTAssertTrue(profile.isArchitectureV2Ready)
 
         let original = try XCTUnwrap(profile.localInstallation)
@@ -205,21 +200,16 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             createdAt: original.createdAt
         )
         XCTAssertFalse(profile.isArchitectureV2Ready)
-        XCTAssertThrowsError(try profile.migrateToArchitectureV2()) { error in
-            XCTAssertEqual(error as? IdentityProfileMigrationError, .invalidV2State)
-        }
     }
 
     func testArchitectureReadinessRejectsReusedOrUnscopedInboxReachability() throws {
         let identity = try Identity.generate(displayName: "Reachability binding")
         let relay = RelayEndpoint(host: "127.0.0.1", port: 9340)
-        var profile = IdentityProfile(
+        var profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: relay,
             prekeys: try PrekeyState.generate(identity: identity)
         )
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
         XCTAssertTrue(profile.isArchitectureV2Ready)
 
         let originalInboxId = profile.inboxId
@@ -239,7 +229,6 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         )
         let unscoped = try MailboxRouteCredentialV2.generate()
         endpoint.mailboxCredentialsByRoute[routeKey] = unscoped
-        endpoint.mailboxConsumerIdsByRoute[routeKey] = unscoped.consumerId
         profile.localInstallation = endpoint
         XCTAssertFalse(profile.isArchitectureV2Ready)
 
@@ -252,24 +241,18 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         endpoint.mailboxCredentialsByRoute = [
             MailboxRouteCredentialV2.routeIdentifier(relay: relay, inboxId: wrongInbox): scopedWrong
         ]
-        endpoint.mailboxConsumerIdsByRoute = [
-            MailboxRouteCredentialV2.routeIdentifier(relay: relay, inboxId: wrongInbox): scopedWrong.consumerId
-        ]
         profile.localInstallation = endpoint
         XCTAssertFalse(profile.isArchitectureV2Ready)
     }
 
-    func testMailboxCredentialsUseFreshKeysPerRouteAndPreserveLegacySponsor() throws {
+    func testMailboxCredentialsUseFreshKeysPerRoute() throws {
         let createdAt = Date(timeIntervalSince1970: 1_500)
         var installation = try LocalInstallationState.generate(
             identityGenerationId: UUID(),
             createdAt: createdAt
         )
-        let legacyId = MailboxConsumerId.generate()
-        installation.mailboxConsumerIdsByRoute["legacy-route"] = legacyId
-
-        let legacyMigration = try installation.ensureMailboxCredential(
-            for: "legacy-route",
+        let firstRoute = try installation.ensureMailboxCredential(
+            for: "first-route",
             at: createdAt.addingTimeInterval(1)
         )
         let secondRoute = try installation.ensureMailboxCredential(
@@ -277,26 +260,16 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             at: createdAt.addingTimeInterval(2)
         )
 
-        XCTAssertEqual(legacyMigration.legacySponsorConsumerId, legacyId)
-        XCTAssertNotEqual(legacyMigration.consumerId, legacyId)
         XCTAssertNotEqual(
-            legacyMigration.signingKey.publicKeyData,
+            firstRoute.signingKey.publicKeyData,
             installation.signingKey.publicKeyData
         )
         XCTAssertNotEqual(
-            legacyMigration.signingKey.publicKeyData,
+            firstRoute.signingKey.publicKeyData,
             secondRoute.signingKey.publicKeyData
         )
         XCTAssertTrue(installation.mailboxStateIsStructurallyValid)
 
-        try installation.completeMailboxCredentialMigration(for: "legacy-route")
-        XCTAssertNil(
-            installation.mailboxCredentialsByRoute["legacy-route"]?.legacySponsorConsumerId
-        )
-        XCTAssertEqual(
-            installation.mailboxConsumerIdsByRoute["legacy-route"],
-            legacyMigration.consumerId
-        )
         let decoded = try NoctweaveCoder.decode(
             LocalInstallationState.self,
             from: NoctweaveCoder.encode(installation, sortedKeys: true)
@@ -305,23 +278,17 @@ final class ArchitectureV2IdentityTests: XCTestCase {
             decoded.mailboxCredentialsByRoute,
             installation.mailboxCredentialsByRoute
         )
-        XCTAssertEqual(
-            decoded.mailboxConsumerIdsByRoute,
-            installation.mailboxConsumerIdsByRoute
-        )
     }
 
     func testProfileAdmitsAndRemovesIndependentEndpointWithProofsAndHashChain() throws {
         let createdAt = Date(timeIntervalSince1970: 3_000)
         let identity = try Identity.generate(displayName: "Installation lifecycle")
-        var profile = IdentityProfile(
+        var profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
             prekeys: try PrekeyState.generate(identity: identity),
             createdAt: createdAt
         )
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
         let root = try XCTUnwrap(profile.installationManifest)
         let rootDigest = try XCTUnwrap(root.digest)
         let remote = try LocalInstallationState.generate(
@@ -373,14 +340,12 @@ final class ArchitectureV2IdentityTests: XCTestCase {
     func testRevokedInstallationsAreCheckpointedSoDeviceChurnDoesNotExhaustManifest() throws {
         let createdAt = Date(timeIntervalSince1970: 4_000)
         let identity = try Identity.generate(displayName: "Installation churn")
-        var profile = IdentityProfile(
+        var profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
             prekeys: try PrekeyState.generate(identity: identity),
             createdAt: createdAt
         )
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
 
         for replacement in 0..<(NoctweaveArchitectureV2.maximumInstallations * 2) {
             let manifest = try XCTUnwrap(profile.installationManifest)
@@ -409,14 +374,12 @@ final class ArchitectureV2IdentityTests: XCTestCase {
     func testExpiredInstallationsAreCheckpointedSoTheyCannotExhaustManifest() throws {
         let createdAt = Date(timeIntervalSince1970: 4_500)
         let identity = try Identity.generate(displayName: "Expiring installation churn")
-        var profile = IdentityProfile(
+        var profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
             prekeys: try PrekeyState.generate(identity: identity),
             createdAt: createdAt
         )
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
         let expiresAt = createdAt.addingTimeInterval(100)
 
         for index in 1..<NoctweaveArchitectureV2.maximumInstallations {
@@ -459,14 +422,12 @@ final class ArchitectureV2IdentityTests: XCTestCase {
     func testEndpointAdmissionRejectsExpiryReplayWrongGenerationAndForgedProofs() throws {
         let createdAt = Date(timeIntervalSince1970: 5_000)
         let identity = try Identity.generate(displayName: "Endpoint admission proofs")
-        var profile = IdentityProfile(
+        var profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
             prekeys: try PrekeyState.generate(identity: identity),
             createdAt: createdAt
         )
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
         let endpoint = try LocalInstallationState.generate(
             identityGenerationId: try XCTUnwrap(profile.identityGenerationId),
             createdAt: createdAt.addingTimeInterval(1)
@@ -577,14 +538,12 @@ final class ArchitectureV2IdentityTests: XCTestCase {
     func testEndpointRemovalRekeysSelfSyncAndReturnsCompleteCleanupPlan() throws {
         let createdAt = Date(timeIntervalSince1970: 5_500)
         let identity = try Identity.generate(displayName: "Endpoint removal rekey")
-        var profile = IdentityProfile(
+        var profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
             prekeys: try PrekeyState.generate(identity: identity),
             createdAt: createdAt
         )
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
         let endpoint = try LocalInstallationState.generate(
             identityGenerationId: try XCTUnwrap(profile.identityGenerationId),
             createdAt: createdAt.addingTimeInterval(1)
@@ -645,14 +604,12 @@ final class ArchitectureV2IdentityTests: XCTestCase {
     func testArchitectureReadinessVerifiesIssuedEndpointAuthorityAndPossession() throws {
         let createdAt = Date(timeIntervalSince1970: 5_800)
         let identity = try Identity.generate(displayName: "Issued endpoint readiness")
-        var profile = IdentityProfile(
+        var profile = try makeCurrentIdentityProfile(
             identity: identity,
-            inboxId: InboxAddress.generate(),
             relay: RelayEndpoint(host: "127.0.0.1", port: 9340),
             prekeys: try PrekeyState.generate(identity: identity),
             createdAt: createdAt
         )
-        XCTAssertTrue(try profile.migrateToArchitectureV2())
         let endpoint = try CertifiedInstallationEndpoint.create(
             identity: identity,
             installation: try XCTUnwrap(profile.localInstallation),
@@ -682,12 +639,7 @@ final class ArchitectureV2IdentityTests: XCTestCase {
     func testRotationChainsManifestWithoutChangingGeneration() throws {
         let relay = RelayEndpoint(host: "127.0.0.1", port: 9340)
         let originalIdentity = try Identity.generate(displayName: "Generation lifecycle")
-        var state = ClientState(
-            identity: originalIdentity,
-            relay: relay,
-            inboxId: InboxAddress.generate()
-        )
-        XCTAssertTrue(try state.migrateToArchitectureV2())
+        var state = try makeCurrentClientState(identity: originalIdentity, relay: relay)
 
         let originalGeneration = try XCTUnwrap(state.identityGenerationId)
         let originalInstallation = try XCTUnwrap(state.localInstallation)
@@ -710,7 +662,7 @@ final class ArchitectureV2IdentityTests: XCTestCase {
         XCTAssertThrowsError(try state.resignInstallationManifestAfterIdentityRotation(
             at: originalManifest.issuedAt
         )) { error in
-            XCTAssertEqual(error as? IdentityProfileMigrationError, .invalidV2State)
+            XCTAssertEqual(error as? IdentityProfileStateError, .invalidCurrentState)
         }
 
         XCTAssertEqual(state.identityGenerationId, originalGeneration)
