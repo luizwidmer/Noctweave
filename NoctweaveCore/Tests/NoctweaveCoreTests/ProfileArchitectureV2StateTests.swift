@@ -140,22 +140,44 @@ final class ProfileArchitectureV2StateTests: XCTestCase {
         )
         XCTAssertTrue(relationship.appendEvent(event))
 
-        let route = RelationshipRouteV2.active(
-            id: .generate(
-                relationshipId: relationship.id,
-                endpointHandle: relationship.localEndpointHandle
-            ),
-            endpointHandle: relationship.localEndpointHandle,
-            relay: profile.relay,
-            inboxCapability: .generate(),
-            at: now
+        let routeCapabilities = try OpaqueRouteClientCapabilityMaterialV2()
+        let routeLease = try OpaqueRouteLeaseV2(
+            issuedAt: now,
+            expiresAt: now.addingTimeInterval(3_600),
+            policy: OpaqueRoutePolicyV2(
+                paddingBucket: .bytes4096,
+                retentionBucket: .sixHours,
+                quotaBucket: .packets256
+            )
         )
-        let routeSet = try RelationshipRouteSetV2.createInitial(
-            relationshipId: relationship.id,
+        let routeCreate = try routeCapabilities.makeCreateRequest(
+            lease: routeLease,
+            idempotencyKey: .generate()
+        )
+        let relayRoute = try OpaqueReceiveRouteV2.creating(
+            from: routeCreate,
+            presentedRenewCapability: routeCapabilities.renewCapability,
+            existing: nil,
+            confidentialTransport: true,
+            receivedAt: now
+        )
+        let localRoute = try LocalOpaqueReceiveRouteV2(
+            relay: RelayEndpoint(
+                host: "relay.example",
+                port: 443,
+                useTLS: true,
+                transport: .websocket
+            ),
+            route: relayRoute,
+            clientCapabilities: routeCapabilities,
+            payloadKey: .generate()
+        )
+        let routeSet = try PairwiseRouteSetV2.create(
+            relationshipID: relationship.id,
             ownerEndpointHandle: relationship.localEndpointHandle,
-            route: route,
+            activeRoutes: [try localRoute.peerSendRoute()],
+            issuedAt: now,
             signingKey: endpoint.signingKey,
-            issuedAt: now
         )
         XCTAssertTrue(
             relationship.upsertVerifiedRouteSet(

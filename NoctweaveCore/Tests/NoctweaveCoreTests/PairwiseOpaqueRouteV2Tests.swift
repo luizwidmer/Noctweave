@@ -28,14 +28,25 @@ final class PairwiseOpaqueRouteV2Tests: XCTestCase {
 
     func testIntroductionIsRendezvousBoundCurrentAndStrict() throws {
         let routeFixture = try makeRouteFixture()
-        let identityFixture = try makeIdentityFixture()
+        let pairwiseIdentity = try LocalPairwiseIdentityV2.generate(
+            displayName: "Ephemeral Alice",
+            createdAt: origin
+        )
         let rendezvousDigest = Data(repeating: 0xA7, count: 32)
-        let introduction = try ContactIntroductionV2.create(
-            identity: identityFixture.identity,
-            identityGenerationID: identityFixture.generationID,
-            endpointSetManifest: identityFixture.manifest,
-            preferredEndpoint: identityFixture.certificate,
+        let relationshipID = try PairwiseRelationshipIDV2.derive(from: rendezvousDigest)
+        let endpointHandle = RelationshipEndpointHandle.generate(
+            identityGenerationId: pairwiseIdentity.generationID,
+            endpointId: pairwiseIdentity.localEndpoint.id,
+            relationshipId: relationshipID
+        )
+        let routeSet = try pairwiseIdentity.makeInitialRouteSet(
+            relationshipID: relationshipID,
+            ownerEndpointHandle: endpointHandle,
             receiveRoute: routeFixture.local.peerSendRoute(),
+            issuedAt: origin
+        )
+        let introduction = try pairwiseIdentity.makeIntroduction(
+            receiveRoutes: routeSet,
             rendezvousTranscriptDigest: rendezvousDigest,
             issuedAt: origin,
             expiresAt: origin.addingTimeInterval(300)
@@ -57,13 +68,37 @@ final class PairwiseOpaqueRouteV2Tests: XCTestCase {
             at: origin.addingTimeInterval(300)
         )) { XCTAssertEqual($0 as? PairwiseOpaqueRouteV2Error, .expiredIntroduction) }
 
+        let peer = try PeerPairwiseIdentityV2(
+            introduction: introduction,
+            rendezvousTranscriptDigest: rendezvousDigest,
+            acceptedAt: origin.addingTimeInterval(1)
+        )
+        XCTAssertEqual(peer.relationshipID, relationshipID)
+        XCTAssertEqual(peer.sendRoutes, routeSet)
+        XCTAssertTrue(peer.isStructurallyValid)
+
+        var peerObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: NoctweaveCoder.encode(peer, sortedKeys: true)
+            ) as? [String: Any]
+        )
+        peerObject["legacyFingerprint"] = "forbidden"
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            PeerPairwiseIdentityV2.self,
+            from: JSONSerialization.data(withJSONObject: peerObject)
+        ))
+
         let encoded = try NoctweaveCoder.encode(introduction, sortedKeys: true)
         var object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
-        var route = try XCTUnwrap(object["receiveRoute"] as? [String: Any])
+        var routes = try XCTUnwrap(object["receiveRoutes"] as? [String: Any])
+        var routeList = try XCTUnwrap(routes["routes"] as? [[String: Any]])
+        var route = try XCTUnwrap(routeList.first)
         route["unknownAuthority"] = "forbidden"
-        object["receiveRoute"] = route
+        routeList[0] = route
+        routes["routes"] = routeList
+        object["receiveRoutes"] = routes
         let unknownNestedField = try JSONSerialization.data(withJSONObject: object)
         XCTAssertThrowsError(try NoctweaveCoder.decode(
             ContactIntroductionV2.self,
@@ -80,6 +115,29 @@ final class PairwiseOpaqueRouteV2Tests: XCTestCase {
         XCTAssertNotEqual(firstProjection.routeID, secondProjection.routeID)
         XCTAssertNotEqual(firstProjection.sendCapability, secondProjection.sendCapability)
         XCTAssertNotEqual(firstProjection.payloadKey, secondProjection.payloadKey)
+    }
+
+    func testPairwiseIdentityKeysAreNeverReusedAcrossContacts() throws {
+        let first = try LocalPairwiseIdentityV2.generate(
+            displayName: "Same local alias",
+            createdAt: origin
+        )
+        let second = try LocalPairwiseIdentityV2.generate(
+            displayName: "Same local alias",
+            createdAt: origin
+        )
+
+        XCTAssertNotEqual(first.generationID, second.generationID)
+        XCTAssertNotEqual(
+            first.relationshipIdentity.signingKey.publicKeyData,
+            second.relationshipIdentity.signingKey.publicKeyData
+        )
+        XCTAssertNotEqual(
+            first.localEndpoint.signingKey.publicKeyData,
+            second.localEndpoint.signingKey.publicKeyData
+        )
+        XCTAssertEqual(String(describing: first), "LocalPairwiseIdentityV2(<redacted>)")
+        XCTAssertTrue(Mirror(reflecting: first).children.isEmpty)
     }
 
     private func makeRouteFixture(
@@ -126,31 +184,4 @@ final class PairwiseOpaqueRouteV2Tests: XCTestCase {
         return (local, capabilities)
     }
 
-    private func makeIdentityFixture() throws -> (
-        identity: Identity,
-        generationID: UUID,
-        manifest: EndpointSetManifest,
-        certificate: CertifiedGenerationEndpoint
-    ) {
-        let identity = try Identity.generate(displayName: "Ephemeral Alice")
-        let generationID = UUID()
-        let endpoint = try LocalEndpointState.generate(
-            identityGenerationId: generationID,
-            createdAt: origin
-        )
-        let manifest = try EndpointSetManifest.create(
-            identityGenerationId: generationID,
-            epoch: 0,
-            endpoints: [endpoint.publicRecord(addedEpoch: 0)],
-            identity: identity,
-            issuedAt: origin
-        )
-        let certificate = try CertifiedGenerationEndpoint.create(
-            identity: identity,
-            endpoint: endpoint,
-            manifest: manifest,
-            issuedAt: origin
-        )
-        return (identity, generationID, manifest, certificate)
-    }
 }

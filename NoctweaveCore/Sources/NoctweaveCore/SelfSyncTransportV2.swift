@@ -142,7 +142,7 @@ public struct SelfSyncPreferenceUpdateV2: Codable, Equatable {
 public enum TypedSelfSyncPayloadV2: Codable, Equatable {
     case conversationEvent(ConversationEvent)
     case endpointSetManifest(EndpointSetManifest)
-    case relationshipRouteSet(RelationshipRouteSetV2)
+    case relationshipRouteSet(PairwiseRouteSetV2)
     case groupCommit(SignedGroupCommitV2)
     case consent(SelfSyncConsentUpdateV2)
     case readMarker(SelfSyncReadMarkerV2)

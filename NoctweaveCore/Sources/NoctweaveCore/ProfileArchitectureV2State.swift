@@ -92,16 +92,15 @@ public enum RelationshipEventCheckpointError: Error, Equatable {
     case countOverflow
 }
 
-/// Endpoint-aware state for one pairwise relationship. Legacy inbox
-/// addresses are deliberately not promoted into v2 route capabilities: route
-/// sets remain empty until an authenticated v2 route advertisement is learned.
+/// Endpoint-aware state for one pairwise relationship. Reachability is held
+/// only as authenticated opaque send routes learned inside that relationship.
 public struct RelationshipStateV2: Codable, Equatable, Identifiable {
     public let version: Int
     public let id: UUID
     public let contactId: UUID
     public let localEndpointHandle: RelationshipEndpointHandle
     public private(set) var conversationIds: [String]
-    public private(set) var routeSets: [RelationshipRouteSetV2]
+    public private(set) var routeSets: [PairwiseRouteSetV2]
     public private(set) var events: [ConversationEvent]
     public private(set) var eventCheckpoint: RelationshipEventCheckpointV2?
     public let createdAt: Date
@@ -112,7 +111,7 @@ public struct RelationshipStateV2: Codable, Equatable, Identifiable {
         contactId: UUID,
         localEndpointHandle: RelationshipEndpointHandle,
         conversationIds: [String] = [],
-        routeSets: [RelationshipRouteSetV2] = [],
+        routeSets: [PairwiseRouteSetV2] = [],
         events: [ConversationEvent] = [],
         eventCheckpoint: RelationshipEventCheckpointV2? = nil,
         createdAt: Date = Date()
@@ -142,7 +141,7 @@ public struct RelationshipStateV2: Codable, Equatable, Identifiable {
             && routeSets.count <= NoctweaveArchitectureV2.maximumEndpoints * 2
             && Set(routeSets.map(\.ownerEndpointHandle)).count == routeSets.count
             && routeSets.allSatisfy {
-                $0.relationshipId == id && $0.isStructurallyValid
+            $0.relationshipID == id && $0.isStructurallyValid
             }
             && events.count <= NoctweaveArchitectureV2.maximumRelationshipEvents
             && Set(events.map(\.id)).count == events.count
@@ -172,10 +171,10 @@ public struct RelationshipStateV2: Codable, Equatable, Identifiable {
     /// remains the caller's authenticated endpoint-manifest check.
     @discardableResult
     public mutating func upsertVerifiedRouteSet(
-        _ routeSet: RelationshipRouteSetV2,
+        _ routeSet: PairwiseRouteSetV2,
         ownerSigningPublicKey: Data
     ) -> Bool {
-        guard routeSet.relationshipId == id,
+        guard routeSet.relationshipID == id,
               routeSet.verify(ownerSigningPublicKey: ownerSigningPublicKey) else {
             return false
         }

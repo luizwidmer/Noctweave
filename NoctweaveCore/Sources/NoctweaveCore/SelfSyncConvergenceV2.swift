@@ -19,7 +19,7 @@ public enum SelfSyncConvergenceV2Error: Error, Equatable {
 public enum SelfSyncExternalHandlingV2: Equatable {
     case conversationEvent(ConversationEvent)
     case endpointSetManifest(EndpointSetManifest)
-    case relationshipRouteSet(RelationshipRouteSetV2)
+    case relationshipRouteSet(PairwiseRouteSetV2)
     case groupCommit(SignedGroupCommitV2)
 }
 

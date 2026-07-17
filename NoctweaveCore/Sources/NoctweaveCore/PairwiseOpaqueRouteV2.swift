@@ -24,6 +24,9 @@ public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
     public let expiresAt: Date
     public let priority: UInt16
     public let state: RelationshipRouteStateV2
+    public let testedAt: Date?
+    public let drainAfter: Date?
+    public let revokedAt: Date?
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case routeID
@@ -36,6 +39,9 @@ public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
         case expiresAt
         case priority
         case state
+        case testedAt
+        case drainAfter
+        case revokedAt
     }
 
     public init(
@@ -48,7 +54,10 @@ public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
         validFrom: Date,
         expiresAt: Date,
         priority: UInt16 = 100,
-        state: RelationshipRouteStateV2
+        state: RelationshipRouteStateV2,
+        testedAt: Date? = nil,
+        drainAfter: Date? = nil,
+        revokedAt: Date? = nil
     ) throws {
         self.routeID = routeID
         self.relay = relay
@@ -60,6 +69,9 @@ public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
         self.expiresAt = expiresAt
         self.priority = priority
         self.state = state
+        self.testedAt = testedAt
+        self.drainAfter = drainAfter
+        self.revokedAt = revokedAt
         guard isStructurallyValid else { throw PairwiseOpaqueRouteV2Error.invalidRoute }
     }
 
@@ -85,7 +97,10 @@ public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
             validFrom: container.decode(Date.self, forKey: .validFrom),
             expiresAt: container.decode(Date.self, forKey: .expiresAt),
             priority: container.decode(UInt16.self, forKey: .priority),
-            state: container.decode(RelationshipRouteStateV2.self, forKey: .state)
+            state: container.decode(RelationshipRouteStateV2.self, forKey: .state),
+            testedAt: container.decodeIfPresent(Date.self, forKey: .testedAt),
+            drainAfter: container.decodeIfPresent(Date.self, forKey: .drainAfter),
+            revokedAt: container.decodeIfPresent(Date.self, forKey: .revokedAt)
         )
     }
 
@@ -110,6 +125,21 @@ public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
         try container.encode(expiresAt, forKey: .expiresAt)
         try container.encode(priority, forKey: .priority)
         try container.encode(state, forKey: .state)
+        if let testedAt {
+            try container.encode(testedAt, forKey: .testedAt)
+        } else {
+            try container.encodeNil(forKey: .testedAt)
+        }
+        if let drainAfter {
+            try container.encode(drainAfter, forKey: .drainAfter)
+        } else {
+            try container.encodeNil(forKey: .drainAfter)
+        }
+        if let revokedAt {
+            try container.encode(revokedAt, forKey: .revokedAt)
+        } else {
+            try container.encodeNil(forKey: .revokedAt)
+        }
     }
 
     public var isStructurallyValid: Bool {
@@ -122,7 +152,69 @@ public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
             && validFrom.timeIntervalSince1970.isFinite
             && expiresAt.timeIntervalSince1970.isFinite
             && expiresAt > validFrom
-            && state != .revoked
+            && testedAt?.timeIntervalSince1970.isFinite != false
+            && drainAfter?.timeIntervalSince1970.isFinite != false
+            && revokedAt?.timeIntervalSince1970.isFinite != false
+            && lifecycleIsStructurallyValid
+    }
+
+    public func isUsable(at date: Date) -> Bool {
+        guard isStructurallyValid,
+              date.timeIntervalSince1970.isFinite,
+              date >= validFrom,
+              date < expiresAt else {
+            return false
+        }
+        switch state {
+        case .active:
+            return true
+        case .draining:
+            return drainAfter.map { date < $0 } ?? false
+        case .testing, .revoked:
+            return false
+        }
+    }
+
+    func replacingLifecycle(
+        state: RelationshipRouteStateV2,
+        testedAt: Date?,
+        drainAfter: Date?,
+        revokedAt: Date?
+    ) throws -> PairwiseSendRouteV2 {
+        try PairwiseSendRouteV2(
+            routeID: routeID,
+            relay: relay,
+            sendCapability: sendCapability,
+            payloadKey: payloadKey,
+            routeRevision: routeRevision,
+            policy: policy,
+            validFrom: validFrom,
+            expiresAt: expiresAt,
+            priority: priority,
+            state: state,
+            testedAt: testedAt,
+            drainAfter: drainAfter,
+            revokedAt: revokedAt
+        )
+    }
+
+    private var lifecycleIsStructurallyValid: Bool {
+        guard testedAt.map({ $0 >= validFrom && $0 < expiresAt }) ?? true,
+              drainAfter.map({ $0 > validFrom && $0 <= expiresAt }) ?? true,
+              revokedAt.map({ $0 >= validFrom }) ?? true else {
+            return false
+        }
+        switch state {
+        case .testing:
+            return drainAfter == nil && revokedAt == nil
+        case .active:
+            return testedAt != nil && drainAfter == nil && revokedAt == nil
+        case .draining:
+            return testedAt != nil && drainAfter != nil && revokedAt == nil
+        case .revoked:
+            guard let revokedAt else { return false }
+            return drainAfter.map { revokedAt >= $0 } ?? true
+        }
     }
 
     public var description: String { "PairwiseSendRouteV2(<redacted>)" }
@@ -179,7 +271,8 @@ public struct LocalOpaqueReceiveRouteV2: Codable, Equatable,
             validFrom: route.lease.issuedAt,
             expiresAt: route.lease.expiresAt,
             priority: priority,
-            state: state
+            state: state,
+            testedAt: state == .active ? route.lease.issuedAt : nil
         )
     }
 
@@ -188,21 +281,21 @@ public struct LocalOpaqueReceiveRouteV2: Codable, Equatable,
     public var customMirror: Mirror { Mirror(self, children: [:], displayStyle: .struct) }
 }
 
-/// One-use identity and route disclosure exchanged only after a PQ rendezvous
-/// session is authenticated. A fresh receive route is created for each
-/// introduction, preventing reuse of one public contact package as a stable
-/// reachability identifier.
+/// One-use pairwise identity and route disclosure exchanged only after a PQ
+/// rendezvous session is authenticated. Both the relationship identity and
+/// receive routes are freshly scoped to this relationship, preventing reuse of
+/// a public contact package as either identity or reachability metadata.
 public struct ContactIntroductionV2: Codable, Equatable {
     public static let version = 2
 
     public let version: Int
     public let displayName: String
-    public let identityGenerationID: UUID
-    public let identitySigningPublicKey: Data
-    public let identityAgreementPublicKey: Data
+    public let relationshipGenerationID: UUID
+    public let relationshipSigningPublicKey: Data
+    public let relationshipAgreementPublicKey: Data
     public let endpointSetCheckpoint: EndpointSetCheckpointV4
     public let preferredEndpoint: CertifiedGenerationEndpoint
-    public let receiveRoute: PairwiseSendRouteV2
+    public let receiveRoutes: PairwiseRouteSetV2
     public let rendezvousTranscriptDigest: Data
     public let issuedAt: Date
     public let expiresAt: Date
@@ -211,12 +304,12 @@ public struct ContactIntroductionV2: Codable, Equatable {
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case version
         case displayName
-        case identityGenerationID
-        case identitySigningPublicKey
-        case identityAgreementPublicKey
+        case relationshipGenerationID
+        case relationshipSigningPublicKey
+        case relationshipAgreementPublicKey
         case endpointSetCheckpoint
         case preferredEndpoint
-        case receiveRoute
+        case receiveRoutes
         case rendezvousTranscriptDigest
         case issuedAt
         case expiresAt
@@ -226,12 +319,12 @@ public struct ContactIntroductionV2: Codable, Equatable {
     public init(
         version: Int = Self.version,
         displayName: String,
-        identityGenerationID: UUID,
-        identitySigningPublicKey: Data,
-        identityAgreementPublicKey: Data,
+        relationshipGenerationID: UUID,
+        relationshipSigningPublicKey: Data,
+        relationshipAgreementPublicKey: Data,
         endpointSetCheckpoint: EndpointSetCheckpointV4,
         preferredEndpoint: CertifiedGenerationEndpoint,
-        receiveRoute: PairwiseSendRouteV2,
+        receiveRoutes: PairwiseRouteSetV2,
         rendezvousTranscriptDigest: Data,
         issuedAt: Date,
         expiresAt: Date,
@@ -239,12 +332,12 @@ public struct ContactIntroductionV2: Codable, Equatable {
     ) {
         self.version = version
         self.displayName = displayName
-        self.identityGenerationID = identityGenerationID
-        self.identitySigningPublicKey = identitySigningPublicKey
-        self.identityAgreementPublicKey = identityAgreementPublicKey
+        self.relationshipGenerationID = relationshipGenerationID
+        self.relationshipSigningPublicKey = relationshipSigningPublicKey
+        self.relationshipAgreementPublicKey = relationshipAgreementPublicKey
         self.endpointSetCheckpoint = endpointSetCheckpoint
         self.preferredEndpoint = preferredEndpoint
-        self.receiveRoute = receiveRoute
+        self.receiveRoutes = receiveRoutes
         self.rendezvousTranscriptDigest = rendezvousTranscriptDigest
         self.issuedAt = issuedAt
         self.expiresAt = expiresAt
@@ -266,12 +359,12 @@ public struct ContactIntroductionV2: Codable, Equatable {
         self.init(
             version: try container.decode(Int.self, forKey: .version),
             displayName: try container.decode(String.self, forKey: .displayName),
-            identityGenerationID: try container.decode(UUID.self, forKey: .identityGenerationID),
-            identitySigningPublicKey: try container.decode(Data.self, forKey: .identitySigningPublicKey),
-            identityAgreementPublicKey: try container.decode(Data.self, forKey: .identityAgreementPublicKey),
+            relationshipGenerationID: try container.decode(UUID.self, forKey: .relationshipGenerationID),
+            relationshipSigningPublicKey: try container.decode(Data.self, forKey: .relationshipSigningPublicKey),
+            relationshipAgreementPublicKey: try container.decode(Data.self, forKey: .relationshipAgreementPublicKey),
             endpointSetCheckpoint: try container.decode(EndpointSetCheckpointV4.self, forKey: .endpointSetCheckpoint),
             preferredEndpoint: try container.decode(CertifiedGenerationEndpoint.self, forKey: .preferredEndpoint),
-            receiveRoute: try container.decode(PairwiseSendRouteV2.self, forKey: .receiveRoute),
+            receiveRoutes: try container.decode(PairwiseRouteSetV2.self, forKey: .receiveRoutes),
             rendezvousTranscriptDigest: try container.decode(Data.self, forKey: .rendezvousTranscriptDigest),
             issuedAt: try container.decode(Date.self, forKey: .issuedAt),
             expiresAt: try container.decode(Date.self, forKey: .expiresAt),
@@ -299,12 +392,12 @@ public struct ContactIntroductionV2: Codable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(version, forKey: .version)
         try container.encode(displayName, forKey: .displayName)
-        try container.encode(identityGenerationID, forKey: .identityGenerationID)
-        try container.encode(identitySigningPublicKey, forKey: .identitySigningPublicKey)
-        try container.encode(identityAgreementPublicKey, forKey: .identityAgreementPublicKey)
+        try container.encode(relationshipGenerationID, forKey: .relationshipGenerationID)
+        try container.encode(relationshipSigningPublicKey, forKey: .relationshipSigningPublicKey)
+        try container.encode(relationshipAgreementPublicKey, forKey: .relationshipAgreementPublicKey)
         try container.encode(endpointSetCheckpoint, forKey: .endpointSetCheckpoint)
         try container.encode(preferredEndpoint, forKey: .preferredEndpoint)
-        try container.encode(receiveRoute, forKey: .receiveRoute)
+        try container.encode(receiveRoutes, forKey: .receiveRoutes)
         try container.encode(rendezvousTranscriptDigest, forKey: .rendezvousTranscriptDigest)
         try container.encode(issuedAt, forKey: .issuedAt)
         try container.encode(expiresAt, forKey: .expiresAt)
@@ -312,35 +405,35 @@ public struct ContactIntroductionV2: Codable, Equatable {
     }
 
     public static func create(
-        identity: Identity,
-        identityGenerationID: UUID,
+        relationshipIdentity: Identity,
+        relationshipGenerationID: UUID,
         endpointSetManifest: EndpointSetManifest,
         preferredEndpoint: CertifiedGenerationEndpoint,
-        receiveRoute: PairwiseSendRouteV2,
+        receiveRoutes: PairwiseRouteSetV2,
         rendezvousTranscriptDigest: Data,
         issuedAt: Date,
         expiresAt: Date
     ) throws -> ContactIntroductionV2 {
-        guard endpointSetManifest.identityGenerationId == identityGenerationID,
-              preferredEndpoint.identityGenerationId == identityGenerationID,
+        guard endpointSetManifest.identityGenerationId == relationshipGenerationID,
+              preferredEndpoint.identityGenerationId == relationshipGenerationID,
               (try? preferredEndpoint.verified(
-                  identityPublicKey: identity.signingKey.publicKeyData,
+                  identityPublicKey: relationshipIdentity.signingKey.publicKeyData,
                   manifest: endpointSetManifest
               )) != nil else {
             throw PairwiseOpaqueRouteV2Error.invalidIntroduction
         }
         let checkpoint = try EndpointSetCheckpointV4.create(
             manifest: endpointSetManifest,
-            identity: identity
+            identity: relationshipIdentity
         )
         var introduction = ContactIntroductionV2(
-            displayName: identity.displayName,
-            identityGenerationID: identityGenerationID,
-            identitySigningPublicKey: identity.signingKey.publicKeyData,
-            identityAgreementPublicKey: identity.agreementKey.publicKeyData,
+            displayName: relationshipIdentity.displayName,
+            relationshipGenerationID: relationshipGenerationID,
+            relationshipSigningPublicKey: relationshipIdentity.signingKey.publicKeyData,
+            relationshipAgreementPublicKey: relationshipIdentity.agreementKey.publicKeyData,
             endpointSetCheckpoint: checkpoint,
             preferredEndpoint: preferredEndpoint,
-            receiveRoute: receiveRoute,
+            receiveRoutes: receiveRoutes,
             rendezvousTranscriptDigest: rendezvousTranscriptDigest,
             issuedAt: issuedAt,
             expiresAt: expiresAt,
@@ -351,16 +444,16 @@ public struct ContactIntroductionV2: Codable, Equatable {
         }
         introduction = ContactIntroductionV2(
             displayName: introduction.displayName,
-            identityGenerationID: introduction.identityGenerationID,
-            identitySigningPublicKey: introduction.identitySigningPublicKey,
-            identityAgreementPublicKey: introduction.identityAgreementPublicKey,
+            relationshipGenerationID: introduction.relationshipGenerationID,
+            relationshipSigningPublicKey: introduction.relationshipSigningPublicKey,
+            relationshipAgreementPublicKey: introduction.relationshipAgreementPublicKey,
             endpointSetCheckpoint: introduction.endpointSetCheckpoint,
             preferredEndpoint: introduction.preferredEndpoint,
-            receiveRoute: introduction.receiveRoute,
+            receiveRoutes: introduction.receiveRoutes,
             rendezvousTranscriptDigest: introduction.rendezvousTranscriptDigest,
             issuedAt: introduction.issuedAt,
             expiresAt: introduction.expiresAt,
-            signature: try identity.signingKey.sign(introduction.signableData())
+            signature: try relationshipIdentity.signingKey.sign(introduction.signableData())
         )
         guard introduction.isStructurallyValid else {
             throw PairwiseOpaqueRouteV2Error.invalidIntroduction
@@ -387,12 +480,12 @@ public struct ContactIntroductionV2: Codable, Equatable {
               SigningKeyPair.verify(
                   signature: signature,
                   data: signable,
-                  publicKeyData: identitySigningPublicKey
+                  publicKeyData: relationshipSigningPublicKey
               ) else {
             throw PairwiseOpaqueRouteV2Error.invalidSignature
         }
         guard (try? preferredEndpoint.verified(
-            identityPublicKey: identitySigningPublicKey,
+            identityPublicKey: relationshipSigningPublicKey,
             checkpoint: endpointSetCheckpoint,
             now: preferredEndpoint.prekeyBundle.createdAt
         )) != nil else {
@@ -408,19 +501,22 @@ public struct ContactIntroductionV2: Codable, Equatable {
             && !name.isEmpty
             && name == displayName
             && name.utf8.count <= 512
-            && SigningKeyPair.isValidPublicKey(identitySigningPublicKey)
-            && AgreementKeyPair.isValidPublicKey(identityAgreementPublicKey)
-            && endpointSetCheckpoint.identityGenerationId == identityGenerationID
-            && preferredEndpoint.identityGenerationId == identityGenerationID
+            && SigningKeyPair.isValidPublicKey(relationshipSigningPublicKey)
+            && AgreementKeyPair.isValidPublicKey(relationshipAgreementPublicKey)
+            && endpointSetCheckpoint.identityGenerationId == relationshipGenerationID
+            && preferredEndpoint.identityGenerationId == relationshipGenerationID
             && preferredEndpoint.manifestEpoch == endpointSetCheckpoint.epoch
-            && receiveRoute.isStructurallyValid
-            && receiveRoute.state == .active
+            && receiveRoutes.isStructurallyValid
+            && receiveRoutes.verify(
+                ownerSigningPublicKey: preferredEndpoint.signingPublicKey
+            )
+            && !receiveRoutes.usableRoutes(at: issuedAt).isEmpty
             && rendezvousTranscriptDigest.count == 32
             && issuedAt.timeIntervalSince1970.isFinite
             && expiresAt.timeIntervalSince1970.isFinite
             && introductionLifetime > 0
             && introductionLifetime <= NoctweaveRendezvousV2.maximumLifetime
-            && receiveRoute.expiresAt > expiresAt
+            && receiveRoutes.usableRoutes(at: issuedAt).allSatisfy { $0.expiresAt > expiresAt }
     }
 
     private func signableData() throws -> Data {
@@ -428,12 +524,12 @@ public struct ContactIntroductionV2: Codable, Equatable {
             ContactIntroductionSignaturePayloadV2(
                 version: version,
                 displayName: displayName,
-                identityGenerationID: identityGenerationID,
-                identitySigningPublicKey: identitySigningPublicKey,
-                identityAgreementPublicKey: identityAgreementPublicKey,
+                relationshipGenerationID: relationshipGenerationID,
+                relationshipSigningPublicKey: relationshipSigningPublicKey,
+                relationshipAgreementPublicKey: relationshipAgreementPublicKey,
                 endpointSetCheckpoint: endpointSetCheckpoint,
                 preferredEndpoint: preferredEndpoint,
-                receiveRoute: receiveRoute,
+                receiveRoutes: receiveRoutes,
                 rendezvousTranscriptDigest: rendezvousTranscriptDigest,
                 issuedAt: issuedAt,
                 expiresAt: expiresAt
@@ -446,12 +542,12 @@ public struct ContactIntroductionV2: Codable, Equatable {
 private struct ContactIntroductionSignaturePayloadV2: Codable {
     let version: Int
     let displayName: String
-    let identityGenerationID: UUID
-    let identitySigningPublicKey: Data
-    let identityAgreementPublicKey: Data
+    let relationshipGenerationID: UUID
+    let relationshipSigningPublicKey: Data
+    let relationshipAgreementPublicKey: Data
     let endpointSetCheckpoint: EndpointSetCheckpointV4
     let preferredEndpoint: CertifiedGenerationEndpoint
-    let receiveRoute: PairwiseSendRouteV2
+    let receiveRoutes: PairwiseRouteSetV2
     let rendezvousTranscriptDigest: Data
     let issuedAt: Date
     let expiresAt: Date
