@@ -136,23 +136,3 @@ public struct ChainKeyState: Codable, Equatable {
         }
     }
 }
-
-public struct RootRatchet: Codable, Equatable {
-    public let counter: UInt64
-    public let kemCiphertext: Data
-    public let sentAt: Date
-
-    public init(counter: UInt64, kemCiphertext: Data, sentAt: Date = Date()) {
-        self.counter = counter
-        self.kemCiphertext = kemCiphertext
-        self.sentAt = sentAt
-    }
-
-    public func bucketed(metadataBucketSeconds: Int?) -> RootRatchet {
-        RootRatchet(
-            counter: counter,
-            kemCiphertext: kemCiphertext,
-            sentAt: MetadataMinimizer.bucketedTimestamp(sentAt, bucketSeconds: metadataBucketSeconds)
-        )
-    }
-}

@@ -424,7 +424,7 @@ public struct ClientState: Codable {
     }
 
     public func resolveCertifiedDirectContext(
-        _ direct: DirectMessageAuthenticatedContextV4
+        _ direct: DirectEnvelopeV4
     ) -> (
         contact: Contact,
         localEndpoint: CertifiedGenerationEndpoint,
@@ -444,10 +444,10 @@ public struct ClientState: Codable {
                 ) else { continue }
                 if binding.peerEndpointHandle == direct.senderEndpointHandle,
                    binding.peerCertificateReferenceDigest == direct.senderCertificateDigest,
-                   peerEndpoint.manifestEpoch == direct.senderManifestEpoch,
+                   peerEndpoint.manifestEpoch == direct.senderEndpointSetEpoch,
                    binding.localEndpointHandle == direct.recipientEndpointHandle,
                    binding.localCertificateReferenceDigest == direct.recipientCertificateDigest,
-                   localEndpoint.manifestEpoch == direct.recipientManifestEpoch {
+                   localEndpoint.manifestEpoch == direct.recipientEndpointSetEpoch {
                     matches.append((contact, localEndpoint, binding))
                 }
             }

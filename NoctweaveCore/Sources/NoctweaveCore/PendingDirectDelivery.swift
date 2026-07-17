@@ -11,7 +11,7 @@ public struct PendingDirectDelivery: Codable, Equatable, Identifiable {
     public let inboxId: String
     public let preferredRelay: RelayEndpoint
     public let destinationRelay: RelayEndpoint
-    public let envelope: Envelope
+    public let envelope: DirectEnvelopeV4
     public let queuedAt: Date
     public var attemptCount: Int
     public var lastAttemptAt: Date?
@@ -21,7 +21,7 @@ public struct PendingDirectDelivery: Codable, Equatable, Identifiable {
         inboxId: String,
         preferredRelay: RelayEndpoint,
         destinationRelay: RelayEndpoint,
-        envelope: Envelope,
+        envelope: DirectEnvelopeV4,
         queuedAt: Date = Date(),
         attemptCount: Int = 0,
         lastAttemptAt: Date? = nil

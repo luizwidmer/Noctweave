@@ -495,8 +495,7 @@ public actor HeadlessMessagingClient {
                 state: &state
             )
             var conversation: Conversation
-            var kemCiphertext: Data?
-            var prekey: PrekeyReference?
+            var bootstrap = DirectBootstrapV4.none
             if let existing = state.conversation(
                 for: contact.id,
                 endpointSession: selected.endpointSession
@@ -510,24 +509,21 @@ public actor HeadlessMessagingClient {
                     contact: contact
                 )
                 conversation = session.conversation
-                kemCiphertext = session.kemCiphertext
-                prekey = session.prekey
+                bootstrap = .signedPrekey(
+                    kemCiphertext: session.kemCiphertext,
+                    prekey: session.prekey
+                )
             }
             let eventId = UUID()
-            let context = try MessageAuthenticatedContext.directV4(
-                eventId: eventId,
-                senderEndpoint: selected.localEndpoint,
-                recipientEndpoint: peerEndpoint,
-                pairwiseBinding: selected.binding
-            )
             let envelope = try MessageEngine.encryptDirectV4(
                 wirePayload: .control(.identityRotation(rotationContext.rotation)),
+                eventId: eventId,
                 senderSigningKey: endpoint.signingKey,
-                senderFingerprint: selected.binding.localEndpointHandle.rawValue,
+                senderEndpoint: selected.localEndpoint,
+                recipientEndpoint: peerEndpoint,
+                pairwiseBinding: selected.binding,
                 conversation: &conversation,
-                kemCiphertext: kemCiphertext,
-                prekey: prekey,
-                authenticatedContext: context,
+                bootstrap: bootstrap,
                 sentAt: mutationAt
             )
             conversation.markMessageProcessed()
@@ -626,8 +622,7 @@ public actor HeadlessMessagingClient {
                 state: &state
             )
             var conversation: Conversation
-            var kemCiphertext: Data?
-            var prekey: PrekeyReference?
+            var bootstrap = DirectBootstrapV4.none
             if let existing = state.conversation(
                 for: contact.id,
                 endpointSession: selected.endpointSession
@@ -641,23 +636,21 @@ public actor HeadlessMessagingClient {
                     contact: contact
                 )
                 conversation = session.conversation
-                kemCiphertext = session.kemCiphertext
-                prekey = session.prekey
+                bootstrap = .signedPrekey(
+                    kemCiphertext: session.kemCiphertext,
+                    prekey: session.prekey
+                )
             }
-            let context = try MessageAuthenticatedContext.directV4(
-                eventId: UUID(),
-                senderEndpoint: selected.localEndpoint,
-                recipientEndpoint: peerEndpoint,
-                pairwiseBinding: selected.binding
-            )
+            let eventId = UUID()
             let envelope = try MessageEngine.encryptDirectV4(
                 wirePayload: .control(.identityReset(reset)),
+                eventId: eventId,
                 senderSigningKey: endpoint.signingKey,
-                senderFingerprint: selected.binding.localEndpointHandle.rawValue,
+                senderEndpoint: selected.localEndpoint,
+                recipientEndpoint: peerEndpoint,
+                pairwiseBinding: selected.binding,
                 conversation: &conversation,
-                kemCiphertext: kemCiphertext,
-                prekey: prekey,
-                authenticatedContext: context,
+                bootstrap: bootstrap,
                 sentAt: staged.createdAt
             )
             let pending = PendingDirectDelivery(
@@ -847,7 +840,7 @@ public actor HeadlessMessagingClient {
         let contact = try resolveContact(selector, in: state.contacts)
         try requireContinuityDeliveryReady(for: contact, state: state)
         var conversation: Conversation
-        var kemCiphertext: Data?
+        var bootstrap = DirectBootstrapV4.none
         let eventId = UUID()
         let clientTransactionId = UUID()
         guard contact.usesCertifiedGenerationEndpoint,
@@ -863,7 +856,6 @@ public actor HeadlessMessagingClient {
         let senderEndpoint = selected.localEndpoint
         let binding = selected.binding
         let endpointSession = selected.endpointSession
-        var prekey: PrekeyReference?
         if let existing = state.conversation(for: contact.id, endpointSession: endpointSession) {
             conversation = existing
         } else {
@@ -874,15 +866,11 @@ public actor HeadlessMessagingClient {
                 contact: contact
             )
             conversation = session.conversation
-            kemCiphertext = session.kemCiphertext
-            prekey = session.prekey
+            bootstrap = .signedPrekey(
+                kemCiphertext: session.kemCiphertext,
+                prekey: session.prekey
+            )
         }
-        let context = try MessageAuthenticatedContext.directV4(
-            eventId: eventId,
-            senderEndpoint: senderEndpoint,
-            recipientEndpoint: peerEndpoint,
-            pairwiseBinding: binding
-        )
         let eventTimestamp = Date()
         guard let content = EncodedContent.text(text) else {
             throw WirePayloadV2Error.invalidKnownApplicationContent
@@ -898,12 +886,13 @@ public actor HeadlessMessagingClient {
         )
         let envelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(event),
+            eventId: eventId,
             senderSigningKey: endpoint.signingKey,
-            senderFingerprint: binding.localEndpointHandle.rawValue,
+            senderEndpoint: senderEndpoint,
+            recipientEndpoint: peerEndpoint,
+            pairwiseBinding: binding,
             conversation: &conversation,
-            kemCiphertext: kemCiphertext,
-            prekey: prekey,
-            authenticatedContext: context,
+            bootstrap: bootstrap,
             sentAt: eventTimestamp
         )
         _ = MessageEngine.appendMessage(
@@ -979,8 +968,7 @@ public actor HeadlessMessagingClient {
         let contact = try resolveContact(selector, in: state.contacts)
         try requireContinuityDeliveryReady(for: contact, state: state)
         var conversation: Conversation
-        var kemCiphertext: Data?
-        var prekey: PrekeyReference?
+        var bootstrap = DirectBootstrapV4.none
         let eventId = UUID()
         let clientTransactionId = UUID()
         guard contact.usesCertifiedGenerationEndpoint,
@@ -1006,15 +994,11 @@ public actor HeadlessMessagingClient {
                 contact: contact
             )
             conversation = session.conversation
-            kemCiphertext = session.kemCiphertext
-            prekey = session.prekey
+            bootstrap = .signedPrekey(
+                kemCiphertext: session.kemCiphertext,
+                prekey: session.prekey
+            )
         }
-        let authenticatedContext = try MessageAuthenticatedContext.directV4(
-            eventId: eventId,
-            senderEndpoint: senderEndpoint,
-            recipientEndpoint: peerEndpoint,
-            pairwiseBinding: binding
-        )
         let prepared = try MessageEngine.prepareMessageKey(conversation: &conversation)
         let context = AttachmentCryptoContext(
             conversationId: conversation.id,
@@ -1049,14 +1033,15 @@ public actor HeadlessMessagingClient {
         )
         let envelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(event),
+            eventId: eventId,
             senderSigningKey: endpoint.signingKey,
-            senderFingerprint: binding.localEndpointHandle.rawValue,
+            senderEndpoint: senderEndpoint,
+            recipientEndpoint: peerEndpoint,
+            pairwiseBinding: binding,
             conversation: conversation,
             messageCounter: prepared.counter,
             messageKey: prepared.key,
-            kemCiphertext: kemCiphertext,
-            prekey: prekey,
-            authenticatedContext: authenticatedContext,
+            bootstrap: bootstrap,
             sentAt: eventTimestamp
         )
         _ = MessageEngine.appendMessage(
@@ -1241,9 +1226,8 @@ public actor HeadlessMessagingClient {
 
         var received: [HeadlessReceivedMessage] = []
         for sequenced in batch.events {
-            let envelope = sequenced.envelope
             do {
-                guard envelope.authenticatedContext?.purpose == .directV4 else {
+                guard case .directV4(let envelope) = sequenced.envelope else {
                     throw HeadlessMessagingClientError.unsupportedInboundSession
                 }
                 if let message = try receiveCertifiedDirectEnvelope(envelope, state: &state) {
@@ -1289,11 +1273,10 @@ public actor HeadlessMessagingClient {
     }
 
     private func receiveCertifiedDirectEnvelope(
-        _ envelope: Envelope,
+        _ envelope: DirectEnvelopeV4,
         state: inout ClientState
     ) throws -> HeadlessReceivedMessage? {
-        guard let direct = envelope.authenticatedContext?.directV4,
-              let resolved = state.resolveCertifiedDirectContext(direct),
+        guard let resolved = state.resolveCertifiedDirectContext(envelope),
               let endpoint = state.localEndpoint,
               let localManifest = state.endpointSetManifest else {
             throw HeadlessMessagingClientError.unsupportedInboundSession
@@ -1318,15 +1301,14 @@ public actor HeadlessMessagingClient {
         var conversation: Conversation
         if let previousConversation {
             conversation = previousConversation
-        } else if let kemCiphertext = envelope.kemCiphertext {
+        } else if envelope.bootstrap.signedPrekeyMaterial != nil {
             conversation = try MessageEngine.createInboundEndpointSession(
                 localEndpoint: endpoint,
                 localCertificate: resolved.localEndpoint,
                 senderEndpoint: peerEndpoint,
                 pairwiseBinding: resolved.binding,
                 contact: contact,
-                kemCiphertext: kemCiphertext,
-                prekey: envelope.prekey
+                bootstrap: envelope.bootstrap
             )
         } else {
             throw HeadlessMessagingClientError.unsupportedInboundSession
@@ -1339,18 +1321,18 @@ public actor HeadlessMessagingClient {
         guard let inboundDigest = try Self.unseenInboundEnvelopeDigest(
             envelope,
             sourceScopeId: contact.id,
-            logicalEventId: direct.eventId,
+            logicalEventId: envelope.eventId,
             state: state
         ) else {
             return nil
         }
-        if conversation.messages.contains(where: { $0.id == direct.eventId })
+        if conversation.messages.contains(where: { $0.id == envelope.eventId })
             || state.relationshipsV2.contains(where: { relationship in
                 relationship.contactId == contact.id
-                    && relationship.events.contains(where: { $0.id == direct.eventId })
+                    && relationship.events.contains(where: { $0.id == envelope.eventId })
             })
-            || state.quarantinedControlEvents.contains(where: { $0.id == direct.eventId }) {
-            throw HeadlessMessagingClientError.inboundEnvelopeConflict(direct.eventId)
+            || state.quarantinedControlEvents.contains(where: { $0.id == envelope.eventId }) {
+            throw HeadlessMessagingClientError.inboundEnvelopeConflict(envelope.eventId)
         }
         let decrypted: DirectV4DecryptionResultV2
         do {
@@ -1365,15 +1347,14 @@ public actor HeadlessMessagingClient {
                 conversation: &conversation
             )
         } catch {
-            guard let kemCiphertext = envelope.kemCiphertext else { throw error }
+            guard envelope.bootstrap.signedPrekeyMaterial != nil else { throw error }
             conversation = try MessageEngine.createInboundEndpointSession(
                 localEndpoint: endpoint,
                 localCertificate: resolved.localEndpoint,
                 senderEndpoint: peerEndpoint,
                 pairwiseBinding: resolved.binding,
                 contact: contact,
-                kemCiphertext: kemCiphertext,
-                prekey: envelope.prekey
+                bootstrap: envelope.bootstrap
             )
             decrypted = try MessageEngine.decryptDirectV4Payload(
                 envelope: envelope,
@@ -1393,7 +1374,7 @@ public actor HeadlessMessagingClient {
         Self.recordInboundEnvelopeReceipt(
             envelope,
             sourceScopeId: contact.id,
-            logicalEventId: direct.eventId,
+            logicalEventId: envelope.eventId,
             digest: inboundDigest,
             state: &state
         )
@@ -1432,7 +1413,7 @@ public actor HeadlessMessagingClient {
             return nil
         }
         _ = MessageEngine.appendMessage(
-            id: direct.eventId,
+            id: envelope.eventId,
             body: body,
             direction: .received,
             counter: envelope.messageCounter,
@@ -1607,7 +1588,7 @@ public actor HeadlessMessagingClient {
     /// already-verified replay, and fails closed for any logical-ID or
     /// envelope-ID reuse with different signed bytes.
     private static func unseenInboundEnvelopeDigest(
-        _ envelope: Envelope,
+        _ envelope: DirectEnvelopeV4,
         sourceScopeId: UUID,
         logicalEventId: UUID,
         state: ClientState
@@ -1636,7 +1617,7 @@ public actor HeadlessMessagingClient {
     }
 
     private static func recordInboundEnvelopeReceipt(
-        _ envelope: Envelope,
+        _ envelope: DirectEnvelopeV4,
         sourceScopeId: UUID,
         logicalEventId: UUID,
         digest: Data,
@@ -1898,13 +1879,13 @@ public actor HeadlessMessagingClient {
         try requireOK(response)
     }
 
-    private func deliver(envelope: Envelope, to contact: Contact, from state: ClientState) async throws -> RelayResponse {
+    private func deliver(envelope: DirectEnvelopeV4, to contact: Contact, from state: ClientState) async throws -> RelayResponse {
         let response = try await relayClient(for: contact.relay).send(
             .deliver(
                 DeliverRequest(
                     inboxId: contact.inboxId,
                     routingToken: contact.inboxId,
-                    envelope: envelope,
+                    envelope: .directV4(envelope),
                     destinationRelay: nil
                 )
             ),
@@ -1922,7 +1903,7 @@ public actor HeadlessMessagingClient {
                 DeliverRequest(
                     inboxId: pending.inboxId,
                     routingToken: pending.inboxId,
-                    envelope: pending.envelope,
+                    envelope: .directV4(pending.envelope),
                     destinationRelay: nil
                 )
             ),
@@ -1935,7 +1916,7 @@ public actor HeadlessMessagingClient {
     }
 
     private func persistDirectDeliveryIntent(
-        envelope: Envelope,
+        envelope: DirectEnvelopeV4,
         contact: Contact,
         state: inout ClientState
     ) async throws -> UUID {

@@ -294,13 +294,12 @@ final class InboxRetirementTests: XCTestCase {
     }
 }
 
-private func retirementEnvelope(marker: UInt8) -> Envelope {
-    Envelope(
+private func retirementEnvelope(marker: UInt8) -> ProtocolEnvelopeV1 {
+    makeTestProtocolEnvelope(
         conversationId: "inbox-retirement",
         sessionId: "retirement-session",
-        senderFingerprint: retirementFingerprint(marker),
+        counter: UInt64(marker),
         sentAt: Date(),
-        messageCounter: UInt64(marker),
         payload: EncryptedPayload(
             nonce: Data(repeating: marker, count: 12),
             ciphertext: Data(repeating: marker, count: 512),

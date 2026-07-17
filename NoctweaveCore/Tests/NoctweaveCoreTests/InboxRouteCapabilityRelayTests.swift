@@ -749,13 +749,11 @@ final class InboxRouteCapabilityRelayTests: XCTestCase {
         InboxRouteCapabilityV2(rawValue: Data(repeating: marker, count: 32))
     }
 
-    private func envelope(_ counter: UInt64) -> Envelope {
-        Envelope(
+    private func envelope(_ counter: UInt64) -> ProtocolEnvelopeV1 {
+        makeTestProtocolEnvelope(
             conversationId: "opaque-route-test",
-            sessionId: "session-v2",
-            senderFingerprint: Data(repeating: 0x33, count: 32).base64EncodedString(),
+            counter: counter,
             sentAt: Date(timeIntervalSince1970: TimeInterval(10_000 + counter)),
-            messageCounter: counter,
             payload: EncryptedPayload(
                 nonce: Data(repeating: 0x11, count: 12),
                 ciphertext: Data(repeating: UInt8(truncatingIfNeeded: counter), count: 512),

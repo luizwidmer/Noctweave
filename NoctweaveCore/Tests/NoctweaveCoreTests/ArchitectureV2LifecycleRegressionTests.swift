@@ -25,8 +25,10 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
             senderEndpoint: alice.endpoint,
             pairwiseBinding: bobAlice,
             contact: bobContact,
-            kemCiphertext: outbound.kemCiphertext,
-            prekey: outbound.prekey,
+            bootstrap: .signedPrekey(
+                kemCiphertext: outbound.kemCiphertext,
+                prekey: outbound.prekey
+            ),
             now: bootstrapAt
         )
 
@@ -47,8 +49,10 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
             senderEndpoint: alice.endpoint,
             pairwiseBinding: bobAlice,
             contact: bobContact,
-            kemCiphertext: outbound.kemCiphertext,
-            prekey: outbound.prekey,
+            bootstrap: .signedPrekey(
+                kemCiphertext: outbound.kemCiphertext,
+                prekey: outbound.prekey
+            ),
             now: afterExpiry
         )) { error in
             XCTAssertEqual(error as? CryptoError, .invalidPayload)
@@ -57,15 +61,10 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
         // The already-created endpoint session remains usable. Neither
         // established encryption nor decryption re-applies bootstrap age.
         var outboundConversation = outbound.conversation
-        let context = try MessageAuthenticatedContext.directV4(
-            eventId: UUID(),
-            senderEndpoint: alice.endpoint,
-            recipientEndpoint: bob.endpoint,
-            pairwiseBinding: aliceBob
-        )
+        let eventId = UUID()
         let sentAt = Date(timeIntervalSince1970: 1_752_680_000)
         let event = ConversationEvent(
-            id: try XCTUnwrap(context.directV4?.eventId),
+            id: eventId,
             conversationId: outboundConversation.id,
             authorEndpointHandle: aliceBob.localEndpointHandle,
             createdAt: sentAt,
@@ -74,12 +73,16 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
         )
         let envelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(event),
+            eventId: eventId,
             senderSigningKey: alice.localEndpoint.signingKey,
-            senderFingerprint: aliceBob.localEndpointHandle.rawValue,
+            senderEndpoint: alice.endpoint,
+            recipientEndpoint: bob.endpoint,
+            pairwiseBinding: aliceBob,
             conversation: &outboundConversation,
-            kemCiphertext: outbound.kemCiphertext,
-            prekey: outbound.prekey,
-            authenticatedContext: context,
+            bootstrap: .signedPrekey(
+                kemCiphertext: outbound.kemCiphertext,
+                prekey: outbound.prekey
+            ),
             sentAt: sentAt
         )
         let decrypted = try MessageEngine.decryptDirectV4(
@@ -138,17 +141,17 @@ final class ArchitectureV2LifecycleRegressionTests: XCTestCase {
     func testMailboxBatchRejectsInternalAndCursorRelativeGaps() {
         let first = SequencedEnvelope(
             sequence: 1,
-            envelope: lifecycleEnvelope(counter: 1),
+            envelope: .directV4(lifecycleEnvelope(counter: 1)),
             storedAt: Date(timeIntervalSince1970: 1_001)
         )
         let second = SequencedEnvelope(
             sequence: 2,
-            envelope: lifecycleEnvelope(counter: 2),
+            envelope: .directV4(lifecycleEnvelope(counter: 2)),
             storedAt: Date(timeIntervalSince1970: 1_002)
         )
         let third = SequencedEnvelope(
             sequence: 3,
-            envelope: lifecycleEnvelope(counter: 3),
+            envelope: .directV4(lifecycleEnvelope(counter: 3)),
             storedAt: Date(timeIntervalSince1970: 1_003)
         )
         let cursor = MailboxCursor(rawValue: "opaque-cursor")
@@ -331,13 +334,11 @@ private func lifecycleBinding(
     )
 }
 
-private func lifecycleEnvelope(counter: UInt64) -> Envelope {
-    Envelope(
+private func lifecycleEnvelope(counter: UInt64) -> DirectEnvelopeV4 {
+    makeTestDirectEnvelope(
         conversationId: "architecture-v2-lifecycle",
-        sessionId: "session-v2",
-        senderFingerprint: Data(repeating: 0x44, count: 32).base64EncodedString(),
+        counter: counter,
         sentAt: Date(timeIntervalSince1970: TimeInterval(1_000 + counter)),
-        messageCounter: counter,
         payload: EncryptedPayload(
             nonce: Data(repeating: 0x11, count: 12),
             ciphertext: Data(

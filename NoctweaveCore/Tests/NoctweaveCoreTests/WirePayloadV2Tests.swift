@@ -10,12 +10,6 @@ final class WirePayloadV2Tests: XCTestCase {
         let eventId = UUID()
         let transactionId = UUID()
         let sentAt = Date(timeIntervalSince1970: 20_000)
-        let context = try MessageAuthenticatedContext.directV4(
-            eventId: eventId,
-            senderEndpoint: pair.alice.endpoint,
-            recipientEndpoint: pair.bob.endpoint,
-            pairwiseBinding: pair.aliceBob
-        )
         let event = ConversationEvent(
             id: eventId,
             clientTransactionId: transactionId,
@@ -27,17 +21,21 @@ final class WirePayloadV2Tests: XCTestCase {
         )
         let envelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(event),
+            eventId: eventId,
             senderSigningKey: pair.alice.localEndpoint.signingKey,
-            senderFingerprint: pair.aliceBob.localEndpointHandle.rawValue,
+            senderEndpoint: pair.alice.endpoint,
+            recipientEndpoint: pair.bob.endpoint,
+            pairwiseBinding: pair.aliceBob,
             conversation: &outbound,
-            kemCiphertext: pair.outbound.kemCiphertext,
-            prekey: pair.outbound.prekey,
-            authenticatedContext: context,
+            bootstrap: .signedPrekey(
+                kemCiphertext: pair.outbound.kemCiphertext,
+                prekey: pair.outbound.prekey
+            ),
             sentAt: sentAt
         )
 
         XCTAssertNotEqual(event.id, event.clientTransactionId)
-        XCTAssertEqual(context.directV4?.payloadFormat, NoctweaveWirePayloadV2.directV4Format)
+        XCTAssertEqual(envelope.payloadFormat, NoctweaveWirePayloadV2.directV4Format)
         let decrypted = try MessageEngine.decryptDirectV4Payload(
             envelope: envelope,
             contact: pair.bobContact,
@@ -425,12 +423,7 @@ final class WirePayloadV2Tests: XCTestCase {
         var outbound = pair.outbound.conversation
         var inbound = try pair.inboundConversation()
         let sentAt = Date(timeIntervalSince1970: 22_000)
-        let unknownContext = try MessageAuthenticatedContext.directV4(
-            eventId: UUID(),
-            senderEndpoint: pair.alice.endpoint,
-            recipientEndpoint: pair.bob.endpoint,
-            pairwiseBinding: pair.aliceBob
-        )
+        let unknownEventId = UUID()
         let unknown = AuthenticatedControlPayloadV2(
             type: ContentTypeId(
                 authority: "org.noctweave.control",
@@ -442,12 +435,16 @@ final class WirePayloadV2Tests: XCTestCase {
         )
         let unknownEnvelope = try MessageEngine.encryptDirectV4(
             wirePayload: .control(unknown),
+            eventId: unknownEventId,
             senderSigningKey: pair.alice.localEndpoint.signingKey,
-            senderFingerprint: pair.aliceBob.localEndpointHandle.rawValue,
+            senderEndpoint: pair.alice.endpoint,
+            recipientEndpoint: pair.bob.endpoint,
+            pairwiseBinding: pair.aliceBob,
             conversation: &outbound,
-            kemCiphertext: pair.outbound.kemCiphertext,
-            prekey: pair.outbound.prekey,
-            authenticatedContext: unknownContext,
+            bootstrap: .signedPrekey(
+                kemCiphertext: pair.outbound.kemCiphertext,
+                prekey: pair.outbound.prekey
+            ),
             sentAt: sentAt
         )
         let unknownResult = try MessageEngine.decryptDirectV4Payload(
@@ -464,27 +461,24 @@ final class WirePayloadV2Tests: XCTestCase {
             return XCTFail("Expected unknown control quarantine")
         }
         XCTAssertNil(unknownResult.disposition.body)
-        XCTAssertEqual(quarantined.event.id, unknownContext.directV4?.eventId)
+        XCTAssertEqual(quarantined.event.id, unknownEventId)
         XCTAssertEqual(quarantined.event.kind, .control)
         XCTAssertEqual(quarantined.event.content.payload, unknown.encodedPayload)
         XCTAssertEqual(inbound.receiveChain.counter, 1)
 
-        let malformedContext = try MessageAuthenticatedContext.directV4(
-            eventId: UUID(),
-            senderEndpoint: pair.alice.endpoint,
-            recipientEndpoint: pair.bob.endpoint,
-            pairwiseBinding: pair.aliceBob
-        )
+        let malformedEventId = UUID()
         let malformed = AuthenticatedControlPayloadV2(
             type: AuthenticatedControlKindV2.identityRotation.contentType,
             encodedPayload: Data("not-a-rotation".utf8)
         )
         let malformedEnvelope = try MessageEngine.encryptDirectV4(
             wirePayload: .control(malformed),
+            eventId: malformedEventId,
             senderSigningKey: pair.alice.localEndpoint.signingKey,
-            senderFingerprint: pair.aliceBob.localEndpointHandle.rawValue,
+            senderEndpoint: pair.alice.endpoint,
+            recipientEndpoint: pair.bob.endpoint,
+            pairwiseBinding: pair.aliceBob,
             conversation: &outbound,
-            authenticatedContext: malformedContext,
             sentAt: sentAt.addingTimeInterval(1)
         )
         let counterBefore = inbound.receiveChain.counter
@@ -589,12 +583,6 @@ final class WirePayloadV2Tests: XCTestCase {
         var outbound = outboundSession.conversation
 
         let unknownControlId = UUID()
-        let controlContext = try MessageAuthenticatedContext.directV4(
-            eventId: unknownControlId,
-            senderEndpoint: aliceEndpoint,
-            recipientEndpoint: bobEndpoint,
-            pairwiseBinding: aliceBob
-        )
         let controlEnvelope = try MessageEngine.encryptDirectV4(
             wirePayload: .control(
                 AuthenticatedControlPayloadV2(
@@ -606,15 +594,19 @@ final class WirePayloadV2Tests: XCTestCase {
                     encodedPayload: Data("future-control".utf8)
                 )
             ),
+            eventId: unknownControlId,
             senderSigningKey: aliceLocalEndpoint.signingKey,
-            senderFingerprint: aliceBob.localEndpointHandle.rawValue,
+            senderEndpoint: aliceEndpoint,
+            recipientEndpoint: bobEndpoint,
+            pairwiseBinding: aliceBob,
             conversation: &outbound,
-            kemCiphertext: outboundSession.kemCiphertext,
-            prekey: outboundSession.prekey,
-            authenticatedContext: controlContext,
+            bootstrap: .signedPrekey(
+                kemCiphertext: outboundSession.kemCiphertext,
+                prekey: outboundSession.prekey
+            ),
             sentAt: Date()
         )
-        _ = try await relayStore.deliver(controlEnvelope, to: bobState.inboxId)
+        _ = try await relayStore.deliver(.directV4(controlEnvelope), to: bobState.inboxId)
         let controlMessages = try await bob.receive(maxCount: 10)
         XCTAssertTrue(controlMessages.isEmpty)
         let maybeQuarantinedState = try await bob.store.load()
@@ -625,12 +617,6 @@ final class WirePayloadV2Tests: XCTestCase {
         let unknownEventId = UUID()
         let unknownTransactionId = UUID()
         let eventAt = Date()
-        let applicationContext = try MessageAuthenticatedContext.directV4(
-            eventId: unknownEventId,
-            senderEndpoint: aliceEndpoint,
-            recipientEndpoint: bobEndpoint,
-            pairwiseBinding: aliceBob
-        )
         let unknownEvent = ConversationEvent(
             id: unknownEventId,
             clientTransactionId: unknownTransactionId,
@@ -647,13 +633,15 @@ final class WirePayloadV2Tests: XCTestCase {
         )
         let applicationEnvelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(unknownEvent),
+            eventId: unknownEventId,
             senderSigningKey: aliceLocalEndpoint.signingKey,
-            senderFingerprint: aliceBob.localEndpointHandle.rawValue,
+            senderEndpoint: aliceEndpoint,
+            recipientEndpoint: bobEndpoint,
+            pairwiseBinding: aliceBob,
             conversation: &outbound,
-            authenticatedContext: applicationContext,
             sentAt: eventAt
         )
-        _ = try await relayStore.deliver(applicationEnvelope, to: bobState.inboxId)
+        _ = try await relayStore.deliver(.directV4(applicationEnvelope), to: bobState.inboxId)
         let received = try await bob.receive(maxCount: 10)
         XCTAssertEqual(received.map(\.body), [.text("Unsupported poll")])
         let maybePersisted = try await bob.store.load()
@@ -696,8 +684,10 @@ private struct WirePairFixture {
             senderEndpoint: alice.endpoint,
             pairwiseBinding: bobAlice,
             contact: bobContact,
-            kemCiphertext: outbound.kemCiphertext,
-            prekey: outbound.prekey
+            bootstrap: .signedPrekey(
+                kemCiphertext: outbound.kemCiphertext,
+                prekey: outbound.prekey
+            )
         )
     }
 }

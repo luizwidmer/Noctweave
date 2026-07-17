@@ -297,19 +297,19 @@ public struct WirePayloadV2: Codable, Equatable {
     }
 
     public func validateDirectV4(
-        context: DirectMessageAuthenticatedContextV4,
+        eventId: UUID,
+        senderEndpointHandle: RelationshipEndpointHandle,
         conversationId: String,
         sentAt: Date
     ) throws {
         guard isStructurallyValid,
-              context.isStructurallyValid,
-              context.payloadFormat == NoctweaveWirePayloadV2.directV4Format else {
+              senderEndpointHandle.isStructurallyValid else {
             throw WirePayloadV2Error.invalidPayload
         }
         if let application {
-            guard application.id == context.eventId,
+            guard application.id == eventId,
                   application.conversationId == conversationId,
-                  application.authorEndpointHandle == context.senderEndpointHandle,
+                  application.authorEndpointHandle == senderEndpointHandle,
                   floor(application.createdAt.timeIntervalSince1970)
                     == floor(sentAt.timeIntervalSince1970) else {
                 throw WirePayloadV2Error.invalidApplicationEvent
@@ -445,7 +445,8 @@ public struct WirePayloadV2: Codable, Equatable {
 
     public func controlDisposition(
         conversationId: String,
-        context: DirectMessageAuthenticatedContextV4,
+        eventId: UUID,
+        senderEndpointHandle: RelationshipEndpointHandle,
         receivedAt: Date
     ) throws -> DirectV4PayloadDispositionV2 {
         guard kind == .control,
@@ -461,10 +462,10 @@ public struct WirePayloadV2: Codable, Equatable {
             disposition: .silent
         )
         let auditEvent = ConversationEvent(
-            id: context.eventId,
-            clientTransactionId: context.eventId,
+            id: eventId,
+            clientTransactionId: eventId,
             conversationId: conversationId,
-            authorEndpointHandle: context.senderEndpointHandle,
+            authorEndpointHandle: senderEndpointHandle,
             createdAt: receivedAt,
             kind: .control,
             content: auditContent

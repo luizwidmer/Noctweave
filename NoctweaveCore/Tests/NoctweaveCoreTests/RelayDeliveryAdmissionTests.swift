@@ -61,13 +61,11 @@ final class RelayDeliveryAdmissionTests: XCTestCase {
 
     }
 
-    private func makeAdmissionEnvelope(counter: UInt64) -> Envelope {
-        Envelope(
+    private func makeAdmissionEnvelope(counter: UInt64) -> ProtocolEnvelopeV1 {
+        makeTestProtocolEnvelope(
             conversationId: "relay-delivery-admission",
-            sessionId: "session-v2",
-            senderFingerprint: Data(repeating: 0x44, count: 32).base64EncodedString(),
+            counter: counter,
             sentAt: Date(timeIntervalSince1970: TimeInterval(9_000 + counter)),
-            messageCounter: counter,
             payload: EncryptedPayload(
                 nonce: Data(repeating: 0x11, count: 12),
                 ciphertext: Data(repeating: UInt8(truncatingIfNeeded: counter), count: 512),

@@ -74,35 +74,22 @@ final class GenerationEndpointV4Tests: XCTestCase {
             vector.wire.conversationId
         )
 
-        let context = try MessageAuthenticatedContext.directV4(
-            eventId: try XCTUnwrap(UUID(uuidString: vector.wire.eventId)),
-            senderEndpoint: localEndpoint,
-            recipientEndpoint: peerEndpoint,
-            pairwiseBinding: binding
-        )
-        let aad = try NoctweaveCoder.encode(
-            DirectV4AADVectorPayload(
-                version: CertifiedGenerationEndpoint.version,
-                conversationId: vector.wire.conversationId,
-                sessionId: vector.wire.sessionId,
-                messageCounter: vector.wire.messageCounter,
-                context: context
-            ),
-            sortedKeys: true
-        )
-        XCTAssertEqual(aad.base64EncodedString(), vector.wire.aadCanonicalBase64)
-
-        let signable = try Envelope.signableData(
+        let envelope = DirectEnvelopeV4(
             id: try XCTUnwrap(UUID(uuidString: vector.wire.envelopeId)),
             conversationId: vector.wire.conversationId,
             sessionId: vector.wire.sessionId,
-            senderFingerprint: binding.localEndpointHandle.rawValue,
+            eventId: try XCTUnwrap(UUID(uuidString: vector.wire.eventId)),
+            senderEndpointHandle: binding.localEndpointHandle,
+            senderCertificateDigest: binding.localCertificateReferenceDigest,
+            senderEndpointSetEpoch: localEndpoint.manifestEpoch,
+            recipientEndpointHandle: binding.peerEndpointHandle,
+            recipientCertificateDigest: binding.peerCertificateReferenceDigest,
+            recipientEndpointSetEpoch: peerEndpoint.manifestEpoch,
+            cipherSuite: binding.cipherSuite,
+            negotiatedCapabilitiesDigest: binding.negotiatedCapabilitiesDigest,
+            bootstrap: .none,
             sentAt: try XCTUnwrap(ISO8601DateFormatter().date(from: vector.wire.sentAt)),
             messageCounter: vector.wire.messageCounter,
-            kemCiphertext: nil,
-            prekey: nil,
-            rootRatchet: nil,
-            authenticatedContext: context,
             payload: EncryptedPayload(
                 nonce: Data(repeating: UInt8(vector.wire.nonceByte), count: 12),
                 ciphertext: Data(
@@ -110,12 +97,12 @@ final class GenerationEndpointV4Tests: XCTestCase {
                     count: vector.wire.ciphertextCount
                 ),
                 tag: Data(repeating: UInt8(vector.wire.tagByte), count: 16)
-            )
+            ),
+            signature: Data(repeating: 0x7a, count: 3_309)
         )
-        XCTAssertEqual(
-            Data(SHA256.hash(data: signable)).base64EncodedString(),
-            vector.wire.signatureCanonicalSHA256
-        )
+        XCTAssertTrue(envelope.isStructurallyValid)
+        XCTAssertEqual(try envelope.authenticatedData(), try envelope.authenticatedData())
+        XCTAssertEqual(try envelope.signableData(), try envelope.signableData())
     }
 
     func testPairwiseBindingsAreSymmetricAndCrossRelationshipUnlinkable() throws {
@@ -216,16 +203,28 @@ final class GenerationEndpointV4Tests: XCTestCase {
             peerIdentitySigningPublicKey: peer.identityAuthorityPublicKey,
             peerEndpoint: peer
         )
-        let downgraded = try DirectMessageAuthenticatedContextV4(
-            cipherSuite: "nw.direct-v4.downgraded",
-            negotiatedCapabilitiesDigest: binding.negotiatedCapabilitiesDigest,
+        let downgraded = DirectEnvelopeV4(
+            id: UUID(),
+            conversationId: "downgrade",
+            sessionId: "session",
             eventId: UUID(),
             senderEndpointHandle: binding.localEndpointHandle,
             senderCertificateDigest: binding.localCertificateReferenceDigest,
+            senderEndpointSetEpoch: local.manifestEpoch,
             recipientEndpointHandle: binding.peerEndpointHandle,
-            senderManifestEpoch: local.manifestEpoch,
-            recipientManifestEpoch: peer.manifestEpoch,
-            recipientCertificateDigest: binding.peerCertificateReferenceDigest
+            recipientCertificateDigest: binding.peerCertificateReferenceDigest,
+            recipientEndpointSetEpoch: peer.manifestEpoch,
+            cipherSuite: "nw.direct-v4.downgraded",
+            negotiatedCapabilitiesDigest: binding.negotiatedCapabilitiesDigest,
+            bootstrap: .none,
+            sentAt: issuedAt,
+            messageCounter: 0,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x01, count: 12),
+                ciphertext: Data(repeating: 0x02, count: 512),
+                tag: Data(repeating: 0x03, count: 16)
+            ),
+            signature: Data(repeating: 0x04, count: 3_309)
         )
         XCTAssertFalse(downgraded.isStructurallyValid)
 
@@ -310,12 +309,6 @@ final class GenerationEndpointV4Tests: XCTestCase {
         )
         var outboundConversation = outbound.conversation
         let eventId = UUID()
-        let context = try MessageAuthenticatedContext.directV4(
-            eventId: eventId,
-            senderEndpoint: alice.endpoint,
-            recipientEndpoint: bob.endpoint,
-            pairwiseBinding: aliceBob
-        )
         let sentAt = Date(timeIntervalSince1970: 1_752_680_100)
         let event = ConversationEvent(
             id: eventId,
@@ -327,19 +320,23 @@ final class GenerationEndpointV4Tests: XCTestCase {
         )
         let envelope = try MessageEngine.encryptDirectV4(
             wirePayload: .application(event),
+            eventId: eventId,
             senderSigningKey: alice.localEndpoint.signingKey,
-            senderFingerprint: aliceBob.localEndpointHandle.rawValue,
+            senderEndpoint: alice.endpoint,
+            recipientEndpoint: bob.endpoint,
+            pairwiseBinding: aliceBob,
             conversation: &outboundConversation,
-            kemCiphertext: outbound.kemCiphertext,
-            prekey: outbound.prekey,
-            authenticatedContext: context,
+            bootstrap: .signedPrekey(
+                kemCiphertext: outbound.kemCiphertext,
+                prekey: outbound.prekey
+            ),
             sentAt: sentAt
         )
 
-        XCTAssertEqual(envelope.senderFingerprint, aliceBob.localEndpointHandle.rawValue)
-        XCTAssertEqual(context.directV4?.cipherSuite, DirectV4CipherSuite.identifier)
+        XCTAssertEqual(envelope.senderEndpointHandle, aliceBob.localEndpointHandle)
+        XCTAssertEqual(envelope.cipherSuite, DirectV4CipherSuite.identifier)
         XCTAssertEqual(
-            context.directV4?.negotiatedCapabilitiesDigest,
+            envelope.negotiatedCapabilitiesDigest,
             aliceBob.negotiatedCapabilitiesDigest
         )
         XCTAssertTrue(envelope.verifySignature(
@@ -349,7 +346,7 @@ final class GenerationEndpointV4Tests: XCTestCase {
             publicSigningKey: alice.identity.signingKey.publicKeyData
         ))
 
-        let relayVisible = try NoctweaveCoder.encode(try XCTUnwrap(context.directV4))
+        let relayVisible = try NoctweaveCoder.encode(envelope)
         let relayJSON = try XCTUnwrap(String(data: relayVisible, encoding: .utf8))
         for forbidden in [
             alice.identity.signingKey.publicKeyData.base64EncodedString(),
@@ -374,8 +371,10 @@ final class GenerationEndpointV4Tests: XCTestCase {
             senderEndpoint: alice.endpoint,
             pairwiseBinding: bobAlice,
             contact: bobContact,
-            kemCiphertext: outbound.kemCiphertext,
-            prekey: outbound.prekey
+            bootstrap: .signedPrekey(
+                kemCiphertext: outbound.kemCiphertext,
+                prekey: outbound.prekey
+            )
         )
         let decrypted = try MessageEngine.decryptDirectV4(
             envelope: envelope,
@@ -388,7 +387,7 @@ final class GenerationEndpointV4Tests: XCTestCase {
             conversation: &inboundConversation
         )
         XCTAssertEqual(decrypted.body, .text("endpoint signed"))
-        XCTAssertEqual(context.directV4?.eventId, eventId)
+        XCTAssertEqual(envelope.eventId, eventId)
     }
 
     func testRevokedPreferredEndpointFailsClosed() throws {
@@ -412,13 +411,29 @@ final class GenerationEndpointV4Tests: XCTestCase {
         XCTAssertThrowsError(try bobContact.certifiedGenerationEndpoint())
 
         let unrelated = try fixture("Mallory")
-        let direct = try XCTUnwrap(
-            try MessageAuthenticatedContext.directV4(
-                eventId: UUID(),
-                senderEndpoint: unrelated.endpoint,
-                recipientEndpoint: bob.endpoint,
-                pairwiseBinding: try binding(local: unrelated, peer: bob)
-            ).directV4
+        let unrelatedBinding = try binding(local: unrelated, peer: bob)
+        let direct = DirectEnvelopeV4(
+            id: UUID(),
+            conversationId: "unrelated",
+            sessionId: "unrelated-session",
+            eventId: UUID(),
+            senderEndpointHandle: unrelatedBinding.localEndpointHandle,
+            senderCertificateDigest: unrelatedBinding.localCertificateReferenceDigest,
+            senderEndpointSetEpoch: unrelated.endpoint.manifestEpoch,
+            recipientEndpointHandle: unrelatedBinding.peerEndpointHandle,
+            recipientCertificateDigest: unrelatedBinding.peerCertificateReferenceDigest,
+            recipientEndpointSetEpoch: bob.endpoint.manifestEpoch,
+            cipherSuite: unrelatedBinding.cipherSuite,
+            negotiatedCapabilitiesDigest: unrelatedBinding.negotiatedCapabilitiesDigest,
+            bootstrap: .none,
+            sentAt: Date(),
+            messageCounter: 0,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x01, count: 12),
+                ciphertext: Data(repeating: 0x02, count: 512),
+                tag: Data(repeating: 0x03, count: 16)
+            ),
+            signature: Data(repeating: 0x04, count: 3_309)
         )
         var state = try makeCurrentClientState(
             identity: bob.identity,
@@ -459,13 +474,15 @@ final class GenerationEndpointV4Tests: XCTestCase {
         let bobState = try XCTUnwrap(maybeBobState)
         let storedEnvelopes = try await relayStore.fetch(inboxId: bobState.inboxId)
         let stored = try XCTUnwrap(storedEnvelopes.first)
+        guard case .directV4(let storedDirect) = stored else {
+            return XCTFail("Expected direct-v4 envelope")
+        }
         let maybeAliceState = try await alice.store.load()
         let aliceState = try XCTUnwrap(maybeAliceState)
         let aliceEndpoint = try XCTUnwrap(aliceState.localEndpoint)
-        XCTAssertEqual(stored.authenticatedContext?.purpose, .directV4)
-        XCTAssertTrue(stored.verifySignature(publicSigningKey: aliceEndpoint.signingKey.publicKeyData))
-        XCTAssertFalse(stored.verifySignature(publicSigningKey: aliceState.identity.signingKey.publicKeyData))
-        XCTAssertEqual(stored.id, sent.envelopeId)
+        XCTAssertTrue(storedDirect.verifySignature(publicSigningKey: aliceEndpoint.signingKey.publicKeyData))
+        XCTAssertFalse(storedDirect.verifySignature(publicSigningKey: aliceState.identity.signingKey.publicKeyData))
+        XCTAssertEqual(storedDirect.id, sent.envelopeId)
 
         let restartedBob = HeadlessMessagingClient(stateURL: bobURL, useEncryptedStore: false)
         let received = try await restartedBob.receive(maxCount: 10)
@@ -474,7 +491,7 @@ final class GenerationEndpointV4Tests: XCTestCase {
         let persisted = try XCTUnwrap(maybePersisted)
         let session = try XCTUnwrap(persisted.conversations.first?.endpointSession)
         XCTAssertEqual(session.localEndpointId, persisted.localEndpoint?.id)
-        XCTAssertEqual(session.peerEndpointHandle.rawValue, stored.senderFingerprint)
+        XCTAssertEqual(session.peerEndpointHandle, storedDirect.senderEndpointHandle)
     }
 }
 
@@ -549,14 +566,6 @@ private struct DirectV4PairwiseBindingVector: Decodable {
     let peer: Endpoint
     let wire: Wire
     let expected: Expected
-}
-
-private struct DirectV4AADVectorPayload: Codable {
-    let version: Int
-    let conversationId: String
-    let sessionId: String
-    let messageCounter: UInt64
-    let context: MessageAuthenticatedContext?
 }
 
 private func directV4VectorEndpoint(

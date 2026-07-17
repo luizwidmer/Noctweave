@@ -155,14 +155,12 @@ final class RelayStoreMailboxV2ParityTests: XCTestCase {
         XCTAssertTrue(maximumPage.hasMore)
     }
 
-    private func makeEnvelope(id: UUID = UUID(), counter: UInt64) -> Envelope {
-        Envelope(
+    private func makeEnvelope(id: UUID = UUID(), counter: UInt64) -> ProtocolEnvelopeV1 {
+        makeTestProtocolEnvelope(
             id: id,
             conversationId: "mailbox-v2-parity",
-            sessionId: "session-v2",
-            senderFingerprint: Data(repeating: 0x44, count: 32).base64EncodedString(),
+            counter: counter,
             sentAt: Date(timeIntervalSince1970: TimeInterval(2_000 + counter)),
-            messageCounter: counter,
             payload: EncryptedPayload(
                 nonce: Data(repeating: 0x11, count: 12),
                 ciphertext: Data(repeating: UInt8(truncatingIfNeeded: counter), count: 512),

@@ -214,13 +214,11 @@ final class ArchitectureV2MailboxTests: XCTestCase {
         XCTAssertTrue(remaining.isEmpty)
     }
 
-    private func makeEnvelope(counter: UInt64) -> Envelope {
-        Envelope(
+    private func makeEnvelope(counter: UInt64) -> ProtocolEnvelopeV1 {
+        makeTestProtocolEnvelope(
             conversationId: "architecture-v2-mailbox",
-            sessionId: "session-v2",
-            senderFingerprint: Data(repeating: 0x44, count: 32).base64EncodedString(),
+            counter: counter,
             sentAt: Date(timeIntervalSince1970: TimeInterval(1_000 + counter)),
-            messageCounter: counter,
             payload: EncryptedPayload(
                 nonce: Data(repeating: 0x11, count: 12),
                 ciphertext: Data(repeating: UInt8(counter), count: PaddedMessagePlaintext.minimumPaddedBytes),

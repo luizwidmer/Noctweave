@@ -558,13 +558,13 @@ public struct DeliverRequest: Codable, Equatable {
     public let inboxId: String?
     public let routingToken: String?
     public let inboxCapability: InboxRouteCapabilityV2?
-    public let envelope: Envelope
+    public let envelope: ProtocolEnvelopeV1
     public let destinationRelay: RelayEndpoint?
 
     public init(
         inboxId: String,
         routingToken: String? = nil,
-        envelope: Envelope,
+        envelope: ProtocolEnvelopeV1,
         destinationRelay: RelayEndpoint? = nil
     ) {
         self.inboxId = inboxId
@@ -579,7 +579,7 @@ public struct DeliverRequest: Codable, Equatable {
     /// opaque capability through a separately authenticated private exchange.
     public init(
         inboxCapability: InboxRouteCapabilityV2,
-        envelope: Envelope,
+        envelope: ProtocolEnvelopeV1,
         destinationRelay: RelayEndpoint? = nil
     ) {
         self.inboxId = nil
@@ -1888,7 +1888,7 @@ public struct RelayResponse: Codable, Equatable {
     public let type: RelayResponseType
     public let delivered: DeliverResponse?
     public let inboxRegistration: InboxRegistrationReceiptV3?
-    public let messages: [Envelope]?
+    public let messages: [ProtocolEnvelopeV1]?
     public let mailboxSync: MailboxSyncBatch?
     public let mailboxConsumer: MailboxConsumerRegistration?
     public let rendezvousSyncV2: RendezvousRelaySyncBatchV2?
@@ -1903,7 +1903,7 @@ public struct RelayResponse: Codable, Equatable {
         type: RelayResponseType,
         delivered: DeliverResponse? = nil,
         inboxRegistration: InboxRegistrationReceiptV3? = nil,
-        messages: [Envelope]? = nil,
+        messages: [ProtocolEnvelopeV1]? = nil,
         mailboxSync: MailboxSyncBatch? = nil,
         mailboxConsumer: MailboxConsumerRegistration? = nil,
         rendezvousSyncV2: RendezvousRelaySyncBatchV2? = nil,
@@ -1939,7 +1939,7 @@ public struct RelayResponse: Codable, Equatable {
         RelayResponse(type: .delivered, delivered: DeliverResponse(storedCount: count))
     }
 
-    public static func messages(_ envelopes: [Envelope]) -> RelayResponse {
+    public static func messages(_ envelopes: [ProtocolEnvelopeV1]) -> RelayResponse {
         RelayResponse(type: .messages, messages: envelopes)
     }
 

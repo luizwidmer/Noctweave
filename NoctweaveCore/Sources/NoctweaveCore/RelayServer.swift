@@ -1270,7 +1270,7 @@ public final class RelayServer {
         return nil
     }
 
-    private func fetchWithOptionalLongPoll(_ fetch: FetchRequest, routingToken: String) async throws -> [Envelope] {
+    private func fetchWithOptionalLongPoll(_ fetch: FetchRequest, routingToken: String) async throws -> [ProtocolEnvelopeV1] {
         var messages = try await store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
         guard messages.isEmpty,
               let timeout = boundedLongPollTimeoutSeconds(for: fetch) else {

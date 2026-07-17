@@ -368,12 +368,11 @@ final class ArchitectureV2RelayWireTests: XCTestCase {
         )
     }
 
-    private func makeEnvelope() -> Envelope {
-        Envelope(
+    private func makeEnvelope() -> ProtocolEnvelopeV1 {
+        makeTestProtocolEnvelope(
             conversationId: "wire-mailbox-v2",
-            senderFingerprint: Data(repeating: 0x31, count: 32).base64EncodedString(),
+            counter: 1,
             sentAt: Date(timeIntervalSince1970: 2_000),
-            messageCounter: 1,
             payload: EncryptedPayload(
                 nonce: Data(repeating: 0x32, count: 12),
                 ciphertext: Data(repeating: 0x33, count: PaddedMessagePlaintext.minimumPaddedBytes),

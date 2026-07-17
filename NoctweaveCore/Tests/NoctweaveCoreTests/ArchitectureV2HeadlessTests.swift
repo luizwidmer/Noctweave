@@ -133,11 +133,8 @@ final class ArchitectureV2HeadlessTests: XCTestCase {
         XCTAssertEqual(failedState.pendingDirectDeliveries.count, 1)
         let pendingId = try XCTUnwrap(failedState.pendingDirectDeliveries.first?.id)
         let pendingEnvelope = try XCTUnwrap(failedState.pendingDirectDeliveries.first?.envelope)
-        let pendingEventId = try XCTUnwrap(pendingEnvelope.authenticatedContext?.directV4?.eventId)
-        XCTAssertEqual(
-            pendingEnvelope.authenticatedContext?.directV4?.payloadFormat,
-            NoctweaveWirePayloadV2.directV4Format
-        )
+        let pendingEventId = pendingEnvelope.eventId
+        XCTAssertEqual(pendingEnvelope.payloadFormat, NoctweaveWirePayloadV2.directV4Format)
         let persistedOutboundEvent = try XCTUnwrap(
             failedState.relationshipsV2.flatMap(\.events).first { $0.id == pendingEventId }
         )

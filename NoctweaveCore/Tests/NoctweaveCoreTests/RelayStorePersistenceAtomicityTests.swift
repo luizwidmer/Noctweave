@@ -186,12 +186,11 @@ private func makeCorePersistentRelayFixture() throws -> (directory: URL, storeUR
 private func structurallyValidCoreEnvelope(
     marker: UInt8,
     signatureBytes: Int = 3_309
-) -> Envelope {
-    Envelope(
+) -> ProtocolEnvelopeV1 {
+    makeTestProtocolEnvelope(
         conversationId: "atomicity-\(marker)",
-        senderFingerprint: canonicalRelayFingerprint(marker),
+        counter: UInt64(marker),
         sentAt: Date(timeIntervalSince1970: 1_700_000_000),
-        messageCounter: UInt64(marker),
         payload: EncryptedPayload(
             nonce: Data(repeating: marker, count: 12),
             ciphertext: Data(repeating: marker, count: 512),

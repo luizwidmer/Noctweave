@@ -28,10 +28,10 @@ public struct MailboxConsumerId: RawRepresentable, Codable, Equatable, Hashable 
 public struct SequencedEnvelope: Codable, Equatable, Identifiable {
     public var id: UUID { envelope.id }
     public let sequence: UInt64
-    public let envelope: Envelope
+    public let envelope: ProtocolEnvelopeV1
     public let storedAt: Date
 
-    public init(sequence: UInt64, envelope: Envelope, storedAt: Date) {
+    public init(sequence: UInt64, envelope: ProtocolEnvelopeV1, storedAt: Date) {
         self.sequence = sequence
         self.envelope = envelope
         self.storedAt = storedAt

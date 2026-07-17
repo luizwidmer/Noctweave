@@ -227,7 +227,7 @@ public enum DecentralizedPrefetchStager {
     public static let maximumSealedEnvelopeBytes = 512 * 1024
 
     public static func stageDirectMessages(
-        _ envelopes: [Envelope],
+        _ envelopes: [ProtocolEnvelopeV1],
         inboxId: String,
         relayIdentifier: String,
         stagedAt: Date = Date()
@@ -237,7 +237,8 @@ public enum DecentralizedPrefetchStager {
         let relayIdentifier = try normalizedRelayIdentifier(relayIdentifier)
         let inboxId = try normalizedInboxId(inboxId)
         let records = try envelopes.map { envelope in
-            guard !envelope.payload.ciphertext.isEmpty else {
+            guard case .directV4(let direct) = envelope,
+                  !direct.payload.ciphertext.isEmpty else {
                 throw DecentralizedPrefetchError.invalidEnvelope
             }
             let sealedEnvelope = try NoctweaveCoder.encode(envelope)

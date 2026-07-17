@@ -164,7 +164,7 @@ public actor RelayStore {
     }
 
     @discardableResult
-    public func deliver(_ envelope: Envelope, to inboxId: String) throws -> Int {
+    public func deliver(_ envelope: ProtocolEnvelopeV1, to inboxId: String) throws -> Int {
         guard envelope.isStructurallyValid,
               envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
             throw RelayStoreError.invalidEnvelopePayload
@@ -206,7 +206,7 @@ public actor RelayStore {
         return inbox.count
     }
 
-    public func fetch(inboxId: String, maxCount: Int? = nil) throws -> [Envelope] {
+    public func fetch(inboxId: String, maxCount: Int? = nil) throws -> [ProtocolEnvelopeV1] {
         let inbox = mailboxes[inboxId, default: []]
         let count = max(0, maxCount ?? inbox.count)
         return Array(inbox.prefix(count)).map { $0.envelope }
@@ -1029,8 +1029,8 @@ public actor RelayStore {
         return consumer.publicRegistration(consumerId: consumerId)
     }
 
-    private func envelopePayloadBytes(_ envelope: Envelope) -> Int {
-        envelope.payload.nonce.count + envelope.payload.ciphertext.count + envelope.payload.tag.count
+    private func envelopePayloadBytes(_ envelope: ProtocolEnvelopeV1) -> Int {
+        envelope.encodedPayloadByteCount
     }
 
     private func allocateMailboxSequence(for inboxId: String) throws -> UInt64 {
@@ -2019,10 +2019,10 @@ extension Data {
 
 private struct StoredEnvelope: Codable {
     var sequence: UInt64
-    let envelope: Envelope
+    let envelope: ProtocolEnvelopeV1
     let storedAt: Date
 
-    init(sequence: UInt64, envelope: Envelope, storedAt: Date) {
+    init(sequence: UInt64, envelope: ProtocolEnvelopeV1, storedAt: Date) {
         self.sequence = sequence
         self.envelope = envelope
         self.storedAt = storedAt

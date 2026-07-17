@@ -1983,19 +1983,18 @@ final class NoctweaveCoreTests: XCTestCase {
     }
 
     func testDecentralizedPrefetchStagerStagesDirectCiphertextOnlyRecords() throws {
-        let envelope = Envelope(
+        let envelope = makeTestProtocolEnvelope(
             id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
             conversationId: "conversation-a",
             sessionId: "session-a",
-            senderFingerprint: "sender-a",
+            counter: 7,
             sentAt: Date(timeIntervalSince1970: 1_000),
-            messageCounter: 7,
             payload: EncryptedPayload(
-                nonce: Data([0x01, 0x02]),
-                ciphertext: Data([0xAA, 0xBB, 0xCC]),
-                tag: Data([0x03, 0x04])
+                nonce: Data(repeating: 0x01, count: 12),
+                ciphertext: Data(repeating: 0xAA, count: 512),
+                tag: Data(repeating: 0x03, count: 16)
             ),
-            signature: Data([0x05, 0x06])
+            signature: Data(repeating: 0x05, count: 3_309)
         )
 
         let batch = try DecentralizedPrefetchStager.stageDirectMessages(
@@ -2013,7 +2012,7 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertNil(batch.records.first?.groupId)
         XCTAssertEqual(batch.records.first?.acknowledgementDeferred, true)
         let decoded = try NoctweaveCoder.decode(
-            Envelope.self,
+            ProtocolEnvelopeV1.self,
             from: try XCTUnwrap(batch.records.first?.sealedEnvelope)
         )
         XCTAssertEqual(decoded, envelope)
@@ -2088,19 +2087,18 @@ final class NoctweaveCoreTests: XCTestCase {
             .appendingPathComponent("prefetch.batch")
         defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
 
-        let envelope = Envelope(
+        let envelope = makeTestProtocolEnvelope(
             id: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!,
             conversationId: "conversation-d",
             sessionId: "session-d",
-            senderFingerprint: "sender-d",
+            counter: 13,
             sentAt: Date(timeIntervalSince1970: 6_000),
-            messageCounter: 13,
             payload: EncryptedPayload(
-                nonce: Data([0x61]),
-                ciphertext: Data("sealed-direct-ciphertext".utf8),
-                tag: Data([0x62])
+                nonce: Data(repeating: 0x61, count: 12),
+                ciphertext: Data(repeating: 0x64, count: 512),
+                tag: Data(repeating: 0x62, count: 16)
             ),
-            signature: Data([0x63])
+            signature: Data(repeating: 0x63, count: 3_309)
         )
         let batch = try DecentralizedPrefetchStager.stageDirectMessages(
             [envelope],
@@ -2118,7 +2116,7 @@ final class NoctweaveCoreTests: XCTestCase {
         let rawStored = try Data(contentsOf: fileURL)
         XCTAssertNotEqual(rawStored, encodedBatch)
         XCTAssertNil(rawStored.range(of: try XCTUnwrap(batch.records.first?.sealedEnvelope)))
-        XCTAssertNil(rawStored.range(of: Data("sealed-direct-ciphertext".utf8)))
+        XCTAssertNil(rawStored.range(of: Data(repeating: 0x64, count: 512)))
 
         let maybeReloaded = try await store.load()
         let reloaded = try XCTUnwrap(maybeReloaded)
@@ -2133,19 +2131,18 @@ final class NoctweaveCoreTests: XCTestCase {
             .appendingPathComponent("prefetch.batch")
         defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
 
-        let envelope = Envelope(
+        let envelope = makeTestProtocolEnvelope(
             id: UUID(uuidString: "56565656-5656-5656-5656-565656565656")!,
             conversationId: "conversation-remove",
             sessionId: "session-remove",
-            senderFingerprint: "sender-remove",
+            counter: 14,
             sentAt: Date(timeIntervalSince1970: 6_100),
-            messageCounter: 14,
             payload: EncryptedPayload(
-                nonce: Data([0x65]),
-                ciphertext: Data("sealed-prefetch-remove-ciphertext".utf8),
-                tag: Data([0x66])
+                nonce: Data(repeating: 0x65, count: 12),
+                ciphertext: Data(repeating: 0x68, count: 512),
+                tag: Data(repeating: 0x66, count: 16)
             ),
-            signature: Data([0x67])
+            signature: Data(repeating: 0x67, count: 3_309)
         )
         let batch = try DecentralizedPrefetchStager.stageDirectMessages(
             [envelope],
@@ -3746,10 +3743,10 @@ final class NoctweaveCoreTests: XCTestCase {
         _ = try await store.deliver(envelope, to: inboxId)
         let secondEnvelope = makeStructurallyValidRelayEnvelope(
             id: UUID(),
-            conversationId: envelope.conversationId,
+            conversationId: "inbox-capacity",
             messageCounter: 1,
             marker: 0x13,
-            sentAt: envelope.sentAt
+            sentAt: Date(timeIntervalSince1970: 7_200)
         )
         do {
             _ = try await store.deliver(secondEnvelope, to: inboxId)
@@ -3766,13 +3763,12 @@ final class NoctweaveCoreTests: XCTestCase {
             ciphertext: Data(repeating: 0x02, count: 100 * 1024),
             tag: Data(repeating: 0x03, count: 16)
         )
-        let envelope = Envelope(
+        let envelope = makeTestProtocolEnvelope(
             conversationId: "oversized",
-            senderFingerprint: "fingerprint",
+            counter: 0,
             sentAt: Date(),
-            messageCounter: 0,
             payload: oversizedPayload,
-            signature: Data([4, 5, 6])
+            signature: Data(repeating: 0x04, count: 3_309)
         )
 
         do {
@@ -4002,13 +3998,7 @@ final class NoctweaveCoreTests: XCTestCase {
         try await reloaded.loadFromDisk()
         let fetched = try await reloaded.fetch(inboxId: inboxId)
         XCTAssertEqual(fetched.count, 1)
-        XCTAssertEqual(fetched.first?.id, envelope.id)
-        XCTAssertEqual(fetched.first?.conversationId, envelope.conversationId)
-        XCTAssertEqual(fetched.first?.senderFingerprint, envelope.senderFingerprint)
-        XCTAssertEqual(fetched.first?.messageCounter, envelope.messageCounter)
-        XCTAssertEqual(fetched.first?.kemCiphertext, envelope.kemCiphertext)
-        XCTAssertEqual(fetched.first?.payload, envelope.payload)
-        XCTAssertEqual(fetched.first?.signature, envelope.signature)
+        XCTAssertEqual(fetched.first, envelope)
     }
 
     func testRelayStoreDiskPersistenceRejectsCorruptNormalizedMessageRow() async throws {
@@ -4081,14 +4071,14 @@ final class NoctweaveCoreTests: XCTestCase {
         messageCounter: UInt64,
         marker: UInt8,
         sentAt: Date = Date()
-    ) -> Envelope {
-        Envelope(
+    ) -> ProtocolEnvelopeV1 {
+        let canonicalSentAt = Date(timeIntervalSince1970: floor(sentAt.timeIntervalSince1970))
+        return makeTestProtocolEnvelope(
             id: id,
             conversationId: conversationId,
             sessionId: "relay-test-session",
-            senderFingerprint: Data(repeating: marker, count: 32).base64EncodedString(),
-            sentAt: sentAt,
-            messageCounter: messageCounter,
+            counter: messageCounter,
+            sentAt: canonicalSentAt,
             payload: EncryptedPayload(
                 nonce: Data(repeating: marker, count: 12),
                 ciphertext: Data(repeating: marker, count: 512),

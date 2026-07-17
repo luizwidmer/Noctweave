@@ -118,10 +118,12 @@ public enum MessageEngine {
         senderEndpoint: CertifiedGenerationEndpoint,
         pairwiseBinding: PairwiseEndpointBindingV4,
         contact: Contact,
-        kemCiphertext: Data,
-        prekey: PrekeyReference?,
+        bootstrap: DirectBootstrapV4,
         now: Date = Date()
     ) throws -> Conversation {
+        guard let material = bootstrap.signedPrekeyMaterial else {
+            throw CryptoError.invalidPayload
+        }
         let expectedPeer = try contact.certifiedGenerationEndpoint()
         let negotiation = try pairwiseBinding.validatedNegotiation(
             localEndpoint: localCertificate,
@@ -132,12 +134,11 @@ public enum MessageEngine {
               senderEndpoint.agreementPublicKey == expectedPeer.agreementPublicKey,
               localCertificate.endpointId == localEndpoint.id,
               pairwiseBinding.isStructurallyValid,
-              prekey?.kind == .signed,
-              let prekeyId = prekey?.id,
-              let advertisedPrekey = localEndpoint.prekeys.signedPrekey(id: prekeyId),
+              material.prekey.kind == .signed,
+              let advertisedPrekey = localEndpoint.prekeys.signedPrekey(id: material.prekey.id),
               advertisedPrekey.verify(using: localEndpoint.signingKey.publicKeyData),
               let prekeyKey = localEndpoint.prekeys.signedPrekeyKeyPair(
-                  id: prekeyId,
+                  id: material.prekey.id,
                   now: now
               ) else {
             throw CryptoError.invalidPayload
@@ -147,7 +148,7 @@ public enum MessageEngine {
             negotiation: negotiation,
             now: now
         )
-        var sharedSecret = try prekeyKey.decapsulate(ciphertext: kemCiphertext)
+        var sharedSecret = try prekeyKey.decapsulate(ciphertext: material.kemCiphertext)
         defer { sharedSecret.secureWipe() }
         let endpointSession = DirectEndpointSessionIdentity(
             contactId: contact.id,
@@ -219,29 +220,29 @@ public enum MessageEngine {
 
     public static func encryptDirectV4(
         wirePayload: WirePayloadV2,
+        eventId: UUID,
         senderSigningKey: SigningKeyPair,
-        senderFingerprint: String,
+        senderEndpoint: CertifiedGenerationEndpoint,
+        recipientEndpoint: CertifiedGenerationEndpoint,
+        pairwiseBinding: PairwiseEndpointBindingV4,
         conversation: inout Conversation,
-        kemCiphertext: Data? = nil,
-        prekey: PrekeyReference? = nil,
-        rootRatchet: RootRatchet? = nil,
-        authenticatedContext: MessageAuthenticatedContext,
+        bootstrap: DirectBootstrapV4 = .none,
         sentAt: Date,
         metadataBucketSeconds: Int? = nil
-    ) throws -> Envelope {
+    ) throws -> DirectEnvelopeV4 {
         var candidateConversation = conversation
         let prepared = try prepareMessageKey(conversation: &candidateConversation)
         let envelope = try encryptDirectV4(
             wirePayload: wirePayload,
+            eventId: eventId,
             senderSigningKey: senderSigningKey,
-            senderFingerprint: senderFingerprint,
+            senderEndpoint: senderEndpoint,
+            recipientEndpoint: recipientEndpoint,
+            pairwiseBinding: pairwiseBinding,
             conversation: candidateConversation,
             messageCounter: prepared.counter,
             messageKey: prepared.key,
-            kemCiphertext: kemCiphertext,
-            prekey: prekey,
-            rootRatchet: rootRatchet,
-            authenticatedContext: authenticatedContext,
+            bootstrap: bootstrap,
             sentAt: sentAt,
             metadataBucketSeconds: metadataBucketSeconds
         )
@@ -251,110 +252,146 @@ public enum MessageEngine {
 
     public static func encryptDirectV4(
         wirePayload: WirePayloadV2,
+        eventId: UUID,
         senderSigningKey: SigningKeyPair,
-        senderFingerprint: String,
+        senderEndpoint: CertifiedGenerationEndpoint,
+        recipientEndpoint: CertifiedGenerationEndpoint,
+        pairwiseBinding: PairwiseEndpointBindingV4,
         conversation: Conversation,
         messageCounter: UInt64,
         messageKey: SymmetricKey,
-        kemCiphertext: Data? = nil,
-        prekey: PrekeyReference? = nil,
-        rootRatchet: RootRatchet? = nil,
-        authenticatedContext: MessageAuthenticatedContext,
+        bootstrap: DirectBootstrapV4 = .none,
         sentAt: Date,
         metadataBucketSeconds: Int? = nil
-    ) throws -> Envelope {
-        guard authenticatedContext.purpose == .directV4,
-              let direct = authenticatedContext.directV4 else {
-            throw WirePayloadV2Error.directV4FormatRequired
-        }
+    ) throws -> DirectEnvelopeV4 {
+        let negotiation = try pairwiseBinding.validatedNegotiation(
+            localEndpoint: senderEndpoint,
+            peerEndpoint: recipientEndpoint
+        )
+        let negotiationDigest = try negotiation.digest()
         let visibleSentAt = MetadataMinimizer.bucketedTimestamp(
             sentAt,
             bucketSeconds: metadataBucketSeconds
         )
         try wirePayload.validateDirectV4(
-            context: direct,
+            eventId: eventId,
+            senderEndpointHandle: pairwiseBinding.localEndpointHandle,
             conversationId: conversation.id,
             sentAt: visibleSentAt
         )
         let payloadData = try PaddedMessagePlaintext.encodeWirePayloadV2(wirePayload)
         return try encryptEncodedPayload(
             payloadData,
+            eventId: eventId,
             senderSigningKey: senderSigningKey,
-            senderFingerprint: senderFingerprint,
+            senderEndpoint: senderEndpoint,
+            recipientEndpoint: recipientEndpoint,
+            pairwiseBinding: pairwiseBinding,
+            cipherSuite: negotiation.cipherSuite,
+            negotiatedCapabilitiesDigest: negotiationDigest,
             conversation: conversation,
             messageCounter: messageCounter,
             messageKey: messageKey,
-            kemCiphertext: kemCiphertext,
-            prekey: prekey,
-            rootRatchet: rootRatchet,
-            authenticatedContext: authenticatedContext,
-            visibleSentAt: visibleSentAt,
-            metadataBucketSeconds: metadataBucketSeconds
+            bootstrap: bootstrap,
+            visibleSentAt: visibleSentAt
         )
     }
 
     private static func encryptEncodedPayload(
         _ encodedPayload: Data,
+        eventId: UUID,
         senderSigningKey: SigningKeyPair,
-        senderFingerprint: String,
+        senderEndpoint: CertifiedGenerationEndpoint,
+        recipientEndpoint: CertifiedGenerationEndpoint,
+        pairwiseBinding: PairwiseEndpointBindingV4,
+        cipherSuite: String,
+        negotiatedCapabilitiesDigest: Data,
         conversation: Conversation,
         messageCounter: UInt64,
         messageKey: SymmetricKey,
-        kemCiphertext: Data?,
-        prekey: PrekeyReference?,
-        rootRatchet: RootRatchet?,
-        authenticatedContext: MessageAuthenticatedContext,
-        visibleSentAt: Date,
-        metadataBucketSeconds: Int?
-    ) throws -> Envelope {
-        try validateOutboundDirectV4Context(
-            authenticatedContext,
+        bootstrap: DirectBootstrapV4,
+        visibleSentAt: Date
+    ) throws -> DirectEnvelopeV4 {
+        try validateOutboundDirectV4Fields(
+            senderSigningKey: senderSigningKey,
+            senderEndpoint: senderEndpoint,
+            recipientEndpoint: recipientEndpoint,
+            pairwiseBinding: pairwiseBinding,
+            cipherSuite: cipherSuite,
+            negotiatedCapabilitiesDigest: negotiatedCapabilitiesDigest,
+            bootstrap: bootstrap,
             conversation: conversation
         )
         var payloadData = encodedPayload
         defer { payloadData.secureWipe() }
-        let encrypted = try encryptPayload(
-            payloadData,
-            conversationId: conversation.id,
-            sessionId: conversation.sessionId,
-            authenticatedContext: authenticatedContext,
-            messageCounter: messageCounter,
-            messageKey: messageKey
-        )
-        let visibleRootRatchet = rootRatchet?.bucketed(metadataBucketSeconds: metadataBucketSeconds)
         let envelopeId = UUID()
-        let signable = try Envelope.signableData(
+        let authenticatedData = try DirectEnvelopeV4.authenticatedData(
             id: envelopeId,
             conversationId: conversation.id,
             sessionId: conversation.sessionId,
-            senderFingerprint: senderFingerprint,
+            eventId: eventId,
+            senderEndpointHandle: pairwiseBinding.localEndpointHandle,
+            senderCertificateDigest: pairwiseBinding.localCertificateReferenceDigest,
+            senderEndpointSetEpoch: senderEndpoint.manifestEpoch,
+            recipientEndpointHandle: pairwiseBinding.peerEndpointHandle,
+            recipientCertificateDigest: pairwiseBinding.peerCertificateReferenceDigest,
+            recipientEndpointSetEpoch: recipientEndpoint.manifestEpoch,
+            cipherSuite: cipherSuite,
+            negotiatedCapabilitiesDigest: negotiatedCapabilitiesDigest,
+            bootstrap: bootstrap,
             sentAt: visibleSentAt,
-            messageCounter: messageCounter,
-            kemCiphertext: kemCiphertext,
-            prekey: prekey,
-            rootRatchet: visibleRootRatchet,
-            authenticatedContext: authenticatedContext,
-            payload: encrypted
+            messageCounter: messageCounter
         )
-        let signature = try senderSigningKey.sign(signable)
-        return Envelope(
+        let encrypted = try CryptoBox.encrypt(
+            payloadData,
+            key: messageKey,
+            authenticatedData: authenticatedData
+        )
+        var envelope = DirectEnvelopeV4(
             id: envelopeId,
             conversationId: conversation.id,
             sessionId: conversation.sessionId,
-            senderFingerprint: senderFingerprint,
+            eventId: eventId,
+            senderEndpointHandle: pairwiseBinding.localEndpointHandle,
+            senderCertificateDigest: pairwiseBinding.localCertificateReferenceDigest,
+            senderEndpointSetEpoch: senderEndpoint.manifestEpoch,
+            recipientEndpointHandle: pairwiseBinding.peerEndpointHandle,
+            recipientCertificateDigest: pairwiseBinding.peerCertificateReferenceDigest,
+            recipientEndpointSetEpoch: recipientEndpoint.manifestEpoch,
+            cipherSuite: cipherSuite,
+            negotiatedCapabilitiesDigest: negotiatedCapabilitiesDigest,
+            bootstrap: bootstrap,
             sentAt: visibleSentAt,
             messageCounter: messageCounter,
-            kemCiphertext: kemCiphertext,
-            prekey: prekey,
-            rootRatchet: visibleRootRatchet,
-            authenticatedContext: authenticatedContext,
             payload: encrypted,
+            signature: Data()
+        )
+        let signature = try senderSigningKey.sign(envelope.signableData())
+        envelope = DirectEnvelopeV4(
+            id: envelope.id,
+            conversationId: envelope.conversationId,
+            sessionId: envelope.sessionId,
+            eventId: envelope.eventId,
+            senderEndpointHandle: envelope.senderEndpointHandle,
+            senderCertificateDigest: envelope.senderCertificateDigest,
+            senderEndpointSetEpoch: envelope.senderEndpointSetEpoch,
+            recipientEndpointHandle: envelope.recipientEndpointHandle,
+            recipientCertificateDigest: envelope.recipientCertificateDigest,
+            recipientEndpointSetEpoch: envelope.recipientEndpointSetEpoch,
+            cipherSuite: envelope.cipherSuite,
+            negotiatedCapabilitiesDigest: envelope.negotiatedCapabilitiesDigest,
+            bootstrap: envelope.bootstrap,
+            sentAt: envelope.sentAt,
+            messageCounter: envelope.messageCounter,
+            payload: envelope.payload,
             signature: signature
         )
+        guard envelope.isStructurallyValid else { throw CryptoError.invalidPayload }
+        return envelope
     }
 
     public static func decryptDirectV4(
-        envelope: Envelope,
+        envelope: DirectEnvelopeV4,
         contact: Contact,
         localIdentity: Identity,
         localEndpoint: LocalEndpointState,
@@ -382,7 +419,7 @@ public enum MessageEngine {
     }
 
     public static func decryptDirectV4Payload(
-        envelope: Envelope,
+        envelope: DirectEnvelopeV4,
         contact: Contact,
         localIdentity: Identity,
         localEndpoint: LocalEndpointState,
@@ -402,13 +439,11 @@ public enum MessageEngine {
             peerEndpoint: senderEndpoint
         )
         let negotiationDigest = try negotiation.digest()
-        guard envelope.authenticatedContext?.purpose == .directV4,
-              let direct = envelope.authenticatedContext?.directV4,
-              direct.cipherSuite == negotiation.cipherSuite,
-              direct.negotiatedCapabilitiesDigest == negotiationDigest,
-              direct.recipientEndpointHandle == pairwiseBinding.localEndpointHandle,
-              direct.recipientManifestEpoch == localCertificate.manifestEpoch,
-              direct.recipientCertificateDigest
+        guard envelope.cipherSuite == negotiation.cipherSuite,
+              envelope.negotiatedCapabilitiesDigest == negotiationDigest,
+              envelope.recipientEndpointHandle == pairwiseBinding.localEndpointHandle,
+              envelope.recipientEndpointSetEpoch == localCertificate.manifestEpoch,
+              envelope.recipientCertificateDigest
                 == pairwiseBinding.localCertificateReferenceDigest,
               localCertificate.identityGenerationId == localEndpoint.identityGenerationId,
               localCertificate.endpointId == localEndpoint.id,
@@ -417,11 +452,10 @@ public enum MessageEngine {
               localCertificate.isStructurallyValid(
                   now: localCertificate.prekeyBundle.createdAt
               ),
-              direct.senderEndpointHandle == pairwiseBinding.peerEndpointHandle,
-              direct.senderCertificateDigest
+              envelope.senderEndpointHandle == pairwiseBinding.peerEndpointHandle,
+              envelope.senderCertificateDigest
                 == pairwiseBinding.peerCertificateReferenceDigest,
-              direct.senderManifestEpoch == senderEndpoint.manifestEpoch,
-              envelope.senderFingerprint == pairwiseBinding.peerEndpointHandle.rawValue,
+              envelope.senderEndpointSetEpoch == senderEndpoint.manifestEpoch,
               let endpointSession = conversation.endpointSession,
               endpointSession.contactId == contact.id,
               endpointSession.localEndpointId == localEndpoint.id,
@@ -441,8 +475,8 @@ public enum MessageEngine {
               ),
               conversation.sessionId == directV4SessionId(
                   rootKey: conversation.rootKey,
-                  cipherSuite: direct.cipherSuite,
-                  negotiatedCapabilitiesDigest: direct.negotiatedCapabilitiesDigest
+                  cipherSuite: envelope.cipherSuite,
+                  negotiatedCapabilitiesDigest: envelope.negotiatedCapabilitiesDigest
               ),
               UInt64(envelope.payload.ciphertext.count)
                 <= negotiation.limit(
@@ -471,7 +505,8 @@ public enum MessageEngine {
         case .control:
             disposition = try decrypted.payload.controlDisposition(
                 conversationId: conversation.id,
-                context: direct,
+                eventId: envelope.eventId,
+                senderEndpointHandle: envelope.senderEndpointHandle,
                 receivedAt: envelope.sentAt
             )
         }
@@ -483,13 +518,11 @@ public enum MessageEngine {
     }
 
     private static func decryptWirePayloadWithSigningKey(
-        envelope: Envelope,
+        envelope: DirectEnvelopeV4,
         publicSigningKey: Data,
         conversation: inout Conversation
     ) throws -> (payload: WirePayloadV2, messageKey: SymmetricKey) {
-        guard envelope.authenticatedContext?.purpose == .directV4,
-              let direct = envelope.authenticatedContext?.directV4,
-              direct.payloadFormat == NoctweaveWirePayloadV2.directV4Format else {
+        guard envelope.payloadFormat == NoctweaveWirePayloadV2.directV4Format else {
             throw WirePayloadV2Error.directV4FormatRequired
         }
         let conversationId = conversation.id
@@ -500,7 +533,8 @@ public enum MessageEngine {
         ) { plaintext in
             let payload = try PaddedMessagePlaintext.decodeWirePayloadV2(plaintext)
             try payload.validateDirectV4(
-                context: direct,
+                eventId: envelope.eventId,
+                senderEndpointHandle: envelope.senderEndpointHandle,
                 conversationId: conversationId,
                 sentAt: envelope.sentAt
             )
@@ -510,46 +544,28 @@ public enum MessageEngine {
     }
 
     private static func decryptPayloadWithSigningKey<T>(
-        envelope: Envelope,
+        envelope: DirectEnvelopeV4,
         publicSigningKey: Data,
         conversation: inout Conversation,
         decode: (Data) throws -> T
     ) throws -> (value: T, messageKey: SymmetricKey) {
         guard envelope.conversationId == conversation.id,
-              let authenticatedContext = envelope.authenticatedContext,
-              authenticatedContext.purpose == .directV4,
-              authenticatedContext.directV4 != nil else {
-            throw CryptoError.invalidPayload
-        }
-        if let sessionId = envelope.sessionId {
-            if conversation.sessionId != sessionId {
-                throw CryptoError.invalidPayload
-            }
-        } else if !conversation.sessionId.isEmpty {
+              envelope.sessionId == conversation.sessionId else {
             throw CryptoError.invalidPayload
         }
         guard envelope.verifySignature(publicSigningKey: publicSigningKey) else {
             throw CryptoError.invalidSignature
         }
-        let sessionId = envelope.sessionId ?? conversation.sessionId
         var candidateReceiveChain = conversation.receiveChain
         let key = try candidateReceiveChain.messageKey(
             for: envelope.messageCounter,
             maxSkip: ChainKeyState.defaultMaxSkip
         )
-        let authenticatedData = try authenticatedData(
-            conversationId: conversation.id,
-            sessionId: sessionId,
-            context: authenticatedContext,
-            messageCounter: envelope.messageCounter
-        )
+        let authenticatedData = try envelope.authenticatedData()
         var plaintext = try CryptoBox.decrypt(envelope.payload, key: key, authenticatedData: authenticatedData)
         defer { plaintext.secureWipe() }
         let value = try decode(plaintext)
         conversation.receiveChain = candidateReceiveChain
-        if conversation.sessionId.isEmpty, let sessionId = envelope.sessionId {
-            conversation.sessionId = sessionId
-        }
         return (value, key)
     }
 
@@ -736,65 +752,35 @@ public enum MessageEngine {
         }
     }
 
-    private static func validateOutboundDirectV4Context(
-        _ context: MessageAuthenticatedContext,
+    private static func validateOutboundDirectV4Fields(
+        senderSigningKey: SigningKeyPair,
+        senderEndpoint: CertifiedGenerationEndpoint,
+        recipientEndpoint: CertifiedGenerationEndpoint,
+        pairwiseBinding: PairwiseEndpointBindingV4,
+        cipherSuite: String,
+        negotiatedCapabilitiesDigest: Data,
+        bootstrap: DirectBootstrapV4,
         conversation: Conversation
     ) throws {
-        guard context.purpose == .directV4,
-              let direct = context.directV4,
-              direct.isStructurallyValid,
+        guard pairwiseBinding.isStructurallyValid,
+              bootstrap.isStructurallyValid,
+              senderSigningKey.publicKeyData == senderEndpoint.signingPublicKey,
               let session = conversation.endpointSession,
-              direct.senderEndpointHandle == session.localEndpointHandle,
-              direct.senderCertificateDigest == session.localCertificateReferenceDigest,
-              direct.senderManifestEpoch == session.localManifestEpoch,
-              direct.recipientEndpointHandle == session.peerEndpointHandle,
-              direct.recipientCertificateDigest == session.peerCertificateReferenceDigest,
-              direct.recipientManifestEpoch == session.peerManifestEpoch,
+              pairwiseBinding.localEndpointHandle == session.localEndpointHandle,
+              pairwiseBinding.localCertificateReferenceDigest
+                == session.localCertificateReferenceDigest,
+              senderEndpoint.manifestEpoch == session.localManifestEpoch,
+              pairwiseBinding.peerEndpointHandle == session.peerEndpointHandle,
+              pairwiseBinding.peerCertificateReferenceDigest
+                == session.peerCertificateReferenceDigest,
+              recipientEndpoint.manifestEpoch == session.peerManifestEpoch,
               conversation.sessionId == directV4SessionId(
                   rootKey: conversation.rootKey,
-                  cipherSuite: direct.cipherSuite,
-                  negotiatedCapabilitiesDigest: direct.negotiatedCapabilitiesDigest
+                  cipherSuite: cipherSuite,
+                  negotiatedCapabilitiesDigest: negotiatedCapabilitiesDigest
               ) else {
             throw DirectV4CapabilityNegotiationError.transcriptMismatch
         }
-    }
-
-    private static func authenticatedData(
-        conversationId: String,
-        sessionId: String,
-        context: MessageAuthenticatedContext,
-        messageCounter: UInt64
-    ) throws -> Data {
-        guard context.purpose == .directV4, context.directV4 != nil else {
-            throw WirePayloadV2Error.directV4FormatRequired
-        }
-        return try NoctweaveCoder.encode(
-            DirectMessageAuthenticatedDataPayloadV4(
-                version: CertifiedGenerationEndpoint.version,
-                conversationId: conversationId,
-                sessionId: sessionId,
-                messageCounter: messageCounter,
-                context: context
-            ),
-            sortedKeys: true
-        )
-    }
-
-    private static func encryptPayload(
-        _ payload: Data,
-        conversationId: String,
-        sessionId: String,
-        authenticatedContext: MessageAuthenticatedContext,
-        messageCounter: UInt64,
-        messageKey: SymmetricKey
-    ) throws -> EncryptedPayload {
-        let authenticatedData = try authenticatedData(
-            conversationId: conversationId,
-            sessionId: sessionId,
-            context: authenticatedContext,
-            messageCounter: messageCounter
-        )
-        return try CryptoBox.encrypt(payload, key: messageKey, authenticatedData: authenticatedData)
     }
 
     private static func labelsForAgreement(ourKey: Data, theirKey: Data) -> (String, String) {
@@ -803,12 +789,4 @@ public enum MessageEngine {
         }
         return ("B", "A")
     }
-}
-
-private struct DirectMessageAuthenticatedDataPayloadV4: Codable {
-    let version: Int
-    let conversationId: String
-    let sessionId: String
-    let messageCounter: UInt64
-    let context: MessageAuthenticatedContext
 }

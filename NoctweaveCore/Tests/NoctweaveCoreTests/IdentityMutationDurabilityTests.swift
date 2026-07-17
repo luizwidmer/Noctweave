@@ -329,7 +329,10 @@ final class IdentityMutationDurabilityTests: XCTestCase {
         )
         let storedAfterBurn = try await bobRelayStore.fetch(inboxId: (try await awaitState(bob)).inboxId)
         let storedPostBurn = try XCTUnwrap(storedAfterBurn.first { $0.id == postBurn.envelopeId })
-        let postBurnEventId = try XCTUnwrap(storedPostBurn.authenticatedContext?.directV4?.eventId)
+        guard case .directV4(let storedDirect) = storedPostBurn else {
+            return XCTFail("Expected direct-v4 envelope")
+        }
+        let postBurnEventId = storedDirect.eventId
         let reboundState = try await awaitState(restartedAlice)
         let rebound = try XCTUnwrap(reboundState.relationshipsV2.first(where: {
             $0.contactId == retainedContactId
