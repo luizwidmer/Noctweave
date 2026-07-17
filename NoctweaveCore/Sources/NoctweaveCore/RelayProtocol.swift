@@ -31,7 +31,7 @@ public struct RelayEndpoint: Codable, Equatable {
         self.directorySigningPublicKey = directorySigningPublicKey
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case host
         case port
         case useTLS
@@ -41,11 +41,21 @@ public struct RelayEndpoint: Codable, Equatable {
     }
 
     public init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: RelayEndpointCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Relay endpoint fields must match the current protocol exactly"
+                )
+            )
+        }
         let container = try decoder.container(keyedBy: CodingKeys.self)
         host = try container.decode(String.self, forKey: .host)
         port = try container.decode(UInt16.self, forKey: .port)
-        useTLS = try container.decodeIfPresent(Bool.self, forKey: .useTLS) ?? false
-        transport = try container.decodeIfPresent(RelayEndpointTransport.self, forKey: .transport) ?? .tcp
+        useTLS = try container.decode(Bool.self, forKey: .useTLS)
+        transport = try container.decode(RelayEndpointTransport.self, forKey: .transport)
         tlsCertificateFingerprintSHA256 = try container.decodeIfPresent(Data.self, forKey: .tlsCertificateFingerprintSHA256)
         directorySigningPublicKey = try container.decodeIfPresent(Data.self, forKey: .directorySigningPublicKey)
     }
@@ -58,6 +68,21 @@ public struct RelayEndpoint: Codable, Equatable {
         try container.encode(transport, forKey: .transport)
         try container.encodeIfPresent(tlsCertificateFingerprintSHA256, forKey: .tlsCertificateFingerprintSHA256)
         try container.encodeIfPresent(directorySigningPublicKey, forKey: .directorySigningPublicKey)
+    }
+}
+
+private struct RelayEndpointCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
     }
 }
 
