@@ -44,7 +44,6 @@ public struct ClientState: Codable {
     public var activeIdentityId: UUID
     public var relayServers: [RelayServerRecord]
     public var masterServerSources: [MasterServerSource]
-    public var insecurePairing: InsecurePairingSettings
     public var appearance: AppearanceSettings
     public var privacy: PrivacySettings
     public var appLock: AppLockSettings
@@ -188,7 +187,6 @@ public struct ClientState: Codable {
         case activeIdentityId
         case relayServers
         case masterServerSources
-        case insecurePairing
         case appearance
         case privacy
         case appLock
@@ -206,7 +204,6 @@ public struct ClientState: Codable {
         relayServers: [RelayServerRecord] = [],
         selectedRelayId: UUID? = nil,
         masterServerSources: [MasterServerSource] = [],
-        insecurePairing: InsecurePairingSettings = InsecurePairingSettings(),
         appearance: AppearanceSettings = AppearanceSettings(),
         privacy: PrivacySettings = PrivacySettings(),
         appLock: AppLockSettings = AppLockSettings(),
@@ -229,7 +226,6 @@ public struct ClientState: Codable {
         self.activeIdentityId = profile.id
         self.relayServers = relayServers
         self.masterServerSources = masterServerSources
-        self.insecurePairing = insecurePairing
         self.appearance = appearance
         self.privacy = privacy
         self.appLock = appLock
@@ -252,7 +248,6 @@ public struct ClientState: Codable {
         }
         relayServers = try container.decode([RelayServerRecord].self, forKey: .relayServers)
         masterServerSources = try container.decode([MasterServerSource].self, forKey: .masterServerSources)
-        insecurePairing = try container.decode(InsecurePairingSettings.self, forKey: .insecurePairing)
         appearance = try container.decode(AppearanceSettings.self, forKey: .appearance)
         privacy = try container.decode(PrivacySettings.self, forKey: .privacy)
         appLock = try container.decode(AppLockSettings.self, forKey: .appLock)
@@ -292,7 +287,6 @@ public struct ClientState: Codable {
         try container.encode(activeIdentityId, forKey: .activeIdentityId)
         try container.encode(relayServers, forKey: .relayServers)
         try container.encode(masterServerSources, forKey: .masterServerSources)
-        try container.encode(insecurePairing, forKey: .insecurePairing)
         try container.encode(appearance, forKey: .appearance)
         try container.encode(privacy, forKey: .privacy)
         try container.encode(appLock, forKey: .appLock)
