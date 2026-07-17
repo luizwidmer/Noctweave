@@ -66,8 +66,19 @@ public struct RelayEndpoint: Codable, Equatable {
         try container.encode(port, forKey: .port)
         try container.encode(useTLS, forKey: .useTLS)
         try container.encode(transport, forKey: .transport)
-        try container.encodeIfPresent(tlsCertificateFingerprintSHA256, forKey: .tlsCertificateFingerprintSHA256)
-        try container.encodeIfPresent(directorySigningPublicKey, forKey: .directorySigningPublicKey)
+        if let tlsCertificateFingerprintSHA256 {
+            try container.encode(
+                tlsCertificateFingerprintSHA256,
+                forKey: .tlsCertificateFingerprintSHA256
+            )
+        } else {
+            try container.encodeNil(forKey: .tlsCertificateFingerprintSHA256)
+        }
+        if let directorySigningPublicKey {
+            try container.encode(directorySigningPublicKey, forKey: .directorySigningPublicKey)
+        } else {
+            try container.encodeNil(forKey: .directorySigningPublicKey)
+        }
     }
 }
 
@@ -206,8 +217,6 @@ public struct RelayInfo: Codable, Equatable {
     public var operatorNote: String?
     public var softwareVersion: String?
     public var protocolCapabilities: RelayCapabilityManifestV2?
-    public var groupCreationMode: GroupCreationMode?
-    public var groupSecurityModel: GroupSecurityModel?
     public var requiresPassword: Bool?
     public var tlsEnabled: Bool?
     public var transport: RelayEndpointTransport?
@@ -239,8 +248,6 @@ public struct RelayInfo: Codable, Equatable {
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         protocolCapabilities: RelayCapabilityManifestV2? = nil,
-        groupCreationMode: GroupCreationMode? = nil,
-        groupSecurityModel: GroupSecurityModel? = nil,
         requiresPassword: Bool? = nil,
         tlsEnabled: Bool? = nil,
         transport: RelayEndpointTransport? = nil,
@@ -280,8 +287,6 @@ public struct RelayInfo: Codable, Equatable {
         self.protocolCapabilities = protocolCapabilities?.isStructurallyValid == true
             ? protocolCapabilities
             : nil
-        self.groupCreationMode = groupCreationMode
-        self.groupSecurityModel = groupSecurityModel
         self.requiresPassword = requiresPassword
         self.tlsEnabled = tlsEnabled
         self.transport = transport
@@ -314,8 +319,6 @@ public struct RelayConfiguration: Codable, Equatable {
     public var relayName: String?
     public var operatorNote: String?
     public var softwareVersion: String?
-    public var groupCreationMode: GroupCreationMode
-    public var groupSecurityModel: GroupSecurityModel
     public var accessPassword: String?
     public var coordinatorRegistrationToken: String?
     public var federationForwardingAuthToken: String?
@@ -358,8 +361,6 @@ public struct RelayConfiguration: Codable, Equatable {
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
-        groupCreationMode: GroupCreationMode = .allowed,
-        groupSecurityModel: GroupSecurityModel = .mlsDerivedTree,
         accessPassword: String? = nil,
         coordinatorRegistrationToken: String? = nil,
         federationForwardingAuthToken: String? = nil,
@@ -416,8 +417,6 @@ public struct RelayConfiguration: Codable, Equatable {
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
-        self.groupCreationMode = groupCreationMode
-        self.groupSecurityModel = groupSecurityModel
         let normalizedAccessPassword = accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.accessPassword = normalizedAccessPassword?.isEmpty == false ? normalizedAccessPassword : nil
         let normalizedRegistrationToken = coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -487,8 +486,6 @@ public struct RelayConfiguration: Codable, Equatable {
                 mixnetEnabled: advertisedMixnetTransport != nil,
                 rendezvousTransportEnabled: isRendezvousTransportEnabled
             ),
-            groupCreationMode: .disabled,
-            groupSecurityModel: groupSecurityModel,
             requiresPassword: requiresPassword,
             tlsEnabled: advertisedTLSEnabled ?? tlsEnabled,
             transport: transport,

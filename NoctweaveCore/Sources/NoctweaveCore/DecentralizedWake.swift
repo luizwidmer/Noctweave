@@ -260,17 +260,17 @@ public enum DecentralizedPrefetchStager {
     }
 
     public static func stageGroupMessages(
-        _ envelopes: [GroupRatchetEnvelope],
-        groupInboxId: String,
+        _ envelopes: [GroupApplicationEnvelopeV2],
+        routeId: String,
         relayIdentifier: String,
         stagedAt: Date = Date()
     ) throws -> DecentralizedPrefetchBatch {
         guard !envelopes.isEmpty else { throw DecentralizedPrefetchError.emptyBatch }
         guard envelopes.count <= maximumRecordsPerBatch else { throw DecentralizedPrefetchError.batchTooLarge }
         let relayIdentifier = try normalizedRelayIdentifier(relayIdentifier)
-        let inboxId = try normalizedInboxId(groupInboxId)
+        let inboxId = try normalizedInboxId(routeId)
         let records = try envelopes.map { envelope in
-            guard !envelope.payload.ciphertext.isEmpty else {
+            guard envelope.isStructurallyValid else {
                 throw DecentralizedPrefetchError.invalidEnvelope
             }
             let sealedEnvelope = try NoctweaveCoder.encode(envelope)

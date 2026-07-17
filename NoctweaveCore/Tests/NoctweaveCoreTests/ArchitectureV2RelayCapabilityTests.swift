@@ -5,8 +5,7 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
     func testRelayInfoAdvertisesOnlyEnabledProtocolModules() throws {
         let configuration = RelayConfiguration(
             federation: FederationDescriptor(mode: .solo),
-            attachmentsEnabled: false,
-            groupCreationMode: .disabled
+            attachmentsEnabled: false
         )
         let info = configuration.makeInfo(now: Date(timeIntervalSince1970: 1_000))
         let manifest = try XCTUnwrap(info.protocolCapabilities)

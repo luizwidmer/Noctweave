@@ -1526,22 +1526,6 @@ final class NoctweaveCoreTests: XCTestCase {
         )
     }
 
-    func testRelayInfoAdvertisesGroupSecurityModel() throws {
-        let defaultInfo = RelayConfiguration().makeInfo(now: Date(timeIntervalSince1970: 1_000))
-        XCTAssertEqual(defaultInfo.groupSecurityModel, .mlsDerivedTree)
-
-        let mlsInfo = RelayConfiguration(
-            groupSecurityModel: .mlsDerivedTree
-        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
-
-        XCTAssertEqual(mlsInfo.groupSecurityModel, .mlsDerivedTree)
-
-        let encoded = try NoctweaveCoder.encode(mlsInfo)
-        let decoded = try NoctweaveCoder.decode(RelayInfo.self, from: encoded)
-
-        XCTAssertEqual(decoded.groupSecurityModel, .mlsDerivedTree)
-    }
-
     func testRelayConfigurationBoundsOperatorControlledCollectionsAndCounts() {
         let endpoints = (0..<300).map { index in
             RelayEndpoint(host: "relay-\(index).example.org", port: 443, useTLS: true, transport: .http)
@@ -2020,25 +2004,29 @@ final class NoctweaveCoreTests: XCTestCase {
 
     func testDecentralizedPrefetchStagerStagesGroupCiphertextOnlyRecords() throws {
         let groupId = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
-        let envelope = GroupRatchetEnvelope(
-            id: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+        let envelope = GroupApplicationEnvelopeV2(
+            profile: NoctweaveSignedGroupV2.experimentalProfile,
+            cipherSuite: NoctweaveSignedGroupV2.experimentalCipherSuite,
             groupId: groupId,
             epoch: 4,
-            transcriptHash: Data([0x10, 0x11]),
-            senderFingerprint: "sender-b",
-            sentAt: Date(timeIntervalSince1970: 3_000),
-            messageCounter: 9,
-            payload: EncryptedPayload(
-                nonce: Data([0x12, 0x13]),
-                ciphertext: Data([0xBA, 0xAD, 0xF0, 0x0D]),
-                tag: Data([0x14, 0x15])
+            transcriptHash: Data(repeating: 0x10, count: 32),
+            senderClientHandle: GroupScopedClientHandleV2(
+                rawValue: Data(repeating: 0x11, count: 32).base64EncodedString()
             ),
-            signature: Data([0x16, 0x17])
+            eventId: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!,
+            messageCounter: 9,
+            sentAt: Date(timeIntervalSince1970: 3_000),
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x12, count: 12),
+                ciphertext: Data([0xBA, 0xAD, 0xF0, 0x0D]),
+                tag: Data(repeating: 0x14, count: 16)
+            ),
+            signature: Data(repeating: 0x16, count: NoctweaveSignedGroupV2.signatureBytes)
         )
 
         let batch = try DecentralizedPrefetchStager.stageGroupMessages(
             [envelope],
-            groupInboxId: " group-inbox ",
+            routeId: " group-route ",
             relayIdentifier: " relay-b ",
             stagedAt: Date(timeIntervalSince1970: 4_000)
         )
@@ -2049,7 +2037,7 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(batch.records.first?.groupId, groupId)
         XCTAssertEqual(batch.records.first?.acknowledgementDeferred, true)
         let decoded = try NoctweaveCoder.decode(
-            GroupRatchetEnvelope.self,
+            GroupApplicationEnvelopeV2.self,
             from: try XCTUnwrap(batch.records.first?.sealedEnvelope)
         )
         XCTAssertEqual(decoded, envelope)
@@ -3228,413 +3216,6 @@ final class NoctweaveCoreTests: XCTestCase {
 
 
 
-    func testGroupRatchetEncryptsOnceForSharedGroupState() throws {
-        let groupId = UUID()
-        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
-        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
-        let alice = Identity(displayName: "Alice")
-        let bob = Identity(displayName: "Bob")
-        var aliceState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret,
-            localSenderFingerprint: alice.fingerprint
-        )
-        var bobState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret,
-            localSenderFingerprint: bob.fingerprint
-        )
-
-        let envelope = try GroupRatchet.encrypt(
-            body: .text("hello group"),
-            senderSigningKey: alice.signingKey,
-            senderFingerprint: alice.fingerprint,
-            state: &aliceState
-        )
-        XCTAssertEqual(envelope.groupId, groupId)
-        XCTAssertEqual(envelope.epoch, 0)
-        XCTAssertEqual(envelope.transcriptHash, transcriptHash)
-
-        let body = try GroupRatchet.decrypt(
-            envelope: envelope,
-            senderPublicSigningKey: alice.signingKey.publicKeyData,
-            state: &bobState
-        )
-        XCTAssertEqual(body, .text("hello group"))
-        XCTAssertNotNil(bobState.receiveChains[alice.fingerprint])
-    }
-
-    func testGroupRatchetBucketsVisibleEnvelopeTimestamp() throws {
-        let groupId = UUID()
-        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
-        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
-        let alice = Identity(displayName: "Alice")
-        let bob = Identity(displayName: "Bob")
-        var aliceState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret,
-            localSenderFingerprint: alice.fingerprint
-        )
-        var bobState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret,
-            localSenderFingerprint: bob.fingerprint
-        )
-        let preciseSentAt = Date(timeIntervalSince1970: 1_765_400_123)
-
-        let envelope = try GroupRatchet.encrypt(
-            body: .text("bucketed group"),
-            senderSigningKey: alice.signingKey,
-            senderFingerprint: alice.fingerprint,
-            state: &aliceState,
-            sentAt: preciseSentAt,
-            metadataBucketSeconds: 300
-        )
-
-        XCTAssertEqual(envelope.sentAt, Date(timeIntervalSince1970: 1_765_400_100))
-        let body = try GroupRatchet.decrypt(
-            envelope: envelope,
-            senderPublicSigningKey: alice.signingKey.publicKeyData,
-            state: &bobState
-        )
-        XCTAssertEqual(body, .text("bucketed group"))
-    }
-
-    func testGroupRatchetPadsSmallPlaintextsToFixedCiphertextSize() throws {
-        let groupId = UUID()
-        let transcriptHash = Data(SHA256.hash(data: Data("epoch-padding".utf8)))
-        let groupSecret = Data(SHA256.hash(data: Data("shared group padding secret".utf8)))
-        let alice = Identity(displayName: "Alice")
-        let bob = Identity(displayName: "Bob")
-        var aliceState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret,
-            localSenderFingerprint: alice.fingerprint
-        )
-        var bobState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret,
-            localSenderFingerprint: bob.fingerprint
-        )
-
-        let short = try GroupRatchet.encrypt(
-            body: .text("hi"),
-            senderSigningKey: alice.signingKey,
-            senderFingerprint: alice.fingerprint,
-            state: &aliceState
-        )
-        let longer = try GroupRatchet.encrypt(
-            body: .text("this group message is longer but remains in the same padding bucket"),
-            senderSigningKey: alice.signingKey,
-            senderFingerprint: alice.fingerprint,
-            state: &aliceState
-        )
-
-        XCTAssertEqual(short.payload.ciphertext.count, PaddedMessagePlaintext.minimumPaddedBytes)
-        XCTAssertEqual(longer.payload.ciphertext.count, PaddedMessagePlaintext.minimumPaddedBytes)
-        XCTAssertEqual(
-            try GroupRatchet.decrypt(
-                envelope: short,
-                senderPublicSigningKey: alice.signingKey.publicKeyData,
-                state: &bobState
-            ),
-            .text("hi")
-        )
-        XCTAssertEqual(
-            try GroupRatchet.decrypt(
-                envelope: longer,
-                senderPublicSigningKey: alice.signingKey.publicKeyData,
-                state: &bobState
-            ),
-            .text("this group message is longer but remains in the same padding bucket")
-        )
-    }
-
-    func testGroupRatchetAttachmentDescriptorAndChunkUseSameMessageKey() throws {
-        let groupId = UUID()
-        let transcriptHash = Data(SHA256.hash(data: Data("epoch-attachment".utf8)))
-        let groupSecret = Data(SHA256.hash(data: Data("shared group attachment secret".utf8)))
-        let alice = Identity(displayName: "Alice")
-        let bob = Identity(displayName: "Bob")
-        var aliceState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 1,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret,
-            localSenderFingerprint: alice.fingerprint
-        )
-        var bobState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 1,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret,
-            localSenderFingerprint: bob.fingerprint
-        )
-        let plaintext = Data("group image bytes".utf8)
-        let attachmentId = UUID()
-        let prepared = try GroupRatchet.prepareMessageKey(
-            senderFingerprint: alice.fingerprint,
-            state: &aliceState
-        )
-        let descriptor = AttachmentDescriptor(
-            id: attachmentId,
-            fileName: "image.jpg",
-            mimeType: "image/jpeg",
-            byteCount: plaintext.count,
-            sha256: AttachmentCrypto.sha256(plaintext),
-            chunkCount: 1,
-            chunkSize: 64 * 1024
-        )
-        let chunkAAD = AttachmentCrypto.authenticatedData(
-            conversationId: "group:\(groupId.uuidString)",
-            sessionId: "epoch:1:\(transcriptHash.base64EncodedString())",
-            messageCounter: prepared.counter,
-            attachmentId: attachmentId,
-            chunkIndex: 0,
-            byteCount: plaintext.count
-        )
-        let encryptedChunk = try AttachmentCrypto.encryptChunk(
-            plaintext: plaintext,
-            messageKey: prepared.key,
-            attachmentId: attachmentId,
-            chunkIndex: 0,
-            authenticatedData: chunkAAD
-        )
-        let envelope = try GroupRatchet.encrypt(
-            body: .attachment(descriptor),
-            senderSigningKey: alice.signingKey,
-            senderFingerprint: alice.fingerprint,
-            messageCounter: prepared.counter,
-            messageKey: prepared.key,
-            state: aliceState
-        )
-
-        let decrypted = try GroupRatchet.decryptWithKey(
-            envelope: envelope,
-            senderPublicSigningKey: alice.signingKey.publicKeyData,
-            state: &bobState
-        )
-        XCTAssertEqual(decrypted.body, .attachment(descriptor))
-        let recoveredChunk = try AttachmentCrypto.decryptChunk(
-            payload: encryptedChunk,
-            messageKey: decrypted.messageKey,
-            attachmentId: attachmentId,
-            chunkIndex: 0,
-            authenticatedData: chunkAAD
-        )
-        XCTAssertEqual(recoveredChunk, plaintext)
-    }
-
-    func testGroupRatchetRejectsReplayAndAllowsBoundedOutOfOrderDelivery() throws {
-        let groupId = UUID()
-        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
-        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
-        let alice = Identity(displayName: "Alice")
-        var aliceState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret,
-            localSenderFingerprint: alice.fingerprint
-        )
-        var receiverState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret
-        )
-
-        let first = try GroupRatchet.encrypt(
-            body: .text("first"),
-            senderSigningKey: alice.signingKey,
-            senderFingerprint: alice.fingerprint,
-            state: &aliceState
-        )
-        let second = try GroupRatchet.encrypt(
-            body: .text("second"),
-            senderSigningKey: alice.signingKey,
-            senderFingerprint: alice.fingerprint,
-            state: &aliceState
-        )
-
-        let secondBody = try GroupRatchet.decrypt(
-            envelope: second,
-            senderPublicSigningKey: alice.signingKey.publicKeyData,
-            state: &receiverState
-        )
-        XCTAssertEqual(secondBody, .text("second"))
-
-        let firstBody = try GroupRatchet.decrypt(
-            envelope: first,
-            senderPublicSigningKey: alice.signingKey.publicKeyData,
-            state: &receiverState
-        )
-        XCTAssertEqual(firstBody, .text("first"))
-
-        XCTAssertThrowsError(
-            try GroupRatchet.decrypt(
-                envelope: second,
-                senderPublicSigningKey: alice.signingKey.publicKeyData,
-                state: &receiverState
-            )
-        ) { error in
-            XCTAssertEqual(error as? CryptoError, .counterReplay)
-        }
-    }
-
-    func testGroupRatchetBindsTranscriptAndSignature() throws {
-        let groupId = UUID()
-        let transcriptHash = Data(SHA256.hash(data: Data("epoch-0".utf8)))
-        let wrongTranscriptHash = Data(SHA256.hash(data: Data("wrong epoch".utf8)))
-        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
-        let alice = Identity(displayName: "Alice")
-        let mallory = Identity(displayName: "Mallory")
-        var aliceState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret,
-            localSenderFingerprint: alice.fingerprint
-        )
-        var receiverState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: wrongTranscriptHash,
-            groupSecret: groupSecret
-        )
-
-        let envelope = try GroupRatchet.encrypt(
-            body: .text("bound"),
-            senderSigningKey: alice.signingKey,
-            senderFingerprint: alice.fingerprint,
-            state: &aliceState
-        )
-
-        XCTAssertThrowsError(
-            try GroupRatchet.decrypt(
-                envelope: envelope,
-                senderPublicSigningKey: alice.signingKey.publicKeyData,
-                state: &receiverState
-            )
-        ) { error in
-            XCTAssertEqual(error as? CryptoError, .invalidPayload)
-        }
-
-        var validReceiverState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcriptHash,
-            groupSecret: groupSecret
-        )
-        XCTAssertThrowsError(
-            try GroupRatchet.decrypt(
-                envelope: envelope,
-                senderPublicSigningKey: mallory.signingKey.publicKeyData,
-                state: &validReceiverState
-            )
-        ) { error in
-            XCTAssertEqual(error as? CryptoError, .invalidPayload)
-        }
-    }
-
-    func testGroupRatchetAdvancesEpochAndRejectsOldEpochMessages() throws {
-        let groupId = UUID()
-        let transcript0 = Data(SHA256.hash(data: Data("epoch-0".utf8)))
-        let transcript1 = Data(SHA256.hash(data: Data("epoch-1".utf8)))
-        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
-        let commitSecret = Data(SHA256.hash(data: Data("commit secret".utf8)))
-        let alice = Identity(displayName: "Alice")
-        var aliceState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcript0,
-            groupSecret: groupSecret,
-            localSenderFingerprint: alice.fingerprint
-        )
-        var receiverState = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcript0,
-            groupSecret: groupSecret
-        )
-
-        let oldEnvelope = try GroupRatchet.encrypt(
-            body: .text("old"),
-            senderSigningKey: alice.signingKey,
-            senderFingerprint: alice.fingerprint,
-            state: &aliceState
-        )
-
-        try aliceState.advanceEpoch(to: 1, transcriptHash: transcript1, commitSecret: commitSecret)
-        try receiverState.advanceEpoch(to: 1, transcriptHash: transcript1, commitSecret: commitSecret)
-
-        XCTAssertThrowsError(
-            try GroupRatchet.decrypt(
-                envelope: oldEnvelope,
-                senderPublicSigningKey: alice.signingKey.publicKeyData,
-                state: &receiverState
-            )
-        ) { error in
-            XCTAssertEqual(error as? CryptoError, .invalidPayload)
-        }
-
-        let newEnvelope = try GroupRatchet.encrypt(
-            body: .text("new"),
-            senderSigningKey: alice.signingKey,
-            senderFingerprint: alice.fingerprint,
-            state: &aliceState
-        )
-        let body = try GroupRatchet.decrypt(
-            envelope: newEnvelope,
-            senderPublicSigningKey: alice.signingKey.publicKeyData,
-            state: &receiverState
-        )
-        XCTAssertEqual(body, .text("new"))
-        XCTAssertEqual(newEnvelope.epoch, 1)
-        XCTAssertEqual(newEnvelope.transcriptHash, transcript1)
-    }
-
-    func testGroupRatchetRejectsSkippedEpochAdvance() throws {
-        let groupId = UUID()
-        let transcript0 = Data(SHA256.hash(data: Data("epoch-0".utf8)))
-        let transcript1 = Data(SHA256.hash(data: Data("epoch-1".utf8)))
-        let transcript2 = Data(SHA256.hash(data: Data("epoch-2".utf8)))
-        let groupSecret = Data(SHA256.hash(data: Data("shared group secret".utf8)))
-        let commitSecret1 = Data(SHA256.hash(data: Data("commit secret 1".utf8)))
-        let commitSecret2 = Data(SHA256.hash(data: Data("commit secret 2".utf8)))
-        let alice = Identity(displayName: "Alice")
-        var state = GroupRatchetState.initialize(
-            groupId: groupId,
-            epoch: 0,
-            transcriptHash: transcript0,
-            groupSecret: groupSecret,
-            localSenderFingerprint: alice.fingerprint
-        )
-
-        XCTAssertThrowsError(
-            try state.advanceEpoch(to: 2, transcriptHash: transcript2, commitSecret: commitSecret2)
-        ) { error in
-            XCTAssertEqual(error as? CryptoError, .invalidPayload)
-        }
-        XCTAssertEqual(state.epoch, 0)
-        XCTAssertEqual(state.transcriptHash, transcript0)
-
-        try state.advanceEpoch(to: 1, transcriptHash: transcript1, commitSecret: commitSecret1)
-        XCTAssertEqual(state.epoch, 1)
-        XCTAssertEqual(state.transcriptHash, transcript1)
-    }
 
 
 
@@ -5623,10 +5204,6 @@ final class NoctweaveCoreTests: XCTestCase {
             makeConversation(contactId: primaryId, body: "older", timestamp: Date(timeIntervalSince1970: 10)),
             makeConversation(contactId: duplicateId, body: "newer", timestamp: Date(timeIntervalSince1970: 20))
         ]
-        state.groups = [
-            GroupConversation(title: "Ops", memberContactIds: [primaryId, duplicateId])
-        ]
-
         let updated = Contact(
             id: UUID(),
             displayName: "Peer Renamed",
@@ -5646,8 +5223,6 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(state.conversations[0].contactId, primaryId)
         XCTAssertEqual(state.conversations[0].messages.last?.body, "newer")
 
-        XCTAssertEqual(state.groups.count, 1)
-        XCTAssertEqual(state.groups[0].memberContactIds, [primaryId])
     }
 
     func testClientStateUpsertContactMatchesByAddressWhenFingerprintChanges() throws {
@@ -5726,80 +5301,6 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(state.conversations[0].sendChain.counter, 3)
     }
 
-    func testClientStateMergeUpsertGroupPreservesConcurrentMessages() throws {
-        let identity = Identity(displayName: "Owner")
-        let relay = RelayEndpoint(host: "relay.example", port: 443, useTLS: true, transport: .http)
-        let groupId = UUID()
-        var state = try makeCurrentClientState(identity: identity, relay: relay)
-
-        let received = Message(
-            id: UUID(uuidString: "CCCCCCCC-DDDD-EEEE-FFFF-AAAAAAAAAAAA")!,
-            direction: .received,
-            senderDisplayName: "Peer",
-            body: "group inbound",
-            timestamp: Date(timeIntervalSince1970: 20),
-            counter: 4
-        )
-        let existing = GroupConversation(
-            id: groupId,
-            title: "Team",
-            memberContactIds: [],
-            messages: [received],
-            unreadCount: 1
-        )
-        state.groups = [existing]
-
-        let sent = Message(
-            id: UUID(uuidString: "DDDDDDDD-EEEE-FFFF-AAAA-BBBBBBBBBBBB")!,
-            direction: .sent,
-            senderDisplayName: "Owner",
-            body: "group outbound",
-            timestamp: Date(timeIntervalSince1970: 21),
-            counter: 5
-        )
-        var outboundSnapshot = existing
-        outboundSnapshot.messages = [sent]
-        outboundSnapshot.unreadCount = 0
-        outboundSnapshot.relayEpoch = 8
-
-        state.mergeUpsert(group: outboundSnapshot)
-
-        XCTAssertEqual(state.groups.count, 1)
-        XCTAssertEqual(state.groups[0].messages.map(\.body), ["group inbound", "group outbound"])
-        XCTAssertEqual(state.groups[0].unreadCount, 1)
-        XCTAssertEqual(state.groups[0].relayEpoch, 8)
-    }
-
-    func testGroupConversationPersistsInClientState() throws {
-        let identity = Identity(displayName: "Alice")
-        let relay = RelayEndpoint(host: "localhost", port: 9339)
-        let group = GroupConversation(
-            title: "Team",
-            memberContactIds: [UUID(), UUID()],
-            messages: [
-                Message(
-                    direction: .received,
-                    senderDisplayName: "Bob",
-                    body: "hi",
-                    timestamp: Date(timeIntervalSince1970: 100),
-                    counter: 1
-                )
-            ],
-            unreadCount: 1,
-            createdAt: Date(timeIntervalSince1970: 50)
-        )
-        var state = try makeCurrentClientState(
-            identity: identity,
-            relay: relay
-        )
-        state.groups = [group]
-
-        let data = try NoctweaveCoder.encode(state)
-        let decoded = try NoctweaveCoder.decode(ClientState.self, from: data)
-        XCTAssertEqual(decoded.groups.count, 1)
-        XCTAssertEqual(decoded.groups[0].title, "Team")
-        XCTAssertEqual(decoded.groups[0].messages.first?.senderDisplayName, "Bob")
-    }
 
     func testOnionTransportPeelsThreeHopsInOrder() throws {
         let hop1 = AgreementKeyPair()
@@ -6458,37 +5959,6 @@ final class NoctweaveCoreTests: XCTestCase {
         )
     }
 
-    func testMLSEpochAdvancementRejectsCounterExhaustion() {
-        let groupId = UUID()
-        let transcript = Data(repeating: 7, count: 32)
-        let commit = MLSGroupCommitSummary(
-            operation: .update,
-            actorFingerprint: String(repeating: "a", count: 64),
-            epoch: UInt64.max,
-            committedAt: Date(),
-            memberFingerprints: [String(repeating: "a", count: 64), String(repeating: "b", count: 64)],
-            previousTranscriptHash: transcript,
-            transcriptHash: transcript
-        )
-        let terminal = MLSGroupEpochState(
-            groupId: groupId,
-            epoch: UInt64.max,
-            treeHash: transcript,
-            confirmedTranscriptHash: transcript,
-            lastCommit: commit
-        )
-
-        XCTAssertThrowsError(
-            try terminal.advancing(
-                title: "Terminal",
-                inboxId: "nw1terminal",
-                actorFingerprint: commit.actorFingerprint,
-                members: [],
-                operation: .update,
-                committedAt: Date()
-            )
-        )
-    }
 
     func testResendRequestRejectsUnboundedWireCounts() throws {
         XCTAssertEqual(ResendRequest(count: Int.max).count, ResendRequest.maximumCount)

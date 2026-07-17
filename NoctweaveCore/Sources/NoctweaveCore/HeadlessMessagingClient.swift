@@ -2533,11 +2533,6 @@ public actor HeadlessMessagingClient {
                 return info
             }
         }
-        for group in state.groups {
-            if let info = group.messages.compactMap(\.attachment).first(where: { $0.descriptor.id == id }) {
-                return info
-            }
-        }
         throw HeadlessMessagingClientError.attachmentNotFound(id.uuidString)
     }
 
@@ -2705,19 +2700,6 @@ public actor HeadlessMessagingClient {
             return descriptor.byteCount - (descriptor.chunkSize * chunkIndex)
         }
         return descriptor.chunkSize
-    }
-
-    private static func groupAttachmentContext(
-        groupId: UUID,
-        epoch: UInt64,
-        transcriptHash: Data,
-        messageCounter: UInt64
-    ) -> AttachmentCryptoContext {
-        AttachmentCryptoContext(
-            conversationId: "group:\(groupId.uuidString)",
-            sessionId: "epoch:\(epoch):\(transcriptHash.base64EncodedString())",
-            messageCounter: messageCounter
-        )
     }
 
     private static func mailboxRouteKey(relay: RelayEndpoint, inboxId: String) -> String {

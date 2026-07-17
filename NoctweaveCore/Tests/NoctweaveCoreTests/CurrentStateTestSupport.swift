@@ -6,7 +6,7 @@ func makeCurrentIdentityProfile(
     relay: RelayEndpoint,
     contacts: [Contact] = [],
     conversations: [Conversation] = [],
-    groups: [GroupConversation] = [],
+    groupRuntimes: [GroupRuntimeRecord] = [],
     selectedRelayId: UUID? = nil,
     prekeys: PrekeyState? = nil,
     createdAt: Date = Date()
@@ -22,7 +22,7 @@ func makeCurrentIdentityProfile(
     )
     profile.contacts = contacts
     profile.conversations = conversations
-    profile.groups = groups
+    profile.groupRuntimes = groupRuntimes
     return profile
 }
 

@@ -4,6 +4,38 @@ import XCTest
 @testable import NoctweaveCore
 
 final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
+    func testClientStatePersistsOnlyCurrentGroupRuntimeRecords() throws {
+        let fixture = try makeSignedFixture()
+        var state = try makeCurrentClientState(
+            identity: try Identity.generate(displayName: "Runtime profile"),
+            relay: RelayEndpoint(host: "localhost", port: 9339)
+        )
+        try state.upsert(groupRuntime: fixture.record)
+
+        XCTAssertEqual(state.groupRuntimes, [fixture.record])
+        XCTAssertEqual(state.groupRuntime(for: fixture.record.groupId), fixture.record)
+        XCTAssertTrue(state.isCurrentBaselineValid)
+
+        let decoded = try NoctweaveCoder.decode(
+            ClientState.self,
+            from: NoctweaveCoder.encode(state, sortedKeys: true)
+        )
+        XCTAssertEqual(decoded.groupRuntimes, [fixture.record])
+
+        let profileData = try NoctweaveCoder.encode(state.identityProfiles[0], sortedKeys: true)
+        var profileObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: profileData) as? [String: Any]
+        )
+        profileObject.removeValue(forKey: "groupRuntimes")
+        let missingCurrentField = try JSONSerialization.data(
+            withJSONObject: profileObject,
+            options: [.sortedKeys]
+        )
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(IdentityProfile.self, from: missingCurrentField)
+        )
+    }
+
     func testProvisionalStateIsNominalAndApplicationRatchetsRejectReplayAndGaps() throws {
         let fixture = try makeSignedFixture()
 

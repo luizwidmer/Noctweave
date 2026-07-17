@@ -112,9 +112,9 @@ public struct ClientState: Codable {
         set { updateActiveProfile { $0.conversations = newValue } }
     }
 
-    public var groups: [GroupConversation] {
-        get { activeProfile.groups }
-        set { updateActiveProfile { $0.groups = newValue } }
+    public var groupRuntimes: [GroupRuntimeRecord] {
+        get { activeProfile.groupRuntimes }
+        set { updateActiveProfile { $0.groupRuntimes = newValue } }
     }
 
     public var pendingDirectDeliveries: [PendingDirectDelivery] {
@@ -380,11 +380,17 @@ public struct ClientState: Codable {
         }
     }
 
-    public mutating func upsert(group: GroupConversation) {
-        if let index = groups.firstIndex(where: { $0.id == group.id }) {
-            groups[index] = group
+    public mutating func upsert(groupRuntime: GroupRuntimeRecord) throws {
+        guard groupRuntime.isStructurallyValid else {
+            throw ClientStateError.invalidCurrentState
+        }
+        if let index = groupRuntimes.firstIndex(where: { $0.id == groupRuntime.id }) {
+            groupRuntimes[index] = groupRuntime
         } else {
-            groups.append(group)
+            guard groupRuntimes.count < IdentityProfile.maximumGroupRuntimes else {
+                throw ClientStateError.invalidCurrentState
+            }
+            groupRuntimes.append(groupRuntime)
         }
     }
 
@@ -399,17 +405,6 @@ public struct ClientState: Codable {
             conversations[index] = merged
         } else {
             conversations.append(incoming)
-        }
-    }
-
-    public mutating func mergeUpsert(group incoming: GroupConversation) {
-        if let index = groups.firstIndex(where: { $0.id == incoming.id }) {
-            var merged = incoming
-            merged.messages = mergedMessages(groups[index].messages, incoming.messages)
-            merged.unreadCount = max(groups[index].unreadCount, incoming.unreadCount)
-            groups[index] = merged
-        } else {
-            groups.append(incoming)
         }
     }
 
@@ -473,8 +468,8 @@ public struct ClientState: Codable {
         })
     }
 
-    public func group(for groupId: UUID) -> GroupConversation? {
-        groups.first(where: { $0.id == groupId })
+    public func groupRuntime(for groupId: UUID) -> GroupRuntimeRecord? {
+        groupRuntimes.first(where: { $0.id == groupId })
     }
 
     public mutating func updateConversation(_ conversation: Conversation) {
@@ -486,10 +481,8 @@ public struct ClientState: Codable {
         }
     }
 
-    public mutating func updateGroup(_ group: GroupConversation) {
-        if let index = groups.firstIndex(where: { $0.id == group.id }) {
-            groups[index] = group
-        }
+    public mutating func updateGroupRuntime(_ groupRuntime: GroupRuntimeRecord) throws {
+        try upsert(groupRuntime: groupRuntime)
     }
 
     public mutating func updateContact(_ contact: Contact) {
@@ -558,8 +551,7 @@ public struct ClientState: Codable {
         profile.relay = staged.relay
         profile.contacts = profile.contacts.filter { retainedContactIds.contains($0.id) }
         profile.conversations.removeAll()
-        profile.groups.removeAll()
-        profile.locallyLeftRelayGroupIds.removeAll()
+        profile.groupRuntimes.removeAll()
         profile.pendingDirectDeliveries = stagedDeliveries
         profile.deliveryStates.removeAll()
         profile.inboundEnvelopeReceiptsV2.removeAll()
@@ -739,11 +731,6 @@ fileprivate extension ClientState {
         }
         conversations = rebuiltConversations
 
-        for index in groups.indices {
-            let remapped = groups[index].memberContactIds.map { staleIds.contains($0) ? newId : $0 }
-            var seen: Set<UUID> = []
-            groups[index].memberContactIds = remapped.filter { seen.insert($0).inserted }
-        }
     }
 
     func preferredConversation(existing: Conversation, candidate: Conversation) -> Conversation {

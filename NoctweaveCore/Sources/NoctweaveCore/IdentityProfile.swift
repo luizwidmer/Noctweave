@@ -2,6 +2,8 @@ import CryptoKit
 import Foundation
 
 public struct IdentityProfile: Codable, Identifiable {
+    public static let maximumGroupRuntimes = 256
+
     public let id: UUID
     public var architectureVersion: Int
     public var identityGenerationId: UUID?
@@ -23,13 +25,12 @@ public struct IdentityProfile: Codable, Identifiable {
     public var relay: RelayEndpoint
     public var contacts: [Contact]
     public var conversations: [Conversation]
-    public var groups: [GroupConversation]
+    public var groupRuntimes: [GroupRuntimeRecord]
     public var pendingDirectDeliveries: [PendingDirectDelivery]
     public var selectedRelayId: UUID?
     public var prekeys: PrekeyState
     public var continuityEvents: [ContinuityEvent]
     public var federationPolicy: FederationDescriptor?
-    public var locallyLeftRelayGroupIds: [UUID]
     public var isArchived: Bool
     public var archivedAt: Date?
     public let createdAt: Date
@@ -55,13 +56,12 @@ public struct IdentityProfile: Codable, Identifiable {
         relay: RelayEndpoint,
         contacts: [Contact] = [],
         conversations: [Conversation] = [],
-        groups: [GroupConversation] = [],
+        groupRuntimes: [GroupRuntimeRecord] = [],
         pendingDirectDeliveries: [PendingDirectDelivery] = [],
         selectedRelayId: UUID? = nil,
         prekeys: PrekeyState,
         continuityEvents: [ContinuityEvent] = [],
         federationPolicy: FederationDescriptor? = nil,
-        locallyLeftRelayGroupIds: [UUID] = [],
         isArchived: Bool = false,
         archivedAt: Date? = nil,
         createdAt: Date = Date()
@@ -87,13 +87,12 @@ public struct IdentityProfile: Codable, Identifiable {
         self.relay = relay
         self.contacts = contacts
         self.conversations = conversations
-        self.groups = groups
+        self.groupRuntimes = groupRuntimes
         self.pendingDirectDeliveries = pendingDirectDeliveries
         self.selectedRelayId = selectedRelayId
         self.prekeys = prekeys
         self.continuityEvents = continuityEvents
         self.federationPolicy = federationPolicy
-        self.locallyLeftRelayGroupIds = locallyLeftRelayGroupIds
         self.isArchived = isArchived
         self.archivedAt = archivedAt
         self.createdAt = createdAt
@@ -169,13 +168,12 @@ public struct IdentityProfile: Codable, Identifiable {
         case relay
         case contacts
         case conversations
-        case groups
+        case groupRuntimes
         case pendingDirectDeliveries
         case selectedRelayId
         case prekeys
         case continuityEvents
         case federationPolicy
-        case locallyLeftRelayGroupIds
         case isArchived
         case archivedAt
         case createdAt
@@ -238,7 +236,10 @@ public struct IdentityProfile: Codable, Identifiable {
         relay = try container.decode(RelayEndpoint.self, forKey: .relay)
         contacts = try container.decode([Contact].self, forKey: .contacts)
         conversations = try container.decode([Conversation].self, forKey: .conversations)
-        groups = try container.decode([GroupConversation].self, forKey: .groups)
+        groupRuntimes = try container.decode(
+            [GroupRuntimeRecord].self,
+            forKey: .groupRuntimes
+        )
         pendingDirectDeliveries = try container.decode(
             [PendingDirectDelivery].self,
             forKey: .pendingDirectDeliveries
@@ -247,7 +248,6 @@ public struct IdentityProfile: Codable, Identifiable {
         prekeys = try container.decode(PrekeyState.self, forKey: .prekeys)
         continuityEvents = try container.decode([ContinuityEvent].self, forKey: .continuityEvents)
         federationPolicy = try container.decodeIfPresent(FederationDescriptor.self, forKey: .federationPolicy)
-        locallyLeftRelayGroupIds = try container.decode([UUID].self, forKey: .locallyLeftRelayGroupIds)
         isArchived = try container.decode(Bool.self, forKey: .isArchived)
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
@@ -326,6 +326,9 @@ public struct IdentityProfile: Codable, Identifiable {
                         $0.id == journal.result.removedEndpointId
                     })
             }
+            && groupRuntimes.count <= Self.maximumGroupRuntimes
+            && Set(groupRuntimes.map(\.groupId)).count == groupRuntimes.count
+            && groupRuntimes.allSatisfy(\.isStructurallyValid)
             && identityMutationStateIsConsistent
             && durableDirectOutboxStateIsConsistent
             && relationshipsV2.count <= 4_096

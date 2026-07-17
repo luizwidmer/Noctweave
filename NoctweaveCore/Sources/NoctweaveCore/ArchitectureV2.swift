@@ -211,7 +211,7 @@ public struct ProtocolCapabilityManifest: Codable, Equatable {
         ProtocolModuleCapability(module: "nw.endpoints", versions: [2], status: .provisional),
         ProtocolModuleCapability(module: "nw.routes", versions: [2, 3], status: .experimental),
         ProtocolModuleCapability(module: "nw.blobs", versions: [1], status: .stable),
-        ProtocolModuleCapability(module: "nw.groups", versions: [1], status: .experimental),
+        ProtocolModuleCapability(module: "nw.groups", versions: [2], status: .experimental),
         ProtocolModuleCapability(module: "nw.wake", versions: [1], status: .experimental),
         ProtocolModuleCapability(module: "nw.federation", versions: [1], status: .provisional),
         ProtocolModuleCapability(
