@@ -21,6 +21,11 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertFalse(OperatorWebUI.html.contains("Long poll"))
         XCTAssertFalse(OperatorWebUI.javascript.contains("wakeLongPoll"))
         XCTAssertTrue(OperatorWebUI.html.contains("Active backend:"))
+        XCTAssertTrue(OperatorWebUI.html.contains("name=\"opaqueRouteRuntimeEnabled\" type=\"checkbox\""))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("opaqueRouteRuntimeEnabled:b(\"opaqueRouteRuntimeEnabled\")"))
+        XCTAssertTrue(OperatorWebUI.html.contains("max=\"2592000\""))
+        XCTAssertTrue(OperatorWebUI.html.contains("Opaque-route packets, rendezvous routes"))
+        XCTAssertFalse(OperatorWebUI.html.contains("Queues, prekeys"))
         XCTAssertTrue(OperatorWebUI.html.contains("aria-live=\"polite\""))
         XCTAssertTrue(OperatorWebUI.javascript.contains("restartSettingsChanged"))
         XCTAssertTrue(OperatorWebUI.javascript.contains("Configuration saved and applied"))
@@ -82,6 +87,22 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(updated.openFederationDHTEnabled)
         XCTAssertEqual(updated.relayPeerExchangeLimit, 16)
         XCTAssertEqual(updated.temporalBucketScheduleSeconds, [60, 120, 300])
+    }
+
+    func testOperatorConfigurationAcceptsThirtyDayAttachmentRetentionOnly() throws {
+        let base = makeBaseConfiguration()
+        var editable = OperatorEditableConfiguration(configuration: base)
+        editable.attachmentDefaultTTLSeconds = 2_592_000
+        editable.attachmentMaxTTLSeconds = 2_592_000
+        XCTAssertEqual(
+            try editable.validatedConfiguration(from: base).attachmentMaxTTLSeconds,
+            OperatorEditableConfiguration.maximumAttachmentTTLSeconds
+        )
+
+        editable.attachmentMaxTTLSeconds = 2_592_001
+        XCTAssertThrowsError(try editable.validatedConfiguration(from: base)) { error in
+            XCTAssertEqual(error as? OperatorConfigurationError, .invalidField("attachment retention"))
+        }
     }
 
     func testOperatorControlPlanePersistsAndAppliesUpdates() throws {

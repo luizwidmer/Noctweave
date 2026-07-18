@@ -77,6 +77,7 @@ export function dockerRunArguments(
     "--http-port", "9340",
     "--admin-port", "9090",
     "--data-dir", "/data",
+    "--rendezvous-transport", "true",
     "--relay-name", settings.relayName
   ];
 }

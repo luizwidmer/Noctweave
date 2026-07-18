@@ -21,6 +21,7 @@ enum OperatorConfigurationError: LocalizedError, Equatable {
 struct OperatorEditableConfiguration: Codable, Equatable {
     static let maximumTextBytes = 1_024
     static let maximumEndpointCount = 256
+    static let maximumAttachmentTTLSeconds = 2_592_000
 
     var relayName: String
     var operatorNote: String
@@ -168,9 +169,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
               bucketSchedule.count <= 16 else {
             throw OperatorConfigurationError.invalidField("temporalBucketScheduleSeconds")
         }
-        let maximumAttachmentTTL = 6 * 60 * 60
-        guard (60...maximumAttachmentTTL).contains(attachmentDefaultTTLSeconds),
-              (attachmentDefaultTTLSeconds...maximumAttachmentTTL).contains(attachmentMaxTTLSeconds) else {
+        guard (60...Self.maximumAttachmentTTLSeconds).contains(attachmentDefaultTTLSeconds),
+              (attachmentDefaultTTLSeconds...Self.maximumAttachmentTTLSeconds).contains(attachmentMaxTTLSeconds) else {
             throw OperatorConfigurationError.invalidField("attachment retention")
         }
         guard (0...128).contains(relayPeerExchangeLimit) else {
