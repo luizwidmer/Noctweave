@@ -11,6 +11,9 @@ source "$ROOT_DIR/scripts/liboqs-runtime.sh"
 echo "Running core XCTest suite..."
 (cd "$CORE_DIR" && swift test)
 
+echo "Running NoctweaveCLI smoke suite..."
+"$ROOT_DIR/scripts/test-cli.sh"
+
 echo "Running relay XCTest suite..."
 (cd "$RELAY_DIR" && swift test)
 
