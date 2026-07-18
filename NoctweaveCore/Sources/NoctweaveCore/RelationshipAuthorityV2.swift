@@ -49,7 +49,7 @@ public struct RelationshipAuthorityV2: Codable {
     }
 
     public init(from decoder: Decoder) throws {
-        let strict = try decoder.container(keyedBy: IdentityCodingKey.self)
+        let strict = try decoder.container(keyedBy: RelationshipAuthorityCodingKey.self)
         guard Set(strict.allKeys.map(\.stringValue))
                 == Set(CodingKeys.allCases.map(\.rawValue)) else {
             throw DecodingError.dataCorrupted(
@@ -108,7 +108,7 @@ public struct RelationshipAuthorityV2: Codable {
     }
 }
 
-private struct IdentityCodingKey: CodingKey {
+private struct RelationshipAuthorityCodingKey: CodingKey {
     let stringValue: String
     let intValue: Int?
 
