@@ -277,6 +277,7 @@ private struct JSONDecodePreflight {
     }
 
     private mutating func parseNumber() throws {
+        let start = index
         _ = consumeIfPresent(0x2D)
         guard let byte = currentByte else {
             throw Failure.invalidJSON
@@ -308,6 +309,11 @@ private struct JSONDecodePreflight {
                 throw Failure.invalidJSON
             }
             consumeDigits()
+        }
+
+        let number = String(decoding: bytes[start..<index], as: UTF8.self)
+        guard let value = Double(number), value.isFinite else {
+            throw Failure.invalidJSON
         }
     }
 

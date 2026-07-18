@@ -79,7 +79,7 @@ final class IPFSAttachmentBlobStore: AttachmentBlobStore {
         request.httpBody = body
 
         let responseData = try send(request, maximumResponseBytes: maximumControlResponseBytes)
-        guard let cid = decodeCID(from: responseData), isValidCID(cid) else {
+        guard let cid = Self.decodeCID(from: responseData), isValidCID(cid) else {
             throw AttachmentBlobStoreError.uploadFailed("IPFS add response did not contain a CID")
         }
         return AttachmentExternalRecord(
@@ -154,24 +154,34 @@ final class IPFSAttachmentBlobStore: AttachmentBlobStore {
         return data
     }
 
-    private func decodeCID(from data: Data) -> String? {
-        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    static func decodeCID(from data: Data) -> String? {
+        if let object = exactJSONObject(from: data),
            let hash = object["Hash"] as? String {
             return hash
         }
-        let lines = String(decoding: data, as: UTF8.self)
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        let lines = text
             .split(whereSeparator: \.isNewline)
         for line in lines.reversed() {
-            if let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+            let lineData = Data(line.utf8)
+            if let object = exactJSONObject(from: lineData),
                let hash = object["Hash"] as? String {
                 return hash
             }
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.first == "{" || trimmed.first == "[" {
+                return nil
+            }
             if !trimmed.isEmpty {
                 return trimmed
             }
         }
         return nil
+    }
+
+    private static func exactJSONObject(from data: Data) -> [String: Any]? {
+        guard (try? RelayCodec.preflightJSON(data)) != nil else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
     private func isValidCID(_ value: String) -> Bool {

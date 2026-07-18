@@ -119,6 +119,29 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 
+    func testOperatorConfigurationRejectsDuplicateSemanticJSONFields() throws {
+        let editable = OperatorEditableConfiguration(configuration: makeBaseConfiguration())
+        let encoded = try JSONEncoder().encode(editable)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        let field = #""relayName":"#
+        XCTAssertTrue(json.contains(field))
+
+        for replacement in [
+            #""relayName":"shadow","relayName":"#,
+            #""relayName":"shadow","\u0072elayName":"#
+        ] {
+            let ambiguous = json.replacingOccurrences(of: field, with: replacement)
+            XCTAssertThrowsError(
+                try decodeOperatorJSON(
+                    OperatorEditableConfiguration.self,
+                    from: Data(ambiguous.utf8)
+                )
+            ) { error in
+                XCTAssertTrue(String(describing: error).contains("duplicate object member"))
+            }
+        }
+    }
+
     func testIPFSSettingsPersistAndRequireRestart() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

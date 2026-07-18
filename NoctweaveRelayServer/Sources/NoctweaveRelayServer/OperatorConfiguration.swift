@@ -486,7 +486,7 @@ struct OperatorConfigurationPersistence {
             throw OperatorConfigurationError.invalidField("persisted operator configuration")
         }
         let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
-        return try operatorJSONDecoder().decode(OperatorEditableConfiguration.self, from: data)
+        return try decodeOperatorJSON(OperatorEditableConfiguration.self, from: data)
     }
 
     func save(_ configuration: OperatorEditableConfiguration) throws {
@@ -577,6 +577,11 @@ private func operatorJSONEncoder() -> JSONEncoder {
 func operatorJSONDecoder() -> JSONDecoder {
     let decoder = JSONDecoder()
     return decoder
+}
+
+func decodeOperatorJSON<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    try RelayCodec.preflightJSON(data)
+    return try operatorJSONDecoder().decode(type, from: data)
 }
 
 private extension String {

@@ -99,6 +99,12 @@ final class CodingPreflightTests: XCTestCase {
         )
     }
 
+    func testRejectsNumbersBeyondFiniteRange() {
+        for input in [#"{"value":1e400}"#, #"{"value":-1e400}"#] {
+            assertPreflightRejects(Data(input.utf8), containing: "malformed input")
+        }
+    }
+
     private func assertPreflightRejects(
         _ data: Data,
         containing expectedDescription: String,

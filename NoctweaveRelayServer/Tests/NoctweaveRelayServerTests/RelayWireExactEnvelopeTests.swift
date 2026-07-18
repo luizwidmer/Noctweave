@@ -126,6 +126,16 @@ final class RelayWireExactEnvelopeTests: XCTestCase {
         XCTAssertEqual(decoded, ["value": "😀"])
     }
 
+    func testRawWireDecoderRejectsNumbersBeyondFiniteRange() {
+        for input in [#"{"value":1e400}"#, #"{"value":-1e400}"#] {
+            assertWireDecodeRejects(
+                Data(input.utf8),
+                as: [String: Double].self,
+                containing: "finite range"
+            )
+        }
+    }
+
     private func object(_ data: Data) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }

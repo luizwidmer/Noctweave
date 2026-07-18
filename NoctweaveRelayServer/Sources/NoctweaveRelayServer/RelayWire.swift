@@ -558,9 +558,13 @@ extension RelayCodec {
     /// this entry point so an attacker cannot smuggle conflicting values under
     /// repeated or escape-equivalent member names.
     static func decodeWire<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        try preflightJSON(data)
+        return try decoder().decode(type, from: data)
+    }
+
+    static func preflightJSON(_ data: Data) throws {
         var validator = RelayRawJSONValidator(data: data)
         try validator.validate()
-        return try decoder().decode(type, from: data)
     }
 }
 
@@ -719,6 +723,7 @@ private struct RelayRawJSONValidator {
     }
 
     private mutating func consumeNumber() throws {
+        let start = index
         if consume(0x2D), index == bytes.count {
             throw error("Relay JSON number is incomplete")
         }
@@ -749,6 +754,11 @@ private struct RelayRawJSONValidator {
                 throw error("Relay JSON exponent is incomplete")
             }
             while index < bytes.count, Self.isDigit(bytes[index]) { index += 1 }
+        }
+
+        let number = String(decoding: bytes[start..<index], as: UTF8.self)
+        guard let value = Double(number), value.isFinite else {
+            throw error("Relay JSON number exceeds the finite range")
         }
     }
 
