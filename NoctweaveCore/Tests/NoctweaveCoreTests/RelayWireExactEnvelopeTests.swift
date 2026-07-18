@@ -61,6 +61,66 @@ final class RelayWireExactEnvelopeTests: XCTestCase {
         XCTAssertTrue(body.values.allSatisfy { $0 is NSNull })
     }
 
+    func testAttachmentUploadRequiresExactBoundedEncryptedPayload() throws {
+        let request = RelayRequest.uploadAttachment(
+            UploadAttachmentRequest(
+                attachmentId: UUID(),
+                chunkIndex: 0,
+                payload: EncryptedPayload(
+                    nonce: Data(repeating: 0x11, count: EncryptedPayload.nonceByteCount),
+                    ciphertext: Data([0x22]),
+                    tag: Data(repeating: 0x33, count: EncryptedPayload.tagByteCount)
+                )
+            )
+        )
+        let encoded = try NoctweaveCoder.encode(request)
+        let base = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(try NoctweaveCoder.decode(RelayRequest.self, from: encoded), request)
+
+        var unknown = base
+        var unknownBody = try XCTUnwrap(unknown["body"] as? [String: Any])
+        var unknownPayload = try XCTUnwrap(unknownBody["payload"] as? [String: Any])
+        unknownPayload["legacy"] = true
+        unknownBody["payload"] = unknownPayload
+        unknown["body"] = unknownBody
+        XCTAssertThrowsError(try decodeRequest(unknown))
+
+        var missing = base
+        var missingBody = try XCTUnwrap(missing["body"] as? [String: Any])
+        var missingPayload = try XCTUnwrap(missingBody["payload"] as? [String: Any])
+        missingPayload.removeValue(forKey: "tag")
+        missingBody["payload"] = missingPayload
+        missing["body"] = missingBody
+        XCTAssertThrowsError(try decodeRequest(missing))
+
+        var malformed = base
+        var malformedBody = try XCTUnwrap(malformed["body"] as? [String: Any])
+        var malformedPayload = try XCTUnwrap(malformedBody["payload"] as? [String: Any])
+        malformedPayload["nonce"] = Data(repeating: 0x11, count: 11).base64EncodedString()
+        malformedBody["payload"] = malformedPayload
+        malformed["body"] = malformedBody
+        XCTAssertThrowsError(try decodeRequest(malformed))
+
+        let empty = EncryptedPayload(
+            nonce: Data(repeating: 0x11, count: EncryptedPayload.nonceByteCount),
+            ciphertext: Data(),
+            tag: Data(repeating: 0x33, count: EncryptedPayload.tagByteCount)
+        )
+        XCTAssertFalse(empty.isStructurallyValid)
+        XCTAssertThrowsError(try NoctweaveCoder.encode(empty))
+
+        let oversized = EncryptedPayload(
+            nonce: Data(repeating: 0x11, count: EncryptedPayload.nonceByteCount),
+            ciphertext: Data(
+                repeating: 0x22,
+                count: EncryptedPayload.maximumCiphertextBytes + 1
+            ),
+            tag: Data(repeating: 0x33, count: EncryptedPayload.tagByteCount)
+        )
+        XCTAssertFalse(oversized.isStructurallyValid)
+        XCTAssertThrowsError(try NoctweaveCoder.encode(oversized))
+    }
+
     func testOpenDiscoveryExclusivelyOwnsDHTBindings() throws {
         XCTAssertTrue(
             RelayOperationBinding(module: .federation, version: 1, method: .register).isCurrent

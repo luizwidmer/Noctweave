@@ -447,14 +447,89 @@ public enum CryptoBox {
 }
 
 public struct EncryptedPayload: Codable, Equatable {
+    public static let nonceByteCount = 12
+    public static let tagByteCount = 16
+    /// The largest encrypted payload used by any current protocol module.
+    /// Individual modules, including attachment upload, impose tighter bounds.
+    public static let maximumCiphertextBytes = 2 * 1_024 * 1_024
+
     public let nonce: Data
     public let ciphertext: Data
     public let tag: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case nonce
+        case ciphertext
+        case tag
+    }
 
     public init(nonce: Data, ciphertext: Data, tag: Data) {
         self.nonce = nonce
         self.ciphertext = ciphertext
         self.tag = tag
+    }
+
+    public init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: EncryptedPayloadCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Encrypted payload fields must match the current schema exactly"
+                )
+            )
+        }
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        nonce = try values.decode(Data.self, forKey: .nonce)
+        ciphertext = try values.decode(Data.self, forKey: .ciphertext)
+        tag = try values.decode(Data.self, forKey: .tag)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Encrypted payload has invalid cryptographic field lengths"
+                )
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                .init(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Encrypted payload has invalid cryptographic field lengths"
+                )
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(nonce, forKey: .nonce)
+        try values.encode(ciphertext, forKey: .ciphertext)
+        try values.encode(tag, forKey: .tag)
+    }
+
+    public var isStructurallyValid: Bool {
+        nonce.count == Self.nonceByteCount
+            && tag.count == Self.tagByteCount
+            && !ciphertext.isEmpty
+            && ciphertext.count <= Self.maximumCiphertextBytes
+    }
+}
+
+private struct EncryptedPayloadCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
     }
 }
 

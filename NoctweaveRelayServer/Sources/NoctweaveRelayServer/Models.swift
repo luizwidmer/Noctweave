@@ -657,9 +657,89 @@ struct RelayConfiguration: Codable, Equatable {
 
 
 struct EncryptedPayload: Codable, Equatable {
+    static let nonceByteCount = 12
+    static let tagByteCount = 16
+    static let maximumEncodedBytes = 128 * 1_024
+
     let nonce: Data
     let ciphertext: Data
     let tag: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case nonce
+        case ciphertext
+        case tag
+    }
+
+    init(nonce: Data, ciphertext: Data, tag: Data) {
+        self.nonce = nonce
+        self.ciphertext = ciphertext
+        self.tag = tag
+    }
+
+    init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: EncryptedPayloadCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Encrypted payload fields must match the current schema exactly"
+                )
+            )
+        }
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        nonce = try values.decode(Data.self, forKey: .nonce)
+        ciphertext = try values.decode(Data.self, forKey: .ciphertext)
+        tag = try values.decode(Data.self, forKey: .tag)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Encrypted attachment payload has invalid cryptographic field lengths"
+                )
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                .init(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Encrypted attachment payload has invalid cryptographic field lengths"
+                )
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(nonce, forKey: .nonce)
+        try values.encode(ciphertext, forKey: .ciphertext)
+        try values.encode(tag, forKey: .tag)
+    }
+
+    var isStructurallyValid: Bool {
+        nonce.count == Self.nonceByteCount
+            && tag.count == Self.tagByteCount
+            && !ciphertext.isEmpty
+            && ciphertext.count
+                <= Self.maximumEncodedBytes - Self.nonceByteCount - Self.tagByteCount
+    }
+}
+
+private struct EncryptedPayloadCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
 }
 
 
