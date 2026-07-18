@@ -66,11 +66,15 @@ final class StableRequestWireBoundaryTests: XCTestCase {
         let upload = UploadAttachmentRequest(
             attachmentId: UUID(),
             chunkIndex: 0,
-            payload: makePayload()
+            payload: makePayload(),
+            idempotencyKey: Data(repeating: 0x44, count: 32)
         )
         let uploadData = try NoctweaveCoder.encode(upload)
         let uploadObject = try object(uploadData)
-        XCTAssertEqual(Set(uploadObject.keys), ["attachmentId", "chunkIndex", "payload", "ttlSeconds"])
+        XCTAssertEqual(
+            Set(uploadObject.keys),
+            ["attachmentId", "chunkIndex", "payload", "ttlSeconds", "idempotencyKey"]
+        )
         XCTAssertTrue(uploadObject["ttlSeconds"] is NSNull)
         XCTAssertEqual(try NoctweaveCoder.decode(UploadAttachmentRequest.self, from: uploadData), upload)
 
@@ -110,18 +114,21 @@ final class StableRequestWireBoundaryTests: XCTestCase {
             UploadAttachmentRequest(
                 attachmentId: UUID(),
                 chunkIndex: -1,
-                payload: makePayload()
+                payload: makePayload(),
+                idempotencyKey: Data(repeating: 0x44, count: 32)
             ),
             UploadAttachmentRequest(
                 attachmentId: UUID(),
                 chunkIndex: 0,
                 payload: makePayload(),
-                ttlSeconds: 59
+                ttlSeconds: 59,
+                idempotencyKey: Data(repeating: 0x44, count: 32)
             ),
             UploadAttachmentRequest(
                 attachmentId: UUID(),
                 chunkIndex: 0,
-                payload: oversizedPayload
+                payload: oversizedPayload,
+                idempotencyKey: Data(repeating: 0x44, count: 32)
             )
         ]
         for invalid in invalidUploads {
@@ -129,6 +136,13 @@ final class StableRequestWireBoundaryTests: XCTestCase {
             XCTAssertThrowsError(try NoctweaveCoder.encode(invalid))
             XCTAssertThrowsError(try NoctweaveCoder.encode(RelayRequest.uploadAttachment(invalid)))
         }
+
+        var invalidIdempotencyKey = uploadObject
+        invalidIdempotencyKey["idempotencyKey"] = Data(repeating: 0x44, count: 31)
+            .base64EncodedString()
+        XCTAssertThrowsError(
+            try decode(UploadAttachmentRequest.self, from: invalidIdempotencyKey)
+        )
 
         let fetch = FetchAttachmentRequest(attachmentId: UUID(), chunkIndex: 511)
         let fetchData = try NoctweaveCoder.encode(fetch)

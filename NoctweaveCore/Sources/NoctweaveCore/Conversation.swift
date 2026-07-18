@@ -8,7 +8,6 @@ public struct Conversation: Codable, Identifiable, Equatable {
         case initializing
         case active
         case reset
-        case healed
     }
 
     public let id: String
@@ -16,7 +15,6 @@ public struct Conversation: Codable, Identifiable, Equatable {
     public let endpointSession: DirectEndpointSessionIdentity
     public var sessionId: String
     public var rootKey: Data
-    public var rootCounter: UInt64
     public var sendChain: ChainKeyState
     public var receiveChain: ChainKeyState
     public var messages: [Message]
@@ -29,7 +27,6 @@ public struct Conversation: Codable, Identifiable, Equatable {
         case endpointSession
         case sessionId
         case rootKey
-        case rootCounter
         case sendChain
         case receiveChain
         case messages
@@ -43,7 +40,6 @@ public struct Conversation: Codable, Identifiable, Equatable {
         endpointSession: DirectEndpointSessionIdentity,
         sessionId: String,
         rootKey: Data,
-        rootCounter: UInt64 = 0,
         sendChain: ChainKeyState,
         receiveChain: ChainKeyState,
         messages: [Message] = [],
@@ -55,7 +51,6 @@ public struct Conversation: Codable, Identifiable, Equatable {
         self.endpointSession = endpointSession
         self.sessionId = sessionId
         self.rootKey = rootKey
-        self.rootCounter = rootCounter
         self.sendChain = sendChain
         self.receiveChain = receiveChain
         self.messages = messages
@@ -83,7 +78,6 @@ public struct Conversation: Codable, Identifiable, Equatable {
         )
         sessionId = try container.decode(String.self, forKey: .sessionId)
         rootKey = try container.decode(Data.self, forKey: .rootKey)
-        rootCounter = try container.decode(UInt64.self, forKey: .rootCounter)
         sendChain = try container.decode(ChainKeyState.self, forKey: .sendChain)
         receiveChain = try container.decode(ChainKeyState.self, forKey: .receiveChain)
         messages = try container.decode([Message].self, forKey: .messages)
@@ -114,7 +108,6 @@ public struct Conversation: Codable, Identifiable, Equatable {
         try container.encode(endpointSession, forKey: .endpointSession)
         try container.encode(sessionId, forKey: .sessionId)
         try container.encode(rootKey, forKey: .rootKey)
-        try container.encode(rootCounter, forKey: .rootCounter)
         try container.encode(sendChain, forKey: .sendChain)
         try container.encode(receiveChain, forKey: .receiveChain)
         try container.encode(messages, forKey: .messages)
@@ -131,18 +124,22 @@ public struct Conversation: Codable, Identifiable, Equatable {
             && !sessionId.isEmpty
             && sessionId.utf8.count <= 256
             && rootKey.count == 32
+            && sendChain.isStructurallyValid
+            && receiveChain.isStructurallyValid
             && messages.count <= NoctweaveArchitectureV2.maximumRelationshipEvents
             && Set(messages.map(\.id)).count == messages.count
             && messages.allSatisfy(\.isStructurallyValid)
             && unreadCount >= 0
-            && unreadCount <= messages.count
+            && unreadCount <= messages.lazy.filter {
+                $0.direction == .received
+            }.count
     }
 
     public mutating func transition(to newState: RatchetState) -> Bool {
         if newState == ratchetState { return true }
         switch (ratchetState, newState) {
         case (.initializing, .active), (.initializing, .reset),
-             (.active, .reset), (.reset, .healed), (.healed, .reset):
+             (.active, .reset):
             ratchetState = newState
             return true
         default:
@@ -153,11 +150,44 @@ public struct Conversation: Codable, Identifiable, Equatable {
     public mutating func markMessageProcessed() {
         switch ratchetState {
         case .initializing: _ = transition(to: .active)
-        case .reset: _ = transition(to: .healed)
-        case .active, .healed: break
+        case .active, .reset: break
         }
     }
 
+    /// Appends one disposable UI projection. `unreadCount` represents the
+    /// newest unread suffix of received projections (sent projections are not
+    /// part of that subsequence). Trimming removes read received projections
+    /// first and decrements the unread count only when an unread received
+    /// projection actually leaves the retained window.
+    public mutating func appendProjectedMessage(_ message: Message) {
+        messages.append(message)
+        if message.direction == .received {
+            unreadCount += 1
+        }
+        let maximum = NoctweaveArchitectureV2.maximumRelationshipEvents
+        if messages.count > maximum {
+            let removalCount = messages.count - maximum
+            let totalReceived = messages.lazy.filter {
+                $0.direction == .received
+            }.count
+            let readReceivedCount = max(0, totalReceived - unreadCount)
+            let removedReceivedCount = messages.prefix(removalCount).lazy.filter {
+                $0.direction == .received
+            }.count
+            unreadCount -= max(0, removedReceivedCount - readReceivedCount)
+            messages.removeFirst(removalCount)
+        }
+    }
+
+    /// Marks every retained local projection read. This is local UI state and
+    /// does not emit a network receipt.
+    public mutating func markAllRead() {
+        unreadCount = 0
+    }
+
+    /// A reset retires this session. Resuming communication requires a fresh
+    /// ML-KEM bootstrap and a distinct `Conversation`; this state never heals
+    /// in place.
     public mutating func markReset() {
         _ = transition(to: .reset)
     }

@@ -686,7 +686,6 @@ public struct QuarantinedControlEvent: Codable, Equatable, Identifiable {
         event.isStructurallyValid
             && event.kind == .control
             && receivedAt.timeIntervalSince1970.isFinite
-            && receivedAt >= event.createdAt
             && !reason.isEmpty
             && reason.utf8.count <= 256
             && !reason.containsUnsafeProtocolControl

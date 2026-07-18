@@ -81,6 +81,8 @@ public final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTrans
         do {
             let envelope = try NoctweaveCoder.decode(GatewayQueryResponse.self, from: data)
             return Array(envelope.records.prefix(max(1, limit)))
+        } catch let error as CryptoError {
+            throw error
         } catch {
             throw OpenFederationDHTGatewayTransportError.invalidResponse
         }

@@ -1875,6 +1875,31 @@ public struct OpaqueReceiveRouteV2: Codable, Equatable {
             }
             return self
         }
+        // Teardown is terminal and effect-idempotent. A client that crashed
+        // after relay mutation may have only its prior active snapshot and can
+        // safely confirm the already-achieved state with a fresh authenticated
+        // teardown request.
+        if status == .tornDown {
+            guard request.renewalSequence == lease.renewalSequence,
+                  request.authorizedAt >= lease.lastRenewedAt else {
+                throw OpaqueRouteV2Error.transitionOutOfOrder
+            }
+            try opaqueRouteValidateAuthorizationTime(
+                request.authorization.authorizedAt,
+                at: receivedAt
+            )
+            guard opaqueRouteCredentialDigest(.teardown, presentedCapability.rawValue)
+                    == teardownCapabilityDigest,
+                  request.authorization.verify(
+                    expectedAuthority: .teardown,
+                    routeID: routeID,
+                    operationDigest: transitionDigest,
+                    secret: presentedCapability.rawValue
+                  ) else {
+                throw OpaqueRouteV2Error.invalidAuthorization
+            }
+            return self
+        }
         guard status == .active else { throw OpaqueRouteV2Error.routeTornDown }
         if request.renewalSequence < lease.renewalSequence {
             throw OpaqueRouteV2Error.staleTransition

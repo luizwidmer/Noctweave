@@ -55,7 +55,7 @@ public struct OpaqueRoutePayloadKeyV2: Codable, Equatable, Hashable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     let rawValue: Data
 
-    private enum CodingKeys: String, CodingKey { case rawValue }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case rawValue }
 
     init(rawValue: Data) {
         self.rawValue = rawValue
@@ -66,6 +66,10 @@ public struct OpaqueRoutePayloadKeyV2: Codable, Equatable, Hashable,
     }
 
     public init(from decoder: Decoder) throws {
+        try opaquePacketRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let value = try container.decode(Data.self, forKey: .rawValue)
         guard opaquePacketIsValidIdentifier(value) else {
@@ -159,7 +163,7 @@ public struct OpaqueRouteBundleIDV2: Codable, Equatable, Hashable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     let rawValue: Data
 
-    private enum CodingKeys: String, CodingKey { case rawValue }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case rawValue }
 
     init(rawValue: Data) {
         self.rawValue = rawValue
@@ -170,6 +174,10 @@ public struct OpaqueRouteBundleIDV2: Codable, Equatable, Hashable,
     }
 
     public init(from decoder: Decoder) throws {
+        try opaquePacketRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let value = try container.decode(Data.self, forKey: .rawValue)
         guard opaquePacketIsValidIdentifier(value) else {
@@ -535,12 +543,15 @@ public enum OpaqueRoutePacketReassemblyResultV2: Equatable {
     case complete(OpaqueRouteReassembledBundleV2)
 }
 
-public struct OpaqueRoutePacketReassemblerV2 {
+public struct OpaqueRoutePacketReassemblerV2: Codable, Equatable,
+    CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public static let defaultMaximumBufferedBundles = 64
-    public static let defaultMaximumBufferedBytes = 64 * 1_024 * 1_024
+    /// Kept deliberately below the maximum logical bundle size because this
+    /// state is persisted as base64-bearing JSON inside `ClientState`.
+    public static let defaultMaximumBufferedBytes = 1 * 1_024 * 1_024
     public static let maximumRecentCompletedBundles = 1_024
 
-    private struct PendingBundle {
+    private struct PendingBundle: Equatable {
         let routeID: OpaqueReceiveRouteIDV2
         let routeRevision: UInt64
         let paddingBucket: OpaqueRoutePaddingBucketV2
@@ -551,20 +562,191 @@ public struct OpaqueRoutePacketReassemblerV2 {
         var packetIDs: Set<OpaqueRoutePacketIDV2>
     }
 
-    private struct CompletedBundle {
+    private struct CompletedBundle: Equatable {
         let routeID: OpaqueReceiveRouteIDV2
         let routeRevision: UInt64
         let bundleDigest: Data
+    }
+
+    private struct PersistedFragment: Codable, Equatable {
+        let index: UInt32
+        let payload: Data
+
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case index
+            case payload
+        }
+
+        init(index: UInt32, payload: Data) {
+            self.index = index
+            self.payload = payload
+        }
+
+        init(from decoder: Decoder) throws {
+            try opaquePacketRequireExactObject(
+                decoder,
+                keys: CodingKeys.allCases.map(\.rawValue)
+            )
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            index = try container.decode(UInt32.self, forKey: .index)
+            payload = try container.decode(Data.self, forKey: .payload)
+        }
+    }
+
+    private struct PersistedPendingBundle: Codable, Equatable {
+        let bundleID: OpaqueRouteBundleIDV2
+        let routeID: OpaqueReceiveRouteIDV2
+        let routeRevision: UInt64
+        let paddingBucket: OpaqueRoutePaddingBucketV2
+        let bundleDigest: Data
+        let fragmentCount: UInt32
+        let totalPayloadBytes: UInt64
+        let fragments: [PersistedFragment]
+        let packetIDs: [OpaqueRoutePacketIDV2]
+
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case bundleID
+            case routeID
+            case routeRevision
+            case paddingBucket
+            case bundleDigest
+            case fragmentCount
+            case totalPayloadBytes
+            case fragments
+            case packetIDs
+        }
+
+        init(
+            bundleID: OpaqueRouteBundleIDV2,
+            state: PendingBundle
+        ) {
+            self.bundleID = bundleID
+            routeID = state.routeID
+            routeRevision = state.routeRevision
+            paddingBucket = state.paddingBucket
+            bundleDigest = state.bundleDigest
+            fragmentCount = state.fragmentCount
+            totalPayloadBytes = state.totalPayloadBytes
+            fragments = state.fragments.map {
+                PersistedFragment(index: $0.key, payload: $0.value)
+            }.sorted { $0.index < $1.index }
+            packetIDs = state.packetIDs.sorted {
+                $0.rawValue.lexicographicallyPrecedes($1.rawValue)
+            }
+        }
+
+        init(from decoder: Decoder) throws {
+            try opaquePacketRequireExactObject(
+                decoder,
+                keys: CodingKeys.allCases.map(\.rawValue)
+            )
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            bundleID = try container.decode(OpaqueRouteBundleIDV2.self, forKey: .bundleID)
+            routeID = try container.decode(OpaqueReceiveRouteIDV2.self, forKey: .routeID)
+            routeRevision = try container.decode(UInt64.self, forKey: .routeRevision)
+            paddingBucket = try container.decode(
+                OpaqueRoutePaddingBucketV2.self,
+                forKey: .paddingBucket
+            )
+            bundleDigest = try container.decode(Data.self, forKey: .bundleDigest)
+            fragmentCount = try container.decode(UInt32.self, forKey: .fragmentCount)
+            totalPayloadBytes = try container.decode(UInt64.self, forKey: .totalPayloadBytes)
+            fragments = try container.decode([PersistedFragment].self, forKey: .fragments)
+            packetIDs = try container.decode(
+                [OpaqueRoutePacketIDV2].self,
+                forKey: .packetIDs
+            )
+        }
+    }
+
+    private struct PersistedPacketDigest: Codable, Equatable {
+        let packetID: OpaqueRoutePacketIDV2
+        let digest: Data
+
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case packetID
+            case digest
+        }
+
+        init(packetID: OpaqueRoutePacketIDV2, digest: Data) {
+            self.packetID = packetID
+            self.digest = digest
+        }
+
+        init(from decoder: Decoder) throws {
+            try opaquePacketRequireExactObject(
+                decoder,
+                keys: CodingKeys.allCases.map(\.rawValue)
+            )
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            packetID = try container.decode(OpaqueRoutePacketIDV2.self, forKey: .packetID)
+            digest = try container.decode(Data.self, forKey: .digest)
+        }
+    }
+
+    private struct PersistedCompletedBundle: Codable, Equatable {
+        let bundleID: OpaqueRouteBundleIDV2
+        let routeID: OpaqueReceiveRouteIDV2
+        let routeRevision: UInt64
+        let bundleDigest: Data
+
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case bundleID
+            case routeID
+            case routeRevision
+            case bundleDigest
+        }
+
+        init(bundleID: OpaqueRouteBundleIDV2, state: CompletedBundle) {
+            self.bundleID = bundleID
+            routeID = state.routeID
+            routeRevision = state.routeRevision
+            bundleDigest = state.bundleDigest
+        }
+
+        init(from decoder: Decoder) throws {
+            try opaquePacketRequireExactObject(
+                decoder,
+                keys: CodingKeys.allCases.map(\.rawValue)
+            )
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            bundleID = try container.decode(OpaqueRouteBundleIDV2.self, forKey: .bundleID)
+            routeID = try container.decode(OpaqueReceiveRouteIDV2.self, forKey: .routeID)
+            routeRevision = try container.decode(UInt64.self, forKey: .routeRevision)
+            bundleDigest = try container.decode(Data.self, forKey: .bundleDigest)
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case maximumBufferedBundles
+        case maximumBufferedBytes
+        case pendingBundles
+        case packetDigests
+        case completedBundles
     }
 
     public let maximumBufferedBundles: Int
     public let maximumBufferedBytes: Int
 
     private var pending: [OpaqueRouteBundleIDV2: PendingBundle] = [:]
+    private var pendingOrder: [OpaqueRouteBundleIDV2] = []
     private var packetDigests: [OpaqueRoutePacketIDV2: Data] = [:]
     private var completed: [OpaqueRouteBundleIDV2: CompletedBundle] = [:]
     private var completedOrder: [OpaqueRouteBundleIDV2] = []
     private var bufferedBytes = 0
+
+    public static var empty: OpaqueRoutePacketReassemblerV2 {
+        OpaqueRoutePacketReassemblerV2(
+            maximumBufferedBundles: defaultMaximumBufferedBundles,
+            maximumBufferedBytes: defaultMaximumBufferedBytes,
+            pending: [:],
+            pendingOrder: [],
+            packetDigests: [:],
+            completed: [:],
+            completedOrder: [],
+            bufferedBytes: 0
+        )
+    }
 
     public init(
         maximumBufferedBundles: Int = Self.defaultMaximumBufferedBundles,
@@ -576,12 +758,280 @@ public struct OpaqueRoutePacketReassemblerV2 {
               maximumBufferedBytes <= NoctweaveOpaqueRoutePacketsV2.maximumBundleBytes else {
             throw OpaqueRoutePacketV2Error.reassemblyCapacityExceeded
         }
-        self.maximumBufferedBundles = maximumBufferedBundles
-        self.maximumBufferedBytes = maximumBufferedBytes
+        self.init(
+            maximumBufferedBundles: maximumBufferedBundles,
+            maximumBufferedBytes: maximumBufferedBytes,
+            pending: [:],
+            pendingOrder: [],
+            packetDigests: [:],
+            completed: [:],
+            completedOrder: [],
+            bufferedBytes: 0
+        )
     }
 
     public var pendingBundleCount: Int { pending.count }
     public var bufferedPayloadBytes: Int { bufferedBytes }
+
+    public init(from decoder: Decoder) throws {
+        try opaquePacketRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let maximumBufferedBundles = try container.decode(
+            Int.self,
+            forKey: .maximumBufferedBundles
+        )
+        let maximumBufferedBytes = try container.decode(
+            Int.self,
+            forKey: .maximumBufferedBytes
+        )
+        let pendingRecords = try container.decode(
+            [PersistedPendingBundle].self,
+            forKey: .pendingBundles
+        )
+        let digestRecords = try container.decode(
+            [PersistedPacketDigest].self,
+            forKey: .packetDigests
+        )
+        let completedRecords = try container.decode(
+            [PersistedCompletedBundle].self,
+            forKey: .completedBundles
+        )
+
+        var pending: [OpaqueRouteBundleIDV2: PendingBundle] = [:]
+        var pendingOrder: [OpaqueRouteBundleIDV2] = []
+        var bufferedBytes = 0
+        for record in pendingRecords {
+            var fragments: [UInt32: Data] = [:]
+            for fragment in record.fragments {
+                guard fragments.updateValue(fragment.payload, forKey: fragment.index) == nil else {
+                    throw Self.corrupted(decoder, "Persisted fragment indexes must be unique")
+                }
+                let (updatedBytes, overflow) = bufferedBytes.addingReportingOverflow(
+                    fragment.payload.count
+                )
+                guard !overflow else {
+                    throw Self.corrupted(decoder, "Persisted fragment byte count overflowed")
+                }
+                bufferedBytes = updatedBytes
+            }
+            let packetIDs = Set(record.packetIDs)
+            guard packetIDs.count == record.packetIDs.count,
+                  pending.updateValue(
+                    PendingBundle(
+                        routeID: record.routeID,
+                        routeRevision: record.routeRevision,
+                        paddingBucket: record.paddingBucket,
+                        bundleDigest: record.bundleDigest,
+                        fragmentCount: record.fragmentCount,
+                        totalPayloadBytes: record.totalPayloadBytes,
+                        fragments: fragments,
+                        packetIDs: packetIDs
+                    ),
+                    forKey: record.bundleID
+                  ) == nil else {
+                throw Self.corrupted(decoder, "Persisted pending bundle identifiers must be unique")
+            }
+            pendingOrder.append(record.bundleID)
+        }
+
+        var packetDigests: [OpaqueRoutePacketIDV2: Data] = [:]
+        for record in digestRecords {
+            guard packetDigests.updateValue(record.digest, forKey: record.packetID) == nil else {
+                throw Self.corrupted(decoder, "Persisted packet identifiers must be unique")
+            }
+        }
+
+        var completed: [OpaqueRouteBundleIDV2: CompletedBundle] = [:]
+        var completedOrder: [OpaqueRouteBundleIDV2] = []
+        for record in completedRecords {
+            guard completed.updateValue(
+                CompletedBundle(
+                    routeID: record.routeID,
+                    routeRevision: record.routeRevision,
+                    bundleDigest: record.bundleDigest
+                ),
+                forKey: record.bundleID
+            ) == nil else {
+                throw Self.corrupted(decoder, "Persisted completed bundle identifiers must be unique")
+            }
+            completedOrder.append(record.bundleID)
+        }
+
+        self.init(
+            maximumBufferedBundles: maximumBufferedBundles,
+            maximumBufferedBytes: maximumBufferedBytes,
+            pending: pending,
+            pendingOrder: pendingOrder,
+            packetDigests: packetDigests,
+            completed: completed,
+            completedOrder: completedOrder,
+            bufferedBytes: bufferedBytes
+        )
+        guard isStructurallyValid else {
+            throw Self.corrupted(decoder, "Persisted opaque route reassembly state is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route reassembly state is invalid"
+                )
+            )
+        }
+        let pendingBundles = pendingOrder.compactMap { bundleID in
+            pending[bundleID].map {
+                PersistedPendingBundle(bundleID: bundleID, state: $0)
+            }
+        }
+        let persistedPacketDigests = packetDigests.map {
+            PersistedPacketDigest(packetID: $0.key, digest: $0.value)
+        }.sorted {
+            $0.packetID.rawValue.lexicographicallyPrecedes($1.packetID.rawValue)
+        }
+        let completedBundles = completedOrder.compactMap { bundleID in
+            completed[bundleID].map {
+                PersistedCompletedBundle(bundleID: bundleID, state: $0)
+            }
+        }
+
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(maximumBufferedBundles, forKey: .maximumBufferedBundles)
+        try container.encode(maximumBufferedBytes, forKey: .maximumBufferedBytes)
+        try container.encode(pendingBundles, forKey: .pendingBundles)
+        try container.encode(persistedPacketDigests, forKey: .packetDigests)
+        try container.encode(completedBundles, forKey: .completedBundles)
+    }
+
+    public var isStructurallyValid: Bool {
+        guard maximumBufferedBundles > 0,
+              maximumBufferedBundles <= 256,
+              maximumBufferedBytes > 0,
+              maximumBufferedBytes <= NoctweaveOpaqueRoutePacketsV2.maximumBundleBytes,
+              pending.count <= maximumBufferedBundles,
+              pendingOrder.count == pending.count,
+              Set(pendingOrder).count == pendingOrder.count,
+              Set(pendingOrder) == Set(pending.keys),
+              completed.count <= Self.maximumRecentCompletedBundles,
+              completedOrder.count == completed.count,
+              Set(completedOrder).count == completedOrder.count,
+              Set(completedOrder) == Set(completed.keys),
+              Set(pending.keys).isDisjoint(with: completed.keys) else {
+            return false
+        }
+
+        var calculatedBufferedBytes = 0
+        var pendingPacketIDs = Set<OpaqueRoutePacketIDV2>()
+        for (bundleID, state) in pending {
+            guard bundleID.isStructurallyValid,
+                  state.routeID.isStructurallyValid,
+                  state.bundleDigest.count == NoctweaveOpaqueRoutePacketsV2.digestBytes,
+                  state.fragmentCount > 0,
+                  state.fragmentCount <= UInt32(
+                    NoctweaveOpaqueRoutePacketsV2.maximumFragmentCount
+                  ),
+                  state.totalPayloadBytes > 0,
+                  state.totalPayloadBytes <= UInt64(maximumBufferedBytes),
+                  !state.fragments.isEmpty,
+                  state.fragments.count <= Int(state.fragmentCount),
+                  state.packetIDs.count == state.fragments.count else {
+                return false
+            }
+            let capacity = NoctweaveOpaqueRoutePacketsV2.maximumFragmentPayloadBytes(
+                for: state.paddingBucket
+            )
+            let totalPayloadBytes = Int(state.totalPayloadBytes)
+            let expectedFragmentCount = (totalPayloadBytes + capacity - 1) / capacity
+            guard expectedFragmentCount == Int(state.fragmentCount) else { return false }
+            for (index, payload) in state.fragments {
+                guard index < state.fragmentCount else { return false }
+                let expectedPayloadBytes: Int
+                if Int(index) == expectedFragmentCount - 1 {
+                    expectedPayloadBytes = totalPayloadBytes
+                        - (expectedFragmentCount - 1) * capacity
+                } else {
+                    expectedPayloadBytes = capacity
+                }
+                guard payload.count == expectedPayloadBytes else { return false }
+                let (updatedBytes, overflow) = calculatedBufferedBytes.addingReportingOverflow(
+                    payload.count
+                )
+                guard !overflow, updatedBytes <= maximumBufferedBytes else { return false }
+                calculatedBufferedBytes = updatedBytes
+            }
+            for packetID in state.packetIDs {
+                guard packetID.isStructurallyValid,
+                      pendingPacketIDs.insert(packetID).inserted else {
+                    return false
+                }
+            }
+        }
+        guard calculatedBufferedBytes == bufferedBytes,
+              Set(packetDigests.keys) == pendingPacketIDs,
+              packetDigests.allSatisfy({
+                $0.key.isStructurallyValid
+                    && $0.value.count == NoctweaveOpaqueRoutePacketsV2.digestBytes
+              }) else {
+            return false
+        }
+        return completed.allSatisfy { bundleID, state in
+            bundleID.isStructurallyValid
+                && state.routeID.isStructurallyValid
+                && state.bundleDigest.count == NoctweaveOpaqueRoutePacketsV2.digestBytes
+        }
+    }
+
+    public func isStructurallyValid(
+        for routeID: OpaqueReceiveRouteIDV2
+    ) -> Bool {
+        isStructurallyValid
+            && routeID.isStructurallyValid
+            && pending.values.allSatisfy { $0.routeID == routeID }
+            && completed.values.allSatisfy { $0.routeID == routeID }
+    }
+
+    /// Drops incomplete plaintext fragments after an unrecoverable packet,
+    /// while retaining the bounded completed-bundle replay cache.
+    public mutating func discardPendingBundles() {
+        pending.removeAll(keepingCapacity: true)
+        pendingOrder.removeAll(keepingCapacity: true)
+        packetDigests.removeAll(keepingCapacity: true)
+        bufferedBytes = 0
+    }
+
+    /// Discards only the oldest incomplete bundle and retires its identity in
+    /// the bounded replay cache. Later matching fragments are duplicates while
+    /// conflicting reuse still fails. The returned identifier is redacted by
+    /// its public descriptions and carries no fragment payload.
+    @discardableResult
+    public mutating func discardOldestPendingBundle() -> OpaqueRouteBundleIDV2? {
+        guard let oldestBundleID = pendingOrder.first,
+              discardPendingBundle(oldestBundleID) else { return nil }
+        return oldestBundleID
+    }
+
+    /// Discards and retires one exact incomplete bundle without disturbing
+    /// unrelated partial bundles or the completed replay cache.
+    @discardableResult
+    public mutating func discardPendingBundle(
+        _ bundleID: OpaqueRouteBundleIDV2
+    ) -> Bool {
+        guard let retired = pending[bundleID] else { return false }
+        removePending(bundleID)
+        rememberTerminalBundle(
+            bundleID: bundleID,
+            routeID: retired.routeID,
+            routeRevision: retired.routeRevision,
+            bundleDigest: retired.bundleDigest
+        )
+        return true
+    }
 
     public mutating func consume(
         _ packet: OpaqueRoutePacketV2,
@@ -652,6 +1102,7 @@ public struct OpaqueRoutePacketReassemblerV2 {
                 fragments: [fragment.fragmentIndex: fragment.payload],
                 packetIDs: [packet.packetID]
             )
+            pendingOrder.append(fragment.bundleID)
         }
         packetDigests[packet.packetID] = packetDigest
         bufferedBytes += fragment.payload.count
@@ -665,17 +1116,18 @@ public struct OpaqueRoutePacketReassemblerV2 {
         payload.reserveCapacity(Int(state.totalPayloadBytes))
         for index in 0..<state.fragmentCount {
             guard let part = state.fragments[index] else {
+                _ = discardPendingBundle(fragment.bundleID)
                 throw OpaqueRoutePacketV2Error.malformedFrame
             }
             payload.append(part)
         }
         guard payload.count == Int(state.totalPayloadBytes) else {
-            removePending(fragment.bundleID)
+            _ = discardPendingBundle(fragment.bundleID)
             throw OpaqueRoutePacketV2Error.malformedFrame
         }
         let digest = opaquePacketBundleDigest(bundleID: fragment.bundleID, payload: payload)
         guard digest == state.bundleDigest else {
-            removePending(fragment.bundleID)
+            _ = discardPendingBundle(fragment.bundleID)
             throw OpaqueRoutePacketV2Error.bundleDigestMismatch
         }
         let completed = OpaqueRouteReassembledBundleV2(
@@ -692,6 +1144,9 @@ public struct OpaqueRoutePacketReassemblerV2 {
 
     private mutating func removePending(_ bundleID: OpaqueRouteBundleIDV2) {
         guard let removed = pending.removeValue(forKey: bundleID) else { return }
+        if let orderIndex = pendingOrder.firstIndex(of: bundleID) {
+            pendingOrder.remove(at: orderIndex)
+        }
         for part in removed.fragments.values {
             bufferedBytes -= part.count
         }
@@ -701,16 +1156,66 @@ public struct OpaqueRoutePacketReassemblerV2 {
     }
 
     private mutating func rememberCompleted(_ bundle: OpaqueRouteReassembledBundleV2) {
-        completed[bundle.bundleID] = CompletedBundle(
+        rememberTerminalBundle(
+            bundleID: bundle.bundleID,
             routeID: bundle.routeID,
             routeRevision: bundle.routeRevision,
             bundleDigest: bundle.bundleDigest
         )
-        completedOrder.append(bundle.bundleID)
+    }
+
+    private mutating func rememberTerminalBundle(
+        bundleID: OpaqueRouteBundleIDV2,
+        routeID: OpaqueReceiveRouteIDV2,
+        routeRevision: UInt64,
+        bundleDigest: Data
+    ) {
+        completed[bundleID] = CompletedBundle(
+            routeID: routeID,
+            routeRevision: routeRevision,
+            bundleDigest: bundleDigest
+        )
+        completedOrder.append(bundleID)
         if completedOrder.count > Self.maximumRecentCompletedBundles {
             let expired = completedOrder.removeFirst()
             completed.removeValue(forKey: expired)
         }
+    }
+
+    public var description: String { "OpaqueRoutePacketReassemblerV2(<redacted>)" }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror { Mirror(self, children: [:], displayStyle: .struct) }
+
+    private init(
+        maximumBufferedBundles: Int,
+        maximumBufferedBytes: Int,
+        pending: [OpaqueRouteBundleIDV2: PendingBundle],
+        pendingOrder: [OpaqueRouteBundleIDV2],
+        packetDigests: [OpaqueRoutePacketIDV2: Data],
+        completed: [OpaqueRouteBundleIDV2: CompletedBundle],
+        completedOrder: [OpaqueRouteBundleIDV2],
+        bufferedBytes: Int
+    ) {
+        self.maximumBufferedBundles = maximumBufferedBundles
+        self.maximumBufferedBytes = maximumBufferedBytes
+        self.pending = pending
+        self.pendingOrder = pendingOrder
+        self.packetDigests = packetDigests
+        self.completed = completed
+        self.completedOrder = completedOrder
+        self.bufferedBytes = bufferedBytes
+    }
+
+    private static func corrupted(
+        _ decoder: Decoder,
+        _ description: String
+    ) -> DecodingError {
+        .dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: description
+            )
+        )
     }
 }
 

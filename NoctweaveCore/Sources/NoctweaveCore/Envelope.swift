@@ -327,17 +327,17 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
         )
     }
 
-    public func verifySignature(publicSigningKey: Data) -> Bool {
-        guard isStructurallyValid,
-              SigningKeyPair.isValidPublicKey(publicSigningKey),
-              let signable = try? signableData() else {
-            return false
-        }
-        return SigningKeyPair.verify(
+    public func verifySignatureThrowing(publicSigningKey: Data) throws -> Bool {
+        guard isStructurallyValid else { return false }
+        return try SigningKeyPair.verifyThrowing(
             signature: signature,
-            data: signable,
+            data: signableData(),
             publicKeyData: publicSigningKey
         )
+    }
+
+    public func verifySignature(publicSigningKey: Data) -> Bool {
+        (try? verifySignatureThrowing(publicSigningKey: publicSigningKey)) == true
     }
 }
 
@@ -523,17 +523,26 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
         )
     }
 
-    public func verifySignature(groupCredentialSigningPublicKey: Data) -> Bool {
+    public func verifySignatureThrowing(
+        groupCredentialSigningPublicKey: Data
+    ) throws -> Bool {
         guard isStructurallyValid,
-              SigningKeyPair.isValidPublicKey(groupCredentialSigningPublicKey),
-              let signable = try? signableData() else {
+              try SigningKeyPair.isValidPublicKeyThrowing(
+                  groupCredentialSigningPublicKey
+              ) else {
             return false
         }
-        return SigningKeyPair.verify(
+        return try SigningKeyPair.verifyThrowing(
             signature: signature,
-            data: signable,
+            data: try signableData(),
             publicKeyData: groupCredentialSigningPublicKey
         )
+    }
+
+    public func verifySignature(groupCredentialSigningPublicKey: Data) -> Bool {
+        (try? verifySignatureThrowing(
+            groupCredentialSigningPublicKey: groupCredentialSigningPublicKey
+        )) == true
     }
 }
 
@@ -544,7 +553,7 @@ public enum ProtocolEnvelopeV1: Codable, Identifiable, Equatable {
 
     case directV4(DirectEnvelopeV4)
     case groupApplicationV2(GroupApplicationEnvelopeV2)
-    case groupCommitV2(SignedGroupCommitV2)
+    case groupCommitV2(GroupEpochTransitionEnvelopeV2)
     case groupWelcomeV2(SignedGroupWelcomeV2)
     case groupDeletionV2(SignedGroupDeletionTombstoneV2)
 
@@ -595,7 +604,10 @@ public enum ProtocolEnvelopeV1: Codable, Identifiable, Equatable {
             )
         case .groupCommitV2:
             self = .groupCommitV2(
-                try container.decode(SignedGroupCommitV2.self, forKey: .groupCommitV2)
+                try container.decode(
+                    GroupEpochTransitionEnvelopeV2.self,
+                    forKey: .groupCommitV2
+                )
             )
         case .groupWelcomeV2:
             self = .groupWelcomeV2(

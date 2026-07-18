@@ -6,9 +6,10 @@ public enum GroupConversationEventKindV2: String, Codable, Equatable {
     case receipt
 }
 
-/// An immutable group-scoped event. Authorship comes from the enclosing signed
-/// group envelope's credential handle, so this object contains no relationship,
-/// endpoint, persona, account, or device identifier.
+/// An immutable group-scoped event. Both author handles are freshly scoped to
+/// this group and are authenticated against the enclosing application envelope
+/// and accepted epoch membership. They are not relationship, endpoint, persona,
+/// account, installation, or device identifiers.
 public struct GroupConversationEventV2: Codable, Equatable, Identifiable {
     public static let version = 2
 
@@ -16,6 +17,8 @@ public struct GroupConversationEventV2: Codable, Equatable, Identifiable {
     public let id: UUID
     public let clientTransactionID: UUID
     public let groupID: UUID
+    public let authorMemberHandle: GroupScopedMemberHandleV2
+    public let authorCredentialHandle: GroupScopedCredentialHandleV2
     public let createdAt: Date
     public let kind: GroupConversationEventKindV2
     public let content: EncodedContent
@@ -26,6 +29,8 @@ public struct GroupConversationEventV2: Codable, Equatable, Identifiable {
         case id
         case clientTransactionID
         case groupID
+        case authorMemberHandle
+        case authorCredentialHandle
         case createdAt
         case kind
         case content
@@ -37,6 +42,8 @@ public struct GroupConversationEventV2: Codable, Equatable, Identifiable {
         id: UUID = UUID(),
         clientTransactionID: UUID = UUID(),
         groupID: UUID,
+        authorMemberHandle: GroupScopedMemberHandleV2,
+        authorCredentialHandle: GroupScopedCredentialHandleV2,
         createdAt: Date = Date(),
         kind: GroupConversationEventKindV2,
         content: EncodedContent,
@@ -46,6 +53,8 @@ public struct GroupConversationEventV2: Codable, Equatable, Identifiable {
         self.id = id
         self.clientTransactionID = clientTransactionID
         self.groupID = groupID
+        self.authorMemberHandle = authorMemberHandle
+        self.authorCredentialHandle = authorCredentialHandle
         self.createdAt = createdAt
         self.kind = kind
         self.content = content
@@ -68,6 +77,14 @@ public struct GroupConversationEventV2: Codable, Equatable, Identifiable {
         id = try values.decode(UUID.self, forKey: .id)
         clientTransactionID = try values.decode(UUID.self, forKey: .clientTransactionID)
         groupID = try values.decode(UUID.self, forKey: .groupID)
+        authorMemberHandle = try values.decode(
+            GroupScopedMemberHandleV2.self,
+            forKey: .authorMemberHandle
+        )
+        authorCredentialHandle = try values.decode(
+            GroupScopedCredentialHandleV2.self,
+            forKey: .authorCredentialHandle
+        )
         createdAt = try values.decode(Date.self, forKey: .createdAt)
         kind = try values.decode(GroupConversationEventKindV2.self, forKey: .kind)
         content = try values.decode(EncodedContent.self, forKey: .content)
@@ -96,6 +113,8 @@ public struct GroupConversationEventV2: Codable, Equatable, Identifiable {
         try values.encode(id, forKey: .id)
         try values.encode(clientTransactionID, forKey: .clientTransactionID)
         try values.encode(groupID, forKey: .groupID)
+        try values.encode(authorMemberHandle, forKey: .authorMemberHandle)
+        try values.encode(authorCredentialHandle, forKey: .authorCredentialHandle)
         try values.encode(createdAt, forKey: .createdAt)
         try values.encode(kind, forKey: .kind)
         try values.encode(content, forKey: .content)
@@ -108,6 +127,8 @@ public struct GroupConversationEventV2: Codable, Equatable, Identifiable {
 
     public var isStructurallyValid: Bool {
         guard version == Self.version,
+              authorMemberHandle.isStructurallyValid,
+              authorCredentialHandle.isStructurallyValid,
               createdAt.timeIntervalSince1970.isFinite,
               createdAt >= ConversationEvent.earliestCreatedAt,
               createdAt <= ConversationEvent.latestCreatedAt,

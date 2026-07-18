@@ -45,16 +45,24 @@ public final class RelayServer {
         self.store = store
         self.opaqueRouteStore = opaqueRouteStore
         self.relayConfiguration = configuration
+        let coordinatorKeyMaterial: (privateKey: Data, publicKey: Data)?
         if configuration.kind == .coordinator {
-            let keyData = FederationDirectorySignature.privateKeyData(
-                from: configuration.coordinatorDirectorySigningPrivateKey
-            )
-            self.coordinatorDirectorySigningPrivateKey = keyData
-            self.coordinatorDirectoryPublicKey = FederationDirectorySignature.publicKeyData(from: keyData)
+            do {
+                let keyData = try FederationDirectorySignature.privateKeyDataThrowing(
+                    from: configuration.coordinatorDirectorySigningPrivateKey
+                )
+                coordinatorKeyMaterial = (
+                    keyData,
+                    try FederationDirectorySignature.publicKeyDataThrowing(from: keyData)
+                )
+            } catch {
+                coordinatorKeyMaterial = nil
+            }
         } else {
-            self.coordinatorDirectorySigningPrivateKey = nil
-            self.coordinatorDirectoryPublicKey = nil
+            coordinatorKeyMaterial = nil
         }
+        self.coordinatorDirectorySigningPrivateKey = coordinatorKeyMaterial?.privateKey
+        self.coordinatorDirectoryPublicKey = coordinatorKeyMaterial?.publicKey
     }
 
     public func start(port: UInt16) throws {
@@ -165,13 +173,37 @@ public final class RelayServer {
             do {
                 try await connection.awaitReady()
                 let line = try await connection.receiveLine(maxLength: RelayClient.maxResponseBytes)
-                let request = try NoctweaveCoder.decode(RelayRequest.self, from: line)
-                let response = try await handle(
-                    request: request,
-                    sourceKey: endpointSourceKey(connection.endpoint)
-                )
+                let request: RelayRequest
+                do {
+                    request = try NoctweaveCoder.decode(RelayRequest.self, from: line)
+                } catch is CryptoError {
+                    onEvent?(.error("Relay cryptography unavailable while decoding request"))
+                    connection.cancel()
+                    return
+                } catch {
+                    onEvent?(.error("Invalid relay request"))
+                    connection.cancel()
+                    return
+                }
+                let response: RelayResponse
+                do {
+                    response = try await handle(
+                        request: request,
+                        sourceKey: endpointSourceKey(connection.endpoint)
+                    )
+                } catch {
+                    response = .error(
+                        "Relay processing failed",
+                        code: .internalFailure,
+                        retryable: true,
+                        respondingTo: request
+                    )
+                }
                 let responseData = try NoctweaveCoder.encode(response)
                 try await connection.sendLine(responseData)
+                connection.cancel()
+            } catch is CryptoError {
+                onEvent?(.error("Relay cryptography unavailable while encoding response"))
                 connection.cancel()
             } catch {
                 onEvent?(.error("Connection error"))
@@ -190,6 +222,15 @@ public final class RelayServer {
                     sourceKey: endpointSourceKey(connection.endpoint)
                 )
                 try await sendRaw(responseData, on: connection)
+            } catch is CryptoError {
+                onEvent?(.error("Relay cryptography unavailable while processing HTTP request"))
+                let errorResponse = httpResponse(
+                    statusCode: 503,
+                    reasonPhrase: "Service Unavailable",
+                    body: Data("relay temporarily unavailable\n".utf8),
+                    contentType: "text/plain; charset=utf-8"
+                )
+                try? await sendRaw(errorResponse, on: connection)
             } catch {
                 onEvent?(.error("HTTP connection error"))
                 let errorResponse = httpResponse(
@@ -309,6 +350,13 @@ public final class RelayServer {
             let request: RelayRequest
             do {
                 request = try NoctweaveCoder.decode(RelayRequest.self, from: message.body)
+            } catch is CryptoError {
+                return httpResponse(
+                    statusCode: 503,
+                    reasonPhrase: "Service Unavailable",
+                    body: Data("relay temporarily unavailable\n".utf8),
+                    contentType: "text/plain; charset=utf-8"
+                )
             } catch {
                 return httpResponse(
                     statusCode: 400,
@@ -611,13 +659,23 @@ public final class RelayServer {
                     attachmentId: upload.attachmentId,
                     chunkIndex: upload.chunkIndex,
                     payload: upload.payload,
-                    ttlSeconds: boundedTTL
+                    ttlSeconds: upload.ttlSeconds,
+                    idempotencyKey: upload.idempotencyKey,
+                    effectiveTTLSeconds: boundedTTL
                 )
                 return .success(.attachment(chunk), respondingTo: request)
             } catch RelayStoreError.invalidChunkIndex {
                 return .error("Invalid chunk index", respondingTo: request)
             } catch RelayStoreError.invalidAttachmentPayload {
                 return .error("Invalid attachment payload", respondingTo: request)
+            } catch RelayStoreError.invalidAttachmentIdempotency {
+                return .error("Invalid attachment idempotency key", respondingTo: request)
+            } catch RelayStoreError.attachmentConflict {
+                return .error(
+                    "Attachment coordinate conflicts with stored state",
+                    code: .conflict,
+                    respondingTo: request
+                )
             } catch {
                 return .error("Attachment store error", code: .unavailable, retryable: true, respondingTo: request)
             }
@@ -670,9 +728,27 @@ public final class RelayServer {
                     return .error("Coordinator directory listing throttled. Retry later.", code: .rateLimited, retryable: true, respondingTo: request)
                 }
                 let nodes = await store.listFederationNodes(listRequest)
-                let snapshot = makeCoordinatorDirectorySnapshot(nodes: nodes, request: listRequest)
+                let snapshot: FederationDirectorySnapshot?
+                do {
+                    snapshot = try makeCoordinatorDirectorySnapshot(
+                        nodes: nodes,
+                        request: listRequest
+                    )
+                } catch {
+                    return .error(
+                        "Coordinator snapshot signing is temporarily unavailable.",
+                        code: .internalFailure,
+                        retryable: true,
+                        respondingTo: request
+                    )
+                }
                 if listRequest.requireSignedSnapshot == true, snapshot == nil {
-                    return .error("Coordinator snapshot signing is not available.", code: .unavailable, respondingTo: request)
+                    return .error(
+                        "Coordinator snapshot signing is not available.",
+                        code: .unavailable,
+                        retryable: true,
+                        respondingTo: request
+                    )
                 }
                 return .success(.federationNodes(FederationNodesResponseBody(nodes: nodes, snapshot: snapshot)), respondingTo: request)
             }
@@ -686,7 +762,7 @@ public final class RelayServer {
             guard publish.namespace == expectedNamespace else {
                 return .error("Open-federation DHT namespace mismatch.", respondingTo: request)
             }
-            let result = await store.ingestOpenFederationDHTRecords(
+            let result = try await store.ingestOpenFederationDHTRecords(
                 [publish.record],
                 configuration: dhtConfiguration
             )
@@ -796,6 +872,14 @@ public final class RelayServer {
             return .error("Invalid chunk index", respondingTo: request)
         case .invalidAttachmentPayload:
             return .error("Invalid attachment payload", respondingTo: request)
+        case .invalidAttachmentIdempotency:
+            return .error("Invalid attachment idempotency key", respondingTo: request)
+        case .attachmentConflict:
+            return .error(
+                "Attachment coordinate conflicts with stored state",
+                code: .conflict,
+                respondingTo: request
+            )
         }
     }
 
@@ -1079,7 +1163,7 @@ public final class RelayServer {
     private func makeCoordinatorDirectorySnapshot(
         nodes: [FederationNodeRecord],
         request: ListFederationNodesRequest
-    ) -> FederationDirectorySnapshot? {
+    ) throws -> FederationDirectorySnapshot? {
         guard configuration.kind == .coordinator,
               let privateKey = coordinatorDirectorySigningPrivateKey else {
             return nil
@@ -1095,7 +1179,10 @@ public final class RelayServer {
             maxStalenessSeconds: maxStaleness,
             nodes: nodes
         )
-        return try? FederationDirectorySignature.signedSnapshot(from: unsigned, privateKeyData: privateKey)
+        return try FederationDirectorySignature.signedSnapshot(
+            from: unsigned,
+            privateKeyData: privateKey
+        )
     }
 
     private func validatedCoordinatorNodes(
@@ -1117,11 +1204,17 @@ public final class RelayServer {
             }
             if request.requireSignedSnapshot == true {
                 guard let trustedPublicKey,
-                      FederationDirectorySignature.verify(snapshot: snapshot, trustedPublicKey: trustedPublicKey) else {
+                      try FederationDirectorySignature.verifyThrowing(
+                          snapshot: snapshot,
+                          trustedPublicKey: trustedPublicKey
+                      ) else {
                     throw RelayNetworkError.invalidResponse
                 }
             } else if let trustedPublicKey, snapshot.signature != nil {
-                guard FederationDirectorySignature.verify(snapshot: snapshot, trustedPublicKey: trustedPublicKey) else {
+                guard try FederationDirectorySignature.verifyThrowing(
+                    snapshot: snapshot,
+                    trustedPublicKey: trustedPublicKey
+                ) else {
                     throw RelayNetworkError.invalidResponse
                 }
             }

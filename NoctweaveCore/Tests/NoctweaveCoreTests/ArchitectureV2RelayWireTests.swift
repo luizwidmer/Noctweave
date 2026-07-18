@@ -95,7 +95,7 @@ final class ArchitectureV2RelayWireTests: XCTestCase {
         guard case .opaqueRouteCommit(let committed)? = commitResponse.successBody else {
             return XCTFail("Expected opaque route commit response")
         }
-        XCTAssertTrue(committed.committedCursor.isStructurallyValid)
+        XCTAssertEqual(committed.committedCursor, batch.nextCursor)
 
         let afterCommit = try material.makeSyncRequest(
             after: committed.committedCursor,

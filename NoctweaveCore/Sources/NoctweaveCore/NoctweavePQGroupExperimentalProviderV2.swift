@@ -32,6 +32,25 @@ private func requireExactPQGroupKeys<Key: CodingKey & CaseIterable>(
     }
 }
 
+private func requirePQGroupCredentialAlgorithms(
+    signingPublicKey: Data,
+    agreementPublicKey: Data
+) throws {
+    try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+        signingPublicKey: signingPublicKey,
+        agreementPublicKey: agreementPublicKey
+    )
+}
+
+private func requirePQGroupCredentialAlgorithms(
+    _ credentials: [GroupProviderCredentialV2]
+) throws {
+    try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+        signingPublicKey: credentials.first?.signingPublicKey ?? Data(),
+        agreementPublicKey: credentials.first?.agreementPublicKey ?? Data()
+    )
+}
+
 public enum NoctweavePQGroupExperimentalErrorV2: Error, Equatable {
     case invalidCredential
     case invalidMembership
@@ -94,19 +113,29 @@ public struct LocalGroupCredentialV2: Codable, Equatable {
             signingKey: try values.decode(SigningKeyPair.self, forKey: .signingKey),
             agreementKey: try values.decode(AgreementKeyPair.self, forKey: .agreementKey)
         )
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "Invalid local group credential")
             )
         }
     }
 
+    /// Throwing protocol preflight. Local ML-DSA/ML-KEM runtime failures are
+    /// preserved; the nonthrowing wrapper remains available for diagnostics.
+    public var isStructurallyValidThrowing: Bool {
+        guard memberHandle.isStructurallyValid,
+              credentialHandle.isStructurallyValid,
+              admissionDigest.count == 32 else {
+            return false
+        }
+        guard try SigningKeyPair.isValidPublicKeyThrowing(signingKey.publicKeyData) else {
+            return false
+        }
+        return try AgreementKeyPair.isValidPublicKeyThrowing(agreementKey.publicKeyData)
+    }
+
     public var isStructurallyValid: Bool {
-        memberHandle.isStructurallyValid
-            && credentialHandle.isStructurallyValid
-            && admissionDigest.count == 32
-            && SigningKeyPair.isValidPublicKey(signingKey.publicKeyData)
-            && AgreementKeyPair.isValidPublicKey(agreementKey.publicKeyData)
+        (try? isStructurallyValidThrowing) == true
     }
 
     public static func == (
@@ -172,6 +201,10 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         members: [GroupMemberV2],
         leaves: [GroupMemberCredentialV2]
     ) throws -> GroupProviderMembershipV2 {
+        try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+            signingPublicKey: leaves.first?.signingPublicKey ?? Data(),
+            agreementPublicKey: leaves.first?.agreementPublicKey ?? Data()
+        )
         guard epoch > 0 else { throw NoctweavePQGroupExperimentalErrorV2.invalidMembership }
         let activeMemberHandles = Set(members.filter { $0.isActive(at: epoch) }.map(\.id))
         let credentials = leaves.filter {
@@ -474,7 +507,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
               let senderLeaf = signedState.activeCredentials.first(where: {
                   $0.credentialHandle == envelope.senderCredentialHandle
               }),
-              envelope.verifySignature(
+              try envelope.verifySignatureThrowing(
                   groupCredentialSigningPublicKey: senderLeaf.signingPublicKey
               ),
               let chainIndex = localState.senderChains.firstIndex(where: {
@@ -513,8 +546,10 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
                 key: SymmetricKey(data: messageKey),
                 authenticatedData: aad
             )
-        } catch {
+        } catch CryptoError.invalidPayload {
             throw NoctweavePQGroupExperimentalErrorV2.authenticationFailed
+        } catch {
+            throw error
         }
         guard !plaintext.isEmpty,
               plaintext.count <= NoctweaveArchitectureV2.maximumContentPayloadBytes else {
@@ -698,8 +733,12 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             sharedSecret = try localCredential.agreementKey.decapsulate(
                 ciphertext: package.core.kemCiphertext
             )
-        } catch {
+        } catch CryptoError.invalidPayload {
             throw NoctweavePQGroupExperimentalErrorV2.authenticationFailed
+        } catch {
+            // Algorithm/runtime failures are local and retryable. Do not
+            // misclassify them as peer authentication failures.
+            throw error
         }
         defer { sharedSecret.secureWipe() }
         let wrapKey = derivePackageKey(
@@ -708,20 +747,23 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             credential: credential,
             commitment: commit.epochSecretCommitment
         )
+        let aad = try packageAAD(
+            proposal: commit.proposal,
+            destinationCredentialHandle: credential.credentialHandle,
+            destinationAdmissionDigest: credential.admissionDigest,
+            commitment: commit.epochSecretCommitment
+        )
         let opened: Data
         do {
             opened = try CryptoBox.decrypt(
                 package.core.encryptedEpochSecret,
                 key: SymmetricKey(data: wrapKey),
-                authenticatedData: try packageAAD(
-                    proposal: commit.proposal,
-                    destinationCredentialHandle: credential.credentialHandle,
-                    destinationAdmissionDigest: credential.admissionDigest,
-                    commitment: commit.epochSecretCommitment
-                )
+                authenticatedData: aad
             )
-        } catch {
+        } catch CryptoError.invalidPayload {
             throw NoctweavePQGroupExperimentalErrorV2.authenticationFailed
+        } catch {
+            throw error
         }
         let plaintext: PQGroupEpochSecretPlaintextV2
         do {
@@ -807,6 +849,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
     }
 
     private func validateMembership(_ membership: GroupProviderMembershipV2) throws {
+        try requirePQGroupCredentialAlgorithms(membership.credentials)
         guard membership.isStructurallyValid,
               membership.selection == Self.selection,
               membership.credentials.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials,
@@ -827,7 +870,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         _ credential: LocalGroupCredentialV2,
         in membership: GroupProviderMembershipV2
     ) throws {
-        guard credential.isStructurallyValid,
+        guard try credential.isStructurallyValidThrowing,
               credential.groupId == membership.groupId,
               let projectedCredential = membership.credentials.first(where: {
                   $0.credentialHandle == credential.credentialHandle
@@ -844,6 +887,10 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         _ localState: PQGroupLocalCryptoStateV2,
         signedState: SignedGroupStateV2
     ) throws {
+        try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+            signingPublicKey: signedState.memberCredentials.first?.signingPublicKey ?? Data(),
+            agreementPublicKey: signedState.memberCredentials.first?.agreementPublicKey ?? Data()
+        )
         guard signedState.isStructurallyValid,
               localState.activation == .active,
               signedState.groupId == localState.groupId,

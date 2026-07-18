@@ -76,10 +76,14 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             marker: 60
         )
 
-        XCTAssertNoThrow(try commit.verifiedTransition(from: fixture.state))
+        XCTAssertNoThrow(try commit.verifiedTransition(
+            from: fixture.state,
+            observedAt: commit.createdAt
+        ))
         let next = try SignedGroupStateV2.applying(
             commit,
             to: fixture.state,
+            observedAt: commit.createdAt,
             signingKey: fixture.memberKeys[0]
         )
         XCTAssertEqual(
@@ -102,7 +106,10 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             admissionProjection: replacement.projection
         )
         XCTAssertThrowsError(try projectionTamperedAfterSigning
-            .verifiedTransition(from: fixture.state)) { error in
+            .verifiedTransition(
+                from: fixture.state,
+                observedAt: projectionTamperedAfterSigning.createdAt
+            )) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .invalidCommitSignature)
         }
     }
@@ -133,21 +140,129 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             key: fixture.ownerKey,
             marker: 2
         )
-        XCTAssertNoThrow(try commitA.verifiedTransition(from: fixture.state))
-        XCTAssertNoThrow(try commitB.verifiedTransition(from: fixture.state))
+        XCTAssertNoThrow(try commitA.verifiedTransition(
+            from: fixture.state,
+            observedAt: commitA.createdAt
+        ))
+        XCTAssertNoThrow(try commitB.verifiedTransition(
+            from: fixture.state,
+            observedAt: commitB.createdAt
+        ))
 
         let tampered = copy(commitA, metadata: metadataB)
-        XCTAssertThrowsError(try tampered.verifiedTransition(from: fixture.state)) { error in
+        XCTAssertThrowsError(try tampered.verifiedTransition(
+            from: fixture.state,
+            observedAt: tampered.createdAt
+        )) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .invalidCommitSignature)
         }
 
-        let next = try SignedGroupStateV2.applying(commitA, to: fixture.state, signingKey: fixture.ownerKey)
-        XCTAssertNoThrow(try next.verified(previousState: fixture.state, commit: commitA))
-        XCTAssertThrowsError(try commitA.verifiedTransition(from: next)) { error in
+        let next = try SignedGroupStateV2.applying(
+            commitA,
+            to: fixture.state,
+            observedAt: commitA.createdAt,
+            signingKey: fixture.ownerKey
+        )
+        XCTAssertNoThrow(try next.verified(
+            previousState: fixture.state,
+            commit: commitA,
+            observedAt: commitA.createdAt
+        ))
+        XCTAssertThrowsError(try commitA.verifiedTransition(
+            from: next,
+            observedAt: commitA.createdAt
+        )) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .staleEpoch)
         }
-        XCTAssertThrowsError(try commitB.verifiedTransition(from: next)) { error in
+        XCTAssertThrowsError(try commitB.verifiedTransition(
+            from: next,
+            observedAt: commitB.createdAt
+        )) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .staleEpoch)
+        }
+    }
+
+    func testCommitAndDeletionFreshnessUseReceiverObservedTime() throws {
+        let fixture = try makeFixture()
+        let observedAt = fixture.state.signedAt.addingTimeInterval(10)
+        let boundedPeerTime = observedAt.addingTimeInterval(
+            NoctweaveSignedGroupV2.maximumClockSkewSeconds
+        )
+        let farFuturePeerTime = boundedPeerTime.addingTimeInterval(1)
+        let boundedCommit = try makeCommit(
+            operation: .updateMetadata,
+            state: fixture.state,
+            members: fixture.state.members,
+            leaves: fixture.state.memberCredentials,
+            permissions: fixture.state.permissions,
+            metadata: Data(repeating: 0xD1, count: 32),
+            author: fixture.ownerLeaf.credentialHandle,
+            key: fixture.ownerKey,
+            marker: 0xD2,
+            createdAt: boundedPeerTime
+        )
+        XCTAssertNoThrow(try boundedCommit.verifiedTransition(
+            from: fixture.state,
+            observedAt: observedAt
+        ))
+
+        let farFutureCommit = try makeCommit(
+            operation: .updateMetadata,
+            state: fixture.state,
+            members: fixture.state.members,
+            leaves: fixture.state.memberCredentials,
+            permissions: fixture.state.permissions,
+            metadata: Data(repeating: 0xD3, count: 32),
+            author: fixture.ownerLeaf.credentialHandle,
+            key: fixture.ownerKey,
+            marker: 0xD4,
+            createdAt: farFuturePeerTime
+        )
+        XCTAssertThrowsError(try farFutureCommit.verifiedTransition(
+            from: fixture.state,
+            observedAt: observedAt
+        )) { error in
+            XCTAssertEqual(error as? SignedGroupV2Error, .invalidTimestamp)
+        }
+
+        let boundedDeletion = try SignedGroupDeletionTombstoneV2.create(
+            currentState: fixture.state,
+            authorCredentialHandle: fixture.ownerLeaf.credentialHandle,
+            idempotencyKey: Data(repeating: 0xD5, count: 32),
+            signingKey: fixture.ownerKey,
+            createdAt: boundedPeerTime
+        )
+        XCTAssertNoThrow(try boundedDeletion.verified(
+            against: fixture.state,
+            observedAt: observedAt
+        ))
+        let historical = try SignedDeletedGroupStateV2.create(
+            tombstone: boundedDeletion,
+            from: fixture.state,
+            observedAt: observedAt
+        )
+        XCTAssertEqual(historical.observedAt, observedAt)
+        XCTAssertNoThrow(try historical.verified(previousState: fixture.state))
+
+        let farFutureDeletion = try SignedGroupDeletionTombstoneV2.create(
+            currentState: fixture.state,
+            authorCredentialHandle: fixture.ownerLeaf.credentialHandle,
+            idempotencyKey: Data(repeating: 0xD6, count: 32),
+            signingKey: fixture.ownerKey,
+            createdAt: farFuturePeerTime
+        )
+        XCTAssertThrowsError(try farFutureDeletion.verified(
+            against: fixture.state,
+            observedAt: observedAt
+        )) { error in
+            XCTAssertEqual(error as? SignedGroupV2Error, .invalidTimestamp)
+        }
+        XCTAssertThrowsError(try SignedDeletedGroupStateV2.create(
+            tombstone: farFutureDeletion,
+            from: fixture.state,
+            observedAt: observedAt
+        )) { error in
+            XCTAssertEqual(error as? SignedGroupV2Error, .invalidTimestamp)
         }
     }
 
@@ -175,7 +290,9 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
         }
         let tamperedState = copy(fixture.state, members: tamperedMembers)
         XCTAssertFalse(tamperedState.isStructurallyValid)
-        XCTAssertThrowsError(try tamperedState.verified()) { error in
+        XCTAssertThrowsError(try tamperedState.verified(
+            observedAt: fixture.state.signedAt
+        )) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .invalidStructure)
         }
     }
@@ -258,6 +375,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
         let state2 = try SignedGroupStateV2.applying(
             adminSelfDemotion,
             to: fixture.state,
+            observedAt: adminSelfDemotion.createdAt,
             signingKey: fixture.adminB.key
         )
         XCTAssertEqual(state2.members.first { $0.id == fixture.adminB.member.id }?.role, .member)
@@ -280,6 +398,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
         let state3 = try SignedGroupStateV2.applying(
             ownerSelfDemotion,
             to: state2,
+            observedAt: ownerSelfDemotion.createdAt,
             signingKey: fixture.ownerB.key
         )
         XCTAssertEqual(state3.members.first { $0.id == fixture.ownerB.member.id }?.role, .admin)
@@ -303,6 +422,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
         let state4 = try SignedGroupStateV2.applying(
             promoteLowerMember,
             to: state3,
+            observedAt: promoteLowerMember.createdAt,
             signingKey: fixture.adminA.key
         )
         XCTAssertEqual(state4.members.first { $0.id == fixture.member.member.id }?.role, .admin)
@@ -412,6 +532,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
         let state2 = try SignedGroupStateV2.applying(
             add,
             to: fixture.state,
+            observedAt: add.createdAt,
             signingKey: fixture.ownerKey
         )
 
@@ -431,7 +552,12 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             key: fixture.ownerKey,
             marker: 9
         )
-        let state3 = try SignedGroupStateV2.applying(promote, to: state2, signingKey: fixture.ownerKey)
+        let state3 = try SignedGroupStateV2.applying(
+            promote,
+            to: state2,
+            observedAt: promote.createdAt,
+            signingKey: fixture.ownerKey
+        )
 
         let permissive = policy(updateMetadata: .everyone)
         let policyCommit = try makeCommit(
@@ -445,7 +571,12 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             key: fixture.ownerKey,
             marker: 10
         )
-        let state4 = try SignedGroupStateV2.applying(policyCommit, to: state3, signingKey: fixture.ownerKey)
+        let state4 = try SignedGroupStateV2.applying(
+            policyCommit,
+            to: state3,
+            observedAt: policyCommit.createdAt,
+            signingKey: fixture.ownerKey
+        )
         let metadataCommit = try makeCommit(
             operation: .updateMetadata,
             state: state4,
@@ -460,6 +591,7 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
         let state5 = try SignedGroupStateV2.applying(
             metadataCommit,
             to: state4,
+            observedAt: metadataCommit.createdAt,
             signingKey: fixture.memberKeys[0]
         )
         XCTAssertEqual(state5.metadataDigest, Data(repeating: 0x51, count: 32))
@@ -490,7 +622,12 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             key: fixture.ownerKey,
             marker: 12
         )
-        let state6 = try SignedGroupStateV2.applying(remove, to: state5, signingKey: fixture.ownerKey)
+        let state6 = try SignedGroupStateV2.applying(
+            remove,
+            to: state5,
+            observedAt: remove.createdAt,
+            signingKey: fixture.ownerKey
+        )
         XCTAssertFalse(state6.activeMembers.contains { $0.id == newcomer.id })
         XCTAssertFalse(state6.activeCredentials.contains { $0.memberHandle == newcomer.id })
     }
@@ -518,11 +655,14 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             signedAt: signedAt
         )
 
-        XCTAssertNoThrow(try state.verified(genesisAdmission: trust))
+        XCTAssertNoThrow(try state.verified(
+            genesisAdmission: trust,
+            observedAt: signedAt
+        ))
         XCTAssertEqual(state.members, [owner])
         XCTAssertEqual(state.memberCredentials, [genesis.leaf])
         XCTAssertEqual(state.authorCredentialHandle, genesis.projection.credentialHandle)
-        XCTAssertThrowsError(try state.verified()) { error in
+        XCTAssertThrowsError(try state.verified(observedAt: signedAt)) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .genesisAdmissionRequired)
         }
 
@@ -530,7 +670,10 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             genesis.projection,
             credentialSignature: flipped(genesis.projection.credentialPossessionSignature)
         )
-        XCTAssertThrowsError(try state.verified(genesisAdmission: forgedAdmission)) { error in
+        XCTAssertThrowsError(try state.verified(
+            genesisAdmission: forgedAdmission,
+            observedAt: signedAt
+        )) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .invalidCredentialSignature)
         }
 
@@ -551,8 +694,14 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
             signingKey: attackerKey,
             signedAt: signedAt
         )
-        XCTAssertNoThrow(try attackerState.verified(genesisAdmission: attackerGenesis.projection))
-        XCTAssertThrowsError(try attackerState.verified(genesisAdmission: trust)) { error in
+        XCTAssertNoThrow(try attackerState.verified(
+            genesisAdmission: attackerGenesis.projection,
+            observedAt: signedAt
+        ))
+        XCTAssertThrowsError(try attackerState.verified(
+            genesisAdmission: trust,
+            observedAt: signedAt
+        )) { error in
             XCTAssertEqual(error as? SignedGroupV2Error, .invalidTransition)
         }
 
@@ -627,7 +776,8 @@ final class ArchitectureV2SignedGroupTests: XCTestCase {
         )
         let deleted = try SignedDeletedGroupStateV2.create(
             tombstone: tombstone,
-            from: fixture.state
+            from: fixture.state,
+            observedAt: tombstone.createdAt
         )
 
         try assertExactRoundTrip(fixture.state, as: SignedGroupStateV2.self)
@@ -737,6 +887,7 @@ private extension ArchitectureV2SignedGroupTests {
             state = try SignedGroupStateV2.applying(
                 commit,
                 to: state,
+                observedAt: commit.createdAt,
                 signingKey: ownerA.key
             )
             marker &+= 1
@@ -821,6 +972,7 @@ private extension ArchitectureV2SignedGroupTests {
         state = try SignedGroupStateV2.applying(
             commit,
             to: state,
+            observedAt: commit.createdAt,
             signingKey: ownerKey
         )
         return Fixture(
@@ -893,7 +1045,8 @@ private extension ArchitectureV2SignedGroupTests {
         metadata: Data?,
         author: GroupScopedCredentialHandleV2,
         key: SigningKeyPair,
-        marker: UInt8
+        marker: UInt8,
+        createdAt: Date? = nil
     ) throws -> SignedGroupCommitV2 {
         return try SignedGroupCommitV2.create(
             operation: operation,
@@ -907,7 +1060,7 @@ private extension ArchitectureV2SignedGroupTests {
             providerCommitDigest: Data(repeating: marker, count: 32),
             idempotencyKey: Data(repeating: marker &+ 100, count: 32),
             signingKey: key,
-            createdAt: state.signedAt.addingTimeInterval(1)
+            createdAt: createdAt ?? state.signedAt.addingTimeInterval(1)
         )
     }
 

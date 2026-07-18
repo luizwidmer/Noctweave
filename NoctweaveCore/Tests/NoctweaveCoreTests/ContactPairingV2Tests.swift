@@ -16,6 +16,7 @@ final class ContactPairingV2Tests: XCTestCase {
         )
 
         XCTAssertEqual(Set(object.keys), Set(["version", "offer", "redemptionSecret"]))
+        XCTAssertTrue(try offer.invitation.isStructurallyValidThrowing)
         XCTAssertEqual(offer.invitation.offer.purpose, .contactPairing)
         let text = try XCTUnwrap(String(data: encoded, encoding: .utf8)).lowercased()
         for forbidden in [
@@ -70,10 +71,50 @@ final class ContactPairingV2Tests: XCTestCase {
         )
         XCTAssertEqual(result.offererRelationship.continuityPolicy, .disabled)
         XCTAssertEqual(result.offererRelationship.localPolicy.consent, .accepted)
+        XCTAssertTrue(try result.offererRelationship.isStructurallyValidThrowing)
+        XCTAssertTrue(try result.responderRelationship.isStructurallyValidThrowing)
         XCTAssertFalse(result.offererRelationship.continuityPolicy.allowsSending)
         XCTAssertFalse(result.offererRelationship.continuityPolicy.allowsReceiving)
         XCTAssertTrue(fixture.pending.isRedeemed)
         XCTAssertEqual(fixture.ledger.redemptionCount, 1)
+    }
+
+    func testInboundSessionUsesPersistedSignedPrekeyWithoutCollapsingLookupErrors() throws {
+        var fixture = try makeHandshakeFixture()
+        let established = try ContactPairingHandshakeV2.establish(
+            pendingOffer: &fixture.pending,
+            invitation: fixture.invitation,
+            offerer: fixture.offerer,
+            responder: fixture.responder,
+            ledger: &fixture.ledger,
+            at: origin.addingTimeInterval(1)
+        )
+        let outbound = try MessageEngine.createOutboundEndpointSession(
+            relationship: established.offererRelationship,
+            now: origin.addingTimeInterval(2)
+        )
+        let bootstrap = DirectBootstrapV4.signedPrekey(
+            kemCiphertext: outbound.kemCiphertext,
+            prekey: outbound.prekey
+        )
+        let inbound = try MessageEngine.createInboundEndpointSession(
+            relationship: established.responderRelationship,
+            bootstrap: bootstrap,
+            now: origin.addingTimeInterval(2)
+        )
+        XCTAssertEqual(inbound.rootKey, outbound.conversation.rootKey)
+
+        let unknownPrekey = DirectBootstrapV4.signedPrekey(
+            kemCiphertext: outbound.kemCiphertext,
+            prekey: PrekeyReference(kind: .signed, id: UUID())
+        )
+        XCTAssertThrowsError(try MessageEngine.createInboundEndpointSession(
+            relationship: established.responderRelationship,
+            bootstrap: unknownPrekey,
+            now: origin.addingTimeInterval(2)
+        )) { error in
+            XCTAssertEqual(error as? CryptoError, .invalidPayload)
+        }
     }
 
     func testContinuityConsentIsLocalAndRelationshipScoped() throws {
@@ -229,7 +270,24 @@ final class ContactPairingV2Tests: XCTestCase {
         XCTAssertTrue(try relationship.appendEvent(event))
         XCTAssertFalse(try relationship.appendEvent(event))
         XCTAssertEqual(relationship.events, [event])
-        let payload = try NoctweaveCoder.encode(event, sortedKeys: true)
+        let createdSession = try MessageEngine.createOutboundEndpointSession(
+            relationship: relationship,
+            now: origin.addingTimeInterval(2)
+        )
+        var conversation = createdSession.conversation
+        let envelope = try MessageEngine.encryptDirectV4(
+            wirePayload: .application(event),
+            eventID: logicalEventID,
+            relationship: relationship,
+            conversation: &conversation,
+            bootstrap: .signedPrekey(
+                kemCiphertext: createdSession.kemCiphertext,
+                prekey: createdSession.prekey
+            ),
+            sentAt: origin.addingTimeInterval(2)
+        )
+        try relationship.upsertDirectSession(conversation)
+        let payload = try NoctweaveCoder.encode(envelope, sortedKeys: true)
         let queued = try relationship.enqueue(
             logicalEventID: logicalEventID,
             payload: payload,
@@ -240,9 +298,18 @@ final class ContactPairingV2Tests: XCTestCase {
         XCTAssertEqual(queued[0].logicalEventID, logicalEventID)
         XCTAssertEqual(relationship.pendingDeliveries, queued)
         let originalPackets = relationship.pendingDeliveries[0].packets
-        relationship.pendingDeliveries[0].attemptCount += 1
-        relationship.pendingDeliveries[0].lastAttemptAt = origin.addingTimeInterval(3)
+        let intentIndex = try XCTUnwrap(relationship.protocolIntents.firstIndex {
+            $0.id == queued[0].intentID
+        })
+        relationship.protocolIntents[intentIndex] = try XCTUnwrap(
+            relationship.protocolIntents[intentIndex].beginningAttempt(
+                id: UUID(),
+                completedIntentIds: [],
+                at: origin.addingTimeInterval(3)
+            )
+        )
         XCTAssertEqual(relationship.pendingDeliveries[0].packets, originalPackets)
+        XCTAssertEqual(relationship.protocolIntents[intentIndex].attemptCount, 1)
 
         let roundTrip = try NoctweaveCoder.decode(
             PairwiseRelationshipV2.self,

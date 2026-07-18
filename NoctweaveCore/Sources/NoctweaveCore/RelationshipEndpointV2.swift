@@ -391,7 +391,7 @@ public struct RelationshipEndpointBindingV4: Codable, Equatable {
             issuedAt: try container.decode(Date.self, forKey: .issuedAt),
             authoritySignature: try container.decode(Data.self, forKey: .authoritySignature)
         )
-        guard hasValidStaticStructure else {
+        guard try hasValidStaticStructureThrowing() else {
             throw DecodingError.dataCorruptedError(
                 forKey: .authoritySignature,
                 in: container,
@@ -401,7 +401,7 @@ public struct RelationshipEndpointBindingV4: Codable, Equatable {
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard hasValidStaticStructure else {
+        guard try hasValidStaticStructureThrowing() else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(
@@ -524,54 +524,68 @@ public struct RelationshipEndpointBindingV4: Codable, Equatable {
         authoritySigningPublicKey: Data,
         now: Date = Date()
     ) throws -> RelationshipEndpointBindingV4 {
-        guard isStructurallyValid(now: now) else {
+        guard try isStructurallyValidThrowing(now: now) else {
             throw RelationshipEndpointBindingError.invalidStructure
         }
-        guard let authorityData = try? authorityPayload.signableData(),
-              SigningKeyPair.verify(
-                  signature: authoritySignature,
-                  data: authorityData,
-                  publicKeyData: authoritySigningPublicKey
-              ) else {
+        guard try SigningKeyPair.verifyThrowing(
+            signature: authoritySignature,
+            data: authorityPayload.signableData(),
+            publicKeyData: authoritySigningPublicKey
+        ) else {
             throw RelationshipEndpointBindingError.invalidAuthoritySignature
         }
-        guard let authorizationDigest,
-              let prekeyData = try? RelationshipEndpointPrekeyPayloadV4(
-                  endpointAuthorizationDigest: authorizationDigest,
-                  bundle: prekeyBundle
-              ).signableData(),
-              SigningKeyPair.verify(
-                  signature: prekeyPackageSignature,
-                  data: prekeyData,
-                  publicKeyData: signingPublicKey
-              ) else {
+        guard let authorizationDigest else {
+            throw RelationshipEndpointBindingError.invalidStructure
+        }
+        guard try SigningKeyPair.verifyThrowing(
+            signature: prekeyPackageSignature,
+            data: RelationshipEndpointPrekeyPayloadV4(
+                endpointAuthorizationDigest: authorizationDigest,
+                bundle: prekeyBundle
+            ).signableData(),
+            publicKeyData: signingPublicKey
+        ) else {
             throw RelationshipEndpointBindingError.invalidPrekeyPackageSignature
         }
         return self
     }
 
+    public func isStructurallyValidThrowing(now: Date = Date()) throws -> Bool {
+        guard try hasValidStaticStructureThrowing(),
+              try prekeyBundle.isStructurallyValidThrowing(now: now) else {
+            return false
+        }
+        return true
+    }
+
     public func isStructurallyValid(now: Date = Date()) -> Bool {
-        hasValidStaticStructure
-            && prekeyBundle.isStructurallyValid(now: now)
-            && prekeyBundle.signedPrekey.verify(using: signingPublicKey)
-            && prekeyBundle.oneTimePrekeys.isEmpty
+        (try? isStructurallyValidThrowing(now: now)) == true
     }
 
     private var hasValidStaticStructure: Bool {
-        version == Self.version
-            && SigningKeyPair.isValidPublicKey(signingPublicKey)
-            && AgreementKeyPair.isValidPublicKey(agreementPublicKey)
-            && capabilities.isStructurallyValid
-            && prekeyBundle.relationshipSigningKeyDigest
-                == CryptoBox.fingerprint(for: signingPublicKey)
-            && prekeyBundle.oneTimePrekeys.isEmpty
-            && prekeyBundle.signedPrekey.verify(using: signingPublicKey)
-            && prekeyBundle.createdAt.timeIntervalSince1970.isFinite
-            && issuedAt.timeIntervalSince1970.isFinite
-            && prekeyBundle.createdAt >= issuedAt
-            && prekeyPackageSignature.count == 3_309
-            && authoritySignature.count == 3_309
-            && authorizationDigest?.count == 32
+        (try? hasValidStaticStructureThrowing()) == true
+    }
+
+    private func hasValidStaticStructureThrowing() throws -> Bool {
+        guard version == Self.version,
+              capabilities.isStructurallyValid,
+              prekeyBundle.relationshipSigningKeyDigest
+                == CryptoBox.fingerprint(for: signingPublicKey),
+              prekeyBundle.oneTimePrekeys.isEmpty,
+              prekeyBundle.createdAt.timeIntervalSince1970.isFinite,
+              issuedAt.timeIntervalSince1970.isFinite,
+              prekeyBundle.createdAt >= issuedAt,
+              prekeyPackageSignature.count == 3_309,
+              authoritySignature.count == 3_309,
+              authorizationDigest?.count == 32 else {
+            return false
+        }
+        guard try SigningKeyPair.isValidPublicKeyThrowing(signingPublicKey),
+              try AgreementKeyPair.isValidPublicKeyThrowing(agreementPublicKey),
+              try prekeyBundle.signedPrekey.verifyThrowing(using: signingPublicKey) else {
+            return false
+        }
+        return true
     }
 
     private var authorityPayload: RelationshipEndpointAuthorityPayloadV4 {

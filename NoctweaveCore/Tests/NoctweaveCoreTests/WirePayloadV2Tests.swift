@@ -82,11 +82,29 @@ final class WirePayloadV2Tests: XCTestCase {
             eventID: eventID,
             signingPublicKey: signingKey.publicKeyData
         ))
+        XCTAssertTrue(try control.verifyThrowing(
+            relationshipID: relationshipID,
+            senderEndpointHandle: sender,
+            eventID: eventID,
+            signingPublicKey: signingKey.publicKeyData
+        ))
         XCTAssertFalse(control.verify(
             relationshipID: UUID(),
             senderEndpointHandle: sender,
             eventID: eventID,
             signingPublicKey: signingKey.publicKeyData
+        ))
+        XCTAssertFalse(try control.verifyThrowing(
+            relationshipID: UUID(),
+            senderEndpointHandle: sender,
+            eventID: eventID,
+            signingPublicKey: signingKey.publicKeyData
+        ))
+        XCTAssertFalse(try control.verifyThrowing(
+            relationshipID: relationshipID,
+            senderEndpointHandle: sender,
+            eventID: eventID,
+            signingPublicKey: Data([0x01])
         ))
         XCTAssertFalse(control.verify(
             relationshipID: relationshipID,
@@ -107,6 +125,7 @@ final class WirePayloadV2Tests: XCTestCase {
             conversationId: relationshipID.uuidString.lowercased(),
             eventId: eventID,
             senderEndpointHandle: sender,
+            sentAt: timestamp,
             receivedAt: timestamp,
             signingPublicKey: signingKey.publicKeyData
         ) else {

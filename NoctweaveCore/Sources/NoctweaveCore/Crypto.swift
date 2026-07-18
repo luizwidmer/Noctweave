@@ -79,8 +79,14 @@ public struct SigningKeyPair: Codable {
         let sig = try PQCLibrary.signature()
         defer { OQS_SIG_free(sig) }
         guard privateKeyData.count == Int(sig.pointee.length_secret_key),
-              publicKeyData.count == Int(sig.pointee.length_public_key),
-              Self.keysMatch(privateKeyData: privateKeyData, publicKeyData: publicKeyData, signature: sig) else {
+              publicKeyData.count == Int(sig.pointee.length_public_key) else {
+            throw CryptoError.invalidPrivateKey
+        }
+        guard try Self.keysMatch(
+            privateKeyData: privateKeyData,
+            publicKeyData: publicKeyData,
+            signature: sig
+        ) else {
             throw CryptoError.invalidPrivateKey
         }
         self.privateKeyData = privateKeyData
@@ -139,51 +145,61 @@ public struct SigningKeyPair: Codable {
         return signature
     }
 
-    public static func verify(signature: Data, data: Data, publicKeyData: Data) -> Bool {
-        do {
-            let sig = try PQCLibrary.signature()
-            defer { OQS_SIG_free(sig) }
-            guard data.count <= maximumSignedMessageBytes,
-                  publicKeyData.count == Int(sig.pointee.length_public_key),
-                  signature.count == Int(sig.pointee.length_signature) else {
-                return false
-            }
-            let messageStorage = data.isEmpty ? Data([0]) : data
-            let result = signature.withUnsafeBytes { sigPtr in
-                messageStorage.withUnsafeBytes { msgPtr in
-                    publicKeyData.withUnsafeBytes { publicPtr in
-                        OQS_SIG_verify(
-                            sig,
-                            msgPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                            data.count,
-                            sigPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                            signature.count,
-                            publicPtr.baseAddress?.assumingMemoryBound(to: UInt8.self)
-                        )
-                    }
-                }
-            }
-            return result == OQS_SUCCESS
-        } catch {
+    /// Verifies peer-controlled signature material without hiding a local
+    /// ML-DSA runtime or algorithm-availability failure.
+    public static func verifyThrowing(
+        signature: Data,
+        data: Data,
+        publicKeyData: Data
+    ) throws -> Bool {
+        let sig = try PQCLibrary.signature()
+        defer { OQS_SIG_free(sig) }
+        guard data.count <= maximumSignedMessageBytes,
+              publicKeyData.count == Int(sig.pointee.length_public_key),
+              signature.count == Int(sig.pointee.length_signature) else {
             return false
         }
+        let messageStorage = data.isEmpty ? Data([0]) : data
+        let result = signature.withUnsafeBytes { sigPtr in
+            messageStorage.withUnsafeBytes { msgPtr in
+                publicKeyData.withUnsafeBytes { publicPtr in
+                    OQS_SIG_verify(
+                        sig,
+                        msgPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        data.count,
+                        sigPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        signature.count,
+                        publicPtr.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                    )
+                }
+            }
+        }
+        return result == OQS_SUCCESS
+    }
+
+    public static func verify(signature: Data, data: Data, publicKeyData: Data) -> Bool {
+        (try? verifyThrowing(
+            signature: signature,
+            data: data,
+            publicKeyData: publicKeyData
+        )) == true
+    }
+
+    public static func isValidPublicKeyThrowing(_ publicKeyData: Data) throws -> Bool {
+        let sig = try PQCLibrary.signature()
+        defer { OQS_SIG_free(sig) }
+        return publicKeyData.count == Int(sig.pointee.length_public_key)
     }
 
     public static func isValidPublicKey(_ publicKeyData: Data) -> Bool {
-        do {
-            let sig = try PQCLibrary.signature()
-            defer { OQS_SIG_free(sig) }
-            return publicKeyData.count == Int(sig.pointee.length_public_key)
-        } catch {
-            return false
-        }
+        (try? isValidPublicKeyThrowing(publicKeyData)) == true
     }
 
     private static func keysMatch(
         privateKeyData: Data,
         publicKeyData: Data,
         signature sig: UnsafeMutablePointer<OQS_SIG>
-    ) -> Bool {
+    ) throws -> Bool {
         let challenge = Data("Noctweave/ML-DSA-65/keypair-validation/v1".utf8)
         var signature = Data(count: Int(sig.pointee.length_signature))
         defer { signature.secureWipe() }
@@ -204,7 +220,7 @@ public struct SigningKeyPair: Codable {
         }
         guard signResult == OQS_SUCCESS,
               signatureLength == sig.pointee.length_signature else {
-            return false
+            throw CryptoError.operationFailed
         }
         return signature.withUnsafeBytes { signaturePointer in
             challenge.withUnsafeBytes { challengePointer in
@@ -275,8 +291,14 @@ public struct AgreementKeyPair: Codable {
         let kem = try PQCLibrary.kem()
         defer { OQS_KEM_free(kem) }
         guard privateKeyData.count == Int(kem.pointee.length_secret_key),
-              publicKeyData.count == Int(kem.pointee.length_public_key),
-              Self.keysMatch(privateKeyData: privateKeyData, publicKeyData: publicKeyData, kem: kem) else {
+              publicKeyData.count == Int(kem.pointee.length_public_key) else {
+            throw CryptoError.invalidPrivateKey
+        }
+        guard try Self.keysMatch(
+            privateKeyData: privateKeyData,
+            publicKeyData: publicKeyData,
+            kem: kem
+        ) else {
             throw CryptoError.invalidPrivateKey
         }
         self.privateKeyData = privateKeyData
@@ -328,14 +350,14 @@ public struct AgreementKeyPair: Codable {
         return KEMOutput(ciphertext: ciphertext, sharedSecret: sharedSecret)
     }
 
+    public static func isValidPublicKeyThrowing(_ publicKeyData: Data) throws -> Bool {
+        let kem = try PQCLibrary.kem()
+        defer { OQS_KEM_free(kem) }
+        return publicKeyData.count == Int(kem.pointee.length_public_key)
+    }
+
     public static func isValidPublicKey(_ publicKeyData: Data) -> Bool {
-        do {
-            let kem = try PQCLibrary.kem()
-            defer { OQS_KEM_free(kem) }
-            return publicKeyData.count == Int(kem.pointee.length_public_key)
-        } catch {
-            return false
-        }
+        (try? isValidPublicKeyThrowing(publicKeyData)) == true
     }
 
     public func decapsulate(ciphertext: Data) throws -> Data {
@@ -370,7 +392,7 @@ public struct AgreementKeyPair: Codable {
         privateKeyData: Data,
         publicKeyData: Data,
         kem: UnsafeMutablePointer<OQS_KEM>
-    ) -> Bool {
+    ) throws -> Bool {
         var ciphertext = Data(count: Int(kem.pointee.length_ciphertext))
         var encapsulatedSecret = Data(count: Int(kem.pointee.length_shared_secret))
         var decapsulatedSecret = Data(count: Int(kem.pointee.length_shared_secret))
@@ -391,7 +413,9 @@ public struct AgreementKeyPair: Codable {
                 }
             }
         }
-        guard encapsulationResult == OQS_SUCCESS else { return false }
+        guard encapsulationResult == OQS_SUCCESS else {
+            throw CryptoError.operationFailed
+        }
         let decapsulationResult = decapsulatedSecret.withUnsafeMutableBytes { secretPointer in
             ciphertext.withUnsafeBytes { ciphertextPointer in
                 privateKeyData.withUnsafeBytes { privatePointer in
@@ -404,8 +428,10 @@ public struct AgreementKeyPair: Codable {
                 }
             }
         }
-        return decapsulationResult == OQS_SUCCESS
-            && timingSafeEqual(encapsulatedSecret, decapsulatedSecret)
+        guard decapsulationResult == OQS_SUCCESS else {
+            throw CryptoError.operationFailed
+        }
+        return timingSafeEqual(encapsulatedSecret, decapsulatedSecret)
     }
 }
 

@@ -130,12 +130,37 @@ final class MessageProjectionStrictTests: XCTestCase {
         let message = makeMessage()
         let valid = makeConversation(messages: [message])
         XCTAssertTrue(valid.isStructurallyValid)
+        let encoded = try NoctweaveCoder.encode(valid, sortedKeys: true)
         XCTAssertEqual(
             try NoctweaveCoder.decode(
                 Conversation.self,
-                from: NoctweaveCoder.encode(valid, sortedKeys: true)
+                from: encoded
             ),
             valid
+        )
+        XCTAssertEqual(
+            Set(try jsonObject(encoded).keys),
+            Set([
+                "id",
+                "relationshipID",
+                "endpointSession",
+                "sessionId",
+                "rootKey",
+                "sendChain",
+                "receiveChain",
+                "messages",
+                "unreadCount",
+                "ratchetState",
+            ])
+        )
+
+        var obsoleteRootCounter = try jsonObject(encoded)
+        obsoleteRootCounter["rootCounter"] = 0
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(
+                Conversation.self,
+                from: try jsonData(obsoleteRootCounter)
+            )
         )
 
         let duplicate = makeConversation(messages: [message, message])
@@ -165,6 +190,64 @@ final class MessageProjectionStrictTests: XCTestCase {
             )
         }
         XCTAssertFalse(makeConversation(messages: tooMany).isStructurallyValid)
+    }
+
+    func testConversationUnreadProjectionIsLocalBoundedState() {
+        var conversation = makeConversation(messages: [])
+        let received = Message(
+            direction: .received,
+            body: "received",
+            timestamp: Date(timeIntervalSince1970: 1_771_200_001),
+            counter: 1
+        )
+        let sent = Message(
+            direction: .sent,
+            body: "sent",
+            timestamp: Date(timeIntervalSince1970: 1_771_200_002),
+            counter: 2
+        )
+
+        conversation.appendProjectedMessage(received)
+        XCTAssertEqual(conversation.unreadCount, 1)
+        conversation.appendProjectedMessage(sent)
+        XCTAssertEqual(conversation.unreadCount, 1)
+        conversation.markAllRead()
+        XCTAssertEqual(conversation.unreadCount, 0)
+        XCTAssertTrue(conversation.isStructurallyValid)
+    }
+
+    func testConversationTrimmingDropsOnlyUnreadReceivedProjectionsThatLeaveWindow() {
+        let maximum = NoctweaveArchitectureV2.maximumRelationshipEvents
+        var projections = [Message(
+            direction: .received,
+            body: "oldest unread",
+            timestamp: Date(timeIntervalSince1970: 1_771_200_000),
+            counter: 0
+        )]
+        projections.append(contentsOf: (1..<maximum).map { index in
+            Message(
+                direction: .sent,
+                body: "sent-\(index)",
+                timestamp: Date(timeIntervalSince1970: 1_771_200_000 + Double(index)),
+                counter: UInt64(index)
+            )
+        })
+        var conversation = makeConversation(messages: projections)
+        conversation.unreadCount = 1
+        XCTAssertTrue(conversation.isStructurallyValid)
+
+        conversation.appendProjectedMessage(
+            Message(
+                direction: .sent,
+                body: "newest sent",
+                timestamp: Date(timeIntervalSince1970: 1_771_300_000),
+                counter: UInt64(maximum)
+            )
+        )
+
+        XCTAssertEqual(conversation.messages.count, maximum)
+        XCTAssertEqual(conversation.unreadCount, 0)
+        XCTAssertTrue(conversation.isStructurallyValid)
     }
 
     private func makeMessage() -> Message {

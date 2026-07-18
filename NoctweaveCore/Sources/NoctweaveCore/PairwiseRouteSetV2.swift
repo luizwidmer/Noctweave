@@ -78,7 +78,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
             issuedAt: try container.decode(Date.self, forKey: .issuedAt),
             signature: try container.decode(Data.self, forKey: .signature)
         )
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .signature,
                 in: container,
@@ -88,7 +88,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(
@@ -134,34 +134,46 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
         )
     }
 
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            guard version == Self.version,
+                  ownerEndpointHandle.isStructurallyValid,
+                  previousDigest?.count != 0,
+                  previousDigest.map({ $0.count == SHA256.byteCount }) ?? true,
+                  (revision == 0) == (previousDigest == nil),
+                  !routes.isEmpty,
+                  routes.count <= NoctweaveArchitectureV2.maximumRoutes,
+                  routes == routes.sorted(by: Self.routeOrdering),
+                  Set(routes.map(\.routeID)).count == routes.count,
+                  routes.contains(where: { $0.state == .active || $0.state == .draining }),
+                  issuedAt.timeIntervalSince1970.isFinite,
+                  routes.allSatisfy({ $0.validFrom <= issuedAt }),
+                  !signature.isEmpty,
+                  signature.count <= 8 * 1_024 else {
+                return false
+            }
+            for route in routes {
+                guard try route.isStructurallyValidThrowing else { return false }
+            }
+            return true
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        version == Self.version
-            && ownerEndpointHandle.isStructurallyValid
-            && previousDigest?.count != 0
-            && previousDigest.map({ $0.count == SHA256.byteCount }) ?? true
-            && ((revision == 0) == (previousDigest == nil))
-            && !routes.isEmpty
-            && routes.count <= NoctweaveArchitectureV2.maximumRoutes
-            && routes == routes.sorted(by: Self.routeOrdering)
-            && Set(routes.map(\.routeID)).count == routes.count
-            && routes.allSatisfy(\.isStructurallyValid)
-            && routes.contains(where: { $0.state == .active || $0.state == .draining })
-            && issuedAt.timeIntervalSince1970.isFinite
-            && routes.allSatisfy { $0.validFrom <= issuedAt }
-            && !signature.isEmpty
-            && signature.count <= 8 * 1_024
+        (try? isStructurallyValidThrowing) == true
+    }
+
+    public func verifyThrowing(ownerSigningPublicKey: Data) throws -> Bool {
+        guard try isStructurallyValidThrowing else { return false }
+        return try SigningKeyPair.verifyThrowing(
+            signature: signature,
+            data: signaturePayloadData(),
+            publicKeyData: ownerSigningPublicKey
+        )
     }
 
     public func verify(ownerSigningPublicKey: Data) -> Bool {
-        guard isStructurallyValid,
-              let payload = try? signaturePayloadData() else {
-            return false
-        }
-        return SigningKeyPair.verify(
-            signature: signature,
-            data: payload,
-            publicKeyData: ownerSigningPublicKey
-        )
+        (try? verifyThrowing(ownerSigningPublicKey: ownerSigningPublicKey)) == true
     }
 
     /// Verifies one exact monotonic successor. Route sets are snapshots, so a
@@ -170,13 +182,59 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
         of previous: PairwiseRouteSetV2,
         ownerSigningPublicKey: Data
     ) -> Bool {
-        guard previous.revision < UInt64.max else { return false }
-        return relationshipID == previous.relationshipID
-            && ownerEndpointHandle == previous.ownerEndpointHandle
-            && revision == previous.revision + 1
-            && previousDigest == previous.digest
-            && issuedAt >= previous.issuedAt
-            && verify(ownerSigningPublicKey: ownerSigningPublicKey)
+        (try? isValidSuccessorThrowing(
+            of: previous,
+            ownerSigningPublicKey: ownerSigningPublicKey
+        )) == true
+    }
+
+    public func isValidSuccessorThrowing(
+        of previous: PairwiseRouteSetV2,
+        ownerSigningPublicKey: Data
+    ) throws -> Bool {
+        guard previous.revision < UInt64.max,
+              relationshipID == previous.relationshipID,
+              ownerEndpointHandle == previous.ownerEndpointHandle,
+              revision == previous.revision + 1,
+              previousDigest == previous.digest,
+              issuedAt >= previous.issuedAt else {
+            return false
+        }
+        return try verifyThrowing(ownerSigningPublicKey: ownerSigningPublicKey)
+    }
+
+    /// Applies the receiver's observation time to a signed successor. The
+    /// peer timestamp remains authenticated metadata, but cannot install a
+    /// route snapshot that is far in the future or has no currently usable
+    /// delivery path.
+    func isAcceptableSuccessor(
+        of previous: PairwiseRouteSetV2,
+        ownerSigningPublicKey: Data,
+        observedAt: Date
+    ) -> Bool {
+        (try? isAcceptableSuccessorThrowing(
+            of: previous,
+            ownerSigningPublicKey: ownerSigningPublicKey,
+            observedAt: observedAt
+        )) == true
+    }
+
+    func isAcceptableSuccessorThrowing(
+        of previous: PairwiseRouteSetV2,
+        ownerSigningPublicKey: Data,
+        observedAt: Date
+    ) throws -> Bool {
+        guard observedAt.timeIntervalSince1970.isFinite,
+              issuedAt <= observedAt.addingTimeInterval(
+                NoctweaveOpaqueRoutesV2.maximumAuthorizationClockSkew
+              ),
+              !usableRoutes(at: observedAt).isEmpty else {
+            return false
+        }
+        return try isValidSuccessorThrowing(
+            of: previous,
+            ownerSigningPublicKey: ownerSigningPublicKey
+        )
     }
 
     public var digest: Data? {
@@ -390,7 +448,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
         signingKey: SigningKeyPair,
         issuedAt: Date
     ) throws -> PairwiseRouteSetV2 {
-        guard verify(ownerSigningPublicKey: signingKey.publicKeyData),
+        guard try verifyThrowing(ownerSigningPublicKey: signingKey.publicKeyData),
               let digest,
               revision < UInt64.max,
               issuedAt.timeIntervalSince1970.isFinite,
@@ -437,7 +495,9 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
             issuedAt: issuedAt,
             signature: signature
         )
-        guard result.isStructurallyValid else { throw PairwiseRouteSetV2Error.invalidState }
+        guard try result.isStructurallyValidThrowing else {
+            throw PairwiseRouteSetV2Error.invalidState
+        }
         return result
     }
 

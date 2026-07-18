@@ -34,8 +34,8 @@ public struct RelationshipAuthorityV2: Codable {
         agreementKey: AgreementKeyPair,
         createdAt: Date = Date()
     ) throws {
-        guard SigningKeyPair.isValidPublicKey(signingKey.publicKeyData),
-              AgreementKeyPair.isValidPublicKey(agreementKey.publicKeyData) else {
+        guard try SigningKeyPair.isValidPublicKeyThrowing(signingKey.publicKeyData),
+              try AgreementKeyPair.isValidPublicKeyThrowing(agreementKey.publicKeyData) else {
             throw CryptoError.invalidPublicKey
         }
         self.relationshipPseudonym = relationshipPseudonym
@@ -69,7 +69,7 @@ public struct RelationshipAuthorityV2: Codable {
             agreementKey: container.decode(AgreementKeyPair.self, forKey: .agreementKey),
             createdAt: container.decode(Date.self, forKey: .createdAt)
         )
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .signingKey,
                 in: container,
@@ -79,7 +79,7 @@ public struct RelationshipAuthorityV2: Codable {
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(
@@ -95,16 +95,24 @@ public struct RelationshipAuthorityV2: Codable {
         try container.encode(createdAt, forKey: .createdAt)
     }
 
-    public var isStructurallyValid: Bool {
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
         let normalized = relationshipPseudonym.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
-        return !normalized.isEmpty
-            && normalized == relationshipPseudonym
-            && normalized.utf8.count <= 512
-            && SigningKeyPair.isValidPublicKey(signingKey.publicKeyData)
-            && AgreementKeyPair.isValidPublicKey(agreementKey.publicKeyData)
-            && createdAt.timeIntervalSince1970.isFinite
+        guard !normalized.isEmpty,
+              normalized == relationshipPseudonym,
+              normalized.utf8.count <= 512,
+              createdAt.timeIntervalSince1970.isFinite else {
+            return false
+        }
+        return try SigningKeyPair.isValidPublicKeyThrowing(signingKey.publicKeyData)
+            && AgreementKeyPair.isValidPublicKeyThrowing(agreementKey.publicKeyData)
+        }
+    }
+
+    public var isStructurallyValid: Bool {
+        (try? isStructurallyValidThrowing) == true
     }
 }
 

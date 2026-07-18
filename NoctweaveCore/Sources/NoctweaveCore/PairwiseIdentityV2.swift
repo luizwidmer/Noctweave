@@ -90,7 +90,7 @@ public struct LocalPairwiseIdentityV2: Codable, Equatable, Identifiable,
             endpointBinding: try container.decode(RelationshipEndpointBindingV4.self, forKey: .endpointBinding),
             createdAt: try container.decode(Date.self, forKey: .createdAt)
         )
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .relationshipAuthority,
                 in: container,
@@ -100,7 +100,7 @@ public struct LocalPairwiseIdentityV2: Codable, Equatable, Identifiable,
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(
@@ -148,7 +148,9 @@ public struct LocalPairwiseIdentityV2: Codable, Equatable, Identifiable,
             endpointBinding: binding,
             createdAt: createdAt
         )
-        guard result.isStructurallyValid else { throw PairwiseIdentityV2Error.invalidState }
+        guard try result.isStructurallyValidThrowing else {
+            throw PairwiseIdentityV2Error.invalidState
+        }
         return result
     }
 
@@ -156,23 +158,39 @@ public struct LocalPairwiseIdentityV2: Codable, Equatable, Identifiable,
         relationshipAuthority.relationshipPseudonym
     }
 
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            guard version == Self.version,
+                  !relationshipPseudonym.isEmpty,
+                  relationshipPseudonym.utf8.count <= 512,
+                  relationshipAuthority.createdAt == createdAt,
+                  localEndpoint.createdAt == createdAt,
+                  endpointBinding.signingPublicKey == localEndpoint.signingKey.publicKeyData,
+                  endpointBinding.agreementPublicKey == localEndpoint.agreementKey.publicKeyData,
+                  createdAt.timeIntervalSince1970.isFinite,
+                  try relationshipAuthority.isStructurallyValidThrowing else {
+                return false
+            }
+            do {
+                _ = try endpointBinding.verified(
+                    authoritySigningPublicKey: relationshipAuthority.signingKey.publicKeyData,
+                    now: endpointBinding.prekeyBundle.createdAt
+                )
+                return true
+            } catch let error as CryptoError {
+                throw error
+            } catch {
+                return false
+            }
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        version == Self.version
-            && !relationshipPseudonym.isEmpty
-            && relationshipPseudonym.utf8.count <= 512
-            && relationshipAuthority.createdAt == createdAt
-            && localEndpoint.createdAt == createdAt
-            && endpointBinding.signingPublicKey == localEndpoint.signingKey.publicKeyData
-            && endpointBinding.agreementPublicKey == localEndpoint.agreementKey.publicKeyData
-            && (try? endpointBinding.verified(
-                authoritySigningPublicKey: relationshipAuthority.signingKey.publicKeyData,
-                now: endpointBinding.prekeyBundle.createdAt
-            )) != nil
-            && createdAt.timeIntervalSince1970.isFinite
+        (try? isStructurallyValidThrowing) == true
     }
 
     /// Atomically renews the one relationship endpoint's advertised prekey.
-    /// The stable authority binding and established direct sessions do not
+    /// The relationship-scoped authority binding and established direct sessions do not
     /// change, and a failure cannot leave local key state ahead of disclosure.
     @discardableResult
     public mutating func renewEndpointPrekeyIfNeeded(at date: Date = Date()) throws -> Bool {
@@ -288,7 +306,7 @@ public struct PeerPairwiseIdentityV2: Codable, Equatable, Identifiable {
         signingPublicKey = verified.relationshipSigningPublicKey
         agreementPublicKey = verified.relationshipAgreementPublicKey
         endpointBinding = verified.endpointBinding
-        guard verified.receiveRoutes.verify(
+        guard try verified.receiveRoutes.verifyThrowing(
             ownerSigningPublicKey: verified.endpointBinding.signingPublicKey
         ), verified.receiveRoutes.relationshipID == relationshipID else {
             throw PairwiseIdentityV2Error.wrongIntroduction
@@ -321,7 +339,7 @@ public struct PeerPairwiseIdentityV2: Codable, Equatable, Identifiable {
         )
         sendRoutes = try container.decode(PairwiseRouteSetV2.self, forKey: .sendRoutes)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .sendRoutes,
                 in: container,
@@ -331,7 +349,7 @@ public struct PeerPairwiseIdentityV2: Codable, Equatable, Identifiable {
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(
@@ -352,22 +370,39 @@ public struct PeerPairwiseIdentityV2: Codable, Equatable, Identifiable {
         try container.encode(createdAt, forKey: .createdAt)
     }
 
-    public var isStructurallyValid: Bool {
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
         let pseudonym = relationshipPseudonym.trimmingCharacters(in: .whitespacesAndNewlines)
-        return version == Self.version
-            && pseudonym == relationshipPseudonym
-            && !pseudonym.isEmpty
-            && pseudonym.utf8.count <= 512
-            && SigningKeyPair.isValidPublicKey(signingPublicKey)
-            && AgreementKeyPair.isValidPublicKey(agreementPublicKey)
-            && sendRoutes.relationshipID == relationshipID
-            && (try? endpointBinding.verified(
+        guard version == Self.version,
+              pseudonym == relationshipPseudonym,
+              !pseudonym.isEmpty,
+              pseudonym.utf8.count <= 512,
+              sendRoutes.relationshipID == relationshipID,
+              createdAt.timeIntervalSince1970.isFinite,
+              try SigningKeyPair.isValidPublicKeyThrowing(signingPublicKey),
+              try AgreementKeyPair.isValidPublicKeyThrowing(agreementPublicKey),
+              try sendRoutes.isStructurallyValidThrowing,
+              try sendRoutes.verifyThrowing(
+                  ownerSigningPublicKey: endpointBinding.signingPublicKey
+              ) else {
+            return false
+        }
+        do {
+            _ = try endpointBinding.verified(
                 authoritySigningPublicKey: signingPublicKey,
                 now: endpointBinding.prekeyBundle.createdAt
-            )) != nil
-            && sendRoutes.isStructurallyValid
-            && sendRoutes.verify(ownerSigningPublicKey: endpointBinding.signingPublicKey)
-            && createdAt.timeIntervalSince1970.isFinite
+            )
+            return true
+        } catch let error as CryptoError {
+            throw error
+        } catch {
+            return false
+        }
+        }
+    }
+
+    public var isStructurallyValid: Bool {
+        (try? isStructurallyValidThrowing) == true
     }
 }
 

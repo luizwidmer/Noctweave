@@ -49,7 +49,7 @@ public actor ClientStateStore {
     }
 
     public func save(_ state: ClientState) throws {
-        guard state.isStructurallyValid else {
+        guard try state.isStructurallyValidThrowing else {
             throw ClientStateError.invalidState
         }
         let directory = fileURL.deletingLastPathComponent()

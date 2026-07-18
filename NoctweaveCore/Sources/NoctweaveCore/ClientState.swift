@@ -380,7 +380,7 @@ public struct ClientState: Codable, Equatable {
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.hasAcceptedPrivacyPolicy = hasAcceptedPrivacyPolicy
         self.hasAcceptedTermsOfUse = hasAcceptedTermsOfUse
-        guard isStructurallyValid else { throw ClientStateError.invalidState }
+        guard try isStructurallyValidThrowing else { throw ClientStateError.invalidState }
     }
 
     public init(from decoder: Decoder) throws {
@@ -412,7 +412,7 @@ public struct ClientState: Codable, Equatable {
         hasAcceptedPrivacyPolicy = try container.decode(Bool.self, forKey: .hasAcceptedPrivacyPolicy)
         hasAcceptedTermsOfUse = try container.decode(Bool.self, forKey: .hasAcceptedTermsOfUse)
         try requireValidClientStateDecoding(
-            isStructurallyValid,
+            try isStructurallyValidThrowing,
             key: .personas,
             container: container,
             description: "Invalid client state"
@@ -421,7 +421,7 @@ public struct ClientState: Codable, Equatable {
 
     public func encode(to encoder: Encoder) throws {
         try requireValidClientStateEncoding(
-            isStructurallyValid,
+            try isStructurallyValidThrowing,
             value: self,
             encoder: encoder,
             description: "Invalid client state"
@@ -467,12 +467,20 @@ public struct ClientState: Codable, Equatable {
         }
     }
 
-    public var isStructurallyValid: Bool {
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            for persona in personas {
+                guard try persona.isStructurallyValidThrowing else { return false }
+            }
+            return hasValidAggregateStructureAfterPersonaPreflight
+        }
+    }
+
+    private var hasValidAggregateStructureAfterPersonaPreflight: Bool {
         version == Self.version
             && !personas.isEmpty
             && personas.count <= Self.maximumPersonas
             && Set(personas.map(\.id)).count == personas.count
-            && personas.allSatisfy(\.isStructurallyValid)
             && protocolScopesAreUnique(
                 relationships: personas.flatMap(\.relationships),
                 groupRuntimes: personas.flatMap(\.groupRuntimes)
@@ -491,6 +499,10 @@ public struct ClientState: Codable, Equatable {
             && privacy.isStructurallyValid
             && appLock.isStructurallyValid
             && chatList.isStructurallyValid
+    }
+
+    public var isStructurallyValid: Bool {
+        (try? isStructurallyValidThrowing) == true
     }
 
     public mutating func addPersona(
@@ -521,10 +533,14 @@ public struct ClientState: Codable, Equatable {
         }
         var persona = personas[index]
         try body(&persona)
-        guard persona.isStructurallyValid else { throw ClientStateError.invalidState }
+        guard try persona.isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
         var candidate = self
         candidate.personas[index] = persona
-        guard candidate.isStructurallyValid else { throw ClientStateError.invalidState }
+        guard try candidate.isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
         self = candidate
     }
 

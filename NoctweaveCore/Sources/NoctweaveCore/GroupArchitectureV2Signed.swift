@@ -60,8 +60,37 @@ public enum SignedGroupV2Error: Error, Equatable {
     case activeLeafLimitExceeded
     case admissionMismatch
     case invalidWelcomeSignature
+    case invalidTimestamp
     case genesisAdmissionRequired
     case groupDeleted
+}
+
+private func requireGroupCredentialAlgorithms(
+    signingPublicKey: Data,
+    agreementPublicKey: Data
+) throws {
+    try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+        signingPublicKey: signingPublicKey,
+        agreementPublicKey: agreementPublicKey
+    )
+}
+
+private func requireGroupCredentialAlgorithms(
+    _ credentials: [GroupMemberCredentialV2]
+) throws {
+    try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+        signingPublicKey: credentials.first?.signingPublicKey ?? Data(),
+        agreementPublicKey: credentials.first?.agreementPublicKey ?? Data()
+    )
+}
+
+private func requireGroupCredentialAlgorithms(
+    _ admission: GroupCredentialAdmissionV2
+) throws {
+    try requireGroupCredentialAlgorithms(
+        signingPublicKey: admission.groupSigningPublicKey,
+        agreementPublicKey: admission.groupAgreementPublicKey
+    )
 }
 
 /// An opaque credential handle generated independently for exactly one group.
@@ -211,6 +240,7 @@ public struct GroupCredentialAdmissionV2: Codable, Equatable, Identifiable {
             expiresAt: try values.decode(Date.self, forKey: .expiresAt),
             credentialPossessionSignature: try values.decode(Data.self, forKey: .credentialPossessionSignature)
         )
+        try requireGroupCredentialAlgorithms(self)
         guard contentTypes == decodedContentTypes, isStructurallyValid else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "Invalid group admission")
@@ -230,6 +260,10 @@ public struct GroupCredentialAdmissionV2: Codable, Equatable, Identifiable {
         issuedAt: Date = Date(),
         expiresAt: Date
     ) throws -> GroupCredentialAdmissionV2 {
+        try requireGroupCredentialAlgorithms(
+            signingPublicKey: groupSigningKey.publicKeyData,
+            agreementPublicKey: groupAgreementKey.publicKeyData
+        )
         var projection = GroupCredentialAdmissionV2(
             id: id,
             groupId: groupId,
@@ -293,6 +327,7 @@ public struct GroupCredentialAdmissionV2: Codable, Equatable, Identifiable {
         selection expectedSelection: GroupProtocolSelectionV2,
         now: Date = Date()
     ) throws -> GroupCredentialAdmissionV2 {
+        try requireGroupCredentialAlgorithms(self)
         guard isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
         guard groupId == expectedGroupId,
               memberHandle == expectedMemberHandle,
@@ -303,7 +338,7 @@ public struct GroupCredentialAdmissionV2: Codable, Equatable, Identifiable {
               issuedAt <= now.addingTimeInterval(NoctweaveSignedGroupV2.maximumClockSkewSeconds),
               now < expiresAt,
               let digest = payloadDigest,
-              SigningKeyPair.verify(
+              try SigningKeyPair.verifyThrowing(
                   signature: credentialPossessionSignature,
                   data: try GroupAdmissionProjectionSignatureContextV2(
                       groupId: groupId,
@@ -433,6 +468,10 @@ public struct GroupMemberCredentialV2: Codable, Equatable, Identifiable {
             addedEpoch: try values.decode(UInt64.self, forKey: .addedEpoch),
             removedEpoch: try values.decodeIfPresent(UInt64.self, forKey: .removedEpoch)
         )
+        try requireGroupCredentialAlgorithms(
+            signingPublicKey: signingPublicKey,
+            agreementPublicKey: agreementPublicKey
+        )
         guard contentTypes == decodedContentTypes, isStructurallyValid else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "Invalid group credential")
@@ -444,6 +483,7 @@ public struct GroupMemberCredentialV2: Codable, Equatable, Identifiable {
         _ projection: GroupCredentialAdmissionV2,
         addedEpoch: UInt64
     ) throws -> GroupMemberCredentialV2 {
+        try requireGroupCredentialAlgorithms(projection)
         guard projection.isStructurallyValid, let digest = projection.digest else {
             throw SignedGroupV2Error.invalidStructure
         }
@@ -685,7 +725,8 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         )
         try commit.validateTransition(
             from: currentState,
-            verifySignature: false
+            verifySignature: false,
+            observedAt: createdAt
         )
         guard let author = currentState.activeCredentials.first(where: {
             $0.credentialHandle == authorCredentialHandle
@@ -720,7 +761,10 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
                 ).signableData()
             )
         )
-        return try commit.verifiedTransition(from: currentState)
+        return try commit.verifiedTransition(
+            from: currentState,
+            observedAt: createdAt
+        )
     }
 
     public var isStructurallyValid: Bool {
@@ -767,11 +811,13 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
     }
 
     public func verifiedTransition(
-        from currentState: SignedGroupStateV2
+        from currentState: SignedGroupStateV2,
+        observedAt: Date
     ) throws -> SignedGroupCommitV2 {
         try validateTransition(
             from: currentState,
-            verifySignature: true
+            verifySignature: true,
+            observedAt: observedAt
         )
         return self
     }
@@ -805,8 +851,14 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
 
     private func validateTransition(
         from currentState: SignedGroupStateV2,
-        verifySignature: Bool
+        verifySignature: Bool,
+        observedAt: Date
     ) throws {
+        try requireGroupCredentialAlgorithms(currentState.memberCredentials)
+        try requireGroupCredentialAlgorithms(proposedCredentials)
+        if let admissionProjection {
+            try requireGroupCredentialAlgorithms(admissionProjection)
+        }
         guard currentState.isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
         guard profile == currentState.profile,
               cipherSuite == currentState.cipherSuite,
@@ -820,9 +872,15 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             throw SignedGroupV2Error.transcriptMismatch
         }
         guard providerCommitDigest.count == 32,
-              idempotencyKey.count == 32,
-              createdAt >= currentState.signedAt else {
+              idempotencyKey.count == 32 else {
             throw SignedGroupV2Error.invalidStructure
+        }
+        guard observedAt.timeIntervalSince1970.isFinite,
+              createdAt >= currentState.signedAt,
+              createdAt <= observedAt.addingTimeInterval(
+                  NoctweaveSignedGroupV2.maximumClockSkewSeconds
+              ) else {
+            throw SignedGroupV2Error.invalidTimestamp
         }
         try SignedGroupStateValidatorV2.validate(
             profile: profile,
@@ -842,18 +900,20 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         }
         if verifySignature {
             guard isStructurallyValid,
-                  let digest,
-                  let signatureData = try? GroupCommitSignatureContextV2(
+                  let digest else {
+                throw SignedGroupV2Error.invalidCommitSignature
+            }
+            let signatureData = try GroupCommitSignatureContextV2(
                       groupId: groupId,
                       profile: profile,
                       nextEpoch: nextEpoch,
                       commitDigest: digest
-                  ).signableData(),
-                  SigningKeyPair.verify(
-                      signature: signature,
-                      data: signatureData,
-                      publicKeyData: actorLeaf.signingPublicKey
-                  ) else {
+                  ).signableData()
+            guard try SigningKeyPair.verifyThrowing(
+                signature: signature,
+                data: signatureData,
+                publicKeyData: actorLeaf.signingPublicKey
+            ) else {
                 throw SignedGroupV2Error.invalidCommitSignature
             }
         }
@@ -1007,6 +1067,7 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
         signingKey: SigningKeyPair,
         createdAt: Date = Date()
     ) throws -> SignedGroupDeletionTombstoneV2 {
+        try requireGroupCredentialAlgorithms(currentState.memberCredentials)
         guard currentState.isStructurallyValid,
               currentState.epoch < UInt64.max,
               idempotencyKey.count == 32,
@@ -1062,7 +1123,10 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
                 ).signableData()
             )
         )
-        return try tombstone.verified(against: currentState)
+        return try tombstone.verified(
+            against: currentState,
+            observedAt: createdAt
+        )
     }
 
     public var isStructurallyValid: Bool {
@@ -1085,8 +1149,10 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
     }
 
     public func verified(
-        against currentState: SignedGroupStateV2
+        against currentState: SignedGroupStateV2,
+        observedAt: Date
     ) throws -> SignedGroupDeletionTombstoneV2 {
+        try requireGroupCredentialAlgorithms(currentState.memberCredentials)
         guard isStructurallyValid,
               currentState.isStructurallyValid else {
             throw SignedGroupV2Error.invalidStructure
@@ -1102,6 +1168,12 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
               createdAt >= currentState.signedAt else {
             throw SignedGroupV2Error.invalidContext
         }
+        guard observedAt.timeIntervalSince1970.isFinite,
+              createdAt <= observedAt.addingTimeInterval(
+                  NoctweaveSignedGroupV2.maximumClockSkewSeconds
+              ) else {
+            throw SignedGroupV2Error.invalidTimestamp
+        }
         guard let authorLeaf = currentState.activeCredentials.first(where: {
             $0.credentialHandle == authorCredentialHandle
         }),
@@ -1110,7 +1182,7 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
               }),
               currentState.permissions.allows(.deleteGroup, for: authorUser.role),
               let digest,
-              SigningKeyPair.verify(
+              try SigningKeyPair.verifyThrowing(
                   signature: signature,
                   data: try GroupDeletionSignatureContextV2(
                       groupId: groupId,
@@ -1155,24 +1227,30 @@ public struct SignedDeletedGroupStateV2: Codable, Equatable, Identifiable {
     public let tombstone: SignedGroupDeletionTombstoneV2
     public let tombstoneDigest: Data
     public let terminalTranscriptHash: Data
+    /// Receiver-observed acceptance time retained for historical verification.
+    /// The signed peer timestamp remains transcript metadata, not freshness authority.
+    public let observedAt: Date
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case version
         case tombstone
         case tombstoneDigest
         case terminalTranscriptHash
+        case observedAt
     }
 
     public init(
         version: Int = NoctweaveSignedGroupV2.version,
         tombstone: SignedGroupDeletionTombstoneV2,
         tombstoneDigest: Data,
-        terminalTranscriptHash: Data
+        terminalTranscriptHash: Data,
+        observedAt: Date
     ) {
         self.version = version
         self.tombstone = tombstone
         self.tombstoneDigest = tombstoneDigest
         self.terminalTranscriptHash = terminalTranscriptHash
+        self.observedAt = observedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -1185,7 +1263,8 @@ public struct SignedDeletedGroupStateV2: Codable, Equatable, Identifiable {
             version: try values.decode(Int.self, forKey: .version),
             tombstone: try values.decode(SignedGroupDeletionTombstoneV2.self, forKey: .tombstone),
             tombstoneDigest: try values.decode(Data.self, forKey: .tombstoneDigest),
-            terminalTranscriptHash: try values.decode(Data.self, forKey: .terminalTranscriptHash)
+            terminalTranscriptHash: try values.decode(Data.self, forKey: .terminalTranscriptHash),
+            observedAt: try values.decode(Date.self, forKey: .observedAt)
         )
         guard isStructurallyValid else {
             throw DecodingError.dataCorrupted(
@@ -1196,9 +1275,13 @@ public struct SignedDeletedGroupStateV2: Codable, Equatable, Identifiable {
 
     public static func create(
         tombstone: SignedGroupDeletionTombstoneV2,
-        from currentState: SignedGroupStateV2
+        from currentState: SignedGroupStateV2,
+        observedAt: Date
     ) throws -> SignedDeletedGroupStateV2 {
-        _ = try tombstone.verified(against: currentState)
+        _ = try tombstone.verified(
+            against: currentState,
+            observedAt: observedAt
+        )
         guard let digest = tombstone.digest else {
             throw SignedGroupV2Error.invalidStructure
         }
@@ -1208,7 +1291,8 @@ public struct SignedDeletedGroupStateV2: Codable, Equatable, Identifiable {
             terminalTranscriptHash: try terminalHash(
                 tombstone: tombstone,
                 tombstoneDigest: digest
-            )
+            ),
+            observedAt: observedAt
         )
         return try state.verified(previousState: currentState)
     }
@@ -1219,6 +1303,10 @@ public struct SignedDeletedGroupStateV2: Codable, Equatable, Identifiable {
               tombstone.digest == tombstoneDigest,
               tombstoneDigest.count == 32,
               terminalTranscriptHash.count == 32,
+              observedAt.timeIntervalSince1970.isFinite,
+              tombstone.createdAt <= observedAt.addingTimeInterval(
+                  NoctweaveSignedGroupV2.maximumClockSkewSeconds
+              ),
               let expected = try? Self.terminalHash(
                   tombstone: tombstone,
                   tombstoneDigest: tombstoneDigest
@@ -1232,7 +1320,10 @@ public struct SignedDeletedGroupStateV2: Codable, Equatable, Identifiable {
         previousState: SignedGroupStateV2
     ) throws -> SignedDeletedGroupStateV2 {
         guard isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
-        _ = try tombstone.verified(against: previousState)
+        _ = try tombstone.verified(
+            against: previousState,
+            observedAt: observedAt
+        )
         return self
     }
 
@@ -1389,6 +1480,7 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
             signedAt: try values.decode(Date.self, forKey: .signedAt),
             signature: try values.decode(Data.self, forKey: .signature)
         )
+        try requireGroupCredentialAlgorithms(memberCredentials)
         guard members == decodedMembers,
               memberCredentials == decodedCredentials,
               isStructurallyValid else {
@@ -1457,15 +1549,22 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
             signingKey: signingKey,
             signedAt: signedAt
         )
-        return try state.verified(genesisAdmission: verifiedAdmission)
+        return try state.verified(
+            genesisAdmission: verifiedAdmission,
+            observedAt: signedAt
+        )
     }
 
     public static func applying(
         _ commit: SignedGroupCommitV2,
         to currentState: SignedGroupStateV2,
+        observedAt: Date,
         signingKey: SigningKeyPair
     ) throws -> SignedGroupStateV2 {
-        _ = try commit.verifiedTransition(from: currentState)
+        _ = try commit.verifiedTransition(
+            from: currentState,
+            observedAt: observedAt
+        )
         guard let author = currentState.activeCredentials.first(where: {
             $0.credentialHandle == commit.authorCredentialHandle
         }), author.signingPublicKey == signingKey.publicKeyData,
@@ -1489,7 +1588,8 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
         )
         return try state.verified(
             previousState: currentState,
-            commit: commit
+            commit: commit,
+            observedAt: observedAt
         )
     }
 
@@ -1548,8 +1648,22 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
     public func verified(
         previousState: SignedGroupStateV2? = nil,
         commit: SignedGroupCommitV2? = nil,
-        genesisAdmission: GroupCredentialAdmissionV2? = nil
+        genesisAdmission: GroupCredentialAdmissionV2? = nil,
+        observedAt: Date
     ) throws -> SignedGroupStateV2 {
+        try requireGroupCredentialAlgorithms(memberCredentials)
+        if let previousState {
+            try requireGroupCredentialAlgorithms(previousState.memberCredentials)
+        }
+        if let genesisAdmission {
+            try requireGroupCredentialAlgorithms(genesisAdmission)
+        }
+        guard observedAt.timeIntervalSince1970.isFinite,
+              signedAt <= observedAt.addingTimeInterval(
+                  NoctweaveSignedGroupV2.maximumClockSkewSeconds
+              ) else {
+            throw SignedGroupV2Error.invalidTimestamp
+        }
         guard isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
         let authorKey: Data
         if let previousState {
@@ -1563,7 +1677,10 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
                 throw SignedGroupV2Error.transcriptMismatch
             }
             guard let commit else { throw SignedGroupV2Error.invalidTransition }
-            _ = try commit.verifiedTransition(from: previousState)
+            _ = try commit.verifiedTransition(
+                from: previousState,
+                observedAt: observedAt
+            )
             guard commit.groupId == groupId,
                   commit.nextEpoch == epoch,
                   commit.proposedMembers == members,
@@ -1604,6 +1721,9 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
                     profile: profile,
                     cipherSuite: cipherSuite
                 ),
+                // Admission validity is evaluated at the authenticated state
+                // signing time. Freshness of that peer time is separately
+                // bounded by the receiver-observed `observedAt` above.
                 now: signedAt
             )
             let expectedLeaf = try GroupMemberCredentialV2.fromVerifiedProjection(
@@ -1623,7 +1743,11 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
             transcriptHash: confirmedTranscriptHash,
             commitDigest: commitDigest
         ).signableData()
-        guard SigningKeyPair.verify(signature: signature, data: signatureData, publicKeyData: authorKey) else {
+        guard try SigningKeyPair.verifyThrowing(
+            signature: signature,
+            data: signatureData,
+            publicKeyData: authorKey
+        ) else {
             throw SignedGroupV2Error.invalidStateSignature
         }
         return self
@@ -1832,6 +1956,7 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
         createdAt: Date = Date(),
         expiresAt: Date
     ) throws -> SignedGroupWelcomeV2 {
+        try requireGroupCredentialAlgorithms(state.memberCredentials)
         guard state.isStructurallyValid,
               let author = state.transitionAuthorCredential,
               author.signingPublicKey == signingKey.publicKeyData,
@@ -1886,6 +2011,7 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
         against state: SignedGroupStateV2,
         now: Date = Date()
     ) throws -> SignedGroupWelcomeV2 {
+        try requireGroupCredentialAlgorithms(state.memberCredentials)
         guard isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
         guard now.timeIntervalSince1970.isFinite,
               createdAt <= now.addingTimeInterval(NoctweaveSignedGroupV2.maximumClockSkewSeconds),
@@ -1910,7 +2036,7 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
               author.credentialHandle == authorCredentialHandle else {
             throw SignedGroupV2Error.unknownAuthor
         }
-        guard SigningKeyPair.verify(
+        guard try SigningKeyPair.verifyThrowing(
             signature: signature,
             data: try signatureContext().signableData(),
             publicKeyData: author.signingPublicKey
@@ -1969,6 +2095,7 @@ private enum SignedGroupStateValidatorV2 {
         permissions: GroupPermissionPolicy,
         metadataDigest: Data?
     ) throws {
+        try requireGroupCredentialAlgorithms(memberCredentials)
         guard profile == NoctweaveSignedGroupV2.experimentalProfile,
               cipherSuite == NoctweaveSignedGroupV2.experimentalCipherSuite else {
             throw SignedGroupV2Error.unsupportedProfile

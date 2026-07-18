@@ -6,11 +6,6 @@ public enum ProtocolIntentKindV2: String, Codable, Equatable, CaseIterable {
     case uploadBlob
     case rolloverRoute
     case renewRelationshipPrekey
-    case addGroupMember
-    case removeGroupMember
-    case replaceGroupCredential
-    case changeGroupPolicy
-    case publishContinuity
 }
 
 public enum ProtocolIntentStateV2: String, Codable, Equatable, CaseIterable {
@@ -31,6 +26,7 @@ public enum ProtocolIntentErrorClassV2: String, Codable, Equatable, CaseIterable
     case relayRejected
     case epochConflict
     case dependencyUnavailable
+    case dependencyFailed
     case expired
     case authorizationRejected
     case invalidPayload
@@ -41,7 +37,7 @@ public enum ProtocolIntentErrorClassV2: String, Codable, Equatable, CaseIterable
         switch self {
         case .networkUnavailable, .relayUnavailable, .epochConflict, .dependencyUnavailable:
             return true
-        case .relayRejected, .expired, .authorizationRejected, .invalidPayload,
+        case .relayRejected, .dependencyFailed, .expired, .authorizationRejected, .invalidPayload,
              .unsupportedCapability, .attemptLimitExceeded:
             return false
         }
@@ -320,41 +316,18 @@ public struct ProtocolIntentV2: Codable, Equatable, Identifiable {
         )
     }
 
-    /// Explicit user/operator recovery for a preserved exact payload after a
-    /// permanent rejection or bounded retry exhaustion. This never changes the
-    /// intent ID, idempotency key, target, dependencies, or payload digest.
-    public func rearming(at date: Date) -> ProtocolIntentV2? {
-        guard (state == .permanentFailure
-                || attemptCount >= UInt32(NoctweaveArchitectureV2.maximumIntentAttempts)),
+    /// Converts bounded retry exhaustion into an explicit terminal result.
+    /// Exact authenticated payloads cannot be generically rearmed because
+    /// their timestamps, leases, or authorization context may have expired.
+    public func exhaustingAttempts(at date: Date) -> ProtocolIntentV2? {
+        if state == .permanentFailure { return self }
+        guard !state.isTerminal,
+              attemptCount >= UInt32(NoctweaveArchitectureV2.maximumIntentAttempts),
               date.timeIntervalSince1970.isFinite,
               date >= updatedAt else {
             return nil
         }
-        let renewedExpiry = expiresAt.map { previousExpiry in
-            date.addingTimeInterval(previousExpiry.timeIntervalSince(createdAt))
-        }
-        guard renewedExpiry?.timeIntervalSince1970.isFinite ?? true,
-              renewedExpiry.map({ $0 > date }) ?? true else {
-            return nil
-        }
-        return ProtocolIntentV2(
-            id: id,
-            kind: kind,
-            targetIdentifier: targetIdentifier,
-            expectedEpoch: expectedEpoch,
-            idempotencyKey: idempotencyKey,
-            payloadDigest: payloadDigest,
-            dependencies: dependencies,
-            state: .prepared,
-            attemptCount: 0,
-            lastAttemptId: nil,
-            lastAttemptAt: nil,
-            lastErrorClass: nil,
-            nextAttemptNotBefore: nil,
-            createdAt: createdAt,
-            updatedAt: date,
-            expiresAt: renewedExpiry
-        )
+        return failingPermanently(errorClass: .attemptLimitExceeded, at: date)
     }
 
     private static func isDirectAdvance(

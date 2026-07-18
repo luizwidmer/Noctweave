@@ -284,6 +284,8 @@ public struct RelayClient {
         let decoded: RelayResponse
         do {
             decoded = try NoctweaveCoder.decode(RelayResponse.self, from: data)
+        } catch let error as CryptoError {
+            throw error
         } catch {
             throw RelayClientResponseError.invalidPayload(
                 details: "Relay returned an invalid current-protocol response (\(data.count) bytes)."

@@ -53,6 +53,9 @@ final class PairwiseRouteSetV2Tests: XCTestCase {
         )
         XCTAssertEqual(routeSet.usableRoutes(at: overlapUntil).map(\.routeID), [candidate.routeID])
         XCTAssertTrue(routeSet.verify(ownerSigningPublicKey: signingKey.publicKeyData))
+        XCTAssertTrue(try routeSet.verifyThrowing(
+            ownerSigningPublicKey: signingKey.publicKeyData
+        ))
         XCTAssertEqual(routeSet.revision, 4)
     }
 
@@ -84,6 +87,9 @@ final class PairwiseRouteSetV2Tests: XCTestCase {
             from: JSONSerialization.data(withJSONObject: object)
         )
         XCTAssertFalse(tampered.verify(ownerSigningPublicKey: signingKey.publicKeyData))
+        XCTAssertFalse(try tampered.verifyThrowing(
+            ownerSigningPublicKey: signingKey.publicKeyData
+        ))
     }
 
     func testTargetedProbePromotesInOneVerifiableSuccessor() throws {
@@ -121,11 +127,70 @@ final class PairwiseRouteSetV2Tests: XCTestCase {
             of: testing,
             ownerSigningPublicKey: signingKey.publicKeyData
         ))
+        XCTAssertTrue(try promoted.isValidSuccessorThrowing(
+            of: testing,
+            ownerSigningPublicKey: signingKey.publicKeyData
+        ))
         XCTAssertEqual(promoted.revision, testing.revision + 1)
         XCTAssertEqual(
             Set(promoted.usableRoutes(at: probedAt).map(\.routeID)),
             Set([current.routeID, candidate.routeID])
         )
+    }
+
+    func testObservedSuccessorRejectsFarFutureAndUnusableRouteSnapshots() throws {
+        let signingKey = try SigningKeyPair.generate()
+        let relationshipID = UUID()
+        let handle = RelationshipEndpointHandle(
+            rawValue: Data(repeating: 0x45, count: 32).base64EncodedString()
+        )
+        let initial = try PairwiseRouteSetV2.create(
+            relationshipID: relationshipID,
+            ownerEndpointHandle: handle,
+            activeRoutes: [try route(marker: 0x51, state: .active, validFrom: origin)],
+            issuedAt: origin,
+            signingKey: signingKey
+        )
+        let candidateAt = origin.addingTimeInterval(60)
+        let currentSuccessor = try initial.addingTestingRoute(
+            try route(marker: 0x52, state: .testing, validFrom: candidateAt),
+            signingKey: signingKey,
+            issuedAt: candidateAt
+        )
+
+        XCTAssertTrue(currentSuccessor.isAcceptableSuccessor(
+            of: initial,
+            ownerSigningPublicKey: signingKey.publicKeyData,
+            observedAt: candidateAt
+        ))
+        XCTAssertTrue(try currentSuccessor.isAcceptableSuccessorThrowing(
+            of: initial,
+            ownerSigningPublicKey: signingKey.publicKeyData,
+            observedAt: candidateAt
+        ))
+        XCTAssertFalse(currentSuccessor.isAcceptableSuccessor(
+            of: initial,
+            ownerSigningPublicKey: signingKey.publicKeyData,
+            observedAt: origin.addingTimeInterval(4_000)
+        ))
+
+        let farFuture = origin.addingTimeInterval(
+            NoctweaveOpaqueRoutesV2.maximumAuthorizationClockSkew + 1_000
+        )
+        let futureSuccessor = try initial.addingTestingRoute(
+            try route(marker: 0x53, state: .testing, validFrom: farFuture),
+            signingKey: signingKey,
+            issuedAt: farFuture
+        )
+        XCTAssertTrue(futureSuccessor.isValidSuccessor(
+            of: initial,
+            ownerSigningPublicKey: signingKey.publicKeyData
+        ))
+        XCTAssertFalse(futureSuccessor.isAcceptableSuccessor(
+            of: initial,
+            ownerSigningPublicKey: signingKey.publicKeyData,
+            observedAt: origin
+        ))
     }
 
     private func route(

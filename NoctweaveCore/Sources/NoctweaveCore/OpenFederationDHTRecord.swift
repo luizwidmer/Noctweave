@@ -144,9 +144,11 @@ public struct OpenFederationDHTRecord: Codable, Equatable {
         guard expiresAt.timeIntervalSince(issuedAt) <= Self.maxLifetimeSeconds else {
             throw OpenFederationDHTRecordError.invalidLifetime
         }
-        guard let payload = try? signingPayloadData(),
-              signatureAlgorithm == Self.signatureAlgorithm,
-              SigningKeyPair.verify(
+        guard signatureAlgorithm == Self.signatureAlgorithm else {
+            throw OpenFederationDHTRecordError.invalidSignature
+        }
+        let payload = try signingPayloadData()
+        guard try SigningKeyPair.verifyThrowing(
                 signature: signature,
                 data: payload,
                 publicKeyData: relaySigningPublicKey

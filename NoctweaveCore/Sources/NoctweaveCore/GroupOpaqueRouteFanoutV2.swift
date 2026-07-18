@@ -337,7 +337,7 @@ private extension ProtocolEnvelopeV1 {
     var groupIDForOpaqueFanout: UUID? {
         switch self {
         case .groupApplicationV2(let envelope): return envelope.groupId
-        case .groupCommitV2(let commit): return commit.groupId
+        case .groupCommitV2(let transition): return transition.commit.groupId
         case .groupWelcomeV2(let welcome): return welcome.groupId
         case .groupDeletionV2(let deletion): return deletion.groupId
         case .directV4: return nil

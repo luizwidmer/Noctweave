@@ -7,6 +7,39 @@ public enum RelayCapabilityStatusV2: String, Codable, Equatable, CaseIterable {
     case deprecated
 }
 
+/// Canonical advertised limits for `nw.opaque-route@2`. The in-process relay
+/// and Linux relay publish this exact registry so clients never infer runtime
+/// bounds from implementation-specific defaults.
+public enum OpaqueRouteRelayCapabilityLimitsV2 {
+    public static let cursorBytes: UInt64 = UInt64(
+        NoctweaveOpaqueRouteRelayStoreV2.cursorBytes
+    )
+    public static let maxPage: UInt64 = UInt64(
+        NoctweaveOpaqueRouteRelayStoreV2.maximumSyncPage
+    )
+    public static let maxPacketBytes: UInt64 = UInt64(
+        OpaqueRoutePaddingBucketV2.bytes65536.rawValue
+    )
+    public static let maxPacketsPerRoute: UInt64 = UInt64(
+        OpaqueRouteQuotaBucketV2.packets1024.rawValue
+    )
+    public static let maxRetentionSeconds: UInt64 = UInt64(
+        OpaqueRouteRetentionBucketV2.sevenDays.rawValue
+    )
+    public static let maxRoutes: UInt64 = UInt64(
+        NoctweaveOpaqueRouteRelayStoreV2.maximumRoutes
+    )
+
+    public static let registry: [String: UInt64] = [
+        "cursorBytes": cursorBytes,
+        "maxPage": maxPage,
+        "maxPacketBytes": maxPacketBytes,
+        "maxPacketsPerRoute": maxPacketsPerRoute,
+        "maxRetentionSeconds": maxRetentionSeconds,
+        "maxRoutes": maxRoutes,
+    ]
+}
+
 /// One relay-side protocol module. This is intentionally narrower than an
 /// endpoint capability manifest: relays advertise only operations they
 /// actually terminate, never encrypted application semantics they cannot see.
@@ -146,21 +179,17 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         rendezvousTransportEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
-            RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .stable),
+            RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .provisional),
             RelayModuleCapabilityV2(
                 module: "nw.opaque-route",
                 versions: [2],
-                status: .stable,
-                limits: [
-                    "maxCursorBytes": UInt64(NoctweaveOpaqueRouteRelayStoreV2.cursorBytes),
-                    "maxPage": UInt64(NoctweaveOpaqueRouteRelayStoreV2.maximumSyncPage),
-                    "maxRoutes": UInt64(NoctweaveOpaqueRouteRelayStoreV2.maximumRoutes)
-                ]
+                status: .provisional,
+                limits: OpaqueRouteRelayCapabilityLimitsV2.registry
             ),
-            RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .stable)
+            RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .provisional)
         ]
         if attachmentsEnabled {
-            modules.append(RelayModuleCapabilityV2(module: "nw.blobs", versions: [1], status: .stable))
+            modules.append(RelayModuleCapabilityV2(module: "nw.blobs", versions: [1], status: .provisional))
         }
         if wakeEnabled {
             modules.append(RelayModuleCapabilityV2(module: "nw.wake", versions: [1], status: .experimental))
@@ -198,7 +227,7 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
                 RelayModuleCapabilityV2(
                     module: "nw.rendezvous-transport",
                     versions: [2],
-                    status: .stable,
+                    status: .provisional,
                     limits: [
                         "maxLifetimeSeconds": 600,
                         "maxLanes": 2,

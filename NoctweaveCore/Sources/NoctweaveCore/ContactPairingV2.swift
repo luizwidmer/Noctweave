@@ -32,7 +32,9 @@ public struct ContactPairingInvitationV2: Codable, Equatable {
         self.version = Self.version
         self.offer = offer
         self.redemptionSecret = redemptionSecret
-        guard isStructurallyValid else { throw ContactPairingV2Error.invalidInvitation }
+        guard try isStructurallyValidThrowing else {
+            throw ContactPairingV2Error.invalidInvitation
+        }
     }
 
     public init(from decoder: Decoder) throws {
@@ -53,7 +55,7 @@ public struct ContactPairingInvitationV2: Codable, Equatable {
             RendezvousRedemptionSecretV2.self,
             forKey: .redemptionSecret
         )
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .offer,
                 in: container,
@@ -62,15 +64,23 @@ public struct ContactPairingInvitationV2: Codable, Equatable {
         }
     }
 
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            guard try offer.isStructurallyValidThrowing else { return false }
+            return version == Self.version
+                && offer.purpose == .contactPairing
+                && redemptionSecret.matches(offer)
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        version == Self.version
-            && offer.purpose == .contactPairing
-            && offer.isStructurallyValid
-            && redemptionSecret.matches(offer)
+        (try? isStructurallyValidThrowing) == true
     }
 
     public func encoded() throws -> String {
-        guard isStructurallyValid else { throw ContactPairingV2Error.invalidInvitation }
+        guard try isStructurallyValidThrowing else {
+            throw ContactPairingV2Error.invalidInvitation
+        }
         let value = try NoctweaveCoder.encode(self).base64EncodedString()
         guard value.count <= Self.maximumEncodedCharacters else {
             throw ContactPairingV2Error.invalidInvitation
@@ -164,7 +174,7 @@ public struct PendingContactParticipantV2: Codable, Equatable,
             ),
             createdAt: createdAt
         )
-        guard participant.isStructurallyValid else {
+        guard try participant.isStructurallyValidThrowing else {
             throw ContactPairingV2Error.invalidParticipant
         }
         return participant
@@ -197,7 +207,7 @@ public struct PendingContactParticipantV2: Codable, Equatable,
             ),
             createdAt: try container.decode(Date.self, forKey: .createdAt)
         )
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .routeCreateRequest,
                 in: container,
@@ -207,7 +217,7 @@ public struct PendingContactParticipantV2: Codable, Equatable,
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(
@@ -226,23 +236,31 @@ public struct PendingContactParticipantV2: Codable, Equatable,
         try container.encode(createdAt, forKey: .createdAt)
     }
 
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            guard try localIdentity.isStructurallyValidThrowing,
+                  try relay.isStructurallyValidRelationshipRouteEndpointV2Throwing else {
+                return false
+            }
+            return version == Self.version
+                && relay.isConfidentialCapabilityTransportV2
+                && clientCapabilities.isStructurallyValid
+                && payloadKey.isStructurallyValid
+                && routeCreateRequest.isStructurallyValid
+                && routeCreateRequest.routeID == clientCapabilities.routeID
+                && routeCreateRequest.lease.issuedAt == createdAt
+                && localIdentity.createdAt == createdAt
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        version == Self.version
-            && localIdentity.isStructurallyValid
-            && relay.isStructurallyValidRelationshipRouteEndpointV2
-            && relay.isConfidentialCapabilityTransportV2
-            && clientCapabilities.isStructurallyValid
-            && payloadKey.isStructurallyValid
-            && routeCreateRequest.isStructurallyValid
-            && routeCreateRequest.routeID == clientCapabilities.routeID
-            && routeCreateRequest.lease.issuedAt == createdAt
-            && localIdentity.createdAt == createdAt
+        (try? isStructurallyValidThrowing) == true
     }
 
     public func activate(
         createdRoute: OpaqueReceiveRouteV2
     ) throws -> PreparedContactParticipantV2 {
-        guard isStructurallyValid,
+        guard try isStructurallyValidThrowing,
               let transitionDigest = routeCreateRequest.transitionDigest,
               createdRoute.status == .active,
               createdRoute.routeID == routeCreateRequest.routeID,
@@ -329,7 +347,7 @@ public struct PreparedContactParticipantV2: Codable, Equatable,
             ),
             createdAt: try container.decode(Date.self, forKey: .createdAt)
         )
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .localIdentity,
                 in: container,
@@ -339,7 +357,7 @@ public struct PreparedContactParticipantV2: Codable, Equatable,
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(
@@ -356,17 +374,25 @@ public struct PreparedContactParticipantV2: Codable, Equatable,
         try container.encode(createdAt, forKey: .createdAt)
     }
 
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            guard try localIdentity.isStructurallyValidThrowing,
+                  try localReceiveRoute.isStructurallyValidThrowing else {
+                return false
+            }
+            return version == Self.version
+                && routeCreateRequest.isStructurallyValid
+                && routeCreateRequest.routeID == localReceiveRoute.route.routeID
+                && localReceiveRoute.route.matches(
+                    clientCapabilities: localReceiveRoute.clientCapabilities
+                )
+                && createdAt.timeIntervalSince1970.isFinite
+                && localIdentity.createdAt == createdAt
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        version == Self.version
-            && localIdentity.isStructurallyValid
-            && localReceiveRoute.isStructurallyValid
-            && routeCreateRequest.isStructurallyValid
-            && routeCreateRequest.routeID == localReceiveRoute.route.routeID
-            && localReceiveRoute.route.matches(
-                clientCapabilities: localReceiveRoute.clientCapabilities
-            )
-            && createdAt.timeIntervalSince1970.isFinite
-            && localIdentity.createdAt == createdAt
+        (try? isStructurallyValidThrowing) == true
     }
 
     fileprivate func introductionBundle(
@@ -374,7 +400,9 @@ public struct PreparedContactParticipantV2: Codable, Equatable,
         issuedAt: Date,
         expiresAt: Date
     ) throws -> PairingIntroductionBundleV2 {
-        guard isStructurallyValid else { throw ContactPairingV2Error.invalidParticipant }
+        guard try isStructurallyValidThrowing else {
+            throw ContactPairingV2Error.invalidParticipant
+        }
         let relationshipID = try PairwiseRelationshipIDV2.derive(
             from: rendezvousTranscriptDigest
         )
@@ -445,8 +473,8 @@ public struct ContactPairingResponderFlowV2 {
         acceptanceFrame: RendezvousFrameV2,
         flow: ContactPairingResponderFlowV2
     ) {
-        guard invitation.isStructurallyValid,
-              participant.isStructurallyValid else {
+        guard try invitation.isStructurallyValidThrowing,
+              try participant.isStructurallyValidThrowing else {
             throw ContactPairingV2Error.invalidInvitation
         }
         let opened = try RendezvousResponderV2.createOpen(
@@ -581,8 +609,8 @@ public struct ContactPairingOffererFlowV2 {
         flow: ContactPairingOffererFlowV2
     ) {
         guard invitation.offer == pendingOffer.offer,
-              invitation.isStructurallyValid,
-              participant.isStructurallyValid else {
+              try invitation.isStructurallyValidThrowing,
+              try participant.isStructurallyValidThrowing else {
             throw ContactPairingV2Error.invalidInvitation
         }
         var session = try pendingOffer.accept(openRequest, ledger: &ledger, at: date)

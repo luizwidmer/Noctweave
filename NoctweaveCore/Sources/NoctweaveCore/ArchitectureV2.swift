@@ -19,6 +19,8 @@ public enum NoctweaveArchitectureV2 {
     public static let maximumIntentDependencies = 32
     public static let maximumIntentAttempts = 64
     public static let maximumPendingDirectDeliveries = 1_024
+    public static let maximumPendingAttachmentUploads = 512
+    public static let maximumDirectSessionsPerRelationship = 8
     public static let maximumProtocolIntents = 1_024
     public static let protocolIntentRecentWindow = 768
     public static let maximumInboundEnvelopeReceipts = 4_096
@@ -120,46 +122,117 @@ public struct InboundEnvelopeReceiptV2: Codable, Equatable, Identifiable {
 public enum TransportQuarantineReasonV2: String, Codable, Equatable, CaseIterable {
     case unknownSender
     case incompatibleProtocol
+    case malformedPacket
     case invalidAttribution
     case invalidCiphertext
+    case invalidEnvelope
+    case invalidControl
     case replayConflict
+    case reassemblyPressure
+    case retiredSession
     case unsupportedPayload
 }
 
-/// Bounded local dead-letter receipt for a permanently invalid opaque-route
-/// event. It contains no plaintext or sender key material. Persisting this
-/// receipt before committing the route cursor prevents one hostile packet from
-/// permanently blocking every later packet in the ordered stream.
+/// Bounded local dead-letter or recovery receipt for an opaque-route event.
+/// It contains no plaintext or sender key material. Persisting this receipt
+/// before committing the route cursor prevents one hostile packet or bounded
+/// reassembly-pressure event from blocking every later packet in the stream.
 public struct QuarantinedTransportEnvelopeV2: Codable, Equatable, Identifiable {
-    public var id: UUID { envelopeId }
+    public var id: OpaqueRoutePacketIDV2 { packetID }
     public let streamDigest: Data
-    public let sequence: UInt64
-    public let envelopeId: UUID
-    public let envelopeDigest: Data
+    public let relaySequence: UInt64
+    public let packetID: OpaqueRoutePacketIDV2
+    public let recordDigest: Data
     public let reason: TransportQuarantineReasonV2
-    public let quarantinedAt: Date
+    public let observedAt: Date
+    public let innerEnvelopeID: UUID?
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case streamDigest
+        case relaySequence
+        case packetID
+        case recordDigest
+        case reason
+        case observedAt
+        case innerEnvelopeID
+    }
 
     public init(
         streamDigest: Data,
-        sequence: UInt64,
-        envelopeId: UUID,
-        envelopeDigest: Data,
+        relaySequence: UInt64,
+        packetID: OpaqueRoutePacketIDV2,
+        recordDigest: Data,
         reason: TransportQuarantineReasonV2,
-        quarantinedAt: Date = Date()
+        observedAt: Date = Date(),
+        innerEnvelopeID: UUID? = nil
     ) {
         self.streamDigest = streamDigest
-        self.sequence = sequence
-        self.envelopeId = envelopeId
-        self.envelopeDigest = envelopeDigest
+        self.relaySequence = relaySequence
+        self.packetID = packetID
+        self.recordDigest = recordDigest
         self.reason = reason
-        self.quarantinedAt = quarantinedAt
+        self.observedAt = observedAt
+        self.innerEnvelopeID = innerEnvelopeID
     }
 
     public var isStructurallyValid: Bool {
         streamDigest.count == 32
-            && sequence > 0
-            && envelopeDigest.count == 32
-            && quarantinedAt.timeIntervalSince1970.isFinite
+            && relaySequence > 0
+            && packetID.isStructurallyValid
+            && recordDigest.count == 32
+            && observedAt.timeIntervalSince1970.isFinite
+    }
+
+    public init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: ArchitectureV2CodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Transport quarantine fields must match the current schema exactly"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        streamDigest = try container.decode(Data.self, forKey: .streamDigest)
+        relaySequence = try container.decode(UInt64.self, forKey: .relaySequence)
+        packetID = try container.decode(OpaqueRoutePacketIDV2.self, forKey: .packetID)
+        recordDigest = try container.decode(Data.self, forKey: .recordDigest)
+        reason = try container.decode(TransportQuarantineReasonV2.self, forKey: .reason)
+        observedAt = try container.decode(Date.self, forKey: .observedAt)
+        innerEnvelopeID = try container.decodeIfPresent(UUID.self, forKey: .innerEnvelopeID)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .packetID,
+                in: container,
+                debugDescription: "Invalid transport quarantine receipt"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Invalid transport quarantine receipt"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(streamDigest, forKey: .streamDigest)
+        try container.encode(relaySequence, forKey: .relaySequence)
+        try container.encode(packetID, forKey: .packetID)
+        try container.encode(recordDigest, forKey: .recordDigest)
+        try container.encode(reason, forKey: .reason)
+        try container.encode(observedAt, forKey: .observedAt)
+        if let innerEnvelopeID {
+            try container.encode(innerEnvelopeID, forKey: .innerEnvelopeID)
+        } else {
+            try container.encodeNil(forKey: .innerEnvelopeID)
+        }
     }
 }
 
@@ -357,14 +430,14 @@ public struct ProtocolCapabilityManifest: Codable, Equatable {
     /// Presence here is descriptive only: it does not claim that an endpoint
     /// has wired or enabled the module.
     public static let knownModuleCatalog: [ProtocolModuleCapability] = [
-        ProtocolModuleCapability(module: "nw.core", versions: [2], status: .stable),
-        ProtocolModuleCapability(module: "nw.direct", versions: [4], status: .stable),
-        ProtocolModuleCapability(module: "nw.opaque-route", versions: [2], status: .stable),
-        ProtocolModuleCapability(module: "nw.rendezvous-transport", versions: [2], status: .stable),
-        ProtocolModuleCapability(module: "nw.blobs", versions: [1], status: .stable),
+        ProtocolModuleCapability(module: "nw.core", versions: [2], status: .provisional),
+        ProtocolModuleCapability(module: "nw.direct", versions: [4], status: .provisional),
+        ProtocolModuleCapability(module: "nw.opaque-route", versions: [2], status: .provisional),
+        ProtocolModuleCapability(module: "nw.rendezvous-transport", versions: [2], status: .provisional),
+        ProtocolModuleCapability(module: "nw.blobs", versions: [1], status: .provisional),
         ProtocolModuleCapability(module: "nw.groups", versions: [2], status: .experimental),
         ProtocolModuleCapability(module: "nw.wake", versions: [1], status: .experimental),
-        ProtocolModuleCapability(module: "nw.federation", versions: [1], status: .stable),
+        ProtocolModuleCapability(module: "nw.federation", versions: [1], status: .provisional),
         ProtocolModuleCapability(module: "nw.open-discovery", versions: [1], status: .experimental),
         ProtocolModuleCapability(
             module: "nw.privacy.hidden-retrieval",
@@ -382,7 +455,7 @@ public struct ProtocolCapabilityManifest: Codable, Equatable {
         ProtocolModuleCapability(
             module: "nw.core",
             versions: [2],
-            status: .stable,
+            status: .provisional,
             limits: [
                 "maxContentParameterBytes": UInt64(
                     NoctweaveArchitectureV2.maximumContentParameterBytes
@@ -401,7 +474,7 @@ public struct ProtocolCapabilityManifest: Codable, Equatable {
         ProtocolModuleCapability(
             module: "nw.direct",
             versions: [4],
-            status: .stable,
+            status: .provisional,
             limits: [
                 "maxCiphertextBytes": UInt64(PaddedMessagePlaintext.maximumPaddedBytes),
                 "maxPrekeyAgeSeconds": UInt64(PrekeyBundle.maximumAge)
@@ -681,7 +754,7 @@ public struct LocalRelationshipEndpointV2: Codable, Equatable,
         agreementKey = try container.decode(AgreementKeyPair.self, forKey: .agreementKey)
         prekeys = try container.decode(PrekeyState.self, forKey: .prekeys)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .signingKey,
                 in: container,
@@ -691,7 +764,7 @@ public struct LocalRelationshipEndpointV2: Codable, Equatable,
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(
@@ -707,11 +780,19 @@ public struct LocalRelationshipEndpointV2: Codable, Equatable,
         try container.encode(createdAt, forKey: .createdAt)
     }
 
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            guard createdAt.timeIntervalSince1970.isFinite,
+                  try SigningKeyPair.isValidPublicKeyThrowing(signingKey.publicKeyData),
+                  try AgreementKeyPair.isValidPublicKeyThrowing(agreementKey.publicKeyData) else {
+                return false
+            }
+            return try prekeys.isStructurallyValidThrowing
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        SigningKeyPair.isValidPublicKey(signingKey.publicKeyData)
-            && AgreementKeyPair.isValidPublicKey(agreementKey.publicKeyData)
-            && prekeys.isStructurallyValid
-            && createdAt.timeIntervalSince1970.isFinite
+        (try? isStructurallyValidThrowing) == true
     }
 
     public var description: String { "LocalRelationshipEndpointV2(<redacted>)" }

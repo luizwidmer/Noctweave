@@ -97,6 +97,40 @@ final class EnvelopeWireVectorTests: XCTestCase {
         ))
     }
 
+    func testDirectEnvelopeThrowingVerificationDistinguishesInvalidPeerMaterial() throws {
+        let signingKey = try SigningKeyPair.generate()
+        let otherKey = try SigningKeyPair.generate()
+        let unsigned = makeTestDirectEnvelope()
+        let envelope = DirectEnvelopeV4(
+            version: unsigned.version,
+            id: unsigned.id,
+            payloadFormat: unsigned.payloadFormat,
+            conversationId: unsigned.conversationId,
+            sessionId: unsigned.sessionId,
+            eventId: unsigned.eventId,
+            senderEndpointHandle: unsigned.senderEndpointHandle,
+            senderBindingDigest: unsigned.senderBindingDigest,
+            recipientEndpointHandle: unsigned.recipientEndpointHandle,
+            recipientBindingDigest: unsigned.recipientBindingDigest,
+            cipherSuite: unsigned.cipherSuite,
+            negotiatedCapabilitiesDigest: unsigned.negotiatedCapabilitiesDigest,
+            bootstrap: unsigned.bootstrap,
+            sentAt: unsigned.sentAt,
+            messageCounter: unsigned.messageCounter,
+            payload: unsigned.payload,
+            signature: try signingKey.sign(unsigned.signableData())
+        )
+
+        XCTAssertTrue(try envelope.verifySignatureThrowing(
+            publicSigningKey: signingKey.publicKeyData
+        ))
+        XCTAssertFalse(try envelope.verifySignatureThrowing(
+            publicSigningKey: otherKey.publicKeyData
+        ))
+        XCTAssertFalse(try envelope.verifySignatureThrowing(publicSigningKey: Data([0x01])))
+        XCTAssertTrue(envelope.verifySignature(publicSigningKey: signingKey.publicKeyData))
+    }
+
     private func makeGroupApplicationEnvelope() -> GroupApplicationEnvelopeV2 {
         GroupApplicationEnvelopeV2(
             profile: NoctweaveSignedGroupV2.experimentalProfile,

@@ -120,7 +120,7 @@ final class ConversationEventStrictTests: XCTestCase {
             DeliveryStateRecord(
                 eventId: event.id,
                 destinationEndpoint: peerEndpoint,
-                state: index == 0 ? .relayAccepted : .peerRead,
+                state: index == 0 ? .relayAccepted : (index == 2 ? .locallyPersisted : .peerRead),
                 updatedAt: event.createdAt
             )
         }
@@ -142,6 +142,7 @@ final class ConversationEventStrictTests: XCTestCase {
             terminalIntents.append(ProtocolIntentV2(
                 id: id,
                 kind: .sendEvent,
+                targetIdentifier: Data(UUID().uuidString.lowercased().utf8),
                 idempotencyKey: .generate(intentId: id),
                 payloadDigest: Data(SHA256.hash(data: Data("intent-\(index)".utf8))),
                 state: .finalized,
@@ -153,13 +154,55 @@ final class ConversationEventStrictTests: XCTestCase {
             ))
         }
         let requiredDependency = try XCTUnwrap(terminalIntents.first)
-        let unfinished = ProtocolIntentV2.prepare(
-            kind: .sendEvent,
-            payloadDigest: Data(SHA256.hash(data: Data("unfinished".utf8))),
-            dependencies: [requiredDependency.id],
-            createdAt: origin.addingTimeInterval(10_000)
+        relationship.protocolIntents = terminalIntents
+
+        let unfinishedEvent = events[2]
+        let createdSession = try MessageEngine.createOutboundEndpointSession(
+            relationship: relationship,
+            now: unfinishedEvent.createdAt
         )
-        relationship.protocolIntents = terminalIntents + [unfinished]
+        var conversation = createdSession.conversation
+        let envelope = try MessageEngine.encryptDirectV4(
+            wirePayload: .application(unfinishedEvent),
+            eventID: unfinishedEvent.id,
+            relationship: relationship,
+            conversation: &conversation,
+            bootstrap: .signedPrekey(
+                kemCiphertext: createdSession.kemCiphertext,
+                prekey: createdSession.prekey
+            ),
+            sentAt: unfinishedEvent.createdAt
+        )
+        try relationship.upsertDirectSession(conversation)
+        let queued = try relationship.enqueue(
+            logicalEventID: unfinishedEvent.id,
+            payload: NoctweaveCoder.encode(envelope, sortedKeys: true),
+            at: unfinishedEvent.createdAt
+        )
+        let delivery = try XCTUnwrap(queued.first)
+        let unfinishedIndex = try XCTUnwrap(relationship.protocolIntents.firstIndex {
+            $0.id == delivery.intentID
+        })
+        let prepared = relationship.protocolIntents[unfinishedIndex]
+        let unfinished = ProtocolIntentV2(
+            id: prepared.id,
+            kind: prepared.kind,
+            targetIdentifier: prepared.targetIdentifier,
+            expectedEpoch: prepared.expectedEpoch,
+            idempotencyKey: prepared.idempotencyKey,
+            payloadDigest: prepared.payloadDigest,
+            dependencies: [requiredDependency.id],
+            state: prepared.state,
+            attemptCount: prepared.attemptCount,
+            lastAttemptId: prepared.lastAttemptId,
+            lastAttemptAt: prepared.lastAttemptAt,
+            lastErrorClass: prepared.lastErrorClass,
+            nextAttemptNotBefore: prepared.nextAttemptNotBefore,
+            createdAt: prepared.createdAt,
+            updatedAt: prepared.updatedAt,
+            expiresAt: prepared.expiresAt
+        )
+        relationship.protocolIntents[unfinishedIndex] = unfinished
         XCTAssertTrue(relationship.isStructurallyValid)
         let newestEventID = try XCTUnwrap(events.last?.id)
 
@@ -170,15 +213,19 @@ final class ConversationEventStrictTests: XCTestCase {
             relationship.events.count,
             NoctweaveArchitectureV2.relationshipEventRecentWindow + 1
         )
-        XCTAssertTrue(relationship.events.contains { $0.id == events[0].id })
+        XCTAssertFalse(relationship.events.contains { $0.id == events[0].id })
         XCTAssertFalse(relationship.events.contains { $0.id == events[1].id })
+        XCTAssertTrue(relationship.events.contains { $0.id == unfinishedEvent.id })
         XCTAssertTrue(relationship.events.contains { $0.id == newestEventID })
         XCTAssertEqual(
             relationship.deliveryStates.count,
             NoctweaveArchitectureV2.deliveryStateRecentWindow + 1
         )
-        XCTAssertTrue(relationship.deliveryStates.contains { $0.eventId == events[0].id })
+        XCTAssertFalse(relationship.deliveryStates.contains { $0.eventId == events[0].id })
         XCTAssertFalse(relationship.deliveryStates.contains { $0.eventId == events[1].id })
+        XCTAssertTrue(relationship.deliveryStates.contains {
+            $0.eventId == unfinishedEvent.id
+        })
         XCTAssertEqual(
             relationship.inboundReceipts.count,
             NoctweaveArchitectureV2.inboundEnvelopeReceiptRecentWindow

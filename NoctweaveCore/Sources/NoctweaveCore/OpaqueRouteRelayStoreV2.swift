@@ -1111,10 +1111,16 @@ public actor OpaqueRouteRelayStoreV2 {
         garbageCollect(&state, at: effectiveTime)
 
         let response = OpaqueRouteCommitResponseV2(
-            committedCursor: try sealCursor(
-                routeID: request.routeID,
-                position: state.committedSequence
-            ),
+            // A cursor is randomized authenticated ciphertext. Echo the exact
+            // accepted token whenever it names the authoritative committed
+            // position so clients can confirm this request without comparing
+            // two unrelated sealings of the same claims.
+            committedCursor: position == state.committedSequence
+                ? request.cursor
+                : try sealCursor(
+                    routeID: request.routeID,
+                    position: state.committedSequence
+                ),
             highWatermark: try sealCursor(
                 routeID: request.routeID,
                 position: highPosition

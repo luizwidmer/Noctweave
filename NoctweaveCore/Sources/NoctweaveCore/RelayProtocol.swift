@@ -31,11 +31,24 @@ public struct RelayEndpoint: Codable, Equatable {
         self.directorySigningPublicKey = directorySigningPublicKey
     }
 
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            guard relayIsBoundedRequiredText(host, maximumBytes: 255),
+                  port > 0,
+                  tlsCertificateFingerprintSHA256.map({ $0.count == 32 }) ?? true else {
+                return false
+            }
+            if let directorySigningPublicKey {
+                return try SigningKeyPair.isValidPublicKeyThrowing(
+                    directorySigningPublicKey
+                )
+            }
+            return true
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        relayIsBoundedRequiredText(host, maximumBytes: 255)
-            && port > 0
-            && (tlsCertificateFingerprintSHA256.map { $0.count == 32 } ?? true)
-            && (directorySigningPublicKey.map(SigningKeyPair.isValidPublicKey) ?? true)
+        (try? isStructurallyValidThrowing) == true
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -65,13 +78,13 @@ public struct RelayEndpoint: Codable, Equatable {
         transport = try container.decode(RelayEndpointTransport.self, forKey: .transport)
         tlsCertificateFingerprintSHA256 = try container.decodeIfPresent(Data.self, forKey: .tlsCertificateFingerprintSHA256)
         directorySigningPublicKey = try container.decodeIfPresent(Data.self, forKey: .directorySigningPublicKey)
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw relayWireError(decoder, "Relay endpoint is invalid")
         }
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw relayWireError(encoder, "Relay endpoint is invalid")
         }
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -486,7 +499,8 @@ public struct RelayInfo: Codable, Equatable {
         self.advertisedAt = relayCanonicalizedDate(advertisedAt)
     }
 
-    public var isStructurallyValid: Bool {
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
         guard federation.isStructurallyValid,
               (0...86_400).contains(temporalBucketSeconds),
               relayIsCanonicalTimestamp(advertisedAt),
@@ -524,7 +538,7 @@ public struct RelayInfo: Codable, Equatable {
             return false
         }
         if let endpoints = federationCoordinatorEndpoints,
-           !relayIsValidEndpointList(endpoints, maximumCount: 16) {
+           try !relayIsValidEndpointListThrowing(endpoints, maximumCount: 16) {
             return false
         }
         if let coordinatorReportedRelayCount,
@@ -536,14 +550,19 @@ public struct RelayInfo: Codable, Equatable {
             return false
         }
         if let federationDirectoryPublicKey,
-           !SigningKeyPair.isValidPublicKey(federationDirectoryPublicKey) {
+           try !SigningKeyPair.isValidPublicKeyThrowing(federationDirectoryPublicKey) {
             return false
         }
         if let knownOpenPeers,
-           !relayIsValidEndpointList(knownOpenPeers, maximumCount: 128) {
+           try !relayIsValidEndpointListThrowing(knownOpenPeers, maximumCount: 128) {
             return false
         }
         return true
+        }
+    }
+
+    public var isStructurallyValid: Bool {
+        (try? isStructurallyValidThrowing) == true
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -649,13 +668,13 @@ public struct RelayInfo: Codable, Equatable {
             forKey: .openFederationDiscovery
         )
         advertisedAt = try container.decode(Date.self, forKey: .advertisedAt)
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw relayWireError(decoder, "Relay information is invalid")
         }
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw relayWireError(encoder, "Relay information is invalid")
         }
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -1084,21 +1103,26 @@ public struct CommitOpaqueRouteRelayRequestV2: Codable, Equatable {
 }
 
 public struct UploadAttachmentRequest: Codable, Equatable {
+    public static let idempotencyKeyBytes = 32
+
     public let attachmentId: UUID
     public let chunkIndex: Int
     public let payload: EncryptedPayload
     public let ttlSeconds: Int?
+    public let idempotencyKey: Data
 
     public init(
         attachmentId: UUID,
         chunkIndex: Int,
         payload: EncryptedPayload,
-        ttlSeconds: Int? = nil
+        ttlSeconds: Int? = nil,
+        idempotencyKey: Data
     ) {
         self.attachmentId = attachmentId
         self.chunkIndex = chunkIndex
         self.payload = payload
         self.ttlSeconds = ttlSeconds
+        self.idempotencyKey = idempotencyKey
     }
 
     public var isStructurallyValid: Bool {
@@ -1107,6 +1131,7 @@ public struct UploadAttachmentRequest: Codable, Equatable {
             && payload.isStructurallyValid
             && payloadBytes <= AttachmentChunk.maximumPayloadBytes
             && (ttlSeconds.map { (60...2_592_000).contains($0) } ?? true)
+            && idempotencyKey.count == Self.idempotencyKeyBytes
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -1114,6 +1139,7 @@ public struct UploadAttachmentRequest: Codable, Equatable {
         case chunkIndex
         case payload
         case ttlSeconds
+        case idempotencyKey
     }
 
     public init(from decoder: Decoder) throws {
@@ -1123,6 +1149,7 @@ public struct UploadAttachmentRequest: Codable, Equatable {
         chunkIndex = try container.decode(Int.self, forKey: .chunkIndex)
         payload = try container.decode(EncryptedPayload.self, forKey: .payload)
         ttlSeconds = try container.decodeIfPresent(Int.self, forKey: .ttlSeconds)
+        idempotencyKey = try container.decode(Data.self, forKey: .idempotencyKey)
         guard isStructurallyValid else {
             throw relayWireError(decoder, "Attachment upload request is invalid")
         }
@@ -1137,6 +1164,7 @@ public struct UploadAttachmentRequest: Codable, Equatable {
         try container.encode(chunkIndex, forKey: .chunkIndex)
         try container.encode(payload, forKey: .payload)
         try container.encode(ttlSeconds, forKey: .ttlSeconds)
+        try container.encode(idempotencyKey, forKey: .idempotencyKey)
     }
 }
 
@@ -2317,7 +2345,7 @@ public enum RelayRequestBody: Equatable {
             return .uploadAttachment(try relayDecodeExact(
                 UploadAttachmentRequest.self,
                 from: decoder,
-                keys: ["attachmentId", "chunkIndex", "payload", "ttlSeconds"]
+                keys: ["attachmentId", "chunkIndex", "payload", "ttlSeconds", "idempotencyKey"]
             ))
         case (.blobs, .fetch):
             return .fetchAttachment(try relayDecodeExact(
@@ -2405,6 +2433,7 @@ public enum RelayRequestBody: Equatable {
             try container.encode(value.chunkIndex, forKey: relayWireKey("chunkIndex"))
             try container.encode(value.payload, forKey: relayWireKey("payload"))
             try relayEncodeOptional(value.ttlSeconds, key: "ttlSeconds", into: &container)
+            try container.encode(value.idempotencyKey, forKey: relayWireKey("idempotencyKey"))
         case .fetchAttachment(let value):
             guard value.isStructurallyValid else {
                 throw relayWireError(encoder, "Attachment fetch request is invalid")
@@ -3046,9 +3075,23 @@ private func relayIsValidEndpointList(
     _ endpoints: [RelayEndpoint],
     maximumCount: Int
 ) -> Bool {
-    endpoints.count <= maximumCount
-        && endpoints.allSatisfy(\.isStructurallyValidRelationshipRouteEndpointV2)
-        && Set(endpoints.map(relayEndpointStructuralKey)).count == endpoints.count
+    (try? relayIsValidEndpointListThrowing(endpoints, maximumCount: maximumCount)) == true
+}
+
+private func relayIsValidEndpointListThrowing(
+    _ endpoints: [RelayEndpoint],
+    maximumCount: Int
+) throws -> Bool {
+    guard endpoints.count <= maximumCount,
+          Set(endpoints.map(relayEndpointStructuralKey)).count == endpoints.count else {
+        return false
+    }
+    for endpoint in endpoints {
+        guard try endpoint.isStructurallyValidRelationshipRouteEndpointV2Throwing else {
+            return false
+        }
+    }
+    return true
 }
 
 private func relayIsValidWakeSupport(_ support: DecentralizedWakeSupport?) -> Bool {

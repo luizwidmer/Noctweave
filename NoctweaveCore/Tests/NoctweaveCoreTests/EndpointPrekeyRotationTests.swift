@@ -2,6 +2,42 @@ import XCTest
 @testable import NoctweaveCore
 
 final class EndpointPrekeyRotationTests: XCTestCase {
+    func testPersistedPrekeyValidationAndConsumptionUseThrowingPath() throws {
+        let authority = try RelationshipAuthorityV2.generate(
+            relationshipPseudonym: "Scoped relationship"
+        )
+        var state = try PrekeyState.generate(
+            authority: authority,
+            oneTimeCount: 1,
+            issuedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let oneTimeID = try XCTUnwrap(state.oneTimePrekeys.first?.id)
+
+        XCTAssertTrue(try state.isStructurallyValidThrowing)
+        XCTAssertNotNil(try state.signedPrekeyKeyPairThrowing(
+            id: state.signedPrekeyId,
+            now: state.signedPrekeyIssuedAt
+        ))
+        XCTAssertNotNil(try state.consumeOneTimePrekeyThrowing(id: oneTimeID))
+        XCTAssertTrue(state.oneTimePrekeys.isEmpty)
+    }
+
+    func testSignedPrekeyThrowingVerificationRejectsInvalidPeerMaterial() throws {
+        let signingKey = try SigningKeyPair.generate()
+        let otherSigningKey = try SigningKeyPair.generate()
+        let agreementKey = try AgreementKeyPair.generate()
+        let prekey = try SignedPrekey.create(
+            agreementPublicKey: agreementKey.publicKeyData,
+            signingKey: signingKey,
+            issuedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+
+        XCTAssertTrue(try prekey.verifyThrowing(using: signingKey.publicKeyData))
+        XCTAssertFalse(try prekey.verifyThrowing(using: otherSigningKey.publicKeyData))
+        XCTAssertFalse(try prekey.verifyThrowing(using: Data([0x01])))
+        XCTAssertTrue(try AgreementKeyPair.isValidPublicKeyThrowing(prekey.publicKey))
+    }
+
     func testPairwiseRenewalAtomicallyRefreshesTheOnlyEndpointBinding() throws {
         let now = Date()
         let createdAt = now.addingTimeInterval(
@@ -43,7 +79,7 @@ final class EndpointPrekeyRotationTests: XCTestCase {
         XCTAssertTrue(try local.localEndpoint.renewSignedPrekeyIfNeeded(at: now))
         XCTAssertEqual(local.localEndpoint.prekeys.retiredSignedPrekeys.count, 1)
         XCTAssertNotEqual(local.localEndpoint.prekeys.signedPrekeyId, originalPrekey.id)
-        XCTAssertNotNil(local.localEndpoint.prekeys.signedPrekeyKeyPair(
+        XCTAssertNotNil(try local.localEndpoint.prekeys.signedPrekeyKeyPairThrowing(
             id: originalPrekey.id,
             now: now
         ))
@@ -51,7 +87,7 @@ final class EndpointPrekeyRotationTests: XCTestCase {
             PrekeyState.self,
             from: NoctweaveCoder.encode(local.localEndpoint.prekeys)
         )
-        XCTAssertNotNil(persistedPrekeys.signedPrekeyKeyPair(
+        XCTAssertNotNil(try persistedPrekeys.signedPrekeyKeyPairThrowing(
             id: originalPrekey.id,
             now: now
         ))
@@ -77,7 +113,7 @@ final class EndpointPrekeyRotationTests: XCTestCase {
         )
         XCTAssertEqual(refreshedTranscript, originalTranscript)
 
-        XCTAssertNil(local.localEndpoint.prekeys.signedPrekeyKeyPair(
+        XCTAssertNil(try local.localEndpoint.prekeys.signedPrekeyKeyPairThrowing(
             id: originalPrekey.id,
             now: originalPrekey.expiresAt
         ))
@@ -92,6 +128,7 @@ final class EndpointPrekeyRotationTests: XCTestCase {
 
         XCTAssertFalse(try fixture.localEndpoint.renewSignedPrekeyIfNeeded(at: now))
         XCTAssertTrue(fixture.localEndpoint.prekeys.retiredSignedPrekeys.isEmpty)
+        XCTAssertTrue(try binding.isStructurallyValidThrowing(now: now))
 
         let tampered = RelationshipEndpointBindingV4(
             signingPublicKey: binding.signingPublicKey,
@@ -105,7 +142,62 @@ final class EndpointPrekeyRotationTests: XCTestCase {
         XCTAssertThrowsError(try tampered.verified(
             authoritySigningPublicKey: fixture.authority.signingKey.publicKeyData,
             now: now
-        ))
+        )) { error in
+            XCTAssertEqual(
+                error as? RelationshipEndpointBindingError,
+                .invalidPrekeyPackageSignature
+            )
+        }
+
+        let tamperedAuthority = RelationshipEndpointBindingV4(
+            signingPublicKey: binding.signingPublicKey,
+            agreementPublicKey: binding.agreementPublicKey,
+            capabilities: binding.capabilities,
+            prekeyBundle: binding.prekeyBundle,
+            prekeyPackageSignature: binding.prekeyPackageSignature,
+            issuedAt: binding.issuedAt,
+            authoritySignature: Data(repeating: 0, count: 3_309)
+        )
+        XCTAssertThrowsError(try tamperedAuthority.verified(
+            authoritySigningPublicKey: fixture.authority.signingKey.publicKeyData,
+            now: now
+        )) { error in
+            XCTAssertEqual(
+                error as? RelationshipEndpointBindingError,
+                .invalidAuthoritySignature
+            )
+        }
+
+        let signedPrekey = binding.prekeyBundle.signedPrekey
+        let invalidSignedPrekey = SignedPrekey(
+            id: signedPrekey.id,
+            publicKey: signedPrekey.publicKey,
+            issuedAt: signedPrekey.issuedAt,
+            expiresAt: signedPrekey.expiresAt,
+            signature: Data(repeating: 0, count: 3_309)
+        )
+        let invalidBundle = PrekeyBundle(
+            version: binding.prekeyBundle.version,
+            relationshipSigningKeyDigest: binding.prekeyBundle.relationshipSigningKeyDigest,
+            signedPrekey: invalidSignedPrekey,
+            oneTimePrekeys: binding.prekeyBundle.oneTimePrekeys,
+            createdAt: binding.prekeyBundle.createdAt
+        )
+        let invalidPrekeyBinding = RelationshipEndpointBindingV4(
+            signingPublicKey: binding.signingPublicKey,
+            agreementPublicKey: binding.agreementPublicKey,
+            capabilities: binding.capabilities,
+            prekeyBundle: invalidBundle,
+            prekeyPackageSignature: binding.prekeyPackageSignature,
+            issuedAt: binding.issuedAt,
+            authoritySignature: binding.authoritySignature
+        )
+        XCTAssertThrowsError(try invalidPrekeyBinding.verified(
+            authoritySigningPublicKey: fixture.authority.signingKey.publicKeyData,
+            now: now
+        )) { error in
+            XCTAssertEqual(error as? RelationshipEndpointBindingError, .invalidStructure)
+        }
         XCTAssertFalse(binding.isStructurallyValid(
             now: binding.prekeyBundle.signedPrekey.expiresAt
         ))

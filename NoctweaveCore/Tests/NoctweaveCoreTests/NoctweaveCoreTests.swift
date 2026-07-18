@@ -1334,7 +1334,7 @@ final class NoctweaveCoreTests: XCTestCase {
             )
         )
 
-        let result = cache.ingest([record], now: now)
+        let result = try cache.ingest([record], now: now)
 
         XCTAssertTrue(result.accepted.isEmpty)
         XCTAssertEqual(result.rejected.map(\.reason), [.discoveryDisabled])
@@ -1352,7 +1352,7 @@ final class NoctweaveCoreTests: XCTestCase {
             )
         )
 
-        let result = cache.ingest([record], now: now)
+        let result = try cache.ingest([record], now: now)
         let nodes = cache.federationNodes(now: now)
 
         XCTAssertEqual(result.accepted, [record])
@@ -1390,7 +1390,7 @@ final class NoctweaveCoreTests: XCTestCase {
             )
         )
 
-        let result = cache.ingest([valid, wrongFederation, tampered, insecure], now: now)
+        let result = try cache.ingest([valid, wrongFederation, tampered, insecure], now: now)
 
         XCTAssertEqual(result.accepted, [valid])
         XCTAssertEqual(
@@ -1419,7 +1419,7 @@ final class NoctweaveCoreTests: XCTestCase {
             )
         )
 
-        let result = cache.ingest(records, now: now)
+        let result = try cache.ingest(records, now: now)
 
         XCTAssertEqual(result.accepted.count, 2)
         XCTAssertEqual(result.rejected.map(\.reason), [.hostLimitExceeded, .hostLimitExceeded, .hostLimitExceeded])
@@ -1456,10 +1456,10 @@ final class NoctweaveCoreTests: XCTestCase {
             )
         )
 
-        let initial = cache.ingest([original, crowded], now: now)
+        let initial = try cache.ingest([original, crowded], now: now)
         XCTAssertEqual(initial.accepted.count, 2)
 
-        let move = cache.ingest([movedIntoCrowdedHost], now: now.addingTimeInterval(2))
+        let move = try cache.ingest([movedIntoCrowdedHost], now: now.addingTimeInterval(2))
 
         XCTAssertTrue(move.accepted.isEmpty)
         XCTAssertEqual(move.rejected.map(\.reason), [.hostLimitExceeded])
@@ -1489,7 +1489,7 @@ final class NoctweaveCoreTests: XCTestCase {
             )
         )
 
-        _ = cache.ingest(records, now: now)
+        _ = try cache.ingest(records, now: now)
         let keptHosts = cache.records(now: now).map(\.endpoint.host)
 
         XCTAssertEqual(cache.count, 3)
@@ -1521,7 +1521,11 @@ final class NoctweaveCoreTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(cache.ingest([newer, older], now: now.addingTimeInterval(60)).rejected.map(\.reason), [.staleDuplicate])
+        XCTAssertEqual(
+            try cache.ingest([newer, older], now: now.addingTimeInterval(60))
+                .rejected.map(\.reason),
+            [.staleDuplicate]
+        )
         XCTAssertEqual(cache.records(now: now.addingTimeInterval(60)), [newer])
 
         cache.evictExpired(now: newer.expiresAt.addingTimeInterval(1))
@@ -2123,6 +2127,15 @@ final class NoctweaveCoreTests: XCTestCase {
                 publicKeyData: Data([0x02])
             )
         )
+        XCTAssertFalse(
+            try SigningKeyPair.verifyThrowing(
+                signature: Data([0x01]),
+                data: Data("message".utf8),
+                publicKeyData: Data([0x02])
+            )
+        )
+        XCTAssertFalse(try SigningKeyPair.isValidPublicKeyThrowing(Data([0x02])))
+        XCTAssertFalse(try AgreementKeyPair.isValidPublicKeyThrowing(Data([0x02])))
         XCTAssertThrowsError(
             try AgreementKeyPair.encapsulate(to: Data([0x01]))
         )
@@ -2169,6 +2182,21 @@ final class NoctweaveCoreTests: XCTestCase {
                 publicKeyData: signing.publicKeyData
             )
         )
+        XCTAssertTrue(
+            try SigningKeyPair.verifyThrowing(
+                signature: signature,
+                data: Data(),
+                publicKeyData: signing.publicKeyData
+            )
+        )
+        XCTAssertTrue(try SigningKeyPair.isValidPublicKeyThrowing(signing.publicKeyData))
+        XCTAssertFalse(
+            try SigningKeyPair.verifyThrowing(
+                signature: signature,
+                data: Data([0x01]),
+                publicKeyData: signing.publicKeyData
+            )
+        )
         XCTAssertThrowsError(try signing.sign(Data(repeating: 0x41, count: 512 * 1024 + 1))) { error in
             XCTAssertEqual(error as? CryptoError, .invalidPayload)
         }
@@ -2187,7 +2215,8 @@ final class NoctweaveCoreTests: XCTestCase {
             attachmentId: attachmentId,
             chunkIndex: 0,
             payload: payload,
-            ttlSeconds: 60
+            ttlSeconds: 60,
+            idempotencyKey: Data(repeating: 0x41, count: 32)
         )
 
         let fetched = try await store.fetchAttachment(attachmentId: attachmentId, chunkIndex: 0)
@@ -2209,16 +2238,46 @@ final class NoctweaveCoreTests: XCTestCase {
             tag: Data(repeating: 0x5A, count: 16)
         )
 
+        let retainedBeyondSixHours = UUID()
+        let retainedStart = Date()
+        _ = try await store.storeAttachment(
+            attachmentId: retainedBeyondSixHours,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 12 * 3_600,
+            idempotencyKey: Data(repeating: 0x42, count: 32)
+        )
+        let retainedExpiry = try relayAttachmentExpiry(
+            at: sqliteURL,
+            attachmentId: retainedBeyondSixHours
+        )
+        XCTAssertGreaterThanOrEqual(
+            retainedExpiry.timeIntervalSince(retainedStart),
+            12 * 3_600 - 5
+        )
+        XCTAssertLessThanOrEqual(
+            retainedExpiry.timeIntervalSince(retainedStart),
+            12 * 3_600 + 5
+        )
+
         let longTTLAttachment = UUID()
         let longTTLStart = Date()
         _ = try await store.storeAttachment(
             attachmentId: longTTLAttachment,
             chunkIndex: 0,
             payload: payload,
-            ttlSeconds: 10_000_000
+            ttlSeconds: 10_000_000,
+            idempotencyKey: Data(repeating: 0x44, count: 32)
         )
         let longTTLExpiry = try relayAttachmentExpiry(at: sqliteURL, attachmentId: longTTLAttachment)
-        XCTAssertLessThanOrEqual(longTTLExpiry.timeIntervalSince(longTTLStart), 6 * 3600 + 5)
+        XCTAssertGreaterThanOrEqual(
+            longTTLExpiry.timeIntervalSince(longTTLStart),
+            2_592_000 - 5
+        )
+        XCTAssertLessThanOrEqual(
+            longTTLExpiry.timeIntervalSince(longTTLStart),
+            2_592_000 + 5
+        )
 
         let shortTTLAttachment = UUID()
         let shortTTLStart = Date()
@@ -2226,7 +2285,8 @@ final class NoctweaveCoreTests: XCTestCase {
             attachmentId: shortTTLAttachment,
             chunkIndex: 0,
             payload: payload,
-            ttlSeconds: -1
+            ttlSeconds: -1,
+            idempotencyKey: Data(repeating: 0x45, count: 32)
         )
         let shortTTLExpiry = try relayAttachmentExpiry(at: sqliteURL, attachmentId: shortTTLAttachment)
         XCTAssertGreaterThanOrEqual(shortTTLExpiry.timeIntervalSince(shortTTLStart), 55)
@@ -2246,7 +2306,8 @@ final class NoctweaveCoreTests: XCTestCase {
             attachmentId: attachmentId,
             chunkIndex: 1,
             payload: payload,
-            ttlSeconds: 60
+            ttlSeconds: 60,
+            idempotencyKey: Data(repeating: 0x44, count: 32)
         )
 
         let fetched = try await store.fetchAttachment(attachmentId: attachmentId, chunkIndex: 1)
@@ -2269,7 +2330,8 @@ final class NoctweaveCoreTests: XCTestCase {
             attachmentId: attachmentId,
             chunkIndex: 0,
             payload: payload,
-            ttlSeconds: 60
+            ttlSeconds: 60,
+            idempotencyKey: Data(repeating: 0x45, count: 32)
         )
         blobStore.corruptAll()
 
@@ -2282,8 +2344,12 @@ final class NoctweaveCoreTests: XCTestCase {
     }
 
     func testFederationDirectoryKeyLoaderDoesNotReplaceCorruptExistingKey() {
-        XCTAssertTrue(FederationDirectorySignature.privateKeyData(from: Data([0xDE, 0xAD])).isEmpty)
-        XCTAssertNil(FederationDirectorySignature.publicKeyData(from: Data([0xDE, 0xAD])))
+        XCTAssertThrowsError(try FederationDirectorySignature.privateKeyDataThrowing(
+            from: Data([0xDE, 0xAD])
+        ))
+        XCTAssertThrowsError(try FederationDirectorySignature.publicKeyDataThrowing(
+            from: Data([0xDE, 0xAD])
+        ))
     }
 
     func testRelayStoreRejectsInvalidAttachmentPayload() async throws {
@@ -2300,7 +2366,8 @@ final class NoctweaveCoreTests: XCTestCase {
                 attachmentId: attachmentId,
                 chunkIndex: 0,
                 payload: payload,
-                ttlSeconds: 60
+                ttlSeconds: 60,
+                idempotencyKey: Data(repeating: 0x46, count: 32)
             )
             XCTFail("Expected invalid attachment payload to be rejected.")
         } catch RelayStoreError.invalidAttachmentPayload {
@@ -2532,7 +2599,10 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(coordinatorInfo.kind, .coordinator)
         XCTAssertEqual(coordinatorInfo.coordinatorReportedRelayCount, 1)
         let publicKey = try XCTUnwrap(coordinatorInfo.federationDirectoryPublicKey)
-        XCTAssertTrue(FederationDirectorySignature.verify(snapshot: snapshot, trustedPublicKey: publicKey))
+        XCTAssertTrue(try FederationDirectorySignature.verifyThrowing(
+            snapshot: snapshot,
+            trustedPublicKey: publicKey
+        ))
     }
 
     func testCoordinatorRegistrationTokenIsEnforcedWhenConfigured() async throws {

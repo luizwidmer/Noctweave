@@ -256,7 +256,7 @@ public struct RendezvousRelayAdapterV2: Equatable,
                     throw RendezvousRelayAdapterV2Error.invalidDirection
                 }
                 let open = try NoctweaveCoder.decode(RendezvousOpenV2.self, from: payload)
-                guard open.isStructurallyValid(for: offer) else {
+                guard try open.isStructurallyValidThrowing(for: offer) else {
                     throw RendezvousRelayAdapterV2Error.invalidPayload
                 }
                 return .open(open)
@@ -273,6 +273,8 @@ public struct RendezvousRelayAdapterV2: Equatable,
                 throw RendezvousRelayAdapterV2Error.invalidPayload
             }
         } catch let error as RendezvousRelayAdapterV2Error {
+            throw error
+        } catch let error as CryptoError {
             throw error
         } catch {
             throw RendezvousRelayAdapterV2Error.invalidPayload

@@ -70,7 +70,8 @@ final class RelayWireExactEnvelopeTests: XCTestCase {
                     nonce: Data(repeating: 0x11, count: EncryptedPayload.nonceByteCount),
                     ciphertext: Data([0x22]),
                     tag: Data(repeating: 0x33, count: EncryptedPayload.tagByteCount)
-                )
+                ),
+                idempotencyKey: Data(repeating: 0x44, count: 32)
             )
         )
         let encoded = try NoctweaveCoder.encode(request)

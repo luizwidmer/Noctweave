@@ -2,6 +2,12 @@ import CryptoKit
 import Foundation
 import SQLite3
 
+private enum RelayAttachmentRetentionLimits {
+    static let defaultSeconds: TimeInterval = 3_600
+    static let minimumSeconds: TimeInterval = 60
+    static let maximumSeconds: TimeInterval = 2_592_000
+}
+
 public actor RelayStore {
     /// Keyed by a domain-separated route-capability digest. Values contain
     /// only digests of lane authorities; raw bearer material is never stored.
@@ -17,9 +23,6 @@ public actor RelayStore {
     private var lastFederationRegistrationByEndpoint: [String: Date] = [:]
     private var lastDurableSnapshot = RelayStoreSnapshot.empty
     private var persistenceFailuresRemainingForTesting = 0
-    private let attachmentTTL: TimeInterval = 3600
-    private let minimumAttachmentTTL: TimeInterval = 60
-    private let maximumAttachmentTTL: TimeInterval = 6 * 3600
     private let maxAttachmentChunks = 512
     private let maxAttachmentChunkPayloadBytes = 128 * 1024
     private let maxAttachmentIds = 4_096
@@ -94,9 +97,9 @@ public actor RelayStore {
         _ records: [OpenFederationDHTRecord],
         configuration: OpenFederationDHTDiscoveryConfiguration,
         now: Date = Date()
-    ) -> OpenFederationDHTDiscoveryIngestResult {
+    ) throws -> OpenFederationDHTDiscoveryIngestResult {
         openFederationDHTCache.configuration = configuration
-        return openFederationDHTCache.ingest(records, now: now)
+        return try openFederationDHTCache.ingest(records, now: now)
     }
 
     public func listOpenFederationDHTRecords(
@@ -339,7 +342,9 @@ public actor RelayStore {
         attachmentId: UUID,
         chunkIndex: Int,
         payload: EncryptedPayload,
-        ttlSeconds: Int?
+        ttlSeconds: Int?,
+        idempotencyKey: Data,
+        effectiveTTLSeconds: Int? = nil
     ) throws -> AttachmentChunk {
         guard chunkIndex >= 0, chunkIndex < maxAttachmentChunks else {
             throw RelayStoreError.invalidChunkIndex
@@ -351,8 +356,17 @@ public actor RelayStore {
               payloadBytes <= maxAttachmentChunkPayloadBytes else {
             throw RelayStoreError.invalidAttachmentPayload
         }
+        guard idempotencyKey.count == UploadAttachmentRequest.idempotencyKeyBytes else {
+            throw RelayStoreError.invalidAttachmentIdempotency
+        }
         pruneAttachments(now: Date())
-        let ttl = boundedAttachmentTTL(ttlSeconds)
+        let bodyDigest = attachmentUploadBodyDigest(
+            attachmentId: attachmentId,
+            chunkIndex: chunkIndex,
+            payload: payload,
+            ttlSeconds: ttlSeconds
+        )
+        let ttl = boundedAttachmentTTL(effectiveTTLSeconds ?? ttlSeconds)
         let now = Date()
         let bucketKey = "attachment:\(attachmentId.uuidString):\(chunkIndex)"
         let expiresAt = bucketedCeil(now.addingTimeInterval(ttl), discriminator: bucketKey)
@@ -368,6 +382,17 @@ public actor RelayStore {
             })?.key
         }
         var records = attachments[key, default: []]
+        if let existing = records.first(where: { $0.chunkIndex == chunkIndex }) {
+            guard existing.idempotencyKey == idempotencyKey,
+                  existing.bodyDigest == bodyDigest else {
+                throw RelayStoreError.attachmentConflict
+            }
+            return AttachmentChunk(
+                attachmentId: attachmentId,
+                chunkIndex: chunkIndex,
+                payload: payload
+            )
+        }
         let storedAt = bucketed(now, discriminator: bucketKey)
         let record: AttachmentRecord
         if let attachmentBlobStore {
@@ -384,7 +409,9 @@ public actor RelayStore {
                 payload: nil,
                 external: external,
                 storedAt: storedAt,
-                expiresAt: expiresAt
+                expiresAt: expiresAt,
+                idempotencyKey: idempotencyKey,
+                bodyDigest: bodyDigest
             )
         } else {
             record = AttachmentRecord(
@@ -392,22 +419,16 @@ public actor RelayStore {
                 payload: payload,
                 external: nil,
                 storedAt: storedAt,
-                expiresAt: expiresAt
+                expiresAt: expiresAt,
+                idempotencyKey: idempotencyKey,
+                bodyDigest: bodyDigest
             )
         }
         if let attachmentKeyToEvict,
            let evicted = attachments.removeValue(forKey: attachmentKeyToEvict) {
             deferredExternalDeletions.append(contentsOf: evicted.compactMap(\.external))
         }
-        if let existing = records.first(where: { $0.chunkIndex == chunkIndex }),
-           let external = existing.external {
-            deferredExternalDeletions.append(external)
-        }
-        if let index = records.firstIndex(where: { $0.chunkIndex == chunkIndex }) {
-            records[index] = record
-        } else {
-            records.append(record)
-        }
+        records.append(record)
         if records.count > maxAttachmentChunks {
             records.sort { $0.storedAt < $1.storedAt }
             for removed in records.dropLast(maxAttachmentChunks) {
@@ -557,8 +578,13 @@ public actor RelayStore {
     }
 
     private func boundedAttachmentTTL(_ ttlSeconds: Int?) -> TimeInterval {
-        let requested = TimeInterval(ttlSeconds ?? Int(attachmentTTL))
-        return min(maximumAttachmentTTL, max(minimumAttachmentTTL, requested))
+        let requested = TimeInterval(
+            ttlSeconds ?? Int(RelayAttachmentRetentionLimits.defaultSeconds)
+        )
+        return min(
+            RelayAttachmentRetentionLimits.maximumSeconds,
+            max(RelayAttachmentRetentionLimits.minimumSeconds, requested)
+        )
     }
 
     private func payload(for record: AttachmentRecord) throws -> EncryptedPayload {
@@ -718,12 +744,7 @@ public actor RelayStore {
                       && records.count <= maxAttachmentChunks
                       && Set(records.map(\.chunkIndex)).count == records.count
                       && records.allSatisfy({ record in
-                          record.chunkIndex >= 0
-                              && record.chunkIndex < maxAttachmentChunks
-                              && (record.payload != nil) != (record.external != nil)
-                              && record.storedAt.timeIntervalSince1970.isFinite
-                              && record.expiresAt.timeIntervalSince1970.isFinite
-                              && record.expiresAt >= record.storedAt
+                          record.isStructurallyValid
                       })
               }),
               snapshot.federationNodes.count <= maxFederationNodes,
@@ -912,6 +933,144 @@ private struct AttachmentRecord: Codable {
     let external: AttachmentExternalRecord?
     let storedAt: Date
     let expiresAt: Date
+    let idempotencyKey: Data
+    let bodyDigest: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case chunkIndex
+        case payload
+        case external
+        case storedAt
+        case expiresAt
+        case idempotencyKey
+        case bodyDigest
+    }
+
+    init(
+        chunkIndex: Int,
+        payload: EncryptedPayload?,
+        external: AttachmentExternalRecord?,
+        storedAt: Date,
+        expiresAt: Date,
+        idempotencyKey: Data,
+        bodyDigest: Data
+    ) {
+        self.chunkIndex = chunkIndex
+        self.payload = payload
+        self.external = external
+        self.storedAt = storedAt
+        self.expiresAt = expiresAt
+        self.idempotencyKey = idempotencyKey
+        self.bodyDigest = bodyDigest
+    }
+
+    init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: AttachmentRecordCodingKey.self)
+        let expected = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(strict.allKeys.map(\.stringValue)) == expected else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Stored attachment fields are not exact"
+                )
+            )
+        }
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            chunkIndex: try values.decode(Int.self, forKey: .chunkIndex),
+            payload: try values.decodeIfPresent(EncryptedPayload.self, forKey: .payload),
+            external: try values.decodeIfPresent(AttachmentExternalRecord.self, forKey: .external),
+            storedAt: try values.decode(Date.self, forKey: .storedAt),
+            expiresAt: try values.decode(Date.self, forKey: .expiresAt),
+            idempotencyKey: try values.decode(Data.self, forKey: .idempotencyKey),
+            bodyDigest: try values.decode(Data.self, forKey: .bodyDigest)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .chunkIndex,
+                in: values,
+                debugDescription: "Stored attachment is structurally invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                .init(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Stored attachment is structurally invalid"
+                )
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(chunkIndex, forKey: .chunkIndex)
+        try values.encode(payload, forKey: .payload)
+        try values.encode(external, forKey: .external)
+        try values.encode(storedAt, forKey: .storedAt)
+        try values.encode(expiresAt, forKey: .expiresAt)
+        try values.encode(idempotencyKey, forKey: .idempotencyKey)
+        try values.encode(bodyDigest, forKey: .bodyDigest)
+    }
+
+    var isStructurallyValid: Bool {
+        (0..<AttachmentChunk.maximumChunkCount).contains(chunkIndex)
+            && payload?.isStructurallyValid != false
+            && (payload != nil) != (external != nil)
+            && storedAt.timeIntervalSince1970.isFinite
+            && expiresAt.timeIntervalSince1970.isFinite
+            && expiresAt >= storedAt
+            && idempotencyKey.count == UploadAttachmentRequest.idempotencyKeyBytes
+            && bodyDigest.count == SHA256.byteCount
+    }
+}
+
+private struct AttachmentRecordCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        self.intValue = nil
+    }
+
+    init?(intValue: Int) {
+        self.stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+func attachmentUploadBodyDigest(
+    attachmentId: UUID,
+    chunkIndex: Int,
+    payload: EncryptedPayload,
+    ttlSeconds: Int?
+) -> Data {
+    var material = Data("org.noctweave.blobs.upload-v1".utf8)
+    appendAttachmentDigestField(Data(attachmentId.uuidString.lowercased().utf8), to: &material)
+    appendAttachmentDigestInteger(UInt64(chunkIndex), to: &material)
+    appendAttachmentDigestField(payload.nonce, to: &material)
+    appendAttachmentDigestField(payload.ciphertext, to: &material)
+    appendAttachmentDigestField(payload.tag, to: &material)
+    if let ttlSeconds {
+        material.append(1)
+        appendAttachmentDigestInteger(UInt64(bitPattern: Int64(ttlSeconds)), to: &material)
+    } else {
+        material.append(0)
+    }
+    return Data(SHA256.hash(data: material))
+}
+
+private func appendAttachmentDigestField(_ value: Data, to material: inout Data) {
+    appendAttachmentDigestInteger(UInt64(value.count), to: &material)
+    material.append(value)
+}
+
+private func appendAttachmentDigestInteger(_ value: UInt64, to material: inout Data) {
+    for shift in stride(from: 56, through: 0, by: -8) {
+        material.append(UInt8(truncatingIfNeeded: value >> UInt64(shift)))
+    }
 }
 
 private enum SQLiteRelayStateStoreError: Error, CustomStringConvertible {
@@ -1047,7 +1206,7 @@ private enum SQLiteRelayStateStore {
         try queryRows("SELECT coordinator_key, public_key FROM relay_coordinator_pinned_keys;", in: db) { statement in
             let coordinatorKey = try readText(statement, column: 0, in: db)
             let publicKey = try readBlob(statement, column: 1)
-            guard SigningKeyPair.isValidPublicKey(publicKey) else {
+            guard try SigningKeyPair.isValidPublicKeyThrowing(publicKey) else {
                 throw SQLiteRelayStateStoreError.corrupt("invalid pinned coordinator public key")
             }
             keys[coordinatorKey] = publicKey
@@ -1322,6 +1481,8 @@ enum RelayStoreError: Error, Equatable {
     case relayCapacityExceeded
     case invalidChunkIndex
     case invalidAttachmentPayload
+    case invalidAttachmentIdempotency
+    case attachmentConflict
 }
 
 enum RelayStorePersistenceError: Error {

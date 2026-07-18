@@ -42,7 +42,9 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
         self.relationships = []
         self.groupRuntimes = []
         self.createdAt = createdAt
-        guard isStructurallyValid else { throw PersonaProfileV1Error.invalidState }
+        guard try isStructurallyValidThrowing else {
+            throw PersonaProfileV1Error.invalidState
+        }
     }
 
     public init(from decoder: Decoder) throws {
@@ -66,7 +68,7 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
         )
         groupRuntimes = try container.decode([GroupRuntimeRecord].self, forKey: .groupRuntimes)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .relationships,
                 in: container,
@@ -76,7 +78,7 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(
@@ -94,7 +96,19 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
         try container.encode(createdAt, forKey: .createdAt)
     }
 
-    public var isStructurallyValid: Bool {
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            for relationship in relationships {
+                guard try relationship.isStructurallyValidThrowing else { return false }
+            }
+            for groupRuntime in groupRuntimes {
+                guard try groupRuntime.isStructurallyValidThrowing else { return false }
+            }
+            return hasValidAggregateStructureAfterRelationshipPreflight
+        }
+    }
+
+    private var hasValidAggregateStructureAfterRelationshipPreflight: Bool {
         let normalizedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard version == Self.version,
               !normalizedName.isEmpty,
@@ -102,10 +116,8 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
               normalizedName.utf8.count <= 512,
               relationships.count <= Self.maximumRelationships,
               Set(relationships.map(\.id)).count == relationships.count,
-              relationships.allSatisfy(\.isStructurallyValid),
               groupRuntimes.count <= Self.maximumGroupRuntimes,
               Set(groupRuntimes.map(\.groupId)).count == groupRuntimes.count,
-              groupRuntimes.allSatisfy(\.isStructurallyValid),
               protocolScopesAreUnique(
                   relationships: relationships,
                   groupRuntimes: groupRuntimes
@@ -116,10 +128,14 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
         return true
     }
 
+    public var isStructurallyValid: Bool {
+        (try? isStructurallyValidThrowing) == true
+    }
+
     public mutating func upsert(
         relationship: PairwiseRelationshipV2
     ) throws {
-        guard relationship.isStructurallyValid else {
+        guard try relationship.isStructurallyValidThrowing else {
             throw PersonaProfileV1Error.invalidState
         }
         var updated = relationships
@@ -141,7 +157,7 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
     }
 
     public mutating func upsert(groupRuntime: GroupRuntimeRecord) throws {
-        guard groupRuntime.isStructurallyValid else {
+        guard try groupRuntime.isStructurallyValidThrowing else {
             throw PersonaProfileV1Error.invalidState
         }
         var updated = groupRuntimes

@@ -18,6 +18,8 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         )
         let event = GroupConversationEventV2(
             groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
             createdAt: fixture.now,
             kind: .application,
             content: try XCTUnwrap(.text("group-scoped hello"))
@@ -80,6 +82,7 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         senderSnapshot = await sender.snapshot()
         XCTAssertTrue(senderSnapshot.pendingApplicationPublications.isEmpty)
         XCTAssertEqual(senderSnapshot.events, [event])
+        try assertExactRoundTrip(event, as: GroupConversationEventV2.self)
         try assertExactRoundTrip(
             try XCTUnwrap(replaySnapshot.processedApplicationEnvelopes.first),
             as: ProcessedGroupApplicationEnvelopeV2.self
@@ -90,6 +93,8 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         let fixture = try makeSignedFixture()
         let event = GroupConversationEventV2(
             groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
             createdAt: fixture.now,
             kind: .application,
             content: try XCTUnwrap(.text("opaque group fanout"))
@@ -142,6 +147,250 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
             }
             XCTAssertEqual(reconstructed?.payload, encodedEnvelope)
         }
+    }
+
+    func testAuthenticatedAuthorMismatchIsDurablyRejectedWithoutPinningSenderChain() async throws {
+        let fixture = try makeSignedFixture()
+        let store = TestGroupRuntimeStore(record: fixture.record)
+        let receiver = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: store
+        )
+        let poison = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: .generate(),
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("wrong group member handle"))
+        )
+        let poisonSeal = try fixture.provider.encryptApplicationEvent(
+            try NoctweaveCoder.encode(poison, sortedKeys: true),
+            state: fixture.cryptoState,
+            signedState: fixture.state,
+            localCredential: fixture.credential,
+            eventId: poison.id,
+            sentAt: fixture.now
+        )
+
+        await XCTAssertThrowsErrorAsync(try await receiver.processApplicationEnvelope(
+            poisonSeal.envelope,
+            at: fixture.now.addingTimeInterval(1)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .conflictingApplicationEnvelope)
+        }
+        let rejected = await receiver.snapshot()
+        XCTAssertTrue(rejected.events.isEmpty)
+        XCTAssertEqual(
+            rejected.processedApplicationEnvelopes.first?.outcome,
+            .rejectedConflictingEnvelope
+        )
+        await XCTAssertThrowsErrorAsync(try await receiver.processApplicationEnvelope(
+            poisonSeal.envelope,
+            at: fixture.now.addingTimeInterval(2)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .conflictingApplicationEnvelope)
+        }
+        let replaySnapshot = await receiver.snapshot()
+        XCTAssertEqual(replaySnapshot, rejected)
+
+        let valid = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("chain continues"))
+        )
+        let validSeal = try fixture.provider.encryptApplicationEvent(
+            try NoctweaveCoder.encode(valid, sortedKeys: true),
+            state: poisonSeal.state,
+            signedState: fixture.state,
+            localCredential: fixture.credential,
+            eventId: valid.id,
+            sentAt: fixture.now
+        )
+        let validResult = try await receiver.processApplicationEnvelope(
+            validSeal.envelope,
+            at: fixture.now.addingTimeInterval(3)
+        )
+        XCTAssertEqual(validResult, valid)
+    }
+
+    func testPerAuthorClientTransactionReplayIsBoundedAndDoesNotPinChain() async throws {
+        let fixture = try makeSignedFixture()
+        let store = TestGroupRuntimeStore(record: fixture.record)
+        let receiver = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: store
+        )
+        let transactionID = UUID()
+        let first = GroupConversationEventV2(
+            clientTransactionID: transactionID,
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("first logical send"))
+        )
+        let firstSeal = try fixture.provider.encryptApplicationEvent(
+            try NoctweaveCoder.encode(first, sortedKeys: true),
+            state: fixture.cryptoState,
+            signedState: fixture.state,
+            localCredential: fixture.credential,
+            eventId: first.id,
+            sentAt: fixture.now
+        )
+        let firstResult = try await receiver.processApplicationEnvelope(
+            firstSeal.envelope,
+            at: fixture.now
+        )
+        XCTAssertEqual(firstResult, first)
+
+        let replay = GroupConversationEventV2(
+            clientTransactionID: transactionID,
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("conflicting logical send"))
+        )
+        let replaySeal = try fixture.provider.encryptApplicationEvent(
+            try NoctweaveCoder.encode(replay, sortedKeys: true),
+            state: firstSeal.state,
+            signedState: fixture.state,
+            localCredential: fixture.credential,
+            eventId: replay.id,
+            sentAt: fixture.now
+        )
+        await XCTAssertThrowsErrorAsync(try await receiver.processApplicationEnvelope(
+            replaySeal.envelope,
+            at: fixture.now.addingTimeInterval(1)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .conflictingClientTransaction)
+        }
+        let afterReplay = await receiver.snapshot()
+        XCTAssertEqual(afterReplay.events, [first])
+        XCTAssertEqual(
+            afterReplay.processedApplicationEnvelopes.last?.outcome,
+            .rejectedClientTransaction
+        )
+
+        let next = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("next unique send"))
+        )
+        let nextSeal = try fixture.provider.encryptApplicationEvent(
+            try NoctweaveCoder.encode(next, sortedKeys: true),
+            state: replaySeal.state,
+            signedState: fixture.state,
+            localCredential: fixture.credential,
+            eventId: next.id,
+            sentAt: fixture.now
+        )
+        let nextResult = try await receiver.processApplicationEnvelope(
+            nextSeal.envelope,
+            at: fixture.now.addingTimeInterval(2)
+        )
+        XCTAssertEqual(nextResult, next)
+
+        let outbound = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: TestGroupRuntimeStore(record: fixture.record)
+        )
+        _ = try await outbound.prepareApplicationEvent(first, at: fixture.now)
+        await XCTAssertThrowsErrorAsync(try await outbound.prepareApplicationEvent(
+            replay,
+            at: fixture.now
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .conflictingClientTransaction)
+        }
+    }
+
+    func testAuthenticatedRejectionAndRatchetAdvanceAreAtomicAcrossSaveFailure() async throws {
+        let fixture = try makeSignedFixture()
+        let store = TestGroupRuntimeStore(record: fixture.record, failOnSaveNumber: 1)
+        let receiver = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: store
+        )
+        let poison = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: .generate(),
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("atomic rejection"))
+        )
+        let sealed = try fixture.provider.encryptApplicationEvent(
+            try NoctweaveCoder.encode(poison, sortedKeys: true),
+            state: fixture.cryptoState,
+            signedState: fixture.state,
+            localCredential: fixture.credential,
+            eventId: poison.id,
+            sentAt: fixture.now
+        )
+
+        await XCTAssertThrowsErrorAsync(try await receiver.processApplicationEnvelope(
+            sealed.envelope,
+            at: fixture.now.addingTimeInterval(1)
+        )) { error in
+            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+        }
+        let inMemoryAfterFailure = await receiver.snapshot()
+        let durableAfterFailure = await store.load()
+        XCTAssertEqual(inMemoryAfterFailure, fixture.record)
+        XCTAssertEqual(durableAfterFailure, fixture.record)
+
+        await store.setFailOnSaveNumber(nil)
+        await XCTAssertThrowsErrorAsync(try await receiver.processApplicationEnvelope(
+            sealed.envelope,
+            at: fixture.now.addingTimeInterval(2)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .conflictingApplicationEnvelope)
+        }
+        let persisted = await receiver.snapshot()
+        XCTAssertEqual(
+            persisted.processedApplicationEnvelopes.first?.outcome,
+            .rejectedConflictingEnvelope
+        )
+    }
+
+    func testEventCompactionUsesAuthenticatedAppendOrderNotPeerCreatedAt() throws {
+        let fixture = try makeSignedFixture()
+        let count = NoctweaveArchitectureV2.groupEventRecentWindow + 2
+        let content = try XCTUnwrap(EncodedContent.text("append ordered"))
+        let events = (0..<count).map { index in
+            GroupConversationEventV2(
+                clientTransactionID: UUID(),
+                groupID: fixture.record.groupId,
+                authorMemberHandle: fixture.credential.memberHandle,
+                authorCredentialHandle: fixture.credential.credentialHandle,
+                createdAt: fixture.now.addingTimeInterval(TimeInterval(count - index)),
+                kind: .application,
+                content: content
+            )
+        }
+        let record = GroupRuntimeRecord(
+            groupId: fixture.record.groupId,
+            localCredential: fixture.credential,
+            signedState: fixture.state,
+            cryptoState: fixture.cryptoState,
+            events: events
+        )
+
+        XCTAssertTrue(record.isStructurallyValid)
+        XCTAssertEqual(record.events, events)
+        XCTAssertEqual(
+            try record.compactedDurableState().events,
+            Array(events.suffix(NoctweaveArchitectureV2.groupEventRecentWindow))
+        )
     }
 
     func testProvisionalStateIsNominalAndApplicationRatchetsRejectReplayAndGaps() throws {
@@ -476,7 +725,7 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         XCTAssertEqual(quarantined.signedState.epoch, 2)
         XCTAssertEqual(quarantined.quarantinedForks.count, 1)
         XCTAssertEqual(
-            quarantined.quarantinedForks.first?.conflictingCommit.digest,
+            quarantined.quarantinedForks.first?.conflictingCommitDigest,
             conflicting.digest
         )
     }
@@ -653,12 +902,608 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
             baseEpoch: fixture.state.epoch,
             acceptedCommitDigest: try XCTUnwrap(publication.signedCommit.digest),
             conflictingCommitDigest: try XCTUnwrap(conflicting.digest),
-            conflictingCommit: conflicting,
             quarantinedAt: fixture.now.addingTimeInterval(3)
         )
         XCTAssertTrue(quarantine.isStructurallyValid)
         try assertExactRoundTrip(quarantine, as: GroupEpochForkQuarantine.self)
         try assertExactRoundTrip(snapshot, as: GroupRuntimeRecord.self)
+    }
+
+    func testPeerEpochConvergesAtomicallyAcrossFailureRestartReplayAndFork() async throws {
+        let fixture = try await makeTwoMemberRuntimeFixture()
+        let ownerBase = await fixture.owner.snapshot()
+        let firstOwner = try NoctweavePQGroupRuntimeV2(
+            record: ownerBase,
+            persistence: TestGroupRuntimeStore(record: ownerBase)
+        )
+        let forkOwner = try NoctweavePQGroupRuntimeV2(
+            record: ownerBase,
+            persistence: TestGroupRuntimeStore(record: ownerBase)
+        )
+        let accepted = try await firstOwner.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: ownerBase.signedState.members,
+            proposedCredentials: ownerBase.signedState.memberCredentials,
+            proposedPermissions: ownerBase.signedState.permissions,
+            proposedMetadataDigest: bytes(0xA1),
+            idempotencyKey: bytes(0xA2),
+            createdAt: fixture.now.addingTimeInterval(2)
+        )
+        let acceptedWelcome = try XCTUnwrap(accepted.signedWelcomes.first(where: {
+            $0.destinationCredentialHandle == fixture.memberCredential.credentialHandle
+        }))
+
+        await fixture.memberStore.setFailOnSaveNumber(2)
+        await XCTAssertThrowsErrorAsync(try await fixture.member.processPeerEpoch(
+            accepted.transition,
+            welcome: acceptedWelcome,
+            observedAt: fixture.now.addingTimeInterval(2)
+        )) { error in
+            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+        }
+        var memberSnapshot = await fixture.member.snapshot()
+        XCTAssertEqual(memberSnapshot.signedState.epoch, 2)
+        XCTAssertTrue(memberSnapshot.peerEpochJournal.count == 1)
+
+        await fixture.memberStore.setFailOnSaveNumber(nil)
+        let acceptedOutcome = try await fixture.member.processPeerEpoch(
+            accepted.transition,
+            welcome: acceptedWelcome,
+            observedAt: fixture.now.addingTimeInterval(2)
+        )
+        XCTAssertEqual(acceptedOutcome, .active)
+        memberSnapshot = await fixture.member.snapshot()
+        XCTAssertEqual(memberSnapshot.signedState.epoch, 3)
+        XCTAssertEqual(memberSnapshot.peerEpochJournal.count, 2)
+        try assertExactRoundTrip(accepted.transition, as: GroupEpochTransitionEnvelopeV2.self)
+        let protocolEnvelope = ProtocolEnvelopeV1.groupCommitV2(accepted.transition)
+        try assertExactRoundTrip(protocolEnvelope, as: ProtocolEnvelopeV1.self)
+        var obsoleteCommitEnvelope = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: NoctweaveCoder.encode(protocolEnvelope, sortedKeys: true)
+            ) as? [String: Any]
+        )
+        obsoleteCommitEnvelope["groupCommitV2"] = try JSONSerialization.jsonObject(
+            with: NoctweaveCoder.encode(accepted.signedCommit, sortedKeys: true)
+        )
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            ProtocolEnvelopeV1.self,
+            from: JSONSerialization.data(
+                withJSONObject: obsoleteCommitEnvelope,
+                options: [.sortedKeys]
+            )
+        ))
+        try assertExactRoundTrip(
+            try XCTUnwrap(memberSnapshot.peerEpochJournal.last),
+            as: GroupPeerEpochJournalEntryV2.self
+        )
+
+        let reopened = try await NoctweavePQGroupRuntimeV2.open(
+            persistence: fixture.memberStore
+        )
+        let beforeReplay = await reopened.snapshot()
+        let replayOutcome = try await reopened.processPeerEpoch(
+            accepted.transition,
+            welcome: acceptedWelcome,
+            observedAt: fixture.now.addingTimeInterval(3)
+        )
+        XCTAssertEqual(replayOutcome, .active)
+        let afterReplay = await reopened.snapshot()
+        XCTAssertEqual(afterReplay, beforeReplay)
+
+        let fork = try await forkOwner.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: ownerBase.signedState.members,
+            proposedCredentials: ownerBase.signedState.memberCredentials,
+            proposedPermissions: ownerBase.signedState.permissions,
+            proposedMetadataDigest: bytes(0xB1),
+            idempotencyKey: bytes(0xB2),
+            createdAt: fixture.now.addingTimeInterval(2)
+        )
+        let forkWelcome = try XCTUnwrap(fork.signedWelcomes.first(where: {
+            $0.destinationCredentialHandle == fixture.memberCredential.credentialHandle
+        }))
+        await XCTAssertThrowsErrorAsync(try await reopened.processPeerEpoch(
+            fork.transition,
+            welcome: forkWelcome,
+            observedAt: fixture.now.addingTimeInterval(3)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .conflictingCommitQuarantined)
+        }
+        let quarantined = await reopened.snapshot()
+        XCTAssertEqual(quarantined.signedState.epoch, 3)
+        XCTAssertEqual(quarantined.peerForkQuarantines.count, 1)
+        try assertExactRoundTrip(
+            try XCTUnwrap(quarantined.peerForkQuarantines.first),
+            as: GroupPeerEpochForkQuarantineV2.self
+        )
+    }
+
+    func testPeerRemovalIsDurableTerminalAndClearsSendableWork() async throws {
+        let fixture = try await makeTwoMemberRuntimeFixture()
+        let memberBefore = await fixture.member.snapshot()
+        let pendingEvent = GroupConversationEventV2(
+            groupID: memberBefore.groupId,
+            authorMemberHandle: fixture.memberCredential.memberHandle,
+            authorCredentialHandle: fixture.memberCredential.credentialHandle,
+            createdAt: fixture.now.addingTimeInterval(2),
+            kind: .application,
+            content: try XCTUnwrap(.text("will be retired with local access"))
+        )
+        _ = try await fixture.member.prepareApplicationEvent(
+            pendingEvent,
+            at: fixture.now.addingTimeInterval(2)
+        )
+
+        let ownerState = await fixture.owner.snapshot().signedState
+        let removalEpoch = ownerState.epoch + 1
+        let removedMembers = ownerState.members.map { member in
+            member.id == fixture.memberCredential.memberHandle
+                ? GroupMemberV2(
+                    id: member.id,
+                    role: member.role,
+                    addedEpoch: member.addedEpoch,
+                    removedEpoch: removalEpoch
+                )
+                : member
+        }
+        let removedCredentials = ownerState.memberCredentials.map { credential in
+            credential.credentialHandle == fixture.memberCredential.credentialHandle
+                ? GroupMemberCredentialV2(
+                    memberHandle: credential.memberHandle,
+                    credentialHandle: credential.credentialHandle,
+                    admissionDigest: credential.admissionDigest,
+                    signingPublicKey: credential.signingPublicKey,
+                    agreementPublicKey: credential.agreementPublicKey,
+                    contentTypes: credential.contentTypes,
+                    addedEpoch: credential.addedEpoch,
+                    removedEpoch: removalEpoch
+                )
+                : credential
+        }
+        let removal = try await fixture.owner.prepareEpoch(
+            operation: .removeMember,
+            proposedMembers: removedMembers,
+            proposedCredentials: removedCredentials,
+            proposedPermissions: ownerState.permissions,
+            proposedMetadataDigest: ownerState.metadataDigest,
+            idempotencyKey: bytes(0xC1),
+            createdAt: fixture.now.addingTimeInterval(3)
+        )
+        XCTAssertNil(removal.signedWelcomes.first(where: {
+            $0.destinationCredentialHandle == fixture.memberCredential.credentialHandle
+        }))
+        let removalOutcome = try await fixture.member.processPeerEpoch(
+            removal.transition,
+            welcome: nil,
+            observedAt: fixture.now.addingTimeInterval(3)
+        )
+        XCTAssertEqual(removalOutcome, .localRemoved)
+        let terminal = await fixture.member.snapshot()
+        XCTAssertEqual(terminal.localRemoval?.acceptedEpoch, removal.signedState.epoch)
+        XCTAssertTrue(terminal.pendingApplicationPublications.isEmpty)
+        XCTAssertTrue(terminal.epochIntents.isEmpty)
+        XCTAssertTrue(terminal.isStructurallyValid)
+
+        await XCTAssertThrowsErrorAsync(try await fixture.member.prepareApplicationEvent(
+            pendingEvent,
+            at: fixture.now.addingTimeInterval(4)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .localCredentialRemoved)
+        }
+        await XCTAssertThrowsErrorAsync(try await fixture.member.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: terminal.signedState.members,
+            proposedCredentials: terminal.signedState.memberCredentials,
+            proposedPermissions: terminal.signedState.permissions,
+            proposedMetadataDigest: bytes(0xC2),
+            idempotencyKey: bytes(0xC3),
+            createdAt: fixture.now.addingTimeInterval(4)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .localCredentialRemoved)
+        }
+        let beforeReplay = await fixture.member.snapshot()
+        let replayOutcome = try await fixture.member.processPeerEpoch(
+            removal.transition,
+            welcome: nil,
+            observedAt: fixture.now.addingTimeInterval(4)
+        )
+        XCTAssertEqual(replayOutcome, .localRemoved)
+        let afterReplay = await fixture.member.snapshot()
+        XCTAssertEqual(afterReplay, beforeReplay)
+
+        let reopened = try await NoctweavePQGroupRuntimeV2.open(
+            persistence: fixture.memberStore
+        )
+        let reopenedState = await reopened.snapshot()
+        XCTAssertEqual(reopenedState.localRemoval, terminal.localRemoval)
+        XCTAssertTrue(reopenedState.isStructurallyValid)
+    }
+
+    func testJoinRequiresExplicitPinnedGroupOnlyInvitationAnchor() async throws {
+        let base = try makeSignedFixture()
+        let invitation = try await makeAddMemberInvitation(base: base)
+        let store = TestGroupRuntimeStore(record: nil)
+        let joined = try await NoctweavePQGroupRuntimeV2.join(
+            anchor: invitation.anchor,
+            transition: invitation.publication.transition,
+            welcome: invitation.welcome,
+            localCredential: invitation.memberCredential,
+            observedAt: base.now.addingTimeInterval(1),
+            persistence: store
+        )
+        let joinedSnapshot = await joined.snapshot()
+        XCTAssertEqual(joinedSnapshot.originJoinAnchorID, invitation.anchor.id)
+
+        await XCTAssertThrowsErrorAsync(try await NoctweavePQGroupRuntimeV2.join(
+            anchor: invitation.anchor,
+            transition: invitation.publication.transition,
+            welcome: invitation.welcome,
+            localCredential: invitation.memberCredential,
+            observedAt: base.now.addingTimeInterval(1),
+            persistence: store
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .unsolicitedJoin)
+        }
+
+        let unrelated = try makeSignedFixture()
+        let unrelatedAnchor = try GroupJoinAnchorV2(
+            baseState: unrelated.state,
+            destinationMemberHandle: invitation.memberCredential.memberHandle,
+            destinationCredentialHandle: invitation.memberCredential.credentialHandle,
+            destinationAdmissionDigest: invitation.memberCredential.admissionDigest,
+            issuedAt: base.now,
+            expiresAt: base.now.addingTimeInterval(3_600)
+        )
+        await XCTAssertThrowsErrorAsync(try await NoctweavePQGroupRuntimeV2.join(
+            anchor: unrelatedAnchor,
+            transition: invitation.publication.transition,
+            welcome: invitation.welcome,
+            localCredential: invitation.memberCredential,
+            observedAt: base.now.addingTimeInterval(1),
+            persistence: TestGroupRuntimeStore(record: nil)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .unsolicitedJoin)
+        }
+        try assertExactRoundTrip(invitation.anchor, as: GroupJoinAnchorV2.self)
+    }
+
+    func testInboundEpochRacingDurableLocalPreparationConvergesOrQuarantines() async throws {
+        let base = try makeSignedFixture()
+        let exactStore = TestGroupRuntimeStore(record: base.record, failOnSaveNumber: 2)
+        let exactRuntime = try NoctweavePQGroupRuntimeV2(
+            record: base.record,
+            persistence: exactStore
+        )
+        await XCTAssertThrowsErrorAsync(try await exactRuntime.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: base.state.members,
+            proposedCredentials: base.state.memberCredentials,
+            proposedPermissions: base.state.permissions,
+            proposedMetadataDigest: bytes(0xE1),
+            idempotencyKey: bytes(0xE2),
+            createdAt: base.now.addingTimeInterval(1)
+        )) { error in
+            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+        }
+        let preparedSnapshot = await exactRuntime.snapshot()
+        let preparedIntent = try XCTUnwrap(preparedSnapshot.epochIntents.first(where: {
+            $0.phase == .prepared
+        }))
+        let exactWelcome = try XCTUnwrap(preparedIntent.signedWelcomes.first(where: {
+            $0.destinationCredentialHandle == base.credential.credentialHandle
+        }))
+        await exactStore.setFailOnSaveNumber(nil)
+        let outcome = try await exactRuntime.processPeerEpoch(
+            preparedIntent.publication.transition,
+            welcome: exactWelcome,
+            observedAt: base.now.addingTimeInterval(1)
+        )
+        XCTAssertEqual(outcome, .active)
+        let converged = await exactRuntime.snapshot()
+        XCTAssertEqual(converged.signedState.epoch, 2)
+        XCTAssertEqual(converged.peerEpochJournal.count, 1)
+        XCTAssertEqual(converged.epochIntents.first?.phase, .stateCommitted)
+
+        let conflictStore = TestGroupRuntimeStore(record: base.record, failOnSaveNumber: 2)
+        let conflictRuntime = try NoctweavePQGroupRuntimeV2(
+            record: base.record,
+            persistence: conflictStore
+        )
+        await XCTAssertThrowsErrorAsync(try await conflictRuntime.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: base.state.members,
+            proposedCredentials: base.state.memberCredentials,
+            proposedPermissions: base.state.permissions,
+            proposedMetadataDigest: bytes(0xE3),
+            idempotencyKey: bytes(0xE4),
+            createdAt: base.now.addingTimeInterval(1)
+        )) { error in
+            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+        }
+        await conflictStore.setFailOnSaveNumber(nil)
+        await XCTAssertThrowsErrorAsync(try await conflictRuntime.processPeerEpoch(
+            preparedIntent.publication.transition,
+            welcome: exactWelcome,
+            observedAt: base.now.addingTimeInterval(1)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .conflictingCommitQuarantined)
+        }
+        let quarantined = await conflictRuntime.snapshot()
+        XCTAssertEqual(quarantined.signedState.epoch, 1)
+        XCTAssertEqual(quarantined.epochIntents.first?.phase, .prepared)
+        XCTAssertEqual(quarantined.peerForkQuarantines.count, 1)
+    }
+
+    func testGroupRuntimeRejectsCountValidStateOverAggregateDurableByteBudget() throws {
+        let fixture = try makeSignedFixture()
+        let maximalContent = EncodedContent(
+            type: .text,
+            payload: Data(
+                repeating: 0xF1,
+                count: NoctweaveArchitectureV2.maximumContentPayloadBytes
+            )
+        )
+        XCTAssertTrue(maximalContent.isStructurallyValid)
+        let events = (0..<385).map { offset in
+            GroupConversationEventV2(
+                groupID: fixture.record.groupId,
+                authorMemberHandle: fixture.credential.memberHandle,
+                authorCredentialHandle: fixture.credential.credentialHandle,
+                createdAt: fixture.now.addingTimeInterval(Double(offset)),
+                kind: .application,
+                content: maximalContent
+            )
+        }
+        XCTAssertLessThan(events.count, NoctweaveArchitectureV2.maximumGroupEvents)
+        XCTAssertTrue(events.allSatisfy(\.isStructurallyValid))
+        let oversized = GroupRuntimeRecord(
+            groupId: fixture.record.groupId,
+            localCredential: fixture.credential,
+            signedState: fixture.state,
+            cryptoState: fixture.cryptoState,
+            events: events
+        )
+        XCTAssertFalse(oversized.isStructurallyValid)
+        XCTAssertThrowsError(try NoctweaveCoder.encode(oversized, sortedKeys: true))
+    }
+
+    func testLocalDeletionPersistsExactOutboxClearsWorkAndReopensTerminal() async throws {
+        let fixture = try makeSignedFixture()
+        let store = TestGroupRuntimeStore(record: fixture.record)
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: store
+        )
+        let event = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            authorMemberHandle: fixture.credential.memberHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("pending before terminal deletion"))
+        )
+        let pendingEnvelope = try await runtime.prepareApplicationEvent(
+            event,
+            at: fixture.now
+        )
+        let pendingReplacement = try makeCredential(
+            groupId: fixture.record.groupId,
+            memberHandle: fixture.credential.memberHandle,
+            marker: 0x71
+        )
+        try await runtime.registerPendingLocalCredential(pendingReplacement)
+
+        await store.setFailOnSaveNumber(4)
+        await XCTAssertThrowsErrorAsync(try await runtime.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: fixture.state.members,
+            proposedCredentials: fixture.state.memberCredentials,
+            proposedPermissions: fixture.state.permissions,
+            proposedMetadataDigest: bytes(0x72),
+            idempotencyKey: bytes(0x73),
+            createdAt: fixture.now.addingTimeInterval(1)
+        )) { error in
+            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+        }
+        await store.setFailOnSaveNumber(nil)
+        let preparedSnapshot = await runtime.snapshot()
+        XCTAssertEqual(preparedSnapshot.epochIntents.first?.phase, .prepared)
+
+        let reasonDigest = bytes(0x74)
+        let idempotencyKey = bytes(0x75)
+        let tombstone = try await runtime.prepareDeletion(
+            reasonDigest: reasonDigest,
+            idempotencyKey: idempotencyKey,
+            createdAt: fixture.now.addingTimeInterval(2)
+        )
+        let terminal = await runtime.snapshot()
+        XCTAssertEqual(terminal.deletionState?.publicationState, .pending)
+        XCTAssertEqual(terminal.deletionState?.deletedState.tombstone, tombstone)
+        XCTAssertTrue(terminal.epochIntents.isEmpty)
+        XCTAssertTrue(terminal.pendingApplicationPublications.isEmpty)
+        XCTAssertTrue(terminal.pendingLocalCredentials.isEmpty)
+        XCTAssertTrue(try terminal.isStructurallyValidThrowing)
+        let pendingDeletion = await runtime.pendingDeletionPublication()
+        XCTAssertEqual(pendingDeletion, tombstone)
+
+        let exactRetry = try await runtime.prepareDeletion(
+            reasonDigest: reasonDigest,
+            idempotencyKey: idempotencyKey,
+            createdAt: fixture.now.addingTimeInterval(20)
+        )
+        XCTAssertEqual(exactRetry, tombstone)
+        let afterExactRetry = await runtime.snapshot()
+        XCTAssertEqual(afterExactRetry, terminal)
+
+        await XCTAssertThrowsErrorAsync(try await runtime.prepareApplicationEvent(
+            event,
+            at: fixture.now.addingTimeInterval(3)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .groupDeleted)
+        }
+        await XCTAssertThrowsErrorAsync(try await runtime.processApplicationEnvelope(
+            pendingEnvelope,
+            at: fixture.now.addingTimeInterval(3)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .groupDeleted)
+        }
+        await XCTAssertThrowsErrorAsync(try await runtime.registerPendingLocalCredential(
+            pendingReplacement
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .groupDeleted)
+        }
+        await XCTAssertThrowsErrorAsync(try await runtime.markApplicationPublished(
+            eventID: event.id
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .groupDeleted)
+        }
+
+        let reopenedPending = try await NoctweavePQGroupRuntimeV2.open(persistence: store)
+        let reopenedOutbox = await reopenedPending.pendingDeletionPublication()
+        XCTAssertEqual(reopenedOutbox, tombstone)
+        try await reopenedPending.markDeletionPublished(
+            tombstoneID: tombstone.id,
+            at: fixture.now.addingTimeInterval(3)
+        )
+        let completedOutbox = await reopenedPending.pendingDeletionPublication()
+        XCTAssertNil(completedOutbox)
+        let published = await reopenedPending.snapshot()
+        XCTAssertEqual(published.deletionState?.publicationState, .published)
+        try await reopenedPending.markDeletionPublished(
+            tombstoneID: tombstone.id,
+            at: fixture.now.addingTimeInterval(4)
+        )
+        let afterCompletionReplay = await reopenedPending.snapshot()
+        XCTAssertEqual(afterCompletionReplay, published)
+
+        let reopenedPublished = try await NoctweavePQGroupRuntimeV2.open(persistence: store)
+        let reopenedPublishedSnapshot = await reopenedPublished.snapshot()
+        XCTAssertEqual(reopenedPublishedSnapshot, published)
+        try assertExactRoundTrip(
+            try XCTUnwrap(published.deletionState),
+            as: GroupRuntimeDeletionStateV2.self
+        )
+        try assertExactRoundTrip(published, as: GroupRuntimeRecord.self)
+    }
+
+    func testInboundDeletionIsAtomicReplayableAndRejectsConflictsAndResurrection() async throws {
+        let fixture = try await makeTwoMemberRuntimeFixture()
+        let ownerBase = await fixture.owner.snapshot()
+        let resurrectionRuntime = try NoctweavePQGroupRuntimeV2(
+            record: ownerBase,
+            persistence: TestGroupRuntimeStore(record: ownerBase)
+        )
+        let resurrection = try await resurrectionRuntime.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: ownerBase.signedState.members,
+            proposedCredentials: ownerBase.signedState.memberCredentials,
+            proposedPermissions: ownerBase.signedState.permissions,
+            proposedMetadataDigest: bytes(0x81),
+            idempotencyKey: bytes(0x82),
+            createdAt: fixture.now.addingTimeInterval(2)
+        )
+        let conflictingRuntime = try NoctweavePQGroupRuntimeV2(
+            record: ownerBase,
+            persistence: TestGroupRuntimeStore(record: ownerBase)
+        )
+        let conflictingTombstone = try await conflictingRuntime.prepareDeletion(
+            reasonDigest: bytes(0x83),
+            idempotencyKey: bytes(0x84),
+            createdAt: fixture.now.addingTimeInterval(3)
+        )
+        let acceptedTombstone = try await fixture.owner.prepareDeletion(
+            reasonDigest: bytes(0x85),
+            idempotencyKey: bytes(0x86),
+            createdAt: fixture.now.addingTimeInterval(3)
+        )
+
+        let memberState = await fixture.member.snapshot()
+        let pendingEvent = GroupConversationEventV2(
+            groupID: memberState.groupId,
+            authorMemberHandle: fixture.memberCredential.memberHandle,
+            authorCredentialHandle: fixture.memberCredential.credentialHandle,
+            createdAt: fixture.now.addingTimeInterval(2),
+            kind: .application,
+            content: try XCTUnwrap(.text("cleared by inbound deletion"))
+        )
+        let pendingEnvelope = try await fixture.member.prepareApplicationEvent(
+            pendingEvent,
+            at: fixture.now.addingTimeInterval(2)
+        )
+        await fixture.memberStore.setFailOnSaveNumber(3)
+        await XCTAssertThrowsErrorAsync(try await fixture.member.processDeletionTombstone(
+            acceptedTombstone,
+            observedAt: fixture.now.addingTimeInterval(3)
+        )) { error in
+            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+        }
+        var afterFailure = await fixture.member.snapshot()
+        XCTAssertNil(afterFailure.deletionState)
+        XCTAssertEqual(afterFailure.signedState.epoch, 2)
+        XCTAssertEqual(afterFailure.pendingApplicationPublications.count, 1)
+
+        await fixture.memberStore.setFailOnSaveNumber(nil)
+        let deletedState = try await fixture.member.processDeletionTombstone(
+            acceptedTombstone,
+            observedAt: fixture.now.addingTimeInterval(3)
+        )
+        var terminal = await fixture.member.snapshot()
+        XCTAssertEqual(terminal.deletionState?.origin, .peer)
+        XCTAssertEqual(terminal.deletionState?.publicationState, .notApplicable)
+        XCTAssertEqual(terminal.deletionState?.deletedState, deletedState)
+        XCTAssertTrue(terminal.pendingApplicationPublications.isEmpty)
+
+        let beforeReplay = terminal
+        let replay = try await fixture.member.processDeletionTombstone(
+            acceptedTombstone,
+            observedAt: fixture.now.addingTimeInterval(4)
+        )
+        XCTAssertEqual(replay, deletedState)
+        let afterReplay = await fixture.member.snapshot()
+        XCTAssertEqual(afterReplay, beforeReplay)
+
+        await XCTAssertThrowsErrorAsync(try await fixture.member.processDeletionTombstone(
+            conflictingTombstone,
+            observedAt: fixture.now.addingTimeInterval(4)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .conflictingDeletionQuarantined)
+        }
+        await XCTAssertThrowsErrorAsync(try await fixture.member.processPeerEpoch(
+            resurrection.transition,
+            welcome: resurrection.signedWelcomes.first(where: {
+                $0.destinationCredentialHandle == fixture.memberCredential.credentialHandle
+            }),
+            observedAt: fixture.now.addingTimeInterval(5)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .groupDeleted)
+        }
+        await XCTAssertThrowsErrorAsync(try await fixture.member.observeCommit(
+            resurrection.signedCommit,
+            at: fixture.now.addingTimeInterval(6)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .groupDeleted)
+        }
+        await XCTAssertThrowsErrorAsync(try await fixture.member.processApplicationEnvelope(
+            pendingEnvelope,
+            at: fixture.now.addingTimeInterval(6)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .groupDeleted)
+        }
+        terminal = await fixture.member.snapshot()
+        XCTAssertEqual(terminal.deletionState?.conflictEvidence.count, 1)
+        XCTAssertTrue(terminal.deletionState?.conflictEvidence.allSatisfy({
+            $0.artifactDigest.count == SHA256.byteCount
+        }) == true)
+        XCTAssertTrue(try terminal.isStructurallyValidThrowing)
+
+        let reopened = try await NoctweavePQGroupRuntimeV2.open(
+            persistence: fixture.memberStore
+        )
+        let reopenedSnapshot = await reopened.snapshot()
+        XCTAssertEqual(reopenedSnapshot, terminal)
+        afterFailure = await reopened.snapshot()
+        XCTAssertNotNil(afterFailure.deletionState)
     }
 }
 
@@ -671,6 +1516,106 @@ private struct SignedGroupRuntimeFixture {
     let state: SignedGroupStateV2
     let cryptoState: GroupCryptoState
     let record: GroupRuntimeRecord
+}
+
+private struct AddMemberInvitationFixture {
+    let owner: NoctweavePQGroupRuntimeV2
+    let publication: GroupEpochPublication
+    let welcome: SignedGroupWelcomeV2
+    let memberCredential: LocalGroupCredentialV2
+    let anchor: GroupJoinAnchorV2
+}
+
+private struct TwoMemberRuntimeFixture {
+    let now: Date
+    let owner: NoctweavePQGroupRuntimeV2
+    let member: NoctweavePQGroupRuntimeV2
+    let memberStore: TestGroupRuntimeStore
+    let memberCredential: LocalGroupCredentialV2
+}
+
+private func makeAddMemberInvitation(
+    base: SignedGroupRuntimeFixture
+) async throws -> AddMemberInvitationFixture {
+    let memberHandle = GroupScopedMemberHandleV2.generate()
+    let signingKey = try SigningKeyPair.generate()
+    let agreementKey = try AgreementKeyPair.generate()
+    let admission = try GroupCredentialAdmissionV2.create(
+        groupId: base.state.groupId,
+        memberHandle: memberHandle,
+        credentialHandle: .generate(),
+        groupSigningKey: signingKey,
+        groupAgreementKey: agreementKey,
+        issuedAt: base.now,
+        expiresAt: base.now.addingTimeInterval(3_600)
+    )
+    let memberLeaf = try GroupMemberCredentialV2.fromVerifiedProjection(
+        admission,
+        addedEpoch: 2
+    )
+    let memberCredential = LocalGroupCredentialV2(
+        groupId: base.state.groupId,
+        memberHandle: memberHandle,
+        credentialHandle: memberLeaf.credentialHandle,
+        admissionDigest: memberLeaf.admissionDigest,
+        signingKey: signingKey,
+        agreementKey: agreementKey
+    )
+    let owner = try NoctweavePQGroupRuntimeV2(
+        record: base.record,
+        persistence: TestGroupRuntimeStore(record: base.record)
+    )
+    let publication = try await owner.prepareEpoch(
+        operation: .addMember,
+        proposedMembers: base.state.members + [
+            GroupMemberV2(id: memberHandle, role: .member, addedEpoch: 2)
+        ],
+        proposedCredentials: base.state.memberCredentials + [memberLeaf],
+        admissionProjection: admission,
+        proposedPermissions: base.state.permissions,
+        proposedMetadataDigest: base.state.metadataDigest,
+        idempotencyKey: bytes(0xD1),
+        createdAt: base.now.addingTimeInterval(1)
+    )
+    let welcome = try XCTUnwrap(publication.signedWelcomes.first(where: {
+        $0.destinationCredentialHandle == memberCredential.credentialHandle
+    }))
+    let anchor = try GroupJoinAnchorV2(
+        baseState: base.state,
+        destinationMemberHandle: memberCredential.memberHandle,
+        destinationCredentialHandle: memberCredential.credentialHandle,
+        destinationAdmissionDigest: memberCredential.admissionDigest,
+        issuedAt: base.now,
+        expiresAt: base.now.addingTimeInterval(3_600)
+    )
+    return AddMemberInvitationFixture(
+        owner: owner,
+        publication: publication,
+        welcome: welcome,
+        memberCredential: memberCredential,
+        anchor: anchor
+    )
+}
+
+private func makeTwoMemberRuntimeFixture() async throws -> TwoMemberRuntimeFixture {
+    let base = try makeSignedFixture()
+    let invitation = try await makeAddMemberInvitation(base: base)
+    let memberStore = TestGroupRuntimeStore(record: nil)
+    let member = try await NoctweavePQGroupRuntimeV2.join(
+        anchor: invitation.anchor,
+        transition: invitation.publication.transition,
+        welcome: invitation.welcome,
+        localCredential: invitation.memberCredential,
+        observedAt: base.now.addingTimeInterval(1),
+        persistence: memberStore
+    )
+    return TwoMemberRuntimeFixture(
+        now: base.now,
+        owner: invitation.owner,
+        member: member,
+        memberStore: memberStore,
+        memberCredential: invitation.memberCredential
+    )
 }
 
 private func makeSignedFixture() throws -> SignedGroupRuntimeFixture {
@@ -852,7 +1797,7 @@ private actor TestGroupRuntimeStore: GroupRuntimeRecordPersistence {
     private var saveCount = 0
     private var failOnSaveNumber: Int?
 
-    init(record: GroupRuntimeRecord, failOnSaveNumber: Int? = nil) {
+    init(record: GroupRuntimeRecord? = nil, failOnSaveNumber: Int? = nil) {
         self.record = record
         self.failOnSaveNumber = failOnSaveNumber
     }

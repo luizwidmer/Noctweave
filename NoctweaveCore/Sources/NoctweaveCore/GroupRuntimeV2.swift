@@ -43,8 +43,21 @@ public enum GroupRuntimeError: Error, Equatable {
     case incompleteFanout
     case unsupportedContentType
     case conflictingApplicationEnvelope
+    case conflictingClientTransaction
     case publicationNotFound
     case capacityReached
+    case invalidPeerEpoch
+    case missingWelcome
+    case unsolicitedJoin
+    case localCredentialRemoved
+    case invalidDeletion
+    case groupDeleted
+    case conflictingDeletionQuarantined
+}
+
+private struct GroupAuthorTransactionKeyV2: Hashable {
+    let memberHandle: GroupScopedMemberHandleV2
+    let clientTransactionID: UUID
 }
 
 /// Exact encrypted artifact retained after advancing a group sender chain and
@@ -122,21 +135,35 @@ public struct PendingGroupApplicationPublicationV2: Codable, Equatable, Identifi
 }
 
 /// Bounded replay receipt for an authenticated group application envelope.
+public enum GroupApplicationProcessingOutcomeV2: String, Codable, Equatable {
+    case accepted
+    case rejectedConflictingEnvelope
+    case rejectedClientTransaction
+}
+
 public struct ProcessedGroupApplicationEnvelopeV2: Codable, Equatable, Identifiable {
     public var id: UUID { eventID }
     public let eventID: UUID
     public let envelopeDigest: Data
+    public let outcome: GroupApplicationProcessingOutcomeV2
     public let processedAt: Date
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case eventID
         case envelopeDigest
+        case outcome
         case processedAt
     }
 
-    public init(eventID: UUID, envelopeDigest: Data, processedAt: Date) {
+    public init(
+        eventID: UUID,
+        envelopeDigest: Data,
+        outcome: GroupApplicationProcessingOutcomeV2,
+        processedAt: Date
+    ) {
         self.eventID = eventID
         self.envelopeDigest = envelopeDigest
+        self.outcome = outcome
         self.processedAt = processedAt
     }
 
@@ -146,6 +173,10 @@ public struct ProcessedGroupApplicationEnvelopeV2: Codable, Equatable, Identifia
         self.init(
             eventID: try values.decode(UUID.self, forKey: .eventID),
             envelopeDigest: try values.decode(Data.self, forKey: .envelopeDigest),
+            outcome: try values.decode(
+                GroupApplicationProcessingOutcomeV2.self,
+                forKey: .outcome
+            ),
             processedAt: try values.decode(Date.self, forKey: .processedAt)
         )
         guard isStructurallyValid else {
@@ -171,6 +202,7 @@ public struct ProcessedGroupApplicationEnvelopeV2: Codable, Equatable, Identifia
         var values = encoder.container(keyedBy: CodingKeys.self)
         try values.encode(eventID, forKey: .eventID)
         try values.encode(envelopeDigest, forKey: .envelopeDigest)
+        try values.encode(outcome, forKey: .outcome)
         try values.encode(processedAt, forKey: .processedAt)
     }
 
@@ -189,22 +221,20 @@ public enum GroupEpochIntentPhase: String, Codable, Equatable, CaseIterable {
 
 public struct GroupEpochPublication: Codable, Equatable {
     public let intentId: UUID
-    public let signedCommit: SignedGroupCommitV2
-    public let signedState: SignedGroupStateV2
-    public let providerCommitBytes: Data
+    public let transition: GroupEpochTransitionEnvelopeV2
     public let signedWelcomes: [SignedGroupWelcomeV2]
+
+    public var signedCommit: SignedGroupCommitV2 { transition.commit }
+    public var signedState: SignedGroupStateV2 { transition.nextState }
+    public var providerCommitBytes: Data { transition.providerCommitBytes }
 
     public init(
         intentId: UUID,
-        signedCommit: SignedGroupCommitV2,
-        signedState: SignedGroupStateV2,
-        providerCommitBytes: Data,
+        transition: GroupEpochTransitionEnvelopeV2,
         signedWelcomes: [SignedGroupWelcomeV2]
     ) {
         self.intentId = intentId
-        self.signedCommit = signedCommit
-        self.signedState = signedState
-        self.providerCommitBytes = providerCommitBytes
+        self.transition = transition
         self.signedWelcomes = signedWelcomes.sorted {
             $0.destinationCredentialHandle.rawValue < $1.destinationCredentialHandle.rawValue
         }
@@ -334,9 +364,11 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
     public var publication: GroupEpochPublication {
         GroupEpochPublication(
             intentId: id,
-            signedCommit: signedCommit,
-            signedState: nextSignedState,
-            providerCommitBytes: providerCommitBytes,
+            transition: GroupEpochTransitionEnvelopeV2(
+                commit: signedCommit,
+                nextState: nextSignedState,
+                providerCommitBytes: providerCommitBytes
+            ),
             signedWelcomes: signedWelcomes
         )
     }
@@ -356,6 +388,11 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
               nextCryptoState.groupId == groupId,
               nextCryptoState.epoch == nextEpoch,
               localCredentialAfterCommit.groupId == groupId,
+              GroupEpochTransitionEnvelopeV2(
+                  commit: signedCommit,
+                  nextState: nextSignedState,
+                  providerCommitBytes: providerCommitBytes
+              ).isStructurallyValid,
               Data(SHA256.hash(data: providerCommitBytes)) == signedCommit.providerCommitDigest,
               !providerCommitBytes.isEmpty,
               providerCommitBytes.count <= NoctweaveGroupArchitectureV2.maximumCommitBytes,
@@ -450,7 +487,6 @@ public struct GroupEpochForkQuarantine: Codable, Equatable, Identifiable {
     public let baseEpoch: UInt64
     public let acceptedCommitDigest: Data
     public let conflictingCommitDigest: Data
-    public let conflictingCommit: SignedGroupCommitV2
     public let quarantinedAt: Date
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -459,7 +495,6 @@ public struct GroupEpochForkQuarantine: Codable, Equatable, Identifiable {
         case baseEpoch
         case acceptedCommitDigest
         case conflictingCommitDigest
-        case conflictingCommit
         case quarantinedAt
     }
 
@@ -469,7 +504,6 @@ public struct GroupEpochForkQuarantine: Codable, Equatable, Identifiable {
         baseEpoch: UInt64,
         acceptedCommitDigest: Data,
         conflictingCommitDigest: Data,
-        conflictingCommit: SignedGroupCommitV2,
         quarantinedAt: Date
     ) {
         self.id = id
@@ -477,7 +511,6 @@ public struct GroupEpochForkQuarantine: Codable, Equatable, Identifiable {
         self.baseEpoch = baseEpoch
         self.acceptedCommitDigest = acceptedCommitDigest
         self.conflictingCommitDigest = conflictingCommitDigest
-        self.conflictingCommit = conflictingCommit
         self.quarantinedAt = quarantinedAt
     }
 
@@ -490,10 +523,6 @@ public struct GroupEpochForkQuarantine: Codable, Equatable, Identifiable {
             baseEpoch: try values.decode(UInt64.self, forKey: .baseEpoch),
             acceptedCommitDigest: try values.decode(Data.self, forKey: .acceptedCommitDigest),
             conflictingCommitDigest: try values.decode(Data.self, forKey: .conflictingCommitDigest),
-            conflictingCommit: try values.decode(
-                SignedGroupCommitV2.self,
-                forKey: .conflictingCommit
-            ),
             quarantinedAt: try values.decode(Date.self, forKey: .quarantinedAt)
         )
         guard isStructurallyValid else {
@@ -504,19 +533,23 @@ public struct GroupEpochForkQuarantine: Codable, Equatable, Identifiable {
     }
 
     public var isStructurallyValid: Bool {
-        conflictingCommit.groupId == groupId
-            && conflictingCommit.baseEpoch == baseEpoch
+        baseEpoch > 0
             && acceptedCommitDigest.count == 32
             && conflictingCommitDigest.count == 32
-            && conflictingCommit.digest == conflictingCommitDigest
             && acceptedCommitDigest != conflictingCommitDigest
             && quarantinedAt.timeIntervalSince1970.isFinite
     }
 }
 
 public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
-    public static let version = 1
+    public static let version = 3
     public static let maximumQuarantinedForks = 64
+    public static let maximumPeerEpochJournalEntries = 256
+    public static let peerEpochRecentWindow = 192
+    public static let maximumPeerForkQuarantines = 64
+    /// Leaves headroom inside the 64 MiB outer client-state envelope for
+    /// persona, relationship, routing, and encoding overhead.
+    public static let maximumDurableEncodedBytes = 32 * 1_024 * 1_024
 
     public var id: UUID { groupId }
     public let formatVersion: Int
@@ -526,6 +559,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
     public let cryptoState: GroupCryptoState
     public let epochIntents: [GroupEpochIntent]
     public let quarantinedForks: [GroupEpochForkQuarantine]
+    public let peerEpochJournal: [GroupPeerEpochJournalEntryV2]
+    public let peerForkQuarantines: [GroupPeerEpochForkQuarantineV2]
+    public let pendingLocalCredentials: [LocalGroupCredentialV2]
+    public let localRemoval: GroupLocalRemovalStateV2?
+    public let deletionState: GroupRuntimeDeletionStateV2?
+    public let originJoinAnchorID: UUID?
     public let events: [GroupConversationEventV2]
     public let pendingApplicationPublications: [PendingGroupApplicationPublicationV2]
     public let processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]
@@ -538,6 +577,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         case cryptoState
         case epochIntents
         case quarantinedForks
+        case peerEpochJournal
+        case peerForkQuarantines
+        case pendingLocalCredentials
+        case localRemoval
+        case deletionState
+        case originJoinAnchorID
         case events
         case pendingApplicationPublications
         case processedApplicationEnvelopes
@@ -551,6 +596,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         cryptoState: GroupCryptoState,
         epochIntents: [GroupEpochIntent] = [],
         quarantinedForks: [GroupEpochForkQuarantine] = [],
+        peerEpochJournal: [GroupPeerEpochJournalEntryV2] = [],
+        peerForkQuarantines: [GroupPeerEpochForkQuarantineV2] = [],
+        pendingLocalCredentials: [LocalGroupCredentialV2] = [],
+        localRemoval: GroupLocalRemovalStateV2? = nil,
+        deletionState: GroupRuntimeDeletionStateV2? = nil,
+        originJoinAnchorID: UUID? = nil,
         events: [GroupConversationEventV2] = [],
         pendingApplicationPublications: [PendingGroupApplicationPublicationV2] = [],
         processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2] = []
@@ -571,10 +622,20 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             }
             return $0.id.uuidString < $1.id.uuidString
         }
-        self.events = events.sorted {
-            if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
-            return $0.id.uuidString < $1.id.uuidString
+        // Receiver observations retain authenticated append order. Peer dates
+        // never choose which fork evidence survives bounded compaction.
+        self.peerEpochJournal = peerEpochJournal
+        self.peerForkQuarantines = peerForkQuarantines
+        self.pendingLocalCredentials = pendingLocalCredentials.sorted {
+            $0.credentialHandle.rawValue < $1.credentialHandle.rawValue
         }
+        self.localRemoval = localRemoval
+        self.deletionState = deletionState
+        self.originJoinAnchorID = originJoinAnchorID
+        // This array is the durable authenticated append order. Never sort it
+        // by peer-authored timestamps: a sender could otherwise influence which
+        // replay/transaction records survive bounded compaction.
+        self.events = events
         self.pendingApplicationPublications = pendingApplicationPublications.sorted {
             if $0.preparedAt != $1.preparedAt { return $0.preparedAt < $1.preparedAt }
             return $0.id.uuidString < $1.id.uuidString
@@ -592,6 +653,18 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         let forks = try values.decode(
             [GroupEpochForkQuarantine].self,
             forKey: .quarantinedForks
+        )
+        let peerJournal = try values.decode(
+            [GroupPeerEpochJournalEntryV2].self,
+            forKey: .peerEpochJournal
+        )
+        let peerForks = try values.decode(
+            [GroupPeerEpochForkQuarantineV2].self,
+            forKey: .peerForkQuarantines
+        )
+        let pendingCredentials = try values.decode(
+            [LocalGroupCredentialV2].self,
+            forKey: .pendingLocalCredentials
         )
         let decodedEvents = try values.decode(
             [GroupConversationEventV2].self,
@@ -616,16 +689,31 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             cryptoState: try values.decode(GroupCryptoState.self, forKey: .cryptoState),
             epochIntents: intents,
             quarantinedForks: forks,
+            peerEpochJournal: peerJournal,
+            peerForkQuarantines: peerForks,
+            pendingLocalCredentials: pendingCredentials,
+            localRemoval: try values.decodeIfPresent(
+                GroupLocalRemovalStateV2.self,
+                forKey: .localRemoval
+            ),
+            deletionState: try values.decodeIfPresent(
+                GroupRuntimeDeletionStateV2.self,
+                forKey: .deletionState
+            ),
+            originJoinAnchorID: try values.decodeIfPresent(UUID.self, forKey: .originJoinAnchorID),
             events: decodedEvents,
             pendingApplicationPublications: decodedPending,
             processedApplicationEnvelopes: decodedProcessed
         )
         guard epochIntents == intents,
               quarantinedForks == forks,
+              peerEpochJournal == peerJournal,
+              peerForkQuarantines == peerForks,
+              pendingLocalCredentials == pendingCredentials,
               events == decodedEvents,
               pendingApplicationPublications == decodedPending,
               processedApplicationEnvelopes == decodedProcessed,
-              isStructurallyValid else {
+              try isStructurallyValidThrowing else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "Invalid group runtime record")
             )
@@ -633,7 +721,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw EncodingError.invalidValue(
                 self,
                 .init(
@@ -650,6 +738,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         try values.encode(cryptoState, forKey: .cryptoState)
         try values.encode(epochIntents, forKey: .epochIntents)
         try values.encode(quarantinedForks, forKey: .quarantinedForks)
+        try values.encode(peerEpochJournal, forKey: .peerEpochJournal)
+        try values.encode(peerForkQuarantines, forKey: .peerForkQuarantines)
+        try values.encode(pendingLocalCredentials, forKey: .pendingLocalCredentials)
+        try values.encode(localRemoval, forKey: .localRemoval)
+        try values.encode(deletionState, forKey: .deletionState)
+        try values.encode(originJoinAnchorID, forKey: .originJoinAnchorID)
         try values.encode(events, forKey: .events)
         try values.encode(
             pendingApplicationPublications,
@@ -661,12 +755,14 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         )
     }
 
-    public var isStructurallyValid: Bool {
-        guard formatVersion == Self.version,
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            try requireCryptographicRuntime()
+            guard formatVersion == Self.version,
+              try localCredential.isStructurallyValidThrowing,
               localCredential.groupId == groupId,
               signedState.groupId == groupId,
               cryptoState.groupId == groupId,
-              signedState.epoch == cryptoState.epoch,
               epochIntents.count <= GroupEpochIntent.maximumJournalEntries,
               Set(epochIntents.map(\.id)).count == epochIntents.count,
               Set(epochIntents.map(\.idempotencyKey)).count == epochIntents.count,
@@ -678,8 +774,41 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               quarantinedForks.allSatisfy({
                   $0.groupId == groupId && $0.isStructurallyValid
               }),
+              peerEpochJournal.count <= Self.maximumPeerEpochJournalEntries,
+              Set(peerEpochJournal.map(\.id)).count == peerEpochJournal.count,
+              Set(peerEpochJournal.map(\.baseEpoch)).count == peerEpochJournal.count,
+              peerEpochJournal.allSatisfy({
+                  $0.groupId == groupId && $0.isStructurallyValid
+              }),
+              zip(peerEpochJournal, peerEpochJournal.dropFirst()).allSatisfy({
+                  $0.baseEpoch < $1.baseEpoch
+              }),
+              peerEpochJournal.last.map({ $0.nextEpoch <= signedState.epoch }) ?? true,
+              peerForkQuarantines.count <= Self.maximumPeerForkQuarantines,
+              Set(peerForkQuarantines.map(\.id)).count == peerForkQuarantines.count,
+              Set(peerForkQuarantines.map(\.conflictingArtifactDigest)).count
+                == peerForkQuarantines.count,
+              peerForkQuarantines.allSatisfy({
+                  $0.groupId == groupId && $0.isStructurallyValid
+              }),
+              pendingLocalCredentials.count
+                <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials,
+              Set(pendingLocalCredentials.map(\.credentialHandle)).count
+                == pendingLocalCredentials.count,
+              try pendingLocalCredentials.allSatisfy({
+                  $0.groupId == groupId
+                      && $0.memberHandle == localCredential.memberHandle
+                      && $0.credentialHandle != localCredential.credentialHandle
+                      && (try $0.isStructurallyValidThrowing)
+              }),
               events.count <= NoctweaveArchitectureV2.maximumGroupEvents,
               Set(events.map(\.id)).count == events.count,
+              Set(events.map {
+                  GroupAuthorTransactionKeyV2(
+                      memberHandle: $0.authorMemberHandle,
+                      clientTransactionID: $0.clientTransactionID
+                  )
+              }).count == events.count,
               events.allSatisfy({ $0.groupID == groupId && $0.isStructurallyValid }),
               pendingApplicationPublications.count
                 <= NoctweaveArchitectureV2.maximumPendingGroupPublications,
@@ -697,26 +826,72 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               Set(processedApplicationEnvelopes.map(\.eventID)).count
                 == processedApplicationEnvelopes.count,
               processedApplicationEnvelopes.allSatisfy(\.isStructurallyValid),
-              Set(processedApplicationEnvelopes.map(\.eventID))
-                .isSubset(of: Set(events.map(\.id))) else {
-            return false
-        }
-        do {
+              Set(processedApplicationEnvelopes.lazy.filter {
+                  $0.outcome == .accepted
+              }.map(\.eventID)).isSubset(of: Set(events.map(\.id))),
+              Set(processedApplicationEnvelopes.lazy.filter {
+                  $0.outcome != .accepted
+              }.map(\.eventID)).isDisjoint(with: Set(events.map(\.id))),
+              try durableAggregateEncodedByteCountThrowing()
+                <= Self.maximumDurableEncodedBytes else {
+                return false
+            }
+            if let deletionState {
+                guard localRemoval == nil,
+                      deletionState.isStructurallyValid,
+                      deletionState.deletedState.tombstone.groupId == groupId,
+                      deletionState.deletedState.tombstone.baseEpoch == signedState.epoch,
+                      signedState.epoch == cryptoState.epoch,
+                      pendingLocalCredentials.isEmpty,
+                      pendingApplicationPublications.isEmpty,
+                      epochIntents.isEmpty else {
+                    return false
+                }
+            _ = try deletionState.deletedState.verified(previousState: signedState)
             try NoctweavePQGroupExperimentalProviderV2().validateActiveState(
                 cryptoState,
                 signedState: signedState,
                 localCredential: localCredential
             )
-            return true
-        } catch {
-            return false
+        } else if let localRemoval {
+                guard localRemoval.isStructurallyValid,
+                      localRemoval.groupId == groupId,
+                      localRemoval.memberHandle == localCredential.memberHandle,
+                      localRemoval.removedCredentialHandle == localCredential.credentialHandle,
+                      localRemoval.acceptedEpoch == signedState.epoch,
+                      cryptoState.epoch < UInt64.max,
+                      cryptoState.epoch + 1 == signedState.epoch,
+                      !signedState.activeCredentials.contains(where: {
+                          $0.credentialHandle == localCredential.credentialHandle
+                      }),
+                      pendingLocalCredentials.isEmpty,
+                      pendingApplicationPublications.isEmpty,
+                      epochIntents.allSatisfy({ !$0.requiresRecoveryState }),
+                      peerEpochJournal.last?.outcome == .localRemoved,
+                      peerEpochJournal.last?.transitionDigest == localRemoval.transitionDigest else {
+                    return false
+                }
+        } else {
+            guard signedState.epoch == cryptoState.epoch else { return false }
+            try NoctweavePQGroupExperimentalProviderV2().validateActiveState(
+                cryptoState,
+                signedState: signedState,
+                localCredential: localCredential
+            )
         }
+            return true
+        }
+    }
+
+    public var isStructurallyValid: Bool {
+        (try? isStructurallyValidThrowing) == true
     }
 
     /// Retains every unfinished epoch mutation and the newest finalized
     /// publications. Finalized artifacts are a bounded duplicate/fork window,
     /// not an unbounded group archive.
     public func compactedDurableState() throws -> GroupRuntimeRecord {
+        try requireCryptographicRuntime()
         guard Set(epochIntents.map(\.id)).count == epochIntents.count,
               Set(epochIntents.map(\.idempotencyKey)).count == epochIntents.count,
               epochIntents.allSatisfy({
@@ -747,15 +922,19 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         let retainedEventIDs = Set(retainedEvents.map(\.id))
         let retainedProcessed = Array(
             processedApplicationEnvelopes.filter {
-                retainedEventIDs.contains($0.eventID)
+                $0.outcome != .accepted || retainedEventIDs.contains($0.eventID)
             }.suffix(NoctweaveArchitectureV2.processedGroupEnvelopeRecentWindow)
         )
         let candidate = replacing(
             epochIntents: epochIntents.filter { retainedIDs.contains($0.id) },
+            peerEpochJournal: Array(peerEpochJournal.suffix(Self.peerEpochRecentWindow)),
+            peerForkQuarantines: Array(
+                peerForkQuarantines.suffix(Self.maximumPeerForkQuarantines)
+            ),
             events: retainedEvents,
             processedApplicationEnvelopes: retainedProcessed
         )
-        guard candidate.isStructurallyValid else {
+        guard try candidate.isStructurallyValidThrowing else {
             throw GroupRuntimeError.invalidRecord
         }
         return candidate
@@ -774,6 +953,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         cryptoState: GroupCryptoState? = nil,
         epochIntents: [GroupEpochIntent]? = nil,
         quarantinedForks: [GroupEpochForkQuarantine]? = nil,
+        peerEpochJournal: [GroupPeerEpochJournalEntryV2]? = nil,
+        peerForkQuarantines: [GroupPeerEpochForkQuarantineV2]? = nil,
+        pendingLocalCredentials: [LocalGroupCredentialV2]? = nil,
+        localRemoval: GroupLocalRemovalStateV2? = nil,
+        deletionState: GroupRuntimeDeletionStateV2? = nil,
+        originJoinAnchorID: UUID? = nil,
         events: [GroupConversationEventV2]? = nil,
         pendingApplicationPublications: [PendingGroupApplicationPublicationV2]? = nil,
         processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]? = nil
@@ -786,6 +971,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             cryptoState: cryptoState ?? self.cryptoState,
             epochIntents: epochIntents ?? self.epochIntents,
             quarantinedForks: quarantinedForks ?? self.quarantinedForks,
+            peerEpochJournal: peerEpochJournal ?? self.peerEpochJournal,
+            peerForkQuarantines: peerForkQuarantines ?? self.peerForkQuarantines,
+            pendingLocalCredentials: pendingLocalCredentials ?? self.pendingLocalCredentials,
+            localRemoval: localRemoval ?? self.localRemoval,
+            deletionState: deletionState ?? self.deletionState,
+            originJoinAnchorID: originJoinAnchorID ?? self.originJoinAnchorID,
             events: events ?? self.events,
             pendingApplicationPublications: pendingApplicationPublications
                 ?? self.pendingApplicationPublications,
@@ -799,17 +990,48 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             return events
         }
         let protected = Set(pendingApplicationPublications.map { $0.event.id })
-        var retained = Array(
-            events.suffix(NoctweaveArchitectureV2.groupEventRecentWindow)
+        let recentIDs = Set(
+            events.suffix(NoctweaveArchitectureV2.groupEventRecentWindow).map(\.id)
         )
-        let retainedIDs = Set(retained.map(\.id))
-        retained.append(contentsOf: events.filter {
-            protected.contains($0.id) && !retainedIDs.contains($0.id)
-        })
-        return retained.sorted {
-            if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
-            return $0.id.uuidString < $1.id.uuidString
+        let retainedIDs = recentIDs.union(protected)
+        return events.filter { retainedIDs.contains($0.id) }
+    }
+
+    /// Conservative sum of canonical field encodings plus fixed record
+    /// framing. Array encodings include every duplicated artifact, so nominal
+    /// entry-count bounds cannot bypass the durable byte budget.
+    private func durableAggregateEncodedByteCountThrowing() throws -> Int {
+        var total = 4_096
+        func add<T: Encodable>(_ value: T) throws {
+            let bytes = try NoctweaveCoder.encode(value, sortedKeys: true).count
+            let (next, overflow) = total.addingReportingOverflow(bytes)
+            guard !overflow else { throw GroupRuntimeError.capacityReached }
+            total = next
         }
+        try add(localCredential)
+        try add(signedState)
+        try add(cryptoState)
+        try add(epochIntents)
+        try add(quarantinedForks)
+        try add(peerEpochJournal)
+        try add(peerForkQuarantines)
+        try add(pendingLocalCredentials)
+        try add(localRemoval)
+        try add(deletionState)
+        try add(originJoinAnchorID)
+        try add(events)
+        try add(pendingApplicationPublications)
+        try add(processedApplicationEnvelopes)
+        return total
+    }
+
+    fileprivate func requireCryptographicRuntime() throws {
+        try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+            signingPublicKey: signedState.memberCredentials.first?.signingPublicKey
+                ?? localCredential.signingKey.publicKeyData,
+            agreementPublicKey: signedState.memberCredentials.first?.agreementPublicKey
+                ?? localCredential.agreementKey.publicKeyData
+        )
     }
 }
 
@@ -829,7 +1051,9 @@ public actor NoctweavePQGroupRuntimeV2 {
         persistence: any GroupRuntimeRecordPersistence,
         provider: NoctweavePQGroupExperimentalProviderV2 = .init()
     ) throws {
-        guard record.isStructurallyValid else { throw GroupRuntimeError.invalidRecord }
+        guard try record.isStructurallyValidThrowing else {
+            throw GroupRuntimeError.invalidRecord
+        }
         self.record = record
         self.persistence = persistence
         self.provider = provider
@@ -839,7 +1063,9 @@ public actor NoctweavePQGroupRuntimeV2 {
         record: GroupRuntimeRecord,
         persistence: any GroupRuntimeRecordPersistence
     ) async throws -> NoctweavePQGroupRuntimeV2 {
-        guard record.isStructurallyValid else { throw GroupRuntimeError.invalidRecord }
+        guard try record.isStructurallyValidThrowing else {
+            throw GroupRuntimeError.invalidRecord
+        }
         try await persistence.save(record)
         return try NoctweavePQGroupRuntimeV2(record: record, persistence: persistence)
     }
@@ -853,10 +1079,272 @@ public actor NoctweavePQGroupRuntimeV2 {
         return try NoctweavePQGroupRuntimeV2(record: record, persistence: persistence)
     }
 
+    /// Creates a runtime only from a caller-pinned, group-scoped invitation
+    /// anchor. The encrypted Welcome supplies epoch secrets but never acts as
+    /// its own trust root.
+    public static func join(
+        anchor: GroupJoinAnchorV2,
+        transition: GroupEpochTransitionEnvelopeV2,
+        welcome: SignedGroupWelcomeV2,
+        localCredential: LocalGroupCredentialV2,
+        observedAt: Date,
+        persistence: any GroupRuntimeRecordPersistence
+    ) async throws -> NoctweavePQGroupRuntimeV2 {
+        guard try await persistence.load() == nil else {
+            throw GroupRuntimeError.unsolicitedJoin
+        }
+        try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+            signingPublicKey: anchor.baseState.memberCredentials.first?.signingPublicKey
+                ?? localCredential.signingKey.publicKeyData,
+            agreementPublicKey: anchor.baseState.memberCredentials.first?.agreementPublicKey
+                ?? localCredential.agreementKey.publicKeyData
+        )
+        try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+            signingPublicKey: transition.nextState.memberCredentials.first?.signingPublicKey
+                ?? localCredential.signingKey.publicKeyData,
+            agreementPublicKey: transition.nextState.memberCredentials.first?.agreementPublicKey
+                ?? localCredential.agreementKey.publicKeyData
+        )
+        try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+            signingPublicKey: localCredential.signingKey.publicKeyData,
+            agreementPublicKey: localCredential.agreementKey.publicKeyData
+        )
+        guard try localCredential.isStructurallyValidThrowing,
+              anchor.isStructurallyValid,
+              transition.isStructurallyValid,
+              observedAt.timeIntervalSince1970.isFinite,
+              anchor.issuedAt <= observedAt.addingTimeInterval(
+                  NoctweaveSignedGroupV2.maximumClockSkewSeconds
+              ),
+              observedAt < anchor.expiresAt,
+              anchor.baseState.groupId == transition.commit.groupId,
+              anchor.baseState.epoch == transition.commit.baseEpoch,
+              localCredential.groupId == anchor.baseState.groupId,
+              localCredential.memberHandle == anchor.destinationMemberHandle,
+              localCredential.credentialHandle == anchor.destinationCredentialHandle,
+              localCredential.admissionDigest == anchor.destinationAdmissionDigest else {
+            throw GroupRuntimeError.unsolicitedJoin
+        }
+        _ = try transition.commit.verifiedTransition(
+            from: anchor.baseState,
+            observedAt: observedAt
+        )
+        _ = try transition.nextState.verified(
+            previousState: anchor.baseState,
+            commit: transition.commit,
+            observedAt: observedAt
+        )
+        guard let localLeaf = transition.nextState.activeCredentials.first(where: {
+            $0.memberHandle == localCredential.memberHandle
+                && $0.credentialHandle == localCredential.credentialHandle
+        }),
+              localLeaf.admissionDigest == localCredential.admissionDigest,
+              localLeaf.signingPublicKey == localCredential.signingKey.publicKeyData,
+              localLeaf.agreementPublicKey == localCredential.agreementKey.publicKeyData,
+              welcome.destinationCredentialHandle == localCredential.credentialHandle,
+              welcome.destinationAdmissionDigest == localCredential.admissionDigest else {
+            throw GroupRuntimeError.unsolicitedJoin
+        }
+        _ = try welcome.verified(against: transition.nextState, now: observedAt)
+
+        let provider = NoctweavePQGroupExperimentalProviderV2()
+        let currentMembership = try provider.membership(from: anchor.baseState)
+        let proposedMembership = try provider.membership(from: transition.nextState)
+        let acceptance = try acceptedPeerEpoch(
+            transition: transition,
+            currentMembership: currentMembership,
+            proposedMembership: proposedMembership
+        )
+        let cryptoState = try provider.processWelcome(
+            GroupWelcomePackage(
+                destination: welcome.destinationCredentialHandle,
+                bytes: welcome.encryptedWelcome
+            ),
+            membership: proposedMembership,
+            acceptance: acceptance,
+            commitBytes: transition.providerCommitBytes,
+            localCredential: localCredential
+        )
+        let journal = try GroupPeerEpochJournalEntryV2(
+            transition: transition,
+            welcome: welcome,
+            outcome: .active,
+            observedAt: observedAt
+        )
+        let newRecord = GroupRuntimeRecord(
+            groupId: transition.commit.groupId,
+            localCredential: localCredential,
+            signedState: transition.nextState,
+            cryptoState: cryptoState,
+            peerEpochJournal: [journal],
+            originJoinAnchorID: anchor.id
+        )
+        guard try newRecord.isStructurallyValidThrowing else {
+            throw GroupRuntimeError.invalidPeerEpoch
+        }
+        try await persistence.save(newRecord)
+        return try NoctweavePQGroupRuntimeV2(
+            record: newRecord,
+            persistence: persistence,
+            provider: provider
+        )
+    }
+
     public func snapshot() -> GroupRuntimeRecord { record }
 
     public func pendingApplicationPublications() -> [PendingGroupApplicationPublicationV2] {
         record.pendingApplicationPublications
+    }
+
+    /// Exact terminal tombstone awaiting transport acceptance. The tombstone
+    /// remains in the terminal state after completion for replay rejection.
+    public func pendingDeletionPublication() -> SignedGroupDeletionTombstoneV2? {
+        guard let deletion = record.deletionState,
+              deletion.origin == .local,
+              deletion.publicationState == .pending else {
+            return nil
+        }
+        return deletion.deletedState.tombstone
+    }
+
+    /// Creates and durably stores one exact deletion tombstone before it can be
+    /// handed to transport. The same atomic replacement clears every sendable
+    /// application, epoch, and replacement-credential artifact.
+    public func prepareDeletion(
+        reasonDigest: Data? = nil,
+        idempotencyKey: Data,
+        createdAt: Date = Date()
+    ) async throws -> SignedGroupDeletionTombstoneV2 {
+        if let deletion = record.deletionState {
+            let retained = deletion.deletedState.tombstone
+            guard deletion.origin == .local,
+                  retained.idempotencyKey == idempotencyKey,
+                  retained.reasonDigest == reasonDigest else {
+                throw GroupRuntimeError.groupDeleted
+            }
+            return retained
+        }
+        try requireActiveRuntime()
+        guard idempotencyKey.count == SHA256.byteCount,
+              reasonDigest?.count ?? SHA256.byteCount == SHA256.byteCount,
+              createdAt.timeIntervalSince1970.isFinite else {
+            throw GroupRuntimeError.invalidDeletion
+        }
+        let tombstone = try SignedGroupDeletionTombstoneV2.create(
+            currentState: record.signedState,
+            authorCredentialHandle: record.localCredential.credentialHandle,
+            reasonDigest: reasonDigest,
+            idempotencyKey: idempotencyKey,
+            signingKey: record.localCredential.signingKey,
+            createdAt: createdAt
+        )
+        let deletedState = try SignedDeletedGroupStateV2.create(
+            tombstone: tombstone,
+            from: record.signedState,
+            observedAt: createdAt
+        )
+        let deletion = try GroupRuntimeDeletionStateV2(
+            deletedState: deletedState,
+            origin: .local,
+            publicationState: .pending,
+            updatedAt: createdAt
+        )
+        try await persist(record.replacing(
+            epochIntents: [],
+            pendingLocalCredentials: [],
+            deletionState: deletion,
+            pendingApplicationPublications: []
+        ))
+        return tombstone
+    }
+
+    /// Completes the deletion outbox only after transport has accepted the
+    /// exact retained tombstone. This operation is exactly idempotent.
+    public func markDeletionPublished(
+        tombstoneID: UUID,
+        at date: Date = Date()
+    ) async throws {
+        guard let deletion = record.deletionState,
+              deletion.origin == .local,
+              deletion.deletedState.tombstone.id == tombstoneID else {
+            throw GroupRuntimeError.publicationNotFound
+        }
+        let completed = try deletion.markingPublished(at: date)
+        if completed == deletion { return }
+        try await persist(record.replacing(deletionState: completed))
+    }
+
+    /// Accepts a peer deletion against the current signed group state. A save
+    /// failure leaves the active state untouched and the same artifact can be
+    /// retried safely.
+    public func processDeletionTombstone(
+        _ tombstone: SignedGroupDeletionTombstoneV2,
+        observedAt: Date = Date()
+    ) async throws -> SignedDeletedGroupStateV2 {
+        guard tombstone.isStructurallyValid,
+              tombstone.groupId == record.groupId,
+              observedAt.timeIntervalSince1970.isFinite,
+              let artifactDigest = Self.exactArtifactDigest(tombstone) else {
+            throw GroupRuntimeError.invalidDeletion
+        }
+        if let deletion = record.deletionState {
+            if deletion.tombstoneArtifactDigest == artifactDigest,
+               deletion.deletedState.tombstone == tombstone {
+                return deletion.deletedState
+            }
+            _ = try tombstone.verified(
+                against: record.signedState,
+                observedAt: observedAt
+            )
+            try await retainDeletionConflict(
+                kind: .conflictingDeletion,
+                artifactDigest: artifactDigest,
+                observedAt: observedAt
+            )
+            throw GroupRuntimeError.conflictingDeletionQuarantined
+        }
+        try requireActiveRuntime()
+        let deletedState = try SignedDeletedGroupStateV2.create(
+            tombstone: tombstone,
+            from: record.signedState,
+            observedAt: observedAt
+        )
+        let deletion = try GroupRuntimeDeletionStateV2(
+            deletedState: deletedState,
+            origin: .peer,
+            publicationState: .notApplicable,
+            updatedAt: observedAt
+        )
+        try await persist(record.replacing(
+            epochIntents: [],
+            pendingLocalCredentials: [],
+            deletionState: deletion,
+            pendingApplicationPublications: []
+        ))
+        return deletedState
+    }
+
+    /// Retains a freshly generated, group-only replacement credential until a
+    /// valid accepted epoch installs it. No account or device identifier is
+    /// introduced by this local ownership proof.
+    public func registerPendingLocalCredential(
+        _ credential: LocalGroupCredentialV2
+    ) async throws {
+        try requireActiveRuntime()
+        guard try credential.isStructurallyValidThrowing,
+              credential.groupId == record.groupId,
+              credential.memberHandle == record.localCredential.memberHandle,
+              credential.credentialHandle != record.localCredential.credentialHandle,
+              !record.pendingLocalCredentials.contains(where: {
+                  $0.credentialHandle == credential.credentialHandle
+              }),
+              record.pendingLocalCredentials.count
+                < NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials else {
+            throw GroupRuntimeError.invalidIntent
+        }
+        try await persist(record.replacing(
+            pendingLocalCredentials: record.pendingLocalCredentials + [credential]
+        ))
     }
 
     /// Atomically advances the sender chain and stores the exact encrypted
@@ -865,8 +1353,15 @@ public actor NoctweavePQGroupRuntimeV2 {
         _ event: GroupConversationEventV2,
         at date: Date = Date()
     ) async throws -> GroupApplicationEnvelopeV2 {
+        try requireActiveRuntime()
         guard event.isStructurallyValid,
               event.groupID == record.groupId,
+              event.authorMemberHandle == record.localCredential.memberHandle,
+              event.authorCredentialHandle == record.localCredential.credentialHandle,
+              record.signedState.activeCredentials.contains(where: {
+                  $0.memberHandle == event.authorMemberHandle
+                      && $0.credentialHandle == event.authorCredentialHandle
+              }),
               date.timeIntervalSince1970.isFinite,
               date >= event.createdAt else {
             throw GroupRuntimeError.invalidRecord
@@ -882,9 +1377,14 @@ public actor NoctweavePQGroupRuntimeV2 {
         guard !record.events.contains(where: { $0.id == event.id }) else {
             throw GroupRuntimeError.conflictingApplicationEnvelope
         }
+        guard !record.events.contains(where: {
+            $0.authorMemberHandle == event.authorMemberHandle
+                && $0.clientTransactionID == event.clientTransactionID
+        }) else {
+            throw GroupRuntimeError.conflictingClientTransaction
+        }
         guard record.pendingApplicationPublications.count
-                < NoctweaveArchitectureV2.maximumPendingGroupPublications,
-              record.events.count < NoctweaveArchitectureV2.maximumGroupEvents else {
+                < NoctweaveArchitectureV2.maximumPendingGroupPublications else {
             throw GroupRuntimeError.capacityReached
         }
         guard record.signedState.activeCredentials.allSatisfy({ credential in
@@ -922,6 +1422,7 @@ public actor NoctweavePQGroupRuntimeV2 {
     public func markApplicationPublished(
         eventID: UUID
     ) async throws {
+        try requireActiveRuntime()
         guard record.pendingApplicationPublications.contains(where: {
             $0.event.id == eventID
         }) else {
@@ -941,6 +1442,7 @@ public actor NoctweavePQGroupRuntimeV2 {
         _ envelope: GroupApplicationEnvelopeV2,
         at date: Date = Date()
     ) async throws -> GroupConversationEventV2 {
+        try requireActiveRuntime()
         guard envelope.isStructurallyValid,
               envelope.groupId == record.groupId,
               date.timeIntervalSince1970.isFinite,
@@ -951,36 +1453,80 @@ public actor NoctweavePQGroupRuntimeV2 {
         if let processed = record.processedApplicationEnvelopes.first(where: {
             $0.eventID == envelope.eventId
         }) {
-            guard processed.envelopeDigest == envelopeDigest,
-                  let existing = record.events.first(where: {
-                      $0.id == envelope.eventId
-                  }) else {
+            guard processed.envelopeDigest == envelopeDigest else {
                 throw GroupRuntimeError.conflictingApplicationEnvelope
             }
-            return existing
+            switch processed.outcome {
+            case .accepted:
+                guard let existing = record.events.first(where: {
+                    $0.id == envelope.eventId
+                }) else {
+                    throw GroupRuntimeError.invalidRecord
+                }
+                return existing
+            case .rejectedConflictingEnvelope:
+                throw GroupRuntimeError.conflictingApplicationEnvelope
+            case .rejectedClientTransaction:
+                throw GroupRuntimeError.conflictingClientTransaction
+            }
         }
-        guard !record.events.contains(where: { $0.id == envelope.eventId }),
-              record.events.count < NoctweaveArchitectureV2.maximumGroupEvents,
-              record.processedApplicationEnvelopes.count
-                < NoctweaveArchitectureV2.maximumProcessedGroupEnvelopes else {
-            throw GroupRuntimeError.capacityReached
+        guard !record.events.contains(where: { $0.id == envelope.eventId }) else {
+            throw GroupRuntimeError.conflictingApplicationEnvelope
         }
         let opened = try provider.decryptApplicationEvent(
             envelope,
             state: record.cryptoState,
             signedState: record.signedState
         )
-        let event = try NoctweaveCoder.decode(
-            GroupConversationEventV2.self,
-            from: opened.plaintext
-        )
-        guard event.groupID == record.groupId,
-              event.id == envelope.eventId else {
+        let event: GroupConversationEventV2
+        do {
+            event = try NoctweaveCoder.decode(
+                GroupConversationEventV2.self,
+                from: opened.plaintext
+            )
+        } catch {
+            try await persistRejectedApplication(
+                envelope: envelope,
+                envelopeDigest: envelopeDigest,
+                cryptoState: opened.state,
+                outcome: .rejectedConflictingEnvelope,
+                at: date
+            )
             throw GroupRuntimeError.conflictingApplicationEnvelope
+        }
+        guard event.groupID == record.groupId,
+              event.id == envelope.eventId,
+              event.authorCredentialHandle == envelope.senderCredentialHandle,
+              let author = record.signedState.activeCredentials.first(where: {
+                  $0.credentialHandle == envelope.senderCredentialHandle
+              }),
+              event.authorMemberHandle == author.memberHandle else {
+            try await persistRejectedApplication(
+                envelope: envelope,
+                envelopeDigest: envelopeDigest,
+                cryptoState: opened.state,
+                outcome: .rejectedConflictingEnvelope,
+                at: date
+            )
+            throw GroupRuntimeError.conflictingApplicationEnvelope
+        }
+        guard !record.events.contains(where: {
+            $0.authorMemberHandle == event.authorMemberHandle
+                && $0.clientTransactionID == event.clientTransactionID
+        }) else {
+            try await persistRejectedApplication(
+                envelope: envelope,
+                envelopeDigest: envelopeDigest,
+                cryptoState: opened.state,
+                outcome: .rejectedClientTransaction,
+                at: date
+            )
+            throw GroupRuntimeError.conflictingClientTransaction
         }
         let processed = ProcessedGroupApplicationEnvelopeV2(
             eventID: event.id,
             envelopeDigest: envelopeDigest,
+            outcome: .accepted,
             processedAt: date
         )
         try await persist(record.replacing(
@@ -1003,6 +1549,7 @@ public actor NoctweavePQGroupRuntimeV2 {
         idempotencyKey: Data,
         createdAt: Date = Date()
     ) async throws -> GroupEpochPublication {
+        try requireActiveRuntime()
         guard idempotencyKey.count == 32,
               createdAt.timeIntervalSince1970.isFinite else {
             throw GroupRuntimeError.invalidIntent
@@ -1079,6 +1626,7 @@ public actor NoctweavePQGroupRuntimeV2 {
         let nextSignedState = try SignedGroupStateV2.applying(
             signedCommit,
             to: record.signedState,
+            observedAt: createdAt,
             signingKey: record.localCredential.signingKey
         )
         let acceptance = GroupCryptoAcceptedEpochV2(
@@ -1129,7 +1677,8 @@ public actor NoctweavePQGroupRuntimeV2 {
         intentId: UUID,
         at date: Date = Date()
     ) async throws -> GroupEpochPublication {
-        try await resumeOrReturn(intentId, at: date)
+        try requireActiveRuntime()
+        return try await resumeOrReturn(intentId, at: date)
     }
 
     public func markFanoutStored(
@@ -1137,6 +1686,7 @@ public actor NoctweavePQGroupRuntimeV2 {
         destinationCredentialHandle: GroupScopedCredentialHandleV2,
         at date: Date = Date()
     ) async throws {
+        try requireActiveRuntime()
         guard let index = record.epochIntents.firstIndex(where: { $0.id == intentId }) else {
             throw GroupRuntimeError.unknownIntent
         }
@@ -1163,6 +1713,7 @@ public actor NoctweavePQGroupRuntimeV2 {
         intentId: UUID,
         at date: Date = Date()
     ) async throws {
+        try requireActiveRuntime()
         guard let index = record.epochIntents.firstIndex(where: { $0.id == intentId }) else {
             throw GroupRuntimeError.unknownIntent
         }
@@ -1183,12 +1734,260 @@ public actor NoctweavePQGroupRuntimeV2 {
         try await persist(record.replacing(epochIntents: intents))
     }
 
+    /// Applies one complete peer-authored epoch transition. Verification,
+    /// provider processing, the accepted signed state, and the replay journal
+    /// are saved as one record replacement.
+    public func processPeerEpoch(
+        _ transition: GroupEpochTransitionEnvelopeV2,
+        welcome: SignedGroupWelcomeV2?,
+        observedAt: Date = Date()
+    ) async throws -> GroupPeerEpochOutcomeV2 {
+        if record.deletionState != nil {
+            throw GroupRuntimeError.groupDeleted
+        }
+        try GroupCryptographicRuntimeProbeV2.requireAlgorithms(
+            signingPublicKey: transition.nextState.memberCredentials.first?.signingPublicKey
+                ?? record.localCredential.signingKey.publicKeyData,
+            agreementPublicKey: transition.nextState.memberCredentials.first?.agreementPublicKey
+                ?? record.localCredential.agreementKey.publicKeyData
+        )
+        guard transition.isStructurallyValid,
+              transition.commit.groupId == record.groupId,
+              observedAt.timeIntervalSince1970.isFinite else {
+            throw GroupRuntimeError.invalidPeerEpoch
+        }
+
+        if let accepted = record.peerEpochJournal.first(where: {
+            $0.baseEpoch == transition.commit.baseEpoch
+        }) {
+            if accepted.exactlyMatches(transition: transition, welcome: welcome) {
+                return accepted.outcome
+            }
+            try await quarantinePeerFork(
+                accepted: accepted,
+                transition: transition,
+                welcome: welcome,
+                at: observedAt
+            )
+            throw GroupRuntimeError.conflictingCommitQuarantined
+        }
+
+        if let localIntent = record.epochIntents.first(where: {
+            $0.baseEpoch == transition.commit.baseEpoch
+        }) {
+            let localTransition = localIntent.publication.transition
+            let localWelcome = localIntent.signedWelcomes.first(where: {
+                $0.destinationCredentialHandle
+                    == localIntent.localCredentialAfterCommit.credentialHandle
+            })
+            let baseline = try GroupPeerEpochJournalEntryV2(
+                transition: localTransition,
+                welcome: localWelcome,
+                outcome: .active,
+                observedAt: localIntent.createdAt
+            )
+            guard localTransition == transition, localWelcome == welcome else {
+                try await quarantinePeerFork(
+                    accepted: baseline,
+                    transition: transition,
+                    welcome: welcome,
+                    at: observedAt
+                )
+                throw GroupRuntimeError.conflictingCommitQuarantined
+            }
+            if localIntent.phase != .prepared {
+                guard record.signedState.epoch >= localIntent.nextEpoch else {
+                    throw GroupRuntimeError.invalidRecord
+                }
+                return .active
+            }
+            _ = try transition.commit.verifiedTransition(
+                from: record.signedState,
+                observedAt: observedAt
+            )
+            _ = try transition.nextState.verified(
+                previousState: record.signedState,
+                commit: transition.commit,
+                observedAt: observedAt
+            )
+            guard let welcome else { throw GroupRuntimeError.missingWelcome }
+            _ = try welcome.verified(against: transition.nextState, now: observedAt)
+            try provider.validateActiveState(
+                localIntent.nextCryptoState,
+                signedState: localIntent.nextSignedState,
+                localCredential: localIntent.localCredentialAfterCommit
+            )
+            let journal = try GroupPeerEpochJournalEntryV2(
+                transition: transition,
+                welcome: welcome,
+                outcome: .active,
+                observedAt: observedAt
+            )
+            let committed = try localIntent.advancing(
+                to: .stateCommitted,
+                at: max(observedAt, localIntent.updatedAt)
+            )
+            var intents = record.epochIntents
+            guard let index = intents.firstIndex(where: { $0.id == localIntent.id }) else {
+                throw GroupRuntimeError.invalidRecord
+            }
+            intents[index] = committed
+            try await persist(record.replacing(
+                localCredential: localIntent.localCredentialAfterCommit,
+                signedState: localIntent.nextSignedState,
+                cryptoState: localIntent.nextCryptoState,
+                epochIntents: intents,
+                peerEpochJournal: record.peerEpochJournal + [journal],
+                pendingLocalCredentials: record.pendingLocalCredentials.filter {
+                    $0.credentialHandle
+                        != localIntent.localCredentialAfterCommit.credentialHandle
+                }
+            ))
+            return .active
+        }
+
+        try requireActiveRuntime()
+        guard transition.commit.baseEpoch == record.signedState.epoch else {
+            throw GroupRuntimeError.staleEpoch
+        }
+        _ = try transition.commit.verifiedTransition(
+            from: record.signedState,
+            observedAt: observedAt
+        )
+        _ = try transition.nextState.verified(
+            previousState: record.signedState,
+            commit: transition.commit,
+            observedAt: observedAt
+        )
+
+        let currentMembership = try provider.membership(from: record.signedState)
+        let proposedMembership = try provider.membership(from: transition.nextState)
+        let acceptance = try Self.acceptedPeerEpoch(
+            transition: transition,
+            currentMembership: currentMembership,
+            proposedMembership: proposedMembership
+        )
+
+        let currentCredentialStillActive = transition.nextState.activeCredentials.contains {
+            $0.memberHandle == record.localCredential.memberHandle
+                && $0.credentialHandle == record.localCredential.credentialHandle
+                && $0.admissionDigest == record.localCredential.admissionDigest
+                && $0.signingPublicKey == record.localCredential.signingKey.publicKeyData
+                && $0.agreementPublicKey == record.localCredential.agreementKey.publicKeyData
+        }
+
+        let nextCredential: LocalGroupCredentialV2?
+        let nextCryptoState: GroupCryptoState?
+        let outcome: GroupPeerEpochOutcomeV2
+        if currentCredentialStillActive {
+            guard let welcome,
+                  welcome.destinationCredentialHandle
+                    == record.localCredential.credentialHandle,
+                  welcome.destinationAdmissionDigest
+                    == record.localCredential.admissionDigest else {
+                throw GroupRuntimeError.missingWelcome
+            }
+            _ = try welcome.verified(against: transition.nextState, now: observedAt)
+            nextCryptoState = try provider.processCommit(
+                state: record.cryptoState,
+                currentMembership: currentMembership,
+                proposedMembership: proposedMembership,
+                acceptance: acceptance,
+                commitBytes: transition.providerCommitBytes,
+                localPackage: GroupWelcomePackage(
+                    destination: welcome.destinationCredentialHandle,
+                    bytes: welcome.encryptedWelcome
+                ),
+                localCredential: record.localCredential
+            )
+            nextCredential = record.localCredential
+            outcome = .active
+        } else if let replacement = record.pendingLocalCredentials.first(where: { candidate in
+            transition.nextState.activeCredentials.contains(where: { leaf in
+                leaf.memberHandle == candidate.memberHandle
+                    && leaf.credentialHandle == candidate.credentialHandle
+                    && leaf.admissionDigest == candidate.admissionDigest
+                    && leaf.signingPublicKey == candidate.signingKey.publicKeyData
+                    && leaf.agreementPublicKey == candidate.agreementKey.publicKeyData
+            })
+        }) {
+            guard let welcome,
+                  welcome.destinationCredentialHandle == replacement.credentialHandle,
+                  welcome.destinationAdmissionDigest == replacement.admissionDigest else {
+                throw GroupRuntimeError.missingWelcome
+            }
+            _ = try welcome.verified(against: transition.nextState, now: observedAt)
+            nextCryptoState = try provider.processWelcome(
+                GroupWelcomePackage(
+                    destination: welcome.destinationCredentialHandle,
+                    bytes: welcome.encryptedWelcome
+                ),
+                membership: proposedMembership,
+                acceptance: acceptance,
+                commitBytes: transition.providerCommitBytes,
+                localCredential: replacement
+            )
+            nextCredential = replacement
+            outcome = .active
+        } else {
+            guard welcome == nil else { throw GroupRuntimeError.invalidPeerEpoch }
+            nextCryptoState = nil
+            nextCredential = nil
+            outcome = .localRemoved
+        }
+
+        let journal = try GroupPeerEpochJournalEntryV2(
+            transition: transition,
+            welcome: welcome,
+            outcome: outcome,
+            observedAt: observedAt
+        )
+        let nextJournal = record.peerEpochJournal + [journal]
+        let candidate: GroupRuntimeRecord
+        if let nextCredential, let nextCryptoState {
+            candidate = record.replacing(
+                localCredential: nextCredential,
+                signedState: transition.nextState,
+                cryptoState: nextCryptoState,
+                peerEpochJournal: nextJournal,
+                pendingLocalCredentials: record.pendingLocalCredentials.filter {
+                    $0.credentialHandle != nextCredential.credentialHandle
+                }
+            )
+        } else {
+            guard let transitionDigest = transition.digest else {
+                throw GroupRuntimeError.invalidPeerEpoch
+            }
+            let removal = GroupLocalRemovalStateV2(
+                groupId: record.groupId,
+                memberHandle: record.localCredential.memberHandle,
+                removedCredentialHandle: record.localCredential.credentialHandle,
+                acceptedEpoch: transition.nextState.epoch,
+                transitionDigest: transitionDigest,
+                observedAt: observedAt
+            )
+            candidate = record.replacing(
+                signedState: transition.nextState,
+                epochIntents: [],
+                peerEpochJournal: nextJournal,
+                pendingLocalCredentials: [],
+                localRemoval: removal,
+                pendingApplicationPublications: []
+            )
+        }
+        try await persist(candidate)
+        return outcome
+    }
+
     /// Returns the exact retained artifacts for a duplicate commit and
     /// quarantines a different digest that claims the same base epoch.
     public func observeCommit(
         _ commit: SignedGroupCommitV2,
         at date: Date = Date()
     ) async throws -> GroupEpochPublication? {
+        if record.deletionState != nil {
+            throw GroupRuntimeError.groupDeleted
+        }
         guard commit.groupId == record.groupId,
               let digest = commit.digest,
               date.timeIntervalSince1970.isFinite else {
@@ -1213,7 +2012,6 @@ public actor NoctweavePQGroupRuntimeV2 {
                 baseEpoch: commit.baseEpoch,
                 acceptedCommitDigest: accepted.signedCommitDigest,
                 conflictingCommitDigest: digest,
-                conflictingCommit: commit,
                 quarantinedAt: date
             )
             guard quarantine.isStructurallyValid else {
@@ -1243,7 +2041,11 @@ public actor NoctweavePQGroupRuntimeV2 {
         }
         _ = try intent.nextSignedState.verified(
             previousState: record.signedState,
-            commit: intent.signedCommit
+            commit: intent.signedCommit,
+            // Reuse the original locally observed preparation time. Rechecking
+            // against wall-clock time after a restart would eventually accept a
+            // commit that was too far in the future when first observed.
+            observedAt: intent.createdAt
         )
         try provider.validateActiveState(
             intent.nextCryptoState,
@@ -1265,8 +2067,128 @@ public actor NoctweavePQGroupRuntimeV2 {
 
     private func persist(_ candidate: GroupRuntimeRecord) async throws {
         let compacted = try candidate.compactedDurableState()
-        guard compacted.isStructurallyValid else { throw GroupRuntimeError.invalidRecord }
+        guard try compacted.isStructurallyValidThrowing else {
+            throw GroupRuntimeError.invalidRecord
+        }
         try await persistence.save(compacted)
         record = compacted
+    }
+
+    private func requireActiveRuntime() throws {
+        guard record.deletionState == nil else {
+            throw GroupRuntimeError.groupDeleted
+        }
+        guard record.localRemoval == nil else {
+            throw GroupRuntimeError.localCredentialRemoved
+        }
+    }
+
+    private static func exactArtifactDigest<T: Encodable>(_ artifact: T) -> Data? {
+        guard let bytes = try? NoctweaveCoder.encode(artifact, sortedKeys: true) else {
+            return nil
+        }
+        return Data(SHA256.hash(data: bytes))
+    }
+
+    private func retainDeletionConflict(
+        kind: GroupDeletionConflictKindV2,
+        artifactDigest: Data,
+        observedAt: Date
+    ) async throws {
+        guard let deletion = record.deletionState else {
+            throw GroupRuntimeError.invalidRecord
+        }
+        let updated = try deletion.retainingConflict(
+            kind: kind,
+            artifactDigest: artifactDigest,
+            observedAt: observedAt
+        )
+        if updated == deletion { return }
+        try await persist(record.replacing(deletionState: updated))
+    }
+
+    private static func acceptedPeerEpoch(
+        transition: GroupEpochTransitionEnvelopeV2,
+        currentMembership: GroupProviderMembershipV2,
+        proposedMembership: GroupProviderMembershipV2
+    ) throws -> GroupCryptoAcceptedEpochV2 {
+        guard transition.isStructurallyValid,
+              let signedCommitDigest = transition.commit.digest,
+              currentMembership.groupId == transition.commit.groupId,
+              currentMembership.epoch == transition.commit.baseEpoch,
+              proposedMembership.groupId == transition.commit.groupId,
+              proposedMembership.epoch == transition.commit.nextEpoch,
+              currentMembership.selection == .currentExperimental,
+              proposedMembership.selection == .currentExperimental else {
+            throw GroupRuntimeError.invalidPeerEpoch
+        }
+        let proposal = GroupCryptoEpochProposalV2(
+            groupId: transition.commit.groupId,
+            baseEpoch: transition.commit.baseEpoch,
+            nextEpoch: transition.commit.nextEpoch,
+            selection: .currentExperimental,
+            currentMembershipDigest: currentMembership.membershipDigest,
+            proposedMembershipDigest: proposedMembership.membershipDigest,
+            authorCredentialHandle: transition.commit.authorCredentialHandle
+        )
+        let acceptance = GroupCryptoAcceptedEpochV2(
+            proposal: proposal,
+            providerCommitDigest: transition.commit.providerCommitDigest,
+            signedCommitDigest: signedCommitDigest,
+            acceptedTranscriptHash: transition.nextState.confirmedTranscriptHash
+        )
+        guard acceptance.isStructurallyValid else {
+            throw GroupRuntimeError.invalidPeerEpoch
+        }
+        return acceptance
+    }
+
+    private func quarantinePeerFork(
+        accepted: GroupPeerEpochJournalEntryV2,
+        transition: GroupEpochTransitionEnvelopeV2,
+        welcome: SignedGroupWelcomeV2?,
+        at date: Date
+    ) async throws {
+        let quarantine = try GroupPeerEpochForkQuarantineV2(
+            acceptedArtifactDigest: accepted.artifactDigest,
+            transition: transition,
+            welcome: welcome,
+            quarantinedAt: date
+        )
+        if record.peerForkQuarantines.contains(where: {
+            $0.conflictingArtifactDigest == quarantine.conflictingArtifactDigest
+        }) {
+            return
+        }
+        let retained = Array(
+            (record.peerForkQuarantines + [quarantine])
+                .suffix(GroupRuntimeRecord.maximumPeerForkQuarantines)
+        )
+        try await persist(record.replacing(peerForkQuarantines: retained))
+    }
+
+    /// Authenticated semantic poison consumes the sender-chain position before
+    /// returning a deterministic peer-invalid result. Persisting the rejection
+    /// atomically prevents one bad event from pinning all later events from that
+    /// group-scoped credential; a save failure leaves the old chain retryable.
+    private func persistRejectedApplication(
+        envelope: GroupApplicationEnvelopeV2,
+        envelopeDigest: Data,
+        cryptoState: GroupCryptoState,
+        outcome: GroupApplicationProcessingOutcomeV2,
+        at date: Date
+    ) async throws {
+        guard outcome != .accepted else { throw GroupRuntimeError.invalidRecord }
+        let processed = ProcessedGroupApplicationEnvelopeV2(
+            eventID: envelope.eventId,
+            envelopeDigest: envelopeDigest,
+            outcome: outcome,
+            processedAt: date
+        )
+        try await persist(record.replacing(
+            cryptoState: cryptoState,
+            processedApplicationEnvelopes: record.processedApplicationEnvelopes
+                + [processed]
+        ))
     }
 }

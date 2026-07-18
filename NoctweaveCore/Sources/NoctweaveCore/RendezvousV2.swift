@@ -218,30 +218,47 @@ public struct RendezvousOfferV2: Codable, Equatable {
         self.createdAt = createdAt
         self.expiresAt = expiresAt
         self.limits = limits
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw RendezvousV2Error.invalidOffer
         }
     }
 
-    public var isStructurallyValid: Bool {
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
         let lifetime = expiresAt.timeIntervalSince(createdAt)
-        return version == NoctweaveRendezvousV2.version
-            && transportCapability.isStructurallyValid
-            && transportCapability.expiresAt == expiresAt
-            && oneTimeTokenDigest.count == NoctweaveRendezvousV2.tokenDigestBytes
-            && AgreementKeyPair.isValidPublicKey(ephemeralAgreementPublicKey)
-            && RendezvousCanonicalV2.isCanonicalTimestamp(createdAt)
-            && RendezvousCanonicalV2.isCanonicalTimestamp(expiresAt)
-            && lifetime > 0
-            && lifetime <= NoctweaveRendezvousV2.maximumLifetime
-            && limits.isStructurallyValid
+        guard version == NoctweaveRendezvousV2.version,
+              transportCapability.isStructurallyValid,
+              transportCapability.expiresAt == expiresAt,
+              oneTimeTokenDigest.count == NoctweaveRendezvousV2.tokenDigestBytes,
+              RendezvousCanonicalV2.isCanonicalTimestamp(createdAt),
+              RendezvousCanonicalV2.isCanonicalTimestamp(expiresAt),
+              lifetime > 0,
+              lifetime <= NoctweaveRendezvousV2.maximumLifetime,
+              limits.isStructurallyValid else {
+            return false
+        }
+        return try AgreementKeyPair.isValidPublicKeyThrowing(
+            ephemeralAgreementPublicKey
+        )
+        }
+    }
+
+    public var isStructurallyValid: Bool {
+        (try? isStructurallyValidThrowing) == true
     }
 
     public func isUsable(
         at date: Date = Date(),
         for expectedPurpose: RendezvousPurposeV2
     ) -> Bool {
-        isStructurallyValid
+        (try? isUsableThrowing(at: date, for: expectedPurpose)) == true
+    }
+
+    public func isUsableThrowing(
+        at date: Date = Date(),
+        for expectedPurpose: RendezvousPurposeV2
+    ) throws -> Bool {
+        try isStructurallyValidThrowing
             && purpose == expectedPurpose
             && date.timeIntervalSince1970.isFinite
             && date >= createdAt
@@ -273,7 +290,7 @@ public struct RendezvousOfferV2: Codable, Equatable {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         expiresAt = try container.decode(Date.self, forKey: .expiresAt)
         limits = try container.decode(RendezvousLimitsV2.self, forKey: .limits)
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .version,
                 in: container,
@@ -284,7 +301,7 @@ public struct RendezvousOfferV2: Codable, Equatable {
 
     public func encode(to encoder: Encoder) throws {
         try requireValidRendezvousEncoding(
-            isStructurallyValid,
+            try isStructurallyValidThrowing,
             value: self,
             encoder: encoder,
             description: "Invalid rendezvous offer"
@@ -417,7 +434,7 @@ public struct PendingRendezvousOfferV2: Codable {
         ephemeralAgreementKey = try container.decode(AgreementKeyPair.self, forKey: .ephemeralAgreementKey)
         oneTimeToken = try container.decode(Data.self, forKey: .oneTimeToken)
         redeemedAt = try container.decodeIfPresent(Date.self, forKey: .redeemedAt)
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .offer,
                 in: container,
@@ -428,7 +445,7 @@ public struct PendingRendezvousOfferV2: Codable {
 
     public func encode(to encoder: Encoder) throws {
         try requireValidRendezvousEncoding(
-            isStructurallyValid,
+            try isStructurallyValidThrowing,
             value: self,
             encoder: encoder,
             description: "Invalid pending rendezvous state"
@@ -442,8 +459,9 @@ public struct PendingRendezvousOfferV2: Codable {
 
     public var isRedeemed: Bool { redeemedAt != nil }
 
-    public var isStructurallyValid: Bool {
-        guard offer.isStructurallyValid,
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+        guard try offer.isStructurallyValidThrowing,
               ephemeralAgreementKey.publicKeyData == offer.ephemeralAgreementPublicKey,
               oneTimeToken.count == NoctweaveRendezvousV2.tokenBytes,
               RendezvousCanonicalV2.constantTimeEqual(
@@ -455,6 +473,11 @@ public struct PendingRendezvousOfferV2: Codable {
         return redeemedAt.map {
             $0.timeIntervalSince1970.isFinite && $0 >= offer.createdAt && $0 < offer.expiresAt
         } ?? true
+        }
+    }
+
+    public var isStructurallyValid: Bool {
+        (try? isStructurallyValidThrowing) == true
     }
 
     /// Explicitly exports only the one-use bearer secret, never the ML-KEM private key.
@@ -473,7 +496,7 @@ public struct PendingRendezvousOfferV2: Codable {
         ledger: inout RendezvousRedemptionLedgerV2,
         at date: Date = Date()
     ) throws -> RendezvousSessionV2 {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw RendezvousV2Error.invalidOffer
         }
         guard redeemedAt == nil else {
@@ -484,7 +507,7 @@ public struct PendingRendezvousOfferV2: Codable {
             expectedPurpose: offer.purpose,
             at: date
         )
-        guard request.isStructurallyValid(for: offer) else {
+        guard try request.isStructurallyValidThrowing(for: offer) else {
             throw RendezvousV2Error.invalidOpen
         }
         let proofMaterial = RendezvousCanonicalV2.openProofMaterial(request)
@@ -499,7 +522,7 @@ public struct PendingRendezvousOfferV2: Codable {
         var sharedSecret: Data
         do {
             sharedSecret = try ephemeralAgreementKey.decapsulate(ciphertext: request.kemCiphertext)
-        } catch {
+        } catch CryptoError.invalidPayload {
             throw RendezvousV2Error.invalidOpen
         }
         defer { sharedSecret.secureWipe() }
@@ -564,8 +587,12 @@ public struct RendezvousOpenV2: Codable, Equatable {
     }
 
     public func isStructurallyValid(for offer: RendezvousOfferV2) -> Bool {
-        isStructurallyValid
-            && offer.isStructurallyValid
+        (try? isStructurallyValidThrowing(for: offer)) == true
+    }
+
+    public func isStructurallyValidThrowing(for offer: RendezvousOfferV2) throws -> Bool {
+        guard try offer.isStructurallyValidThrowing else { return false }
+        return isStructurallyValid
             && purpose == offer.purpose
             && offerDigest == offer.transcriptDigest
             && openedAt >= offer.createdAt
@@ -655,7 +682,7 @@ public enum RendezvousResponderV2 {
             tokenProof: proof,
             openedAt: openedAt
         )
-        guard request.isStructurallyValid(for: offer) else {
+        guard try request.isStructurallyValidThrowing(for: offer) else {
             throw RendezvousV2Error.invalidOpen
         }
         return (
@@ -1191,7 +1218,7 @@ private enum RendezvousCanonicalV2 {
         expectedPurpose: RendezvousPurposeV2,
         at date: Date
     ) throws {
-        guard offer.isStructurallyValid else {
+        guard try offer.isStructurallyValidThrowing else {
             throw RendezvousV2Error.invalidOffer
         }
         guard offer.purpose == expectedPurpose else {

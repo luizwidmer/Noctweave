@@ -13,8 +13,12 @@ public enum RelationshipSafetyNumberV2 {
         localAuthoritySigningPublicKey: Data,
         peerAuthoritySigningPublicKey: Data
     ) throws -> String {
-        guard SigningKeyPair.isValidPublicKey(localAuthoritySigningPublicKey),
-              SigningKeyPair.isValidPublicKey(peerAuthoritySigningPublicKey) else {
+        guard try SigningKeyPair.isValidPublicKeyThrowing(
+                  localAuthoritySigningPublicKey
+              ),
+              try SigningKeyPair.isValidPublicKeyThrowing(
+                  peerAuthoritySigningPublicKey
+              ) else {
             throw RelationshipSafetyNumberV2Error.invalidAuthorityKey
         }
         let keys = [

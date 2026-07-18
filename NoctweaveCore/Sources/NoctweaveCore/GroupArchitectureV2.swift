@@ -49,6 +49,20 @@ public enum NoctweaveGroupArchitectureV2 {
     public static let maximumWelcomeBytes = 4 * 1_024 * 1_024
 }
 
+/// Aggregate structural predicates intentionally remain nonthrowing for UI and
+/// persistence inspection. Throwing protocol paths call this probe first so a
+/// missing local ML-DSA/ML-KEM runtime is never misclassified as peer-invalid
+/// key material.
+enum GroupCryptographicRuntimeProbeV2 {
+    static func requireAlgorithms(
+        signingPublicKey: Data = Data(),
+        agreementPublicKey: Data = Data()
+    ) throws {
+        _ = try SigningKeyPair.isValidPublicKeyThrowing(signingPublicKey)
+        _ = try AgreementKeyPair.isValidPublicKeyThrowing(agreementPublicKey)
+    }
+}
+
 /// Names are deliberately explicit about interoperability and review status.
 public enum GroupProtocolProfile: String, Codable, Equatable, Hashable, CaseIterable {
     /// The existing Noctweave post-quantum construction. It is not RFC 9420 MLS.

@@ -64,7 +64,8 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
         )
         let deleted = try SignedDeletedGroupStateV2.create(
             tombstone: tombstone,
-            from: fixture.state
+            from: fixture.state,
+            observedAt: tombstone.createdAt
         )
         XCTAssertTrue(deleted.isStructurallyValid)
         XCTAssertEqual(tombstone.operation, .deleteGroup)
@@ -170,6 +171,7 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
         let stateWithMember = try SignedGroupStateV2.applying(
             addMember,
             to: fixture.state,
+            observedAt: addMember.createdAt,
             signingKey: fixture.ownerKey
         )
 
@@ -236,6 +238,7 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
         let next = try SignedGroupStateV2.applying(
             replaceCredential,
             to: stateWithMember,
+            observedAt: replaceCredential.createdAt,
             signingKey: memberKey
         )
         XCTAssertEqual(next.activeCredentials.filter { $0.memberHandle == member.id }, [replacementLeaf])

@@ -231,7 +231,7 @@ public enum OnionTransport {
             let trimmedInstruction = hop.routingInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedHopId.isEmpty,
                   !trimmedInstruction.isEmpty,
-                  AgreementKeyPair.isValidPublicKey(hop.publicKeyData) else {
+                  try AgreementKeyPair.isValidPublicKeyThrowing(hop.publicKeyData) else {
                 throw OnionTransportError.invalidHop
             }
             guard trimmedHopId.utf8.count <= maximumHopIdBytes,

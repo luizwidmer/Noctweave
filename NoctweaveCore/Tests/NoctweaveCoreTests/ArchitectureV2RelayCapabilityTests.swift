@@ -16,8 +16,9 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
         XCTAssertTrue(manifest.supports(module: "nw.opaque-route", version: 2))
         XCTAssertTrue(manifest.supports(module: "nw.rendezvous-transport", version: 2))
         for module in ["nw.core", "nw.opaque-route", "nw.rendezvous-transport", "nw.federation"] {
-            XCTAssertEqual(manifest.modules.first { $0.module == module }?.status, .stable)
+            XCTAssertEqual(manifest.modules.first { $0.module == module }?.status, .provisional)
         }
+        XCTAssertFalse(manifest.modules.contains { $0.status == .stable })
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 2))
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 3))
         XCTAssertFalse(
@@ -37,6 +38,63 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
         XCTAssertEqual(roundTrip.protocolCapabilities, manifest)
     }
 
+    func testOpaqueRouteCapabilityRegistryIsCanonicalAndComplete() throws {
+        let expected: [String: UInt64] = [
+            "cursorBytes": 68,
+            "maxPage": 256,
+            "maxPacketBytes": 65_536,
+            "maxPacketsPerRoute": 1_024,
+            "maxRetentionSeconds": 604_800,
+            "maxRoutes": 100_000,
+        ]
+        XCTAssertEqual(OpaqueRouteRelayCapabilityLimitsV2.registry, expected)
+        let manifest = RelayCapabilityManifestV2.advertised(
+            attachmentsEnabled: false,
+            wakeEnabled: false,
+            hiddenRetrievalEnabled: false,
+            onionEnabled: false,
+            mixnetEnabled: false
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(manifest.modules.first {
+                $0.module == "nw.opaque-route"
+            }).limits,
+            expected
+        )
+    }
+
+    func testCandidateAndExperimentalModuleCatalogStatuses() {
+        let catalog = ProtocolCapabilityManifest.knownModuleCatalog
+
+        XCTAssertEqual(
+            catalog.filter { $0.status == .provisional }.map(\.module),
+            [
+                "nw.core",
+                "nw.direct",
+                "nw.opaque-route",
+                "nw.rendezvous-transport",
+                "nw.blobs",
+                "nw.federation"
+            ]
+        )
+        XCTAssertEqual(
+            catalog.filter { $0.status == .experimental }.map(\.module),
+            [
+                "nw.groups",
+                "nw.wake",
+                "nw.open-discovery",
+                "nw.privacy.hidden-retrieval",
+                "nw.privacy.onion",
+                "nw.privacy.mixnet"
+            ]
+        )
+        XCTAssertFalse(catalog.contains { $0.status == .stable })
+        XCTAssertEqual(
+            ProtocolCapabilityManifest.defaultActiveEndpointModules.map(\.status),
+            [.provisional, .provisional]
+        )
+    }
+
     func testRelayAdvertisesExperimentalOpenDiscoveryOnlyWhenDHTIsEnabled() throws {
         let enabled = RelayConfiguration(
             federation: FederationDescriptor(mode: .open, name: "example"),
@@ -50,7 +108,7 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
         )
         XCTAssertEqual(
             enabledManifest.modules.first { $0.module == "nw.federation" }?.status,
-            .stable
+            .provisional
         )
 
         let disabled = RelayConfiguration(

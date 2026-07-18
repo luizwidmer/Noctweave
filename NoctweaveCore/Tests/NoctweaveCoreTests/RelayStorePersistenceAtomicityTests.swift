@@ -4,6 +4,23 @@ import XCTest
 @testable import NoctweaveCore
 
 final class RelayStorePersistenceAtomicityTests: XCTestCase {
+    func testAttachmentUploadCanonicalBodyDigestVector() {
+        let digest = attachmentUploadBodyDigest(
+            attachmentId: UUID(uuidString: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE")!,
+            chunkIndex: 7,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x11, count: 12),
+                ciphertext: Data([0x22, 0x23]),
+                tag: Data(repeating: 0x33, count: 16)
+            ),
+            ttlSeconds: 300
+        )
+        XCTAssertEqual(
+            digest.map { String(format: "%02x", $0) }.joined(),
+            "7dc148be3f5b80970024c6ea417d4c2eab2db423599f018c96c5431dce7c6895"
+        )
+    }
+
     func testExistingUnmarkedSQLiteStoreIsRejected() async throws {
         let fixture = try makeCorePersistentRelayFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -20,7 +37,7 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
         }
     }
 
-    func testFailedExternalAttachmentReplacementPreservesDurableBlobAndCleansOrphan() async throws {
+    func testImmutableAttachmentReplayAndFailedNewChunkPreserveDurableBlobs() async throws {
         let fixture = try makeCorePersistentRelayFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
         let blobStore = CoreAtomicityBlobStore()
@@ -31,22 +48,62 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
         )
         let attachmentId = UUID()
         let first = atomicityAttachmentPayload(0x61)
-        let replacement = atomicityAttachmentPayload(0x62)
+        let second = atomicityAttachmentPayload(0x62)
+        let firstKey = Data(repeating: 0x71, count: 32)
+        let secondKey = Data(repeating: 0x72, count: 32)
         _ = try await store.storeAttachment(
             attachmentId: attachmentId,
             chunkIndex: 0,
             payload: first,
-            ttlSeconds: 300
+            ttlSeconds: 300,
+            idempotencyKey: firstKey
         )
         XCTAssertEqual(blobStore.activeBlobCount, 1)
 
         await store.failNextPersistenceForTesting()
-        await assertCoreFailure {
+        let replay = try await store.storeAttachment(
+            attachmentId: attachmentId,
+            chunkIndex: 0,
+            payload: first,
+            ttlSeconds: 300,
+            idempotencyKey: firstKey
+        )
+        XCTAssertEqual(replay.payload, first)
+        XCTAssertEqual(blobStore.activeBlobCount, 1)
+
+        do {
             _ = try await store.storeAttachment(
                 attachmentId: attachmentId,
                 chunkIndex: 0,
-                payload: replacement,
-                ttlSeconds: 300
+                payload: second,
+                ttlSeconds: 300,
+                idempotencyKey: firstKey
+            )
+            XCTFail("Expected immutable attachment conflict")
+        } catch RelayStoreError.attachmentConflict {
+            // Expected.
+        }
+        do {
+            _ = try await store.storeAttachment(
+                attachmentId: attachmentId,
+                chunkIndex: 0,
+                payload: first,
+                ttlSeconds: 300,
+                idempotencyKey: secondKey
+            )
+            XCTFail("Expected idempotency-key conflict")
+        } catch RelayStoreError.attachmentConflict {
+            // Expected.
+        }
+        XCTAssertEqual(blobStore.activeBlobCount, 1)
+
+        await assertCoreFailure {
+            _ = try await store.storeAttachment(
+                attachmentId: attachmentId,
+                chunkIndex: 1,
+                payload: second,
+                ttlSeconds: 300,
+                idempotencyKey: secondKey
             )
         }
         let afterFailure = try await store.fetchAttachment(
@@ -54,13 +111,19 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
             chunkIndex: 0
         )
         XCTAssertEqual(afterFailure?.payload, first)
+        let missingSecondChunk = try await store.fetchAttachment(
+            attachmentId: attachmentId,
+            chunkIndex: 1
+        )
+        XCTAssertNil(missingSecondChunk)
         XCTAssertEqual(blobStore.activeBlobCount, 1)
 
         _ = try await store.storeAttachment(
             attachmentId: attachmentId,
-            chunkIndex: 0,
-            payload: replacement,
-            ttlSeconds: 300
+            chunkIndex: 1,
+            payload: second,
+            ttlSeconds: 300,
+            idempotencyKey: secondKey
         )
         let reloaded = RelayStore(
             storeURL: fixture.storeURL,
@@ -70,10 +133,29 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
         try await reloaded.loadFromDisk()
         let persisted = try await reloaded.fetchAttachment(
             attachmentId: attachmentId,
-            chunkIndex: 0
+            chunkIndex: 1
         )
-        XCTAssertEqual(persisted?.payload, replacement)
-        XCTAssertEqual(blobStore.activeBlobCount, 1)
+        XCTAssertEqual(persisted?.payload, second)
+        _ = try await reloaded.storeAttachment(
+            attachmentId: attachmentId,
+            chunkIndex: 1,
+            payload: second,
+            ttlSeconds: 300,
+            idempotencyKey: secondKey
+        )
+        do {
+            _ = try await reloaded.storeAttachment(
+                attachmentId: attachmentId,
+                chunkIndex: 1,
+                payload: second,
+                ttlSeconds: 301,
+                idempotencyKey: secondKey
+            )
+            XCTFail("Expected persisted TTL conflict")
+        } catch RelayStoreError.attachmentConflict {
+            // Expected.
+        }
+        XCTAssertEqual(blobStore.activeBlobCount, 2)
     }
 }
 

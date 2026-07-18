@@ -92,7 +92,7 @@ public struct RelationshipContinuityOfferV2: Codable, Equatable {
             ),
             expiresAt: try container.decode(Date.self, forKey: .expiresAt)
         )
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .invitation,
                 in: container,
@@ -102,7 +102,7 @@ public struct RelationshipContinuityOfferV2: Codable, Equatable {
     }
 
     public func encode(to encoder: Encoder) throws {
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw EncodingError.invalidValue(
                 self,
                 EncodingError.Context(
@@ -117,10 +117,16 @@ public struct RelationshipContinuityOfferV2: Codable, Equatable {
         try container.encode(expiresAt, forKey: .expiresAt)
     }
 
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            guard try invitation.isStructurallyValidThrowing else { return false }
+            return expiresAt.timeIntervalSince1970.isFinite
+                && expiresAt == invitation.offer.expiresAt
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        invitation.isStructurallyValid
-            && expiresAt.timeIntervalSince1970.isFinite
-            && expiresAt == invitation.offer.expiresAt
+        (try? isStructurallyValidThrowing) == true
     }
 }
 
@@ -152,7 +158,7 @@ public struct RelationshipRouteSetUpdateV2: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         relationshipID = try container.decode(UUID.self, forKey: .relationshipID)
         routeSet = try container.decode(PairwiseRouteSetV2.self, forKey: .routeSet)
-        guard isStructurallyValid else {
+        guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
                 forKey: .routeSet,
                 in: container,
@@ -161,8 +167,15 @@ public struct RelationshipRouteSetUpdateV2: Codable, Equatable {
         }
     }
 
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            guard routeSet.relationshipID == relationshipID else { return false }
+            return try routeSet.isStructurallyValidThrowing
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        routeSet.relationshipID == relationshipID && routeSet.isStructurallyValid
+        (try? isStructurallyValidThrowing) == true
     }
 }
 
@@ -412,24 +425,37 @@ public struct AuthenticatedRelationshipControlV2: Codable, Equatable {
             && signature.count == 3_309
     }
 
+    public func verifyThrowing(
+        relationshipID expectedRelationshipID: UUID,
+        senderEndpointHandle expectedSender: RelationshipEndpointHandle,
+        eventID expectedEventID: UUID,
+        signingPublicKey: Data
+    ) throws -> Bool {
+        guard isStructurallyValid,
+              relationshipID == expectedRelationshipID,
+              senderEndpointHandle == expectedSender,
+              eventID == expectedEventID else {
+            return false
+        }
+        return try SigningKeyPair.verifyThrowing(
+            signature: signature,
+            data: signableData(),
+            publicKeyData: signingPublicKey
+        )
+    }
+
     public func verify(
         relationshipID expectedRelationshipID: UUID,
         senderEndpointHandle expectedSender: RelationshipEndpointHandle,
         eventID expectedEventID: UUID,
         signingPublicKey: Data
     ) -> Bool {
-        guard isStructurallyValid,
-              relationshipID == expectedRelationshipID,
-              senderEndpointHandle == expectedSender,
-              eventID == expectedEventID,
-              let data = try? signableData() else {
-            return false
-        }
-        return SigningKeyPair.verify(
-            signature: signature,
-            data: data,
-            publicKeyData: signingPublicKey
-        )
+        (try? verifyThrowing(
+            relationshipID: expectedRelationshipID,
+            senderEndpointHandle: expectedSender,
+            eventID: expectedEventID,
+            signingPublicKey: signingPublicKey
+        )) == true
     }
 
     public func decodeKnown() throws -> KnownRelationshipControlV2? {
@@ -451,7 +477,7 @@ public struct AuthenticatedRelationshipControlV2: Codable, Equatable {
                     from: encodedPayload
                 )
                 guard value.relationshipID == relationshipID,
-                      value.isStructurallyValid else {
+                      try value.isStructurallyValidThrowing else {
                     throw WirePayloadV2Error.invalidKnownControl
                 }
                 return .continuityOffer(value)
@@ -461,7 +487,7 @@ public struct AuthenticatedRelationshipControlV2: Codable, Equatable {
                     from: encodedPayload
                 )
                 guard value.relationshipID == relationshipID,
-                      value.isStructurallyValid else {
+                      try value.isStructurallyValidThrowing else {
                     throw WirePayloadV2Error.invalidKnownControl
                 }
                 return .routeSetUpdate(value)
@@ -486,6 +512,8 @@ public struct AuthenticatedRelationshipControlV2: Codable, Equatable {
                 }
                 return .endpointPrekeyUpdate(value)
             }
+        } catch let error as CryptoError {
+            throw error
         } catch {
             throw WirePayloadV2Error.invalidKnownControl
         }
@@ -717,13 +745,15 @@ public struct WirePayloadV2: Codable, Equatable {
             guard let control,
                   floor(control.issuedAt.timeIntervalSince1970)
                     == floor(sentAt.timeIntervalSince1970),
-                  let signingPublicKey,
-                  control.verify(
-                    relationshipID: relationshipID,
-                    senderEndpointHandle: senderEndpointHandle,
-                    eventID: eventId,
-                    signingPublicKey: signingPublicKey
-                  ) else {
+                  let signingPublicKey else {
+                throw WirePayloadV2Error.invalidKnownControl
+            }
+            guard try control.verifyThrowing(
+                relationshipID: relationshipID,
+                senderEndpointHandle: senderEndpointHandle,
+                eventID: eventId,
+                signingPublicKey: signingPublicKey
+            ) else {
                 throw WirePayloadV2Error.invalidKnownControl
             }
         }
@@ -810,18 +840,21 @@ public struct WirePayloadV2: Codable, Equatable {
         conversationId: String,
         eventId: UUID,
         senderEndpointHandle: RelationshipEndpointHandle,
+        sentAt: Date,
         receivedAt: Date,
         signingPublicKey: Data
     ) throws -> DirectV4PayloadDispositionV2 {
         guard kind == .control,
-              let control else {
+              let control,
+              sentAt.timeIntervalSince1970.isFinite,
+              receivedAt.timeIntervalSince1970.isFinite else {
             throw WirePayloadV2Error.invalidKnownControl
         }
         try validateDirectV4(
             eventId: eventId,
             senderEndpointHandle: senderEndpointHandle,
             conversationId: conversationId,
-            sentAt: receivedAt,
+            sentAt: sentAt,
             signingPublicKey: signingPublicKey
         )
         let auditEvent = ConversationEvent(
@@ -829,7 +862,7 @@ public struct WirePayloadV2: Codable, Equatable {
             clientTransactionId: control.nonce,
             conversationId: conversationId,
             authorEndpointHandle: senderEndpointHandle,
-            createdAt: receivedAt,
+            createdAt: sentAt,
             kind: .control,
             content: EncodedContent(
                 type: control.type,

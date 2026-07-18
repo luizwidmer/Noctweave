@@ -253,6 +253,19 @@ final class ArchitectureV2OpaqueRouteTests: XCTestCase {
         )
         XCTAssertEqual(replay, tombstone)
 
+        let crashRecoveryTeardown = try material.makeTeardownRequest(
+            current: initial,
+            authorizedAt: origin.addingTimeInterval(201),
+            idempotencyKey: .generate()
+        )
+        let crashRecovery = try tombstone.applyingTeardown(
+            crashRecoveryTeardown,
+            presentedCapability: material.teardownCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(201)
+        )
+        XCTAssertEqual(crashRecovery, tombstone)
+
         XCTAssertThrowsError(try tombstone.applyingRenewal(
             pendingRenewal,
             presentedCapability: material.renewCapability,

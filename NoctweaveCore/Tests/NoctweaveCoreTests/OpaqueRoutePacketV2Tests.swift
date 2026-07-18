@@ -263,6 +263,432 @@ final class OpaqueRoutePacketV2Tests: XCTestCase {
         )
     }
 
+    func testReassemblerPersistsPartialFragmentsAndResumesAfterRoundTrip() throws {
+        let material = try OpaqueRouteClientCapabilityMaterialV2()
+        let key = OpaqueRoutePayloadKeyV2.generate()
+        let capacity = NoctweaveOpaqueRoutePacketsV2.maximumFragmentPayloadBytes(
+            for: .bytes4096
+        )
+        let completedBundle = try OpaqueRouteSealedBundleV2.seal(
+            Data("already completed".utf8),
+            routeRevision: 31,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt
+        )
+        let payload = Data((0..<(capacity + 137)).map { UInt8($0 % 251) })
+        let partialBundle = try OpaqueRouteSealedBundleV2.seal(
+            payload,
+            routeRevision: 31,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt
+        )
+
+        var original = try OpaqueRoutePacketReassemblerV2()
+        guard case .complete = try original.consume(
+            completedBundle.packets[0],
+            payloadKey: key,
+            routeRevision: 31
+        ) else {
+            return XCTFail("Expected the one-packet bundle to complete")
+        }
+        XCTAssertEqual(
+            try original.consume(
+                partialBundle.packets[0],
+                payloadKey: key,
+                routeRevision: 31
+            ),
+            .accepted
+        )
+
+        let encoded = try NoctweaveCoder.encode(original, sortedKeys: true)
+        var restored = try NoctweaveCoder.decode(
+            OpaqueRoutePacketReassemblerV2.self,
+            from: encoded
+        )
+        XCTAssertEqual(restored, original)
+        XCTAssertTrue(restored.isStructurallyValid)
+        XCTAssertEqual(restored.pendingBundleCount, 1)
+        XCTAssertEqual(restored.bufferedPayloadBytes, capacity)
+        XCTAssertEqual(
+            String(describing: restored),
+            "OpaqueRoutePacketReassemblerV2(<redacted>)"
+        )
+        XCTAssertTrue(Mirror(reflecting: restored).children.isEmpty)
+
+        XCTAssertEqual(
+            try restored.consume(
+                completedBundle.packets[0],
+                payloadKey: key,
+                routeRevision: 31
+            ),
+            .duplicate
+        )
+        XCTAssertEqual(
+            try restored.consume(
+                partialBundle.packets[0],
+                payloadKey: key,
+                routeRevision: 31
+            ),
+            .duplicate
+        )
+        guard case .complete(let resumed) = try restored.consume(
+            partialBundle.packets[1],
+            payloadKey: key,
+            routeRevision: 31
+        ) else {
+            return XCTFail("Expected persisted fragments to resume the bundle")
+        }
+        XCTAssertEqual(resumed.payload, payload)
+        XCTAssertEqual(restored.pendingBundleCount, 0)
+        XCTAssertEqual(restored.bufferedPayloadBytes, 0)
+    }
+
+    func testPendingInsertionOrderIsDeterministicAndSurvivesRoundTrip() throws {
+        let material = try OpaqueRouteClientCapabilityMaterialV2()
+        let key = OpaqueRoutePayloadKeyV2.generate()
+        let capacity = NoctweaveOpaqueRoutePacketsV2.maximumFragmentPayloadBytes(
+            for: .bytes4096
+        )
+        let firstBundleID = OpaqueRouteBundleIDV2(
+            rawValue: Data(repeating: 0xF1, count: 32)
+        )
+        let secondBundleID = OpaqueRouteBundleIDV2(
+            rawValue: Data(repeating: 0x01, count: 32)
+        )
+        let completedBundle = try OpaqueRouteSealedBundleV2.seal(
+            Data("completed replay entry".utf8),
+            routeRevision: 32,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt
+        )
+        let firstBundle = try OpaqueRouteSealedBundleV2.seal(
+            Data(repeating: 0x61, count: capacity + 1),
+            routeRevision: 32,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt,
+            bundleID: firstBundleID
+        )
+        let secondBundle = try OpaqueRouteSealedBundleV2.seal(
+            Data(repeating: 0x62, count: capacity + 1),
+            routeRevision: 32,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt,
+            bundleID: secondBundleID
+        )
+        let conflictingFirstBundle = try OpaqueRouteSealedBundleV2.seal(
+            Data(repeating: 0x63, count: capacity + 1),
+            routeRevision: 32,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt,
+            bundleID: firstBundleID
+        )
+
+        var original = try OpaqueRoutePacketReassemblerV2()
+        _ = try original.consume(
+            completedBundle.packets[0],
+            payloadKey: key,
+            routeRevision: 32
+        )
+        _ = try original.consume(firstBundle.packets[0], payloadKey: key, routeRevision: 32)
+        _ = try original.consume(secondBundle.packets[0], payloadKey: key, routeRevision: 32)
+
+        let encoded = try NoctweaveCoder.encode(original, sortedKeys: true)
+        XCTAssertEqual(
+            encoded,
+            try NoctweaveCoder.encode(original, sortedKeys: true)
+        )
+        var restored = try NoctweaveCoder.decode(
+            OpaqueRoutePacketReassemblerV2.self,
+            from: encoded
+        )
+        XCTAssertEqual(restored, original)
+
+        let firstDiscarded = try XCTUnwrap(restored.discardOldestPendingBundle())
+        XCTAssertEqual(firstDiscarded, firstBundleID)
+        XCTAssertEqual(
+            String(describing: firstDiscarded),
+            "OpaqueRouteBundleIDV2(<redacted>)"
+        )
+        XCTAssertEqual(restored.pendingBundleCount, 1)
+        XCTAssertEqual(restored.bufferedPayloadBytes, capacity)
+        let retiredEncoded = try NoctweaveCoder.encode(restored, sortedKeys: true)
+        var afterEviction = try NoctweaveCoder.decode(
+            OpaqueRoutePacketReassemblerV2.self,
+            from: retiredEncoded
+        )
+        XCTAssertEqual(afterEviction, restored)
+        XCTAssertEqual(
+            try afterEviction.consume(
+                firstBundle.packets[1],
+                payloadKey: key,
+                routeRevision: 32
+            ),
+            .duplicate
+        )
+        XCTAssertThrowsError(try afterEviction.consume(
+            conflictingFirstBundle.packets[0],
+            payloadKey: key,
+            routeRevision: 32
+        )) {
+            XCTAssertEqual($0 as? OpaqueRoutePacketV2Error, .bundleConflict)
+        }
+        XCTAssertEqual(
+            try afterEviction.consume(
+                completedBundle.packets[0],
+                payloadKey: key,
+                routeRevision: 32
+            ),
+            .duplicate
+        )
+        XCTAssertEqual(afterEviction.discardOldestPendingBundle(), secondBundleID)
+        XCTAssertNil(afterEviction.discardOldestPendingBundle())
+        XCTAssertEqual(afterEviction.pendingBundleCount, 0)
+        XCTAssertEqual(afterEviction.bufferedPayloadBytes, 0)
+        XCTAssertTrue(afterEviction.isStructurallyValid)
+    }
+
+    func testDiscardPendingBundleRetiresOnlyTheTargetBundle() throws {
+        let material = try OpaqueRouteClientCapabilityMaterialV2()
+        let key = OpaqueRoutePayloadKeyV2.generate()
+        let capacity = NoctweaveOpaqueRoutePacketsV2.maximumFragmentPayloadBytes(
+            for: .bytes4096
+        )
+        let retainedPayload = Data(repeating: 0x81, count: capacity + 11)
+        let targetPayload = Data(repeating: 0x82, count: capacity + 17)
+        let retainedBundle = try OpaqueRouteSealedBundleV2.seal(
+            retainedPayload,
+            routeRevision: 35,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt,
+            bundleID: OpaqueRouteBundleIDV2(rawValue: Data(repeating: 0x81, count: 32))
+        )
+        let targetBundleID = OpaqueRouteBundleIDV2(
+            rawValue: Data(repeating: 0x82, count: 32)
+        )
+        let targetBundle = try OpaqueRouteSealedBundleV2.seal(
+            targetPayload,
+            routeRevision: 35,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt,
+            bundleID: targetBundleID
+        )
+        let conflictingTarget = try OpaqueRouteSealedBundleV2.seal(
+            Data(repeating: 0x83, count: capacity + 17),
+            routeRevision: 35,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt,
+            bundleID: targetBundleID
+        )
+        let completedBundle = try OpaqueRouteSealedBundleV2.seal(
+            Data("preexisting completed entry".utf8),
+            routeRevision: 35,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt
+        )
+
+        var reassembler = try OpaqueRoutePacketReassemblerV2()
+        _ = try reassembler.consume(
+            completedBundle.packets[0],
+            payloadKey: key,
+            routeRevision: 35
+        )
+        _ = try reassembler.consume(
+            retainedBundle.packets[0],
+            payloadKey: key,
+            routeRevision: 35
+        )
+        _ = try reassembler.consume(
+            targetBundle.packets[0],
+            payloadKey: key,
+            routeRevision: 35
+        )
+
+        XCTAssertFalse(reassembler.discardPendingBundle(.generate()))
+        XCTAssertTrue(reassembler.discardPendingBundle(targetBundleID))
+        XCTAssertFalse(reassembler.discardPendingBundle(targetBundleID))
+        XCTAssertEqual(reassembler.pendingBundleCount, 1)
+        XCTAssertEqual(reassembler.bufferedPayloadBytes, capacity)
+        XCTAssertEqual(
+            try reassembler.consume(
+                targetBundle.packets[1],
+                payloadKey: key,
+                routeRevision: 35
+            ),
+            .duplicate
+        )
+        XCTAssertThrowsError(try reassembler.consume(
+            conflictingTarget.packets[0],
+            payloadKey: key,
+            routeRevision: 35
+        )) {
+            XCTAssertEqual($0 as? OpaqueRoutePacketV2Error, .bundleConflict)
+        }
+        XCTAssertEqual(
+            try reassembler.consume(
+                completedBundle.packets[0],
+                payloadKey: key,
+                routeRevision: 35
+            ),
+            .duplicate
+        )
+        guard case .complete(let retained) = try reassembler.consume(
+            retainedBundle.packets[1],
+            payloadKey: key,
+            routeRevision: 35
+        ) else {
+            return XCTFail("Expected unrelated partial bundle to remain resumable")
+        }
+        XCTAssertEqual(retained.payload, retainedPayload)
+        XCTAssertTrue(reassembler.isStructurallyValid)
+    }
+
+    func testReassemblerRejectsMalformedPersistedStateExactly() throws {
+        let material = try OpaqueRouteClientCapabilityMaterialV2()
+        let key = OpaqueRoutePayloadKeyV2.generate()
+        let capacity = NoctweaveOpaqueRoutePacketsV2.maximumFragmentPayloadBytes(
+            for: .bytes4096
+        )
+        let bundle = try OpaqueRouteSealedBundleV2.seal(
+            Data(repeating: 0x71, count: capacity + 1),
+            routeRevision: 33,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt
+        )
+        var reassembler = try OpaqueRoutePacketReassemblerV2()
+        _ = try reassembler.consume(bundle.packets[0], payloadKey: key, routeRevision: 33)
+        let encoded = try NoctweaveCoder.encode(reassembler, sortedKeys: true)
+        let original = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+
+        var unknownField = original
+        unknownField["legacyPendingState"] = true
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRoutePacketReassemblerV2.self,
+            from: JSONSerialization.data(withJSONObject: unknownField)
+        ))
+
+        var unknownNestedField = original
+        var nestedPending = try XCTUnwrap(
+            unknownNestedField["pendingBundles"] as? [[String: Any]]
+        )
+        nestedPending[0]["legacyFragmentMap"] = [:]
+        unknownNestedField["pendingBundles"] = nestedPending
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRoutePacketReassemblerV2.self,
+            from: JSONSerialization.data(withJSONObject: unknownNestedField)
+        ))
+
+        var duplicateFragment = original
+        var duplicatePending = try XCTUnwrap(
+            duplicateFragment["pendingBundles"] as? [[String: Any]]
+        )
+        var fragments = try XCTUnwrap(
+            duplicatePending[0]["fragments"] as? [[String: Any]]
+        )
+        fragments.append(fragments[0])
+        duplicatePending[0]["fragments"] = fragments
+        duplicateFragment["pendingBundles"] = duplicatePending
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRoutePacketReassemblerV2.self,
+            from: JSONSerialization.data(withJSONObject: duplicateFragment)
+        ))
+
+        var impossibleCapacity = original
+        impossibleCapacity["maximumBufferedBytes"] = 1
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRoutePacketReassemblerV2.self,
+            from: JSONSerialization.data(withJSONObject: impossibleCapacity)
+        ))
+    }
+
+    func testDiscardPendingBundlesPreservesCompletedReplayCache() throws {
+        let material = try OpaqueRouteClientCapabilityMaterialV2()
+        let key = OpaqueRoutePayloadKeyV2.generate()
+        let capacity = NoctweaveOpaqueRoutePacketsV2.maximumFragmentPayloadBytes(
+            for: .bytes4096
+        )
+        let completedBundle = try OpaqueRouteSealedBundleV2.seal(
+            Data("complete before discard".utf8),
+            routeRevision: 34,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt
+        )
+        let partialPayload = Data(repeating: 0x72, count: capacity + 19)
+        let partialBundle = try OpaqueRouteSealedBundleV2.seal(
+            partialPayload,
+            routeRevision: 34,
+            paddingBucket: .bytes4096,
+            payloadKey: key,
+            routeCapabilities: material,
+            authorizedAt: authorizedAt
+        )
+        var reassembler = try OpaqueRoutePacketReassemblerV2()
+        _ = try reassembler.consume(
+            completedBundle.packets[0],
+            payloadKey: key,
+            routeRevision: 34
+        )
+        _ = try reassembler.consume(
+            partialBundle.packets[0],
+            payloadKey: key,
+            routeRevision: 34
+        )
+
+        reassembler.discardPendingBundles()
+        XCTAssertTrue(reassembler.isStructurallyValid)
+        XCTAssertEqual(reassembler.pendingBundleCount, 0)
+        XCTAssertEqual(reassembler.bufferedPayloadBytes, 0)
+        XCTAssertEqual(
+            try reassembler.consume(
+                completedBundle.packets[0],
+                payloadKey: key,
+                routeRevision: 34
+            ),
+            .duplicate
+        )
+        XCTAssertEqual(
+            try reassembler.consume(
+                partialBundle.packets[0],
+                payloadKey: key,
+                routeRevision: 34
+            ),
+            .accepted
+        )
+        guard case .complete(let completed) = try reassembler.consume(
+            partialBundle.packets[1],
+            payloadKey: key,
+            routeRevision: 34
+        ) else {
+            return XCTFail("Expected discarded pending state to be safely rebuilt")
+        }
+        XCTAssertEqual(completed.payload, partialPayload)
+    }
+
     func testAADBindsRevisionAndWrongPayloadKeyFailsClosed() throws {
         let material = try OpaqueRouteClientCapabilityMaterialV2()
         let key = OpaqueRoutePayloadKeyV2.generate()

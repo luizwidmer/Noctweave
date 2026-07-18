@@ -26,6 +26,93 @@ final class PairwiseOpaqueRouteV2Tests: XCTestCase {
         XCTAssertTrue(Mirror(reflecting: fixture.local).children.isEmpty)
     }
 
+    func testLocalRoutePersistsBoundedRouteReassemblyState() throws {
+        let fixture = try makeRouteFixture()
+        var local = fixture.local
+        XCTAssertEqual(local.reassembler, .empty)
+        XCTAssertEqual(
+            OpaqueRoutePacketReassemblerV2.defaultMaximumBufferedBytes,
+            LocalOpaqueReceiveRouteV2.maximumPersistedReassemblerBufferedBytes
+        )
+        XCTAssertLessThanOrEqual(
+            LocalOpaqueReceiveRouteV2.maximumPersistedReassemblerBufferedBytes
+                * PairwiseRelationshipV2.maximumReceiveRoutes * 2,
+            ClientStateStore.maximumPlaintextBytes
+        )
+
+        let sendRoute = try local.peerSendRoute()
+        let capacity = NoctweaveOpaqueRoutePacketsV2.maximumFragmentPayloadBytes(
+            for: sendRoute.policy.paddingBucket
+        )
+        let payload = Data(repeating: 0x91, count: capacity + 23)
+        let bundle = try OpaqueRouteSealedBundleV2.seal(
+            payload,
+            to: sendRoute,
+            authorizedAt: origin.addingTimeInterval(1)
+        )
+        let payloadKey = local.payloadKey
+        let firstResult = try local.updateReassembler {
+            try $0.consume(
+                bundle.packets[0],
+                payloadKey: payloadKey,
+                routeRevision: sendRoute.routeRevision
+            )
+        }
+        XCTAssertEqual(firstResult, .accepted)
+        XCTAssertEqual(local.reassembler.pendingBundleCount, 1)
+        XCTAssertTrue(local.isStructurallyValid)
+
+        let encoded = try NoctweaveCoder.encode(local, sortedKeys: true)
+        var restored = try NoctweaveCoder.decode(LocalOpaqueReceiveRouteV2.self, from: encoded)
+        XCTAssertEqual(restored, local)
+        XCTAssertEqual(restored.reassembler, local.reassembler)
+        let resumed = try restored.updateReassembler {
+            try $0.consume(
+                bundle.packets[1],
+                payloadKey: payloadKey,
+                routeRevision: sendRoute.routeRevision
+            )
+        }
+        guard case .complete(let completed) = resumed else {
+            return XCTFail("Expected local route state to resume its persisted bundle")
+        }
+        XCTAssertEqual(completed.payload, payload)
+
+        var missingState = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        missingState.removeValue(forKey: "reassembler")
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            LocalOpaqueReceiveRouteV2.self,
+            from: JSONSerialization.data(withJSONObject: missingState)
+        ))
+
+        let oversized = try OpaqueRoutePacketReassemblerV2(
+            maximumBufferedBytes:
+                LocalOpaqueReceiveRouteV2.maximumPersistedReassemblerBufferedBytes + 1
+        )
+        XCTAssertThrowsError(try local.replaceReassembler(with: oversized)) {
+            XCTAssertEqual($0 as? PairwiseOpaqueRouteV2Error, .invalidRoute)
+        }
+
+        let otherFixture = try makeRouteFixture(marker: 0x92)
+        let otherSendRoute = try otherFixture.local.peerSendRoute()
+        let otherBundle = try OpaqueRouteSealedBundleV2.seal(
+            Data(repeating: 0x92, count: capacity + 1),
+            to: otherSendRoute,
+            authorizedAt: origin.addingTimeInterval(1)
+        )
+        var otherReassembler = OpaqueRoutePacketReassemblerV2.empty
+        _ = try otherReassembler.consume(
+            otherBundle.packets[0],
+            payloadKey: otherFixture.local.payloadKey,
+            routeRevision: otherSendRoute.routeRevision
+        )
+        XCTAssertThrowsError(try local.replaceReassembler(with: otherReassembler)) {
+            XCTAssertEqual($0 as? PairwiseOpaqueRouteV2Error, .invalidRoute)
+        }
+    }
+
     func testIntroductionIsRendezvousBoundCurrentAndStrict() throws {
         let routeFixture = try makeRouteFixture()
         let pairwiseIdentity = try LocalPairwiseIdentityV2.generate(

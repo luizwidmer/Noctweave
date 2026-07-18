@@ -5,7 +5,9 @@ public enum MessageEngine {
     public static func pairwiseBinding(
         for relationship: PairwiseRelationshipV2
     ) throws -> PairwiseEndpointBindingV4 {
-        guard relationship.isStructurallyValid else {
+        // Preserve local PQ runtime failures while still rejecting malformed
+        // persisted or peer-provided relationship state as invalid payload.
+        guard try relationship.isStructurallyValidThrowing else {
             throw CryptoError.invalidPayload
         }
         return try PairwiseEndpointBindingV4.create(
@@ -25,7 +27,6 @@ public enum MessageEngine {
         kemCiphertext: Data,
         prekey: PrekeyReference
     ) {
-        guard relationship.isStructurallyValid else { throw CryptoError.invalidPayload }
         let local = relationship.localIdentity
         let peerEndpoint = relationship.peerIdentity.endpointBinding
         let binding = try pairwiseBinding(for: relationship)
@@ -34,7 +35,9 @@ public enum MessageEngine {
             peerEndpoint: peerEndpoint
         )
         let signedPrekey = peerEndpoint.prekeyBundle.signedPrekey
-        guard signedPrekey.verify(using: peerEndpoint.signingPublicKey) else {
+        guard try signedPrekey.verifyThrowing(
+            using: peerEndpoint.signingPublicKey
+        ) else {
             throw CryptoError.invalidSignature
         }
         try validateNegotiatedPrekeyFreshness(
@@ -60,8 +63,7 @@ public enum MessageEngine {
         bootstrap: DirectBootstrapV4,
         now: Date = Date()
     ) throws -> Conversation {
-        guard relationship.isStructurallyValid,
-              let material = bootstrap.signedPrekeyMaterial else {
+        guard let material = bootstrap.signedPrekeyMaterial else {
             throw CryptoError.invalidPayload
         }
         let local = relationship.localIdentity
@@ -71,13 +73,19 @@ public enum MessageEngine {
             peerEndpoint: relationship.peerIdentity.endpointBinding
         )
         guard material.prekey.kind == .signed,
-              let advertised = local.localEndpoint.prekeys.signedPrekey(id: material.prekey.id),
-              advertised.verify(using: local.localEndpoint.signingKey.publicKeyData),
-              let prekeyKey = local.localEndpoint.prekeys.signedPrekeyKeyPair(
-                id: material.prekey.id,
-                now: now
-              ) else {
+              let advertised = local.localEndpoint.prekeys.signedPrekey(id: material.prekey.id) else {
             throw CryptoError.invalidPayload
+        }
+        guard let prekeyKey = try local.localEndpoint.prekeys.signedPrekeyKeyPairThrowing(
+            id: material.prekey.id,
+            now: now
+        ) else {
+            throw CryptoError.invalidPayload
+        }
+        guard try advertised.verifyThrowing(
+            using: local.localEndpoint.signingKey.publicKeyData
+        ) else {
+            throw CryptoError.invalidSignature
         }
         try validateNegotiatedPrekeyFreshness(advertised, negotiation: negotiation, now: now)
         var sharedSecret = try prekeyKey.decapsulate(ciphertext: material.kemCiphertext)
@@ -224,7 +232,8 @@ public enum MessageEngine {
     public static func decryptDirectV4(
         envelope: DirectEnvelopeV4,
         relationship: PairwiseRelationshipV2,
-        conversation: inout Conversation
+        conversation: inout Conversation,
+        receivedAt: Date
     ) throws -> DirectV4DecryptionResultV2 {
         let local = relationship.localIdentity
         let peerEndpoint = relationship.peerIdentity.endpointBinding
@@ -235,7 +244,8 @@ public enum MessageEngine {
         )
         let negotiationDigest = try negotiation.digest()
         let session = conversation.endpointSession
-        guard relationship.id == conversation.relationshipID,
+        guard receivedAt.timeIntervalSince1970.isFinite,
+              relationship.id == conversation.relationshipID,
               envelope.conversationId == relationship.conversationID,
               envelope.sessionId == conversation.sessionId,
               envelope.cipherSuite == negotiation.cipherSuite,
@@ -259,6 +269,11 @@ public enum MessageEngine {
             signingPublicKey: peerEndpoint.signingPublicKey,
             conversation: &candidate
         )
+        // Cryptographic acceptance consumes the receive-chain position even
+        // when authenticated application/control semantics are rejected later.
+        // The caller can therefore quarantine a poison event without allowing
+        // a run of invalid events to exhaust the ratchet skip window.
+        conversation = candidate
         try validateNegotiatedWirePayloadLimits(decrypted.payload, negotiation: negotiation)
         let disposition: DirectV4PayloadDispositionV2
         switch decrypted.payload.kind {
@@ -272,11 +287,11 @@ public enum MessageEngine {
                 conversationId: relationship.conversationID,
                 eventId: envelope.eventId,
                 senderEndpointHandle: envelope.senderEndpointHandle,
-                receivedAt: envelope.sentAt,
+                sentAt: envelope.sentAt,
+                receivedAt: receivedAt,
                 signingPublicKey: peerEndpoint.signingPublicKey
             )
         }
-        conversation = candidate
         return DirectV4DecryptionResultV2(
             disposition: disposition,
             messageKey: decrypted.messageKey
@@ -323,7 +338,7 @@ public enum MessageEngine {
                 )
             )
         }
-        conversation.messages.append(message)
+        conversation.appendProjectedMessage(message)
         return message
     }
 
@@ -371,8 +386,12 @@ public enum MessageEngine {
         signingPublicKey: Data,
         conversation: inout Conversation
     ) throws -> (payload: WirePayloadV2, messageKey: SymmetricKey) {
-        guard envelope.payloadFormat == NoctweaveWirePayloadV2.directV4Format,
-              envelope.verifySignature(publicSigningKey: signingPublicKey) else {
+        guard envelope.payloadFormat == NoctweaveWirePayloadV2.directV4Format else {
+            throw CryptoError.invalidSignature
+        }
+        guard try envelope.verifySignatureThrowing(
+            publicSigningKey: signingPublicKey
+        ) else {
             throw CryptoError.invalidSignature
         }
         var receiveChain = conversation.receiveChain
@@ -386,6 +405,10 @@ public enum MessageEngine {
             authenticatedData: try envelope.authenticatedData()
         )
         defer { plaintext.secureWipe() }
+        // A valid signature and AEAD opening authenticate this ratchet
+        // position. Consume it before interpreting padded/application bytes so
+        // repeated authenticated semantic poison cannot exhaust max-skip.
+        conversation.receiveChain = receiveChain
         let payload = try PaddedMessagePlaintext.decodeWirePayloadV2(plaintext)
         try payload.validateDirectV4(
             eventId: envelope.eventId,
@@ -394,7 +417,6 @@ public enum MessageEngine {
             sentAt: envelope.sentAt,
             signingPublicKey: signingPublicKey
         )
-        conversation.receiveChain = receiveChain
         return (payload, key)
     }
 
@@ -406,7 +428,7 @@ public enum MessageEngine {
         bootstrap: DirectBootstrapV4
     ) throws {
         let session = conversation.endpointSession
-        guard relationship.isStructurallyValid,
+        guard try relationship.isStructurallyValidThrowing,
               conversation.isStructurallyValid,
               conversation.relationshipID == relationship.id,
               binding.relationshipId == relationship.id,
