@@ -13,6 +13,13 @@ struct RelayModuleCapabilityV2: Codable, Equatable {
     let status: RelayCapabilityStatusV2
     let limits: [String: UInt64]
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case module
+        case versions
+        case status
+        case limits
+    }
+
     init(
         module: String,
         versions: [UInt16],
@@ -23,6 +30,39 @@ struct RelayModuleCapabilityV2: Codable, Equatable {
         self.versions = Array(Set(versions)).sorted()
         self.status = status
         self.limits = limits
+    }
+
+    init(from decoder: Decoder) throws {
+        try requireExactModelFields(decoder, CodingKeys.self, context: "Relay module capability")
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedModule = try values.decode(String.self, forKey: .module)
+        let decodedVersions = try values.decode([UInt16].self, forKey: .versions)
+        self.init(
+            module: decodedModule,
+            versions: decodedVersions,
+            status: try values.decode(RelayCapabilityStatusV2.self, forKey: .status),
+            limits: try values.decode([String: UInt64].self, forKey: .limits)
+        )
+        guard module == decodedModule,
+              versions == decodedVersions,
+              isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .module,
+                in: values,
+                debugDescription: "Relay module capability is not canonical or structurally valid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw invalidModelEncoding(self, encoder, context: "Relay module capability")
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(module, forKey: .module)
+        try values.encode(versions, forKey: .versions)
+        try values.encode(status, forKey: .status)
+        try values.encode(limits, forKey: .limits)
     }
 
     var isStructurallyValid: Bool {
@@ -52,9 +92,40 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
     let architectureVersion: Int
     let modules: [RelayModuleCapabilityV2]
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case architectureVersion
+        case modules
+    }
+
     init(architectureVersion: Int = Self.architectureVersion, modules: [RelayModuleCapabilityV2]) {
         self.architectureVersion = architectureVersion
         self.modules = modules.sorted { $0.module < $1.module }
+    }
+
+    init(from decoder: Decoder) throws {
+        try requireExactModelFields(decoder, CodingKeys.self, context: "Relay capability manifest")
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedModules = try values.decode([RelayModuleCapabilityV2].self, forKey: .modules)
+        self.init(
+            architectureVersion: try values.decode(Int.self, forKey: .architectureVersion),
+            modules: decodedModules
+        )
+        guard modules == decodedModules, isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .modules,
+                in: values,
+                debugDescription: "Relay capability manifest is not canonical or structurally valid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw invalidModelEncoding(self, encoder, context: "Relay capability manifest")
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(architectureVersion, forKey: .architectureVersion)
+        try values.encode(modules, forKey: .modules)
     }
 
     var isStructurallyValid: Bool {
