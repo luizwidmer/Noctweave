@@ -1,13 +1,13 @@
 ---
 name: NoctweaveMessagingRelay
-description: "Use this skill when an agent needs to operate Noctweave open tooling: run NoctweaveCLI headless messaging workflows, diagnose relay endpoints, configure or verify Linux/Docker relays, inspect federation mode, or perform relay/client smoke tests without using proprietary Noctyra app code."
+description: "Operate the public Noctweave 1.0 relationship protocol, headless client, exact modular relay, opaque routes, and federation without relying on proprietary app code."
 ---
 
 # Noctweave Messaging + Relay
 
 ## Scope
 
-Use only the public Noctweave surface:
+Use only:
 
 - `NoctweaveCore/` and `NoctweaveCore/Sources/NoctweaveCLI/`
 - `NoctweaveRelayServer/`
@@ -15,49 +15,61 @@ Use only the public Noctweave surface:
 - `NoctweaveDocumentation/`
 - `scripts/`
 
-Do not rely on the proprietary Apple clients or macOS GUI relay app.
+Do not rely on proprietary Apple clients or the macOS relay app.
 
-## First Checks
+## Protocol boundary
 
-1. Confirm the relay endpoint scheme exactly: `http`, `https`, `ws`, `wss`, `tcp`, or `tls`. Do not append a port when the user gave a full URL.
-2. Run relay diagnostics before messaging:
+A persona is a local label and container. It is never a network identity.
+Every contact pairing creates fresh relationship authority, one relationship
+endpoint binding, and opaque receive routes. Never introduce accounts, global
+inboxes, device or installation registries, recovery authorities, self-sync
+identity, shared live ratchets, or compatibility adapters for discarded
+pre-1.0 state.
+
+Relays accept one exact request envelope on `/relay`. They route ciphertext by
+opaque capability and never receive persona, contact, message, or group
+plaintext.
+
+## First checks
+
+1. Preserve the supplied endpoint scheme (`http`, `https`, `ws`, `wss`, `tcp`,
+   or `tls`). Do not invent a port for a complete URL.
+2. Query the modular core operations:
 
 ```sh
 swift run --package-path NoctweaveCore NoctweaveCLI health --relay http://127.0.0.1:9340
 swift run --package-path NoctweaveCore NoctweaveCLI info --relay http://127.0.0.1:9340
 ```
 
-3. Preserve privacy boundaries: relays store and forward encrypted envelopes and attachment chunks; they must not decrypt payloads, log plaintext, or bypass federation policy.
+3. Preserve E2EE and metadata boundaries. Never add plaintext logging,
+   server-side decryption, implicit escrow, or identity-addressed routing.
 
-## Messaging Tasks
+## Messaging tasks
 
-For identity creation, inbox registration, contact exchange, direct/group send, fetch/decrypt, attachments, continuity audit, key rotation, and burn workflows, read `references/messaging-cli.md`.
+Read `references/messaging-cli.md` for local persona initialization, one-use
+contact rendezvous, pairwise send/sync, prekey renewal, route rollover, explicit
+continuity, and persona burn.
 
-Prefer `NoctweaveCLI` for smoke tests because it exercises the same public protocol models and crypto paths used by compatible clients.
+## Relay tasks
 
-## Relay Tasks
+Read `references/relay-operations.md` for Linux/Docker startup, the exact
+modular envelope, opaque-route persistence, TLS proxying, encrypted blobs, and
+federation policy.
 
-For Linux relay startup, Docker, HTTP/WebSocket/TLS proxying, storage, password-protected relays, federation modes, health checks, IPFS offload, and operator hardening, read `references/relay-operations.md`.
-
-When operating relays:
-
-- `solo` never forwards.
-- `manual` uses an operator-maintained peer list.
-- `curated` uses allow lists and coordinator policy.
-- `open` may use DHT/PEX discovery and must retain public endpoint safeguards.
-
-Do not silently bridge curated and open networks.
+Federation modes remain explicit trust domains: `solo`, `manual`, `curated`,
+and `open` must never be silently bridged.
 
 ## Validation
-
-Use the narrowest verification that proves the task:
 
 ```sh
 swift build --package-path NoctweaveCore
 swift test --package-path NoctweaveCore
-swift build --package-path "NoctweaveRelayServer"
-swift test --package-path "NoctweaveRelayServer"
+swift build --package-path NoctweaveRelayServer
+swift test --package-path NoctweaveRelayServer
 scripts/run-tests.sh
 ```
 
-For relay work, also run `health` and `info` against the actual endpoint. For messaging work, send and fetch at least one encrypted test message between two headless identities when feasible.
+For relay work, query `health` and `info` through the actual `/relay` endpoint.
+For messaging work, prove one encrypted relationship event is relay-accepted,
+synced, durably processed, and cursor-committed. Do not call a relay response a
+peer delivery or read receipt.

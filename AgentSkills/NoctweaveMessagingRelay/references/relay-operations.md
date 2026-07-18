@@ -1,64 +1,71 @@
-# Noctweave Relay Operations Reference
+# Noctweave relay operations reference
 
-Use this reference when an agent must run, configure, verify, or troubleshoot a Noctweave relay.
-
-## Build + Run
+## Build and run
 
 ```sh
-swift build --package-path "NoctweaveRelayServer"
+swift build --package-path NoctweaveRelayServer
 "NoctweaveRelayServer/.build/debug/NoctweaveRelayServer" \
-  --host 0.0.0.0 \
-  --port 9339 \
-  --http-port 9340 \
+  --host 0.0.0.0 --port 9339 --http-port 9340 \
   --data-dir /tmp/noctweave-relay
 ```
 
-Docker:
-
 ```sh
-docker build -t noctweave-relay "NoctweaveRelayServer"
-docker run --rm -p 9339:9339 -p 9340:9340 -v noctweave-data:/data noctweave-relay
+docker build -t noctweave-relay NoctweaveRelayServer
+docker run --rm -p 9339:9339 -p 9340:9340 \
+  -v noctweave-data:/data noctweave-relay
 ```
 
-## Endpoint Modes
+## Transport
 
-- Raw TCP: one JSON request line, one response line.
+- Raw TCP: one exact JSON request line and one correlated response line.
 - HTTP: `POST /relay`.
-- WebSocket: connect to `/relay`, send one JSON frame, receive one JSON frame.
-- HTTPS/WSS usually come from a reverse proxy such as Caddy, nginx, or Cloudflare Tunnel.
+- WebSocket: connect to `/relay`, send one JSON request frame, receive one
+  correlated response frame.
+- HTTPS/WSS normally terminate at an operator-controlled reverse proxy.
 
-For reverse proxy deployments, point clients at the public URL, for example `https://relay.example.org/relay` or `wss://relay.example.org/relay`. Do not add a port unless the public URL requires it.
+The supported protocol modules are `nw.core@2`, `nw.opaque-route@2`,
+`nw.rendezvous-transport@2`, `nw.blobs@1`, and `nw.federation@1`. There are no
+identity, inbox, account, group-plaintext, or legacy endpoints.
+
+When explicitly enabled in open mode, the relay also advertises experimental
+`nw.open-discovery@1`; its discovery records never authorize message routes.
 
 ## Diagnostics
 
 ```sh
-curl -s http://127.0.0.1:9340/health
 swift run --package-path NoctweaveCore NoctweaveCLI health --relay http://127.0.0.1:9340
 swift run --package-path NoctweaveCore NoctweaveCLI info --relay http://127.0.0.1:9340
 ```
 
-Relay `info` should advertise relay name, software version, transport, TLS status, federation mode, temporal bucket policy, attachment TTLs, attachment storage backend, group creation policy, wake policy, and optional federation capabilities.
+Both commands use `POST /relay`. Relay info reports the exact modules, limits,
+transport, storage posture, and federation mode; it does not claim message
+delivery, group authority, or user identity services.
 
-The software version is binary-defined rather than operator-defined. Use the
-relay name and operator note fields for local branding or contact information.
+## Opaque-route storage
 
-## Storage + Attachments
+SQLite is the default durable store. `--memory-only` is for ephemeral tests.
+Route records are ordered and digest-chained. The receiver commits an opaque
+cursor only after durable processing. Retention, quota, and padding are coarse
+route policy buckets. Send, read, renew, and teardown capabilities are distinct.
 
-Default persistent relay storage is SQLite under the configured data directory. `--memory-only` is for ephemeral testing. Attachment chunks are encrypted by clients before upload and may expire by relay TTL. IPFS offload is for relay storage pressure, not anonymity or cryptographic deletion.
+Encrypted blob storage and optional IPFS offload reduce relay disk pressure;
+they do not provide anonymity or cryptographic deletion.
 
 ## Federation
 
-- `solo`: local-only relay, no forwarding.
-- `manual`: operator-managed peer list.
-- `curated`: allow-listed federation with coordinator policy and health.
-- `open`: public discovery mode; DHT/PEX belongs here only.
+- `solo`: no federation discovery or coordination.
+- `manual`: explicit operator-reviewed relay descriptors.
+- `curated`: allow-listed coordinator policy and directory evidence.
+- `open`: bounded signed relay discovery and public-endpoint safeguards.
 
-Manual and curated relays should fail closed when the destination relay is not listed or policy-compatible. Never mix curated and open networks implicitly.
+Federation is an operator-plane directory and coordination mechanism, not a
+message-forwarding path. A client reads the destination relay from its peer's
+relationship-encrypted route set and appends ciphertext directly to that opaque
+route. Never infer or silently cross a federation trust domain.
 
-## Security Hygiene
+## Security hygiene
 
-- Run as an unprivileged user.
-- Put public deployments behind TLS or a TLS reverse proxy.
-- Keep relay passwords and federation tokens out of logs.
-- Do not log plaintext payloads, decrypted keys, auth tokens, or contact payload secrets.
-- Back up the SQLite database only when operator policy requires preserving queued encrypted data.
+- Run unprivileged and put public endpoints behind TLS.
+- Keep relay auth and coordinator-registration tokens out of logs.
+- Never log plaintext payloads, route secrets, contact material, or state keys.
+- Treat backups as copies of queued ciphertext and capability-protected state.

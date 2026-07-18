@@ -1,8 +1,8 @@
-# NoctweaveCLI Messaging Reference
+# NoctweaveCLI relationship reference
 
-Use this reference when an agent must exercise Noctweave as a headless client.
+NoctweaveCLI exercises the clean Noctweave 1.0 public architecture.
 
-## Baseline Commands
+## Baseline
 
 ```sh
 swift run --package-path NoctweaveCore NoctweaveCLI help
@@ -11,46 +11,80 @@ swift run --package-path NoctweaveCore NoctweaveCLI health --relay http://127.0.
 swift run --package-path NoctweaveCore NoctweaveCLI info --relay http://127.0.0.1:9340
 ```
 
-Relay endpoints may be `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, or `tls`. Keep the user-supplied scheme intact.
+The health and info commands are `nw.core@2` operations sent through `/relay`;
+they are not separate HTTP compatibility endpoints.
 
-## Identity + Inbox
-
-Initialize a headless identity and register its inbox:
+## Local persona state
 
 ```sh
-swift run --package-path NoctweaveCore NoctweaveCLI init --display-name Alice --relay http://127.0.0.1:9340
-swift run --package-path NoctweaveCore NoctweaveCLI export-contact
+swift run --package-path NoctweaveCore NoctweaveCLI init \
+  --display-name "local label" --state alice.json
+swift run --package-path NoctweaveCore NoctweaveCLI status --state alice.json
 ```
 
-Use separate state directories or environment-specific CLI flags when simulating two users. Never reuse the same identity state for both peers in a delivery test.
+The display name is local-only. It is not registered or disclosed.
 
-## Pairing + Messaging
+## One-use relationship preparation
 
-For compatibility checks:
+Each side independently creates fresh relationship keys and a fresh opaque
+receive route:
 
-1. Create two identities.
-2. Exchange contact payloads.
-3. Send a direct encrypted text message.
-4. Fetch/decrypt on the recipient.
-5. Reply in the opposite direction.
+```sh
+swift run --package-path NoctweaveCore NoctweaveCLI prepare-participant \
+  --state alice.json --relay https://relay.example \
+  --relationship-pseudonym "Night orchid" --out alice-participant.json
 
-For attachment tests, verify both automatic and manual download behavior when the client supports it. Attachment payloads are encrypted before relay upload; relay TTL metadata tells recipients the relay copy is temporary.
+swift run --package-path NoctweaveCore NoctweaveCLI pairing-invitation \
+  --state alice.json --out alice-offer.json --lifetime 600
+```
 
-## Groups
+The invitation is one-use ephemeral rendezvous material. The prepared
+participant file contains local secret state and must be protected. Complete
+introductions travel only inside the authenticated rendezvous channel.
 
-Use group commands only after checking relay `info` for group creation support.
-The reference path uses the MLS-derived epoch/transcript-bound group ratchet and
-must not silently downgrade to pairwise fan-out. This is not a claim of a
-formally proven MLS implementation.
+## Messaging
 
-## Identity Management
+After the rendezvous result has been durably added to each local persona:
 
-Key rotation preserves identity continuity and should be received by paired contacts. Burn identity is a discontinuity event: contacts not explicitly carried forward should not be able to keep addressing the burned identity.
+```sh
+swift run --package-path NoctweaveCore NoctweaveCLI relationships --state alice.json
+swift run --package-path NoctweaveCore NoctweaveCLI send \
+  --state alice.json --relationship <uuid> --text "hello"
+swift run --package-path NoctweaveCore NoctweaveCLI sync \
+  --state bob.json --relationship <uuid> --max 256
+```
 
-## Safety Rules
+One logical event, one retry-stable intent, per-route ciphertext packets, and
+a route-local cursor are distinct objects. Cursor commit occurs
+only after verification, decryption, and durable local application.
 
-- Do not add plaintext logging.
-- Do not export private keys unless the user explicitly asks for a backup/export workflow.
-- Do not downgrade endpoint security silently.
-- Do not claim delivery unless the recipient fetch/decrypt step succeeds.
-- Prefer `--password-file` and `--auth-file`; literal command-line secrets may be visible in shell history or process listings.
+## Relationship maintenance
+
+Use `HeadlessMessagingClient` for the full public maintenance surface:
+
+- `renewRelationshipPrekeyIfNeeded`
+- `prepareRouteRollover` / `beginRouteRollover`
+- targeted route probing and automatic make-before-break promotion
+- `finalizeDrainedRoutes`
+- explicit `sendContinuityOffer` when local policy permits
+- explicit `markRead`; read receipts are never automatic
+
+These operations affect one relationship only.
+
+## Persona burn
+
+```sh
+swift run --package-path NoctweaveCore NoctweaveCLI burn-persona \
+  --state alice.json --confirm BURN --replacement-name "new local label"
+```
+
+Burn deletes the active local persona state and creates an unrelated local
+container. No continuity link is emitted.
+
+## Safety
+
+- Never copy live ratchet or route-capability state into another process.
+- Never log private participant files, rendezvous secrets, route capabilities,
+  decrypted payloads, or state-store keys.
+- Prefer `--auth-file`; literal secrets may leak through process listings.
+- A relay acceptance is not peer storage. A peer-storage receipt is not read.
