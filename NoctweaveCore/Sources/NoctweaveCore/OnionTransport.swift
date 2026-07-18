@@ -20,6 +20,74 @@ public struct OnionTransportSupport: Codable, Equatable {
         self.maxHops = min(max(1, maxHops), 8)
         self.requiresFixedSizePackets = requiresFixedSizePackets
     }
+
+    public var isStructurallyValid: Bool {
+        (1...8).contains(maxHops)
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case enabled
+        case maxHops
+        case requiresFixedSizePackets
+    }
+
+    public init(from decoder: Decoder) throws {
+        try onionSupportRequireExactObject(decoder, keys: CodingKeys.allCases.map(\.rawValue))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        maxHops = try container.decode(Int.self, forKey: .maxHops)
+        requiresFixedSizePackets = try container.decode(Bool.self, forKey: .requiresFixedSizePackets)
+        guard isStructurallyValid else {
+            throw onionSupportDecodingError(decoder, "Onion transport support is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                .init(codingPath: encoder.codingPath, debugDescription: "Onion transport support is invalid")
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(maxHops, forKey: .maxHops)
+        try container.encode(requiresFixedSizePackets, forKey: .requiresFixedSizePackets)
+    }
+}
+
+private struct OnionSupportCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func onionSupportRequireExactObject(_ decoder: Decoder, keys: [String]) throws {
+    let container = try decoder.container(keyedBy: OnionSupportCodingKey.self)
+    guard Set(container.allKeys.map(\.stringValue)) == Set(keys) else {
+        throw onionSupportDecodingError(
+            decoder,
+            "Onion transport support fields must match the current protocol exactly"
+        )
+    }
+}
+
+private func onionSupportDecodingError(
+    _ decoder: Decoder,
+    _ description: String
+) -> DecodingError {
+    DecodingError.dataCorrupted(
+        .init(codingPath: decoder.codingPath, debugDescription: description)
+    )
 }
 
 public enum OnionTransportPolicyIssue: String, Codable, Equatable, CaseIterable {

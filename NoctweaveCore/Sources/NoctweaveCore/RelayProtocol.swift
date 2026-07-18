@@ -122,6 +122,38 @@ public struct FederationDescriptor: Codable, Equatable {
         self.name = name
         self.description = description
     }
+
+    public var isStructurallyValid: Bool {
+        relayIsBoundedText(name, maximumBytes: 1_024)
+            && relayIsBoundedText(description, maximumBytes: 1_024)
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case mode
+        case name
+        case description
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decode(FederationMode.self, forKey: .mode)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Federation descriptor is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Federation descriptor is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(name, forKey: .name)
+        try container.encode(description, forKey: .description)
+    }
 }
 
 public enum HiddenRetrievalMode: String, Codable, CaseIterable {
@@ -143,6 +175,39 @@ public struct HiddenRetrievalPIRReplica: Codable, Equatable {
         self.operatorId = operatorId.trimmingCharacters(in: .whitespacesAndNewlines)
         self.endpoint = endpoint
     }
+
+    public var isStructurallyValid: Bool {
+        relayIsBoundedRequiredText(replicaId, maximumBytes: 1_024)
+            && relayIsBoundedRequiredText(operatorId, maximumBytes: 1_024)
+            && endpoint.isStructurallyValidRelationshipRouteEndpointV2
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case replicaId
+        case operatorId
+        case endpoint
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        replicaId = try container.decode(String.self, forKey: .replicaId)
+        operatorId = try container.decode(String.self, forKey: .operatorId)
+        endpoint = try container.decode(RelayEndpoint.self, forKey: .endpoint)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Hidden retrieval replica is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Hidden retrieval replica is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(replicaId, forKey: .replicaId)
+        try container.encode(operatorId, forKey: .operatorId)
+        try container.encode(endpoint, forKey: .endpoint)
+    }
 }
 
 public struct HiddenRetrievalSupport: Codable, Equatable {
@@ -157,17 +222,74 @@ public struct HiddenRetrievalSupport: Codable, Equatable {
         maxCoverSetSize: Int = 32,
         replicatedXorPIRReplicas: [HiddenRetrievalPIRReplica]? = nil
     ) {
-        let normalizedMax = max(2, maxCoverSetSize)
+        let normalizedMax = min(max(2, maxCoverSetSize), 4_096)
         self.mode = mode
         self.maxCoverSetSize = normalizedMax
         self.defaultCoverSetSize = min(max(2, defaultCoverSetSize), normalizedMax)
-        self.replicatedXorPIRReplicas = replicatedXorPIRReplicas?.map {
-            HiddenRetrievalPIRReplica(
-                replicaId: $0.replicaId,
-                operatorId: $0.operatorId,
-                endpoint: $0.endpoint
-            )
+        self.replicatedXorPIRReplicas = replicatedXorPIRReplicas.map { replicas in
+            Array(replicas.prefix(256)).map {
+                HiddenRetrievalPIRReplica(
+                    replicaId: $0.replicaId,
+                    operatorId: $0.operatorId,
+                    endpoint: $0.endpoint
+                )
+            }
         }
+    }
+
+    public var isStructurallyValid: Bool {
+        guard (2...4_096).contains(defaultCoverSetSize),
+              (defaultCoverSetSize...4_096).contains(maxCoverSetSize) else {
+            return false
+        }
+        guard let replicas = replicatedXorPIRReplicas else {
+            return mode != .replicatedXorPIR
+        }
+        guard !replicas.isEmpty,
+              replicas.count <= 256,
+              replicas.allSatisfy(\.isStructurallyValid) else {
+            return false
+        }
+        let replicaIDs = replicas.map { $0.replicaId.lowercased() }
+        let operatorIDs = replicas.map { $0.operatorId.lowercased() }
+        let endpointKeys = replicas.map { relayEndpointStructuralKey($0.endpoint) }
+        return Set(replicaIDs).count == replicas.count
+            && Set(operatorIDs).count == replicas.count
+            && Set(endpointKeys).count == replicas.count
+            && (mode != .replicatedXorPIR || replicas.count >= 2)
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case mode
+        case defaultCoverSetSize
+        case maxCoverSetSize
+        case replicatedXorPIRReplicas
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decode(HiddenRetrievalMode.self, forKey: .mode)
+        defaultCoverSetSize = try container.decode(Int.self, forKey: .defaultCoverSetSize)
+        maxCoverSetSize = try container.decode(Int.self, forKey: .maxCoverSetSize)
+        replicatedXorPIRReplicas = try container.decodeIfPresent(
+            [HiddenRetrievalPIRReplica].self,
+            forKey: .replicatedXorPIRReplicas
+        )
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Hidden retrieval support is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Hidden retrieval support is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(defaultCoverSetSize, forKey: .defaultCoverSetSize)
+        try container.encode(maxCoverSetSize, forKey: .maxCoverSetSize)
+        try container.encode(replicatedXorPIRReplicas, forKey: .replicatedXorPIRReplicas)
     }
 }
 
@@ -191,11 +313,61 @@ public struct OpenFederationDiscoverySupport: Codable, Equatable {
     ) {
         self.dhtNodeEnabled = dhtNodeEnabled
         self.peerExchangeEnabled = peerExchangeEnabled
-        self.peerExchangeLimit = max(0, peerExchangeLimit)
+        self.peerExchangeLimit = min(max(0, peerExchangeLimit), 128)
         self.requirePublicEndpoint = requirePublicEndpoint
-        self.maxDHTRecords = max(1, maxDHTRecords)
-        self.maxDHTRecordsPerHost = max(1, maxDHTRecordsPerHost)
-        self.maxDHTQueryRecords = max(1, maxDHTQueryRecords)
+        self.maxDHTRecords = min(max(1, maxDHTRecords), 256)
+        self.maxDHTRecordsPerHost = min(
+            min(max(1, maxDHTRecordsPerHost), 16),
+            self.maxDHTRecords
+        )
+        self.maxDHTQueryRecords = min(max(1, maxDHTQueryRecords), 512)
+    }
+
+    public var isStructurallyValid: Bool {
+        (0...128).contains(peerExchangeLimit)
+            && (1...256).contains(maxDHTRecords)
+            && (1...16).contains(maxDHTRecordsPerHost)
+            && maxDHTRecordsPerHost <= maxDHTRecords
+            && (1...512).contains(maxDHTQueryRecords)
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case dhtNodeEnabled
+        case peerExchangeEnabled
+        case peerExchangeLimit
+        case requirePublicEndpoint
+        case maxDHTRecords
+        case maxDHTRecordsPerHost
+        case maxDHTQueryRecords
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        dhtNodeEnabled = try container.decode(Bool.self, forKey: .dhtNodeEnabled)
+        peerExchangeEnabled = try container.decode(Bool.self, forKey: .peerExchangeEnabled)
+        peerExchangeLimit = try container.decode(Int.self, forKey: .peerExchangeLimit)
+        requirePublicEndpoint = try container.decode(Bool.self, forKey: .requirePublicEndpoint)
+        maxDHTRecords = try container.decode(Int.self, forKey: .maxDHTRecords)
+        maxDHTRecordsPerHost = try container.decode(Int.self, forKey: .maxDHTRecordsPerHost)
+        maxDHTQueryRecords = try container.decode(Int.self, forKey: .maxDHTQueryRecords)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Open federation discovery support is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Open federation discovery support is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(dhtNodeEnabled, forKey: .dhtNodeEnabled)
+        try container.encode(peerExchangeEnabled, forKey: .peerExchangeEnabled)
+        try container.encode(peerExchangeLimit, forKey: .peerExchangeLimit)
+        try container.encode(requirePublicEndpoint, forKey: .requirePublicEndpoint)
+        try container.encode(maxDHTRecords, forKey: .maxDHTRecords)
+        try container.encode(maxDHTRecordsPerHost, forKey: .maxDHTRecordsPerHost)
+        try container.encode(maxDHTQueryRecords, forKey: .maxDHTQueryRecords)
     }
 }
 
@@ -298,7 +470,214 @@ public struct RelayInfo: Codable, Equatable {
         self.federationDirectoryPublicKey = federationDirectoryPublicKey
         self.knownOpenPeers = knownOpenPeers
         self.openFederationDiscovery = openFederationDiscovery
-        self.advertisedAt = advertisedAt
+        self.advertisedAt = relayCanonicalizedDate(advertisedAt)
+    }
+
+    public var isStructurallyValid: Bool {
+        guard federation.isStructurallyValid,
+              (0...86_400).contains(temporalBucketSeconds),
+              relayIsCanonicalTimestamp(advertisedAt),
+              relayIsBoundedText(attachmentStorageBackend, maximumBytes: 1_024),
+              relayIsBoundedText(relayName, maximumBytes: 1_024),
+              relayIsBoundedText(operatorNote, maximumBytes: 1_024),
+              relayIsBoundedText(softwareVersion, maximumBytes: 1_024),
+              hiddenRetrieval?.isStructurallyValid != false,
+              onionTransport?.isStructurallyValid != false,
+              mixnetTransport?.isStructurallyValid != false,
+              relayIsValidWakeSupport(wakeSupport),
+              protocolCapabilities?.isStructurallyValid != false,
+              openFederationDiscovery?.isStructurallyValid != false else {
+            return false
+        }
+        if let schedule = temporalBucketScheduleSeconds {
+            guard !schedule.isEmpty,
+                  schedule.count <= 16,
+                  schedule == Array(Set(schedule)).sorted(),
+                  schedule.allSatisfy({ (1...86_400).contains($0) }) else {
+                return false
+            }
+        }
+        if let attachmentDefaultTTLSeconds,
+           !(60...2_592_000).contains(attachmentDefaultTTLSeconds) {
+            return false
+        }
+        if let attachmentMaxTTLSeconds,
+           !(60...2_592_000).contains(attachmentMaxTTLSeconds) {
+            return false
+        }
+        if let attachmentDefaultTTLSeconds,
+           let attachmentMaxTTLSeconds,
+           attachmentMaxTTLSeconds < attachmentDefaultTTLSeconds {
+            return false
+        }
+        if let endpoints = federationCoordinatorEndpoints,
+           !relayIsValidEndpointList(endpoints, maximumCount: 16) {
+            return false
+        }
+        if let coordinatorReportedRelayCount,
+           !(0...1_000_000).contains(coordinatorReportedRelayCount) {
+            return false
+        }
+        if let curatedCoordinatorQuorum,
+           !(1...16).contains(curatedCoordinatorQuorum) {
+            return false
+        }
+        if let federationDirectoryPublicKey,
+           !SigningKeyPair.isValidPublicKey(federationDirectoryPublicKey) {
+            return false
+        }
+        if let knownOpenPeers,
+           !relayIsValidEndpointList(knownOpenPeers, maximumCount: 128) {
+            return false
+        }
+        return true
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case kind
+        case federation
+        case temporalBucketSeconds
+        case temporalBucketScheduleSeconds
+        case attachmentDefaultTTLSeconds
+        case attachmentMaxTTLSeconds
+        case attachmentsEnabled
+        case attachmentStorageBackend
+        case hiddenRetrieval
+        case onionTransport
+        case mixnetTransport
+        case wakeSupport
+        case relayName
+        case operatorNote
+        case softwareVersion
+        case protocolCapabilities
+        case requiresPassword
+        case tlsEnabled
+        case transport
+        case federationCoordinatorEndpoints
+        case coordinatorReportedRelayCount
+        case coordinatorRegistrationAuthRequired
+        case curatedStrictPolicyEnabled
+        case curatedCoordinatorQuorum
+        case curatedRequireSignedDirectory
+        case federationDirectoryPublicKey
+        case knownOpenPeers
+        case openFederationDiscovery
+        case advertisedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(RelayKind.self, forKey: .kind)
+        federation = try container.decode(FederationDescriptor.self, forKey: .federation)
+        temporalBucketSeconds = try container.decode(Int.self, forKey: .temporalBucketSeconds)
+        temporalBucketScheduleSeconds = try container.decodeIfPresent(
+            [Int].self,
+            forKey: .temporalBucketScheduleSeconds
+        )
+        attachmentDefaultTTLSeconds = try container.decodeIfPresent(
+            Int.self,
+            forKey: .attachmentDefaultTTLSeconds
+        )
+        attachmentMaxTTLSeconds = try container.decodeIfPresent(
+            Int.self,
+            forKey: .attachmentMaxTTLSeconds
+        )
+        attachmentsEnabled = try container.decodeIfPresent(Bool.self, forKey: .attachmentsEnabled)
+        attachmentStorageBackend = try container.decodeIfPresent(
+            String.self,
+            forKey: .attachmentStorageBackend
+        )
+        hiddenRetrieval = try container.decodeIfPresent(HiddenRetrievalSupport.self, forKey: .hiddenRetrieval)
+        onionTransport = try container.decodeIfPresent(OnionTransportSupport.self, forKey: .onionTransport)
+        mixnetTransport = try container.decodeIfPresent(MixnetTransportSupport.self, forKey: .mixnetTransport)
+        wakeSupport = try container.decodeIfPresent(DecentralizedWakeSupport.self, forKey: .wakeSupport)
+        relayName = try container.decodeIfPresent(String.self, forKey: .relayName)
+        operatorNote = try container.decodeIfPresent(String.self, forKey: .operatorNote)
+        softwareVersion = try container.decodeIfPresent(String.self, forKey: .softwareVersion)
+        protocolCapabilities = try container.decodeIfPresent(
+            RelayCapabilityManifestV2.self,
+            forKey: .protocolCapabilities
+        )
+        requiresPassword = try container.decodeIfPresent(Bool.self, forKey: .requiresPassword)
+        tlsEnabled = try container.decodeIfPresent(Bool.self, forKey: .tlsEnabled)
+        transport = try container.decodeIfPresent(RelayEndpointTransport.self, forKey: .transport)
+        federationCoordinatorEndpoints = try container.decodeIfPresent(
+            [RelayEndpoint].self,
+            forKey: .federationCoordinatorEndpoints
+        )
+        coordinatorReportedRelayCount = try container.decodeIfPresent(
+            Int.self,
+            forKey: .coordinatorReportedRelayCount
+        )
+        coordinatorRegistrationAuthRequired = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .coordinatorRegistrationAuthRequired
+        )
+        curatedStrictPolicyEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .curatedStrictPolicyEnabled
+        )
+        curatedCoordinatorQuorum = try container.decodeIfPresent(
+            Int.self,
+            forKey: .curatedCoordinatorQuorum
+        )
+        curatedRequireSignedDirectory = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .curatedRequireSignedDirectory
+        )
+        federationDirectoryPublicKey = try container.decodeIfPresent(
+            Data.self,
+            forKey: .federationDirectoryPublicKey
+        )
+        knownOpenPeers = try container.decodeIfPresent([RelayEndpoint].self, forKey: .knownOpenPeers)
+        openFederationDiscovery = try container.decodeIfPresent(
+            OpenFederationDiscoverySupport.self,
+            forKey: .openFederationDiscovery
+        )
+        advertisedAt = try container.decode(Date.self, forKey: .advertisedAt)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Relay information is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Relay information is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(federation, forKey: .federation)
+        try container.encode(temporalBucketSeconds, forKey: .temporalBucketSeconds)
+        try container.encode(temporalBucketScheduleSeconds, forKey: .temporalBucketScheduleSeconds)
+        try container.encode(attachmentDefaultTTLSeconds, forKey: .attachmentDefaultTTLSeconds)
+        try container.encode(attachmentMaxTTLSeconds, forKey: .attachmentMaxTTLSeconds)
+        try container.encode(attachmentsEnabled, forKey: .attachmentsEnabled)
+        try container.encode(attachmentStorageBackend, forKey: .attachmentStorageBackend)
+        try container.encode(hiddenRetrieval, forKey: .hiddenRetrieval)
+        try container.encode(onionTransport, forKey: .onionTransport)
+        try container.encode(mixnetTransport, forKey: .mixnetTransport)
+        try container.encode(wakeSupport, forKey: .wakeSupport)
+        try container.encode(relayName, forKey: .relayName)
+        try container.encode(operatorNote, forKey: .operatorNote)
+        try container.encode(softwareVersion, forKey: .softwareVersion)
+        try container.encode(protocolCapabilities, forKey: .protocolCapabilities)
+        try container.encode(requiresPassword, forKey: .requiresPassword)
+        try container.encode(tlsEnabled, forKey: .tlsEnabled)
+        try container.encode(transport, forKey: .transport)
+        try container.encode(federationCoordinatorEndpoints, forKey: .federationCoordinatorEndpoints)
+        try container.encode(coordinatorReportedRelayCount, forKey: .coordinatorReportedRelayCount)
+        try container.encode(
+            coordinatorRegistrationAuthRequired,
+            forKey: .coordinatorRegistrationAuthRequired
+        )
+        try container.encode(curatedStrictPolicyEnabled, forKey: .curatedStrictPolicyEnabled)
+        try container.encode(curatedCoordinatorQuorum, forKey: .curatedCoordinatorQuorum)
+        try container.encode(curatedRequireSignedDirectory, forKey: .curatedRequireSignedDirectory)
+        try container.encode(federationDirectoryPublicKey, forKey: .federationDirectoryPublicKey)
+        try container.encode(knownOpenPeers, forKey: .knownOpenPeers)
+        try container.encode(openFederationDiscovery, forKey: .openFederationDiscovery)
+        try container.encode(advertisedAt, forKey: .advertisedAt)
     }
 }
 
@@ -768,8 +1147,47 @@ public struct FederationNodeRecord: Codable, Equatable {
     ) {
         self.endpoint = endpoint
         self.relayInfo = relayInfo
-        self.lastHeartbeatAt = lastHeartbeatAt
-        self.expiresAt = expiresAt
+        self.lastHeartbeatAt = relayCanonicalizedDate(lastHeartbeatAt)
+        self.expiresAt = relayCanonicalizedDate(expiresAt)
+    }
+
+    public var isStructurallyValid: Bool {
+        endpoint.isStructurallyValidRelationshipRouteEndpointV2
+            && relayInfo.isStructurallyValid
+            && relayIsCanonicalTimestamp(lastHeartbeatAt)
+            && relayIsCanonicalTimestamp(expiresAt)
+            && expiresAt > lastHeartbeatAt
+            && expiresAt.timeIntervalSince(lastHeartbeatAt) <= 900
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case endpoint
+        case relayInfo
+        case lastHeartbeatAt
+        case expiresAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        endpoint = try container.decode(RelayEndpoint.self, forKey: .endpoint)
+        relayInfo = try container.decode(RelayInfo.self, forKey: .relayInfo)
+        lastHeartbeatAt = try container.decode(Date.self, forKey: .lastHeartbeatAt)
+        expiresAt = try container.decode(Date.self, forKey: .expiresAt)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Federation node record is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Federation node record is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(endpoint, forKey: .endpoint)
+        try container.encode(relayInfo, forKey: .relayInfo)
+        try container.encode(lastHeartbeatAt, forKey: .lastHeartbeatAt)
+        try container.encode(expiresAt, forKey: .expiresAt)
     }
 }
 
@@ -798,12 +1216,81 @@ public struct FederationDirectorySnapshot: Codable, Equatable {
         self.version = version
         self.mode = mode
         self.federationName = federationName
-        self.issuedAt = issuedAt
-        self.validUntil = validUntil
-        self.maxStalenessSeconds = max(1, maxStalenessSeconds)
-        self.nodes = nodes
+        self.issuedAt = relayCanonicalizedDate(issuedAt)
+        self.validUntil = relayCanonicalizedDate(validUntil)
+        self.maxStalenessSeconds = min(max(1, maxStalenessSeconds), 86_400)
+        self.nodes = Array(nodes.prefix(10_000))
         self.signatureAlgorithm = signatureAlgorithm
         self.signature = signature
+    }
+
+    public var isStructurallyValid: Bool {
+        guard version == 1,
+              relayIsBoundedText(federationName, maximumBytes: 1_024),
+              relayIsCanonicalTimestamp(issuedAt),
+              relayIsCanonicalTimestamp(validUntil),
+              validUntil > issuedAt,
+              (1...86_400).contains(maxStalenessSeconds),
+              validUntil.timeIntervalSince(issuedAt) <= TimeInterval(maxStalenessSeconds),
+              nodes.count <= 10_000,
+              nodes.allSatisfy(\.isStructurallyValid) else {
+            return false
+        }
+        let endpointKeys = nodes.map { relayEndpointStructuralKey($0.endpoint) }
+        guard Set(endpointKeys).count == nodes.count else { return false }
+        switch (signatureAlgorithm, signature) {
+        case (nil, nil):
+            return true
+        case (FederationDirectorySignature.algorithm?, let signature?):
+            return signature.count == NoctweaveSignedGroupV2.signatureBytes
+        default:
+            return false
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case mode
+        case federationName
+        case issuedAt
+        case validUntil
+        case maxStalenessSeconds
+        case nodes
+        case signatureAlgorithm
+        case signature
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        mode = try container.decode(FederationMode.self, forKey: .mode)
+        federationName = try container.decodeIfPresent(String.self, forKey: .federationName)
+        issuedAt = try container.decode(Date.self, forKey: .issuedAt)
+        validUntil = try container.decode(Date.self, forKey: .validUntil)
+        maxStalenessSeconds = try container.decode(Int.self, forKey: .maxStalenessSeconds)
+        nodes = try container.decode([FederationNodeRecord].self, forKey: .nodes)
+        signatureAlgorithm = try container.decodeIfPresent(String.self, forKey: .signatureAlgorithm)
+        signature = try container.decodeIfPresent(Data.self, forKey: .signature)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Federation directory snapshot is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Federation directory snapshot is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(federationName, forKey: .federationName)
+        try container.encode(issuedAt, forKey: .issuedAt)
+        try container.encode(validUntil, forKey: .validUntil)
+        try container.encode(maxStalenessSeconds, forKey: .maxStalenessSeconds)
+        try container.encode(nodes, forKey: .nodes)
+        try container.encode(signatureAlgorithm, forKey: .signatureAlgorithm)
+        try container.encode(signature, forKey: .signature)
     }
 }
 
@@ -1998,12 +2485,25 @@ public struct RelayErrorBody: Codable, Equatable {
 }
 
 public struct FederationNodesResponseBody: Equatable {
+    public static let maximumNodes = 10_000
+
     public let nodes: [FederationNodeRecord]
     public let snapshot: FederationDirectorySnapshot?
 
     public init(nodes: [FederationNodeRecord], snapshot: FederationDirectorySnapshot? = nil) {
         self.nodes = nodes
         self.snapshot = snapshot
+    }
+
+    public var isStructurallyValid: Bool {
+        guard nodes.count <= Self.maximumNodes,
+              nodes.allSatisfy(\.isStructurallyValid) else {
+            return false
+        }
+        let endpointKeys = nodes.map { relayEndpointStructuralKey($0.endpoint) }
+        return Set(endpointKeys).count == nodes.count
+            && snapshot?.isStructurallyValid != false
+            && (snapshot == nil || snapshot?.nodes == nodes)
     }
 }
 
@@ -2093,10 +2593,14 @@ public enum RelaySuccessBody: Equatable {
         case (.federation, .register), (.federation, .list):
             try relayRequireExactObject(decoder, keys: ["nodes", "snapshot"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .federationNodes(FederationNodesResponseBody(
+            let body = FederationNodesResponseBody(
                 nodes: try container.decode([FederationNodeRecord].self, forKey: relayWireKey("nodes")),
                 snapshot: try container.decodeIfPresent(FederationDirectorySnapshot.self, forKey: relayWireKey("snapshot"))
-            ))
+            )
+            guard body.isStructurallyValid else {
+                throw relayWireError(decoder, "Federation node response is invalid")
+            }
+            return .federationNodes(body)
         case (.openDiscovery, .listDHT):
             try relayRequireExactObject(decoder, keys: ["records"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
@@ -2126,6 +2630,9 @@ public enum RelaySuccessBody: Equatable {
         case .attachment(let value):
             try container.encode(value, forKey: relayWireKey("chunk"))
         case .federationNodes(let value):
+            guard value.isStructurallyValid else {
+                throw relayWireError(encoder, "Federation node response is invalid")
+            }
             try container.encode(value.nodes, forKey: relayWireKey("nodes"))
             try relayEncodeOptional(value.snapshot, key: "snapshot", into: &container)
         case .dhtRecords(let value):
@@ -2332,6 +2839,68 @@ private func encodeRendezvousRelayOpaqueValue(
     try container.encode(value, forKey: relayWireKey("rawValue"))
 }
 
+private func relayIsBoundedRequiredText(_ value: String, maximumBytes: Int) -> Bool {
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return !normalized.isEmpty
+        && normalized == value
+        && value.utf8.count <= maximumBytes
+        && value.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
+}
+
+private func relayIsBoundedText(_ value: String?, maximumBytes: Int) -> Bool {
+    value.map { relayIsBoundedRequiredText($0, maximumBytes: maximumBytes) } ?? true
+}
+
+private func relayCanonicalizedDate(_ value: Date) -> Date {
+    let seconds = value.timeIntervalSince1970
+    guard seconds.isFinite else { return value }
+    return Date(timeIntervalSince1970: floor(seconds))
+}
+
+private func relayIsCanonicalTimestamp(_ value: Date) -> Bool {
+    let seconds = value.timeIntervalSince1970
+    return seconds.isFinite
+        && seconds >= 0
+        && seconds <= 4_102_444_800
+        && floor(seconds) == seconds
+}
+
+private func relayEndpointStructuralKey(_ endpoint: RelayEndpoint) -> String {
+    [
+        endpoint.host.lowercased(),
+        String(endpoint.port),
+        endpoint.useTLS ? "1" : "0",
+        endpoint.transport.rawValue
+    ].joined(separator: "\u{0}")
+}
+
+private func relayIsValidEndpointList(
+    _ endpoints: [RelayEndpoint],
+    maximumCount: Int
+) -> Bool {
+    endpoints.count <= maximumCount
+        && endpoints.allSatisfy(\.isStructurallyValidRelationshipRouteEndpointV2)
+        && Set(endpoints.map(relayEndpointStructuralKey)).count == endpoints.count
+}
+
+private func relayIsValidWakeSupport(_ support: DecentralizedWakeSupport?) -> Bool {
+    guard let support else { return true }
+    guard (5...DecentralizedWakeSupport.absoluteMaximumPollIntervalSeconds)
+        .contains(support.minPollIntervalSeconds),
+          (support.minPollIntervalSeconds...DecentralizedWakeSupport.absoluteMaximumPollIntervalSeconds)
+        .contains(support.maxPollIntervalSeconds),
+          (0...1_000).contains(support.jitterPermille) else {
+        return false
+    }
+    switch support.mode {
+    case .pullOnly:
+        return support.longPollTimeoutSeconds == nil
+    case .longPoll:
+        guard let timeout = support.longPollTimeoutSeconds else { return false }
+        return (5...support.maxPollIntervalSeconds).contains(timeout)
+    }
+}
+
 private func relayBoundedErrorMessage(_ message: String) -> String {
     let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty, trimmed.utf8.count <= RelayErrorBody.maximumMessageBytes else {
@@ -2354,6 +2923,9 @@ private func relayWireError(_ encoder: Encoder, _ description: String) -> Encodi
 }
 
 public struct AttachmentChunk: Codable, Equatable {
+    public static let maximumChunkCount = 512
+    public static let maximumPayloadBytes = 128 * 1_024
+
     public let attachmentId: UUID
     public let chunkIndex: Int
     public let payload: EncryptedPayload
@@ -2362,5 +2934,39 @@ public struct AttachmentChunk: Codable, Equatable {
         self.attachmentId = attachmentId
         self.chunkIndex = chunkIndex
         self.payload = payload
+    }
+
+    public var isStructurallyValid: Bool {
+        let payloadBytes = payload.nonce.count + payload.ciphertext.count + payload.tag.count
+        return (0..<Self.maximumChunkCount).contains(chunkIndex)
+            && payload.isStructurallyValid
+            && payloadBytes <= Self.maximumPayloadBytes
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case attachmentId
+        case chunkIndex
+        case payload
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        attachmentId = try container.decode(UUID.self, forKey: .attachmentId)
+        chunkIndex = try container.decode(Int.self, forKey: .chunkIndex)
+        payload = try container.decode(EncryptedPayload.self, forKey: .payload)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Attachment chunk is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Attachment chunk is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(attachmentId, forKey: .attachmentId)
+        try container.encode(chunkIndex, forKey: .chunkIndex)
+        try container.encode(payload, forKey: .payload)
     }
 }

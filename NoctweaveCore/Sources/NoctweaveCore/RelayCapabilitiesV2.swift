@@ -30,6 +30,7 @@ public struct RelayModuleCapabilityV2: Codable, Equatable {
 
     public var isStructurallyValid: Bool {
         let normalized = module.trimmingCharacters(in: .whitespacesAndNewlines)
+        let canonicalVersions = Array(Set(versions)).sorted()
         return !normalized.isEmpty
             && normalized == module
             && module.hasPrefix("nw.")
@@ -37,12 +38,48 @@ public struct RelayModuleCapabilityV2: Codable, Equatable {
             && !versions.isEmpty
             && versions.count <= NoctweaveArchitectureV2.maximumModuleVersions
             && versions.allSatisfy { $0 > 0 }
+            && versions == canonicalVersions
             && limits.count <= 32
             && limits.allSatisfy { key, _ in
-                !key.isEmpty
+                let normalizedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+                return !normalizedKey.isEmpty
+                    && normalizedKey == key
                     && key.utf8.count <= 96
                     && key.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
             }
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case module
+        case versions
+        case status
+        case limits
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayCapabilitiesRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        module = try container.decode(String.self, forKey: .module)
+        versions = try container.decode([UInt16].self, forKey: .versions)
+        status = try container.decode(RelayCapabilityStatusV2.self, forKey: .status)
+        limits = try container.decode([String: UInt64].self, forKey: .limits)
+        guard isStructurallyValid else {
+            throw relayCapabilitiesDecodingError(decoder, "Relay module capability is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayCapabilitiesEncodingError(encoder, "Relay module capability is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(module, forKey: .module)
+        try container.encode(versions, forKey: .versions)
+        try container.encode(status, forKey: .status)
+        try container.encode(limits, forKey: .limits)
     }
 }
 
@@ -63,8 +100,36 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
             && !modules.isEmpty
             && modules.count <= NoctweaveArchitectureV2.maximumModules
             && Set(modules.map(\.module)).count == modules.count
+            && modules.map(\.module) == modules.map(\.module).sorted()
             && modules.allSatisfy(\.isStructurallyValid)
             && supports(module: "nw.core", version: 2)
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case architectureVersion
+        case modules
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayCapabilitiesRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        architectureVersion = try container.decode(Int.self, forKey: .architectureVersion)
+        modules = try container.decode([RelayModuleCapabilityV2].self, forKey: .modules)
+        guard isStructurallyValid else {
+            throw relayCapabilitiesDecodingError(decoder, "Relay capability manifest is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayCapabilitiesEncodingError(encoder, "Relay capability manifest is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(architectureVersion, forKey: .architectureVersion)
+        try container.encode(modules, forKey: .modules)
     }
 
     public func supports(module: String, version: UInt16) -> Bool {
@@ -145,4 +210,51 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         }
         return RelayCapabilityManifestV2(modules: modules)
     }
+}
+
+private struct RelayCapabilitiesCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func relayCapabilitiesRequireExactObject(
+    _ decoder: Decoder,
+    keys: [String]
+) throws {
+    let container = try decoder.container(keyedBy: RelayCapabilitiesCodingKey.self)
+    guard Set(container.allKeys.map(\.stringValue)) == Set(keys) else {
+        throw relayCapabilitiesDecodingError(
+            decoder,
+            "Relay capability fields must match the current protocol exactly"
+        )
+    }
+}
+
+private func relayCapabilitiesDecodingError(
+    _ decoder: Decoder,
+    _ description: String
+) -> DecodingError {
+    DecodingError.dataCorrupted(
+        .init(codingPath: decoder.codingPath, debugDescription: description)
+    )
+}
+
+private func relayCapabilitiesEncodingError(
+    _ encoder: Encoder,
+    _ description: String
+) -> EncodingError {
+    EncodingError.invalidValue(
+        description,
+        .init(codingPath: encoder.codingPath, debugDescription: description)
+    )
 }

@@ -95,6 +95,83 @@ public struct MixnetTransportSupport: Codable, Equatable {
         self.coverPacketsPerBatch = min(max(0, coverPacketsPerBatch), 256)
         self.maxDelaySeconds = min(max(0, maxDelaySeconds), 3_600)
     }
+
+    public var isStructurallyValid: Bool {
+        (5...3_600).contains(batchIntervalSeconds)
+            && (1...256).contains(minBatchSize)
+            && (0...256).contains(coverPacketsPerBatch)
+            && (0...3_600).contains(maxDelaySeconds)
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case enabled
+        case batchIntervalSeconds
+        case minBatchSize
+        case coverPacketsPerBatch
+        case maxDelaySeconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        try mixnetSupportRequireExactObject(decoder, keys: CodingKeys.allCases.map(\.rawValue))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        batchIntervalSeconds = try container.decode(Int.self, forKey: .batchIntervalSeconds)
+        minBatchSize = try container.decode(Int.self, forKey: .minBatchSize)
+        coverPacketsPerBatch = try container.decode(Int.self, forKey: .coverPacketsPerBatch)
+        maxDelaySeconds = try container.decode(Int.self, forKey: .maxDelaySeconds)
+        guard isStructurallyValid else {
+            throw mixnetSupportDecodingError(decoder, "Mixnet transport support is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                .init(codingPath: encoder.codingPath, debugDescription: "Mixnet transport support is invalid")
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(batchIntervalSeconds, forKey: .batchIntervalSeconds)
+        try container.encode(minBatchSize, forKey: .minBatchSize)
+        try container.encode(coverPacketsPerBatch, forKey: .coverPacketsPerBatch)
+        try container.encode(maxDelaySeconds, forKey: .maxDelaySeconds)
+    }
+}
+
+private struct MixnetSupportCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func mixnetSupportRequireExactObject(_ decoder: Decoder, keys: [String]) throws {
+    let container = try decoder.container(keyedBy: MixnetSupportCodingKey.self)
+    guard Set(container.allKeys.map(\.stringValue)) == Set(keys) else {
+        throw mixnetSupportDecodingError(
+            decoder,
+            "Mixnet transport support fields must match the current protocol exactly"
+        )
+    }
+}
+
+private func mixnetSupportDecodingError(
+    _ decoder: Decoder,
+    _ description: String
+) -> DecodingError {
+    DecodingError.dataCorrupted(
+        .init(codingPath: decoder.codingPath, debugDescription: description)
+    )
 }
 
 public enum MixnetPacketPadder {
