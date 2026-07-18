@@ -18,6 +18,7 @@ Package.resolved
 .clang-module-cache/
 
 # Local logs and scratch output
+.research/
 .relay-data/
 .runtime/
 NoctweaveJS/wasm/build/
