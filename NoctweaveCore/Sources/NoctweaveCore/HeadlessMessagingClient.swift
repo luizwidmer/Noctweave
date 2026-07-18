@@ -66,6 +66,37 @@ public struct HeadlessRouteRolloverResult: Codable, Equatable {
     public let routeSetPublication: HeadlessPublicationResult?
 }
 
+/// Current maintenance outcome for one unlinkable relationship endpoint.
+/// This is local operational state only; it is never placed on the wire.
+public enum HeadlessRouteMaintenanceDispositionV2: String, Codable, Equatable {
+    case healthy
+    case rolloverInProgress
+    case rolloverStarted
+    case rolloverFailed
+    case routeExpired
+    case noLocalRoute
+    case blocked
+}
+
+public struct HeadlessRelationshipMaintenanceReportV2: Codable, Equatable {
+    public let relationshipID: UUID
+    public let observedAt: Date
+    public let routeDisposition: HeadlessRouteMaintenanceDispositionV2
+    public let resumedRollovers: [HeadlessRouteRolloverResult]
+    public let startedRollover: HeadlessRouteRolloverResult?
+    public let prekeyPublication: HeadlessPublicationResult?
+    public let finalizedRouteIDs: [OpaqueReceiveRouteIDV2]
+
+    public var requiresFollowUp: Bool {
+        routeDisposition == .rolloverInProgress
+            || routeDisposition == .rolloverFailed
+            || routeDisposition == .routeExpired
+            || routeDisposition == .noLocalRoute
+            || resumedRollovers.contains { !$0.state.isTerminal }
+            || startedRollover.map { !$0.state.isTerminal } == true
+    }
+}
+
 public struct HeadlessBlobUploadResult: Codable, Equatable {
     public let relationshipID: UUID
     public let uploadID: UUID
@@ -86,6 +117,11 @@ public struct HeadlessSyncResult: Codable, Equatable {
 /// organization only; all cryptographic state and delivery authority is scoped
 /// to a `PairwiseRelationshipV2`.
 public actor HeadlessMessagingClient {
+    /// Routes are replaced, not renewed. Starting thirty minutes before the
+    /// six-hour lease expires leaves time for signed make-before-break route
+    /// publication, a peer probe, and the overlap drain window.
+    public static let routeReplacementLeadTime: TimeInterval = 30 * 60
+
     private var state: ClientState
     private let stateStore: ClientStateStore
     private let personaScopeIssuer = UUID()
@@ -1055,6 +1091,150 @@ public actor HeadlessMessagingClient {
             finalized.append(candidate.routeID)
         }
         return finalized
+    }
+
+    /// Performs the endpoint maintenance that a long-running client needs in
+    /// one serialized relationship transaction. Replacement routes are fresh
+    /// unlinkable capabilities; this never authorizes a device, account, or
+    /// persona-wide endpoint and never renews a stable route identifier.
+    public func maintainRelationship(
+        relationshipID: UUID,
+        at date: Date = Date()
+    ) async throws -> HeadlessRelationshipMaintenanceReportV2 {
+        if !HeadlessTransactionContext.relationshipIDs.contains(relationshipID) {
+            return try await withRelationshipTransaction(relationshipID) {
+                try await self.maintainRelationship(
+                    relationshipID: relationshipID,
+                    at: date
+                )
+            }
+        }
+        guard date.timeIntervalSince1970.isFinite,
+              date.addingTimeInterval(Self.routeReplacementLeadTime)
+                .timeIntervalSince1970.isFinite else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+
+        var current = try relationship(relationshipID)
+        guard current.localPolicy.consent != .blocked else {
+            return HeadlessRelationshipMaintenanceReportV2(
+                relationshipID: relationshipID,
+                observedAt: date,
+                routeDisposition: .blocked,
+                resumedRollovers: [],
+                startedRollover: nil,
+                prekeyPublication: nil,
+                finalizedRouteIDs: []
+            )
+        }
+
+        let resumed = try await resumePendingRouteRollovers(
+            relationshipID: relationshipID,
+            at: date
+        )
+        let prekeyPublication = try await renewRelationshipPrekeyIfNeeded(
+            relationshipID: relationshipID,
+            at: date
+        )
+        let finalized = try await finalizeDrainedRoutes(
+            relationshipID: relationshipID,
+            at: date
+        )
+
+        current = try relationship(relationshipID)
+        let unfinishedRollover = current.protocolIntents.contains {
+            $0.kind == .rolloverRoute && !$0.state.isTerminal
+        }
+        let failedRolloverStillPresent = current.protocolIntents.contains { intent in
+            guard intent.kind == .rolloverRoute,
+                  intent.state == .permanentFailure,
+                  let target = intent.targetIdentifier else { return false }
+            return current.pendingRouteRollovers.contains {
+                $0.clientCapabilities.routeID.rawValue == target
+            } || current.localAdvertisedRoutes.routes.contains {
+                $0.routeID.rawValue == target && $0.state == .testing
+            }
+        }
+
+        var started: HeadlessRouteRolloverResult?
+        let disposition: HeadlessRouteMaintenanceDispositionV2
+        if failedRolloverStillPresent {
+            disposition = .rolloverFailed
+        } else if unfinishedRollover {
+            disposition = .rolloverInProgress
+        } else {
+            let activeLocalRoute = current.localReceiveRoutes
+                .filter { local in
+                    current.localAdvertisedRoutes.routes.contains {
+                        $0.routeID == local.route.routeID && $0.state == .active
+                    }
+                }
+                .min { lhs, rhs in
+                    lhs.route.lease.expiresAt < rhs.route.lease.expiresAt
+                }
+            guard let activeLocalRoute else {
+                return HeadlessRelationshipMaintenanceReportV2(
+                    relationshipID: relationshipID,
+                    observedAt: date,
+                    routeDisposition: .noLocalRoute,
+                    resumedRollovers: resumed,
+                    startedRollover: nil,
+                    prekeyPublication: prekeyPublication,
+                    finalizedRouteIDs: finalized
+                )
+            }
+            if date >= activeLocalRoute.route.lease.expiresAt {
+                disposition = .routeExpired
+            } else if activeLocalRoute.route.lease.expiresAt
+                        <= date.addingTimeInterval(Self.routeReplacementLeadTime) {
+                let pending = try await prepareRouteRollover(
+                    relationshipID: relationshipID,
+                    relay: activeLocalRoute.relay,
+                    policy: activeLocalRoute.route.lease.policy,
+                    createdAt: date
+                )
+                started = try await beginRouteRollover(
+                    pending,
+                    relationshipID: relationshipID,
+                    at: date
+                )
+                disposition = started?.state == .permanentFailure
+                    ? .rolloverFailed
+                    : .rolloverStarted
+            } else {
+                disposition = .healthy
+            }
+        }
+
+        return HeadlessRelationshipMaintenanceReportV2(
+            relationshipID: relationshipID,
+            observedAt: date,
+            routeDisposition: disposition,
+            resumedRollovers: resumed,
+            startedRollover: started,
+            prekeyPublication: prekeyPublication,
+            finalizedRouteIDs: finalized
+        )
+    }
+
+    /// Runs maintenance independently for every relationship in the active
+    /// local persona. No state or identifier is shared across relationships.
+    public func maintainAllRelationships(
+        at date: Date = Date()
+    ) async throws -> [HeadlessRelationshipMaintenanceReportV2] {
+        guard date.timeIntervalSince1970.isFinite else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let relationshipIDs = state.activePersona.relationships.map(\.id)
+        var reports: [HeadlessRelationshipMaintenanceReportV2] = []
+        reports.reserveCapacity(relationshipIDs.count)
+        for relationshipID in relationshipIDs {
+            reports.append(try await maintainRelationship(
+                relationshipID: relationshipID,
+                at: date
+            ))
+        }
+        return reports
     }
 
     /// Tears down only the blocked relationship's opaque receive routes. The

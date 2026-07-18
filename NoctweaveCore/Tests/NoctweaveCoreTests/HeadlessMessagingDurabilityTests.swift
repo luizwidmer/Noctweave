@@ -180,6 +180,50 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
         XCTAssertEqual(roundTrip, pending)
     }
 
+    func testMaintenanceDistinguishesHealthyExpiredAndBlockedLocalRoutes() async throws {
+        let healthyHarness = try makeHarness(label: "\(#function)-healthy")
+        defer { try? FileManager.default.removeItem(at: healthyHarness.directory) }
+        let healthy = try await healthyHarness.client.maintainRelationship(
+            relationshipID: healthyHarness.relationshipID,
+            at: origin.addingTimeInterval(60 * 60)
+        )
+        XCTAssertEqual(healthy.routeDisposition, .healthy)
+        XCTAssertFalse(healthy.requiresFollowUp)
+        XCTAssertNil(healthy.startedRollover)
+
+        let expiredHarness = try makeHarness(label: "\(#function)-expired")
+        defer { try? FileManager.default.removeItem(at: expiredHarness.directory) }
+        let expired = try await expiredHarness.client.maintainRelationship(
+            relationshipID: expiredHarness.relationshipID,
+            at: origin.addingTimeInterval(6 * 60 * 60)
+        )
+        XCTAssertEqual(expired.routeDisposition, .routeExpired)
+        XCTAssertTrue(expired.requiresFollowUp)
+        XCTAssertNil(expired.startedRollover)
+        let expiredRelationship = try await expiredHarness.client.relationship(
+            expiredHarness.relationshipID
+        )
+        XCTAssertTrue(expiredRelationship.pendingRouteRollovers.isEmpty)
+
+        let blockedHarness = try makeHarness(label: "\(#function)-blocked")
+        defer { try? FileManager.default.removeItem(at: blockedHarness.directory) }
+        var policy = try await blockedHarness.client.relationship(
+            blockedHarness.relationshipID
+        ).localPolicy
+        policy.consent = .blocked
+        try await blockedHarness.client.setRelationshipLocalPolicy(
+            policy,
+            relationshipID: blockedHarness.relationshipID,
+            at: origin.addingTimeInterval(1)
+        )
+        let blocked = try await blockedHarness.client.maintainRelationship(
+            relationshipID: blockedHarness.relationshipID,
+            at: origin.addingTimeInterval(2)
+        )
+        XCTAssertEqual(blocked.routeDisposition, .blocked)
+        XCTAssertFalse(blocked.requiresFollowUp)
+    }
+
     func testEncryptedBlobUploadPreparationPersistsExactRequestAndIntent() async throws {
         let harness = try makeHarness(label: #function)
         defer { try? FileManager.default.removeItem(at: harness.directory) }

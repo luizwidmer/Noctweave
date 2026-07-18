@@ -22,6 +22,55 @@ final class HeadlessOpaqueRouteSyncDurabilityTests: XCTestCase {
         let baseDate: Date
     }
 
+    func testMaintenanceStartsOneFreshRouteBeforeExpiryAndResumesAfterReopen() async throws {
+        let fixture = try await makeFixture(
+            label: #function,
+            receiverRouteExpiresIn: 29 * 60
+        )
+        defer { tearDown(fixture) }
+        let observedAt = NoctweaveRendezvousV2.canonicalTimestamp(Date())
+        let before = try await fixture.receiver.relationship(fixture.relationshipID)
+        let originalRouteID = try XCTUnwrap(
+            before.localAdvertisedRoutes.routes.first { $0.state == .active }
+        ).routeID
+
+        let report = try await fixture.receiver.maintainRelationship(
+            relationshipID: fixture.relationshipID,
+            at: observedAt
+        )
+
+        XCTAssertEqual(report.routeDisposition, .rolloverStarted)
+        XCTAssertNotNil(report.startedRollover)
+        XCTAssertNil(report.prekeyPublication)
+        XCTAssertTrue(report.finalizedRouteIDs.isEmpty)
+        let after = try await fixture.receiver.relationship(fixture.relationshipID)
+        XCTAssertEqual(after.localReceiveRoutes.count, 2)
+        let replacement = try XCTUnwrap(
+            after.localAdvertisedRoutes.routes.first { $0.state == .testing }
+        )
+        XCTAssertNotEqual(replacement.routeID, originalRouteID)
+        XCTAssertEqual(
+            after.protocolIntents.filter {
+                $0.kind == .rolloverRoute && !$0.state.isTerminal
+            }.count,
+            1
+        )
+
+        let reopened = try await HeadlessMessagingClient.open(
+            stateStore: fixture.receiverStore,
+            displayName: "ignored after reopen"
+        )
+        let resumed = try await reopened.maintainRelationship(
+            relationshipID: fixture.relationshipID,
+            at: observedAt.addingTimeInterval(1)
+        )
+        XCTAssertEqual(resumed.routeDisposition, .rolloverInProgress)
+        XCTAssertEqual(resumed.resumedRollovers.count, 1)
+        XCTAssertNil(resumed.startedRollover)
+        let reopenedRelationship = try await reopened.relationship(fixture.relationshipID)
+        XCTAssertEqual(reopenedRelationship.localReceiveRoutes.count, 2)
+    }
+
     func testPartialBundleCommitsEachPageAndCompletesOnceAfterReopen() async throws {
         let fixture = try await makeFixture(label: #function)
         defer { tearDown(fixture) }
@@ -652,7 +701,10 @@ final class HeadlessOpaqueRouteSyncDurabilityTests: XCTestCase {
         )
     }
 
-    private func makeFixture(label: String) async throws -> Fixture {
+    private func makeFixture(
+        label: String,
+        receiverRouteExpiresIn: TimeInterval? = nil
+    ) async throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "noctweave-live-sync-\(label)-\(UUID().uuidString)"
         )
@@ -704,19 +756,40 @@ final class HeadlessOpaqueRouteSyncDurabilityTests: XCTestCase {
                 at: baseDate.addingTimeInterval(1)
             )
 
+            var senderRelationship = pairing.offererRelationship
+            var receiverRelationship = pairing.responderRelationship
+            if let receiverRouteExpiresIn {
+                let original = try XCTUnwrap(receiverRelationship.localReceiveRoutes.first)
+                let expiry = NoctweaveRendezvousV2.canonicalTimestamp(
+                    Date().addingTimeInterval(receiverRouteExpiresIn)
+                )
+                let shortened = try replacingExpiry(in: original, expiresAt: expiry)
+                let advertised = try shortened.peerSendRoute(state: .active)
+                let routeSet = try PairwiseRouteSetV2.create(
+                    relationshipID: receiverRelationship.id,
+                    ownerEndpointHandle: receiverRelationship.localEndpointHandle,
+                    activeRoutes: [advertised],
+                    issuedAt: receiverRelationship.localAdvertisedRoutes.issuedAt,
+                    signingKey: receiverRelationship.localIdentity.localEndpoint.signingKey
+                )
+                receiverRelationship.localReceiveRoutes = [shortened]
+                receiverRelationship.localAdvertisedRoutes = routeSet
+                senderRelationship.peerIdentity.sendRoutes = routeSet
+            }
+
             var senderState = try ClientState(
                 displayName: "Sender local persona",
                 createdAt: baseDate
             )
             try senderState.updateActivePersona {
-                try $0.upsert(relationship: pairing.offererRelationship)
+                try $0.upsert(relationship: senderRelationship)
             }
             var receiverState = try ClientState(
                 displayName: "Receiver local persona",
                 createdAt: baseDate
             )
             try receiverState.updateActivePersona {
-                try $0.upsert(relationship: pairing.responderRelationship)
+                try $0.upsert(relationship: receiverRelationship)
             }
             let senderStore = ClientStateStore(
                 fileURL: senderStateURL,
@@ -877,6 +950,42 @@ final class HeadlessOpaqueRouteSyncDurabilityTests: XCTestCase {
             testedAt: route.testedAt,
             drainAfter: route.drainAfter,
             revokedAt: route.revokedAt
+        )
+    }
+
+    private func replacingExpiry(
+        in route: LocalOpaqueReceiveRouteV2,
+        expiresAt: Date
+    ) throws -> LocalOpaqueReceiveRouteV2 {
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: NoctweaveCoder.encode(route.route, sortedKeys: true)
+            ) as? [String: Any]
+        )
+        let lease = try OpaqueRouteLeaseV2(
+            issuedAt: route.route.lease.issuedAt,
+            expiresAt: expiresAt,
+            policy: route.route.lease.policy
+        )
+        object["lease"] = try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: NoctweaveCoder.encode(lease, sortedKeys: true)
+            ) as? [String: Any]
+        )
+        let replacement = try NoctweaveCoder.decode(
+            OpaqueReceiveRouteV2.self,
+            from: JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        )
+        return try LocalOpaqueReceiveRouteV2(
+            relay: route.relay,
+            route: replacement,
+            clientCapabilities: route.clientCapabilities,
+            payloadKey: route.payloadKey,
+            committedCursor: route.committedCursor,
+            committedSequence: route.committedSequence,
+            committedRecordDigest: route.committedRecordDigest,
+            gapState: route.gapState,
+            reassembler: route.reassembler
         )
     }
 
