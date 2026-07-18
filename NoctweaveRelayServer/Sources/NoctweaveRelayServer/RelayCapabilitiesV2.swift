@@ -109,7 +109,7 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                 RelayModuleCapabilityV2(
                     module: "nw.rendezvous-transport",
                     versions: [2],
-                    status: .experimental,
+                    status: .stable,
                     limits: [
                         "maxLifetimeSeconds": 600,
                         "maxLanes": 2,

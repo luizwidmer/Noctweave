@@ -80,7 +80,7 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         rendezvousTransportEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
-            RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .provisional),
+            RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .stable),
             RelayModuleCapabilityV2(
                 module: "nw.opaque-route",
                 versions: [2],
@@ -91,7 +91,7 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
                     "maxRoutes": UInt64(NoctweaveOpaqueRouteRelayStoreV2.maximumRoutes)
                 ]
             ),
-            RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .provisional)
+            RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .stable)
         ]
         if attachmentsEnabled {
             modules.append(RelayModuleCapabilityV2(module: "nw.blobs", versions: [1], status: .stable))
@@ -123,7 +123,7 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
                 RelayModuleCapabilityV2(
                     module: "nw.rendezvous-transport",
                     versions: [2],
-                    status: .experimental,
+                    status: .stable,
                     limits: [
                         "maxLifetimeSeconds": 600,
                         "maxLanes": 2,

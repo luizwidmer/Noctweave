@@ -5,7 +5,8 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
     func testRelayInfoAdvertisesOnlyEnabledProtocolModules() throws {
         let configuration = RelayConfiguration(
             federation: FederationDescriptor(mode: .solo),
-            attachmentsEnabled: false
+            attachmentsEnabled: false,
+            rendezvousTransportEnabled: true
         )
         let info = configuration.makeInfo(now: Date(timeIntervalSince1970: 1_000))
         let manifest = try XCTUnwrap(info.protocolCapabilities)
@@ -13,6 +14,10 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
         XCTAssertTrue(manifest.isStructurallyValid)
         XCTAssertTrue(manifest.supports(module: "nw.core", version: 2))
         XCTAssertTrue(manifest.supports(module: "nw.opaque-route", version: 2))
+        XCTAssertTrue(manifest.supports(module: "nw.rendezvous-transport", version: 2))
+        for module in ["nw.core", "nw.opaque-route", "nw.rendezvous-transport", "nw.federation"] {
+            XCTAssertEqual(manifest.modules.first { $0.module == module }?.status, .stable)
+        }
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 2))
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 3))
         XCTAssertFalse(

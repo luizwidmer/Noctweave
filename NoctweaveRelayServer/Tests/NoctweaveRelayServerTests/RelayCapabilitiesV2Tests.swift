@@ -5,13 +5,18 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
     func testConfiguredRelayAdvertisesStableOpaqueRouteAndEnabledModules() throws {
         let info = RelayConfiguration(
             federation: FederationDescriptor(mode: .manual),
-            attachmentsEnabled: true
+            attachmentsEnabled: true,
+            rendezvousTransportEnabled: true
         ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
         let manifest = try XCTUnwrap(info.protocolCapabilities)
 
         XCTAssertTrue(manifest.isStructurallyValid)
         XCTAssertTrue(manifest.supports(module: "nw.core", version: 2))
         XCTAssertTrue(manifest.supports(module: "nw.opaque-route", version: 2))
+        XCTAssertTrue(manifest.supports(module: "nw.rendezvous-transport", version: 2))
+        for module in ["nw.core", "nw.opaque-route", "nw.rendezvous-transport", "nw.federation"] {
+            XCTAssertEqual(manifest.modules.first { $0.module == module }?.status, .stable)
+        }
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 2))
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 3))
         XCTAssertTrue(manifest.supports(module: "nw.blobs", version: 1))
