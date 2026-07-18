@@ -675,6 +675,168 @@ final class OpaqueRouteRelayStoreV2Tests: XCTestCase {
         }
     }
 
+    func testOpaqueRouteCodableGraphRejectsUnknownAndMissingNestedFields() async throws {
+        let fixture = try await makeFixture()
+
+        XCTAssertThrowsError(try NoctweaveCoder.encode(
+            OpaqueRouteCursorV2(rawValue: Data()),
+            sortedKeys: true
+        ))
+        XCTAssertThrowsError(try NoctweaveCoder.encode(
+            OpaqueReceiveRouteIDV2(rawValue: Data(repeating: 0, count: 32)),
+            sortedKeys: true
+        ))
+
+        var createObject = try opaqueRouteJSONObject(fixture.createRequest)
+        var leaseObject = try XCTUnwrap(createObject["lease"] as? [String: Any])
+        var policyObject = try XCTUnwrap(leaseObject["policy"] as? [String: Any])
+        policyObject["unexpected"] = true
+        leaseObject["policy"] = policyObject
+        createObject["lease"] = leaseObject
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteCreateRequestV2.self,
+            from: opaqueRouteJSONData(createObject)
+        ))
+
+        var materialObject = try opaqueRouteJSONObject(fixture.material)
+        var sendCapability = try XCTUnwrap(materialObject["sendCapability"] as? [String: Any])
+        sendCapability["unexpected"] = true
+        materialObject["sendCapability"] = sendCapability
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteClientCapabilityMaterialV2.self,
+            from: opaqueRouteJSONData(materialObject)
+        ))
+
+        let syncRequest = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 1,
+            authorizedAt: origin.addingTimeInterval(10)
+        )
+        var syncObject = try opaqueRouteJSONObject(syncRequest)
+        XCTAssertTrue(syncObject["after"] is NSNull)
+        syncObject.removeValue(forKey: "after")
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteSyncRequestV2.self,
+            from: opaqueRouteJSONData(syncObject)
+        ))
+
+        var authorizationObject = try opaqueRouteJSONObject(syncRequest)
+        var authorization = try XCTUnwrap(
+            authorizationObject["authorization"] as? [String: Any]
+        )
+        var nonceObject = try XCTUnwrap(authorization["nonce"] as? [String: Any])
+        nonceObject["unexpected"] = true
+        authorization["nonce"] = nonceObject
+        authorizationObject["authorization"] = authorization
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteSyncRequestV2.self,
+            from: opaqueRouteJSONData(authorizationObject)
+        ))
+
+        var routeIDObject = try opaqueRouteJSONObject(syncRequest)
+        var routeID = try XCTUnwrap(routeIDObject["routeID"] as? [String: Any])
+        routeID["unexpected"] = true
+        routeIDObject["routeID"] = routeID
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteSyncRequestV2.self,
+            from: opaqueRouteJSONData(routeIDObject)
+        ))
+
+        var requestIDObject = try opaqueRouteJSONObject(syncRequest)
+        var requestID = try XCTUnwrap(requestIDObject["requestID"] as? [String: Any])
+        requestID["unexpected"] = true
+        requestIDObject["requestID"] = requestID
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteSyncRequestV2.self,
+            from: opaqueRouteJSONData(requestIDObject)
+        ))
+
+        let packet = try makePacket(
+            Data("exact-receipt".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(11)
+        )
+        let receipt = try await fixture.store.append(
+            packet,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(11)
+        )
+
+        var packetObject = try opaqueRouteJSONObject(packet)
+        packetObject["unexpected"] = true
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRoutePacketV2.self,
+            from: opaqueRouteJSONData(packetObject)
+        ))
+
+        var nestedPacketIDObject = try opaqueRouteJSONObject(packet)
+        var packetID = try XCTUnwrap(nestedPacketIDObject["packetID"] as? [String: Any])
+        packetID["unexpected"] = true
+        nestedPacketIDObject["packetID"] = packetID
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRoutePacketV2.self,
+            from: opaqueRouteJSONData(nestedPacketIDObject)
+        ))
+
+        var receiptObject = try opaqueRouteJSONObject(receipt)
+        var acceptedCursor = try XCTUnwrap(
+            receiptObject["acceptedCursor"] as? [String: Any]
+        )
+        acceptedCursor["unexpected"] = true
+        receiptObject["acceptedCursor"] = acceptedCursor
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteAppendReceiptV2.self,
+            from: opaqueRouteJSONData(receiptObject)
+        ))
+
+        var routeObject = try opaqueRouteJSONObject(fixture.route)
+        var routeLease = try XCTUnwrap(routeObject["lease"] as? [String: Any])
+        routeLease["unexpected"] = true
+        routeObject["lease"] = routeLease
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueReceiveRouteV2.self,
+            from: opaqueRouteJSONData(routeObject)
+        ))
+
+        let gap = OpaqueRouteGapStateV2(
+            reason: .digestChainBreak,
+            expectedSequence: 4,
+            observedSequence: 5,
+            retentionFloorSequence: 2,
+            detectedAt: origin
+        )
+        var gapObject = try opaqueRouteJSONObject(gap)
+        gapObject["unexpected"] = true
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteGapStateV2.self,
+            from: opaqueRouteJSONData(gapObject)
+        ))
+
+        let digestObject = try opaqueRouteJSONObject([
+            "digest": Data(repeating: 0xA5, count: NoctweaveOpaqueRoutesV2.digestBytes),
+        ])
+        let expiryObject = try opaqueRouteJSONObject([
+            "expiresAt": origin.addingTimeInterval(30),
+        ])
+        var ledgerObject = try opaqueRouteJSONObject(OpaqueRouteAuthorizationReplayLedgerV2())
+        ledgerObject["entries"] = [[
+            "digest": try XCTUnwrap(digestObject["digest"]),
+            "expiresAt": try XCTUnwrap(expiryObject["expiresAt"]),
+        ]]
+        _ = try NoctweaveCoder.decode(
+            OpaqueRouteAuthorizationReplayLedgerV2.self,
+            from: opaqueRouteJSONData(ledgerObject)
+        )
+        var entries = try XCTUnwrap(ledgerObject["entries"] as? [[String: Any]])
+        entries[0]["unexpected"] = true
+        ledgerObject["entries"] = entries
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteAuthorizationReplayLedgerV2.self,
+            from: opaqueRouteJSONData(ledgerObject)
+        ))
+    }
+
     private struct Fixture {
         let store: OpaqueRouteRelayStoreV2
         let material: OpaqueRouteClientCapabilityMaterialV2
@@ -759,6 +921,17 @@ final class OpaqueRouteRelayStoreV2Tests: XCTestCase {
             testedAt: route.lease.issuedAt
         )
     }
+}
+
+private func opaqueRouteJSONObject<T: Encodable>(_ value: T) throws -> [String: Any] {
+    let data = try NoctweaveCoder.encode(value, sortedKeys: true)
+    return try XCTUnwrap(
+        JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+}
+
+private func opaqueRouteJSONData(_ object: [String: Any]) throws -> Data {
+    try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
 }
 
 private extension Data {

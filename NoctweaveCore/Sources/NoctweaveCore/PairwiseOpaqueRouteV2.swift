@@ -282,6 +282,14 @@ public struct OpaqueRouteGapStateV2: Codable, Equatable {
     public let retentionFloorSequence: UInt64
     public let detectedAt: Date
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case reason
+        case expectedSequence
+        case observedSequence
+        case retentionFloorSequence
+        case detectedAt
+    }
+
     public init(
         reason: OpaqueRouteGapReasonV2,
         expectedSequence: UInt64,
@@ -294,6 +302,55 @@ public struct OpaqueRouteGapStateV2: Codable, Equatable {
         self.observedSequence = observedSequence
         self.retentionFloorSequence = retentionFloorSequence
         self.detectedAt = detectedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: PairwiseOpaqueRouteCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Opaque route gap fields must match the current protocol exactly"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            reason: try container.decode(OpaqueRouteGapReasonV2.self, forKey: .reason),
+            expectedSequence: try container.decode(UInt64.self, forKey: .expectedSequence),
+            observedSequence: try container.decode(UInt64.self, forKey: .observedSequence),
+            retentionFloorSequence: try container.decode(
+                UInt64.self,
+                forKey: .retentionFloorSequence
+            ),
+            detectedAt: try container.decode(Date.self, forKey: .detectedAt)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .detectedAt,
+                in: container,
+                debugDescription: "Opaque route gap state is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route gap state is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(reason, forKey: .reason)
+        try container.encode(expectedSequence, forKey: .expectedSequence)
+        try container.encode(observedSequence, forKey: .observedSequence)
+        try container.encode(retentionFloorSequence, forKey: .retentionFloorSequence)
+        try container.encode(detectedAt, forKey: .detectedAt)
     }
 
     public var isStructurallyValid: Bool {

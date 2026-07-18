@@ -30,13 +30,17 @@ public struct OpaqueRouteCursorV2: Codable, Equatable, Hashable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     let rawValue: Data
 
-    private enum CodingKeys: String, CodingKey { case rawValue }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case rawValue }
 
     init(rawValue: Data) {
         self.rawValue = rawValue
     }
 
     public init(from decoder: Decoder) throws {
+        try opaqueRouteRelayRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let value = try container.decode(Data.self, forKey: .rawValue)
         guard value.count == NoctweaveOpaqueRouteRelayStoreV2.cursorBytes else {
@@ -79,6 +83,14 @@ public struct OpaqueRouteSyncRequestV2: Codable, Equatable {
     public let limit: UInt16
     public let authorization: OpaqueRouteAuthorizationProofV2
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case routeID
+        case requestID
+        case after
+        case limit
+        case authorization
+    }
+
     init(
         routeID: OpaqueReceiveRouteIDV2,
         requestID: OpaqueRouteIdempotencyKeyV2,
@@ -91,6 +103,51 @@ public struct OpaqueRouteSyncRequestV2: Codable, Equatable {
         self.after = after
         self.limit = limit
         self.authorization = authorization
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRelayRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        routeID = try container.decode(OpaqueReceiveRouteIDV2.self, forKey: .routeID)
+        requestID = try container.decode(OpaqueRouteIdempotencyKeyV2.self, forKey: .requestID)
+        after = try container.decodeIfPresent(OpaqueRouteCursorV2.self, forKey: .after)
+        limit = try container.decode(UInt16.self, forKey: .limit)
+        authorization = try container.decode(
+            OpaqueRouteAuthorizationProofV2.self,
+            forKey: .authorization
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .authorization,
+                in: container,
+                debugDescription: "Opaque route sync request is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route sync request is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(routeID, forKey: .routeID)
+        try container.encode(requestID, forKey: .requestID)
+        if let after {
+            try container.encode(after, forKey: .after)
+        } else {
+            try container.encodeNil(forKey: .after)
+        }
+        try container.encode(limit, forKey: .limit)
+        try container.encode(authorization, forKey: .authorization)
     }
 
     public var operationDigest: Data {
@@ -123,6 +180,13 @@ public struct OpaqueRouteCommitRequestV2: Codable, Equatable {
     public let cursor: OpaqueRouteCursorV2
     public let authorization: OpaqueRouteAuthorizationProofV2
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case routeID
+        case requestID
+        case cursor
+        case authorization
+    }
+
     init(
         routeID: OpaqueReceiveRouteIDV2,
         requestID: OpaqueRouteIdempotencyKeyV2,
@@ -133,6 +197,45 @@ public struct OpaqueRouteCommitRequestV2: Codable, Equatable {
         self.requestID = requestID
         self.cursor = cursor
         self.authorization = authorization
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRelayRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        routeID = try container.decode(OpaqueReceiveRouteIDV2.self, forKey: .routeID)
+        requestID = try container.decode(OpaqueRouteIdempotencyKeyV2.self, forKey: .requestID)
+        cursor = try container.decode(OpaqueRouteCursorV2.self, forKey: .cursor)
+        authorization = try container.decode(
+            OpaqueRouteAuthorizationProofV2.self,
+            forKey: .authorization
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .authorization,
+                in: container,
+                debugDescription: "Opaque route commit request is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route commit request is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(routeID, forKey: .routeID)
+        try container.encode(requestID, forKey: .requestID)
+        try container.encode(cursor, forKey: .cursor)
+        try container.encode(authorization, forKey: .authorization)
     }
 
     public var operationDigest: Data {
@@ -221,6 +324,62 @@ public struct OpaqueRouteAppendReceiptV2: Codable, Equatable {
     public let packetID: OpaqueRoutePacketIDV2
     public let acceptedCursor: OpaqueRouteCursorV2
     public let highWatermark: OpaqueRouteCursorV2
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case packetID
+        case acceptedCursor
+        case highWatermark
+    }
+
+    public init(
+        packetID: OpaqueRoutePacketIDV2,
+        acceptedCursor: OpaqueRouteCursorV2,
+        highWatermark: OpaqueRouteCursorV2
+    ) {
+        self.packetID = packetID
+        self.acceptedCursor = acceptedCursor
+        self.highWatermark = highWatermark
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRelayRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        packetID = try container.decode(OpaqueRoutePacketIDV2.self, forKey: .packetID)
+        acceptedCursor = try container.decode(OpaqueRouteCursorV2.self, forKey: .acceptedCursor)
+        highWatermark = try container.decode(OpaqueRouteCursorV2.self, forKey: .highWatermark)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .acceptedCursor,
+                in: container,
+                debugDescription: "Opaque route append receipt is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route append receipt is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(packetID, forKey: .packetID)
+        try container.encode(acceptedCursor, forKey: .acceptedCursor)
+        try container.encode(highWatermark, forKey: .highWatermark)
+    }
+
+    public var isStructurallyValid: Bool {
+        packetID.isStructurallyValid
+            && acceptedCursor.isStructurallyValid
+            && highWatermark.isStructurallyValid
+    }
 }
 
 public struct OpaqueRouteReceivedPacketV2: Codable, Equatable {
@@ -441,6 +600,62 @@ public struct OpaqueRouteCommitResponseV2: Codable, Equatable {
     public let committedCursor: OpaqueRouteCursorV2
     public let highWatermark: OpaqueRouteCursorV2
     public let retentionFloor: OpaqueRouteCursorV2
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case committedCursor
+        case highWatermark
+        case retentionFloor
+    }
+
+    public init(
+        committedCursor: OpaqueRouteCursorV2,
+        highWatermark: OpaqueRouteCursorV2,
+        retentionFloor: OpaqueRouteCursorV2
+    ) {
+        self.committedCursor = committedCursor
+        self.highWatermark = highWatermark
+        self.retentionFloor = retentionFloor
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRelayRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        committedCursor = try container.decode(OpaqueRouteCursorV2.self, forKey: .committedCursor)
+        highWatermark = try container.decode(OpaqueRouteCursorV2.self, forKey: .highWatermark)
+        retentionFloor = try container.decode(OpaqueRouteCursorV2.self, forKey: .retentionFloor)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .committedCursor,
+                in: container,
+                debugDescription: "Opaque route commit response is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route commit response is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(committedCursor, forKey: .committedCursor)
+        try container.encode(highWatermark, forKey: .highWatermark)
+        try container.encode(retentionFloor, forKey: .retentionFloor)
+    }
+
+    public var isStructurallyValid: Bool {
+        committedCursor.isStructurallyValid
+            && highWatermark.isStructurallyValid
+            && retentionFloor.isStructurallyValid
+    }
 }
 
 // MARK: - Authoritative in-memory relay state

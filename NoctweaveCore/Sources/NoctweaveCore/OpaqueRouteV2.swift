@@ -47,7 +47,7 @@ public struct OpaqueReceiveRouteIDV2: Codable, Equatable, Hashable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     let rawValue: Data
 
-    private enum CodingKeys: String, CodingKey { case rawValue }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case rawValue }
 
     init(rawValue: Data) {
         self.rawValue = rawValue
@@ -58,6 +58,10 @@ public struct OpaqueReceiveRouteIDV2: Codable, Equatable, Hashable,
     }
 
     public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let rawValue = try container.decode(Data.self, forKey: .rawValue)
         guard opaqueRouteIsValidFixedValue(rawValue) else {
@@ -71,6 +75,15 @@ public struct OpaqueReceiveRouteIDV2: Codable, Equatable, Hashable,
     }
 
     public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                rawValue,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route identifier must be a nonzero 32-byte value"
+                )
+            )
+        }
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(rawValue, forKey: .rawValue)
     }
@@ -88,7 +101,7 @@ public struct OpaqueRouteIdempotencyKeyV2: Codable, Equatable, Hashable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     let rawValue: Data
 
-    private enum CodingKeys: String, CodingKey { case rawValue }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case rawValue }
 
     init(rawValue: Data) {
         self.rawValue = rawValue
@@ -99,6 +112,10 @@ public struct OpaqueRouteIdempotencyKeyV2: Codable, Equatable, Hashable,
     }
 
     public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let rawValue = try container.decode(Data.self, forKey: .rawValue)
         guard opaqueRouteIsValidFixedValue(rawValue) else {
@@ -112,6 +129,15 @@ public struct OpaqueRouteIdempotencyKeyV2: Codable, Equatable, Hashable,
     }
 
     public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                rawValue,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route idempotency key must be a nonzero 32-byte value"
+                )
+            )
+        }
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(rawValue, forKey: .rawValue)
     }
@@ -129,7 +155,7 @@ public struct OpaqueRouteProofNonceV2: Codable, Equatable, Hashable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     let rawValue: Data
 
-    private enum CodingKeys: String, CodingKey { case rawValue }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case rawValue }
 
     init(rawValue: Data) {
         self.rawValue = rawValue
@@ -140,6 +166,10 @@ public struct OpaqueRouteProofNonceV2: Codable, Equatable, Hashable,
     }
 
     public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let rawValue = try container.decode(Data.self, forKey: .rawValue)
         guard opaqueRouteIsValidFixedValue(rawValue) else {
@@ -153,6 +183,15 @@ public struct OpaqueRouteProofNonceV2: Codable, Equatable, Hashable,
     }
 
     public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                rawValue,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route proof nonce must be a nonzero 32-byte value"
+                )
+            )
+        }
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(rawValue, forKey: .rawValue)
     }
@@ -315,6 +354,13 @@ public struct OpaqueRoutePolicyV2: Codable, Equatable {
     public let quotaBucket: OpaqueRouteQuotaBucketV2
     public let transportRequirement: OpaqueRouteTransportRequirementV2
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case paddingBucket
+        case retentionBucket
+        case quotaBucket
+        case transportRequirement
+    }
+
     public init(
         paddingBucket: OpaqueRoutePaddingBucketV2,
         retentionBucket: OpaqueRouteRetentionBucketV2,
@@ -324,6 +370,45 @@ public struct OpaqueRoutePolicyV2: Codable, Equatable {
         self.retentionBucket = retentionBucket
         self.quotaBucket = quotaBucket
         self.transportRequirement = .confidentialAuthenticated
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        paddingBucket = try container.decode(OpaqueRoutePaddingBucketV2.self, forKey: .paddingBucket)
+        retentionBucket = try container.decode(OpaqueRouteRetentionBucketV2.self, forKey: .retentionBucket)
+        quotaBucket = try container.decode(OpaqueRouteQuotaBucketV2.self, forKey: .quotaBucket)
+        transportRequirement = try container.decode(
+            OpaqueRouteTransportRequirementV2.self,
+            forKey: .transportRequirement
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .transportRequirement,
+                in: container,
+                debugDescription: "Opaque route policy is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route policy is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(paddingBucket, forKey: .paddingBucket)
+        try container.encode(retentionBucket, forKey: .retentionBucket)
+        try container.encode(quotaBucket, forKey: .quotaBucket)
+        try container.encode(transportRequirement, forKey: .transportRequirement)
     }
 
     public var maximumStoredBytes: UInt64 {
@@ -342,6 +427,14 @@ public struct OpaqueRouteLeaseV2: Codable, Equatable {
     public let expiresAt: Date
     public let renewalSequence: UInt64
     public let policy: OpaqueRoutePolicyV2
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case issuedAt
+        case lastRenewedAt
+        case expiresAt
+        case renewalSequence
+        case policy
+    }
 
     public init(
         issuedAt: Date,
@@ -369,6 +462,46 @@ public struct OpaqueRouteLeaseV2: Codable, Equatable {
         self.expiresAt = expiresAt
         self.renewalSequence = renewalSequence
         self.policy = policy
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            issuedAt: try container.decode(Date.self, forKey: .issuedAt),
+            lastRenewedAt: try container.decode(Date.self, forKey: .lastRenewedAt),
+            expiresAt: try container.decode(Date.self, forKey: .expiresAt),
+            renewalSequence: try container.decode(UInt64.self, forKey: .renewalSequence),
+            policy: try container.decode(OpaqueRoutePolicyV2.self, forKey: .policy)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .expiresAt,
+                in: container,
+                debugDescription: "Opaque route lease is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route lease is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(issuedAt, forKey: .issuedAt)
+        try container.encode(lastRenewedAt, forKey: .lastRenewedAt)
+        try container.encode(expiresAt, forKey: .expiresAt)
+        try container.encode(renewalSequence, forKey: .renewalSequence)
+        try container.encode(policy, forKey: .policy)
     }
 
     public var isStructurallyValid: Bool {
@@ -428,6 +561,68 @@ public struct OpaqueRouteAuthorizationProofV2: Codable, Equatable {
     public let operationDigest: Data
     public let authorizedAt: Date
     public let mac: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case authority
+        case nonce
+        case operationDigest
+        case authorizedAt
+        case mac
+    }
+
+    init(
+        authority: OpaqueRouteAuthorityV2,
+        nonce: OpaqueRouteProofNonceV2,
+        operationDigest: Data,
+        authorizedAt: Date,
+        mac: Data
+    ) {
+        self.authority = authority
+        self.nonce = nonce
+        self.operationDigest = operationDigest
+        self.authorizedAt = authorizedAt
+        self.mac = mac
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            authority: try container.decode(OpaqueRouteAuthorityV2.self, forKey: .authority),
+            nonce: try container.decode(OpaqueRouteProofNonceV2.self, forKey: .nonce),
+            operationDigest: try container.decode(Data.self, forKey: .operationDigest),
+            authorizedAt: try container.decode(Date.self, forKey: .authorizedAt),
+            mac: try container.decode(Data.self, forKey: .mac)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .mac,
+                in: container,
+                debugDescription: "Opaque route authorization proof is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route authorization proof is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(authority, forKey: .authority)
+        try container.encode(nonce, forKey: .nonce)
+        try container.encode(operationDigest, forKey: .operationDigest)
+        try container.encode(authorizedAt, forKey: .authorizedAt)
+        try container.encode(mac, forKey: .mac)
+    }
 
     public var isStructurallyValid: Bool {
         nonce.isStructurallyValid
@@ -522,12 +717,59 @@ public struct OpaqueRouteAuthorizationReplayLedgerV2: Codable, Equatable {
     private struct Entry: Codable, Equatable {
         let digest: Data
         let expiresAt: Date
+
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case digest
+            case expiresAt
+        }
+
+        init(digest: Data, expiresAt: Date) {
+            self.digest = digest
+            self.expiresAt = expiresAt
+        }
+
+        init(from decoder: Decoder) throws {
+            try opaqueRouteRequireExactObject(
+                decoder,
+                keys: CodingKeys.allCases.map(\.rawValue)
+            )
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            digest = try container.decode(Data.self, forKey: .digest)
+            expiresAt = try container.decode(Date.self, forKey: .expiresAt)
+            guard isStructurallyValid else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .digest,
+                    in: container,
+                    debugDescription: "Opaque route replay entry is invalid"
+                )
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            guard isStructurallyValid else {
+                throw EncodingError.invalidValue(
+                    self,
+                    EncodingError.Context(
+                        codingPath: encoder.codingPath,
+                        debugDescription: "Opaque route replay entry is invalid"
+                    )
+                )
+            }
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(digest, forKey: .digest)
+            try container.encode(expiresAt, forKey: .expiresAt)
+        }
+
+        var isStructurallyValid: Bool {
+            opaqueRouteIsValidDigest(digest)
+                && expiresAt.timeIntervalSince1970.isFinite
+        }
     }
 
     private var entriesByDigest: [Data: Date] = [:]
     private var observedAtHighWatermark: Date?
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case entries
         case observedAtHighWatermark
     }
@@ -535,6 +777,10 @@ public struct OpaqueRouteAuthorizationReplayLedgerV2: Codable, Equatable {
     public init() {}
 
     public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let entries = try container.decode([Entry].self, forKey: .entries)
         let highWatermark = try container.decodeIfPresent(
@@ -569,6 +815,15 @@ public struct OpaqueRouteAuthorizationReplayLedgerV2: Codable, Equatable {
     }
 
     public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route replay ledger is invalid"
+                )
+            )
+        }
         var container = encoder.container(keyedBy: CodingKeys.self)
         let deterministicEntries = entriesByDigest.map {
             Entry(digest: $0.key, expiresAt: $0.value)
@@ -576,13 +831,24 @@ public struct OpaqueRouteAuthorizationReplayLedgerV2: Codable, Equatable {
             $0.digest.lexicographicallyPrecedes($1.digest)
         }
         try container.encode(deterministicEntries, forKey: .entries)
-        try container.encodeIfPresent(
-            observedAtHighWatermark,
-            forKey: .observedAtHighWatermark
-        )
+        if let observedAtHighWatermark {
+            try container.encode(observedAtHighWatermark, forKey: .observedAtHighWatermark)
+        } else {
+            try container.encodeNil(forKey: .observedAtHighWatermark)
+        }
     }
 
     public var count: Int { entriesByDigest.count }
+
+    public var isStructurallyValid: Bool {
+        entriesByDigest.count <= Self.maximumEntries
+            && entriesByDigest.allSatisfy { entry in
+                opaqueRouteIsValidDigest(entry.key)
+                    && entry.value.timeIntervalSince1970.isFinite
+                    && (observedAtHighWatermark.map { entry.value >= $0 } ?? true)
+            }
+            && observedAtHighWatermark?.timeIntervalSince1970.isFinite != false
+    }
 
     fileprivate mutating func monotonicTime(_ receivedAt: Date) throws -> Date {
         guard receivedAt.timeIntervalSince1970.isFinite else {
@@ -627,6 +893,14 @@ public struct OpaqueRouteClientCapabilityMaterialV2: Codable, Equatable,
     public let renewCapability: RouteRenewCapabilityV2
     public let teardownCapability: RouteTeardownCapabilityV2
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case routeID
+        case sendCapability
+        case readCredential
+        case renewCapability
+        case teardownCapability
+    }
+
     public init(
         routeID: OpaqueReceiveRouteIDV2 = .generate(),
         sendCapability: RouteSendCapabilityV2 = .generate(),
@@ -640,6 +914,42 @@ public struct OpaqueRouteClientCapabilityMaterialV2: Codable, Equatable,
         self.renewCapability = renewCapability
         self.teardownCapability = teardownCapability
         guard isStructurallyValid else { throw OpaqueRouteV2Error.invalidCredential }
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            routeID: container.decode(OpaqueReceiveRouteIDV2.self, forKey: .routeID),
+            sendCapability: container.decode(RouteSendCapabilityV2.self, forKey: .sendCapability),
+            readCredential: container.decode(RouteReadCredentialV2.self, forKey: .readCredential),
+            renewCapability: container.decode(RouteRenewCapabilityV2.self, forKey: .renewCapability),
+            teardownCapability: container.decode(
+                RouteTeardownCapabilityV2.self,
+                forKey: .teardownCapability
+            )
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route client capability material is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(routeID, forKey: .routeID)
+        try container.encode(sendCapability, forKey: .sendCapability)
+        try container.encode(readCredential, forKey: .readCredential)
+        try container.encode(renewCapability, forKey: .renewCapability)
+        try container.encode(teardownCapability, forKey: .teardownCapability)
     }
 
     public var isStructurallyValid: Bool {
@@ -812,6 +1122,18 @@ public struct OpaqueRouteCreateRequestV2: Codable, Equatable {
     public let idempotencyKey: OpaqueRouteIdempotencyKeyV2
     public let authorization: OpaqueRouteAuthorizationProofV2
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case routeID
+        case sendCapabilityDigest
+        case readCredentialDigest
+        case renewCapabilityDigest
+        case teardownCapabilityDigest
+        case lease
+        case idempotencyKey
+        case authorization
+    }
+
     fileprivate init(unsigned: Unsigned, authorization: OpaqueRouteAuthorizationProofV2) {
         version = unsigned.version
         routeID = unsigned.routeID
@@ -822,6 +1144,62 @@ public struct OpaqueRouteCreateRequestV2: Codable, Equatable {
         lease = unsigned.lease
         idempotencyKey = unsigned.idempotencyKey
         self.authorization = authorization
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            unsigned: Unsigned(
+                version: try container.decode(Int.self, forKey: .version),
+                routeID: try container.decode(OpaqueReceiveRouteIDV2.self, forKey: .routeID),
+                sendCapabilityDigest: try container.decode(Data.self, forKey: .sendCapabilityDigest),
+                readCredentialDigest: try container.decode(Data.self, forKey: .readCredentialDigest),
+                renewCapabilityDigest: try container.decode(Data.self, forKey: .renewCapabilityDigest),
+                teardownCapabilityDigest: try container.decode(Data.self, forKey: .teardownCapabilityDigest),
+                lease: try container.decode(OpaqueRouteLeaseV2.self, forKey: .lease),
+                idempotencyKey: try container.decode(
+                    OpaqueRouteIdempotencyKeyV2.self,
+                    forKey: .idempotencyKey
+                )
+            ),
+            authorization: try container.decode(
+                OpaqueRouteAuthorizationProofV2.self,
+                forKey: .authorization
+            )
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .authorization,
+                in: container,
+                debugDescription: "Opaque route create request is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route create request is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(routeID, forKey: .routeID)
+        try container.encode(sendCapabilityDigest, forKey: .sendCapabilityDigest)
+        try container.encode(readCredentialDigest, forKey: .readCredentialDigest)
+        try container.encode(renewCapabilityDigest, forKey: .renewCapabilityDigest)
+        try container.encode(teardownCapabilityDigest, forKey: .teardownCapabilityDigest)
+        try container.encode(lease, forKey: .lease)
+        try container.encode(idempotencyKey, forKey: .idempotencyKey)
+        try container.encode(authorization, forKey: .authorization)
     }
 
     fileprivate var unsigned: Unsigned {
@@ -885,6 +1263,17 @@ public struct OpaqueRouteRenewRequestV2: Codable, Equatable {
     public let idempotencyKey: OpaqueRouteIdempotencyKeyV2
     public let authorization: OpaqueRouteAuthorizationProofV2
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case routeID
+        case renewalSequence
+        case previousTransitionDigest
+        case newExpiry
+        case authorizedAt
+        case idempotencyKey
+        case authorization
+    }
+
     fileprivate init(unsigned: Unsigned, authorization: OpaqueRouteAuthorizationProofV2) {
         version = unsigned.version
         routeID = unsigned.routeID
@@ -894,6 +1283,63 @@ public struct OpaqueRouteRenewRequestV2: Codable, Equatable {
         authorizedAt = unsigned.authorizedAt
         idempotencyKey = unsigned.idempotencyKey
         self.authorization = authorization
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            unsigned: Unsigned(
+                version: try container.decode(Int.self, forKey: .version),
+                routeID: try container.decode(OpaqueReceiveRouteIDV2.self, forKey: .routeID),
+                renewalSequence: try container.decode(UInt64.self, forKey: .renewalSequence),
+                previousTransitionDigest: try container.decode(
+                    Data.self,
+                    forKey: .previousTransitionDigest
+                ),
+                newExpiry: try container.decode(Date.self, forKey: .newExpiry),
+                authorizedAt: try container.decode(Date.self, forKey: .authorizedAt),
+                idempotencyKey: try container.decode(
+                    OpaqueRouteIdempotencyKeyV2.self,
+                    forKey: .idempotencyKey
+                )
+            ),
+            authorization: try container.decode(
+                OpaqueRouteAuthorizationProofV2.self,
+                forKey: .authorization
+            )
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .authorization,
+                in: container,
+                debugDescription: "Opaque route renew request is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route renew request is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(routeID, forKey: .routeID)
+        try container.encode(renewalSequence, forKey: .renewalSequence)
+        try container.encode(previousTransitionDigest, forKey: .previousTransitionDigest)
+        try container.encode(newExpiry, forKey: .newExpiry)
+        try container.encode(authorizedAt, forKey: .authorizedAt)
+        try container.encode(idempotencyKey, forKey: .idempotencyKey)
+        try container.encode(authorization, forKey: .authorization)
     }
 
     fileprivate var unsigned: Unsigned {
@@ -953,6 +1399,16 @@ public struct OpaqueRouteTeardownRequestV2: Codable, Equatable {
     public let idempotencyKey: OpaqueRouteIdempotencyKeyV2
     public let authorization: OpaqueRouteAuthorizationProofV2
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case routeID
+        case renewalSequence
+        case previousTransitionDigest
+        case authorizedAt
+        case idempotencyKey
+        case authorization
+    }
+
     fileprivate init(unsigned: Unsigned, authorization: OpaqueRouteAuthorizationProofV2) {
         version = unsigned.version
         routeID = unsigned.routeID
@@ -961,6 +1417,61 @@ public struct OpaqueRouteTeardownRequestV2: Codable, Equatable {
         authorizedAt = unsigned.authorizedAt
         idempotencyKey = unsigned.idempotencyKey
         self.authorization = authorization
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            unsigned: Unsigned(
+                version: try container.decode(Int.self, forKey: .version),
+                routeID: try container.decode(OpaqueReceiveRouteIDV2.self, forKey: .routeID),
+                renewalSequence: try container.decode(UInt64.self, forKey: .renewalSequence),
+                previousTransitionDigest: try container.decode(
+                    Data.self,
+                    forKey: .previousTransitionDigest
+                ),
+                authorizedAt: try container.decode(Date.self, forKey: .authorizedAt),
+                idempotencyKey: try container.decode(
+                    OpaqueRouteIdempotencyKeyV2.self,
+                    forKey: .idempotencyKey
+                )
+            ),
+            authorization: try container.decode(
+                OpaqueRouteAuthorizationProofV2.self,
+                forKey: .authorization
+            )
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .authorization,
+                in: container,
+                debugDescription: "Opaque route teardown request is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route teardown request is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(routeID, forKey: .routeID)
+        try container.encode(renewalSequence, forKey: .renewalSequence)
+        try container.encode(previousTransitionDigest, forKey: .previousTransitionDigest)
+        try container.encode(authorizedAt, forKey: .authorizedAt)
+        try container.encode(idempotencyKey, forKey: .idempotencyKey)
+        try container.encode(authorization, forKey: .authorization)
     }
 
     fileprivate var unsigned: Unsigned {
@@ -1017,6 +1528,23 @@ public struct OpaqueReceiveRouteV2: Codable, Equatable {
     public let lastIdempotencyKey: OpaqueRouteIdempotencyKeyV2
     public let lastTransitionDigest: Data
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case routeID
+        case sendCapabilityDigest
+        case readCredentialDigest
+        case renewCapabilityDigest
+        case teardownCapabilityDigest
+        case lease
+        case status
+        case createdAt
+        case tornDownAt
+        case creationIdempotencyKey
+        case creationDigest
+        case lastIdempotencyKey
+        case lastTransitionDigest
+    }
+
     private init(
         version: Int = NoctweaveOpaqueRoutesV2.version,
         routeID: OpaqueReceiveRouteIDV2,
@@ -1047,6 +1575,74 @@ public struct OpaqueReceiveRouteV2: Codable, Equatable {
         self.creationDigest = creationDigest
         self.lastIdempotencyKey = lastIdempotencyKey
         self.lastTransitionDigest = lastTransitionDigest
+    }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            version: try container.decode(Int.self, forKey: .version),
+            routeID: try container.decode(OpaqueReceiveRouteIDV2.self, forKey: .routeID),
+            sendCapabilityDigest: try container.decode(Data.self, forKey: .sendCapabilityDigest),
+            readCredentialDigest: try container.decode(Data.self, forKey: .readCredentialDigest),
+            renewCapabilityDigest: try container.decode(Data.self, forKey: .renewCapabilityDigest),
+            teardownCapabilityDigest: try container.decode(Data.self, forKey: .teardownCapabilityDigest),
+            lease: try container.decode(OpaqueRouteLeaseV2.self, forKey: .lease),
+            status: try container.decode(OpaqueReceiveRouteStatusV2.self, forKey: .status),
+            createdAt: try container.decode(Date.self, forKey: .createdAt),
+            tornDownAt: try container.decodeIfPresent(Date.self, forKey: .tornDownAt),
+            creationIdempotencyKey: try container.decode(
+                OpaqueRouteIdempotencyKeyV2.self,
+                forKey: .creationIdempotencyKey
+            ),
+            creationDigest: try container.decode(Data.self, forKey: .creationDigest),
+            lastIdempotencyKey: try container.decode(
+                OpaqueRouteIdempotencyKeyV2.self,
+                forKey: .lastIdempotencyKey
+            ),
+            lastTransitionDigest: try container.decode(Data.self, forKey: .lastTransitionDigest)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .lastTransitionDigest,
+                in: container,
+                debugDescription: "Opaque receive route is invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque receive route is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(routeID, forKey: .routeID)
+        try container.encode(sendCapabilityDigest, forKey: .sendCapabilityDigest)
+        try container.encode(readCredentialDigest, forKey: .readCredentialDigest)
+        try container.encode(renewCapabilityDigest, forKey: .renewCapabilityDigest)
+        try container.encode(teardownCapabilityDigest, forKey: .teardownCapabilityDigest)
+        try container.encode(lease, forKey: .lease)
+        try container.encode(status, forKey: .status)
+        try container.encode(createdAt, forKey: .createdAt)
+        if let tornDownAt {
+            try container.encode(tornDownAt, forKey: .tornDownAt)
+        } else {
+            try container.encodeNil(forKey: .tornDownAt)
+        }
+        try container.encode(creationIdempotencyKey, forKey: .creationIdempotencyKey)
+        try container.encode(creationDigest, forKey: .creationDigest)
+        try container.encode(lastIdempotencyKey, forKey: .lastIdempotencyKey)
+        try container.encode(lastTransitionDigest, forKey: .lastTransitionDigest)
     }
 
     public var isStructurallyValid: Bool {
@@ -1474,6 +2070,7 @@ private struct OpaqueRouteCredentialCodingKey: CodingKey {
 }
 
 private func opaqueRouteDecodeCredential(from decoder: Decoder) throws -> Data {
+    try opaqueRouteRequireExactObject(decoder, keys: ["rawValue"])
     let key = OpaqueRouteCredentialCodingKey(stringValue: "rawValue")!
     let container = try decoder.container(keyedBy: OpaqueRouteCredentialCodingKey.self)
     let value = try container.decode(Data.self, forKey: key)
@@ -1485,6 +2082,21 @@ private func opaqueRouteDecodeCredential(from decoder: Decoder) throws -> Data {
         )
     }
     return value
+}
+
+private func opaqueRouteRequireExactObject(
+    _ decoder: Decoder,
+    keys: [String]
+) throws {
+    let container = try decoder.container(keyedBy: OpaqueRouteCredentialCodingKey.self)
+    guard Set(container.allKeys.map(\.stringValue)) == Set(keys) else {
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "Opaque route fields must match the current protocol exactly"
+            )
+        )
+    }
 }
 
 private func opaqueRouteEncodeCredential(_ value: Data, to encoder: Encoder) throws {

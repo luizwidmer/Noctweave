@@ -105,7 +105,7 @@ public struct OpaqueRoutePacketIDV2: Codable, Equatable, Hashable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     let rawValue: Data
 
-    private enum CodingKeys: String, CodingKey { case rawValue }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case rawValue }
 
     init(rawValue: Data) {
         self.rawValue = rawValue
@@ -116,6 +116,10 @@ public struct OpaqueRoutePacketIDV2: Codable, Equatable, Hashable,
     }
 
     public init(from decoder: Decoder) throws {
+        try opaquePacketRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let value = try container.decode(Data.self, forKey: .rawValue)
         guard opaquePacketIsValidIdentifier(value) else {
@@ -209,7 +213,7 @@ public struct OpaqueRoutePacketV2: Codable, Equatable {
     public let sealedFrame: Data
     public let authorization: OpaqueRouteAuthorizationProofV2
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case routeID
         case packetID
         case sealedFrame
@@ -229,6 +233,10 @@ public struct OpaqueRoutePacketV2: Codable, Equatable {
     }
 
     public init(from decoder: Decoder) throws {
+        try opaquePacketRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         routeID = try container.decode(OpaqueReceiveRouteIDV2.self, forKey: .routeID)
         packetID = try container.decode(OpaqueRoutePacketIDV2.self, forKey: .packetID)
@@ -904,4 +912,34 @@ private func opaquePacketReadBytes(
     let value = Data(data[offset..<(offset + count)])
     offset += count
     return value
+}
+
+private struct OpaquePacketExactCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func opaquePacketRequireExactObject(
+    _ decoder: Decoder,
+    keys: [String]
+) throws {
+    let container = try decoder.container(keyedBy: OpaquePacketExactCodingKey.self)
+    guard Set(container.allKeys.map(\.stringValue)) == Set(keys) else {
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "Opaque route packet fields must match the current protocol exactly"
+            )
+        )
+    }
 }
