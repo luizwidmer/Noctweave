@@ -113,6 +113,100 @@ public struct HeadlessSyncResult: Codable, Equatable {
     public let hasMore: Bool
 }
 
+/// Durable local preparation of one group application event. When
+/// `transportOperation` is non-nil its exact route packets have already been
+/// saved and may be resumed byte-for-byte after a process restart.
+public struct HeadlessPreparedGroupApplicationV2: Codable, Equatable {
+    public let groupID: UUID
+    public let event: GroupConversationEventV2
+    public let envelope: GroupApplicationEnvelopeV2
+    public let transportOperation: GroupOpaqueRouteOutboundOperationV2?
+    public let complete: Bool
+
+    public init(
+        groupID: UUID,
+        event: GroupConversationEventV2,
+        envelope: GroupApplicationEnvelopeV2,
+        transportOperation: GroupOpaqueRouteOutboundOperationV2?,
+        complete: Bool
+    ) {
+        self.groupID = groupID
+        self.event = event
+        self.envelope = envelope
+        self.transportOperation = transportOperation
+        self.complete = complete
+    }
+}
+
+/// Durable local preparation of a group epoch transition and its Welcomes.
+/// Group authority remains group-scoped; this contains no account, persona,
+/// device, installation, or globally reusable endpoint identity.
+public struct HeadlessPreparedGroupEpochV2: Codable, Equatable {
+    public let groupID: UUID
+    public let publication: GroupEpochPublication
+    public let transportOperation: GroupOpaqueRouteOutboundOperationV2?
+    public let complete: Bool
+
+    public init(
+        groupID: UUID,
+        publication: GroupEpochPublication,
+        transportOperation: GroupOpaqueRouteOutboundOperationV2?,
+        complete: Bool
+    ) {
+        self.groupID = groupID
+        self.publication = publication
+        self.transportOperation = transportOperation
+        self.complete = complete
+    }
+}
+
+/// Why a durable group transport operation stopped. Exact packets remain in
+/// the encrypted client state for every non-complete disposition.
+public enum HeadlessGroupTransportDispositionV2: String, Codable, Equatable {
+    case complete
+    case pendingRetry
+    case authorizationRecoveryRequired
+    case relayRejected
+    case invalidRelayResponse
+}
+
+public struct HeadlessGroupTransportResumeResultV2: Codable, Equatable {
+    public let groupID: UUID
+    public let operationID: UUID
+    public let logicalID: UUID
+    public let kind: GroupOpaqueRouteOutboundOperationKindV2
+    public let acceptedCredentialHandles: [GroupScopedCredentialHandleV2]
+    public let attemptedPublicationCount: Int
+    public let acceptedPublicationCount: Int
+    public let pendingPublicationCount: Int
+    public let complete: Bool
+    public let disposition: HeadlessGroupTransportDispositionV2
+
+    public init(
+        groupID: UUID,
+        operationID: UUID,
+        logicalID: UUID,
+        kind: GroupOpaqueRouteOutboundOperationKindV2,
+        acceptedCredentialHandles: [GroupScopedCredentialHandleV2],
+        attemptedPublicationCount: Int,
+        acceptedPublicationCount: Int,
+        pendingPublicationCount: Int,
+        complete: Bool,
+        disposition: HeadlessGroupTransportDispositionV2
+    ) {
+        self.groupID = groupID
+        self.operationID = operationID
+        self.logicalID = logicalID
+        self.kind = kind
+        self.acceptedCredentialHandles = acceptedCredentialHandles
+        self.attemptedPublicationCount = attemptedPublicationCount
+        self.acceptedPublicationCount = acceptedPublicationCount
+        self.pendingPublicationCount = pendingPublicationCount
+        self.complete = complete
+        self.disposition = disposition
+    }
+}
+
 /// Public headless client for the clean 1.0 architecture. A persona is local
 /// organization only; all cryptographic state and delivery authority is scoped
 /// to a `PairwiseRelationshipV2`.
@@ -132,6 +226,9 @@ public actor HeadlessMessagingClient {
     private var stateSaveWaiters: [CheckedContinuation<Void, Never>] = []
     private var activeRelationshipTransactions = Set<UUID>()
     private var relationshipTransactionWaiters:
+        [UUID: [CheckedContinuation<Void, Never>]] = [:]
+    private var activeGroupTransactions = Set<UUID>()
+    private var groupTransactionWaiters:
         [UUID: [CheckedContinuation<Void, Never>]] = [:]
 
     public init(
@@ -355,19 +452,158 @@ public actor HeadlessMessagingClient {
         )
     }
 
-    /// Publishes a previously persisted group fanout plan. A credential is
-    /// reported accepted when at least one of its opaque routes durably accepts
-    /// every packet; redundant routes are availability copies, not extra
-    /// membership identities.
-    public func publishGroupFanoutPlan(
-        _ plan: GroupOpaqueRouteFanoutPlanV2
-    ) async throws -> [GroupScopedCredentialHandleV2] {
-        guard plan.isStructurallyValid else {
+    /// Persists the group sender-chain advance, exact encrypted envelope, and
+    /// exact opaque-route packets as one resumable workflow before relay I/O.
+    public func prepareGroupApplication(
+        _ event: GroupConversationEventV2,
+        routeSets: [SignedGroupOpaqueRouteSetV2],
+        at date: Date = Date()
+    ) async throws -> HeadlessPreparedGroupApplicationV2 {
+        if !HeadlessTransactionContext.groupIDs.contains(event.groupID) {
+            return try await withGroupTransaction(event.groupID) {
+                try await self.prepareGroupApplication(
+                    event,
+                    routeSets: routeSets,
+                    at: date
+                )
+            }
+        }
+        guard date.timeIntervalSince1970.isFinite else {
             throw HeadlessMessagingClientError.invalidState
         }
-        var accepted = Set<GroupScopedCredentialHandleV2>()
-        for publication in plan.publications {
-            var routeAccepted = true
+        let runtime = try openGroupRuntime(groupID: event.groupID)
+        let envelope = try await runtime.prepareApplicationEvent(event, at: date)
+        let operation = try await runtime.prepareApplicationTransport(
+            eventID: event.id,
+            routeSets: routeSets,
+            at: date
+        )
+        if operation == nil {
+            try await runtime.markApplicationPublished(eventID: event.id)
+        }
+        return HeadlessPreparedGroupApplicationV2(
+            groupID: event.groupID,
+            event: event,
+            envelope: envelope,
+            transportOperation: operation,
+            complete: operation == nil
+        )
+    }
+
+    /// Persists a signed group epoch transition, its Welcomes, and the exact
+    /// route publications needed for the old/new credential union.
+    public func prepareGroupEpoch(
+        groupID: UUID,
+        operation: SignedGroupCommitOperationV2,
+        proposedMembers: [GroupMemberV2],
+        proposedCredentials: [GroupMemberCredentialV2],
+        admissionProjection: GroupCredentialAdmissionV2? = nil,
+        replacementLocalCredential: LocalGroupCredentialV2? = nil,
+        proposedPermissions: GroupPermissionPolicy,
+        proposedMetadataDigest: Data?,
+        idempotencyKey: Data,
+        routeSets: [SignedGroupOpaqueRouteSetV2],
+        createdAt: Date = Date()
+    ) async throws -> HeadlessPreparedGroupEpochV2 {
+        if !HeadlessTransactionContext.groupIDs.contains(groupID) {
+            return try await withGroupTransaction(groupID) {
+                try await self.prepareGroupEpoch(
+                    groupID: groupID,
+                    operation: operation,
+                    proposedMembers: proposedMembers,
+                    proposedCredentials: proposedCredentials,
+                    admissionProjection: admissionProjection,
+                    replacementLocalCredential: replacementLocalCredential,
+                    proposedPermissions: proposedPermissions,
+                    proposedMetadataDigest: proposedMetadataDigest,
+                    idempotencyKey: idempotencyKey,
+                    routeSets: routeSets,
+                    createdAt: createdAt
+                )
+            }
+        }
+        guard createdAt.timeIntervalSince1970.isFinite else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let runtime = try openGroupRuntime(groupID: groupID)
+        let publication = try await runtime.prepareEpoch(
+            operation: operation,
+            proposedMembers: proposedMembers,
+            proposedCredentials: proposedCredentials,
+            admissionProjection: admissionProjection,
+            replacementLocalCredential: replacementLocalCredential,
+            proposedPermissions: proposedPermissions,
+            proposedMetadataDigest: proposedMetadataDigest,
+            idempotencyKey: idempotencyKey,
+            createdAt: createdAt
+        )
+        let transportOperation = try await runtime.prepareEpochTransport(
+            intentID: publication.intentId,
+            routeSets: routeSets,
+            at: createdAt
+        )
+        if transportOperation == nil {
+            try await runtime.finalizeEpoch(
+                intentId: publication.intentId,
+                at: createdAt
+            )
+        }
+        return HeadlessPreparedGroupEpochV2(
+            groupID: groupID,
+            publication: publication,
+            transportOperation: transportOperation,
+            complete: transportOperation == nil
+        )
+    }
+
+    /// Resumes one exact persisted group transport operation. An attempt is
+    /// durably recorded before every network call; only structurally valid,
+    /// packet-matching relay receipts can create acceptance evidence.
+    public func resumeGroupTransport(
+        groupID: UUID,
+        operationID: UUID,
+        at date: Date = Date()
+    ) async throws -> HeadlessGroupTransportResumeResultV2 {
+        if !HeadlessTransactionContext.groupIDs.contains(groupID) {
+            return try await withGroupTransaction(groupID) {
+                try await self.resumeGroupTransport(
+                    groupID: groupID,
+                    operationID: operationID,
+                    at: date
+                )
+            }
+        }
+        guard date.timeIntervalSince1970.isFinite else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let runtime = try openGroupRuntime(groupID: groupID)
+        guard var currentOperation = await runtime.outboundTransportOperations()
+            .first(where: { $0.id == operationID }) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+
+        var attemptedPublicationIDs = Set<UUID>()
+        var failureDisposition: HeadlessGroupTransportDispositionV2?
+
+        while !currentOperation.isComplete {
+            let eligible = try await runtime.eligibleOutboundTransportPublications(
+                operationID: operationID
+            )
+            guard let candidate = eligible.first(where: {
+                !attemptedPublicationIDs.contains($0.id)
+            }) else { break }
+            attemptedPublicationIDs.insert(candidate.id)
+
+            let attemptAt = max(max(Date(), date), currentOperation.updatedAt)
+            let publication = try await runtime.recordOutboundTransportAttempt(
+                operationID: operationID,
+                publicationID: candidate.id,
+                at: attemptAt
+            )
+            var receipts: [OpaqueRouteAppendReceiptV2] = []
+            receipts.reserveCapacity(publication.packets.count)
+            var publicationFailure: HeadlessGroupTransportDispositionV2?
+
             for packet in publication.packets {
                 do {
                     let response = try await relayClient(
@@ -378,20 +614,138 @@ public actor HeadlessMessagingClient {
                             sendCapability: publication.sendCapability
                         )
                     ))
-                    guard case .opaqueRouteAppend = response.successBody else {
-                        routeAccepted = false
+                    if response.status == .error {
+                        if response.error?.code == .authenticationRequired,
+                           groupAuthorizationProofExpired(packet, at: attemptAt) {
+                            publicationFailure = .authorizationRecoveryRequired
+                        } else if response.error?.retryable == true {
+                            publicationFailure = .pendingRetry
+                        } else {
+                            publicationFailure = .relayRejected
+                        }
                         break
                     }
+                    guard case .opaqueRouteAppend(let receipt)? = response.successBody,
+                          receipt.isStructurallyValid,
+                          receipt.packetID == packet.packetID else {
+                        publicationFailure = .invalidRelayResponse
+                        break
+                    }
+                    receipts.append(receipt)
                 } catch {
-                    routeAccepted = false
+                    publicationFailure = .pendingRetry
                     break
                 }
             }
-            if routeAccepted {
-                accepted.insert(publication.destinationCredentialHandle)
+
+            if let publicationFailure {
+                failureDisposition = strongerGroupTransportDisposition(
+                    failureDisposition,
+                    publicationFailure
+                )
+            } else {
+                let acceptedAt = max(Date(), attemptAt)
+                try await runtime.recordOutboundTransportAcceptance(
+                    operationID: operationID,
+                    publicationID: publication.id,
+                    receipts: receipts,
+                    at: acceptedAt
+                )
+            }
+            guard let refreshed = await runtime.outboundTransportOperations()
+                .first(where: { $0.id == operationID }) else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            currentOperation = refreshed
+        }
+
+        if currentOperation.isComplete {
+            switch currentOperation.kind {
+            case .application:
+                if await runtime.pendingApplicationPublications().contains(where: {
+                    $0.event.id == currentOperation.logicalID
+                }) {
+                    try await runtime.markApplicationPublished(
+                        eventID: currentOperation.logicalID
+                    )
+                }
+            case .epoch:
+                try await runtime.finalizeEpoch(
+                    intentId: currentOperation.logicalID,
+                    at: max(max(Date(), date), currentOperation.updatedAt)
+                )
             }
         }
-        return accepted.sorted { $0.rawValue < $1.rawValue }
+
+        guard let completedOperation = await runtime.outboundTransportOperations()
+            .first(where: { $0.id == operationID }) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let acceptedCount = completedOperation.deliveries.flatMap(\.attempts)
+            .filter { $0.acceptance != nil }.count
+        let pendingCount = completedOperation.isComplete
+            ? 0
+            : completedOperation.deliveries.flatMap(\.attempts)
+                .filter { $0.acceptance == nil }.count
+        let disposition: HeadlessGroupTransportDispositionV2 = completedOperation.isComplete
+            ? .complete
+            : (failureDisposition ?? .pendingRetry)
+        return HeadlessGroupTransportResumeResultV2(
+            groupID: groupID,
+            operationID: operationID,
+            logicalID: completedOperation.logicalID,
+            kind: completedOperation.kind,
+            acceptedCredentialHandles: fullyAcceptedGroupCredentialHandles(
+                completedOperation
+            ),
+            attemptedPublicationCount: attemptedPublicationIDs.count,
+            acceptedPublicationCount: acceptedCount,
+            pendingPublicationCount: pendingCount,
+            complete: completedOperation.isComplete,
+            disposition: disposition
+        )
+    }
+
+    /// Resumes every incomplete operation plus operations whose relay evidence
+    /// was saved before a crash but whose logical application/epoch projection
+    /// was not yet finalized.
+    public func resumePendingGroupTransports(
+        groupID: UUID,
+        at date: Date = Date()
+    ) async throws -> [HeadlessGroupTransportResumeResultV2] {
+        if !HeadlessTransactionContext.groupIDs.contains(groupID) {
+            return try await withGroupTransaction(groupID) {
+                try await self.resumePendingGroupTransports(
+                    groupID: groupID,
+                    at: date
+                )
+            }
+        }
+        let runtime = try openGroupRuntime(groupID: groupID)
+        let snapshot = await runtime.snapshot()
+        let pendingApplicationIDs = Set(
+            snapshot.pendingApplicationPublications.map { $0.event.id }
+        )
+        let pendingEpochIDs = Set(snapshot.epochIntents.filter {
+            $0.phase != .finalized
+        }.map(\.id))
+        let operationIDs = snapshot.outboundTransportOperations.filter { operation in
+            !operation.isComplete
+                || (operation.kind == .application
+                    && pendingApplicationIDs.contains(operation.logicalID))
+                || (operation.kind == .epoch
+                    && pendingEpochIDs.contains(operation.logicalID))
+        }.map(\.id)
+        var results: [HeadlessGroupTransportResumeResultV2] = []
+        results.reserveCapacity(operationIDs.count)
+        for operationID in operationIDs {
+            results.append(try await resumeGroupTransport(
+                groupID: groupID,
+                operationID: operationID,
+                at: date
+            ))
+        }
+        return results
     }
 
     public func setContinuityPolicy(
@@ -1132,10 +1486,22 @@ public actor HeadlessMessagingClient {
             relationshipID: relationshipID,
             at: date
         )
-        let prekeyPublication = try await renewRelationshipPrekeyIfNeeded(
-            relationshipID: relationshipID,
-            at: date
-        )
+        current = try relationship(relationshipID)
+        let hasReachableActiveRoute = current.localReceiveRoutes.contains { local in
+            local.route.lease.expiresAt > date
+                && current.localAdvertisedRoutes.routes.contains {
+                    $0.routeID == local.route.routeID && $0.state == .active
+                }
+        }
+        // Publishing a fresh prekey without a live receive route creates an
+        // unreachable session-establishment artifact. Route recovery must
+        // happen first; the next maintenance pass can then publish the prekey.
+        let prekeyPublication = hasReachableActiveRoute
+            ? try await renewRelationshipPrekeyIfNeeded(
+                relationshipID: relationshipID,
+                at: date
+            )
+            : nil
         let finalized = try await finalizeDrainedRoutes(
             relationshipID: relationshipID,
             at: date
@@ -3442,6 +3808,46 @@ public actor HeadlessMessagingClient {
         }
     }
 
+    private func withGroupTransaction<T>(
+        _ groupID: UUID,
+        operation: () async throws -> T
+    ) async rethrows -> T {
+        if HeadlessTransactionContext.groupIDs.contains(groupID) {
+            return try await operation()
+        }
+        await acquireGroupTransaction(groupID)
+        defer { releaseGroupTransaction(groupID) }
+        var held = HeadlessTransactionContext.groupIDs
+        held.insert(groupID)
+        return try await HeadlessTransactionContext.$groupIDs.withValue(held) {
+            try await operation()
+        }
+    }
+
+    private func acquireGroupTransaction(_ groupID: UUID) async {
+        if !activeGroupTransactions.contains(groupID) {
+            activeGroupTransactions.insert(groupID)
+            return
+        }
+        await withCheckedContinuation { continuation in
+            groupTransactionWaiters[groupID, default: []].append(continuation)
+        }
+    }
+
+    private func releaseGroupTransaction(_ groupID: UUID) {
+        if var waiters = groupTransactionWaiters[groupID], !waiters.isEmpty {
+            let next = waiters.removeFirst()
+            if waiters.isEmpty {
+                groupTransactionWaiters.removeValue(forKey: groupID)
+            } else {
+                groupTransactionWaiters[groupID] = waiters
+            }
+            next.resume()
+        } else {
+            activeGroupTransactions.remove(groupID)
+        }
+    }
+
     private func withStateSaveLock<T>(
         operation: () async throws -> T
     ) async rethrows -> T {
@@ -3578,6 +3984,54 @@ public actor HeadlessMessagingClient {
         return RelayClient(endpoint: endpoint, authToken: token)
     }
 
+    private func groupAuthorizationProofExpired(
+        _ packet: OpaqueRoutePacketV2,
+        at date: Date
+    ) -> Bool {
+        let expiry = packet.authorization.authorizedAt.addingTimeInterval(
+            NoctweaveOpaqueRoutesV2.maximumAuthorizationClockSkew
+        )
+        return expiry.timeIntervalSince1970.isFinite && expiry < date
+    }
+
+    private func strongerGroupTransportDisposition(
+        _ current: HeadlessGroupTransportDispositionV2?,
+        _ candidate: HeadlessGroupTransportDispositionV2
+    ) -> HeadlessGroupTransportDispositionV2 {
+        func priority(_ value: HeadlessGroupTransportDispositionV2) -> Int {
+            switch value {
+            case .complete: return 0
+            case .pendingRetry: return 1
+            case .relayRejected: return 2
+            case .invalidRelayResponse: return 3
+            case .authorizationRecoveryRequired: return 4
+            }
+        }
+        guard let current else { return candidate }
+        return priority(candidate) > priority(current) ? candidate : current
+    }
+
+    private func fullyAcceptedGroupCredentialHandles(
+        _ operation: GroupOpaqueRouteOutboundOperationV2
+    ) -> [GroupScopedCredentialHandleV2] {
+        operation.destinationSnapshots.compactMap { snapshot in
+            let handle = snapshot.credential.credentialHandle
+            let requiredDeliveries = operation.deliveries.filter {
+                $0.requiredCredentialHandles.contains(handle)
+            }
+            guard !requiredDeliveries.isEmpty,
+                  requiredDeliveries.allSatisfy({ delivery in
+                      delivery.attempts.contains {
+                          $0.publication.destinationCredentialHandle == handle
+                              && $0.acceptance != nil
+                      }
+                  }) else {
+                return nil
+            }
+            return handle
+        }.sorted { $0.rawValue < $1.rawValue }
+    }
+
     private func persistGroupRuntime(
         _ record: GroupRuntimeRecord,
         expectedCurrentRecord: GroupRuntimeRecord,
@@ -3610,6 +4064,7 @@ public actor HeadlessMessagingClient {
 
 private enum HeadlessTransactionContext {
     @TaskLocal static var relationshipIDs: Set<UUID> = []
+    @TaskLocal static var groupIDs: Set<UUID> = []
 }
 
 private actor HeadlessGroupRuntimePersistence: GroupRuntimeRecordPersistence {

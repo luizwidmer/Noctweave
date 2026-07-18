@@ -200,10 +200,14 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
         XCTAssertEqual(expired.routeDisposition, .routeExpired)
         XCTAssertTrue(expired.requiresFollowUp)
         XCTAssertNil(expired.startedRollover)
+        XCTAssertNil(expired.prekeyPublication)
         let expiredRelationship = try await expiredHarness.client.relationship(
             expiredHarness.relationshipID
         )
         XCTAssertTrue(expiredRelationship.pendingRouteRollovers.isEmpty)
+        XCTAssertFalse(expiredRelationship.protocolIntents.contains {
+            $0.kind == .renewRelationshipPrekey
+        })
 
         let blockedHarness = try makeHarness(label: "\(#function)-blocked")
         defer { try? FileManager.default.removeItem(at: blockedHarness.directory) }

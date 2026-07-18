@@ -1294,7 +1294,6 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         )
         try await runtime.registerPendingLocalCredential(pendingReplacement)
 
-        await store.setFailOnSaveNumber(4)
         await XCTAssertThrowsErrorAsync(try await runtime.prepareEpoch(
             operation: .updateMetadata,
             proposedMembers: fixture.state.members,
@@ -1304,11 +1303,10 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
             idempotencyKey: bytes(0x73),
             createdAt: fixture.now.addingTimeInterval(1)
         )) { error in
-            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+            XCTAssertEqual(error as? GroupRuntimeError, .pendingEpoch)
         }
-        await store.setFailOnSaveNumber(nil)
         let preparedSnapshot = await runtime.snapshot()
-        XCTAssertEqual(preparedSnapshot.epochIntents.first?.phase, .prepared)
+        XCTAssertTrue(preparedSnapshot.epochIntents.isEmpty)
 
         let reasonDigest = bytes(0x74)
         let idempotencyKey = bytes(0x75)
@@ -1505,6 +1503,254 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         afterFailure = await reopened.snapshot()
         XCTAssertNotNil(afterFailure.deletionState)
     }
+
+    func testGroupRouteSetIsCredentialBoundStrictAndHashChained() throws {
+        let fixture = try makeSignedFixture()
+        let firstRoute = try makeGroupSendRoute(marker: 0x21, now: fixture.now)
+        let initial = try SignedGroupOpaqueRouteSetV2.create(
+            groupID: fixture.record.groupId,
+            ownerCredentialHandle: fixture.credential.credentialHandle,
+            ownerAdmissionDigest: fixture.credential.admissionDigest,
+            routes: [firstRoute],
+            issuedAt: fixture.now,
+            expiresAt: fixture.now.addingTimeInterval(3_600),
+            signingKey: fixture.credential.signingKey
+        )
+        XCTAssertTrue(initial.verify(
+            ownerSigningPublicKey: fixture.credential.signingKey.publicKeyData
+        ))
+        XCTAssertNil(initial.previousDigest)
+
+        let successor = try initial.successor(
+            routes: [firstRoute],
+            issuedAt: fixture.now.addingTimeInterval(1),
+            expiresAt: fixture.now.addingTimeInterval(3_600),
+            signingKey: fixture.credential.signingKey
+        )
+        XCTAssertEqual(successor.revision, 1)
+        XCTAssertEqual(successor.previousDigest, initial.digest)
+        XCTAssertTrue(successor.isValidSuccessor(
+            of: initial,
+            ownerSigningPublicKey: fixture.credential.signingKey.publicKeyData
+        ))
+        try assertExactRoundTrip(successor, as: SignedGroupOpaqueRouteSetV2.self)
+
+        let encoded = try NoctweaveCoder.encode(successor, sortedKeys: true)
+        let wire = String(decoding: encoded, as: UTF8.self).lowercased()
+        for banned in ["persona", "account", "identity", "device", "installation", "inbox", "recovery"] {
+            XCTAssertFalse(wire.contains(banned), "unexpected non-group field: \(banned)")
+        }
+    }
+
+    func testApplicationTransportPersistsExactRetryAndRequiresAppendReceipts() async throws {
+        let fixture = try await makeTwoMemberRuntimeFixture()
+        let ownerSnapshot = await fixture.owner.snapshot()
+        let store = TestGroupRuntimeStore(record: ownerSnapshot)
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: ownerSnapshot,
+            persistence: store
+        )
+        let event = GroupConversationEventV2(
+            groupID: ownerSnapshot.groupId,
+            authorMemberHandle: ownerSnapshot.localCredential.memberHandle,
+            authorCredentialHandle: ownerSnapshot.localCredential.credentialHandle,
+            createdAt: fixture.now.addingTimeInterval(10),
+            kind: .application,
+            content: try XCTUnwrap(.text("durable group route retry"))
+        )
+        _ = try await runtime.prepareApplicationEvent(
+            event,
+            at: fixture.now.addingTimeInterval(10)
+        )
+        let routeSet = try makeGroupRouteSet(
+            credential: fixture.memberCredential,
+            groupID: ownerSnapshot.groupId,
+            marker: 0x41,
+            now: fixture.now
+        )
+        let preparedOperation = try await runtime.prepareApplicationTransport(
+            eventID: event.id,
+            routeSets: [routeSet],
+            at: fixture.now.addingTimeInterval(11)
+        )
+        let operation = try XCTUnwrap(preparedOperation)
+        let eligible = try await runtime.eligibleOutboundTransportPublications(
+            operationID: operation.id
+        )
+        let candidate = try XCTUnwrap(eligible.first)
+        await store.failNextSave()
+        await XCTAssertThrowsErrorAsync(try await runtime.recordOutboundTransportAttempt(
+            operationID: operation.id,
+            publicationID: candidate.id,
+            at: fixture.now.addingTimeInterval(12)
+        )) { error in
+            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+        }
+        await store.setFailOnSaveNumber(nil)
+        let afterFailedAttempt = await runtime.snapshot()
+        XCTAssertEqual(
+            afterFailedAttempt.outboundTransportOperations.first(where: {
+                $0.id == operation.id
+            })?.deliveries.first?.attempts.first?.attemptCount,
+            0
+        )
+        let exactAttempt = try await runtime.recordOutboundTransportAttempt(
+            operationID: operation.id,
+            publicationID: candidate.id,
+            at: fixture.now.addingTimeInterval(12)
+        )
+        XCTAssertEqual(exactAttempt, candidate)
+
+        let reopened = try await NoctweavePQGroupRuntimeV2.open(persistence: store)
+        let reopenedEligible = try await reopened.eligibleOutboundTransportPublications(
+            operationID: operation.id
+        )
+        let reopenedCandidate = try XCTUnwrap(reopenedEligible.first)
+        XCTAssertEqual(reopenedCandidate, candidate)
+        await XCTAssertThrowsErrorAsync(try await reopened.markApplicationPublished(
+            eventID: event.id
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .incompleteFanout)
+        }
+
+        await store.failNextSave()
+        await XCTAssertThrowsErrorAsync(try await reopened.recordOutboundTransportAcceptance(
+            operationID: operation.id,
+            publicationID: candidate.id,
+            receipts: transportReceipts(for: candidate, marker: 0x42),
+            at: fixture.now.addingTimeInterval(13)
+        )) { error in
+            XCTAssertEqual(error as? TestGroupRuntimeStore.StoreError, .injectedFailure)
+        }
+        await store.setFailOnSaveNumber(nil)
+        let afterFailedAcceptance = await reopened.snapshot()
+        XCTAssertNil(
+            afterFailedAcceptance.outboundTransportOperations.first(where: {
+                $0.id == operation.id
+            })?.deliveries.first?.attempts.first?.acceptance
+        )
+        try await reopened.recordOutboundTransportAcceptance(
+            operationID: operation.id,
+            publicationID: candidate.id,
+            receipts: transportReceipts(for: candidate, marker: 0x42),
+            at: fixture.now.addingTimeInterval(13)
+        )
+        try await reopened.markApplicationPublished(eventID: event.id)
+        let completed = await reopened.snapshot()
+        XCTAssertTrue(completed.pendingApplicationPublications.isEmpty)
+        XCTAssertEqual(
+            completed.outboundTransportOperations.first(where: { $0.id == operation.id })?
+                .isComplete,
+            true
+        )
+    }
+
+    func testEpochTransportOrdersTransitionBeforeWelcomeAndBlocksNextEpochTraffic() async throws {
+        let fixture = try await makeTwoMemberRuntimeFixture()
+        let ownerState = await fixture.owner.snapshot()
+        let publication = try await fixture.owner.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: ownerState.signedState.members,
+            proposedCredentials: ownerState.signedState.memberCredentials,
+            proposedPermissions: ownerState.signedState.permissions,
+            proposedMetadataDigest: bytes(0x51),
+            idempotencyKey: bytes(0x52),
+            createdAt: fixture.now.addingTimeInterval(20)
+        )
+        let blockedEvent = GroupConversationEventV2(
+            groupID: ownerState.groupId,
+            authorMemberHandle: ownerState.localCredential.memberHandle,
+            authorCredentialHandle: ownerState.localCredential.credentialHandle,
+            createdAt: fixture.now.addingTimeInterval(21),
+            kind: .application,
+            content: try XCTUnwrap(.text("must wait for epoch transport"))
+        )
+        await XCTAssertThrowsErrorAsync(try await fixture.owner.prepareApplicationEvent(
+            blockedEvent,
+            at: fixture.now.addingTimeInterval(21)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .pendingEpoch)
+        }
+
+        let routeSet = try makeGroupRouteSet(
+            credential: fixture.memberCredential,
+            groupID: ownerState.groupId,
+            marker: 0x53,
+            now: fixture.now
+        )
+        let preparedOperation = try await fixture.owner.prepareEpochTransport(
+            intentID: publication.intentId,
+            routeSets: [routeSet],
+            at: fixture.now.addingTimeInterval(22)
+        )
+        let operation = try XCTUnwrap(preparedOperation)
+        let welcomeAttempt = try XCTUnwrap(operation.deliveries.first(where: {
+            $0.artifactKind == .epochWelcome
+        })?.attempts.first)
+        await XCTAssertThrowsErrorAsync(try await fixture.owner.recordOutboundTransportAttempt(
+            operationID: operation.id,
+            publicationID: welcomeAttempt.id,
+            at: fixture.now.addingTimeInterval(23)
+        )) { error in
+            XCTAssertEqual(
+                error as? GroupOpaqueRouteTransportV2Error,
+                .publicationNotEligible
+            )
+        }
+        await XCTAssertThrowsErrorAsync(try await fixture.owner.markFanoutStored(
+            intentId: publication.intentId,
+            destinationCredentialHandle: fixture.memberCredential.credentialHandle,
+            at: fixture.now.addingTimeInterval(23)
+        )) { error in
+            XCTAssertEqual(error as? GroupRuntimeError, .incompleteFanout)
+        }
+
+        let initiallyEligible = try await fixture.owner
+            .eligibleOutboundTransportPublications(operationID: operation.id)
+        let transition = try XCTUnwrap(initiallyEligible.first)
+        _ = try await fixture.owner.recordOutboundTransportAttempt(
+            operationID: operation.id,
+            publicationID: transition.id,
+            at: fixture.now.addingTimeInterval(23)
+        )
+        try await fixture.owner.recordOutboundTransportAcceptance(
+            operationID: operation.id,
+            publicationID: transition.id,
+            receipts: transportReceipts(for: transition, marker: 0x54),
+            at: fixture.now.addingTimeInterval(24)
+        )
+        let nowEligible = try await fixture.owner
+            .eligibleOutboundTransportPublications(operationID: operation.id)
+        XCTAssertEqual(nowEligible.map(\.id), [welcomeAttempt.id])
+        _ = try await fixture.owner.recordOutboundTransportAttempt(
+            operationID: operation.id,
+            publicationID: welcomeAttempt.id,
+            at: fixture.now.addingTimeInterval(25)
+        )
+        try await fixture.owner.recordOutboundTransportAcceptance(
+            operationID: operation.id,
+            publicationID: welcomeAttempt.id,
+            receipts: transportReceipts(for: welcomeAttempt.publication, marker: 0x55),
+            at: fixture.now.addingTimeInterval(26)
+        )
+        try await fixture.owner.finalizeEpoch(
+            intentId: publication.intentId,
+            at: fixture.now.addingTimeInterval(27)
+        )
+        let completed = await fixture.owner.snapshot()
+        let completedOperation = try XCTUnwrap(
+            completed.outboundTransportOperations.first(where: { $0.id == operation.id })
+        )
+        XCTAssertTrue(completedOperation.isComplete)
+        XCTAssertEqual(
+            completed.epochIntents.first(where: { $0.id == publication.intentId })?.phase,
+            .finalized
+        )
+        try assertExactRoundTrip(
+            completedOperation,
+            as: GroupOpaqueRouteOutboundOperationV2.self
+        )
+    }
 }
 
 private struct SignedGroupRuntimeFixture {
@@ -1576,6 +1822,57 @@ private func makeAddMemberInvitation(
         proposedMetadataDigest: base.state.metadataDigest,
         idempotencyKey: bytes(0xD1),
         createdAt: base.now.addingTimeInterval(1)
+    )
+    let route = try makeGroupSendRoute(marker: 0xD2, now: base.now)
+    let routeSet = try SignedGroupOpaqueRouteSetV2.create(
+        groupID: base.state.groupId,
+        ownerCredentialHandle: memberCredential.credentialHandle,
+        ownerAdmissionDigest: memberCredential.admissionDigest,
+        routes: [route],
+        issuedAt: base.now,
+        expiresAt: base.now.addingTimeInterval(3_600),
+        signingKey: memberCredential.signingKey
+    )
+    let preparedTransport = try await owner.prepareEpochTransport(
+        intentID: publication.intentId,
+        routeSets: [routeSet],
+        at: base.now.addingTimeInterval(1)
+    )
+    let transport = try XCTUnwrap(preparedTransport)
+    var transportDate = base.now.addingTimeInterval(1)
+    while true {
+        let eligible = try await owner.eligibleOutboundTransportPublications(
+            operationID: transport.id
+        )
+        guard let candidate = eligible.first else { break }
+        transportDate = transportDate.addingTimeInterval(0.01)
+        let exact = try await owner.recordOutboundTransportAttempt(
+            operationID: transport.id,
+            publicationID: candidate.id,
+            at: transportDate
+        )
+        let receipts = exact.packets.map {
+            OpaqueRouteAppendReceiptV2(
+                packetID: $0.packetID,
+                acceptedCursor: OpaqueRouteCursorV2(
+                    rawValue: Data(repeating: 0xD3, count: 68)
+                ),
+                highWatermark: OpaqueRouteCursorV2(
+                    rawValue: Data(repeating: 0xD4, count: 68)
+                )
+            )
+        }
+        transportDate = transportDate.addingTimeInterval(0.01)
+        try await owner.recordOutboundTransportAcceptance(
+            operationID: transport.id,
+            publicationID: candidate.id,
+            receipts: receipts,
+            at: transportDate
+        )
+    }
+    try await owner.finalizeEpoch(
+        intentId: publication.intentId,
+        at: transportDate.addingTimeInterval(0.01)
     )
     let welcome = try XCTUnwrap(publication.signedWelcomes.first(where: {
         $0.destinationCredentialHandle == memberCredential.credentialHandle
@@ -1744,6 +2041,40 @@ private func makeGroupSendRoute(marker: UInt8, now: Date) throws -> OpaqueSendRo
     )
 }
 
+private func makeGroupRouteSet(
+    credential: LocalGroupCredentialV2,
+    groupID: UUID,
+    marker: UInt8,
+    now: Date
+) throws -> SignedGroupOpaqueRouteSetV2 {
+    try SignedGroupOpaqueRouteSetV2.create(
+        groupID: groupID,
+        ownerCredentialHandle: credential.credentialHandle,
+        ownerAdmissionDigest: credential.admissionDigest,
+        routes: [try makeGroupSendRoute(marker: marker, now: now)],
+        issuedAt: now,
+        expiresAt: now.addingTimeInterval(3_600),
+        signingKey: credential.signingKey
+    )
+}
+
+private func transportReceipts(
+    for publication: GroupOpaqueRoutePublicationV2,
+    marker: UInt8
+) -> [OpaqueRouteAppendReceiptV2] {
+    publication.packets.map {
+        OpaqueRouteAppendReceiptV2(
+            packetID: $0.packetID,
+            acceptedCursor: OpaqueRouteCursorV2(
+                rawValue: Data(repeating: marker, count: 68)
+            ),
+            highWatermark: OpaqueRouteCursorV2(
+                rawValue: Data(repeating: marker &+ 1, count: 68)
+            )
+        )
+    }
+}
+
 private func accepted(
     _ prepared: GroupCryptoPreparedEpochV2,
     signedCommitDigest: Data,
@@ -1812,6 +2143,10 @@ private actor TestGroupRuntimeStore: GroupRuntimeRecordPersistence {
 
     func setFailOnSaveNumber(_ number: Int?) {
         failOnSaveNumber = number
+    }
+
+    func failNextSave() {
+        failOnSaveNumber = saveCount + 1
     }
 }
 

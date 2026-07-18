@@ -258,6 +258,10 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
     public let nextSignedState: SignedGroupStateV2
     public let nextCryptoState: GroupCryptoState
     public let localCredentialAfterCommit: LocalGroupCredentialV2
+    /// Group-only credential snapshot used to address the epoch transition.
+    /// It is the union of credentials active before and after the commit, so
+    /// removed credentials can receive the transition that removes them.
+    public let transportRecipientCredentials: [GroupMemberCredentialV2]
     public let providerCommitBytes: Data
     public let signedWelcomes: [SignedGroupWelcomeV2]
     public let deliveredCredentialHandles: [GroupScopedCredentialHandleV2]
@@ -276,6 +280,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
         case nextSignedState
         case nextCryptoState
         case localCredentialAfterCommit
+        case transportRecipientCredentials
         case providerCommitBytes
         case signedWelcomes
         case deliveredCredentialHandles
@@ -295,6 +300,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
         nextSignedState: SignedGroupStateV2,
         nextCryptoState: GroupCryptoState,
         localCredentialAfterCommit: LocalGroupCredentialV2,
+        transportRecipientCredentials: [GroupMemberCredentialV2]? = nil,
         providerCommitBytes: Data,
         signedWelcomes: [SignedGroupWelcomeV2],
         deliveredCredentialHandles: [GroupScopedCredentialHandleV2] = [],
@@ -312,6 +318,13 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
         self.nextSignedState = nextSignedState
         self.nextCryptoState = nextCryptoState
         self.localCredentialAfterCommit = localCredentialAfterCommit
+        self.transportRecipientCredentials = (
+            transportRecipientCredentials ?? nextSignedState.memberCredentials.filter {
+                $0.isActive(at: baseEpoch) || $0.isActive(at: nextEpoch)
+            }
+        ).sorted {
+            $0.credentialHandle.rawValue < $1.credentialHandle.rawValue
+        }
         self.providerCommitBytes = providerCommitBytes
         self.signedWelcomes = signedWelcomes.sorted {
             $0.destinationCredentialHandle.rawValue < $1.destinationCredentialHandle.rawValue
@@ -331,6 +344,10 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
             [GroupScopedCredentialHandleV2].self,
             forKey: .deliveredCredentialHandles
         )
+        let transportRecipients = try values.decode(
+            [GroupMemberCredentialV2].self,
+            forKey: .transportRecipientCredentials
+        )
         self.init(
             id: try values.decode(UUID.self, forKey: .id),
             idempotencyKey: try values.decode(Data.self, forKey: .idempotencyKey),
@@ -346,6 +363,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
                 LocalGroupCredentialV2.self,
                 forKey: .localCredentialAfterCommit
             ),
+            transportRecipientCredentials: transportRecipients,
             providerCommitBytes: try values.decode(Data.self, forKey: .providerCommitBytes),
             signedWelcomes: welcomes,
             deliveredCredentialHandles: delivered,
@@ -354,6 +372,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
         )
         guard signedWelcomes == welcomes,
               deliveredCredentialHandles == delivered,
+              transportRecipientCredentials == transportRecipients,
               isStructurallyValid else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "Invalid group epoch intent")
@@ -388,6 +407,18 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
               nextCryptoState.groupId == groupId,
               nextCryptoState.epoch == nextEpoch,
               localCredentialAfterCommit.groupId == groupId,
+              !transportRecipientCredentials.isEmpty,
+              transportRecipientCredentials.count
+                <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials,
+              transportRecipientCredentials == transportRecipientCredentials.sorted(by: {
+                  $0.credentialHandle.rawValue < $1.credentialHandle.rawValue
+              }),
+              Set(transportRecipientCredentials.map(\.credentialHandle)).count
+                == transportRecipientCredentials.count,
+              transportRecipientCredentials.allSatisfy(\.isStructurallyValid),
+              transportRecipientCredentials == nextSignedState.memberCredentials.filter({
+                  $0.isActive(at: baseEpoch) || $0.isActive(at: nextEpoch)
+              }),
               GroupEpochTransitionEnvelopeV2(
                   commit: signedCommit,
                   nextState: nextSignedState,
@@ -470,6 +501,7 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
             nextSignedState: nextSignedState,
             nextCryptoState: nextCryptoState,
             localCredentialAfterCommit: localCredentialAfterCommit,
+            transportRecipientCredentials: transportRecipientCredentials,
             providerCommitBytes: providerCommitBytes,
             signedWelcomes: signedWelcomes,
             deliveredCredentialHandles: deliveredCredentialHandles ?? self.deliveredCredentialHandles,
@@ -542,7 +574,7 @@ public struct GroupEpochForkQuarantine: Codable, Equatable, Identifiable {
 }
 
 public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
-    public static let version = 3
+    public static let version = 4
     public static let maximumQuarantinedForks = 64
     public static let maximumPeerEpochJournalEntries = 256
     public static let peerEpochRecentWindow = 192
@@ -568,6 +600,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
     public let events: [GroupConversationEventV2]
     public let pendingApplicationPublications: [PendingGroupApplicationPublicationV2]
     public let processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]
+    public let outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2]
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case formatVersion
@@ -586,6 +619,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         case events
         case pendingApplicationPublications
         case processedApplicationEnvelopes
+        case outboundTransportOperations
     }
 
     public init(
@@ -604,7 +638,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         originJoinAnchorID: UUID? = nil,
         events: [GroupConversationEventV2] = [],
         pendingApplicationPublications: [PendingGroupApplicationPublicationV2] = [],
-        processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2] = []
+        processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2] = [],
+        outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2] = []
     ) {
         self.formatVersion = formatVersion
         self.groupId = groupId
@@ -644,6 +679,10 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             if $0.processedAt != $1.processedAt { return $0.processedAt < $1.processedAt }
             return $0.eventID.uuidString < $1.eventID.uuidString
         }
+        self.outboundTransportOperations = outboundTransportOperations.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }
     }
 
     public init(from decoder: Decoder) throws {
@@ -678,6 +717,10 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             [ProcessedGroupApplicationEnvelopeV2].self,
             forKey: .processedApplicationEnvelopes
         )
+        let decodedOutboundTransport = try values.decode(
+            [GroupOpaqueRouteOutboundOperationV2].self,
+            forKey: .outboundTransportOperations
+        )
         self.init(
             formatVersion: try values.decode(Int.self, forKey: .formatVersion),
             groupId: try values.decode(UUID.self, forKey: .groupId),
@@ -703,7 +746,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             originJoinAnchorID: try values.decodeIfPresent(UUID.self, forKey: .originJoinAnchorID),
             events: decodedEvents,
             pendingApplicationPublications: decodedPending,
-            processedApplicationEnvelopes: decodedProcessed
+            processedApplicationEnvelopes: decodedProcessed,
+            outboundTransportOperations: decodedOutboundTransport
         )
         guard epochIntents == intents,
               quarantinedForks == forks,
@@ -713,6 +757,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               events == decodedEvents,
               pendingApplicationPublications == decodedPending,
               processedApplicationEnvelopes == decodedProcessed,
+              outboundTransportOperations == decodedOutboundTransport,
               try isStructurallyValidThrowing else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "Invalid group runtime record")
@@ -752,6 +797,10 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         try values.encode(
             processedApplicationEnvelopes,
             forKey: .processedApplicationEnvelopes
+        )
+        try values.encode(
+            outboundTransportOperations,
+            forKey: .outboundTransportOperations
         )
     }
 
@@ -827,6 +876,67 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               Set(processedApplicationEnvelopes.map(\.eventID)).count
                 == processedApplicationEnvelopes.count,
               processedApplicationEnvelopes.allSatisfy(\.isStructurallyValid),
+              outboundTransportOperations.count
+                <= GroupOpaqueRouteOutboundOperationV2.maximumJournalEntries,
+              Set(outboundTransportOperations.map(\.id)).count
+                == outboundTransportOperations.count,
+              Set(outboundTransportOperations.map {
+                  "\($0.kind.rawValue)\u{0}\($0.logicalID.uuidString)"
+              }).count == outboundTransportOperations.count,
+              outboundTransportOperations.allSatisfy({
+                  $0.groupID == groupId && $0.isStructurallyValid
+              }),
+              outboundTransportOperations.allSatisfy({ operation in
+                  guard operation.kind == .epoch,
+                        let intent = epochIntents.first(where: {
+                            $0.id == operation.logicalID
+                        }) else {
+                      return true
+                  }
+                  guard let transition = operation.deliveries.first(where: {
+                      $0.artifactKind == .epochTransition
+                  }),
+                        transition.plan.protocolEnvelopeID
+                            == intent.publication.transition.id else {
+                      return false
+                  }
+                  let expectedTransition = Set(intent.transportRecipientCredentials.filter {
+                      $0.memberHandle != intent.localCredentialAfterCommit.memberHandle
+                  }.map(\.credentialHandle))
+                  let expectedWelcomes = Set(intent.nextSignedState.activeCredentials.filter {
+                      $0.memberHandle != intent.localCredentialAfterCommit.memberHandle
+                  }.map(\.credentialHandle))
+                  let actualWelcomes = Set(operation.deliveries.filter {
+                      $0.artifactKind == .epochWelcome
+                  }.flatMap(\.requiredCredentialHandles))
+                  guard Set(transition.requiredCredentialHandles) == expectedTransition,
+                        actualWelcomes == expectedWelcomes else {
+                      return false
+                  }
+                  return operation.deliveries.filter {
+                      $0.artifactKind == .epochWelcome
+                  }.allSatisfy { delivery in
+                      guard let handle = delivery.requiredCredentialHandles.first,
+                            let welcome = intent.signedWelcomes.first(where: {
+                                $0.destinationCredentialHandle == handle
+                            }) else {
+                          return false
+                      }
+                      return delivery.plan.protocolEnvelopeID == welcome.id
+                  }
+              }),
+              outboundTransportOperations.filter({ !$0.isComplete }).allSatisfy({ operation in
+                  switch operation.kind {
+                  case .application:
+                      return pendingApplicationPublications.contains {
+                          $0.event.id == operation.logicalID
+                      }
+                  case .epoch:
+                      return epochIntents.contains {
+                          $0.id == operation.logicalID && $0.requiresRecoveryState
+                      }
+                  }
+              }),
               Set(processedApplicationEnvelopes.lazy.filter {
                   $0.outcome == .accepted
               }.map(\.eventID)).isSubset(of: Set(events.map(\.id))),
@@ -845,7 +955,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                       signedState.epoch == cryptoState.epoch,
                       pendingLocalCredentials.isEmpty,
                       pendingApplicationPublications.isEmpty,
-                      epochIntents.isEmpty else {
+                      epochIntents.isEmpty,
+                      outboundTransportOperations.isEmpty else {
                     return false
                 }
             _ = try deletionState.deletedState.verified(previousState: signedState)
@@ -867,6 +978,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                       }),
                       pendingLocalCredentials.isEmpty,
                       pendingApplicationPublications.isEmpty,
+                      outboundTransportOperations.allSatisfy(\.isComplete),
                       epochIntents.allSatisfy({ !$0.requiresRecoveryState }),
                       peerEpochJournal.last?.outcome == .localRemoved,
                       peerEpochJournal.last?.transitionDigest == localRemoval.transitionDigest else {
@@ -926,6 +1038,25 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                 $0.outcome != .accepted || retainedEventIDs.contains($0.eventID)
             }.suffix(NoctweaveArchitectureV2.processedGroupEnvelopeRecentWindow)
         )
+        let unfinishedTransport = outboundTransportOperations.filter { !$0.isComplete }
+        guard unfinishedTransport.count
+                <= GroupOpaqueRouteOutboundOperationV2.maximumJournalEntries else {
+            throw GroupRuntimeError.invalidRecord
+        }
+        let completedCapacity = max(
+            0,
+            GroupOpaqueRouteOutboundOperationV2.maximumJournalEntries
+                - unfinishedTransport.count
+        )
+        let retainedCompletedTransport = Array(
+            outboundTransportOperations.filter(\.isComplete).suffix(min(
+                GroupOpaqueRouteOutboundOperationV2.recentCompletedWindow,
+                completedCapacity
+            ))
+        )
+        let retainedTransportIDs = Set(
+            unfinishedTransport.map(\.id) + retainedCompletedTransport.map(\.id)
+        )
         let candidate = replacing(
             epochIntents: epochIntents.filter { retainedIDs.contains($0.id) },
             peerEpochJournal: Array(peerEpochJournal.suffix(Self.peerEpochRecentWindow)),
@@ -933,7 +1064,10 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                 peerForkQuarantines.suffix(Self.maximumPeerForkQuarantines)
             ),
             events: retainedEvents,
-            processedApplicationEnvelopes: retainedProcessed
+            processedApplicationEnvelopes: retainedProcessed,
+            outboundTransportOperations: outboundTransportOperations.filter {
+                retainedTransportIDs.contains($0.id)
+            }
         )
         guard try candidate.isStructurallyValidThrowing else {
             throw GroupRuntimeError.invalidRecord
@@ -948,7 +1082,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         return lhs.id.uuidString < rhs.id.uuidString
     }
 
-    fileprivate func replacing(
+    func replacing(
         localCredential: LocalGroupCredentialV2? = nil,
         signedState: SignedGroupStateV2? = nil,
         cryptoState: GroupCryptoState? = nil,
@@ -962,7 +1096,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         originJoinAnchorID: UUID? = nil,
         events: [GroupConversationEventV2]? = nil,
         pendingApplicationPublications: [PendingGroupApplicationPublicationV2]? = nil,
-        processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]? = nil
+        processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]? = nil,
+        outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2]? = nil
     ) -> GroupRuntimeRecord {
         GroupRuntimeRecord(
             formatVersion: formatVersion,
@@ -982,7 +1117,9 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             pendingApplicationPublications: pendingApplicationPublications
                 ?? self.pendingApplicationPublications,
             processedApplicationEnvelopes: processedApplicationEnvelopes
-                ?? self.processedApplicationEnvelopes
+                ?? self.processedApplicationEnvelopes,
+            outboundTransportOperations: outboundTransportOperations
+                ?? self.outboundTransportOperations
         )
     }
 
@@ -1023,6 +1160,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         try add(events)
         try add(pendingApplicationPublications)
         try add(processedApplicationEnvelopes)
+        try add(outboundTransportOperations)
         return total
     }
 
@@ -1045,7 +1183,7 @@ public protocol GroupRuntimeRecordPersistence: Sendable {
 public actor NoctweavePQGroupRuntimeV2 {
     private let provider: NoctweavePQGroupExperimentalProviderV2
     private let persistence: any GroupRuntimeRecordPersistence
-    private var record: GroupRuntimeRecord
+    var record: GroupRuntimeRecord
 
     public init(
         record: GroupRuntimeRecord,
@@ -1254,7 +1392,8 @@ public actor NoctweavePQGroupRuntimeV2 {
             epochIntents: [],
             pendingLocalCredentials: [],
             deletionState: deletion,
-            pendingApplicationPublications: []
+            pendingApplicationPublications: [],
+            outboundTransportOperations: []
         ))
         return tombstone
     }
@@ -1320,7 +1459,8 @@ public actor NoctweavePQGroupRuntimeV2 {
             epochIntents: [],
             pendingLocalCredentials: [],
             deletionState: deletion,
-            pendingApplicationPublications: []
+            pendingApplicationPublications: [],
+            outboundTransportOperations: []
         ))
         return deletedState
     }
@@ -1366,6 +1506,12 @@ public actor NoctweavePQGroupRuntimeV2 {
               date.timeIntervalSince1970.isFinite,
               date >= event.createdAt else {
             throw GroupRuntimeError.invalidRecord
+        }
+        guard record.epochIntents.allSatisfy({ !$0.requiresRecoveryState }),
+              record.outboundTransportOperations.allSatisfy({
+                  $0.kind != .epoch || $0.isComplete
+              }) else {
+            throw GroupRuntimeError.pendingEpoch
         }
         if let existing = record.pendingApplicationPublications.first(where: {
             $0.event.id == event.id
@@ -1428,6 +1574,9 @@ public actor NoctweavePQGroupRuntimeV2 {
             $0.event.id == eventID
         }) else {
             throw GroupRuntimeError.publicationNotFound
+        }
+        guard hasCompletedApplicationTransport(eventID: eventID) else {
+            throw GroupRuntimeError.incompleteFanout
         }
         try await persist(record.replacing(
             pendingApplicationPublications: record.pendingApplicationPublications.filter {
@@ -1582,9 +1731,9 @@ public actor NoctweavePQGroupRuntimeV2 {
         }) {
             return try await resumeOrReturn(existing.id, at: createdAt)
         }
-        guard !record.epochIntents.contains(where: {
-            $0.baseEpoch == record.signedState.epoch && $0.phase == .prepared
-        }) else {
+        guard record.pendingApplicationPublications.isEmpty,
+              record.epochIntents.allSatisfy({ !$0.requiresRecoveryState }),
+              record.outboundTransportOperations.allSatisfy(\.isComplete) else {
             throw GroupRuntimeError.pendingEpoch
         }
         guard record.signedState.epoch < UInt64.max else {
@@ -1640,6 +1789,10 @@ public actor NoctweavePQGroupRuntimeV2 {
             prepared,
             acceptance: acceptance
         )
+        let transportRecipients = nextSignedState.memberCredentials.filter {
+            $0.isActive(at: record.signedState.epoch)
+                || $0.isActive(at: nextSignedState.epoch)
+        }
         let welcomeExpiry = createdAt.addingTimeInterval(
             min(NoctweaveSignedGroupV2.maximumWelcomeLifetimeSeconds, 24 * 60 * 60)
         )
@@ -1664,6 +1817,7 @@ public actor NoctweavePQGroupRuntimeV2 {
             nextSignedState: nextSignedState,
             nextCryptoState: nextCryptoState,
             localCredentialAfterCommit: replacementLocalCredential ?? record.localCredential,
+            transportRecipientCredentials: transportRecipients,
             providerCommitBytes: prepared.commitBytes,
             signedWelcomes: signedWelcomes,
             createdAt: createdAt,
@@ -1699,6 +1853,12 @@ public actor NoctweavePQGroupRuntimeV2 {
             throw GroupRuntimeError.invalidIntent
         }
         if intent.deliveredCredentialHandles.contains(destinationCredentialHandle) { return }
+        guard hasAcceptedEpochWelcome(
+            intentID: intentId,
+            credentialHandle: destinationCredentialHandle
+        ) else {
+            throw GroupRuntimeError.incompleteFanout
+        }
         let delivered = intent.deliveredCredentialHandles + [destinationCredentialHandle]
         let updated = try intent.advancing(
             to: .fanoutInProgress,
@@ -1723,10 +1883,11 @@ public actor NoctweavePQGroupRuntimeV2 {
         guard intent.phase == .stateCommitted || intent.phase == .fanoutInProgress else {
             throw GroupRuntimeError.invalidIntent
         }
-        let required = Set(intent.signedWelcomes.map(\.destinationCredentialHandle)).subtracting([
-            record.localCredential.credentialHandle
-        ])
-        guard Set(intent.deliveredCredentialHandles).isSuperset(of: required) else {
+        let required = Set(intent.nextSignedState.activeCredentials.filter {
+            $0.memberHandle != intent.localCredentialAfterCommit.memberHandle
+        }.map(\.credentialHandle))
+        guard Set(intent.deliveredCredentialHandles).isSuperset(of: required),
+              hasCompletedEpochTransport(intent: intent) else {
             throw GroupRuntimeError.incompleteFanout
         }
         let updated = try intent.advancing(to: .finalized, at: date)
@@ -1973,7 +2134,8 @@ public actor NoctweavePQGroupRuntimeV2 {
                 peerEpochJournal: nextJournal,
                 pendingLocalCredentials: [],
                 localRemoval: removal,
-                pendingApplicationPublications: []
+                pendingApplicationPublications: [],
+                outboundTransportOperations: []
             )
         }
         try await persist(candidate)
@@ -2066,7 +2228,7 @@ public actor NoctweavePQGroupRuntimeV2 {
         return committedIntent.publication
     }
 
-    private func persist(_ candidate: GroupRuntimeRecord) async throws {
+    func persist(_ candidate: GroupRuntimeRecord) async throws {
         let compacted = try candidate.compactedDurableState()
         guard try compacted.isStructurallyValidThrowing else {
             throw GroupRuntimeError.invalidRecord
@@ -2075,7 +2237,7 @@ public actor NoctweavePQGroupRuntimeV2 {
         record = compacted
     }
 
-    private func requireActiveRuntime() throws {
+    func requireActiveRuntime() throws {
         guard record.deletionState == nil else {
             throw GroupRuntimeError.groupDeleted
         }
