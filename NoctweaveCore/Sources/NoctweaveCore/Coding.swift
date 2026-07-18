@@ -1,5 +1,187 @@
 import Foundation
 import CryptoKit
+import CoreFoundation
+
+/// Noctweave Canonical JSON version 1 (NCJ-1).
+///
+/// NCJ-1 is the deterministic byte representation used by signed, hashed, and
+/// otherwise authenticated JSON structures. It deliberately permits only the
+/// data model used by the protocol: null, booleans, UTF-8 strings, arrays,
+/// objects, and interoperable safe integers (-(2^53-1)...2^53-1). Object keys
+/// are NFC-normalized and ordered by their UTF-8 bytes; strings are
+/// NFC-normalized and use minimal JSON escaping.
+/// Floating-point values are rejected so different language runtimes cannot
+/// disagree about exponent or rounding spellings.
+public enum NoctweaveCanonicalJSON {
+    private static let maximumSafeInteger: Int64 = 9_007_199_254_740_991
+
+    public enum Error: Swift.Error, Equatable {
+        case invalidJSON
+        case unsupportedValue
+        case nonIntegerNumber
+        case duplicateNormalizedKey
+    }
+
+    public static func encode<T: Encodable>(_ value: T) throws -> Data {
+        let transportBytes = try NoctweaveCoder.encoder().encode(value)
+        return try canonicalize(transportBytes)
+    }
+
+    public static func canonicalize(_ data: Data) throws -> Data {
+        do {
+            var preflight = JSONDecodePreflight(
+                data: data,
+                maximumNestingDepth: NoctweaveCoder.maximumJSONNestingDepth,
+                canonicalNumbersOnly: true
+            )
+            try preflight.validate()
+        } catch {
+            throw Error.invalidJSON
+        }
+
+        let value: Any
+        do {
+            value = try JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])
+        } catch {
+            throw Error.invalidJSON
+        }
+
+        var output = Data()
+        try append(value, to: &output)
+        return output
+    }
+
+    public static func isCanonical(_ data: Data) -> Bool {
+        guard let canonical = try? canonicalize(data) else {
+            return false
+        }
+        return canonical == data
+    }
+
+    private static func append(_ value: Any, to output: inout Data) throws {
+        if value is NSNull {
+            output.append(contentsOf: "null".utf8)
+            return
+        }
+
+        if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                output.append(contentsOf: number.boolValue ? "true".utf8 : "false".utf8)
+                return
+            }
+
+            let type = String(cString: number.objCType)
+            guard type != "f", type != "d" else {
+                throw Error.nonIntegerNumber
+            }
+            let spelling = number.stringValue
+            guard isCanonicalInteger(spelling) else {
+                throw Error.nonIntegerNumber
+            }
+            output.append(contentsOf: spelling.utf8)
+            return
+        }
+
+        if let string = value as? String {
+            appendEscaped(string.precomposedStringWithCanonicalMapping, to: &output)
+            return
+        }
+
+        if let array = value as? [Any] {
+            output.append(0x5B)
+            for (index, child) in array.enumerated() {
+                if index > 0 { output.append(0x2C) }
+                try append(child, to: &output)
+            }
+            output.append(0x5D)
+            return
+        }
+
+        if let object = value as? [String: Any] {
+            var normalized: [String: Any] = [:]
+            normalized.reserveCapacity(object.count)
+            for (key, child) in object {
+                let canonicalKey = key.precomposedStringWithCanonicalMapping
+                guard normalized.updateValue(child, forKey: canonicalKey) == nil else {
+                    throw Error.duplicateNormalizedKey
+                }
+            }
+            let keys = normalized.keys.sorted(by: utf8Precedes)
+
+            output.append(0x7B)
+            for (index, key) in keys.enumerated() {
+                if index > 0 { output.append(0x2C) }
+                appendEscaped(key, to: &output)
+                output.append(0x3A)
+                guard let child = normalized[key] else {
+                    throw Error.unsupportedValue
+                }
+                try append(child, to: &output)
+            }
+            output.append(0x7D)
+            return
+        }
+
+        throw Error.unsupportedValue
+    }
+
+    private static func isCanonicalInteger(_ value: String) -> Bool {
+        guard !value.isEmpty else { return false }
+        let bytes = Array(value.utf8)
+        var index = 0
+        if bytes[0] == 0x2D {
+            index = 1
+            guard index < bytes.count else { return false }
+        }
+        if bytes[index] == 0x30 {
+            return index + 1 == bytes.count && index == 0
+        }
+        guard (0x31 ... 0x39).contains(bytes[index]) else { return false }
+        index += 1
+        while index < bytes.count {
+            guard (0x30 ... 0x39).contains(bytes[index]) else { return false }
+            index += 1
+        }
+        guard let parsed = Int64(value),
+              parsed >= -maximumSafeInteger,
+              parsed <= maximumSafeInteger else {
+            return false
+        }
+        return true
+    }
+
+    private static func utf8Precedes(_ left: String, _ right: String) -> Bool {
+        left.utf8.lexicographicallyPrecedes(right.utf8)
+    }
+
+    private static func appendEscaped(_ value: String, to output: inout Data) {
+        output.append(0x22)
+        for scalar in value.unicodeScalars {
+            switch scalar.value {
+            case 0x22:
+                output.append(contentsOf: [0x5C, 0x22])
+            case 0x5C:
+                output.append(contentsOf: [0x5C, 0x5C])
+            case 0x08:
+                output.append(contentsOf: [0x5C, 0x62])
+            case 0x09:
+                output.append(contentsOf: [0x5C, 0x74])
+            case 0x0A:
+                output.append(contentsOf: [0x5C, 0x6E])
+            case 0x0C:
+                output.append(contentsOf: [0x5C, 0x66])
+            case 0x0D:
+                output.append(contentsOf: [0x5C, 0x72])
+            case 0x00 ... 0x1F:
+                let escape = String(format: "\\u%04x", scalar.value)
+                output.append(contentsOf: escape.utf8)
+            default:
+                output.append(contentsOf: String(scalar).utf8)
+            }
+        }
+        output.append(0x22)
+    }
+}
 
 public enum NoctweaveCoder {
     static let maximumJSONNestingDepth = 128
@@ -20,7 +202,10 @@ public enum NoctweaveCoder {
     }
 
     public static func encode<T: Encodable>(_ value: T, sortedKeys: Bool = false) throws -> Data {
-        try encoder(sortedKeys: sortedKeys).encode(value)
+        if sortedKeys {
+            return try NoctweaveCanonicalJSON.encode(value)
+        }
+        return try encoder().encode(value)
     }
 
     public static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
@@ -59,11 +244,17 @@ private struct JSONDecodePreflight {
 
     private let bytes: [UInt8]
     private let maximumNestingDepth: Int
+    private let canonicalNumbersOnly: Bool
     private var index = 0
 
-    init(data: Data, maximumNestingDepth: Int) {
+    init(
+        data: Data,
+        maximumNestingDepth: Int,
+        canonicalNumbersOnly: Bool = false
+    ) {
         bytes = Array(data)
         self.maximumNestingDepth = maximumNestingDepth
+        self.canonicalNumbersOnly = canonicalNumbersOnly
     }
 
     mutating func validate() throws {
@@ -314,6 +505,14 @@ private struct JSONDecodePreflight {
         let number = String(decoding: bytes[start..<index], as: UTF8.self)
         guard let value = Double(number), value.isFinite else {
             throw Failure.invalidJSON
+        }
+        if canonicalNumbersOnly {
+            guard !number.contains("."),
+                  !number.contains("e"),
+                  !number.contains("E"),
+                  number != "-0" else {
+                throw Failure.invalidJSON
+            }
         }
     }
 

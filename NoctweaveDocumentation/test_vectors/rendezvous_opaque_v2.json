@@ -27,7 +27,7 @@
     "paddingBucket": 16384,
     "retentionBucket": 86400,
     "quotaBucket": 256,
-    "expectedTransitionDigestHex": "eeed484656e7976d8d0b13024260c1bb87c24e44d3c2b1edf8324c3213171c11",
-    "expectedAuthorizationMACHex": "d9ae84d2a524b0eae65c4d5a0a09cd6269d16c82d17bb4e02f449b6dc2a0167f"
+    "expectedTransitionDigestHex": "ce632810482bc772d2ed2e9cc91bcf9fe2270fdf79de1cbd63945e114677c28a",
+    "expectedAuthorizationMACHex": "e45ad22b7f03adf99ed4ea88e3646589bd9a6f5376b3faa0380d4a9fa77b13a4"
   }
 }
