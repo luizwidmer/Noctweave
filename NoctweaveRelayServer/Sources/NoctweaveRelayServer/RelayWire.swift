@@ -120,7 +120,7 @@ enum RelayRequestBody: Equatable {
         case (.rendezvousTransport, .delete):
             return .deleteRendezvous(try relayDecodeExact(DeleteRendezvousTransportV2Request.self, from: decoder, keys: ["routeCapability", "laneId", "deleteCapability"]))
         case (.blobs, .upload):
-            return .uploadAttachment(try relayDecodeExact(UploadAttachmentRequest.self, from: decoder, keys: ["attachmentId", "chunkIndex", "payload", "ttlSeconds"]))
+            return .uploadAttachment(try relayDecodeExact(UploadAttachmentRequest.self, from: decoder, keys: ["attachmentId", "chunkIndex", "payload", "ttlSeconds", "idempotencyKey"]))
         case (.blobs, .fetch):
             return .fetchAttachment(try relayDecodeExact(FetchAttachmentRequest.self, from: decoder, keys: ["attachmentId", "chunkIndex"]))
         case (.federation, .register):
@@ -184,6 +184,7 @@ enum RelayRequestBody: Equatable {
             try container.encode(value.chunkIndex, forKey: relayWireKey("chunkIndex"))
             try container.encode(value.payload, forKey: relayWireKey("payload"))
             try relayEncodeOptional(value.ttlSeconds, key: "ttlSeconds", into: &container)
+            try container.encode(value.idempotencyKey, forKey: relayWireKey("idempotencyKey"))
         case .fetchAttachment(let value):
             try container.encode(value.attachmentId, forKey: relayWireKey("attachmentId"))
             try container.encode(value.chunkIndex, forKey: relayWireKey("chunkIndex"))

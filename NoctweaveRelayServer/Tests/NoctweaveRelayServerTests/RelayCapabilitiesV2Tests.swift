@@ -2,7 +2,7 @@ import XCTest
 @testable import NoctweaveRelayServer
 
 final class RelayCapabilitiesV2Tests: XCTestCase {
-    func testConfiguredRelayAdvertisesStableOpaqueRouteAndEnabledModules() throws {
+    func testConfiguredRelayAdvertisesProvisionalCandidateModules() throws {
         let info = RelayConfiguration(
             federation: FederationDescriptor(mode: .manual),
             attachmentsEnabled: true,
@@ -14,9 +14,10 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         XCTAssertTrue(manifest.supports(module: "nw.core", version: 2))
         XCTAssertTrue(manifest.supports(module: "nw.opaque-route", version: 2))
         XCTAssertTrue(manifest.supports(module: "nw.rendezvous-transport", version: 2))
-        for module in ["nw.core", "nw.opaque-route", "nw.rendezvous-transport", "nw.federation"] {
-            XCTAssertEqual(manifest.modules.first { $0.module == module }?.status, .stable)
+        for module in ["nw.core", "nw.opaque-route", "nw.rendezvous-transport", "nw.blobs", "nw.federation"] {
+            XCTAssertEqual(manifest.modules.first { $0.module == module }?.status, .provisional)
         }
+        XCTAssertFalse(manifest.modules.contains { $0.status == .stable })
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 2))
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 3))
         XCTAssertTrue(manifest.supports(module: "nw.blobs", version: 1))
@@ -33,6 +34,30 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         XCTAssertEqual(decoded.protocolCapabilities, manifest)
     }
 
+    func testOpaqueRouteCapabilityRegistryMatchesCanonicalPublicContract() throws {
+        let expected: [String: UInt64] = [
+            "cursorBytes": 68,
+            "maxPage": 256,
+            "maxPacketBytes": 65_536,
+            "maxPacketsPerRoute": 1_024,
+            "maxRetentionSeconds": 604_800,
+            "maxRoutes": 100_000,
+        ]
+        XCTAssertEqual(OpaqueRouteRelayCapabilityLimitsV2.registry, expected)
+        let manifest = RelayCapabilityManifestV2.advertised(
+            attachmentsEnabled: false,
+            hiddenRetrievalEnabled: false,
+            onionEnabled: false,
+            mixnetEnabled: false
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(manifest.modules.first {
+                $0.module == "nw.opaque-route"
+            }).limits,
+            expected
+        )
+    }
+
     func testOpenDiscoveryAdvertisementIsExperimentalAndFeatureGated() throws {
         let enabled = RelayConfiguration(
             federation: FederationDescriptor(mode: .open, name: "example"),
@@ -46,7 +71,7 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         )
         XCTAssertEqual(
             enabledManifest.modules.first { $0.module == "nw.federation" }?.status,
-            .stable
+            .provisional
         )
 
         let disabled = RelayConfiguration(
@@ -75,7 +100,7 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         let valid = RelayModuleCapabilityV2(
             module: "nw.core",
             versions: [2],
-            status: .stable,
+            status: .provisional,
             limits: ["maxPage": 256]
         )
         XCTAssertTrue(valid.isStructurallyValid)
@@ -85,7 +110,7 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
             let invalid = RelayModuleCapabilityV2(
                 module: "nw.core",
                 versions: [2],
-                status: .stable,
+                status: .provisional,
                 limits: [key: 256]
             )
             XCTAssertFalse(invalid.isStructurallyValid)

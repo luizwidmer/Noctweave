@@ -14,6 +14,73 @@ final class RelayStoreCurrentTests: XCTestCase {
         to: sqlite3_destructor_type.self
     )
 
+    func testAttachmentUploadCanonicalBodyDigestMatchesCoreVector() {
+        let digest = attachmentUploadBodyDigest(
+            attachmentId: UUID(uuidString: "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE")!,
+            chunkIndex: 7,
+            payload: EncryptedPayload(
+                nonce: Data(repeating: 0x11, count: 12),
+                ciphertext: Data([0x22, 0x23]),
+                tag: Data(repeating: 0x33, count: 16)
+            ),
+            ttlSeconds: 300
+        )
+        XCTAssertEqual(
+            digest.map { String(format: "%02x", $0) }.joined(),
+            "7dc148be3f5b80970024c6ea417d4c2eab2db423599f018c96c5431dce7c6895"
+        )
+    }
+
+    func testAttachmentStorePreservesRequestedTTLAboveSixHoursAndCapsAtThirtyDays() throws {
+        let blobStore = TTLRecordingAttachmentBlobStore()
+        let store = RelayStore(
+            fileURL: nil,
+            attachmentBlobStore: blobStore,
+            temporalBucketSeconds: 0
+        )
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0xA1, count: 12),
+            ciphertext: Data([0xA2]),
+            tag: Data(repeating: 0xA3, count: 16)
+        )
+
+        let retainedStart = Date()
+        _ = try store.storeAttachment(
+            attachmentId: UUID(),
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 12 * 3_600,
+            idempotencyKey: Data(repeating: 0xA4, count: 32)
+        )
+        let retainedExpiry = try XCTUnwrap(blobStore.expirations.last)
+        XCTAssertGreaterThanOrEqual(
+            retainedExpiry.timeIntervalSince(retainedStart),
+            12 * 3_600 - 5
+        )
+        XCTAssertLessThanOrEqual(
+            retainedExpiry.timeIntervalSince(retainedStart),
+            12 * 3_600 + 5
+        )
+
+        let cappedStart = Date()
+        _ = try store.storeAttachment(
+            attachmentId: UUID(),
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 10_000_000,
+            idempotencyKey: Data(repeating: 0xA5, count: 32)
+        )
+        let cappedExpiry = try XCTUnwrap(blobStore.expirations.last)
+        XCTAssertGreaterThanOrEqual(
+            cappedExpiry.timeIntervalSince(cappedStart),
+            2_592_000 - 5
+        )
+        XCTAssertLessThanOrEqual(
+            cappedExpiry.timeIntervalSince(cappedStart),
+            2_592_000 + 5
+        )
+    }
+
     func testCurrentStatePersistsAttachmentsFederationAndPinsInOneSchema() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -42,7 +109,8 @@ final class RelayStoreCurrentTests: XCTestCase {
             attachmentId: attachmentID,
             chunkIndex: 0,
             payload: payload,
-            ttlSeconds: 300
+            ttlSeconds: 300,
+            idempotencyKey: Data(repeating: 0x45, count: 32)
         )
         _ = try writer.registerFederationNode(
             FederationNodeRegistrationRequest(
@@ -85,7 +153,8 @@ final class RelayStoreCurrentTests: XCTestCase {
             attachmentId: attachmentID,
             chunkIndex: 0,
             payload: payload,
-            ttlSeconds: 300
+            ttlSeconds: 300,
+            idempotencyKey: Data(repeating: 0x46, count: 32)
         ))
         XCTAssertNil(try store.fetchAttachment(attachmentId: attachmentID, chunkIndex: 0))
 
@@ -93,7 +162,8 @@ final class RelayStoreCurrentTests: XCTestCase {
             attachmentId: attachmentID,
             chunkIndex: 0,
             payload: payload,
-            ttlSeconds: 300
+            ttlSeconds: 300,
+            idempotencyKey: Data(repeating: 0x46, count: 32)
         )
         let reader = RelayStore(fileURL: url, temporalBucketSeconds: 0)
         try reader.load()
@@ -101,6 +171,90 @@ final class RelayStoreCurrentTests: XCTestCase {
             try reader.fetchAttachment(attachmentId: attachmentID, chunkIndex: 0)?.payload,
             payload
         )
+    }
+
+    func testAttachmentCoordinatesAreImmutableAndIdempotencySurvivesReload() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("relay.sqlite")
+        let attachmentID = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0xB1, count: 12),
+            ciphertext: Data(repeating: 0xB2, count: 64),
+            tag: Data(repeating: 0xB3, count: 16)
+        )
+        let replacement = EncryptedPayload(
+            nonce: Data(repeating: 0xC1, count: 12),
+            ciphertext: Data(repeating: 0xC2, count: 64),
+            tag: Data(repeating: 0xC3, count: 16)
+        )
+        let key = Data(repeating: 0xD1, count: 32)
+        let otherKey = Data(repeating: 0xD2, count: 32)
+        let writer = RelayStore(fileURL: url, temporalBucketSeconds: 0)
+
+        _ = try writer.storeAttachment(
+            attachmentId: attachmentID,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 300,
+            idempotencyKey: key
+        )
+        writer.failNextPersistenceForTesting()
+        let replay = try writer.storeAttachment(
+            attachmentId: attachmentID,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 300,
+            idempotencyKey: key
+        )
+        XCTAssertEqual(replay.payload, payload)
+        XCTAssertThrowsError(try writer.storeAttachment(
+            attachmentId: attachmentID,
+            chunkIndex: 0,
+            payload: replacement,
+            ttlSeconds: 300,
+            idempotencyKey: key
+        )) { error in
+            XCTAssertEqual(error as? RelayStoreError, .attachmentConflict)
+        }
+        XCTAssertThrowsError(try writer.storeAttachment(
+            attachmentId: attachmentID,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 300,
+            idempotencyKey: otherKey
+        )) { error in
+            XCTAssertEqual(error as? RelayStoreError, .attachmentConflict)
+        }
+        XCTAssertThrowsError(try writer.storeAttachment(
+            attachmentId: attachmentID,
+            chunkIndex: 1,
+            payload: payload,
+            ttlSeconds: 300,
+            idempotencyKey: otherKey
+        ))
+        XCTAssertNil(try writer.fetchAttachment(attachmentId: attachmentID, chunkIndex: 1))
+
+        let reader = RelayStore(fileURL: url, temporalBucketSeconds: 0)
+        try reader.load()
+        _ = try reader.storeAttachment(
+            attachmentId: attachmentID,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 300,
+            idempotencyKey: key
+        )
+        XCTAssertThrowsError(try reader.storeAttachment(
+            attachmentId: attachmentID,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 301,
+            idempotencyKey: key
+        )) { error in
+            XCTAssertEqual(error as? RelayStoreError, .attachmentConflict)
+        }
     }
 
     func testExistingForeignDatabaseIsRejectedWithoutImportFallback() throws {
@@ -411,7 +565,8 @@ final class RelayStoreCurrentTests: XCTestCase {
                 ciphertext: Data(repeating: 0x52, count: 512),
                 tag: Data(repeating: 0x53, count: 16)
             ),
-            ttlSeconds: 300
+            ttlSeconds: 300,
+            idempotencyKey: Data(repeating: 0x47, count: 32)
         )
         let federationEndpoint = RelayEndpoint(
             host: "relay.example.org",
@@ -546,5 +701,40 @@ final class RelayStoreCurrentTests: XCTestCase {
             names.append(String(cString: sqlite3_column_text(statement, 0)))
         }
         return names
+    }
+}
+
+private final class TTLRecordingAttachmentBlobStore: AttachmentBlobStore {
+    let backendName = "ttl-recording"
+    private(set) var expirations: [Date] = []
+    private var blobs: [String: Data] = [:]
+
+    func put(
+        _ data: Data,
+        attachmentId: UUID,
+        chunkIndex: Int,
+        expiresAt: Date
+    ) throws -> AttachmentExternalRecord {
+        let locator = "\(attachmentId.uuidString)-\(chunkIndex)"
+        expirations.append(expiresAt)
+        blobs[locator] = data
+        return AttachmentExternalRecord(
+            backend: backendName,
+            locator: locator,
+            byteCount: data.count,
+            sha256Hex: AttachmentBlobDigest.sha256Hex(data),
+            expiresAt: expiresAt
+        )
+    }
+
+    func get(_ record: AttachmentExternalRecord) throws -> Data {
+        guard let data = blobs[record.locator] else {
+            throw AttachmentBlobStoreError.fetchFailed("missing test blob")
+        }
+        return data
+    }
+
+    func delete(_ record: AttachmentExternalRecord) {
+        blobs.removeValue(forKey: record.locator)
     }
 }

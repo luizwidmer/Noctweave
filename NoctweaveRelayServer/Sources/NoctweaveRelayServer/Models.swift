@@ -2616,28 +2616,34 @@ struct ListOpenFederationDHTRecordsRequest: Codable, Equatable {
 }
 
 struct UploadAttachmentRequest: Codable, Equatable {
+    static let idempotencyKeyBytes = 32
+
     let attachmentId: UUID
     let chunkIndex: Int
     let payload: EncryptedPayload
     let ttlSeconds: Int?
+    let idempotencyKey: Data
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case attachmentId
         case chunkIndex
         case payload
         case ttlSeconds
+        case idempotencyKey
     }
 
     init(
         attachmentId: UUID,
         chunkIndex: Int,
         payload: EncryptedPayload,
-        ttlSeconds: Int? = nil
+        ttlSeconds: Int? = nil,
+        idempotencyKey: Data
     ) {
         self.attachmentId = attachmentId
         self.chunkIndex = chunkIndex
         self.payload = payload
         self.ttlSeconds = ttlSeconds
+        self.idempotencyKey = idempotencyKey
     }
 
     init(from decoder: Decoder) throws {
@@ -2647,7 +2653,8 @@ struct UploadAttachmentRequest: Codable, Equatable {
             attachmentId: try values.decode(UUID.self, forKey: .attachmentId),
             chunkIndex: try values.decode(Int.self, forKey: .chunkIndex),
             payload: try values.decode(EncryptedPayload.self, forKey: .payload),
-            ttlSeconds: try values.decodeIfPresent(Int.self, forKey: .ttlSeconds)
+            ttlSeconds: try values.decodeIfPresent(Int.self, forKey: .ttlSeconds),
+            idempotencyKey: try values.decode(Data.self, forKey: .idempotencyKey)
         )
         guard isStructurallyValid else {
             throw DecodingError.dataCorruptedError(
@@ -2667,6 +2674,7 @@ struct UploadAttachmentRequest: Codable, Equatable {
         try values.encode(chunkIndex, forKey: .chunkIndex)
         try values.encode(payload, forKey: .payload)
         try values.encode(ttlSeconds, forKey: .ttlSeconds)
+        try values.encode(idempotencyKey, forKey: .idempotencyKey)
     }
 
     var isStructurallyValid: Bool {
@@ -2675,6 +2683,7 @@ struct UploadAttachmentRequest: Codable, Equatable {
             && payload.isStructurallyValid
             && payloadBytes <= AttachmentChunk.maximumPayloadBytes
             && (ttlSeconds.map { (60...2_592_000).contains($0) } ?? true)
+            && idempotencyKey.count == Self.idempotencyKeyBytes
     }
 }
 

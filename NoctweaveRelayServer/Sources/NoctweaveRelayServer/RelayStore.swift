@@ -17,6 +17,8 @@ enum RelayStoreError: Error, Equatable {
     case relayCapacityExceeded
     case invalidChunkIndex
     case invalidAttachmentPayload
+    case invalidAttachmentIdempotency
+    case attachmentConflict
     case attachmentBlobUnavailable
     case invalidCoordinatorPublicKey
 }
@@ -72,6 +74,12 @@ private func isCanonicalFederationNodeStorageKey(_ value: String) -> Bool {
         && federationNodeStorageKey(endpoint) == value
 }
 
+private enum RelayAttachmentRetentionLimits {
+    static let defaultSeconds: TimeInterval = 3_600
+    static let minimumSeconds: TimeInterval = 60
+    static let maximumSeconds: TimeInterval = 2_592_000
+}
+
 final class RelayStore {
     /// Keyed by a domain-separated route-capability digest. Values contain
     /// only digests of lane authorities; raw bearer material is never stored.
@@ -88,9 +96,6 @@ final class RelayStore {
     private let attachmentBlobStore: AttachmentBlobStore?
     private var temporalBuckets: [TimeInterval]
     private let queueKey = DispatchSpecificKey<Void>()
-    private let attachmentTTL: TimeInterval = 3600
-    private let minimumAttachmentTTL: TimeInterval = 60
-    private let maximumAttachmentTTL: TimeInterval = 6 * 3600
     private let maxAttachmentChunks = RelayStoreCurrentLimits.maximumAttachmentChunksPerID
     private let maxAttachmentChunkPayloadBytes = 128 * 1024
     private let maxAttachmentIds = RelayStoreCurrentLimits.maximumAttachmentIDs
@@ -270,10 +275,10 @@ final class RelayStore {
         _ records: [OpenFederationDHTRecord],
         configuration: OpenFederationDHTDiscoveryConfiguration,
         now: Date = Date()
-    ) -> OpenFederationDHTDiscoveryIngestResult {
-        performSync {
+    ) throws -> OpenFederationDHTDiscoveryIngestResult {
+        try performSync {
             openFederationDHTCache.configuration = configuration
-            return openFederationDHTCache.ingest(records, now: now)
+            return try openFederationDHTCache.ingest(records, now: now)
         }
     }
 
@@ -297,7 +302,9 @@ final class RelayStore {
         attachmentId: UUID,
         chunkIndex: Int,
         payload: EncryptedPayload,
-        ttlSeconds: Int?
+        ttlSeconds: Int?,
+        idempotencyKey: Data,
+        effectiveTTLSeconds: Int? = nil
     ) throws -> AttachmentChunk {
         try performSync {
             guard chunkIndex >= 0, chunkIndex < maxAttachmentChunks else {
@@ -310,8 +317,17 @@ final class RelayStore {
                   payloadBytes <= maxAttachmentChunkPayloadBytes else {
                 throw RelayStoreError.invalidAttachmentPayload
             }
+            guard idempotencyKey.count == UploadAttachmentRequest.idempotencyKeyBytes else {
+                throw RelayStoreError.invalidAttachmentIdempotency
+            }
             pruneAttachmentsLocked(now: Date())
-            let ttl = boundedAttachmentTTL(ttlSeconds)
+            let bodyDigest = attachmentUploadBodyDigest(
+                attachmentId: attachmentId,
+                chunkIndex: chunkIndex,
+                payload: payload,
+                ttlSeconds: ttlSeconds
+            )
+            let ttl = boundedAttachmentTTL(effectiveTTLSeconds ?? ttlSeconds)
             let now = Date()
             let bucketKey = "attachment:\(attachmentId.uuidString):\(chunkIndex)"
             let storedAt = bucketed(now, discriminator: bucketKey)
@@ -328,6 +344,17 @@ final class RelayStore {
                 })?.key
             }
             var records = attachments[key, default: []]
+            if let existing = records.first(where: { $0.chunkIndex == chunkIndex }) {
+                guard existing.idempotencyKey == idempotencyKey,
+                      existing.bodyDigest == bodyDigest else {
+                    throw RelayStoreError.attachmentConflict
+                }
+                return AttachmentChunk(
+                    attachmentId: attachmentId,
+                    chunkIndex: chunkIndex,
+                    payload: payload
+                )
+            }
             let record: AttachmentRecord
             if let attachmentBlobStore {
                 let encodedPayload = try RelayCodec.encoder().encode(payload)
@@ -343,7 +370,9 @@ final class RelayStore {
                     payload: nil,
                     external: external,
                     storedAt: storedAt,
-                    expiresAt: expiresAt
+                    expiresAt: expiresAt,
+                    idempotencyKey: idempotencyKey,
+                    bodyDigest: bodyDigest
                 )
             } else {
                 record = AttachmentRecord(
@@ -351,22 +380,16 @@ final class RelayStore {
                     payload: payload,
                     external: nil,
                     storedAt: storedAt,
-                    expiresAt: expiresAt
+                    expiresAt: expiresAt,
+                    idempotencyKey: idempotencyKey,
+                    bodyDigest: bodyDigest
                 )
             }
             if let attachmentKeyToEvict,
                let evicted = attachments.removeValue(forKey: attachmentKeyToEvict) {
                 deferredExternalDeletions.append(contentsOf: evicted.compactMap(\.external))
             }
-            if let existing = records.first(where: { $0.chunkIndex == chunkIndex }),
-               let external = existing.external {
-                deferredExternalDeletions.append(external)
-            }
-            if let index = records.firstIndex(where: { $0.chunkIndex == chunkIndex }) {
-                records[index] = record
-            } else {
-                records.append(record)
-            }
+            records.append(record)
             if records.count > maxAttachmentChunks {
                 records.sort { $0.storedAt < $1.storedAt }
                 for removed in records.dropLast(maxAttachmentChunks) {
@@ -872,8 +895,13 @@ final class RelayStore {
 
 
     private func boundedAttachmentTTL(_ ttlSeconds: Int?) -> TimeInterval {
-        let requested = TimeInterval(ttlSeconds ?? Int(attachmentTTL))
-        return min(maximumAttachmentTTL, max(minimumAttachmentTTL, requested))
+        let requested = TimeInterval(
+            ttlSeconds ?? Int(RelayAttachmentRetentionLimits.defaultSeconds)
+        )
+        return min(
+            RelayAttachmentRetentionLimits.maximumSeconds,
+            max(RelayAttachmentRetentionLimits.minimumSeconds, requested)
+        )
     }
 
     private func payload(for record: AttachmentRecord) throws -> EncryptedPayload {
@@ -1582,6 +1610,8 @@ private struct AttachmentRecord: Codable {
     let external: AttachmentExternalRecord?
     let storedAt: Date
     let expiresAt: Date
+    let idempotencyKey: Data
+    let bodyDigest: Data
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case chunkIndex
@@ -1589,6 +1619,8 @@ private struct AttachmentRecord: Codable {
         case external
         case storedAt
         case expiresAt
+        case idempotencyKey
+        case bodyDigest
     }
 
     init(
@@ -1596,13 +1628,17 @@ private struct AttachmentRecord: Codable {
         payload: EncryptedPayload?,
         external: AttachmentExternalRecord?,
         storedAt: Date,
-        expiresAt: Date
+        expiresAt: Date,
+        idempotencyKey: Data,
+        bodyDigest: Data
     ) {
         self.chunkIndex = chunkIndex
         self.payload = payload
         self.external = external
         self.storedAt = storedAt
         self.expiresAt = expiresAt
+        self.idempotencyKey = idempotencyKey
+        self.bodyDigest = bodyDigest
     }
 
     init(from decoder: Decoder) throws {
@@ -1620,7 +1656,9 @@ private struct AttachmentRecord: Codable {
                 forKey: .external
             ),
             storedAt: try values.decode(Date.self, forKey: .storedAt),
-            expiresAt: try values.decode(Date.self, forKey: .expiresAt)
+            expiresAt: try values.decode(Date.self, forKey: .expiresAt),
+            idempotencyKey: try values.decode(Data.self, forKey: .idempotencyKey),
+            bodyDigest: try values.decode(Data.self, forKey: .bodyDigest)
         )
         guard isStructurallyValid else {
             throw DecodingError.dataCorruptedError(
@@ -1653,6 +1691,8 @@ private struct AttachmentRecord: Codable {
         }
         try values.encode(storedAt, forKey: .storedAt)
         try values.encode(expiresAt, forKey: .expiresAt)
+        try values.encode(idempotencyKey, forKey: .idempotencyKey)
+        try values.encode(bodyDigest, forKey: .bodyDigest)
     }
 
     var isStructurallyValid: Bool {
@@ -1663,6 +1703,40 @@ private struct AttachmentRecord: Codable {
             && expiresAt.timeIntervalSince1970.isFinite
             && expiresAt >= storedAt
             && ((payload != nil) != (external != nil))
+            && idempotencyKey.count == UploadAttachmentRequest.idempotencyKeyBytes
+            && bodyDigest.count == SHA256.byteCount
+    }
+}
+
+func attachmentUploadBodyDigest(
+    attachmentId: UUID,
+    chunkIndex: Int,
+    payload: EncryptedPayload,
+    ttlSeconds: Int?
+) -> Data {
+    var material = Data("org.noctweave.blobs.upload-v1".utf8)
+    appendAttachmentDigestField(Data(attachmentId.uuidString.lowercased().utf8), to: &material)
+    appendAttachmentDigestInteger(UInt64(chunkIndex), to: &material)
+    appendAttachmentDigestField(payload.nonce, to: &material)
+    appendAttachmentDigestField(payload.ciphertext, to: &material)
+    appendAttachmentDigestField(payload.tag, to: &material)
+    if let ttlSeconds {
+        material.append(1)
+        appendAttachmentDigestInteger(UInt64(bitPattern: Int64(ttlSeconds)), to: &material)
+    } else {
+        material.append(0)
+    }
+    return Data(SHA256.hash(data: material))
+}
+
+private func appendAttachmentDigestField(_ value: Data, to material: inout Data) {
+    appendAttachmentDigestInteger(UInt64(value.count), to: &material)
+    material.append(value)
+}
+
+private func appendAttachmentDigestInteger(_ value: UInt64, to material: inout Data) {
+    for shift in stride(from: 56, through: 0, by: -8) {
+        material.append(UInt8(truncatingIfNeeded: value >> UInt64(shift)))
     }
 }
 

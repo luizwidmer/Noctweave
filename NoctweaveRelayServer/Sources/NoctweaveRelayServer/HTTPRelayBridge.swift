@@ -195,7 +195,17 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
         }
 
         let payload = requestBody.readData(length: requestBody.readableBytes) ?? Data()
-        guard let request = try? RelayCodec.decodeWire(RelayRequest.self, from: payload) else {
+        let request: RelayRequest
+        do {
+            request = try RelayCodec.decodeWire(RelayRequest.self, from: payload)
+        } catch is RetryableRelayLocalError {
+            sendHTTPResponse(
+                status: .serviceUnavailable,
+                body: Data(#"{"error":"Relay temporarily unavailable","retryable":true}"#.utf8),
+                context: context
+            )
+            return
+        } catch {
             sendHTTPResponse(
                 status: .badRequest,
                 body: Data(#"{"error":"Malformed relay request"}"#.utf8),
@@ -316,7 +326,14 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
                 context.close(promise: nil)
                 return
             }
-            guard let request = try? RelayCodec.decodeWire(RelayRequest.self, from: payload) else {
+            let request: RelayRequest
+            do {
+                request = try RelayCodec.decodeWire(RelayRequest.self, from: payload)
+            } catch is RetryableRelayLocalError {
+                print("[relay] local cryptography unavailable while decoding WebSocket request")
+                context.close(promise: nil)
+                return
+            } catch {
                 context.close(promise: nil)
                 return
             }

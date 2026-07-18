@@ -57,16 +57,24 @@ final class RelayHandler: ChannelInboundHandler {
         self.localEndpoint = localEndpoint
         self.relayConfiguration = relayConfiguration
         self.forwardingRequestTimeoutSeconds = max(1, forwardingRequestTimeoutSeconds)
+        let coordinatorKeyMaterial: (privateKey: Data, publicKey: Data)?
         if relayConfiguration.kind == .coordinator {
-            let keyData = FederationDirectorySignature.privateKeyData(
-                from: relayConfiguration.coordinatorDirectorySigningPrivateKey
-            )
-            self.coordinatorDirectorySigningPrivateKey = keyData
-            self.coordinatorDirectoryPublicKey = FederationDirectorySignature.publicKeyData(from: keyData)
+            do {
+                let keyData = try FederationDirectorySignature.privateKeyDataThrowing(
+                    from: relayConfiguration.coordinatorDirectorySigningPrivateKey
+                )
+                coordinatorKeyMaterial = (
+                    keyData,
+                    try FederationDirectorySignature.publicKeyDataThrowing(from: keyData)
+                )
+            } catch {
+                coordinatorKeyMaterial = nil
+            }
         } else {
-            self.coordinatorDirectorySigningPrivateKey = nil
-            self.coordinatorDirectoryPublicKey = nil
+            coordinatorKeyMaterial = nil
         }
+        self.coordinatorDirectorySigningPrivateKey = coordinatorKeyMaterial?.privateKey
+        self.coordinatorDirectoryPublicKey = coordinatorKeyMaterial?.publicKey
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -98,6 +106,9 @@ final class RelayHandler: ChannelInboundHandler {
                     )
                 }
             }
+        } catch is RetryableRelayLocalError {
+            print("[relay] local cryptography unavailable while decoding request")
+            context.close(promise: nil)
         } catch {
             context.close(promise: nil)
         }
@@ -406,13 +417,22 @@ final class RelayHandler: ChannelInboundHandler {
                     attachmentId: upload.attachmentId,
                     chunkIndex: upload.chunkIndex,
                     payload: upload.payload,
-                    ttlSeconds: boundedTTL
+                    ttlSeconds: upload.ttlSeconds,
+                    idempotencyKey: upload.idempotencyKey,
+                    effectiveTTLSeconds: boundedTTL
                 )
                 return success(.attachment(chunk))
             } catch RelayStoreError.invalidChunkIndex {
                 return failure("Invalid chunk index")
             } catch RelayStoreError.invalidAttachmentPayload {
                 return failure("Invalid attachment payload")
+            } catch RelayStoreError.invalidAttachmentIdempotency {
+                return failure("Invalid attachment idempotency key")
+            } catch RelayStoreError.attachmentConflict {
+                return failure(
+                    "Attachment coordinate conflicts with stored state",
+                    code: .conflict
+                )
             } catch RelayStoreError.attachmentBlobUnavailable {
                 return failure("Attachment blob backend unavailable", code: .unavailable, retryable: true)
             } catch {
@@ -475,9 +495,25 @@ final class RelayHandler: ChannelInboundHandler {
                     return failure("Coordinator directory listing throttled. Retry later.", code: .rateLimited, retryable: true)
                 }
                 let nodes = store.listFederationNodes(listRequest)
-                let snapshot = makeCoordinatorDirectorySnapshot(nodes: nodes, request: listRequest)
+                let snapshot: FederationDirectorySnapshot?
+                do {
+                    snapshot = try makeCoordinatorDirectorySnapshot(
+                        nodes: nodes,
+                        request: listRequest
+                    )
+                } catch {
+                    return failure(
+                        "Coordinator snapshot signing is temporarily unavailable.",
+                        code: .unavailable,
+                        retryable: true
+                    )
+                }
                 if listRequest.requireSignedSnapshot == true, snapshot == nil {
-                    return failure("Coordinator snapshot signing is not available.", code: .unavailable)
+                    return failure(
+                        "Coordinator snapshot signing is not available.",
+                        code: .unavailable,
+                        retryable: true
+                    )
                 }
                 return success(.federationNodes(.init(nodes: nodes, snapshot: snapshot)))
             }
@@ -491,10 +527,25 @@ final class RelayHandler: ChannelInboundHandler {
             guard publish.namespace == expectedNamespace else {
                 return failure("Open-federation DHT namespace mismatch.")
             }
-            let result = store.ingestOpenFederationDHTRecords(
-                [publish.record],
-                configuration: dhtConfiguration
-            )
+            let result: OpenFederationDHTDiscoveryIngestResult
+            do {
+                result = try store.ingestOpenFederationDHTRecords(
+                    [publish.record],
+                    configuration: dhtConfiguration
+                )
+            } catch is RetryableRelayLocalError {
+                return failure(
+                    "Relay cryptography is temporarily unavailable.",
+                    code: .unavailable,
+                    retryable: true
+                )
+            } catch {
+                return failure(
+                    "Open-federation DHT processing failed.",
+                    code: .internalFailure,
+                    retryable: true
+                )
+            }
             guard !result.accepted.isEmpty else {
                 let reason = result.rejected.first.map { "\($0.reason)" } ?? "record rejected"
                 return failure("Open-federation DHT record rejected: \(reason)")
@@ -538,6 +589,14 @@ final class RelayHandler: ChannelInboundHandler {
             return .error("Invalid chunk index", respondingTo: request)
         case RelayStoreError.invalidAttachmentPayload:
             return .error("Invalid attachment payload", respondingTo: request)
+        case RelayStoreError.invalidAttachmentIdempotency:
+            return .error("Invalid attachment idempotency key", respondingTo: request)
+        case RelayStoreError.attachmentConflict:
+            return .error(
+                "Attachment coordinate conflicts with stored state",
+                code: .conflict,
+                respondingTo: request
+            )
         case RelayStoreError.attachmentBlobUnavailable:
             return .error("Attachment blob backend unavailable", code: .unavailable, retryable: true, respondingTo: request)
         default:
@@ -594,6 +653,9 @@ final class RelayHandler: ChannelInboundHandler {
             var buffer = context.channel.allocator.buffer(capacity: data.count + 1)
             LineEncoder.wrap(data, into: &buffer)
             context.writeAndFlush(wrapOutboundOut(buffer), promise: nil)
+        } catch is RetryableRelayLocalError {
+            print("[relay] local cryptography unavailable while encoding response")
+            context.close(promise: nil)
         } catch {
             context.close(promise: nil)
         }
@@ -829,7 +891,7 @@ final class RelayHandler: ChannelInboundHandler {
     private func makeCoordinatorDirectorySnapshot(
         nodes: [FederationNodeRecord],
         request: ListFederationNodesRequest
-    ) -> FederationDirectorySnapshot? {
+    ) throws -> FederationDirectorySnapshot? {
         guard relayConfiguration.kind == .coordinator,
               let privateKey = coordinatorDirectorySigningPrivateKey else {
             return nil
@@ -845,7 +907,10 @@ final class RelayHandler: ChannelInboundHandler {
             maxStalenessSeconds: maxStaleness,
             nodes: nodes
         )
-        return try? FederationDirectorySignature.signedSnapshot(from: unsigned, privateKeyData: privateKey)
+        return try FederationDirectorySignature.signedSnapshot(
+            from: unsigned,
+            privateKeyData: privateKey
+        )
     }
 
     private func validatedCoordinatorNodes(
@@ -867,11 +932,17 @@ final class RelayHandler: ChannelInboundHandler {
             }
             if request.requireSignedSnapshot == true {
                 guard let trustedPublicKey,
-                      FederationDirectorySignature.verify(snapshot: snapshot, trustedPublicKey: trustedPublicKey) else {
+                      try FederationDirectorySignature.verifyThrowing(
+                          snapshot: snapshot,
+                          trustedPublicKey: trustedPublicKey
+                      ) else {
                     throw FederationDirectoryValidationError.invalidSnapshot
                 }
             } else if let trustedPublicKey, snapshot.signature != nil {
-                guard FederationDirectorySignature.verify(snapshot: snapshot, trustedPublicKey: trustedPublicKey) else {
+                guard try FederationDirectorySignature.verifyThrowing(
+                    snapshot: snapshot,
+                    trustedPublicKey: trustedPublicKey
+                ) else {
                     throw FederationDirectoryValidationError.invalidSnapshot
                 }
             }

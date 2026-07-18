@@ -1,5 +1,25 @@
 import Foundation
 
+/// Canonical advertised limits for `nw.opaque-route@2`. Keep this registry
+/// byte-for-byte equivalent to the public Core registry.
+enum OpaqueRouteRelayCapabilityLimitsV2 {
+    static let cursorBytes: UInt64 = UInt64(NoctweaveOpaqueRouteRelayStoreV2.cursorBytes)
+    static let maxPage: UInt64 = UInt64(NoctweaveOpaqueRouteRelayStoreV2.maximumSyncPage)
+    static let maxPacketBytes: UInt64 = UInt64(OpaqueRoutePaddingBucketV2.bytes65536.rawValue)
+    static let maxPacketsPerRoute: UInt64 = UInt64(OpaqueRouteQuotaBucketV2.packets1024.rawValue)
+    static let maxRetentionSeconds: UInt64 = UInt64(OpaqueRouteRetentionBucketV2.sevenDays.rawValue)
+    static let maxRoutes: UInt64 = UInt64(NoctweaveOpaqueRouteRelayStoreV2.maximumRoutes)
+
+    static let registry: [String: UInt64] = [
+        "cursorBytes": cursorBytes,
+        "maxPage": maxPage,
+        "maxPacketBytes": maxPacketBytes,
+        "maxPacketsPerRoute": maxPacketsPerRoute,
+        "maxRetentionSeconds": maxRetentionSeconds,
+        "maxRoutes": maxRoutes,
+    ]
+}
+
 enum RelayCapabilityStatusV2: String, Codable, Equatable, CaseIterable {
     case experimental
     case provisional
@@ -153,11 +173,11 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
         rendezvousTransportEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
-            RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .stable),
-            RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .stable)
+            RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .provisional),
+            RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .provisional)
         ]
         if attachmentsEnabled {
-            modules.append(RelayModuleCapabilityV2(module: "nw.blobs", versions: [1], status: .stable))
+            modules.append(RelayModuleCapabilityV2(module: "nw.blobs", versions: [1], status: .provisional))
         }
         if hiddenRetrievalEnabled {
             modules.append(
@@ -192,7 +212,7 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                 RelayModuleCapabilityV2(
                     module: "nw.rendezvous-transport",
                     versions: [2],
-                    status: .stable,
+                    status: .provisional,
                     limits: [
                         "maxLifetimeSeconds": 600,
                         "maxLanes": 2,
@@ -207,14 +227,8 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                 RelayModuleCapabilityV2(
                     module: "nw.opaque-route",
                     versions: [2],
-                    status: .stable,
-                    limits: [
-                        "cursorBytes": 68,
-                        "maxPage": 256,
-                        "maxPacketBytes": 65_536,
-                        "maxPacketsPerRoute": 1_024,
-                        "maxRetentionSeconds": 604_800
-                    ]
+                    status: .provisional,
+                    limits: OpaqueRouteRelayCapabilityLimitsV2.registry
                 )
             )
         }

@@ -104,27 +104,27 @@ struct OpenFederationDHTDiscoveryEngine {
                 )
             } catch let error as OpenFederationDHTRecordError {
                 throw OpenFederationDHTDiscoveryError.invalidLocalAdvertisement(error)
-            } catch {
-                throw OpenFederationDHTDiscoveryError.invalidLocalAdvertisement(.invalidSignature)
             }
             try await transport.publish(record, namespace: namespace)
             publishedRecord = record
-            let localIngest = cache.ingest([record], now: now)
+            let localIngest = try cache.ingest([record], now: now)
             accepted.append(contentsOf: localIngest.accepted)
             rejected.append(contentsOf: localIngest.rejected)
         }
 
+        let queriedRecords: [OpenFederationDHTRecord]
         do {
-            let queriedRecords = try await transport.query(
+            queriedRecords = try await transport.query(
                 namespace: namespace,
                 limit: configuration.maxQueryRecords
             )
-            let queryIngest = cache.ingest(queriedRecords, now: now)
-            accepted.append(contentsOf: queryIngest.accepted)
-            rejected.append(contentsOf: queryIngest.rejected)
         } catch {
             cache.evictExpired(now: now)
+            queriedRecords = []
         }
+        let queryIngest = try cache.ingest(queriedRecords, now: now)
+        accepted.append(contentsOf: queryIngest.accepted)
+        rejected.append(contentsOf: queryIngest.rejected)
 
         let ingestResult = OpenFederationDHTDiscoveryIngestResult(
             accepted: accepted,
@@ -142,11 +142,7 @@ struct OpenFederationDHTCandidateCache: Equatable {
     var configuration: OpenFederationDHTDiscoveryConfiguration
     private var recordsByRelayIdentity: [String: OpenFederationDHTRecord]
 
-    init(
-        configuration: OpenFederationDHTDiscoveryConfiguration,
-        records: [OpenFederationDHTRecord] = [],
-        now: Date = Date()
-    ) {
+    init(configuration: OpenFederationDHTDiscoveryConfiguration) {
         self.configuration = OpenFederationDHTDiscoveryConfiguration(
             isEnabled: configuration.isEnabled,
             federationName: configuration.federationName,
@@ -156,7 +152,6 @@ struct OpenFederationDHTCandidateCache: Equatable {
             maxQueryRecords: configuration.maxQueryRecords
         )
         self.recordsByRelayIdentity = [:]
-        _ = ingest(records, now: now)
     }
 
     var count: Int {
@@ -166,7 +161,7 @@ struct OpenFederationDHTCandidateCache: Equatable {
     mutating func ingest(
         _ records: [OpenFederationDHTRecord],
         now: Date = Date()
-    ) -> OpenFederationDHTDiscoveryIngestResult {
+    ) throws -> OpenFederationDHTDiscoveryIngestResult {
         guard configuration.isEnabled else {
             return OpenFederationDHTDiscoveryIngestResult(
                 accepted: [],
@@ -190,9 +185,6 @@ struct OpenFederationDHTCandidateCache: Equatable {
                 )
             } catch let error as OpenFederationDHTRecordError {
                 rejected.append(OpenFederationDHTRecordRejection(record: record, reason: .validationFailed(error)))
-                continue
-            } catch {
-                rejected.append(OpenFederationDHTRecordRejection(record: record, reason: .validationFailed(.invalidSignature)))
                 continue
             }
 

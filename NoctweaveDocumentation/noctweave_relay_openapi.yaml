@@ -1017,6 +1017,10 @@ components:
             maximum: 65535
         status:
           type: string
+          description: |
+            Module lifecycle status. The relay modules in the 1.0 candidate
+            are provisional; opt-in research modules remain experimental.
+            Stable remains a valid lifecycle value for a future promotion.
           enum: [experimental, provisional, stable, deprecated]
         limits:
           type: object
@@ -1280,7 +1284,7 @@ components:
       additionalProperties: false
     UploadAttachmentRequest:
       type: object
-      required: [attachmentId, chunkIndex, payload, ttlSeconds]
+      required: [attachmentId, chunkIndex, payload, ttlSeconds, idempotencyKey]
       properties:
         attachmentId: { type: string, format: uuid }
         chunkIndex: { type: integer, minimum: 0, maximum: 511 }
@@ -1289,6 +1293,11 @@ components:
           type: [integer, "null"]
           minimum: 60
           maximum: 2592000
+        idempotencyKey:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
       additionalProperties: false
     FetchAttachmentRequest:
       type: object

@@ -96,13 +96,11 @@ struct OpenFederationDHTRecord: Codable, Equatable {
             relaySigningPublicKey: publicKey,
             signature: Data()
         )
-        guard let signature = OQSSignatureVerifier.shared.sign(
+        let signature = try OQSSignatureVerifier.shared.signThrowing(
             data: try unsigned.signingPayloadData(),
             privateKey: privateKey,
             publicKey: publicKey
-        ) else {
-            throw OpenFederationDHTRecordError.invalidSignature
-        }
+        )
         return OpenFederationDHTRecord(
             namespace: unsigned.namespace,
             relayIdentityDigest: unsigned.relayIdentityDigest,
@@ -150,12 +148,14 @@ struct OpenFederationDHTRecord: Codable, Equatable {
         guard expiresAt.timeIntervalSince(issuedAt) <= Self.maxLifetimeSeconds else {
             throw OpenFederationDHTRecordError.invalidLifetime
         }
-        guard signatureAlgorithm == Self.signatureAlgorithm,
-              OQSSignatureVerifier.shared.verify(
-                signature: signature,
-                data: try signingPayloadData(),
-                publicKey: relaySigningPublicKey
-              ) else {
+        guard signatureAlgorithm == Self.signatureAlgorithm else {
+            throw OpenFederationDHTRecordError.invalidSignature
+        }
+        guard try OQSSignatureVerifier.shared.verifyThrowing(
+            signature: signature,
+            data: try signingPayloadData(),
+            publicKey: relaySigningPublicKey
+        ) else {
             throw OpenFederationDHTRecordError.invalidSignature
         }
         guard endpoint.useTLS,

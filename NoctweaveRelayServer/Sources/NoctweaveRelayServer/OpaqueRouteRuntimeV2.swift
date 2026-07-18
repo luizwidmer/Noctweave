@@ -1330,6 +1330,24 @@ struct OpaqueReceiveRouteV2: Codable, Equatable {
             )
             return self
         }
+        if status == .tornDown {
+            guard request.renewalSequence == lease.renewalSequence,
+                  request.authorizedAt >= lease.lastRenewedAt else {
+                throw OpaqueRouteV2Error.transitionOutOfOrder
+            }
+            try opaqueRouteValidateAuthorizationTime(
+                request.authorization.authorizedAt,
+                at: receivedAt
+            )
+            try authenticateTransition(
+                request.authorization,
+                authority: .teardown,
+                digest: transitionDigest,
+                presentedSecret: presentedCapability.rawValue,
+                expectedDigest: teardownCapabilityDigest
+            )
+            return self
+        }
         guard status == .active else { throw OpaqueRouteV2Error.routeTornDown }
         if request.renewalSequence < lease.renewalSequence { throw OpaqueRouteV2Error.staleTransition }
         guard request.renewalSequence == lease.renewalSequence else {
@@ -3163,7 +3181,15 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
         state.committedSequence = max(state.committedSequence, position)
         garbageCollect(&state, at: effective)
         let response = OpaqueRouteCommitResponseV2(
-            committedCursor: try sealCursor(routeID: request.routeID, position: state.committedSequence),
+            // Opaque cursors use randomized sealing. Echo the authenticated
+            // request token when it denotes the authoritative position so the
+            // client can confirm the exact commit it submitted.
+            committedCursor: position == state.committedSequence
+                ? request.cursor
+                : try sealCursor(
+                    routeID: request.routeID,
+                    position: state.committedSequence
+                ),
             highWatermark: try sealCursor(routeID: request.routeID, position: highPosition),
             retentionFloor: try sealCursor(routeID: request.routeID, position: state.retentionFloor)
         )

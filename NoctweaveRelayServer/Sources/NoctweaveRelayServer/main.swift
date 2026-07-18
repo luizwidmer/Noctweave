@@ -891,8 +891,10 @@ if relayConfiguration.kind == .coordinator {
         } else {
             existing = nil
         }
-        let normalized = FederationDirectorySignature.privateKeyData(from: existing)
-        guard !normalized.isEmpty else {
+        let normalized: Data
+        do {
+            normalized = try FederationDirectorySignature.privateKeyDataThrowing(from: existing)
+        } catch {
             print("[relay] Coordinator mode requires runtime liboqs support for ML-DSA-65 directory signing.")
             exit(2)
         }
@@ -910,10 +912,12 @@ if relayConfiguration.kind == .coordinator {
         }
         relayConfiguration.coordinatorDirectorySigningPrivateKey = normalized
     }
-    let normalizedSigningKey = FederationDirectorySignature.privateKeyData(
-        from: relayConfiguration.coordinatorDirectorySigningPrivateKey
-    )
-    guard !normalizedSigningKey.isEmpty else {
+    let normalizedSigningKey: Data
+    do {
+        normalizedSigningKey = try FederationDirectorySignature.privateKeyDataThrowing(
+            from: relayConfiguration.coordinatorDirectorySigningPrivateKey
+        )
+    } catch {
         print("[relay] Coordinator mode requires runtime liboqs support for ML-DSA-65 directory signing.")
         exit(2)
     }

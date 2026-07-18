@@ -101,7 +101,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
             confidentialTransport: true,
             receivedAt: fixture.now.addingTimeInterval(5)
         )
-        XCTAssertEqual(committed.committedCursor.rawValue.count, 68)
+        XCTAssertEqual(committed.committedCursor, commit.request.cursor)
 
         let sqliteBytes = try Data(contentsOf: url)
         XCTAssertNil(sqliteBytes.range(of: fixture.send.rawValue))
@@ -177,6 +177,16 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
 
         let reloaded = RelayStore(fileURL: url)
         try reloaded.load()
+        let recovered = try reloaded.teardownOpaqueRouteV2(
+            fixture.teardownRoute(
+                route,
+                at: fixture.now.addingTimeInterval(3),
+                discriminator: 0x73
+            ),
+            confidentialTransport: true,
+            receivedAt: fixture.now.addingTimeInterval(3)
+        )
+        XCTAssertEqual(recovered, tombstone)
         XCTAssertThrowsError(try reloaded.createOpaqueRouteV2(
             create,
             confidentialTransport: true,
@@ -651,7 +661,8 @@ private struct Fixture {
 
     func teardownRoute(
         _ route: OpaqueReceiveRouteV2,
-        at date: Date
+        at date: Date,
+        discriminator: UInt8 = 0x71
     ) throws -> OpaqueRouteTeardownSubmissionV2 {
         let provisional = OpaqueRouteTeardownRequestV2(
             version: 2,
@@ -659,12 +670,12 @@ private struct Fixture {
             renewalSequence: route.lease.renewalSequence,
             previousTransitionDigest: route.lastTransitionDigest,
             authorizedAt: date,
-            idempotencyKey: key(0x71),
+            idempotencyKey: key(discriminator),
             authorization: proof(
                 authority: .teardown,
                 digest: Data(repeating: 0, count: 32),
                 at: date,
-                nonce: 0x72
+                nonce: discriminator &+ 1
             )
         )
         let request = OpaqueRouteTeardownRequestV2(
@@ -679,7 +690,7 @@ private struct Fixture {
                 routeID: routeID,
                 operationDigest: try XCTUnwrap(provisional.transitionDigest),
                 authorizedAt: date,
-                nonce: nonce(0x72),
+                nonce: nonce(discriminator &+ 1),
                 secret: teardown.rawValue
             )
         )

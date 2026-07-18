@@ -82,7 +82,8 @@ final class RelayWireExactEnvelopeTests: XCTestCase {
                     ciphertext: Data([0x22]),
                     tag: Data(repeating: 0x33, count: EncryptedPayload.tagByteCount)
                 ),
-                ttlSeconds: nil
+                ttlSeconds: nil,
+                idempotencyKey: Data(repeating: 0x44, count: 32)
             )
         )
         let encoded = try RelayCodec.encoder().encode(request)

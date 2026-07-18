@@ -10,13 +10,14 @@ final class StableModelBoundsTests: XCTestCase {
             attachmentId: attachmentID,
             chunkIndex: 0,
             payload: payload,
-            ttlSeconds: nil
+            ttlSeconds: nil,
+            idempotencyKey: Data(repeating: 0x44, count: 32)
         )
         let fetch = FetchAttachmentRequest(attachmentId: attachmentID, chunkIndex: 511)
 
         try assertExactObject(
             upload,
-            keys: ["attachmentId", "chunkIndex", "payload", "ttlSeconds"],
+            keys: ["attachmentId", "chunkIndex", "payload", "ttlSeconds", "idempotencyKey"],
             missingKey: "ttlSeconds"
         )
         let uploadObject = try jsonObject(RelayCodec.encoder().encode(upload))
@@ -33,7 +34,8 @@ final class StableModelBoundsTests: XCTestCase {
                 attachmentId: attachmentID,
                 chunkIndex: invalidIndex,
                 payload: payload,
-                ttlSeconds: 60
+                ttlSeconds: 60,
+                idempotencyKey: Data(repeating: 0x44, count: 32)
             )
             let invalidFetch = FetchAttachmentRequest(
                 attachmentId: attachmentID,
@@ -66,7 +68,8 @@ final class StableModelBoundsTests: XCTestCase {
                 attachmentId: attachmentID,
                 chunkIndex: 0,
                 payload: payload,
-                ttlSeconds: invalidTTL
+                ttlSeconds: invalidTTL,
+                idempotencyKey: Data(repeating: 0x44, count: 32)
             )
             XCTAssertThrowsError(try RelayCodec.encoder().encode(invalid))
             var object = uploadObject
@@ -77,7 +80,8 @@ final class StableModelBoundsTests: XCTestCase {
             attachmentId: attachmentID,
             chunkIndex: 511,
             payload: payload,
-            ttlSeconds: 2_592_000
+            ttlSeconds: 2_592_000,
+            idempotencyKey: Data(repeating: 0x44, count: 32)
         )
         XCTAssertEqual(
             try RelayCodec.decoder().decode(
@@ -85,6 +89,13 @@ final class StableModelBoundsTests: XCTestCase {
                 from: RelayCodec.encoder().encode(maximumTTL)
             ),
             maximumTTL
+        )
+
+        var invalidIdempotencyKey = uploadObject
+        invalidIdempotencyKey["idempotencyKey"] = Data(repeating: 0x44, count: 31)
+            .base64EncodedString()
+        XCTAssertThrowsError(
+            try decode(UploadAttachmentRequest.self, object: invalidIdempotencyKey)
         )
     }
 

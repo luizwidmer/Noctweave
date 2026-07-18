@@ -5,8 +5,8 @@
 # Noctweave Relay Server
 
 Linux/Docker ciphertext relay for the clean Noctweave 1.0 protocol. It has no
-user accounts, identity directory, global inbox, device registry, plaintext
-message API, or legacy request profile.
+global identity service, identity directory, global inbox, endpoint registry,
+plaintext message API, or legacy request profile.
 
 ## Protocol surface
 
@@ -127,8 +127,8 @@ Enable one-use contact transport explicitly:
 
 The transport stores bounded opaque frames under expiring random capabilities.
 It does not learn the relationship introduction carried inside the encrypted
-rendezvous and supports no device admission, group invitation, route rollover,
-or history-transfer purpose.
+rendezvous. It is only for pairwise contact establishment; it does not perform
+endpoint enrollment, group invitation, route rollover, or history transfer.
 
 ## Encrypted blobs
 
@@ -142,6 +142,20 @@ Inline SQLite is the default. Optional IPFS offload uses
 `--attachment-storage ipfs`, `--ipfs-api-endpoint`, and an optional
 `--ipfs-gateway-endpoint`. The relay verifies fetched byte count and digest.
 IPFS changes storage placement, not anonymity or cryptographic deletion.
+
+Every `nw.blobs@1 upload` body contains an attachment UUID, chunk index,
+encrypted payload, explicit nullable TTL, and a required base64-encoded
+32-byte `idempotencyKey`. The coordinate `(attachmentId, chunkIndex)` is
+immutable while retained:
+
+- the same idempotency key and canonical request body returns the original
+  chunk without extending its TTL, rewriting SQLite, or repeating an IPFS put;
+- a different key, encrypted payload, or requested TTL returns a non-retryable
+  `conflict`;
+- replacing content requires a fresh attachment UUID.
+
+The relay persists the key and canonical body digest only to enforce this
+retry boundary. It never receives attachment plaintext or its content key.
 
 ## Federation
 
