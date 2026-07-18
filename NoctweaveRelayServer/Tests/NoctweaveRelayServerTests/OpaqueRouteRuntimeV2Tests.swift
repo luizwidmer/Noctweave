@@ -14,7 +14,10 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
         )
         let encoded = try RelayCodec.encoder(sortedKeys: true).encode(request)
         let decoded = try RelayCodec.decoder().decode(RelayRequest.self, from: encoded)
-        XCTAssertEqual(decoded.appendOpaqueRouteV2?.packet.sealedFrame, packet.sealedFrame)
+        guard case .appendOpaqueRoute(let submission) = decoded.body else {
+            return XCTFail("Expected opaque route append request body")
+        }
+        XCTAssertEqual(submission.packet.sealedFrame, packet.sealedFrame)
         XCTAssertEqual(decoded, request)
 
         let malformed = OpaqueRoutePacketV2(
@@ -73,8 +76,16 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
             receivedAt: fixture.now.addingTimeInterval(4)
         )
         XCTAssertEqual(page.packets.count, 1)
+        XCTAssertEqual(page.packets[0].sequence, 1)
         XCTAssertEqual(page.packets[0].routeRevision, 0)
         XCTAssertEqual(page.packets[0].packet.sealedFrame, packet.sealedFrame)
+        XCTAssertEqual(page.startsAfterSequence, 0)
+        XCTAssertEqual(page.nextSequence, 1)
+        XCTAssertEqual(page.highWatermarkSequence, 1)
+        XCTAssertEqual(page.retentionFloorSequence, 0)
+        XCTAssertEqual(page.packets[0].previousRecordDigest, page.startsAfterRecordDigest)
+        XCTAssertEqual(page.packets[0].recordDigest, page.nextRecordDigest)
+        XCTAssertTrue(page.isStructurallyValid)
 
         let commit = try fixture.commit(
             cursor: page.nextCursor,

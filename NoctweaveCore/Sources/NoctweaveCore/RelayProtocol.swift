@@ -859,6 +859,21 @@ public struct RendezvousRelayRouteCapabilityV2: RawRepresentable, Codable, Equat
         self.rawValue = rawValue
     }
 
+    public init(from decoder: Decoder) throws {
+        rawValue = try decodeRendezvousRelayOpaqueValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try encodeRendezvousRelayOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            to: encoder
+        )
+    }
+
     public static func generate() -> RendezvousRelayRouteCapabilityV2 {
         RendezvousRelayRouteCapabilityV2(
             rawValue: SymmetricKey(size: .bits256).dataRepresentation
@@ -878,6 +893,21 @@ public struct RendezvousRelayPublishCapabilityV2: RawRepresentable, Codable, Equ
 
     public init(rawValue: Data) {
         self.rawValue = rawValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        rawValue = try decodeRendezvousRelayOpaqueValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try encodeRendezvousRelayOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            to: encoder
+        )
     }
 
     public static func generate() -> RendezvousRelayPublishCapabilityV2 {
@@ -901,6 +931,21 @@ public struct RendezvousRelayReadCapabilityV2: RawRepresentable, Codable, Equata
         self.rawValue = rawValue
     }
 
+    public init(from decoder: Decoder) throws {
+        rawValue = try decodeRendezvousRelayOpaqueValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try encodeRendezvousRelayOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            to: encoder
+        )
+    }
+
     public static func generate() -> RendezvousRelayReadCapabilityV2 {
         RendezvousRelayReadCapabilityV2(
             rawValue: SymmetricKey(size: .bits256).dataRepresentation
@@ -920,6 +965,21 @@ public struct RendezvousRelayDeleteCapabilityV2: RawRepresentable, Codable, Equa
 
     public init(rawValue: Data) {
         self.rawValue = rawValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        rawValue = try decodeRendezvousRelayOpaqueValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try encodeRendezvousRelayOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            to: encoder
+        )
     }
 
     public static func generate() -> RendezvousRelayDeleteCapabilityV2 {
@@ -943,6 +1003,21 @@ public struct RendezvousRelayLaneIDV2: RawRepresentable, Codable, Equatable, Has
         self.rawValue = rawValue
     }
 
+    public init(from decoder: Decoder) throws {
+        rawValue = try decodeRendezvousRelayOpaqueValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.laneIDBytes
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try encodeRendezvousRelayOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.laneIDBytes,
+            to: encoder
+        )
+    }
+
     public static func generate() -> RendezvousRelayLaneIDV2 {
         RendezvousRelayLaneIDV2(
             rawValue: SymmetricKey(size: .bits256).dataRepresentation
@@ -962,6 +1037,21 @@ public struct RendezvousRelayFrameIDV2: RawRepresentable, Codable, Equatable, Ha
 
     public init(rawValue: Data) {
         self.rawValue = rawValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        rawValue = try decodeRendezvousRelayOpaqueValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.frameIDBytes
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try encodeRendezvousRelayOpaqueValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.frameIDBytes,
+            to: encoder
+        )
     }
 
     public static func generate() -> RendezvousRelayFrameIDV2 {
@@ -998,6 +1088,46 @@ public struct RendezvousRelayLaneRegistrationV2: Codable, Equatable {
         self.deleteCapability = deleteCapability
     }
 
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(
+            decoder,
+            keys: ["laneId", "publishCapability", "readCapability", "deleteCapability"]
+        )
+        let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+        self.init(
+            laneId: try container.decode(
+                RendezvousRelayLaneIDV2.self,
+                forKey: relayWireKey("laneId")
+            ),
+            publishCapability: try container.decode(
+                RendezvousRelayPublishCapabilityV2.self,
+                forKey: relayWireKey("publishCapability")
+            ),
+            readCapability: try container.decode(
+                RendezvousRelayReadCapabilityV2.self,
+                forKey: relayWireKey("readCapability")
+            ),
+            deleteCapability: try container.decode(
+                RendezvousRelayDeleteCapabilityV2.self,
+                forKey: relayWireKey("deleteCapability")
+            )
+        )
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Rendezvous relay lane registration is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Rendezvous relay lane registration is invalid")
+        }
+        var container = encoder.container(keyedBy: RelayWireCodingKey.self)
+        try container.encode(laneId, forKey: relayWireKey("laneId"))
+        try container.encode(publishCapability, forKey: relayWireKey("publishCapability"))
+        try container.encode(readCapability, forKey: relayWireKey("readCapability"))
+        try container.encode(deleteCapability, forKey: relayWireKey("deleteCapability"))
+    }
+
     public var isStructurallyValid: Bool {
         laneId.isStructurallyValid
             && publishCapability.isStructurallyValid
@@ -1024,16 +1154,57 @@ public struct RegisterRendezvousTransportV2Request: Codable, Equatable {
         self.lanes = lanes
     }
 
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(
+            decoder,
+            keys: ["version", "routeCapability", "expiresAt", "lanes"]
+        )
+        let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+        self.init(
+            version: try container.decode(Int.self, forKey: relayWireKey("version")),
+            routeCapability: try container.decode(
+                RendezvousRelayRouteCapabilityV2.self,
+                forKey: relayWireKey("routeCapability")
+            ),
+            expiresAt: try container.decode(Date.self, forKey: relayWireKey("expiresAt")),
+            lanes: try container.decode(
+                [RendezvousRelayLaneRegistrationV2].self,
+                forKey: relayWireKey("lanes")
+            )
+        )
+        guard hasValidStaticStructure else {
+            throw relayWireError(decoder, "Rendezvous relay registration is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard hasValidStaticStructure else {
+            throw relayWireError(encoder, "Rendezvous relay registration is invalid")
+        }
+        var container = encoder.container(keyedBy: RelayWireCodingKey.self)
+        try container.encode(version, forKey: relayWireKey("version"))
+        try container.encode(routeCapability, forKey: relayWireKey("routeCapability"))
+        try container.encode(expiresAt, forKey: relayWireKey("expiresAt"))
+        try container.encode(lanes, forKey: relayWireKey("lanes"))
+    }
+
     public func isStructurallyValid(at now: Date = Date()) -> Bool {
-        guard version == RendezvousRelayTransportV2.version,
-              routeCapability.isStructurallyValid,
-              RendezvousRelayTransportV2.isCanonicalTimestamp(expiresAt),
+        guard hasValidStaticStructure,
               now.timeIntervalSince1970.isFinite,
               expiresAt > now,
               expiresAt <= Date(
                 timeIntervalSince1970: floor(now.timeIntervalSince1970)
                     + RendezvousRelayTransportV2.maximumLifetimeSeconds
-              ),
+              ) else {
+            return false
+        }
+        return true
+    }
+
+    private var hasValidStaticStructure: Bool {
+        guard version == RendezvousRelayTransportV2.version,
+              routeCapability.isStructurallyValid,
+              RendezvousRelayTransportV2.isCanonicalTimestamp(expiresAt),
               lanes.count == RendezvousRelayTransportV2.laneCount,
               lanes.allSatisfy(\.isStructurallyValid),
               Set(lanes.map(\.laneId)).count == RendezvousRelayTransportV2.laneCount else {
@@ -1067,6 +1238,32 @@ public struct RendezvousRelayCiphertextFrameV2: Codable, Equatable {
         self.ciphertext = ciphertext
     }
 
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: ["frameId", "sequence", "ciphertext"])
+        let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+        self.init(
+            frameId: try container.decode(
+                RendezvousRelayFrameIDV2.self,
+                forKey: relayWireKey("frameId")
+            ),
+            sequence: try container.decode(UInt64.self, forKey: relayWireKey("sequence")),
+            ciphertext: try container.decode(Data.self, forKey: relayWireKey("ciphertext"))
+        )
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Rendezvous relay ciphertext frame is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Rendezvous relay ciphertext frame is invalid")
+        }
+        var container = encoder.container(keyedBy: RelayWireCodingKey.self)
+        try container.encode(frameId, forKey: relayWireKey("frameId"))
+        try container.encode(sequence, forKey: relayWireKey("sequence"))
+        try container.encode(ciphertext, forKey: relayWireKey("ciphertext"))
+    }
+
     public var isStructurallyValid: Bool {
         frameId.isStructurallyValid
             && sequence > 0
@@ -1095,6 +1292,46 @@ public struct AppendRendezvousTransportV2Request: Codable, Equatable {
         self.laneId = laneId
         self.publishCapability = publishCapability
         self.frame = frame
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(
+            decoder,
+            keys: ["routeCapability", "laneId", "publishCapability", "frame"]
+        )
+        let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+        self.init(
+            routeCapability: try container.decode(
+                RendezvousRelayRouteCapabilityV2.self,
+                forKey: relayWireKey("routeCapability")
+            ),
+            laneId: try container.decode(
+                RendezvousRelayLaneIDV2.self,
+                forKey: relayWireKey("laneId")
+            ),
+            publishCapability: try container.decode(
+                RendezvousRelayPublishCapabilityV2.self,
+                forKey: relayWireKey("publishCapability")
+            ),
+            frame: try container.decode(
+                RendezvousRelayCiphertextFrameV2.self,
+                forKey: relayWireKey("frame")
+            )
+        )
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Rendezvous relay append request is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Rendezvous relay append request is invalid")
+        }
+        var container = encoder.container(keyedBy: RelayWireCodingKey.self)
+        try container.encode(routeCapability, forKey: relayWireKey("routeCapability"))
+        try container.encode(laneId, forKey: relayWireKey("laneId"))
+        try container.encode(publishCapability, forKey: relayWireKey("publishCapability"))
+        try container.encode(frame, forKey: relayWireKey("frame"))
     }
 
     public var isStructurallyValid: Bool {
@@ -1126,6 +1363,51 @@ public struct SyncRendezvousTransportV2Request: Codable, Equatable {
         self.maxCount = maxCount
     }
 
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(
+            decoder,
+            keys: ["routeCapability", "laneId", "readCapability", "afterSequence", "maxCount"]
+        )
+        let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+        self.init(
+            routeCapability: try container.decode(
+                RendezvousRelayRouteCapabilityV2.self,
+                forKey: relayWireKey("routeCapability")
+            ),
+            laneId: try container.decode(
+                RendezvousRelayLaneIDV2.self,
+                forKey: relayWireKey("laneId")
+            ),
+            readCapability: try container.decode(
+                RendezvousRelayReadCapabilityV2.self,
+                forKey: relayWireKey("readCapability")
+            ),
+            afterSequence: try container.decode(
+                UInt64.self,
+                forKey: relayWireKey("afterSequence")
+            ),
+            maxCount: try container.decodeIfPresent(
+                Int.self,
+                forKey: relayWireKey("maxCount")
+            )
+        )
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Rendezvous relay sync request is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Rendezvous relay sync request is invalid")
+        }
+        var container = encoder.container(keyedBy: RelayWireCodingKey.self)
+        try container.encode(routeCapability, forKey: relayWireKey("routeCapability"))
+        try container.encode(laneId, forKey: relayWireKey("laneId"))
+        try container.encode(readCapability, forKey: relayWireKey("readCapability"))
+        try container.encode(afterSequence, forKey: relayWireKey("afterSequence"))
+        try relayEncodeOptional(maxCount, key: "maxCount", into: &container)
+    }
+
     public var isStructurallyValid: Bool {
         routeCapability.isStructurallyValid
             && laneId.isStructurallyValid
@@ -1148,6 +1430,41 @@ public struct DeleteRendezvousTransportV2Request: Codable, Equatable {
         self.routeCapability = routeCapability
         self.laneId = laneId
         self.deleteCapability = deleteCapability
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(
+            decoder,
+            keys: ["routeCapability", "laneId", "deleteCapability"]
+        )
+        let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+        self.init(
+            routeCapability: try container.decode(
+                RendezvousRelayRouteCapabilityV2.self,
+                forKey: relayWireKey("routeCapability")
+            ),
+            laneId: try container.decode(
+                RendezvousRelayLaneIDV2.self,
+                forKey: relayWireKey("laneId")
+            ),
+            deleteCapability: try container.decode(
+                RendezvousRelayDeleteCapabilityV2.self,
+                forKey: relayWireKey("deleteCapability")
+            )
+        )
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Rendezvous relay delete request is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Rendezvous relay delete request is invalid")
+        }
+        var container = encoder.container(keyedBy: RelayWireCodingKey.self)
+        try container.encode(routeCapability, forKey: relayWireKey("routeCapability"))
+        try container.encode(laneId, forKey: relayWireKey("laneId"))
+        try container.encode(deleteCapability, forKey: relayWireKey("deleteCapability"))
     }
 
     public var isStructurallyValid: Bool {
@@ -1173,6 +1490,57 @@ public struct RendezvousRelaySyncBatchV2: Codable, Equatable {
         self.highWatermark = highWatermark
         self.nextSequence = nextSequence
         self.hasMore = hasMore
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(
+            decoder,
+            keys: ["frames", "highWatermark", "nextSequence", "hasMore"]
+        )
+        let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+        self.init(
+            frames: try container.decode(
+                [RendezvousRelayCiphertextFrameV2].self,
+                forKey: relayWireKey("frames")
+            ),
+            highWatermark: try container.decode(
+                UInt64.self,
+                forKey: relayWireKey("highWatermark")
+            ),
+            nextSequence: try container.decode(
+                UInt64.self,
+                forKey: relayWireKey("nextSequence")
+            ),
+            hasMore: try container.decode(Bool.self, forKey: relayWireKey("hasMore"))
+        )
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Rendezvous relay sync batch is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Rendezvous relay sync batch is invalid")
+        }
+        var container = encoder.container(keyedBy: RelayWireCodingKey.self)
+        try container.encode(frames, forKey: relayWireKey("frames"))
+        try container.encode(highWatermark, forKey: relayWireKey("highWatermark"))
+        try container.encode(nextSequence, forKey: relayWireKey("nextSequence"))
+        try container.encode(hasMore, forKey: relayWireKey("hasMore"))
+    }
+
+    public var isStructurallyValid: Bool {
+        let sequences = frames.map(\.sequence)
+        return frames.count <= RendezvousRelayTransportV2.maximumSyncFrames
+            && frames.allSatisfy(\.isStructurallyValid)
+            && Set(frames.map(\.frameId)).count == frames.count
+            && sequences == sequences.sorted()
+            && Set(sequences).count == sequences.count
+            && highWatermark <= RendezvousRelayTransportV2.maximumFramesPerLane
+            && nextSequence <= highWatermark
+            && sequences.allSatisfy { $0 <= highWatermark }
+            && (frames.last?.sequence == nextSequence || frames.isEmpty)
+            && hasMore == (nextSequence < highWatermark)
     }
 }
 
@@ -1934,6 +2302,31 @@ private func relayEncodeOptional<T: Encodable>(
     } else {
         try container.encodeNil(forKey: relayWireKey(key))
     }
+}
+
+private func decodeRendezvousRelayOpaqueValue(
+    from decoder: Decoder,
+    byteCount: Int
+) throws -> Data {
+    try relayRequireExactObject(decoder, keys: ["rawValue"])
+    let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+    let value = try container.decode(Data.self, forKey: relayWireKey("rawValue"))
+    guard RendezvousRelayTransportV2.isValidOpaqueValue(value, byteCount: byteCount) else {
+        throw relayWireError(decoder, "Rendezvous relay opaque value is invalid")
+    }
+    return value
+}
+
+private func encodeRendezvousRelayOpaqueValue(
+    _ value: Data,
+    byteCount: Int,
+    to encoder: Encoder
+) throws {
+    guard RendezvousRelayTransportV2.isValidOpaqueValue(value, byteCount: byteCount) else {
+        throw relayWireError(encoder, "Rendezvous relay opaque value is invalid")
+    }
+    var container = encoder.container(keyedBy: RelayWireCodingKey.self)
+    try container.encode(value, forKey: relayWireKey("rawValue"))
 }
 
 private func relayBoundedErrorMessage(_ message: String) -> String {

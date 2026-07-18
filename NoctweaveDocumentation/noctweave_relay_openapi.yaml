@@ -13,23 +13,6 @@ servers:
   - url: https://relay.example.org
     description: TLS relay bridge or reverse proxy
 paths:
-  /health:
-    get:
-      summary: Health probe
-      operationId: getHealth
-      responses:
-        "200":
-          description: Relay is accepting requests
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: "#/components/schemas/RelayResponse"
-                  - type: object
-                    properties:
-                      status:
-                        type: string
-                        examples: ["ok"]
   /relay:
     post:
       summary: Submit one relay protocol request
@@ -48,11 +31,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/RelayResponse"
         "400":
-          description: Malformed request or rejected relay operation
+          description: The body is not an exact, current RelayRequest envelope.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RelayResponse"
+                $ref: "#/components/schemas/HTTPTransportError"
         "413":
           description: Request body exceeds the configured relay limit
         "429":
@@ -69,116 +52,340 @@ components:
   schemas:
     RelayRequest:
       type: object
-      required: [type]
+      description: |
+        Exact request-correlated protocol envelope. Every key is mandatory;
+        authToken is explicitly null when unused. Module/version/method select
+        exactly one body shape. Unknown keys and unsupported bindings are rejected.
+      required: [requestID, module, version, method, body, authToken]
       properties:
-        type:
-          $ref: "#/components/schemas/RelayRequestType"
-        authToken:
+        requestID:
           type: string
+          format: uuid
+        module:
+          $ref: "#/components/schemas/RelayModuleID"
+        version:
+          type: integer
+          minimum: 1
+        method:
+          $ref: "#/components/schemas/RelayMethodID"
+        body:
+          type: object
+        authToken:
+          type: [string, "null"]
+          minLength: 1
           maxLength: 4096
           description: Optional relay password or coordinator registration token.
-        createOpaqueRouteV2:
-          $ref: "#/components/schemas/OpaqueRouteCreateSubmissionV2"
-        renewOpaqueRouteV2:
-          $ref: "#/components/schemas/OpaqueRouteRenewSubmissionV2"
-        teardownOpaqueRouteV2:
-          $ref: "#/components/schemas/OpaqueRouteTeardownSubmissionV2"
-        appendOpaqueRouteV2:
-          $ref: "#/components/schemas/OpaqueRouteAppendSubmissionV2"
-        syncOpaqueRouteV2:
-          $ref: "#/components/schemas/OpaqueRouteSyncSubmissionV2"
-        commitOpaqueRouteV2:
-          $ref: "#/components/schemas/OpaqueRouteCommitSubmissionV2"
-        registerRendezvousTransportV2:
-          $ref: "#/components/schemas/RegisterRendezvousTransportV2Request"
-        appendRendezvousTransportV2:
-          $ref: "#/components/schemas/AppendRendezvousTransportV2Request"
-        syncRendezvousTransportV2:
-          $ref: "#/components/schemas/SyncRendezvousTransportV2Request"
-        deleteRendezvousTransportV2:
-          $ref: "#/components/schemas/DeleteRendezvousTransportV2Request"
-        uploadAttachment:
-          type: object
-        fetchAttachment:
-          type: object
-        registerFederationNode:
-          type: object
-        listFederationNodes:
-          type: object
-        publishOpenFederationDHTRecord:
-          type: object
-        listOpenFederationDHTRecords:
-          type: object
       additionalProperties: false
-    RelayRequestType:
+      allOf:
+        - oneOf:
+            - $ref: "#/components/schemas/CoreHealthRequestBinding"
+            - $ref: "#/components/schemas/CoreInfoRequestBinding"
+            - $ref: "#/components/schemas/OpaqueRouteCreateRequestBinding"
+            - $ref: "#/components/schemas/OpaqueRouteRenewRequestBinding"
+            - $ref: "#/components/schemas/OpaqueRouteTeardownRequestBinding"
+            - $ref: "#/components/schemas/OpaqueRouteAppendRequestBinding"
+            - $ref: "#/components/schemas/OpaqueRouteSyncRequestBinding"
+            - $ref: "#/components/schemas/OpaqueRouteCommitRequestBinding"
+            - $ref: "#/components/schemas/RendezvousRegisterRequestBinding"
+            - $ref: "#/components/schemas/RendezvousAppendRequestBinding"
+            - $ref: "#/components/schemas/RendezvousSyncRequestBinding"
+            - $ref: "#/components/schemas/RendezvousDeleteRequestBinding"
+            - $ref: "#/components/schemas/BlobUploadRequestBinding"
+            - $ref: "#/components/schemas/BlobFetchRequestBinding"
+            - $ref: "#/components/schemas/FederationRegisterRequestBinding"
+            - $ref: "#/components/schemas/FederationListRequestBinding"
+            - $ref: "#/components/schemas/FederationPublishDHTRequestBinding"
+            - $ref: "#/components/schemas/FederationListDHTRequestBinding"
+    RelayModuleID:
       type: string
       enum:
-        - createOpaqueRouteV2
-        - renewOpaqueRouteV2
-        - teardownOpaqueRouteV2
-        - appendOpaqueRouteV2
-        - syncOpaqueRouteV2
-        - commitOpaqueRouteV2
-        - registerRendezvousTransportV2
-        - appendRendezvousTransportV2
-        - syncRendezvousTransportV2
-        - deleteRendezvousTransportV2
-        - health
-        - info
-        - uploadAttachment
-        - fetchAttachment
-        - registerFederationNode
-        - listFederationNodes
-        - publishOpenFederationDHTRecord
-        - listOpenFederationDHTRecords
+        - nw.core
+        - nw.opaque-route
+        - nw.rendezvous-transport
+        - nw.blobs
+        - nw.federation
+    RelayMethodID:
+      type: string
+      enum: [health, info, create, renew, teardown, append, sync, commit, register, delete, upload, fetch, list, publish-dht, list-dht]
     RelayResponse:
       type: object
-      required: [type]
+      description: |
+        Exact response envelope. requestID, module, version, and method MUST
+        equal the request. Success has a non-null operation body and null error;
+        failure has null body and a bounded structured error.
+      required: [requestID, module, version, method, status, body, error]
       properties:
-        type:
-          $ref: "#/components/schemas/RelayResponseType"
-        rendezvousSyncV2:
-          $ref: "#/components/schemas/RendezvousRelaySyncBatchV2"
-        opaqueRouteV2:
-          $ref: "#/components/schemas/OpaqueReceiveRouteV2"
-        opaqueRouteAppendV2:
-          $ref: "#/components/schemas/OpaqueRouteAppendReceiptV2"
-        opaqueRouteSyncV2:
-          $ref: "#/components/schemas/OpaqueRouteSyncResponseV2"
-        opaqueRouteCommitV2:
-          $ref: "#/components/schemas/OpaqueRouteCommitResponseV2"
-        attachment:
-          type: object
-        federationNodes:
-          type: array
-          items:
-            type: object
-        federationSnapshot:
-          type: object
-        relayInfo:
-          $ref: "#/components/schemas/RelayInfo"
-        openFederationDHTRecords:
-          type: array
-          items:
-            type: object
+        requestID:
+          type: string
+          format: uuid
+        module:
+          $ref: "#/components/schemas/RelayModuleID"
+        version:
+          type: integer
+          minimum: 1
+        method:
+          $ref: "#/components/schemas/RelayMethodID"
+        status:
+          type: string
+          enum: [success, error]
+        body:
+          oneOf:
+            - $ref: "#/components/schemas/EmptyBody"
+            - $ref: "#/components/schemas/RelayInfoSuccessBody"
+            - $ref: "#/components/schemas/OpaqueRouteSuccessBody"
+            - $ref: "#/components/schemas/OpaqueRouteAppendSuccessBody"
+            - $ref: "#/components/schemas/OpaqueRouteSyncSuccessBody"
+            - $ref: "#/components/schemas/OpaqueRouteCommitSuccessBody"
+            - $ref: "#/components/schemas/RendezvousSyncSuccessBody"
+            - $ref: "#/components/schemas/AttachmentSuccessBody"
+            - $ref: "#/components/schemas/FederationNodesSuccessBody"
+            - $ref: "#/components/schemas/DHTRecordsSuccessBody"
+            - type: "null"
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/RelayErrorBody"
+            - type: "null"
+      additionalProperties: false
+      oneOf:
+        - properties:
+            status:
+              const: success
+            body:
+              oneOf:
+                - $ref: "#/components/schemas/EmptyBody"
+                - $ref: "#/components/schemas/RelayInfoSuccessBody"
+                - $ref: "#/components/schemas/OpaqueRouteSuccessBody"
+                - $ref: "#/components/schemas/OpaqueRouteAppendSuccessBody"
+                - $ref: "#/components/schemas/OpaqueRouteSyncSuccessBody"
+                - $ref: "#/components/schemas/OpaqueRouteCommitSuccessBody"
+                - $ref: "#/components/schemas/RendezvousSyncSuccessBody"
+                - $ref: "#/components/schemas/AttachmentSuccessBody"
+                - $ref: "#/components/schemas/FederationNodesSuccessBody"
+                - $ref: "#/components/schemas/DHTRecordsSuccessBody"
+            error:
+              type: "null"
+        - properties:
+            status:
+              const: error
+            body:
+              type: "null"
+            error:
+              $ref: "#/components/schemas/RelayErrorBody"
+    RelayErrorBody:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+          enum: [authentication-required, rate-limited, invalid-request, unavailable, not-found, conflict, capacity, internal-failure]
+        message:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: UTF-8 encoded length is limited to 512 bytes by implementations.
+        retryable:
+          type: boolean
+      additionalProperties: false
+    HTTPTransportError:
+      type: object
+      required: [error]
+      properties:
         error:
           type: string
-          description: Stable human-readable rejection reason.
+          maxLength: 512
       additionalProperties: false
-    RelayResponseType:
-      type: string
-      enum:
-        - ok
-        - rendezvousSyncV2
-        - opaqueRouteV2
-        - opaqueRouteAppendV2
-        - opaqueRouteSyncV2
-        - opaqueRouteCommitV2
-        - attachment
-        - federationNodes
-        - info
-        - openFederationDHTRecords
-        - error
+    EmptyBody:
+      type: object
+      maxProperties: 0
+      additionalProperties: false
+    CoreHealthRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.core }
+        version: { const: 2 }
+        method: { const: health }
+        body: { $ref: "#/components/schemas/EmptyBody" }
+    CoreInfoRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.core }
+        version: { const: 2 }
+        method: { const: info }
+        body: { $ref: "#/components/schemas/EmptyBody" }
+    OpaqueRouteCreateRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.opaque-route }
+        version: { const: 2 }
+        method: { const: create }
+        body: { $ref: "#/components/schemas/OpaqueRouteCreateSubmissionV2" }
+    OpaqueRouteRenewRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.opaque-route }
+        version: { const: 2 }
+        method: { const: renew }
+        body: { $ref: "#/components/schemas/OpaqueRouteRenewSubmissionV2" }
+    OpaqueRouteTeardownRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.opaque-route }
+        version: { const: 2 }
+        method: { const: teardown }
+        body: { $ref: "#/components/schemas/OpaqueRouteTeardownSubmissionV2" }
+    OpaqueRouteAppendRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.opaque-route }
+        version: { const: 2 }
+        method: { const: append }
+        body: { $ref: "#/components/schemas/OpaqueRouteAppendSubmissionV2" }
+    OpaqueRouteSyncRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.opaque-route }
+        version: { const: 2 }
+        method: { const: sync }
+        body: { $ref: "#/components/schemas/OpaqueRouteSyncSubmissionV2" }
+    OpaqueRouteCommitRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.opaque-route }
+        version: { const: 2 }
+        method: { const: commit }
+        body: { $ref: "#/components/schemas/OpaqueRouteCommitSubmissionV2" }
+    RendezvousRegisterRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.rendezvous-transport }
+        version: { const: 2 }
+        method: { const: register }
+        body: { $ref: "#/components/schemas/RegisterRendezvousTransportV2Request" }
+    RendezvousAppendRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.rendezvous-transport }
+        version: { const: 2 }
+        method: { const: append }
+        body: { $ref: "#/components/schemas/AppendRendezvousTransportV2Request" }
+    RendezvousSyncRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.rendezvous-transport }
+        version: { const: 2 }
+        method: { const: sync }
+        body: { $ref: "#/components/schemas/SyncRendezvousTransportV2Request" }
+    RendezvousDeleteRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.rendezvous-transport }
+        version: { const: 2 }
+        method: { const: delete }
+        body: { $ref: "#/components/schemas/DeleteRendezvousTransportV2Request" }
+    BlobUploadRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.blobs }
+        version: { const: 1 }
+        method: { const: upload }
+        body: { $ref: "#/components/schemas/UploadAttachmentRequest" }
+    BlobFetchRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.blobs }
+        version: { const: 1 }
+        method: { const: fetch }
+        body: { $ref: "#/components/schemas/FetchAttachmentRequest" }
+    FederationRegisterRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation }
+        version: { const: 1 }
+        method: { const: register }
+        body: { $ref: "#/components/schemas/FederationNodeRegistrationRequest" }
+    FederationListRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation }
+        version: { const: 1 }
+        method: { const: list }
+        body: { $ref: "#/components/schemas/ListFederationNodesRequest" }
+    FederationPublishDHTRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation }
+        version: { const: 1 }
+        method: { const: publish-dht }
+        body: { $ref: "#/components/schemas/PublishOpenFederationDHTRecordRequest" }
+    FederationListDHTRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation }
+        version: { const: 1 }
+        method: { const: list-dht }
+        body: { $ref: "#/components/schemas/ListOpenFederationDHTRecordsRequest" }
+    RelayInfoSuccessBody:
+      type: object
+      required: [relayInfo]
+      properties:
+        relayInfo: { $ref: "#/components/schemas/RelayInfo" }
+      additionalProperties: false
+    OpaqueRouteSuccessBody:
+      type: object
+      required: [route]
+      properties:
+        route: { $ref: "#/components/schemas/OpaqueReceiveRouteV2" }
+      additionalProperties: false
+    OpaqueRouteAppendSuccessBody:
+      type: object
+      required: [receipt]
+      properties:
+        receipt: { $ref: "#/components/schemas/OpaqueRouteAppendReceiptV2" }
+      additionalProperties: false
+    OpaqueRouteSyncSuccessBody:
+      type: object
+      required: [batch]
+      properties:
+        batch: { $ref: "#/components/schemas/OpaqueRouteSyncResponseV2" }
+      additionalProperties: false
+    OpaqueRouteCommitSuccessBody:
+      type: object
+      required: [commit]
+      properties:
+        commit: { $ref: "#/components/schemas/OpaqueRouteCommitResponseV2" }
+      additionalProperties: false
+    RendezvousSyncSuccessBody:
+      type: object
+      required: [batch]
+      properties:
+        batch: { $ref: "#/components/schemas/RendezvousRelaySyncBatchV2" }
+      additionalProperties: false
+    AttachmentSuccessBody:
+      type: object
+      required: [chunk]
+      properties:
+        chunk: { $ref: "#/components/schemas/AttachmentChunk" }
+      additionalProperties: false
+    FederationNodesSuccessBody:
+      type: object
+      required: [nodes, snapshot]
+      properties:
+        nodes:
+          type: array
+          items: { $ref: "#/components/schemas/FederationNodeRecord" }
+        snapshot:
+          oneOf:
+            - $ref: "#/components/schemas/FederationDirectorySnapshot"
+            - type: "null"
+      additionalProperties: false
+    DHTRecordsSuccessBody:
+      type: object
+      required: [records]
+      properties:
+        records:
+          type: array
+          items: { $ref: "#/components/schemas/OpenFederationDHTRecord" }
+      additionalProperties: false
     OpaqueRouteOpaque32V2:
       type: object
       required: [rawValue]
@@ -542,8 +749,22 @@ components:
       additionalProperties: false
     OpaqueRouteReceivedPacketV2:
       type: object
-      required: [routeRevision, packet]
+      required: [sequence, previousRecordDigest, recordDigest, routeRevision, packet]
       properties:
+        sequence:
+          type: integer
+          format: uint64
+          minimum: 1
+        previousRecordDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        recordDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
         routeRevision:
           type: integer
           format: uint64
@@ -553,13 +774,39 @@ components:
       additionalProperties: false
     OpaqueRouteSyncResponseV2:
       type: object
-      required: [packets, nextCursor, highWatermark, retentionFloor, hasMore]
+      required: [packets, startsAfterSequence, startsAfterRecordDigest, nextSequence, nextRecordDigest, highWatermarkSequence, retentionFloorSequence, nextCursor, highWatermark, retentionFloor, hasMore]
       properties:
         packets:
           type: array
           maxItems: 256
           items:
             $ref: "#/components/schemas/OpaqueRouteReceivedPacketV2"
+        startsAfterSequence:
+          type: integer
+          format: uint64
+          minimum: 0
+        startsAfterRecordDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        nextSequence:
+          type: integer
+          format: uint64
+          minimum: 0
+        nextRecordDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        highWatermarkSequence:
+          type: integer
+          format: uint64
+          minimum: 0
+        retentionFloorSequence:
+          type: integer
+          format: uint64
+          minimum: 0
         nextCursor:
           $ref: "#/components/schemas/OpaqueRouteCursorV2"
         highWatermark:
@@ -654,7 +901,8 @@ components:
       description: |
         Relay-opaque encrypted bytes. The relay does not decode the enclosed
         RendezvousFrameV2. Decoded ciphertext length MUST be exactly 4096,
-        16384, or 65536 bytes.
+        16384, 65536, or 131072 bytes. The largest bucket wraps an already
+        padded 65536-byte encrypted rendezvous frame without leaking its size.
       properties:
         frameId:
           $ref: "#/components/schemas/RendezvousRelayFrameIDV2"
@@ -688,7 +936,7 @@ components:
       additionalProperties: false
     SyncRendezvousTransportV2Request:
       type: object
-      required: [routeCapability, laneId, readCapability, afterSequence]
+      required: [routeCapability, laneId, readCapability, afterSequence, maxCount]
       properties:
         routeCapability:
           $ref: "#/components/schemas/RendezvousRelayOpaque32V2"
@@ -702,7 +950,7 @@ components:
           minimum: 0
           maximum: 32
         maxCount:
-          type: integer
+          type: [integer, "null"]
           minimum: 1
           maximum: 32
       additionalProperties: false
@@ -813,12 +1061,126 @@ components:
           type: string
           contentEncoding: base64
       additionalProperties: false
+    EncryptedPayload:
+      type: object
+      required: [nonce, ciphertext, tag]
+      properties:
+        nonce: { type: string, contentEncoding: base64 }
+        ciphertext: { type: string, contentEncoding: base64 }
+        tag: { type: string, contentEncoding: base64 }
+      additionalProperties: false
+    UploadAttachmentRequest:
+      type: object
+      required: [attachmentId, chunkIndex, payload, ttlSeconds]
+      properties:
+        attachmentId: { type: string, format: uuid }
+        chunkIndex: { type: integer, minimum: 0 }
+        payload: { $ref: "#/components/schemas/EncryptedPayload" }
+        ttlSeconds:
+          type: [integer, "null"]
+          minimum: 60
+      additionalProperties: false
+    FetchAttachmentRequest:
+      type: object
+      required: [attachmentId, chunkIndex]
+      properties:
+        attachmentId: { type: string, format: uuid }
+        chunkIndex: { type: integer, minimum: 0 }
+      additionalProperties: false
+    AttachmentChunk:
+      type: object
+      required: [attachmentId, chunkIndex, payload]
+      properties:
+        attachmentId: { type: string, format: uuid }
+        chunkIndex: { type: integer, minimum: 0 }
+        payload: { $ref: "#/components/schemas/EncryptedPayload" }
+      additionalProperties: false
+    FederationNodeRegistrationRequest:
+      type: object
+      required: [endpoint, relayInfo, ttlSeconds]
+      properties:
+        endpoint: { $ref: "#/components/schemas/RelayEndpoint" }
+        relayInfo: { $ref: "#/components/schemas/RelayInfo" }
+        ttlSeconds:
+          type: [integer, "null"]
+          minimum: 1
+      additionalProperties: false
+    ListFederationNodesRequest:
+      type: object
+      required: [mode, federationName, onlyHealthy, maxStalenessSeconds, requireSignedSnapshot]
+      properties:
+        mode:
+          type: [string, "null"]
+          enum: [solo, manual, curated, open, null]
+        federationName: { type: [string, "null"] }
+        onlyHealthy: { type: [boolean, "null"] }
+        maxStalenessSeconds:
+          type: [integer, "null"]
+          minimum: 1
+        requireSignedSnapshot: { type: [boolean, "null"] }
+      additionalProperties: false
+    FederationNodeRecord:
+      type: object
+      required: [endpoint, relayInfo, lastHeartbeatAt, expiresAt]
+      properties:
+        endpoint: { $ref: "#/components/schemas/RelayEndpoint" }
+        relayInfo: { $ref: "#/components/schemas/RelayInfo" }
+        lastHeartbeatAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+      additionalProperties: false
+    FederationDirectorySnapshot:
+      type: object
+      required: [version, mode, issuedAt, validUntil, maxStalenessSeconds, nodes]
+      properties:
+        version: { type: integer, const: 1 }
+        mode: { type: string, enum: [solo, manual, curated, open] }
+        federationName: { type: string }
+        issuedAt: { type: string, format: date-time }
+        validUntil: { type: string, format: date-time }
+        maxStalenessSeconds: { type: integer, minimum: 1 }
+        nodes:
+          type: array
+          items: { $ref: "#/components/schemas/FederationNodeRecord" }
+        signatureAlgorithm: { type: string }
+        signature: { type: string, contentEncoding: base64 }
+      additionalProperties: false
+    OpenFederationDHTRecord:
+      type: object
+      required: [version, namespace, relayIdentityDigest, endpoint, issuedAt, expiresAt, relaySigningPublicKey, signatureAlgorithm, signature]
+      properties:
+        version: { type: integer, const: 1 }
+        namespace: { type: string }
+        relayIdentityDigest: { type: string }
+        endpoint: { $ref: "#/components/schemas/RelayEndpoint" }
+        federationName: { type: string }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        relaySigningPublicKey: { type: string, contentEncoding: base64 }
+        signatureAlgorithm: { type: string, const: ML-DSA-65 }
+        signature: { type: string, contentEncoding: base64 }
+      additionalProperties: false
+    PublishOpenFederationDHTRecordRequest:
+      type: object
+      required: [namespace, record]
+      properties:
+        namespace: { type: string }
+        record: { $ref: "#/components/schemas/OpenFederationDHTRecord" }
+      additionalProperties: false
+    ListOpenFederationDHTRecordsRequest:
+      type: object
+      required: [namespace, limit]
+      properties:
+        namespace: { type: string }
+        limit:
+          type: [integer, "null"]
+          minimum: 1
+      additionalProperties: false
     RelayInfo:
       type: object
       properties:
         kind:
           type: string
-          enum: [standard, discovery, bridge, archive, privateRelay, coordinator]
+          enum: [standard, discovery, bridge, privateRelay, coordinator]
         federation:
           type: object
         temporalBucketSeconds:
@@ -840,8 +1202,6 @@ components:
         onionTransport:
           type: object
         mixnetTransport:
-          type: object
-        wakeSupport:
           type: object
         relayName:
           type: string

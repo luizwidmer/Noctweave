@@ -39,8 +39,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var ipfsAPIEndpoint: String?
     var ipfsGatewayEndpoint: String?
     var ipfsTimeoutSeconds: Int?
-    var groupCreationMode: String
-    var groupSecurityModel: String?
     var hiddenRetrievalEnabled: Bool?
     var hiddenRetrievalMode: String?
     var hiddenRetrievalCoverSize: Int?
@@ -66,11 +64,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var curatedRequireSignedDirectory: Bool?
     var allowPrivateFederationEndpoints: Bool?
     var opaqueRouteRuntimeEnabled: Bool
-    var wakeMode: String
-    var wakeMinPollSeconds: Int
-    var wakeMaxPollSeconds: Int
-    var wakeJitterPermille: Int
-    var wakeLongPollTimeoutSeconds: Int
 
     init(configuration: RelayConfiguration, serverConfiguration: ServerConfig? = nil) {
         relayName = configuration.relayName ?? ""
@@ -92,8 +85,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         ipfsAPIEndpoint = serverConfiguration?.ipfsAPIEndpoint?.absoluteString ?? "http://127.0.0.1:5001"
         ipfsGatewayEndpoint = serverConfiguration?.ipfsGatewayEndpoint?.absoluteString ?? ""
         ipfsTimeoutSeconds = serverConfiguration?.ipfsTimeoutSeconds ?? 10
-        groupCreationMode = configuration.groupCreationMode.rawValue
-        groupSecurityModel = configuration.groupSecurityModel.rawValue
         hiddenRetrievalEnabled = configuration.hiddenRetrieval != nil
         hiddenRetrievalMode = configuration.hiddenRetrieval?.mode.rawValue ?? HiddenRetrievalMode.coverQuery.rawValue
         hiddenRetrievalCoverSize = configuration.hiddenRetrieval?.defaultCoverSetSize ?? 8
@@ -124,11 +115,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         curatedRequireSignedDirectory = configuration.curatedRequireSignedDirectory
         allowPrivateFederationEndpoints = configuration.allowPrivateFederationEndpoints
         opaqueRouteRuntimeEnabled = configuration.isOpaqueRouteRuntimeEnabled
-        wakeMode = configuration.wakeSupport?.mode.rawValue ?? "disabled"
-        wakeMinPollSeconds = configuration.wakeSupport?.minPollIntervalSeconds ?? 60
-        wakeMaxPollSeconds = configuration.wakeSupport?.maxPollIntervalSeconds ?? 300
-        wakeJitterPermille = configuration.wakeSupport?.jitterPermille ?? 250
-        wakeLongPollTimeoutSeconds = configuration.wakeSupport?.longPollTimeoutSeconds ?? 30
     }
 
     func validatedConfiguration(from current: RelayConfiguration) throws -> RelayConfiguration {
@@ -142,12 +128,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         )
         guard let mode = FederationMode(rawValue: federationMode) else {
             throw OperatorConfigurationError.invalidField("federationMode")
-        }
-        guard let groupMode = GroupCreationMode(rawValue: groupCreationMode) else {
-            throw OperatorConfigurationError.invalidField("groupCreationMode")
-        }
-        guard let groupSecurity = GroupSecurityModel(rawValue: groupSecurityModel ?? current.groupSecurityModel.rawValue) else {
-            throw OperatorConfigurationError.invalidField("groupSecurityModel")
         }
         if mode == .manual, current.kind != .standard {
             throw OperatorConfigurationError.unsupportedTransition(
@@ -223,26 +203,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         }
         try validateRestartControlledSettings()
 
-        let wakeSupport: DecentralizedWakeSupport?
-        if wakeMode == "disabled" {
-            wakeSupport = nil
-        } else {
-            guard let parsedWakeMode = DecentralizedWakeMode(rawValue: wakeMode),
-                  (5...86_400).contains(wakeMinPollSeconds),
-                  (wakeMinPollSeconds...86_400).contains(wakeMaxPollSeconds),
-                  (0...1_000).contains(wakeJitterPermille),
-                  (5...300).contains(wakeLongPollTimeoutSeconds) else {
-                throw OperatorConfigurationError.invalidField("wake policy")
-            }
-            wakeSupport = DecentralizedWakeSupport(
-                mode: parsedWakeMode,
-                minPollIntervalSeconds: wakeMinPollSeconds,
-                maxPollIntervalSeconds: wakeMaxPollSeconds,
-                jitterPermille: wakeJitterPermille,
-                longPollTimeoutSeconds: parsedWakeMode == .longPoll ? wakeLongPollTimeoutSeconds : nil
-            )
-        }
-
         return RelayConfiguration(
             kind: current.kind,
             federation: FederationDescriptor(
@@ -261,12 +221,9 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             hiddenRetrieval: hiddenRetrieval,
             onionTransport: onionTransport,
             mixnetTransport: mixnetTransport,
-            wakeSupport: wakeSupport,
             relayName: normalizedName.nilIfEmpty,
             operatorNote: normalizedNote.nilIfEmpty,
             softwareVersion: current.softwareVersion,
-            groupCreationMode: groupMode,
-            groupSecurityModel: groupSecurity,
             accessPassword: current.accessPassword,
             coordinatorRegistrationToken: current.coordinatorRegistrationToken,
             federationCoordinatorEndpoints: coordinators,
@@ -308,12 +265,9 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             hiddenRetrieval: config.hiddenRetrieval,
             onionTransport: config.onionTransport,
             mixnetTransport: config.mixnetTransport,
-            wakeSupport: config.wakeSupport,
             relayName: config.relayName,
             operatorNote: config.operatorNote,
             softwareVersion: ServerConfig.advertisedSoftwareVersion,
-            groupCreationMode: config.groupCreationMode,
-            groupSecurityModel: config.groupSecurityModel,
             accessPassword: config.accessPassword,
             coordinatorRegistrationToken: config.coordinatorRegistrationToken,
             federationCoordinatorEndpoints: config.federationCoordinatorEndpoints,
@@ -351,11 +305,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.hiddenRetrieval = updated.hiddenRetrieval
         config.onionTransport = updated.onionTransport
         config.mixnetTransport = updated.mixnetTransport
-        config.wakeSupport = updated.wakeSupport
         config.relayName = updated.relayName
         config.operatorNote = updated.operatorNote
-        config.groupCreationMode = updated.groupCreationMode
-        config.groupSecurityModel = updated.groupSecurityModel
         config.federationCoordinatorEndpoints = updated.federationCoordinatorEndpoints ?? []
         config.coordinatorHeartbeatSeconds = updated.coordinatorHeartbeatSeconds ?? config.coordinatorHeartbeatSeconds
         config.coordinatorDirectoryMaxStalenessSeconds = updated.coordinatorDirectoryMaxStalenessSeconds ?? config.coordinatorDirectoryMaxStalenessSeconds

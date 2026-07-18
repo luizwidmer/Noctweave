@@ -975,16 +975,217 @@ struct OpaqueRouteAppendReceiptV2: Codable, Equatable {
 }
 
 struct OpaqueRouteReceivedPacketV2: Codable, Equatable {
+    let sequence: UInt64
+    let previousRecordDigest: Data
+    let recordDigest: Data
     let routeRevision: UInt64
     let packet: OpaqueRoutePacketV2
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case sequence
+        case previousRecordDigest
+        case recordDigest
+        case routeRevision
+        case packet
+    }
+
+    init(
+        sequence: UInt64,
+        previousRecordDigest: Data,
+        recordDigest: Data,
+        routeRevision: UInt64,
+        packet: OpaqueRoutePacketV2
+    ) {
+        self.sequence = sequence
+        self.previousRecordDigest = previousRecordDigest
+        self.recordDigest = recordDigest
+        self.routeRevision = routeRevision
+        self.packet = packet
+    }
+
+    init(from decoder: Decoder) throws {
+        try opaqueRouteRelayRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sequence = try container.decode(UInt64.self, forKey: .sequence)
+        previousRecordDigest = try container.decode(Data.self, forKey: .previousRecordDigest)
+        recordDigest = try container.decode(Data.self, forKey: .recordDigest)
+        routeRevision = try container.decode(UInt64.self, forKey: .routeRevision)
+        packet = try container.decode(OpaqueRoutePacketV2.self, forKey: .packet)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .recordDigest,
+                in: container,
+                debugDescription: "Opaque route record chain is invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route record chain is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sequence, forKey: .sequence)
+        try container.encode(previousRecordDigest, forKey: .previousRecordDigest)
+        try container.encode(recordDigest, forKey: .recordDigest)
+        try container.encode(routeRevision, forKey: .routeRevision)
+        try container.encode(packet, forKey: .packet)
+    }
+
+    var isStructurallyValid: Bool {
+        sequence > 0
+            && opaqueRouteIsValidDigest(previousRecordDigest)
+            && opaqueRouteIsValidDigest(recordDigest)
+            && packet.isStructurallyValid
+            && recordDigest == opaqueRouteRecordDigest(
+                previousRecordDigest: previousRecordDigest,
+                sequence: sequence,
+                routeRevision: routeRevision,
+                packet: packet
+            )
+    }
 }
 
 struct OpaqueRouteSyncResponseV2: Codable, Equatable {
     let packets: [OpaqueRouteReceivedPacketV2]
+    let startsAfterSequence: UInt64
+    let startsAfterRecordDigest: Data
+    let nextSequence: UInt64
+    let nextRecordDigest: Data
+    let highWatermarkSequence: UInt64
+    let retentionFloorSequence: UInt64
     let nextCursor: OpaqueRouteCursorV2
     let highWatermark: OpaqueRouteCursorV2
     let retentionFloor: OpaqueRouteCursorV2
     let hasMore: Bool
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case packets
+        case startsAfterSequence
+        case startsAfterRecordDigest
+        case nextSequence
+        case nextRecordDigest
+        case highWatermarkSequence
+        case retentionFloorSequence
+        case nextCursor
+        case highWatermark
+        case retentionFloor
+        case hasMore
+    }
+
+    init(
+        packets: [OpaqueRouteReceivedPacketV2],
+        startsAfterSequence: UInt64,
+        startsAfterRecordDigest: Data,
+        nextSequence: UInt64,
+        nextRecordDigest: Data,
+        highWatermarkSequence: UInt64,
+        retentionFloorSequence: UInt64,
+        nextCursor: OpaqueRouteCursorV2,
+        highWatermark: OpaqueRouteCursorV2,
+        retentionFloor: OpaqueRouteCursorV2,
+        hasMore: Bool
+    ) {
+        self.packets = packets
+        self.startsAfterSequence = startsAfterSequence
+        self.startsAfterRecordDigest = startsAfterRecordDigest
+        self.nextSequence = nextSequence
+        self.nextRecordDigest = nextRecordDigest
+        self.highWatermarkSequence = highWatermarkSequence
+        self.retentionFloorSequence = retentionFloorSequence
+        self.nextCursor = nextCursor
+        self.highWatermark = highWatermark
+        self.retentionFloor = retentionFloor
+        self.hasMore = hasMore
+    }
+
+    init(from decoder: Decoder) throws {
+        try opaqueRouteRelayRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        packets = try container.decode([OpaqueRouteReceivedPacketV2].self, forKey: .packets)
+        startsAfterSequence = try container.decode(UInt64.self, forKey: .startsAfterSequence)
+        startsAfterRecordDigest = try container.decode(Data.self, forKey: .startsAfterRecordDigest)
+        nextSequence = try container.decode(UInt64.self, forKey: .nextSequence)
+        nextRecordDigest = try container.decode(Data.self, forKey: .nextRecordDigest)
+        highWatermarkSequence = try container.decode(UInt64.self, forKey: .highWatermarkSequence)
+        retentionFloorSequence = try container.decode(UInt64.self, forKey: .retentionFloorSequence)
+        nextCursor = try container.decode(OpaqueRouteCursorV2.self, forKey: .nextCursor)
+        highWatermark = try container.decode(OpaqueRouteCursorV2.self, forKey: .highWatermark)
+        retentionFloor = try container.decode(OpaqueRouteCursorV2.self, forKey: .retentionFloor)
+        hasMore = try container.decode(Bool.self, forKey: .hasMore)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .packets,
+                in: container,
+                debugDescription: "Opaque route sync chain is invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Opaque route sync chain is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(packets, forKey: .packets)
+        try container.encode(startsAfterSequence, forKey: .startsAfterSequence)
+        try container.encode(startsAfterRecordDigest, forKey: .startsAfterRecordDigest)
+        try container.encode(nextSequence, forKey: .nextSequence)
+        try container.encode(nextRecordDigest, forKey: .nextRecordDigest)
+        try container.encode(highWatermarkSequence, forKey: .highWatermarkSequence)
+        try container.encode(retentionFloorSequence, forKey: .retentionFloorSequence)
+        try container.encode(nextCursor, forKey: .nextCursor)
+        try container.encode(highWatermark, forKey: .highWatermark)
+        try container.encode(retentionFloor, forKey: .retentionFloor)
+        try container.encode(hasMore, forKey: .hasMore)
+    }
+
+    var isStructurallyValid: Bool {
+        guard packets.count <= NoctweaveOpaqueRouteRelayStoreV2.maximumSyncPage,
+              retentionFloorSequence <= startsAfterSequence,
+              startsAfterSequence <= nextSequence,
+              nextSequence <= highWatermarkSequence,
+              opaqueRouteIsValidDigest(startsAfterRecordDigest),
+              opaqueRouteIsValidDigest(nextRecordDigest),
+              nextCursor.isStructurallyValid,
+              highWatermark.isStructurallyValid,
+              retentionFloor.isStructurallyValid,
+              hasMore == (nextSequence < highWatermarkSequence) else {
+            return false
+        }
+        var expectedSequence = startsAfterSequence
+        var expectedPreviousDigest = startsAfterRecordDigest
+        for received in packets {
+            guard expectedSequence < UInt64.max,
+                  received.sequence == expectedSequence + 1,
+                  received.previousRecordDigest == expectedPreviousDigest,
+                  received.isStructurallyValid else {
+                return false
+            }
+            expectedSequence = received.sequence
+            expectedPreviousDigest = received.recordDigest
+        }
+        return expectedSequence == nextSequence
+            && expectedPreviousDigest == nextRecordDigest
+    }
 }
 
 struct OpaqueRouteCommitResponseV2: Codable, Equatable {
@@ -1032,6 +1233,8 @@ struct OpaqueRouteCommitSubmissionV2: Codable, Equatable {
 struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
     private struct StoredPacket: Codable, Equatable {
         let sequence: UInt64
+        let previousRecordDigest: Data
+        let recordDigest: Data
         let routeRevision: UInt64
         let packet: OpaqueRoutePacketV2
         let expiresAt: Date
@@ -1067,6 +1270,7 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
         var packets: [StoredPacket]
         var nextSequence: UInt64
         var retentionFloor: UInt64
+        var retentionFloorDigest: Data
         var committedSequence: UInt64
         var acceptedPackets: [OpaqueRoutePacketIDV2: AcceptedPacket]
         var acceptedReads: [OpaqueRouteIdempotencyKeyV2: AcceptedReadRequest]
@@ -1078,6 +1282,10 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
             packets = []
             nextSequence = 1
             retentionFloor = 0
+            retentionFloorDigest = Data(
+                repeating: 0,
+                count: NoctweaveOpaqueRoutesV2.digestBytes
+            )
             committedSequence = 0
             acceptedPackets = [:]
             acceptedReads = [:]
@@ -1089,16 +1297,26 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
                   replayLedger.isStructurallyValid,
                   nextSequence > 0,
                   retentionFloor <= nextSequence - 1,
+                  opaqueRouteIsValidDigest(retentionFloorDigest),
                   committedSequence <= nextSequence - 1,
                   acceptedPackets.count <= NoctweaveOpaqueRouteRelayStoreV2.maximumAcceptedPacketIdentifiers,
                   acceptedReads.count <= NoctweaveOpaqueRouteRelayStoreV2.maximumReadRequestReceipts,
                   observedAtHighWatermark.timeIntervalSince1970.isFinite else {
                 return false
             }
-            var previous = retentionFloor
+            var previousSequence = retentionFloor
+            var previousDigest = retentionFloorDigest
             for stored in packets {
-                guard stored.sequence > previous,
+                guard previousSequence < UInt64.max,
+                      stored.sequence == previousSequence + 1,
                       stored.sequence < nextSequence,
+                      stored.previousRecordDigest == previousDigest,
+                      stored.recordDigest == opaqueRouteRecordDigest(
+                          previousRecordDigest: stored.previousRecordDigest,
+                          sequence: stored.sequence,
+                          routeRevision: stored.routeRevision,
+                          packet: stored.packet
+                      ),
                       stored.routeRevision <= route.lease.renewalSequence,
                       stored.packet.routeID == route.routeID,
                       stored.packet.isStructurallyValid,
@@ -1106,7 +1324,8 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
                       stored.expiresAt.timeIntervalSince1970.isFinite else {
                     return false
                 }
-                previous = stored.sequence
+                previousSequence = stored.sequence
+                previousDigest = stored.recordDigest
             }
             return packets.count <= Int(route.lease.policy.quotaBucket.rawValue)
                 && acceptedPackets.allSatisfy { packetID, accepted in
@@ -1286,6 +1505,14 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
         }
         let sequence = state.nextSequence
         state.nextSequence += 1
+        let previousRecordDigest = state.packets.last?.recordDigest
+            ?? state.retentionFloorDigest
+        let recordDigest = opaqueRouteRecordDigest(
+            previousRecordDigest: previousRecordDigest,
+            sequence: sequence,
+            routeRevision: state.route.lease.renewalSequence,
+            packet: packet
+        )
         let cursor = try sealCursor(routeID: packet.routeID, position: sequence)
         let receipt = OpaqueRouteAppendReceiptV2(
             packetID: packet.packetID,
@@ -1294,6 +1521,8 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
         )
         state.packets.append(StoredPacket(
             sequence: sequence,
+            previousRecordDigest: previousRecordDigest,
+            recordDigest: recordDigest,
             routeRevision: state.route.lease.renewalSequence,
             packet: packet,
             expiresAt: expiry
@@ -1377,8 +1606,24 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
         let packetSequences = page.map(\.sequence)
         let nextPosition = packetSequences.last ?? start
         let highPosition = state.nextSequence - 1
+        let startDigest = try recordDigest(at: start, in: state)
+        let nextDigest = page.last?.recordDigest ?? startDigest
         let response = OpaqueRouteSyncResponseV2(
-            packets: page.map { OpaqueRouteReceivedPacketV2(routeRevision: $0.routeRevision, packet: $0.packet) },
+            packets: page.map {
+                OpaqueRouteReceivedPacketV2(
+                    sequence: $0.sequence,
+                    previousRecordDigest: $0.previousRecordDigest,
+                    recordDigest: $0.recordDigest,
+                    routeRevision: $0.routeRevision,
+                    packet: $0.packet
+                )
+            },
+            startsAfterSequence: start,
+            startsAfterRecordDigest: startDigest,
+            nextSequence: nextPosition,
+            nextRecordDigest: nextDigest,
+            highWatermarkSequence: highPosition,
+            retentionFloorSequence: state.retentionFloor,
             nextCursor: try sealCursor(routeID: request.routeID, position: nextPosition),
             highWatermark: try sealCursor(routeID: request.routeID, position: highPosition),
             retentionFloor: try sealCursor(routeID: request.routeID, position: state.retentionFloor),
@@ -1516,6 +1761,8 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
     private func garbageCollect(_ state: inout RouteState, at receivedAt: Date) {
         let high = state.nextSequence - 1
         if state.route.status != .active || !state.route.lease.isActive(at: receivedAt) {
+            state.retentionFloorDigest = state.packets.last?.recordDigest
+                ?? state.retentionFloorDigest
             state.packets.removeAll(keepingCapacity: false)
             state.retentionFloor = high
             pruneReceipts(&state, at: receivedAt)
@@ -1525,6 +1772,7 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
         while let first = state.packets.first,
               first.sequence <= state.committedSequence || first.expiresAt <= receivedAt {
             removedThrough = first.sequence
+            state.retentionFloorDigest = first.recordDigest
             state.packets.removeFirst()
         }
         state.retentionFloor = max(state.retentionFloor, removedThrough)
@@ -1548,6 +1796,16 @@ struct OpaqueRouteRuntimeStateV2: Codable, Equatable {
                 return receipt.authorizationExpiresAt >= receivedAt
             }
         }
+    }
+
+    private func recordDigest(at sequence: UInt64, in state: RouteState) throws -> Data {
+        if sequence == state.retentionFloor {
+            return state.retentionFloorDigest
+        }
+        guard let packet = state.packets.first(where: { $0.sequence == sequence }) else {
+            throw OpaqueRouteRelayStoreV2Error.invalidCursor
+        }
+        return packet.recordDigest
     }
 
     private func sealCursor(
@@ -1682,6 +1940,27 @@ private func opaqueRouteStoreDigest(domain: String, components: [Data]) -> Data 
     return Data(SHA256.hash(data: material))
 }
 
+private func opaqueRouteRecordDigest(
+    previousRecordDigest: Data,
+    sequence: UInt64,
+    routeRevision: UInt64,
+    packet: OpaqueRoutePacketV2
+) -> Data {
+    opaqueRouteStoreDigest(
+        domain: "org.noctweave.opaque-route.record/v2",
+        components: [
+            previousRecordDigest,
+            opaqueRouteStoreIntegerBytes(sequence),
+            opaqueRouteStoreIntegerBytes(routeRevision),
+            packet.routeID.rawValue,
+            packet.packetID.rawValue,
+            packet.operationDigest,
+            packet.authorization.nonce.rawValue,
+            packet.authorization.mac,
+        ]
+    )
+}
+
 private func opaqueRouteStoreIntegerBytes<T: FixedWidthInteger>(_ value: T) -> Data {
     var data = Data()
     opaqueRouteStoreAppend(value, to: &data)
@@ -1691,4 +1970,34 @@ private func opaqueRouteStoreIntegerBytes<T: FixedWidthInteger>(_ value: T) -> D
 private func opaqueRouteStoreAppend<T: FixedWidthInteger>(_ value: T, to data: inout Data) {
     var bigEndian = value.bigEndian
     Swift.withUnsafeBytes(of: &bigEndian) { data.append(contentsOf: $0) }
+}
+
+private struct OpaqueRouteRelayCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func opaqueRouteRelayRequireExactObject(
+    _ decoder: Decoder,
+    keys: [String]
+) throws {
+    let container = try decoder.container(keyedBy: OpaqueRouteRelayCodingKey.self)
+    guard Set(container.allKeys.map(\.stringValue)) == Set(keys) else {
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "Opaque route relay fields must match the current protocol exactly"
+            )
+        )
+    }
 }

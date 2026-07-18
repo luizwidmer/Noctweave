@@ -75,11 +75,8 @@ struct ServerConfig {
     var hiddenRetrieval: HiddenRetrievalSupport?
     var onionTransport: OnionTransportSupport?
     var mixnetTransport: MixnetTransportSupport?
-    var wakeSupport: DecentralizedWakeSupport?
     var relayName: String?
     var operatorNote: String?
-    var groupCreationMode: GroupCreationMode
-    var groupSecurityModel: GroupSecurityModel
     var accessPassword: String?
     var coordinatorRegistrationToken: String?
     var federationCoordinatorEndpoints: [RelayEndpoint]
@@ -156,15 +153,8 @@ struct ServerConfig {
         var mixnetMinBatchSize = Int(environment["NOCTWEAVE_MIXNET_MIN_BATCH_SIZE"] ?? "") ?? 8
         var mixnetCoverPacketsPerBatch = Int(environment["NOCTWEAVE_MIXNET_COVER_PACKETS_PER_BATCH"] ?? "") ?? 2
         var mixnetMaxDelaySeconds = Int(environment["NOCTWEAVE_MIXNET_MAX_DELAY_SECONDS"] ?? "") ?? 120
-        var wakeMode: DecentralizedWakeMode?
-        var wakeMinPollSeconds = 60
-        var wakeMaxPollSeconds = 300
-        var wakeJitterPermille = 250
-        var wakeLongPollTimeoutSeconds: Int?
         var relayName: String?
         var operatorNote: String?
-        var groupCreationMode: GroupCreationMode = .allowed
-        var groupSecurityModel: GroupSecurityModel = .mlsDerivedTree
         var accessPassword: String? = environment["NOCTWEAVE_RELAY_PASSWORD"]
         var coordinatorRegistrationToken: String? = environment["NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN"]
         var federationCoordinatorEndpoints: [RelayEndpoint] = []
@@ -378,27 +368,6 @@ struct ServerConfig {
                     mixnetMaxDelaySeconds = parsed
                     mixnetTransportEnabled = true
                 }
-            case "--wake-mode":
-                if let value = iterator.next(),
-                   let parsed = DecentralizedWakeMode(rawValue: value) {
-                    wakeMode = parsed
-                }
-            case "--wake-min-poll-seconds":
-                if let value = iterator.next(), let parsed = Int(value) {
-                    wakeMinPollSeconds = max(5, parsed)
-                }
-            case "--wake-max-poll-seconds":
-                if let value = iterator.next(), let parsed = Int(value) {
-                    wakeMaxPollSeconds = max(5, parsed)
-                }
-            case "--wake-jitter-permille":
-                if let value = iterator.next(), let parsed = Int(value) {
-                    wakeJitterPermille = min(max(0, parsed), 1_000)
-                }
-            case "--wake-long-poll-timeout-seconds":
-                if let value = iterator.next(), let parsed = Int(value) {
-                    wakeLongPollTimeoutSeconds = max(5, parsed)
-                }
             case "--attachment-max-ttl-minutes":
                 if let value = iterator.next(), let parsed = Int(value) {
                     attachmentMaxTTLSeconds = min(max(1, parsed), 30 * 24 * 60) * 60
@@ -407,16 +376,6 @@ struct ServerConfig {
                 relayName = iterator.next()
             case "--operator-note":
                 operatorNote = iterator.next()
-            case "--group-creation-mode":
-                if let value = iterator.next(),
-                   let parsed = GroupCreationMode(rawValue: value) {
-                    groupCreationMode = parsed
-                }
-            case "--group-security-model":
-                if let value = iterator.next(),
-                   let parsed = GroupSecurityModel(rawValue: value) {
-                    groupSecurityModel = parsed
-                }
             case "--access-password":
                 accessPassword = iterator.next()
             case "--coordinator-registration-token":
@@ -554,9 +513,6 @@ struct ServerConfig {
         mixnetMinBatchSize = min(max(mixnetMinBatchSize, 1), 256)
         mixnetCoverPacketsPerBatch = min(max(mixnetCoverPacketsPerBatch, 0), 256)
         mixnetMaxDelaySeconds = min(max(mixnetMaxDelaySeconds, 0), 3_600)
-        wakeMinPollSeconds = min(max(wakeMinPollSeconds, 5), 86_400)
-        wakeMaxPollSeconds = min(max(wakeMaxPollSeconds, wakeMinPollSeconds), 86_400)
-        wakeLongPollTimeoutSeconds = wakeLongPollTimeoutSeconds.map { min(max($0, 5), 300) }
         coordinatorHeartbeatSeconds = min(max(coordinatorHeartbeatSeconds, 15), 3_600)
         coordinatorDirectoryMaxStalenessSeconds = min(
             max(coordinatorDirectoryMaxStalenessSeconds, coordinatorHeartbeatSeconds),
@@ -603,16 +559,6 @@ struct ServerConfig {
                 maxDelaySeconds: mixnetMaxDelaySeconds
             )
             : nil
-        let wakeSupport = wakeMode.map { mode in
-            DecentralizedWakeSupport(
-                mode: mode,
-                minPollIntervalSeconds: wakeMinPollSeconds,
-                maxPollIntervalSeconds: wakeMaxPollSeconds,
-                jitterPermille: wakeJitterPermille,
-                longPollTimeoutSeconds: wakeLongPollTimeoutSeconds
-            )
-        }
-
         let normalizedMaxMessageBytes = min(max(1_024, maxMessageBytes ?? (512 * 1024)), 8 * 1024 * 1024)
         let normalizedMaxLineBytes = min(
             max(maxLineBytes ?? (640 * 1024), normalizedMaxMessageBytes + (128 * 1024)),
@@ -649,11 +595,8 @@ struct ServerConfig {
             hiddenRetrieval: hiddenRetrieval,
             onionTransport: onionTransport,
             mixnetTransport: mixnetTransport,
-            wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,
-            groupCreationMode: groupCreationMode,
-            groupSecurityModel: groupSecurityModel,
             accessPassword: accessPassword,
             coordinatorRegistrationToken: coordinatorRegistrationToken,
             federationCoordinatorEndpoints: federationCoordinatorEndpoints,
@@ -900,12 +843,9 @@ var relayConfiguration = RelayConfiguration(
     hiddenRetrieval: config.hiddenRetrieval,
     onionTransport: config.onionTransport,
     mixnetTransport: config.mixnetTransport,
-    wakeSupport: config.wakeSupport,
     relayName: config.relayName,
     operatorNote: config.operatorNote,
     softwareVersion: ServerConfig.advertisedSoftwareVersion,
-    groupCreationMode: config.groupCreationMode,
-    groupSecurityModel: config.groupSecurityModel,
     accessPassword: config.accessPassword,
     coordinatorRegistrationToken: config.coordinatorRegistrationToken,
     federationCoordinatorEndpoints: config.federationCoordinatorEndpoints,

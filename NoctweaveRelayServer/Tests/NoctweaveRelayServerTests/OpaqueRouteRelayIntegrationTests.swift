@@ -13,12 +13,13 @@ final class OpaqueRouteRelayIntegrationTests: XCTestCase {
         let response = try harness.send(
             .createOpaqueRouteV2(try OpaqueRouteIntegrationFixture().create(at: now))
         )
-        XCTAssertEqual(response.type.rawValue, RelayResponseType.opaqueRouteV2.rawValue)
-        XCTAssertNotNil(response.opaqueRouteV2)
+        guard case .opaqueRoute? = response.successBody else {
+            return XCTFail("Expected opaque route create response")
+        }
 
-        let unknownSurface = try harness.sendRaw(Data(#"{"type":"notAProtocolOperation"}"#.utf8))
-        XCTAssertEqual(unknownSurface.type.rawValue, RelayResponseType.error.rawValue)
-        XCTAssertEqual(unknownSurface.error, "Decode failed")
+        XCTAssertThrowsError(
+            try harness.sendRaw(Data(#"{"type":"notAProtocolOperation"}"#.utf8))
+        )
     }
 
     func testRuntimeCanBeExplicitlyDisabledByStableOperatorSetting() throws {
@@ -27,8 +28,8 @@ final class OpaqueRouteRelayIntegrationTests: XCTestCase {
         let response = try harness.send(
             .createOpaqueRouteV2(try OpaqueRouteIntegrationFixture().create(at: Date()))
         )
-        XCTAssertEqual(response.type.rawValue, RelayResponseType.error.rawValue)
-        XCTAssertEqual(response.error, "Opaque route runtime is disabled")
+        XCTAssertEqual(response.status, .error)
+        XCTAssertEqual(response.error?.message, "Opaque route runtime is disabled")
     }
 }
 
@@ -144,7 +145,11 @@ private final class OpaqueRouteRelayTCPHarness {
     }
 
     func send(_ request: RelayRequest) throws -> RelayResponse {
-        try sendRaw(RelayCodec.encoder().encode(request))
+        let response = try sendRaw(RelayCodec.encoder().encode(request))
+        guard response.isResponse(to: request) else {
+            throw NSError(domain: "OpaqueRouteRelayTCPHarness", code: 2)
+        }
+        return response
     }
 
     func sendRaw(_ requestData: Data) throws -> RelayResponse {
@@ -199,6 +204,10 @@ private final class OpaqueRouteRelayResponseHandler: ChannelInboundHandler {
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         fail(error)
         context.close(promise: nil)
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        fail(ChannelError.inputClosed)
     }
 
     private func succeed(_ response: RelayResponse) {

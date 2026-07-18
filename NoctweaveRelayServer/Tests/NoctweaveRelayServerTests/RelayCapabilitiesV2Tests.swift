@@ -33,6 +33,6 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
 
         XCTAssertFalse(manifest.supports(module: "nw.prekeys", version: 1))
         XCTAssertFalse(manifest.supports(module: "nw.groups", version: 1))
-        XCTAssertEqual(info.groupCreationMode, .disabled)
+        XCTAssertFalse(manifest.supports(module: "nw.wake", version: 1))
     }
 }

@@ -5,7 +5,6 @@ enum RelayKind: String, Codable, CaseIterable {
     case standard
     case discovery
     case bridge
-    case archive
     case privateRelay
     case coordinator
 }
@@ -16,17 +15,6 @@ enum FederationMode: String, Codable, CaseIterable {
     case curated
     case open
 }
-
-enum GroupCreationMode: String, Codable, CaseIterable {
-    case disabled
-    case allowed
-}
-
-enum GroupSecurityModel: String, Codable, CaseIterable {
-    case relayBackedPairwise
-    case mlsDerivedTree
-}
-
 
 struct FederationDescriptor: Codable, Equatable {
     let mode: FederationMode
@@ -340,39 +328,6 @@ enum MixnetRoutePolicyValidator {
     }
 }
 
-enum DecentralizedWakeMode: String, Codable, CaseIterable {
-    case pullOnly
-    case longPoll
-}
-
-struct DecentralizedWakeSupport: Codable, Equatable {
-    let mode: DecentralizedWakeMode
-    let minPollIntervalSeconds: Int
-    let maxPollIntervalSeconds: Int
-    let jitterPermille: Int
-    let longPollTimeoutSeconds: Int?
-
-    init(
-        mode: DecentralizedWakeMode = .pullOnly,
-        minPollIntervalSeconds: Int = 60,
-        maxPollIntervalSeconds: Int = 300,
-        jitterPermille: Int = 250,
-        longPollTimeoutSeconds: Int? = nil
-    ) {
-        let normalizedMin = max(5, minPollIntervalSeconds)
-        let normalizedMax = max(normalizedMin, maxPollIntervalSeconds)
-        self.mode = mode
-        self.minPollIntervalSeconds = normalizedMin
-        self.maxPollIntervalSeconds = normalizedMax
-        self.jitterPermille = min(max(0, jitterPermille), 1_000)
-        if mode == .longPoll {
-            self.longPollTimeoutSeconds = longPollTimeoutSeconds.map { min(max(5, $0), normalizedMax) } ?? normalizedMin
-        } else {
-            self.longPollTimeoutSeconds = nil
-        }
-    }
-}
-
 struct RelayInfo: Codable, Equatable {
     let kind: RelayKind
     let federation: FederationDescriptor
@@ -387,13 +342,10 @@ struct RelayInfo: Codable, Equatable {
     let hiddenRetrieval: HiddenRetrievalSupport?
     let onionTransport: OnionTransportSupport?
     let mixnetTransport: MixnetTransportSupport?
-    let wakeSupport: DecentralizedWakeSupport?
     let relayName: String?
     let operatorNote: String?
     let softwareVersion: String?
     let protocolCapabilities: RelayCapabilityManifestV2?
-    let groupCreationMode: GroupCreationMode
-    let groupSecurityModel: GroupSecurityModel
     let requiresPassword: Bool?
     let federationCoordinatorEndpoints: [RelayEndpoint]?
     let coordinatorReportedRelayCount: Int?
@@ -420,13 +372,10 @@ struct RelayInfo: Codable, Equatable {
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         onionTransport: OnionTransportSupport? = nil,
         mixnetTransport: MixnetTransportSupport? = nil,
-        wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         protocolCapabilities: RelayCapabilityManifestV2? = nil,
-        groupCreationMode: GroupCreationMode = .allowed,
-        groupSecurityModel: GroupSecurityModel = .mlsDerivedTree,
         requiresPassword: Bool? = nil,
         federationCoordinatorEndpoints: [RelayEndpoint]? = nil,
         coordinatorReportedRelayCount: Int? = nil,
@@ -459,15 +408,12 @@ struct RelayInfo: Codable, Equatable {
         self.hiddenRetrieval = hiddenRetrieval
         self.onionTransport = onionTransport
         self.mixnetTransport = mixnetTransport
-        self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
         self.protocolCapabilities = protocolCapabilities?.isStructurallyValid == true
             ? protocolCapabilities
             : nil
-        self.groupCreationMode = groupCreationMode
-        self.groupSecurityModel = groupSecurityModel
         self.requiresPassword = requiresPassword
         self.federationCoordinatorEndpoints = federationCoordinatorEndpoints
         self.coordinatorReportedRelayCount = coordinatorReportedRelayCount
@@ -496,12 +442,9 @@ struct RelayConfiguration: Codable, Equatable {
     var hiddenRetrieval: HiddenRetrievalSupport?
     var onionTransport: OnionTransportSupport?
     var mixnetTransport: MixnetTransportSupport?
-    var wakeSupport: DecentralizedWakeSupport?
     var relayName: String?
     var operatorNote: String?
     var softwareVersion: String?
-    var groupCreationMode: GroupCreationMode
-    var groupSecurityModel: GroupSecurityModel
     var accessPassword: String?
     var coordinatorRegistrationToken: String?
     var federationCoordinatorEndpoints: [RelayEndpoint]?
@@ -536,12 +479,9 @@ struct RelayConfiguration: Codable, Equatable {
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         onionTransport: OnionTransportSupport? = nil,
         mixnetTransport: MixnetTransportSupport? = nil,
-        wakeSupport: DecentralizedWakeSupport? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
-        groupCreationMode: GroupCreationMode = .allowed,
-        groupSecurityModel: GroupSecurityModel = .mlsDerivedTree,
         accessPassword: String? = nil,
         coordinatorRegistrationToken: String? = nil,
         federationCoordinatorEndpoints: [RelayEndpoint]? = nil,
@@ -590,12 +530,9 @@ struct RelayConfiguration: Codable, Equatable {
         self.hiddenRetrieval = hiddenRetrieval
         self.onionTransport = onionTransport
         self.mixnetTransport = mixnetTransport
-        self.wakeSupport = wakeSupport
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
-        self.groupCreationMode = groupCreationMode
-        self.groupSecurityModel = groupSecurityModel
         let normalizedAccessPassword = accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.accessPassword = normalizedAccessPassword?.isEmpty == false ? normalizedAccessPassword : nil
         let normalizedRegistrationToken = coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -648,21 +585,17 @@ struct RelayConfiguration: Codable, Equatable {
             hiddenRetrieval: advertisedHiddenRetrieval,
             onionTransport: advertisedOnionTransport,
             mixnetTransport: advertisedMixnetTransport,
-            wakeSupport: wakeSupport,
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
             protocolCapabilities: .advertised(
                 attachmentsEnabled: attachmentsEnabled != false,
-                wakeEnabled: wakeSupport != nil,
                 hiddenRetrievalEnabled: advertisedHiddenRetrieval != nil,
                 onionEnabled: advertisedOnionTransport != nil,
                 mixnetEnabled: advertisedMixnetTransport != nil,
                 opaqueRouteRuntimeEnabled: isOpaqueRouteRuntimeEnabled,
                 rendezvousTransportEnabled: isRendezvousTransportEnabled
             ),
-            groupCreationMode: .disabled,
-            groupSecurityModel: groupSecurityModel,
             requiresPassword: requiresPassword,
             federationCoordinatorEndpoints: federationCoordinatorEndpoints,
             coordinatorRegistrationAuthRequired: kind == .coordinator ? requiresCoordinatorRegistrationAuth : nil,
@@ -780,7 +713,7 @@ enum RendezvousRelayTransportV2 {
     static let maximumFramesPerLane: UInt64 = 32
     static let maximumCiphertextBytesPerLane = 2_097_152
     static let maximumSyncFrames = 32
-    static let allowedCiphertextByteCounts = [4_096, 16_384, 65_536]
+    static let allowedCiphertextByteCounts = [4_096, 16_384, 65_536, 131_072]
 
     static func isCanonicalTimestamp(_ date: Date) -> Bool {
         let seconds = date.timeIntervalSince1970
@@ -797,6 +730,23 @@ struct RendezvousRelayRouteCapabilityV2: RawRepresentable, Codable, Equatable, H
 
     init(rawValue: Data) { self.rawValue = rawValue }
 
+    init(from decoder: Decoder) throws {
+        rawValue = try rendezvousRelayDecodeOpaqueRawValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            description: "Invalid rendezvous route capability"
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try rendezvousRelayEncodeOpaqueRawValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            description: "Invalid rendezvous route capability",
+            to: encoder
+        )
+    }
+
     var isStructurallyValid: Bool {
         RendezvousRelayTransportV2.isValidOpaqueValue(
             rawValue,
@@ -809,6 +759,23 @@ struct RendezvousRelayPublishCapabilityV2: RawRepresentable, Codable, Equatable,
     let rawValue: Data
 
     init(rawValue: Data) { self.rawValue = rawValue }
+
+    init(from decoder: Decoder) throws {
+        rawValue = try rendezvousRelayDecodeOpaqueRawValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            description: "Invalid rendezvous publish capability"
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try rendezvousRelayEncodeOpaqueRawValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            description: "Invalid rendezvous publish capability",
+            to: encoder
+        )
+    }
 
     var isStructurallyValid: Bool {
         RendezvousRelayTransportV2.isValidOpaqueValue(
@@ -823,6 +790,23 @@ struct RendezvousRelayReadCapabilityV2: RawRepresentable, Codable, Equatable, Ha
 
     init(rawValue: Data) { self.rawValue = rawValue }
 
+    init(from decoder: Decoder) throws {
+        rawValue = try rendezvousRelayDecodeOpaqueRawValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            description: "Invalid rendezvous read capability"
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try rendezvousRelayEncodeOpaqueRawValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            description: "Invalid rendezvous read capability",
+            to: encoder
+        )
+    }
+
     var isStructurallyValid: Bool {
         RendezvousRelayTransportV2.isValidOpaqueValue(
             rawValue,
@@ -835,6 +819,23 @@ struct RendezvousRelayDeleteCapabilityV2: RawRepresentable, Codable, Equatable, 
     let rawValue: Data
 
     init(rawValue: Data) { self.rawValue = rawValue }
+
+    init(from decoder: Decoder) throws {
+        rawValue = try rendezvousRelayDecodeOpaqueRawValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            description: "Invalid rendezvous delete capability"
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try rendezvousRelayEncodeOpaqueRawValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.capabilityBytes,
+            description: "Invalid rendezvous delete capability",
+            to: encoder
+        )
+    }
 
     var isStructurallyValid: Bool {
         RendezvousRelayTransportV2.isValidOpaqueValue(
@@ -849,6 +850,23 @@ struct RendezvousRelayLaneIDV2: RawRepresentable, Codable, Equatable, Hashable {
 
     init(rawValue: Data) { self.rawValue = rawValue }
 
+    init(from decoder: Decoder) throws {
+        rawValue = try rendezvousRelayDecodeOpaqueRawValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.laneIDBytes,
+            description: "Invalid rendezvous lane identifier"
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try rendezvousRelayEncodeOpaqueRawValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.laneIDBytes,
+            description: "Invalid rendezvous lane identifier",
+            to: encoder
+        )
+    }
+
     var isStructurallyValid: Bool {
         RendezvousRelayTransportV2.isValidOpaqueValue(
             rawValue,
@@ -861,6 +879,23 @@ struct RendezvousRelayFrameIDV2: RawRepresentable, Codable, Equatable, Hashable 
     let rawValue: Data
 
     init(rawValue: Data) { self.rawValue = rawValue }
+
+    init(from decoder: Decoder) throws {
+        rawValue = try rendezvousRelayDecodeOpaqueRawValue(
+            from: decoder,
+            byteCount: RendezvousRelayTransportV2.frameIDBytes,
+            description: "Invalid rendezvous frame identifier"
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try rendezvousRelayEncodeOpaqueRawValue(
+            rawValue,
+            byteCount: RendezvousRelayTransportV2.frameIDBytes,
+            description: "Invalid rendezvous frame identifier",
+            to: encoder
+        )
+    }
 
     var isStructurallyValid: Bool {
         RendezvousRelayTransportV2.isValidOpaqueValue(
@@ -894,6 +929,52 @@ struct RendezvousRelayLaneRegistrationV2: Codable, Equatable {
             && readCapability.isStructurallyValid
             && deleteCapability.isStructurallyValid
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case laneId
+        case publishCapability
+        case readCapability
+        case deleteCapability
+    }
+
+    init(from decoder: Decoder) throws {
+        try rendezvousRelayRequireExactObject(
+            decoder,
+            keys: ["laneId", "publishCapability", "readCapability", "deleteCapability"]
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        laneId = try container.decode(RendezvousRelayLaneIDV2.self, forKey: .laneId)
+        publishCapability = try container.decode(
+            RendezvousRelayPublishCapabilityV2.self,
+            forKey: .publishCapability
+        )
+        readCapability = try container.decode(
+            RendezvousRelayReadCapabilityV2.self,
+            forKey: .readCapability
+        )
+        deleteCapability = try container.decode(
+            RendezvousRelayDeleteCapabilityV2.self,
+            forKey: .deleteCapability
+        )
+        guard isStructurallyValid else {
+            throw rendezvousRelayDecodingError(decoder, "Invalid rendezvous lane registration")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw rendezvousRelayEncodingError(
+                self,
+                encoder,
+                "Invalid rendezvous lane registration"
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(laneId, forKey: .laneId)
+        try container.encode(publishCapability, forKey: .publishCapability)
+        try container.encode(readCapability, forKey: .readCapability)
+        try container.encode(deleteCapability, forKey: .deleteCapability)
+    }
 }
 
 struct RegisterRendezvousTransportV2Request: Codable, Equatable {
@@ -914,16 +995,10 @@ struct RegisterRendezvousTransportV2Request: Codable, Equatable {
         self.lanes = lanes
     }
 
-    func isStructurallyValid(at now: Date = Date()) -> Bool {
+    private var isStaticallyStructurallyValid: Bool {
         guard version == RendezvousRelayTransportV2.version,
               routeCapability.isStructurallyValid,
               RendezvousRelayTransportV2.isCanonicalTimestamp(expiresAt),
-              now.timeIntervalSince1970.isFinite,
-              expiresAt > now,
-              expiresAt <= Date(
-                timeIntervalSince1970: floor(now.timeIntervalSince1970)
-                    + RendezvousRelayTransportV2.maximumLifetimeSeconds
-              ),
               lanes.count == RendezvousRelayTransportV2.laneCount,
               lanes.allSatisfy(\.isStructurallyValid),
               Set(lanes.map(\.laneId)).count == RendezvousRelayTransportV2.laneCount else {
@@ -937,6 +1012,59 @@ struct RegisterRendezvousTransportV2Request: Codable, Equatable {
             ]
         }
         return Set(authorityValues).count == authorityValues.count
+    }
+
+    func isStructurallyValid(at now: Date = Date()) -> Bool {
+        isStaticallyStructurallyValid
+            && now.timeIntervalSince1970.isFinite
+            && expiresAt > now
+            && expiresAt <= Date(
+                timeIntervalSince1970: floor(now.timeIntervalSince1970)
+                    + RendezvousRelayTransportV2.maximumLifetimeSeconds
+            )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version
+        case routeCapability
+        case expiresAt
+        case lanes
+    }
+
+    init(from decoder: Decoder) throws {
+        try rendezvousRelayRequireExactObject(
+            decoder,
+            keys: ["version", "routeCapability", "expiresAt", "lanes"]
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        routeCapability = try container.decode(
+            RendezvousRelayRouteCapabilityV2.self,
+            forKey: .routeCapability
+        )
+        expiresAt = try container.decode(Date.self, forKey: .expiresAt)
+        lanes = try container.decode(
+            [RendezvousRelayLaneRegistrationV2].self,
+            forKey: .lanes
+        )
+        guard isStaticallyStructurallyValid else {
+            throw rendezvousRelayDecodingError(decoder, "Invalid rendezvous registration")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStaticallyStructurallyValid else {
+            throw rendezvousRelayEncodingError(
+                self,
+                encoder,
+                "Invalid rendezvous registration"
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(routeCapability, forKey: .routeCapability)
+        try container.encode(expiresAt, forKey: .expiresAt)
+        try container.encode(lanes, forKey: .lanes)
     }
 }
 
@@ -965,6 +1093,40 @@ struct RendezvousRelayCiphertextFrameV2: Codable, Equatable {
     var ciphertextDigest: Data {
         Data(SHA256.hash(data: ciphertext))
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case frameId
+        case sequence
+        case ciphertext
+    }
+
+    init(from decoder: Decoder) throws {
+        try rendezvousRelayRequireExactObject(
+            decoder,
+            keys: ["frameId", "sequence", "ciphertext"]
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        frameId = try container.decode(RendezvousRelayFrameIDV2.self, forKey: .frameId)
+        sequence = try container.decode(UInt64.self, forKey: .sequence)
+        ciphertext = try container.decode(Data.self, forKey: .ciphertext)
+        guard isStructurallyValid else {
+            throw rendezvousRelayDecodingError(decoder, "Invalid rendezvous ciphertext frame")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw rendezvousRelayEncodingError(
+                self,
+                encoder,
+                "Invalid rendezvous ciphertext frame"
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(frameId, forKey: .frameId)
+        try container.encode(sequence, forKey: .sequence)
+        try container.encode(ciphertext, forKey: .ciphertext)
+    }
 }
 
 struct AppendRendezvousTransportV2Request: Codable, Equatable {
@@ -990,6 +1152,49 @@ struct AppendRendezvousTransportV2Request: Codable, Equatable {
             && laneId.isStructurallyValid
             && publishCapability.isStructurallyValid
             && frame.isStructurallyValid
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case routeCapability
+        case laneId
+        case publishCapability
+        case frame
+    }
+
+    init(from decoder: Decoder) throws {
+        try rendezvousRelayRequireExactObject(
+            decoder,
+            keys: ["routeCapability", "laneId", "publishCapability", "frame"]
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        routeCapability = try container.decode(
+            RendezvousRelayRouteCapabilityV2.self,
+            forKey: .routeCapability
+        )
+        laneId = try container.decode(RendezvousRelayLaneIDV2.self, forKey: .laneId)
+        publishCapability = try container.decode(
+            RendezvousRelayPublishCapabilityV2.self,
+            forKey: .publishCapability
+        )
+        frame = try container.decode(RendezvousRelayCiphertextFrameV2.self, forKey: .frame)
+        guard isStructurallyValid else {
+            throw rendezvousRelayDecodingError(decoder, "Invalid rendezvous append request")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw rendezvousRelayEncodingError(
+                self,
+                encoder,
+                "Invalid rendezvous append request"
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(routeCapability, forKey: .routeCapability)
+        try container.encode(laneId, forKey: .laneId)
+        try container.encode(publishCapability, forKey: .publishCapability)
+        try container.encode(frame, forKey: .frame)
     }
 }
 
@@ -1021,6 +1226,56 @@ struct SyncRendezvousTransportV2Request: Codable, Equatable {
             && afterSequence <= RendezvousRelayTransportV2.maximumFramesPerLane
             && maxCount.map { (1...RendezvousRelayTransportV2.maximumSyncFrames).contains($0) } ?? true
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case routeCapability
+        case laneId
+        case readCapability
+        case afterSequence
+        case maxCount
+    }
+
+    init(from decoder: Decoder) throws {
+        try rendezvousRelayRequireExactObject(
+            decoder,
+            keys: ["routeCapability", "laneId", "readCapability", "afterSequence", "maxCount"]
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        routeCapability = try container.decode(
+            RendezvousRelayRouteCapabilityV2.self,
+            forKey: .routeCapability
+        )
+        laneId = try container.decode(RendezvousRelayLaneIDV2.self, forKey: .laneId)
+        readCapability = try container.decode(
+            RendezvousRelayReadCapabilityV2.self,
+            forKey: .readCapability
+        )
+        afterSequence = try container.decode(UInt64.self, forKey: .afterSequence)
+        maxCount = try container.decodeIfPresent(Int.self, forKey: .maxCount)
+        guard isStructurallyValid else {
+            throw rendezvousRelayDecodingError(decoder, "Invalid rendezvous sync request")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw rendezvousRelayEncodingError(
+                self,
+                encoder,
+                "Invalid rendezvous sync request"
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(routeCapability, forKey: .routeCapability)
+        try container.encode(laneId, forKey: .laneId)
+        try container.encode(readCapability, forKey: .readCapability)
+        try container.encode(afterSequence, forKey: .afterSequence)
+        if let maxCount {
+            try container.encode(maxCount, forKey: .maxCount)
+        } else {
+            try container.encodeNil(forKey: .maxCount)
+        }
+    }
 }
 
 struct DeleteRendezvousTransportV2Request: Codable, Equatable {
@@ -1043,6 +1298,46 @@ struct DeleteRendezvousTransportV2Request: Codable, Equatable {
             && laneId.isStructurallyValid
             && deleteCapability.isStructurallyValid
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case routeCapability
+        case laneId
+        case deleteCapability
+    }
+
+    init(from decoder: Decoder) throws {
+        try rendezvousRelayRequireExactObject(
+            decoder,
+            keys: ["routeCapability", "laneId", "deleteCapability"]
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        routeCapability = try container.decode(
+            RendezvousRelayRouteCapabilityV2.self,
+            forKey: .routeCapability
+        )
+        laneId = try container.decode(RendezvousRelayLaneIDV2.self, forKey: .laneId)
+        deleteCapability = try container.decode(
+            RendezvousRelayDeleteCapabilityV2.self,
+            forKey: .deleteCapability
+        )
+        guard isStructurallyValid else {
+            throw rendezvousRelayDecodingError(decoder, "Invalid rendezvous delete request")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw rendezvousRelayEncodingError(
+                self,
+                encoder,
+                "Invalid rendezvous delete request"
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(routeCapability, forKey: .routeCapability)
+        try container.encode(laneId, forKey: .laneId)
+        try container.encode(deleteCapability, forKey: .deleteCapability)
+    }
 }
 
 struct RendezvousRelaySyncBatchV2: Codable, Equatable {
@@ -1062,28 +1357,148 @@ struct RendezvousRelaySyncBatchV2: Codable, Equatable {
         self.nextSequence = nextSequence
         self.hasMore = hasMore
     }
+
+    var isStructurallyValid: Bool {
+        guard frames.count <= RendezvousRelayTransportV2.maximumSyncFrames,
+              frames.allSatisfy(\.isStructurallyValid),
+              Set(frames.map(\.frameId)).count == frames.count,
+              frames.reduce(0, { $0 + $1.ciphertext.count })
+                <= RendezvousRelayTransportV2.maximumCiphertextBytesPerLane,
+              highWatermark <= RendezvousRelayTransportV2.maximumFramesPerLane,
+              nextSequence <= highWatermark,
+              hasMore == (nextSequence < highWatermark) else {
+            return false
+        }
+        guard let first = frames.first, let last = frames.last else {
+            return nextSequence == highWatermark
+        }
+        guard last.sequence == nextSequence else { return false }
+        return zip(frames, frames.dropFirst()).allSatisfy { previous, current in
+            previous.sequence < UInt64.max && current.sequence == previous.sequence + 1
+        } && first.sequence <= nextSequence
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case frames
+        case highWatermark
+        case nextSequence
+        case hasMore
+    }
+
+    init(from decoder: Decoder) throws {
+        try rendezvousRelayRequireExactObject(
+            decoder,
+            keys: ["frames", "highWatermark", "nextSequence", "hasMore"]
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        frames = try container.decode([RendezvousRelayCiphertextFrameV2].self, forKey: .frames)
+        highWatermark = try container.decode(UInt64.self, forKey: .highWatermark)
+        nextSequence = try container.decode(UInt64.self, forKey: .nextSequence)
+        hasMore = try container.decode(Bool.self, forKey: .hasMore)
+        guard isStructurallyValid else {
+            throw rendezvousRelayDecodingError(decoder, "Invalid rendezvous sync batch")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw rendezvousRelayEncodingError(
+                self,
+                encoder,
+                "Invalid rendezvous sync batch"
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(frames, forKey: .frames)
+        try container.encode(highWatermark, forKey: .highWatermark)
+        try container.encode(nextSequence, forKey: .nextSequence)
+        try container.encode(hasMore, forKey: .hasMore)
+    }
 }
 
-enum RelayRequestType: String, Codable {
-    case createOpaqueRouteV2
-    case renewOpaqueRouteV2
-    case teardownOpaqueRouteV2
-    case appendOpaqueRouteV2
-    case syncOpaqueRouteV2
-    case commitOpaqueRouteV2
-    case registerRendezvousTransportV2
-    case appendRendezvousTransportV2
-    case syncRendezvousTransportV2
-    case deleteRendezvousTransportV2
-    case health
-    case info
-    case uploadAttachment
-    case fetchAttachment
-    case registerFederationNode
-    case listFederationNodes
-    case publishOpenFederationDHTRecord
-    case listOpenFederationDHTRecords
+private struct RendezvousRelayCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
 
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func rendezvousRelayKey(_ value: String) -> RendezvousRelayCodingKey {
+    RendezvousRelayCodingKey(stringValue: value)!
+}
+
+private func rendezvousRelayRequireExactObject(
+    _ decoder: Decoder,
+    keys: Set<String>
+) throws {
+    let container = try decoder.container(keyedBy: RendezvousRelayCodingKey.self)
+    guard Set(container.allKeys.map(\.stringValue)) == keys else {
+        throw rendezvousRelayDecodingError(
+            decoder,
+            "Rendezvous relay fields must match nw.rendezvous-transport@2 exactly"
+        )
+    }
+}
+
+private func rendezvousRelayDecodeOpaqueRawValue(
+    from decoder: Decoder,
+    byteCount: Int,
+    description: String
+) throws -> Data {
+    try rendezvousRelayRequireExactObject(decoder, keys: ["rawValue"])
+    let container = try decoder.container(keyedBy: RendezvousRelayCodingKey.self)
+    let value = try container.decode(Data.self, forKey: rendezvousRelayKey("rawValue"))
+    guard RendezvousRelayTransportV2.isValidOpaqueValue(value, byteCount: byteCount) else {
+        throw rendezvousRelayDecodingError(decoder, description)
+    }
+    return value
+}
+
+private func rendezvousRelayEncodeOpaqueRawValue(
+    _ value: Data,
+    byteCount: Int,
+    description: String,
+    to encoder: Encoder
+) throws {
+    guard RendezvousRelayTransportV2.isValidOpaqueValue(value, byteCount: byteCount) else {
+        throw rendezvousRelayEncodingError(value, encoder, description)
+    }
+    var container = encoder.container(keyedBy: RendezvousRelayCodingKey.self)
+    try container.encode(value, forKey: rendezvousRelayKey("rawValue"))
+}
+
+private func rendezvousRelayDecodingError(
+    _ decoder: Decoder,
+    _ description: String
+) -> DecodingError {
+    .dataCorrupted(
+        DecodingError.Context(
+            codingPath: decoder.codingPath,
+            debugDescription: description
+        )
+    )
+}
+
+private func rendezvousRelayEncodingError(
+    _ value: Any,
+    _ encoder: Encoder,
+    _ description: String
+) -> EncodingError {
+    .invalidValue(
+        value,
+        EncodingError.Context(
+            codingPath: encoder.codingPath,
+            debugDescription: description
+        )
+    )
 }
 
 struct FederationNodeRegistrationRequest: Codable, Equatable {
@@ -1170,289 +1585,6 @@ struct ListOpenFederationDHTRecordsRequest: Codable, Equatable {
     let namespace: String
     let limit: Int?
 }
-
-struct RelayRequest: Codable, Equatable {
-    let type: RelayRequestType
-    let authToken: String?
-    let createOpaqueRouteV2: OpaqueRouteCreateSubmissionV2?
-    let renewOpaqueRouteV2: OpaqueRouteRenewSubmissionV2?
-    let teardownOpaqueRouteV2: OpaqueRouteTeardownSubmissionV2?
-    let appendOpaqueRouteV2: OpaqueRouteAppendSubmissionV2?
-    let syncOpaqueRouteV2: OpaqueRouteSyncSubmissionV2?
-    let commitOpaqueRouteV2: OpaqueRouteCommitSubmissionV2?
-    let registerRendezvousTransportV2: RegisterRendezvousTransportV2Request?
-    let appendRendezvousTransportV2: AppendRendezvousTransportV2Request?
-    let syncRendezvousTransportV2: SyncRendezvousTransportV2Request?
-    let deleteRendezvousTransportV2: DeleteRendezvousTransportV2Request?
-    let uploadAttachment: UploadAttachmentRequest?
-    let fetchAttachment: FetchAttachmentRequest?
-    let registerFederationNode: FederationNodeRegistrationRequest?
-    let listFederationNodes: ListFederationNodesRequest?
-    let publishOpenFederationDHTRecord: PublishOpenFederationDHTRecordRequest?
-    let listOpenFederationDHTRecords: ListOpenFederationDHTRecordsRequest?
-
-    init(
-        type: RelayRequestType,
-        authToken: String? = nil,
-        createOpaqueRouteV2: OpaqueRouteCreateSubmissionV2? = nil,
-        renewOpaqueRouteV2: OpaqueRouteRenewSubmissionV2? = nil,
-        teardownOpaqueRouteV2: OpaqueRouteTeardownSubmissionV2? = nil,
-        appendOpaqueRouteV2: OpaqueRouteAppendSubmissionV2? = nil,
-        syncOpaqueRouteV2: OpaqueRouteSyncSubmissionV2? = nil,
-        commitOpaqueRouteV2: OpaqueRouteCommitSubmissionV2? = nil,
-        registerRendezvousTransportV2: RegisterRendezvousTransportV2Request? = nil,
-        appendRendezvousTransportV2: AppendRendezvousTransportV2Request? = nil,
-        syncRendezvousTransportV2: SyncRendezvousTransportV2Request? = nil,
-        deleteRendezvousTransportV2: DeleteRendezvousTransportV2Request? = nil,
-        uploadAttachment: UploadAttachmentRequest? = nil,
-        fetchAttachment: FetchAttachmentRequest? = nil,
-        registerFederationNode: FederationNodeRegistrationRequest? = nil,
-        listFederationNodes: ListFederationNodesRequest? = nil,
-        publishOpenFederationDHTRecord: PublishOpenFederationDHTRecordRequest? = nil,
-        listOpenFederationDHTRecords: ListOpenFederationDHTRecordsRequest? = nil
-    ) {
-        self.type = type
-        self.authToken = authToken
-        self.createOpaqueRouteV2 = createOpaqueRouteV2
-        self.renewOpaqueRouteV2 = renewOpaqueRouteV2
-        self.teardownOpaqueRouteV2 = teardownOpaqueRouteV2
-        self.appendOpaqueRouteV2 = appendOpaqueRouteV2
-        self.syncOpaqueRouteV2 = syncOpaqueRouteV2
-        self.commitOpaqueRouteV2 = commitOpaqueRouteV2
-        self.registerRendezvousTransportV2 = registerRendezvousTransportV2
-        self.appendRendezvousTransportV2 = appendRendezvousTransportV2
-        self.syncRendezvousTransportV2 = syncRendezvousTransportV2
-        self.deleteRendezvousTransportV2 = deleteRendezvousTransportV2
-        self.uploadAttachment = uploadAttachment
-        self.fetchAttachment = fetchAttachment
-        self.registerFederationNode = registerFederationNode
-        self.listFederationNodes = listFederationNodes
-        self.publishOpenFederationDHTRecord = publishOpenFederationDHTRecord
-        self.listOpenFederationDHTRecords = listOpenFederationDHTRecords
-    }
-
-    static func createOpaqueRouteV2(_ submission: OpaqueRouteCreateSubmissionV2) -> RelayRequest {
-        RelayRequest(type: .createOpaqueRouteV2, createOpaqueRouteV2: submission)
-    }
-
-    static func renewOpaqueRouteV2(_ submission: OpaqueRouteRenewSubmissionV2) -> RelayRequest {
-        RelayRequest(type: .renewOpaqueRouteV2, renewOpaqueRouteV2: submission)
-    }
-
-    static func teardownOpaqueRouteV2(_ submission: OpaqueRouteTeardownSubmissionV2) -> RelayRequest {
-        RelayRequest(type: .teardownOpaqueRouteV2, teardownOpaqueRouteV2: submission)
-    }
-
-    static func appendOpaqueRouteV2(_ submission: OpaqueRouteAppendSubmissionV2) -> RelayRequest {
-        RelayRequest(type: .appendOpaqueRouteV2, appendOpaqueRouteV2: submission)
-    }
-
-    static func syncOpaqueRouteV2(_ submission: OpaqueRouteSyncSubmissionV2) -> RelayRequest {
-        RelayRequest(type: .syncOpaqueRouteV2, syncOpaqueRouteV2: submission)
-    }
-
-    static func commitOpaqueRouteV2(_ submission: OpaqueRouteCommitSubmissionV2) -> RelayRequest {
-        RelayRequest(type: .commitOpaqueRouteV2, commitOpaqueRouteV2: submission)
-    }
-
-    static func registerRendezvousTransportV2(
-        _ request: RegisterRendezvousTransportV2Request
-    ) -> RelayRequest {
-        RelayRequest(
-            type: .registerRendezvousTransportV2,
-            registerRendezvousTransportV2: request
-        )
-    }
-
-    static func appendRendezvousTransportV2(
-        _ request: AppendRendezvousTransportV2Request
-    ) -> RelayRequest {
-        RelayRequest(
-            type: .appendRendezvousTransportV2,
-            appendRendezvousTransportV2: request
-        )
-    }
-
-    static func syncRendezvousTransportV2(
-        _ request: SyncRendezvousTransportV2Request
-    ) -> RelayRequest {
-        RelayRequest(
-            type: .syncRendezvousTransportV2,
-            syncRendezvousTransportV2: request
-        )
-    }
-
-    static func deleteRendezvousTransportV2(
-        _ request: DeleteRendezvousTransportV2Request
-    ) -> RelayRequest {
-        RelayRequest(
-            type: .deleteRendezvousTransportV2,
-            deleteRendezvousTransportV2: request
-        )
-    }
-
-    static func health() -> RelayRequest {
-        RelayRequest(type: .health)
-    }
-
-    static func info() -> RelayRequest {
-        RelayRequest(type: .info)
-    }
-
-    static func uploadAttachment(_ request: UploadAttachmentRequest) -> RelayRequest {
-        RelayRequest(type: .uploadAttachment, uploadAttachment: request)
-    }
-
-    static func fetchAttachment(_ request: FetchAttachmentRequest) -> RelayRequest {
-        RelayRequest(type: .fetchAttachment, fetchAttachment: request)
-    }
-
-    static func registerFederationNode(_ request: FederationNodeRegistrationRequest) -> RelayRequest {
-        RelayRequest(type: .registerFederationNode, registerFederationNode: request)
-    }
-
-    static func listFederationNodes(_ request: ListFederationNodesRequest) -> RelayRequest {
-        RelayRequest(type: .listFederationNodes, listFederationNodes: request)
-    }
-
-    static func publishOpenFederationDHTRecord(_ request: PublishOpenFederationDHTRecordRequest) -> RelayRequest {
-        RelayRequest(type: .publishOpenFederationDHTRecord, publishOpenFederationDHTRecord: request)
-    }
-
-    static func listOpenFederationDHTRecords(_ request: ListOpenFederationDHTRecordsRequest) -> RelayRequest {
-        RelayRequest(type: .listOpenFederationDHTRecords, listOpenFederationDHTRecords: request)
-    }
-
-    func withAuthToken(_ token: String?) -> RelayRequest {
-        RelayRequest(
-            type: type,
-            authToken: token,
-            createOpaqueRouteV2: createOpaqueRouteV2,
-            renewOpaqueRouteV2: renewOpaqueRouteV2,
-            teardownOpaqueRouteV2: teardownOpaqueRouteV2,
-            appendOpaqueRouteV2: appendOpaqueRouteV2,
-            syncOpaqueRouteV2: syncOpaqueRouteV2,
-            commitOpaqueRouteV2: commitOpaqueRouteV2,
-            registerRendezvousTransportV2: registerRendezvousTransportV2,
-            appendRendezvousTransportV2: appendRendezvousTransportV2,
-            syncRendezvousTransportV2: syncRendezvousTransportV2,
-            deleteRendezvousTransportV2: deleteRendezvousTransportV2,
-            uploadAttachment: uploadAttachment,
-            fetchAttachment: fetchAttachment,
-            registerFederationNode: registerFederationNode,
-            listFederationNodes: listFederationNodes,
-            publishOpenFederationDHTRecord: publishOpenFederationDHTRecord,
-            listOpenFederationDHTRecords: listOpenFederationDHTRecords
-        )
-    }
-}
-
-
-
-enum RelayResponseType: String, Codable {
-    case ok
-    case rendezvousSyncV2
-    case opaqueRouteV2
-    case opaqueRouteAppendV2
-    case opaqueRouteSyncV2
-    case opaqueRouteCommitV2
-    case attachment
-    case info
-    case federationNodes
-    case openFederationDHTRecords
-    case error
-}
-
-struct RelayResponse: Codable, Equatable {
-    let type: RelayResponseType
-    let rendezvousSyncV2: RendezvousRelaySyncBatchV2?
-    let opaqueRouteV2: OpaqueReceiveRouteV2?
-    let opaqueRouteAppendV2: OpaqueRouteAppendReceiptV2?
-    let opaqueRouteSyncV2: OpaqueRouteSyncResponseV2?
-    let opaqueRouteCommitV2: OpaqueRouteCommitResponseV2?
-    let attachment: AttachmentChunk?
-    let relayInfo: RelayInfo?
-    let federationNodes: [FederationNodeRecord]?
-    let federationSnapshot: FederationDirectorySnapshot?
-    let openFederationDHTRecords: [OpenFederationDHTRecord]?
-    let error: String?
-
-    init(
-        type: RelayResponseType,
-        rendezvousSyncV2: RendezvousRelaySyncBatchV2? = nil,
-        opaqueRouteV2: OpaqueReceiveRouteV2? = nil,
-        opaqueRouteAppendV2: OpaqueRouteAppendReceiptV2? = nil,
-        opaqueRouteSyncV2: OpaqueRouteSyncResponseV2? = nil,
-        opaqueRouteCommitV2: OpaqueRouteCommitResponseV2? = nil,
-        attachment: AttachmentChunk? = nil,
-        relayInfo: RelayInfo? = nil,
-        federationNodes: [FederationNodeRecord]? = nil,
-        federationSnapshot: FederationDirectorySnapshot? = nil,
-        openFederationDHTRecords: [OpenFederationDHTRecord]? = nil,
-        error: String? = nil
-    ) {
-        self.type = type
-        self.rendezvousSyncV2 = rendezvousSyncV2
-        self.opaqueRouteV2 = opaqueRouteV2
-        self.opaqueRouteAppendV2 = opaqueRouteAppendV2
-        self.opaqueRouteSyncV2 = opaqueRouteSyncV2
-        self.opaqueRouteCommitV2 = opaqueRouteCommitV2
-        self.attachment = attachment
-        self.relayInfo = relayInfo
-        self.federationNodes = federationNodes
-        self.federationSnapshot = federationSnapshot
-        self.openFederationDHTRecords = openFederationDHTRecords
-        self.error = error
-    }
-
-    static func ok() -> RelayResponse {
-        RelayResponse(type: .ok)
-    }
-
-    static func rendezvousSyncV2(_ batch: RendezvousRelaySyncBatchV2) -> RelayResponse {
-        RelayResponse(type: .rendezvousSyncV2, rendezvousSyncV2: batch)
-    }
-
-    static func opaqueRouteV2(_ route: OpaqueReceiveRouteV2) -> RelayResponse {
-        RelayResponse(type: .opaqueRouteV2, opaqueRouteV2: route)
-    }
-
-    static func opaqueRouteAppendV2(_ receipt: OpaqueRouteAppendReceiptV2) -> RelayResponse {
-        RelayResponse(type: .opaqueRouteAppendV2, opaqueRouteAppendV2: receipt)
-    }
-
-    static func opaqueRouteSyncV2(_ response: OpaqueRouteSyncResponseV2) -> RelayResponse {
-        RelayResponse(type: .opaqueRouteSyncV2, opaqueRouteSyncV2: response)
-    }
-
-    static func opaqueRouteCommitV2(_ response: OpaqueRouteCommitResponseV2) -> RelayResponse {
-        RelayResponse(type: .opaqueRouteCommitV2, opaqueRouteCommitV2: response)
-    }
-
-    static func attachment(_ chunk: AttachmentChunk) -> RelayResponse {
-        RelayResponse(type: .attachment, attachment: chunk)
-    }
-
-    static func info(_ info: RelayInfo) -> RelayResponse {
-        RelayResponse(type: .info, relayInfo: info)
-    }
-
-    static func federationNodes(
-        _ nodes: [FederationNodeRecord],
-        snapshot: FederationDirectorySnapshot? = nil
-    ) -> RelayResponse {
-        RelayResponse(type: .federationNodes, federationNodes: nodes, federationSnapshot: snapshot)
-    }
-
-    static func openFederationDHTRecords(_ records: [OpenFederationDHTRecord]) -> RelayResponse {
-        RelayResponse(type: .openFederationDHTRecords, openFederationDHTRecords: records)
-    }
-
-    static func error(_ message: String) -> RelayResponse {
-        RelayResponse(type: .error, error: message)
-    }
-}
-
 
 struct UploadAttachmentRequest: Codable, Equatable {
     let attachmentId: UUID

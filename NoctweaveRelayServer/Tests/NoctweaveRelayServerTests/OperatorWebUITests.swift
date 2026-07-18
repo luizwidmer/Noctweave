@@ -16,6 +16,9 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.html.contains("IPFS API endpoint"))
         XCTAssertTrue(OperatorWebUI.html.contains("Hidden retrieval"))
         XCTAssertTrue(OperatorWebUI.html.contains("Onion and mixnet capabilities"))
+        XCTAssertFalse(OperatorWebUI.html.contains("Group creation"))
+        XCTAssertFalse(OperatorWebUI.html.contains("Long poll"))
+        XCTAssertFalse(OperatorWebUI.javascript.contains("wakeLongPoll"))
         XCTAssertTrue(OperatorWebUI.html.contains("Active backend:"))
         XCTAssertTrue(OperatorWebUI.html.contains("aria-live=\"polite\""))
         XCTAssertTrue(OperatorWebUI.javascript.contains("restartSettingsChanged"))
@@ -173,8 +176,6 @@ final class OperatorWebUITests: XCTestCase {
         editable.mixnetMinBatchSize = 8
         editable.mixnetCoverPacketsPerBatch = 2
         editable.mixnetMaxDelaySeconds = 120
-        editable.groupSecurityModel = GroupSecurityModel.mlsDerivedTree.rawValue
-
         let updated = try editable.validatedConfiguration(from: base)
         XCTAssertEqual(updated.hiddenRetrieval?.defaultCoverSetSize, 12)
         XCTAssertEqual(updated.onionTransport?.maxHops, 4)
@@ -182,7 +183,6 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertEqual(updated.openFederationDHTMaxRecords, 128)
         XCTAssertEqual(updated.openFederationDHTMaxRecordsPerHost, 3)
         XCTAssertEqual(updated.openFederationDHTMaxQueryRecords, 192)
-        XCTAssertEqual(updated.groupSecurityModel, .mlsDerivedTree)
     }
 
     func testOperatorSecurityHeadersDisallowEmbeddingAndInlineCode() {

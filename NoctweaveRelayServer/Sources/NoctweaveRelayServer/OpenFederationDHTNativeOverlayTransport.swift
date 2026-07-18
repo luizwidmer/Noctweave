@@ -66,6 +66,9 @@ final class OpenFederationDHTHTTPRelayQueryClient: OpenFederationDHTRelayQueryCl
         guard let decoded = try? RelayCodec.decoder().decode(RelayResponse.self, from: data) else {
             throw OpenFederationDHTNativeOverlayTransportError.invalidResponse
         }
+        guard decoded.isResponse(to: request) else {
+            throw OpenFederationDHTNativeOverlayTransportError.invalidResponse
+        }
         return decoded
     }
 
@@ -107,7 +110,7 @@ final class OpenFederationDHTNativeOverlayTransport: OpenFederationDHTTransport 
         for endpoint in seedEndpoints.prefix(maxVisitedEndpoints) {
             do {
                 let response = try await client.send(request, to: endpoint)
-                if response.type == .ok {
+                if case .empty? = response.successBody {
                     delivered = true
                 } else if firstError == nil {
                     firstError = OpenFederationDHTNativeOverlayTransportError.invalidResponse
@@ -140,7 +143,8 @@ final class OpenFederationDHTNativeOverlayTransport: OpenFederationDHTTransport 
 
             do {
                 let infoResponse = try await client.send(.info(), to: endpoint)
-                if let hints = infoResponse.relayInfo?.knownOpenPeers {
+                if case .relayInfo(let relayInfo)? = infoResponse.successBody,
+                   let hints = relayInfo.knownOpenPeers {
                     for hint in hints.prefix(maxPeerHintsPerEndpoint) {
                         let key = Self.key(for: hint)
                         if !visited.contains(key), !queue.contains(where: { Self.key(for: $0) == key }) {
@@ -155,8 +159,8 @@ final class OpenFederationDHTNativeOverlayTransport: OpenFederationDHTTransport 
                     ),
                     to: endpoint
                 )
-                if listResponse.type == .openFederationDHTRecords {
-                    records.append(contentsOf: listResponse.openFederationDHTRecords ?? [])
+                if case .dhtRecords(let returned)? = listResponse.successBody {
+                    records.append(contentsOf: returned)
                 } else if firstError == nil {
                     firstError = OpenFederationDHTNativeOverlayTransportError.invalidResponse
                 }

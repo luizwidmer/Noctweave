@@ -214,6 +214,72 @@ final class RendezvousRelayTransportTests: XCTestCase {
         )
     }
 
+    func testEveryRendezvousRelayWireLayerRejectsUnknownOrMissingFields() throws {
+        let now = canonical(2_000_000_000)
+        let fixture = makeFixture(now: now)
+
+        var registration = try jsonObject(fixture.registration)
+        var lanes = try XCTUnwrap(registration["lanes"] as? [[String: Any]])
+        lanes[0]["legacy"] = true
+        registration["lanes"] = lanes
+        XCTAssertThrowsError(try decode(
+            RegisterRendezvousTransportV2Request.self,
+            object: registration
+        ))
+
+        registration = try jsonObject(fixture.registration)
+        var routeCapability = try XCTUnwrap(
+            registration["routeCapability"] as? [String: Any]
+        )
+        routeCapability["legacy"] = true
+        registration["routeCapability"] = routeCapability
+        XCTAssertThrowsError(try decode(
+            RegisterRendezvousTransportV2Request.self,
+            object: registration
+        ))
+
+        let append = AppendRendezvousTransportV2Request(
+            routeCapability: fixture.route,
+            laneId: fixture.lanes[0].laneId,
+            publishCapability: fixture.lanes[0].publishCapability,
+            frame: frame(marker: 0x44, sequence: 1)
+        )
+        var appendObject = try jsonObject(append)
+        var frameObject = try XCTUnwrap(appendObject["frame"] as? [String: Any])
+        frameObject["legacy"] = true
+        appendObject["frame"] = frameObject
+        XCTAssertThrowsError(try decode(
+            AppendRendezvousTransportV2Request.self,
+            object: appendObject
+        ))
+
+        let sync = SyncRendezvousTransportV2Request(
+            routeCapability: fixture.route,
+            laneId: fixture.lanes[0].laneId,
+            readCapability: fixture.lanes[0].readCapability
+        )
+        var syncObject = try jsonObject(sync)
+        XCTAssertTrue(syncObject["maxCount"] is NSNull)
+        syncObject.removeValue(forKey: "maxCount")
+        XCTAssertThrowsError(try decode(
+            SyncRendezvousTransportV2Request.self,
+            object: syncObject
+        ))
+
+        let batch = RendezvousRelaySyncBatchV2(
+            frames: [frame(marker: 0x55, sequence: 1)],
+            highWatermark: 1,
+            nextSequence: 1,
+            hasMore: false
+        )
+        var batchObject = try jsonObject(batch)
+        batchObject["legacy"] = true
+        XCTAssertThrowsError(try decode(
+            RendezvousRelaySyncBatchV2.self,
+            object: batchObject
+        ))
+    }
+
     func testAppendSyncAuthoritySeparationAndExactIdempotence() async throws {
         let now = canonical(2_000_000_000)
         let fixture = makeFixture(now: now)
@@ -470,6 +536,24 @@ final class RendezvousRelayTransportTests: XCTestCase {
             frameId: .generate(),
             sequence: sequence,
             ciphertext: Data(repeating: marker, count: 4_096)
+        )
+    }
+
+    private func jsonObject<T: Encodable>(_ value: T) throws -> [String: Any] {
+        try XCTUnwrap(
+            JSONSerialization.jsonObject(
+                with: NoctweaveCoder.encode(value, sortedKeys: true)
+            ) as? [String: Any]
+        )
+    }
+
+    private func decode<T: Decodable>(
+        _ type: T.Type,
+        object: [String: Any]
+    ) throws -> T {
+        try NoctweaveCoder.decode(
+            type,
+            from: JSONSerialization.data(withJSONObject: object)
         )
     }
 

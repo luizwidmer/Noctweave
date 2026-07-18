@@ -72,7 +72,6 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
 
     static func advertised(
         attachmentsEnabled: Bool,
-        wakeEnabled: Bool,
         hiddenRetrievalEnabled: Bool,
         onionEnabled: Bool,
         mixnetEnabled: Bool,
@@ -85,9 +84,6 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
         ]
         if attachmentsEnabled {
             modules.append(RelayModuleCapabilityV2(module: "nw.blobs", versions: [1], status: .stable))
-        }
-        if wakeEnabled {
-            modules.append(RelayModuleCapabilityV2(module: "nw.wake", versions: [1], status: .experimental))
         }
         if hiddenRetrievalEnabled {
             modules.append(
