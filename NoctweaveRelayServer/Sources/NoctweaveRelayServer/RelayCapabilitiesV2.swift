@@ -76,7 +76,9 @@ struct RelayModuleCapabilityV2: Codable, Equatable {
             && versions.allSatisfy { $0 > 0 }
             && limits.count <= 32
             && limits.allSatisfy { key, _ in
-                !key.isEmpty
+                let normalizedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+                return !normalizedKey.isEmpty
+                    && normalizedKey == key
                     && key.utf8.count <= 96
                     && key.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) }
             }

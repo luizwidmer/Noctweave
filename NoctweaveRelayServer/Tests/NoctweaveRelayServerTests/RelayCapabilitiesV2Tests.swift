@@ -70,4 +70,26 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         XCTAssertFalse(manifest.supports(module: "nw.groups", version: 1))
         XCTAssertFalse(manifest.supports(module: "nw.wake", version: 1))
     }
+
+    func testCapabilityLimitNamesMustAlreadyBeCanonical() throws {
+        let valid = RelayModuleCapabilityV2(
+            module: "nw.core",
+            versions: [2],
+            status: .stable,
+            limits: ["maxPage": 256]
+        )
+        XCTAssertTrue(valid.isStructurallyValid)
+        XCTAssertNoThrow(try JSONEncoder().encode(valid))
+
+        for key in [" maxPage", "maxPage ", "max\u{0}Page"] {
+            let invalid = RelayModuleCapabilityV2(
+                module: "nw.core",
+                versions: [2],
+                status: .stable,
+                limits: [key: 256]
+            )
+            XCTAssertFalse(invalid.isStructurallyValid)
+            XCTAssertThrowsError(try JSONEncoder().encode(invalid))
+        }
+    }
 }
