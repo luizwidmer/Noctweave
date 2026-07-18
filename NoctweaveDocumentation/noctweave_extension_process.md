@@ -1,6 +1,6 @@
 # Noctweave Extension Process
 
-Noctweave keeps a small stable core and gives optional work an explicit
+Noctweave keeps a small core and gives every module/profile an explicit
 lifecycle:
 
 ```text
@@ -44,25 +44,31 @@ Lifecycle status describes wire and API maturity, not a production-security
 approval. Experimental work may ship disabled and honestly labeled.
 Provisional status requires a complete implementation and internal conformance
 suite. Stable status additionally requires normative documentation, frozen
-positive and negative vectors, defined operational behavior, and enforcement
-of the major-version compatibility rules.
+positive and negative vectors, defined operational behavior, enforcement of
+the major-version compatibility rules, and either a genuinely independent
+implementation or an independently built conformance harness that exercises
+the normative wire and failure semantics.
 
-Independent implementations, differential testing, deployment evidence, and
-security review remain separately reported assurance gates. A stable profile
-without those gates may be a stable integration target, but it must not be
-described as independently interoperable, audited, or production-secure.
+The independent evidence must not reuse the primary implementation as its
+oracle. A second wrapper around the same decoder, generated model, or test
+helpers does not qualify; the implementation or harness must derive expected
+bytes and outcomes from the normative specification and frozen vectors.
+
+Differential testing, deployment evidence, and security review remain
+separately reported assurance gates. Stable means independently demonstrated
+interoperability; it still does not mean audited or production-secure.
 
 Deprecation never lets an implementation silently reinterpret old bytes as a
 new operation. Authenticated profile identifiers remain unambiguous.
 
 ## Current profile boundary
 
-Stable relay modules are `nw.core`, `nw.opaque-route`,
+The provisional 1.0-candidate relay modules are `nw.core`, `nw.opaque-route`,
 `nw.rendezvous-transport`, `nw.blobs`, and `nw.federation`. The direct client
-profile advertises `nw.core` and `nw.direct`.
+profile advertises provisional `nw.core` and `nw.direct` modules.
 
 The Noctweave PQ group provider, `nw.wake`, hidden retrieval, onion, mixnet, and
 `nw.open-discovery` are experimental profiles. The open-discovery methods are
-not part of stable `nw.federation`. These profiles do not expand what
-“Noctweave Core” means, and their presence is not a production anonymity
-claim.
+separate from the provisional `nw.federation` module. These profiles do not
+expand what “Noctweave Core” means, and their presence is not a production
+anonymity claim.

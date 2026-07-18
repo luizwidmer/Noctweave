@@ -59,6 +59,12 @@ an unrelated empty local persona. It does not archive old live authority or
 publish a burn event. Previously issued opaque routes expire according to
 their bounded relay lifetime; their existence does not link the replacement.
 
+Construction that may suspend outside the local client is guarded by a
+non-serializable process-local persona-scope token minted before it begins.
+Burn or restart invalidates the token, so a late relationship or group result
+cannot enter the replacement persona. This token is local race protection, not
+a persona identifier, recovery key, or network authority.
+
 Noctweave cannot erase ciphertext, screenshots, exports, or records already
 held by other parties.
 

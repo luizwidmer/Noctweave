@@ -10,14 +10,15 @@ dual protocol paths.
 
 ## Release numbering
 
-- `1.0.0` freezes the documented stable core.
+- `1.0.0` may freeze only profiles promoted from the documented provisional
+  candidate after their promotion gates are satisfied.
 - `1.x` adds backward-compatible stable API or optional-module features.
 - `1.x.y` fixes defects without changing authenticated semantics.
 - a post-1.0 breaking public API, wire, or persisted-state change requires the
   next major version and an explicit specification decision.
 
 Experimental modules may change under their explicit profile/version and must
-never be presented as part of the stable core.
+never be presented as part of the provisional candidate or later stable core.
 
 ## Change gate
 
@@ -28,9 +29,11 @@ A public protocol change requires:
 3. bounds, errors, downgrade behavior, and metadata analysis;
 4. strict positive and negative decoding tests;
 5. shared vectors and differential tests for multi-language structures;
-6. Swift Core and Linux relay build/test success where applicable;
-7. JavaScript tests and desktop type-check where applicable;
-8. updated security requirements, extension status, and public documentation.
+6. independently demonstrated normative wire and failure-semantics conformance
+   before a profile is promoted to stable;
+7. Swift Core and Linux relay build/test success where applicable;
+8. JavaScript tests and desktop type-check where applicable;
+9. updated security requirements, extension status, and public documentation.
 
 No release may advertise an optional module solely because models or research
 code exist. The runtime and tests must implement the exact advertised methods.

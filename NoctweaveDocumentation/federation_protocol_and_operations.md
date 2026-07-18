@@ -32,8 +32,8 @@ through a bounded overlap.
 
 ## Relay module
 
-Stable operator coordination uses the exact `nw.federation` version 1 relay
-module:
+Provisional 1.0-candidate operator coordination uses the exact
+`nw.federation` version 1 relay module:
 
 | Method | Purpose |
 | --- | --- |

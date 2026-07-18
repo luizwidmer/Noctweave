@@ -7,7 +7,7 @@
 Noctweave is a self-hostable encrypted messaging protocol in which a local
 persona never becomes a network identity. Each pairwise relationship and group
 is a fresh cryptographic context. Direct relationships use ML-DSA-65 for
-authentication, ML-KEM-768 for asynchronous establishment and PQ root refresh,
+authentication, ML-KEM-768 for one asynchronous signed-prekey bootstrap,
 padded authenticated encryption for content, and opaque capability routes for
 relay delivery. Relays store ciphertext and ordered route state without
 receiving a global user identifier or plaintext social graph.
@@ -67,10 +67,16 @@ route rollover, or group membership.
 The direct profile authenticates both singular endpoint bindings and the exact
 negotiated protocol, cipher, content-type-major-version, and bounds context.
 Unsupported content is rejected before ratchet mutation. Initial asynchronous
-messages consume a valid endpoint-signed ML-KEM prekey. A symmetric chain
-ratchet derives message keys; periodic ML-KEM operations refresh the root.
-Bounded skipped-key state supports ordinary reordering without unbounded
-allocation.
+messages consume a valid endpoint-signed ML-KEM prekey. Symmetric send and
+receive chains then derive message keys. Direct-v4 does not periodically refresh
+its root with ML-KEM and therefore makes no in-session post-compromise-healing
+claim. Reset retires the session; resumption requires a fresh signed-prekey
+bootstrap and a distinct session. Bounded skipped-key state supports ordinary
+reordering without unbounded allocation.
+
+Live authentication uses throwing PQ operations. An unavailable algorithm or
+local PQ runtime is therefore retryable local failure, not an invalid peer
+signature that could be quarantined and skipped.
 
 Application events are padded and encrypted. Security controls carry their own
 relationship, event, sender, time, nonce, and signature binding. Unknown
@@ -82,13 +88,23 @@ relationship-authority keys.
 ## 5. Event semantics
 
 Messages are immutable events. Replies, edits, reactions, retractions, and
-receipts refer to an earlier event inside ciphertext. A local transaction ID
-survives retries, while an event ID names the logical action and packet IDs name
-individual relay delivery copies.
+receipts refer to an earlier event inside ciphertext. A unique local transaction
+ID reconciles one user action and its retries; an event ID names the logical
+action, an envelope ID names its direct-session ciphertext projection, and
+packet/bundle IDs name exact per-route delivery copies.
 
-The client persists the event, mutation intent, and exact encrypted packets
-before publication. This provides local echo and makes retries idempotent even
-after a crash.
+Preparing a send performs no relay I/O. The client atomically persists the
+event, advanced per-relationship ratchet, direct envelope, mutation intents,
+exact encrypted route packets, and local delivery projection before returning
+local echo. A restart resumes by event or transaction ID without re-encrypting.
+Within one route/session, later counters wait for earlier counters. Retryable
+and terminal failures remain distinct; terminal artifacts require explicit
+discard, and discarding a ratchet gap forces a fresh session instead of silently
+skipping state.
+
+Mutations are serialized per relationship. A process-wide encrypted-state save
+gate merges independent relationship changes against the latest aggregate so
+awaited operations cannot overwrite another relationship's newer state.
 
 ## 6. Opaque route delivery
 
@@ -103,10 +119,40 @@ an opaque cursor without deleting them. A cursor is committed only after local
 durable processing. Retention and route expiry keep the relay from becoming a
 permanent archive.
 
+Verified fragments may span pages and restarts because partial reassembly state
+and the next local cursor are saved atomically. Route-chain or persisted-state
+corruption is route-fatal without page advancement; deterministic peer poison
+is durably quarantined and advances; transient local, storage, network, or PQ
+failure does not advance. When the bounded reassembly budget fills, the oldest
+incomplete bundle is deterministically tombstoned and recorded as lost rather
+than falsely reported stored.
+
+The receiver persists verified events, replay state, and its next local cursor
+before committing that cursor to the relay. A crash in between leaves the relay
+with the older retained prefix and allows safe resumption from local state.
+Relay commit and generated receipts or route-control followups are best-effort
+after that local transition. A failed route does not prevent the same pass from
+processing another healthy receive route.
+Terminal route teardown is effect-idempotent: a fresh authenticated repeat
+returns the existing tombstone, while all non-teardown operations stay rejected.
+
+Freshness and local chronology use receiver-observed time. A peer timestamp is
+authenticated metadata, never the sole authority for future expiry or state
+advancement.
+
 Routes can move independently of relationship identity. A replacement route is
 registered, advertised as `testing` through the old path, targeted by a probe,
 then promoted while the old route drains through bounded overlap before
-teardown.
+teardown. The client journals the exact create request and every accepted
+rollover boundary so restart can resume or explicitly discard a terminal
+failure without inventing a completed transition.
+
+Encrypted attachment chunks use the same durability discipline. Each upload
+has a 32-byte idempotency key and canonical body digest. While a chunk coordinate
+is retained, an exact retry returns the original result without extending
+expiry or rewriting storage; changed ciphertext, key, or expiry conflicts.
+Relay info reports the configured default and maximum TTL, and storage enforces
+an absolute 2,592,000-second (30-day) ceiling.
 
 ## 7. Delivery meanings
 
@@ -119,12 +165,31 @@ cannot truthfully assert that a peer read end-to-end encrypted content.
 Group state uses group-scoped handles, one active credential per member,
 signed roles and permissions, linear epochs, commits, and welcomes. Credential
 replacement is approved by the old key and proven by the new key in one commit.
-Crash-safe intents preserve dependent work, and conflicting forks are
-quarantined.
+An epoch publication binds the signed commit, authoritative signed next state,
+exact provider commit bytes, and destination-specific signed welcomes. Peer
+processing atomically stores verified signed/provider state and a replay
+journal. Exact replay is idempotent; a conflicting same-base transition retains
+bounded digest-only fork evidence.
+
+Joining requires a group-only anchor delivered through an already encrypted
+invitation; a Welcome cannot authenticate its own destination. Accepted removal
+of the local credential is terminal and clears sendable work. Group deletion
+first persists an exact signed tombstone as local outbox or inbound terminal
+state, clears pending application/epoch work atomically, and rejects later
+resurrection. Runtime state is bounded to 32 MiB, and group cryptographic
+operations propagate PQ runtime/algorithm failures rather than treating them as
+peer authentication failures.
 
 Typed immutable group events use negotiated content capabilities. Exact sealed
-envelopes remain in a durable outbox until opaque-route fanout accepts them;
-retries reuse ciphertext and inbound replay receipts prevent ratchet advance.
+application envelopes remain in a durable runtime outbox; retries reuse that
+ciphertext and inbound replay receipts prevent a second ratchet advance.
+
+The current opaque-route group helpers are lower-level and stateless. They can
+plan member-route packet copies and attempt publication, but they do not yet
+persist recipient/route authorization snapshots, packet attempts, or complete
+transition-plus-Welcome delivery; nor do they provide group receive cursors,
+reassembly/quarantine, route lifecycle, or Headless group dispatch. End-to-end
+crash-safe opaque-route group transport remains experimental product work.
 
 This design learns state-machine discipline from MLS, but the current PQ
 provider has custom wire and cryptography. It needs independent review and must
@@ -138,8 +203,11 @@ federation are explicit operator decisions with different trust and discovery
 rules. They are never silently combined.
 
 Relay requests use exact module/version/method envelopes. A relay advertises
-only modules it actually implements. The stable surface covers health/info,
-opaque routes, rendezvous transport, encrypted blobs, and federation.
+only modules it actually implements. The provisional 1.0-candidate surface
+covers health/info, opaque routes, rendezvous transport, encrypted blobs, and
+federation. Both relay implementations publish the same exact
+`nw.opaque-route@2` registry: 68-byte cursors, 256-packet pages, 65,536-byte
+packets, 1,024 packets per route, 604,800-second retention, and 100,000 routes.
 
 ## 10. Wake and privacy research
 
@@ -157,6 +225,11 @@ Burn deletes the old local persona record and its live authority, then creates
 an unrelated empty container. No recoverable archived identity remains. Relay
 packets may survive until route expiry, and remote parties may retain data they
 already received.
+
+An asynchronous relationship or group construction is guarded by a
+non-serializable process-local persona-scope token minted before it starts.
+Burn or restart invalidates the token, preventing the late result from entering
+the replacement persona without creating a protocol account or recovery link.
 
 Continuity is a separate opt-in relationship control: one chosen contact may
 receive a successor one-use pairing invitation. Other contacts receive no

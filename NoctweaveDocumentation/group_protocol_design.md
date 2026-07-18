@@ -66,13 +66,22 @@ Credential replacement is deliberately a two-proof transition:
 There is no sibling-credential consent, device linking, account recovery, or
 group-wide device registry.
 
-## Epochs, welcomes, and delivery
+## Epochs, welcomes, and runtime convergence
 
-Commits create a linear epoch sequence. A welcome is scoped to the admitted
-member credential, expires, and is authenticated against the accepted state.
-The experimental provider seals the new epoch secret independently to each
+Commits create a linear epoch sequence. A complete transition carries the
+signed commit, authoritative signed next state, and exact provider commit
+bytes. A destination-specific welcome is scoped to an admitted or continuing
+member credential, expires, and is authenticated against that next state. The
+experimental provider seals the new epoch secret independently to each
 post-commit credential. This is O(n) and therefore bounded to 128 active
 credentials by the current profile.
+
+Peer processing validates the transition against the current state, processes
+the local Welcome, and atomically stores signed state, provider state, and the
+replay journal. Exact replay is idempotent; a different artifact for the same
+base epoch retains bounded digest-only fork evidence. A new runtime additionally
+requires a caller-pinned group-only join anchor delivered by an already
+encrypted invitation. A Welcome is not its own trust root.
 
 Application ciphertext authenticates the exact profile and cipher suite,
 group ID, epoch, transcript digest, sender credential handle, counter, time
@@ -83,18 +92,31 @@ Application events are typed, immutable group records whose content type must
 be supported by every active credential. Preparing an event atomically advances
 the sender state and persists the exact sealed envelope before transport. An
 opaque-route fanout plan maps that same envelope to member-supplied routes;
-retry never re-encrypts it. Processed-envelope receipts make exact replay
-idempotent and reject conflicting event-ID reuse or counter gaps.
+processed-envelope receipts make exact replay idempotent and reject conflicting
+event-ID reuse or counter gaps.
+
+The fanout plan and Headless publication method are stateless experimental
+helpers. They do not persist route-authorization snapshots or packet attempts,
+stage transitions with all Welcomes, manage group routes, or implement group
+receive cursors, reassembly/quarantine, and Headless dispatch. They are not an
+end-to-end crash-safe transport.
 
 ## Crash and fork safety
 
 `GroupRuntimeV2` persists prepared epoch intents and application outbox records
-before publication and records exact commit, welcome, and ciphertext artifacts.
-Recovery can resume without creating a different transition. Accepted epochs
-and local credential replacement are committed atomically.
+before publication and records exact transition, welcome, and ciphertext
+artifacts. Recovery can resume local work without creating a different
+transition. Accepted local or peer epochs and credential replacement are
+committed atomically. Accepted removal of the local credential is terminal and
+clears sendable work. Runtime state is capped at 32 MiB.
 
-Conflicting valid successors are quarantined as a fork. The runtime does not
-guess a winner from timestamps or relay order.
+Local deletion persists the exact signed tombstone outbox and clears sendable
+work atomically; inbound deletion persists the same terminal boundary. Exact
+replay is accepted, while conflicts and later resurrection retain only bounded
+digest evidence. Conflicting valid successors are likewise recorded by digest.
+The runtime does not guess a winner from timestamps or relay order. Live group
+cryptographic operations propagate PQ algorithm/runtime failure through
+throwing APIs.
 
 ## Protocol profile
 

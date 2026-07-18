@@ -84,6 +84,13 @@ event ID, PQ profile, nonce, ciphertext, and tag.
 read, renewal, and teardown use distinct capability types. Sync returns ordered
 packets and an opaque cursor; commit is separate and non-destructive.
 
+The receiver persists bounded partial reassembly with its next cursor, allowing
+verified bundles to span pages and restarts. Route-fatal corruption does not
+advance; deterministic peer poison advances only with a bounded quarantine
+receipt; transient local/PQ failure does not advance. Deterministic
+reassembly-pressure eviction tombstones the oldest incomplete bundle and never
+creates a `peerStored` receipt.
+
 The checked-in deterministic packet vector is:
 
 - `test_vectors/opaque_route_packet_v2.json`

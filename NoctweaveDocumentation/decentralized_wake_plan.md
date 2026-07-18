@@ -39,10 +39,12 @@ same aggregate work limit.
 4. Store the page as one `DecentralizedPrefetchBatch`, protected by a separate
    32-byte local storage key.
 5. In foreground processing, verify each canonical packet envelope, validate
-   the route revision, reassemble packet fragments, decrypt the route payload,
-   and durably apply the resulting events.
-6. Commit `deferredCommitCursor` only after every packet in the staged page has
-   completed that processing sequence.
+   the route revision, durably retain accepted partial fragments, decrypt each
+   completed route payload, classify terminal peer poison, and apply resulting
+   events.
+6. Persist the updated partial reassembler and `deferredCommitCursor` atomically
+   after every packet is durably processed or terminally quarantined; only then
+   commit the cursor to the relay.
 7. Remove the encrypted local batch after the cursor commit succeeds.
 
 A crash before step 6 leaves the relay cursor unchanged, so the page remains
@@ -89,7 +91,8 @@ not visible in the file's outer JSON.
 - The route-local jitter seed stays local and is unrelated across routes.
 - Relays never receive plaintext through wake or prefetch.
 - Prefetch stages ciphertext only and does not need route decryption material.
-- Cursor advancement is deferred until verified durable processing.
+- Cursor advancement is deferred until verified durable processing, including
+  persisted partial reassembly for a bundle that spans staged pages.
 - Local staging uses authenticated encryption, atomic file replacement,
   restrictive filesystem permissions, size limits, and best-effort overwrite
   before removal.
