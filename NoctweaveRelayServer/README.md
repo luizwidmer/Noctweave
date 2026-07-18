@@ -29,10 +29,12 @@ Implemented modules:
 | `nw.opaque-route` | 2 | `create`, `renew`, `teardown`, `append`, `sync`, `commit` |
 | `nw.rendezvous-transport` | 2 | `register`, `append`, `sync`, `delete` |
 | `nw.blobs` | 1 | `upload`, `fetch` |
-| `nw.federation` | 1 | `register`, `list`, `publish-dht`, `list-dht` |
+| `nw.federation` | 1 | `register`, `list` |
+| `nw.open-discovery` | 1 | `publish-dht`, `list-dht` (experimental; open discovery only) |
 
-The opaque-route runtime is enabled by default. Rendezvous transport is
-operator opt-in. A module is omitted from `info` when its runtime is disabled.
+The opaque-route runtime is enabled by default. Rendezvous transport and open
+discovery are operator opt-in. A module is omitted from `info` when its exact
+runtime is disabled.
 
 ## Build and test
 
@@ -143,18 +145,24 @@ IPFS changes storage placement, not anonymity or cryptographic deletion.
 
 ## Federation
 
+Federation is operator-plane relay discovery and coordination only. Clients
+obtain relay endpoints from relationship-encrypted peer route sets and submit
+ciphertext directly to the selected opaque route. A relay does not receive a
+user message for forwarding to another relay.
+
 Modes are explicit and must not be mixed:
 
-- `solo`: no forwarding;
-- `manual`: operator-maintained peer allow list;
+- `solo`: no federation discovery or coordination;
+- `manual`: operator-maintained relay descriptors and allow list;
 - `curated`: coordinator policy, quorum, freshness, and optional signed
   directory requirements;
-- `open`: bounded signed discovery records and optional peer hints.
+- `open`: bounded signed relay discovery records and optional peer hints.
 
 Configure `--advertised-endpoint` with an explicit public scheme and keep
 private/loopback federation destinations rejected unless running a deliberately
-isolated network. Inbound client auth tokens are never forwarded; use a
-separate federation forwarding token.
+isolated network. `NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN` authorizes only
+relay registration with a curated coordinator; it is not a message-routing or
+client credential.
 
 See
 [`federation_protocol_and_operations.md`](../NoctweaveDocumentation/federation_protocol_and_operations.md).
@@ -164,8 +172,8 @@ See
 Set `NOCTWEAVE_ADMIN_TOKEN` (at least 32 random bytes recommended) and bind the
 admin listener to loopback/private management networking. The console may
 change non-secret operator policy; it cannot return relay passwords, admin
-tokens, federation tokens, or signing private keys. Runtime policy persists in
-`operator-config.json` with restrictive permissions.
+tokens, coordinator registration tokens, or signing private keys. Runtime
+policy persists in `operator-config.json` with restrictive permissions.
 
 ## Optional privacy advertisements
 
@@ -181,14 +189,14 @@ Prefer environment variables:
 - `NOCTWEAVE_RELAY_PASSWORD`
 - `NOCTWEAVE_ADMIN_TOKEN`
 - `NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN`
-- `NOCTWEAVE_FEDERATION_FORWARDING_TOKEN`
 - `NOCTWEAVE_COORDINATOR_SIGNING_KEY`
 
 Keep each role separate and rotate it independently.
 
 ## Security and operations
 
-- terminate public client and federation traffic with HTTPS/WSS or TLS;
+- terminate public client and federation-directory traffic with HTTPS/WSS or
+  TLS;
 - keep raw TCP and the bridge behind a reverse proxy/firewall where possible;
 - keep the admin listener private;
 - back up SQLite and operator policy consistently;
@@ -201,4 +209,3 @@ See
 [`relay_ops_hardening_guide.md`](../NoctweaveDocumentation/relay_ops_hardening_guide.md)
 and the exact
 [`OpenAPI schema`](../NoctweaveDocumentation/noctweave_relay_openapi.yaml).
-

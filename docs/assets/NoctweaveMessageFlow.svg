@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="430" viewBox="0 0 1200 430" role="img" aria-labelledby="title desc">
   <title id="title">Noctweave direct message lifecycle</title>
-  <desc id="desc">Five steps show signed contact exchange, post-quantum session setup, local message sealing, ciphertext relay delivery, and recipient verification and decryption.</desc>
+  <desc id="desc">Five steps show one-use encrypted pairing, a fresh post-quantum relationship session, durable local event sealing, opaque-route delivery, and recipient verification and decryption.</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0a0d19"/>
@@ -12,8 +12,8 @@
   </defs>
   <rect width="1200" height="430" rx="30" fill="url(#background)"/>
   <g font-family="Geist, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
-    <text x="60" y="62" fill="#F3F5FA" font-size="28" font-weight="750">From contact code to decrypted message</text>
-    <text x="60" y="94" fill="#A8ADBD" font-size="16">Private material stays on client devices throughout the flow.</text>
+    <text x="60" y="62" fill="#F3F5FA" font-size="28" font-weight="750">From one-use pairing to decrypted event</text>
+    <text x="60" y="94" fill="#A8ADBD" font-size="16">Private relationship material stays client-side throughout the flow.</text>
 
     <g fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)">
       <path d="M250 232H274"/><path d="M470 232H494"/><path d="M690 232H714"/><path d="M910 232H934"/>
@@ -23,34 +23,34 @@
       <rect x="54" y="145" width="196" height="175" rx="20" fill="#181d36" stroke="#7B61FF"/>
       <circle cx="84" cy="177" r="16" fill="#7B61FF"/><text x="84" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">1</text>
       <text x="78" y="220" fill="#fff" font-size="19" font-weight="700">Pair</text>
-      <text x="78" y="251" fill="#A8ADBD" font-size="14">Exchange and verify a</text>
-      <text x="78" y="273" fill="#A8ADBD" font-size="14">signed contact offer.</text>
+      <text x="78" y="251" fill="#A8ADBD" font-size="14">Redeem a one-use</text>
+      <text x="78" y="273" fill="#A8ADBD" font-size="14">encrypted rendezvous.</text>
 
       <rect x="274" y="145" width="196" height="175" rx="20" fill="#181d36" stroke="#7B61FF"/>
       <circle cx="304" cy="177" r="16" fill="#7B61FF"/><text x="304" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">2</text>
       <text x="298" y="220" fill="#fff" font-size="19" font-weight="700">Establish</text>
-      <text x="298" y="251" fill="#A8ADBD" font-size="14">Consume ML-KEM prekeys</text>
-      <text x="298" y="273" fill="#A8ADBD" font-size="14">and derive session roots.</text>
+      <text x="298" y="251" fill="#A8ADBD" font-size="14">Verify fresh authorities</text>
+      <text x="298" y="273" fill="#A8ADBD" font-size="14">and consume PQ prekeys.</text>
 
       <rect x="494" y="145" width="196" height="175" rx="20" fill="#181d36" stroke="#7B61FF"/>
       <circle cx="524" cy="177" r="16" fill="#7B61FF"/><text x="524" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">3</text>
       <text x="518" y="220" fill="#fff" font-size="19" font-weight="700">Seal</text>
-      <text x="518" y="251" fill="#A8ADBD" font-size="14">Pad, ratchet, and encrypt</text>
-      <text x="518" y="273" fill="#A8ADBD" font-size="14">the payload locally.</text>
+      <text x="518" y="251" fill="#A8ADBD" font-size="14">Persist, pad, ratchet,</text>
+      <text x="518" y="273" fill="#A8ADBD" font-size="14">and encrypt the event.</text>
 
       <rect x="714" y="145" width="196" height="175" rx="20" fill="#12313b" stroke="#3DD5C5"/>
       <circle cx="744" cy="177" r="16" fill="#299EAA"/><text x="744" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">4</text>
       <text x="738" y="220" fill="#fff" font-size="19" font-weight="700">Route</text>
-      <text x="738" y="251" fill="#A8ADBD" font-size="14">Relay stores and forwards</text>
-      <text x="738" y="273" fill="#A8ADBD" font-size="14">only the sealed envelope.</text>
+      <text x="738" y="251" fill="#A8ADBD" font-size="14">Relay orders fixed opaque</text>
+      <text x="738" y="273" fill="#A8ADBD" font-size="14">packets by route.</text>
 
       <rect x="934" y="145" width="212" height="175" rx="20" fill="#181d36" stroke="#7B61FF"/>
       <circle cx="964" cy="177" r="16" fill="#7B61FF"/><text x="964" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">5</text>
       <text x="958" y="220" fill="#fff" font-size="19" font-weight="700">Open</text>
-      <text x="958" y="251" fill="#A8ADBD" font-size="14">Verify, decrypt, persist,</text>
-      <text x="958" y="273" fill="#A8ADBD" font-size="14">then commit endpoint cursor.</text>
+      <text x="958" y="251" fill="#A8ADBD" font-size="14">Sync, verify, decrypt,</text>
+      <text x="958" y="273" fill="#A8ADBD" font-size="14">persist, commit route cursor.</text>
     </g>
 
-    <text x="600" y="377" fill="#A8ADBD" font-size="15" text-anchor="middle">Out-of-order windows, replay rejection, and explicit recovery requests protect the session as messages advance.</text>
+    <text x="600" y="377" fill="#A8ADBD" font-size="15" text-anchor="middle">Exact retry bytes, ordered cursors, replay rejection, and bounded recovery protect the relationship as events advance.</text>
   </g>
 </svg>

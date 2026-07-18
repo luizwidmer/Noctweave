@@ -16,7 +16,7 @@
   <img alt="Multi-license" src="https://img.shields.io/badge/license-multi--license-5B9CFA">
   <img alt="Swift 5.9" src="https://img.shields.io/badge/Swift-5.9-F05138">
   <img alt="Node 20 or newer" src="https://img.shields.io/badge/Node-%3E%3D20-3DD5C5">
-  <img alt="Pre-1.0" src="https://img.shields.io/badge/status-pre--1.0-F2B84B">
+  <img alt="Unreleased 1.0 candidate" src="https://img.shields.io/badge/status-1.0%20candidate-F2B84B">
   <img alt="Unaudited" src="https://img.shields.io/badge/security-unaudited-E05D6F">
 </p>
 
@@ -24,40 +24,37 @@
 
 Noctweave is a self-hosted toolkit for adding encrypted messaging to an
 application. It includes a Swift protocol core, a Linux/Docker relay, a working
-JavaScript client, and a headless CLI. Relays route and store encrypted
-envelopes; message plaintext and private identity keys stay with clients.
+JavaScript protocol client and browser integration shell, and a headless CLI. Relays route and store encrypted
+packets; message plaintext and relationship or group keys stay with clients.
 
 There are no hosted accounts, developer-operated relays, or required central
 notification services. You choose where every component runs.
 
-## Architecture Revision Status
+## Noctweave 1.0 Architecture
 
-The pre-1.0 `architecture-revision` work now provides independently keyed local
-endpoints scoped to a disposable identity generation, one certified preferred
-direct endpoint, endpoint-scoped
-ordered mailbox cursors, durable exact-ciphertext retries, typed encrypted
-events and controls, privacy-minimized inbox registration, bounded replay-safe
-receive receipts, and local read-only history export/import inside a padded
-recipient-KEM transport seal. The in-process and Linux relays expose only the
-1.0 mailbox, rendezvous, opaque-route, attachment, and federation surfaces;
-fingerprint-addressed pairing, prekey storage, groups, and destructive inbox
-acknowledgement are not protocol operations.
+The `architecture-revision` branch establishes the clean protocol origin for
+1.0. It does not preserve pre-release identities, storage schemas, relay
+requests, or migration adapters.
 
-This is not yet a complete multi-endpoint protocol. Purpose-bound
-same-generation endpoint admission exists only as an internal conformance
-model; there is no public authorization, linking, or recovery flow. A safe
-multi-endpoint release still requires a rendezvous transport, published
-self-sync, multi-endpoint fan-out, encrypted route exchange, complete removal
-obligations, and active endpoint-aware group delivery. The current group construction is
-Noctweave-specific, experimental, O(n), and independently unaudited; the signed
-endpoint-aware group objects are a tested foundation, not the active relay
-or client group path. See the
-[architecture status matrix](NoctweaveDocumentation/noctweave_architecture_revision_v2.md)
-before selecting a protocol surface.
+A persona is only a local UI container. Every pairwise relationship creates a
+fresh unlinkable ML-DSA/ML-KEM authority, one singular relationship endpoint,
+renewable prekeys, and private opaque routes. Pairing uses a short-lived
+one-use encrypted rendezvous. Relays see capability-authorized opaque packets,
+ordered route positions, and bounded retention—not accounts, global user IDs,
+contact graphs, or plaintext.
+
+The architecture also includes immutable typed events, exact-ciphertext retry
+intents, non-destructive cursor synchronization, make-before-break route sets,
+selective relationship-only continuity, explicit group roles and policy, and a
+strict modular relay envelope. There is deliberately no device/installation
+registry, recovery authority, shared self-sync identity, or portable live-key
+history model. See the
+[normative 1.0 architecture](NoctweaveDocumentation/noctweave_architecture_revision_v2.md).
 
 ## Install And Try It
 
-The quickest path uses Docker for the relay and a browser for two local clients.
+The quickest evaluation path uses Docker for the relay and a browser integration
+shell for two independent local personas.
 
 ### 1. Get the source
 
@@ -86,6 +83,7 @@ docker run --rm --name noctweave-relay \
   --port 9339 \
   --http-port 9340 \
   --admin-port 9090 \
+  --rendezvous-transport true \
   --data-dir /data
 ```
 
@@ -93,7 +91,7 @@ The messaging endpoint is `http://127.0.0.1:9340`. Open the authenticated
 operator console at [http://127.0.0.1:9090/admin/](http://127.0.0.1:9090/admin/)
 and enter the generated token.
 
-### 3. Open two clients
+### 3. Open two integration shells
 
 ```sh
 cd NoctweaveJS
@@ -101,20 +99,25 @@ npm install
 npm run dev:client
 ```
 
-Open two independent profiles:
+Open two independent local personas:
 
 - [Alice](http://127.0.0.1:5173/client/?profile=alice)
 - [Bob](http://127.0.0.1:5173/client/?profile=bob)
 
-Set the relay to `http://127.0.0.1:9340`, create both identities, exchange
-contact codes, and send a message.
+Set the relay to `http://127.0.0.1:9340`. Each new contact relationship must use
+a fresh one-use pairing invitation; persona labels are not sent to the peer.
 
-Current contact codes are reusable compatibility material, not one-time
-unlinkable rendezvous offers. Sharing the same code lets recipients correlate
-the same identity generation, preferred endpoint authorization, inbox, and
-relay details.
+This reference shell verifies the relay and creates or inspects one-use
+invitations. It does not yet orchestrate the complete two-party rendezvous or
+render message send/sync. Applications drive each participant independently
+with `prepareOffererPairing` or `prepareResponderPairing`, persist the returned
+persona state, publish and process its exact outbox frames, acknowledge only
+published frames, and then call `finalizePairing`. `resumePairing` and
+`cancelPairing` make restart and abandonment explicit; no production helper
+co-locates both participants' private state. Shipping that orchestration in the
+end-user shell remains product work.
 
-![NoctweaveJS encrypted browser client](docs/assets/NoctweaveJSClient.png)
+![NoctweaveJS browser integration shell](docs/assets/NoctweaveJSClient.png)
 
 ## Use The Tools
 
@@ -123,10 +126,9 @@ relay details.
 | Run a relay | [`NoctweaveRelayServer/`](NoctweaveRelayServer/) |
 | Build a browser or Node client | [`NoctweaveJS/`](NoctweaveJS/) |
 | Integrate from Swift | [`NoctweaveCore/`](NoctweaveCore/) |
-| Script identities and messages | [`NoctweaveCLI`](NoctweaveDocumentation/noctweave_cli_usage.md) |
-| Review the pre-1.0 architecture | [`Architecture revision v2`](NoctweaveDocumentation/noctweave_architecture_revision_v2.md) |
-| Review read-only endpoint history transfer | [`History transfer v2`](NoctweaveDocumentation/history_transfer_v2.md) |
-| Review the compatibility wire surface | [`Protocol v1 compatibility specification`](NoctweaveDocumentation/noctweave_protocol_spec_v1.md) |
+| Script personas, relationships, and messages | [`NoctweaveCLI`](NoctweaveDocumentation/noctweave_cli_usage.md) |
+| Review the 1.0 architecture | [`Noctweave 1.0 architecture`](NoctweaveDocumentation/noctweave_architecture_revision_v2.md) |
+| Review the protocol | [`Protocol specification`](NoctweaveDocumentation/noctweave_protocol_spec_v1.md) |
 
 ### Relay
 
@@ -135,8 +137,9 @@ relay details.
 </p>
 
 The relay supports raw TCP, HTTP/HTTPS, WebSocket/WSS, SQLite persistence,
-attachments, groups, federation, optional IPFS offload, and an authenticated
-operator console. A solo relay works without federation.
+opaque routes, one-use rendezvous transport, encrypted attachment blobs,
+federation, optional IPFS offload, and an authenticated operator console. A
+solo relay works without federation.
 
 ![Noctweave Relay operator console](docs/assets/NoctweaveRelayConsole.png)
 
@@ -146,7 +149,7 @@ use the [relay guide](NoctweaveRelayServer/README.md) and
 
 ### NoctweaveJS
 
-Run the working browser client:
+Run the browser integration shell:
 
 ```sh
 cd NoctweaveJS
@@ -183,14 +186,13 @@ swift run --package-path NoctweaveCore NoctweaveCLI help
 swift run --package-path NoctweaveCore NoctweaveCLI health \
   --relay http://127.0.0.1:9340
 swift run --package-path NoctweaveCore NoctweaveCLI init \
-  --display-name Alice \
-  --relay http://127.0.0.1:9340
+  --display-name "local mask"
 ```
 
-The CLI supports relay diagnostics, encrypted local identities, public
-contact-share import and export, direct and group messaging, attachments,
-continuity events, and
-identity rotation. See the [CLI usage guide](NoctweaveDocumentation/noctweave_cli_usage.md).
+The CLI supports exact relay diagnostics, encrypted local persona state,
+pairing primitives, direct event send/sync, and destructive local persona
+burn. It does not publish reusable contact identities. See the
+[CLI usage guide](NoctweaveDocumentation/noctweave_cli_usage.md).
 
 ## Desktop Apps
 
@@ -226,10 +228,10 @@ prebuilt desktop binaries are published yet.
   relay primitives, federation logic, and tests.
 - **NoctweaveRelayServer** — Linux/Docker relay, SQLite storage, operator Web
   UI, federation, and optional IPFS attachment storage.
-- **NoctweaveJS** — browser/Node transports, encrypted stores, a working
-  messaging client, and post-quantum WASM bindings.
-- **NoctweaveCLI** — headless identity, relay, messaging, group, and attachment
-  workflows.
+- **NoctweaveJS** — browser/Node protocol transports, encrypted stores, a
+  browser integration shell, and post-quantum WASM bindings.
+- **NoctweaveCLI** — headless persona, pairwise relationship, relay, and
+  messaging workflows.
 - **AgentGuides and AgentSkills** — bounded guidance for integrating clients and
   operating relays through automation.
 
@@ -255,18 +257,19 @@ Exact versions, hashes, and supply-chain requirements are recorded in the
 
 ## Security Status
 
-Noctweave is pre-1.0 and has not received an independent external audit.
+Noctweave implements the clean 1.0 protocol baseline but remains an unreleased
+1.0 candidate and has not received an independent external audit.
 
 | Implemented | Not claimed |
 | --- | --- |
 | ML-KEM/ML-DSA protocol profile | Protection from a compromised operating system |
 | End-to-end encrypted payloads and attachments | Global anonymity |
-| Signed identity continuity and replay rejection | Formal group-protocol proof or RFC 9420 interoperability |
+| Pairwise-scoped optional continuity and replay rejection | Formal group-protocol proof or RFC 9420 interoperability |
 | Bounded parsers, stores, and discovery inputs | Single-server cryptographic PIR |
 | Relay ciphertext-only payload storage | Guaranteed closed-app delivery |
 
 Review the [security requirements](NoctweaveDocumentation/security_requirements.md),
-[internal audit](NoctweaveDocumentation/security_audit_2026-07-10.md), and
+[architecture revision report](NoctweaveDocumentation/architecture_revision_status_report_2026-07-18.md), and
 [roadmap](NoctweaveDocumentation/noctweave_roadmap.md) before production use.
 
 ## Build And Test
@@ -289,14 +292,13 @@ dependency, Docker, and optional container-scan checks with
 
 Technical detail lives in focused documents:
 
-- [Architecture revision v2 and implementation status](NoctweaveDocumentation/noctweave_architecture_revision_v2.md)
+- [Normative Noctweave 1.0 architecture](NoctweaveDocumentation/noctweave_architecture_revision_v2.md)
 - [Extension proposal and promotion process](NoctweaveDocumentation/noctweave_extension_process.md)
-- [Protocol v1 compatibility specification](NoctweaveDocumentation/noctweave_protocol_spec_v1.md)
+- [Protocol specification](NoctweaveDocumentation/noctweave_protocol_spec_v1.md)
 - [Relay OpenAPI schema](NoctweaveDocumentation/noctweave_relay_openapi.yaml)
 - [Wire format and test vectors](NoctweaveDocumentation/wire_format_and_test_vectors.md)
 - [Core public API](NoctweaveDocumentation/noctweave_core_public_api.md)
-- [Read-only history transfer v2](NoctweaveDocumentation/history_transfer_v2.md)
-- [Experimental PQ group design](NoctweaveDocumentation/group_mls_design.md)
+- [Experimental PQ group design](NoctweaveDocumentation/group_protocol_design.md)
 - [Federation protocol and operations](NoctweaveDocumentation/federation_protocol_and_operations.md)
 - [Relay hardening](NoctweaveDocumentation/relay_ops_hardening_guide.md)
 - [Whitepaper](NoctweaveDocumentation/noctweave_whitepaper.md)
@@ -315,7 +317,7 @@ Noctweave is a multi-license repository. The nearest license file governs:
 
 | Path | License |
 | --- | --- |
-| `NoctweaveCore/`, `NoctweaveCLI`, `NoctweaveRelayServer/` | `AGPL-3.0-or-later` |
+| `NoctweaveCore/`, `NoctweaveRelayServer/` | `AGPL-3.0-or-later` |
 | `NoctweaveCore/COMMERCIAL-LICENSE.md` | Optional commercial terms for NoctweaveCore |
 | `NoctweaveJS/` | `Apache-2.0` |
 | `NoctweaveJS/examples/` | `MIT` |

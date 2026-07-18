@@ -1,58 +1,65 @@
-# Noctweave Security Requirements
+# Noctweave 1.0 Security Requirements
 
-This document defines the repository-owned security requirements for the current Noctweave Protocol implementation. External audit, formal proofs, and large-scale operational validation remain separate roadmap items.
+This document defines repository-owned requirements for the clean 1.0
+architecture. Passing repository tests is implementation evidence, not an
+independent audit or formal proof.
 
-| ID | Requirement | Current control | Verification evidence |
-|----|-------------|-----------------|-----------------------|
-| SR-01 | Long-term identity authentication must be post-quantum. | ML-DSA-65 identity signatures and signed continuity events. | `Crypto.swift`, identity rotation tests, federation signature tests. |
-| SR-02 | Session establishment must resist harvest-now/decrypt-later attacks. | ML-KEM-768 prekey bundles and root-ratchet KEM steps. | prekey, bootstrap, and root-ratchet tests in `NoctweaveCoreTests.swift`. |
-| SR-03 | Message plaintext must never be visible to relays. | Direct and group messages are AEAD envelopes; relays store ciphertext. | relay deliver/fetch tests and message encryption/decryption tests. |
-| SR-04 | Message-size metadata must be reduced. | Direct and group plaintexts are padded before encryption; relays reject oversized envelopes. | fixed-size padding and relay payload-size tests. |
-| SR-05 | Replay of non-idempotent security operations must fail closed; an explicitly monotonic operation may only converge to its already-authorized terminal state. | Actor-proof nonce cache, message counter windows, relationship-scoped logical-event receipts plus mailbox-local envelope IDs, group epoch checks, and the inbox-bound exact-request tombstone for irreversible retirement. | replay, cross-relationship event-ID scope, actor-proof replay, stale epoch, retirement-idempotency, and group model-checker tests. |
-| SR-06 | Inbox authority and mailbox data access must be cryptographically bound, not granted by an address string. | The inbox-access key authorizes registration, consumer revocation, and irreversible retirement. Mailbox-v2 sync/commit uses a separate route-scoped consumer key; the old inbox-authority fetch is an explicit compatibility path and is permanently disabled after the first v2 binding. | inbox registration, mailbox consumer, sync/commit, legacy-gate, and retirement proof tests. |
-| SR-07 | Key rotation must preserve continuity only when explicitly disclosed. | Signed rotation payloads and contact continuity controls. | identity rotation verification and post-rotation session tests. |
-| SR-08 | Identity burn must sever continuity for unselected contacts and local state. | Burn/reset creates an unrelated generation, sends reset ciphertext only to selected contacts, and clears the new profile's general old-to-new audit trail. | identity reset, continuity, and durable burn tests. |
-| SR-09 | Sensitive local state must be encrypted at rest. | Native state stores encrypt by default; JavaScript raw storage adapters must be wrapped by `EncryptedNoctweaveStore`. | `ClientStateStore`, native attachment/thread store, and JavaScript encrypted-store tests. |
-| SR-10 | Decrypted attachment material must be scoped to active use. | Implementations must decrypt only for active inspection and clear temporary plaintext buffers after use. | attachment handling requirements and store tests. |
-| SR-11 | Relay storage must fail closed on persisted corruption. | Normalized SQLite rows are decoded under strict bounds; corrupt security-relevant rows prevent startup instead of being silently discarded. | core and Linux relay corrupt-row rejection tests. |
-| SR-12 | Relays must bound storage and payload growth. | Inbox caps, mailbox caps, attachment chunk caps, group caps, and max payload checks. | relay capacity, oversized envelope, prekey, and attachment tests. |
-| SR-13 | Federation must not silently cross manual, curated, and open trust domains. | Federation mode policy, manual node-list checks, allow-list checks, coordinator quorum, and signed directory snapshots. | manual forwarding, curated forwarding, strict policy, and coordinator tests. |
-| SR-14 | Open federation discovery must be bounded and signed. | Signed short-lived DHT records, host caps, total caps, TTL checks, and feature gates. | DHT record validation, poisoning, flood, and native overlay tests. |
-| SR-15 | Optional PIR/mixnet/onion claims must not be advertised unless usable. | Relay metadata suppresses weak replicated-PIR, onion, and mixnet capabilities. | whitepaper alignment verifier and relay info suppression tests. |
-| SR-16 | Pull-only helper paths must not expose identity signing keys or message counts. | Prefetch profiles use delegated inbox keys and metadata-blind status where implemented by a client. | decentralized wake plan and whitepaper caveats. |
-| SR-17 | UI capture protections must be best-effort and not overclaimed. | Client implementations may add capture redaction and secure input, but the protocol does not claim to defeat a hostile OS. | whitepaper caveats. |
-| SR-18 | Release claims must distinguish internal verification from external assurance. | Roadmap keeps external audit, formal proof, side-channel analysis, and load reports unchecked. | `noctweave_roadmap.md` and release policy. |
-| SR-19 | Remote and persisted inputs must not control unbounded allocation or arithmetic. | Request/response, state, attachment, resend, DHT, PIR, onion, mixnet, URL-loader, and operator-configuration limits are checked before allocation or conversion. | resource-bound and malformed-input regression tests. |
-| SR-20 | OS notification surfaces must not receive decrypted message or contact content. | Native local notifications use a generic encrypted-message signal. | `NotificationManager.swift` and client build verification. |
-| SR-21 | A previously trusted TLS relay certificate change must fail closed. | The reference client records the system-trusted leaf-certificate SHA-256 fingerprint after the first successful relay request and enforces it on subsequent TCP-TLS, HTTPS, and WSS connections; operators may supply a manual pin. | relay TLS observation tests, persisted pin-record tests, and native onboarding/relay-editor tests. |
-| SR-22 | A group application ciphertext must not be transferable between envelope identifiers, protocol profiles, epochs, senders, counters, or visible metadata. | Experimental group envelope v2 binds the complete routing/security context into ML-DSA and AEAD data; relays require the current group profile, suite, epoch, and transcript without decrypting. | `GroupEnvelopeAuthenticationTests` in Core and Linux relay targets. |
-| SR-23 | Inbox creation must not disclose identity, contact, endpoint-set, endpoint-certificate, or prekey material to a relay. | Privacy-minimized registration v2 binds the inbox address, access key, explicit version, time, and nonce under the inbox-access key; v2 rejects `ContactOffer`, and relay storage accepts only the address, access key, mailbox state, and random relay-local route scope/cursor. The discriminator-less legacy verifier remains an explicit compatibility path and cannot accept a stripped v2 proof. | Core/Linux `InboxRegistrationV2Tests` wire-capture, tamper, downgrade, wrong-key, replay, parity, and SQLite-state tests; browser identity capture test. |
-| SR-24 | Mailbox authentication must not reuse an endpoint key across relay/inbox routes. | Each route persists a fresh ML-DSA consumer credential and its exact relay scope; legacy endpoint-key bindings rotate through a one-time sponsored migration before removal. | Swift identity/headless route-credential tests and JavaScript browser-identity retry tests. |
-| SR-25 | One permanently invalid remote envelope must not block later ordered events. | The Swift receiver durably records a bounded plaintext-free transport quarantine receipt before cursor commit; local storage, state, and crypto-runtime failures remain retryable. | certified-profile downgrade followed by valid direct-v4 delivery regression. |
-| SR-26 | Delivery must not allocate storage for guessed inbox addresses. | Final Core and Linux relays reject direct and group delivery to unregistered destinations before sequence allocation. | mirrored relay delivery-admission tests. |
-| SR-27 | Identity-generation burn must not retain an old inbox private key merely to finish relay cleanup, and a copied old key must never resurrect the route. | Before cutover, the client signs one domain-separated ML-DSA `retireInbox` value and journals it with every known route scope. Each route is retired independently and durably; the old key is discarded at cutover. Relays verify inbox/access-key binding without a freshness window or consumable nonce, atomically purge registration, consumers, stream state, and queued envelopes, and retain a non-expiring exact-request non-resurrection record. Lifetime capacity is reserved when an inbox is admitted; records are never expired or evicted. | mirrored Core/Linux `InboxRetirementTests` plus `IdentityMutationDurabilityTests.testBurnRetiresEveryScopedOldInboxRouteWithoutRetainingAuthority`. |
-| SR-28 | A bare public endpoint record must never authorize participation, and model-only endpoint membership must not be advertised as active multi-endpoint support. | The internal admission conformance model is purpose-bound to one generation and endpoint-set epoch, expires within ten minutes, and verifies both ML-DSA possession and ML-KEM key confirmation. Removal rekeys local self-sync and persists bounded unfinished cleanup in `EndpointRemovalJournalV2`. The active manifest advertises one endpoint. That endpoint renews a separately endpoint-signed prekey package before expiry and retains at most four old private prekeys only until their authenticated expiry; this does not activate endpoint linking. Public linking remains disabled until participant state, durable admission intent, route binding, and teardown authority exist without copying generation or inbox authority. | `ArchitectureV2IdentityTests` admission expiry, replay, wrong-generation, forged-signature, wrong-KEM, journal durability, readiness, and removal tests; `EndpointPrekeyRotationTests` stable authorization, proactive renewal, expiry retention, and fail-closed package tests. |
-| SR-29 | Direct-v4 capabilities and ciphersuite must not be silently downgraded or asymmetrically interpreted. | Swift and JavaScript negotiate required `nw.core`, `nw.endpoints`, `nw.events`, and `nw.prekeys` v2 modules under fixed ceilings. The exact ML-KEM-768/ML-DSA-65/HKDF-HMAC-SHA256/AES-256-GCM suite and 32-byte canonical digest are bound into endpoint references, root/session derivation, authenticated context, and signatures; Linux preserves both fields byte-for-byte. | Swift/JavaScript direct-v4 negotiation tests, shared pairwise vector, and Linux `EnvelopeWireFidelityTests`. |
-| SR-30 | An opaque route capability must not be guessable, its mutation authorization must not be replayable across relays, and delayed or half-committed mutations must not resurrect it. It must not be advertised or client-activated before its metadata, transport, expiry, scale, and abuse limits satisfy the identity philosophy. | New capabilities use the OS CSPRNG and strict 32-byte decoding. Registration returns a random scope owned only by that inbox generation on that relay. Mutation v3 signs the scope and a monotonic sequence; the relay atomically persists route state, sequence, and a proof-independent logical digest. An already-applied matching signed retry converges without a freshness limit; first applications remain fresh. Stale, conflicting, skipped, and cross-relay mutation requests fail closed. Inbox retirement removes the scope and cursor. A holder may intentionally authorize the same bearer at another relay under that relay's independent scope. The module is experimental, default-disabled, and unadvertised because the final relay can correlate mappings to an inbox and expiry/rotation, relationship-scale capacity, per-capability quotas, and padding remain unresolved. | Mirrored Core/Linux `InboxRouteCapabilityRelayTests` cover default-off behavior, canonical parity, secure import, scope/cursor corruption, exhaustion, scope separation, replay freshness, conflict/gap rejection, tombstone churn, wire-level persistence rollback, and reload. |
+| ID | Requirement | Required control |
+| --- | --- | --- |
+| SR-01 | A local persona must not become a protocol identity. | Persona labels and IDs never enter pairings, relationships, groups, routes, envelopes, wake traffic, or federation. |
+| SR-02 | Two relationships must be cryptographically unlinkable by their peers. | Mint fresh ML-DSA/ML-KEM authority, endpoint, prekey, handle, and route material per relationship. |
+| SR-03 | Pairing must not publish identity or routing material. | Use a one-use, expiring, contact-pairing-only encrypted rendezvous; exchange relationship material inside it. |
+| SR-04 | The protocol must not create a device or installation graph. | Exactly one endpoint binding per relationship; no endpoint set, sibling authorization, self-sync, recovery authority, or shared live ratchet. |
+| SR-05 | Continuity must be selective. | A successor invitation is sent and accepted only under explicit local policy in one existing relationship. |
+| SR-06 | Burn must remove live local authority. | Remove the burned persona record, relationships, groups, sessions, pending operations, and local route capabilities; never retain a recoverable archived identity. |
+| SR-07 | Relationship authentication must be post-quantum. | ML-DSA-65 signs relationship authority, endpoint binding, route changes, controls, and selective continuity. |
+| SR-08 | Session establishment must resist harvest-now/decrypt-later attacks. | ML-KEM-768 prekeys and root-ratchet refresh; reject expired, replayed, or wrongly bound prekey material. |
+| SR-09 | Cipher and module negotiation must fail closed. | Bind exact module versions, cipher suite, transcript, relationship, endpoint, and event context into authenticated bytes; no silent downgrade. |
+| SR-10 | Relays must never receive message plaintext or content keys. | Pad and encrypt application, control, group, and attachment material before submission. |
+| SR-11 | Relay routing authority must be opaque and scoped. | Random route capabilities with distinct append/read/renew/teardown authority, relay binding, expiry, revision, and bounded replay rules. |
+| SR-12 | Ordered synchronization must be durable and non-destructive. | Route-local monotonic sequences and cursors; commit only after verification, decryption, and durable local persistence. |
+| SR-13 | Retry must not create a second logical operation. | Separate transaction, event, envelope/packet, and sequence identifiers; persist exact retry bytes in bounded intents. |
+| SR-14 | Unknown protocol input must fail safely. | Strict field sets and canonical authenticated bytes; preserve unknown application content safely, quarantine unknown controls, reject malformed security state. |
+| SR-15 | One invalid packet must not block a route forever. | Persist a bounded plaintext-free quarantine receipt before advancing beyond deterministic permanent failures. |
+| SR-16 | Remote input must not control unbounded resources. | Explicit limits for bytes, arrays, packets, chunks, routes, events, intents, retries, gaps, cursors, retention, and expiry. |
+| SR-17 | Group identity must remain group-scoped. | Fresh member handle and one active credential per group member; signed roles, policies, epochs, commits, welcomes, key replacement, and fork handling. |
+| SR-18 | Federation trust domains must not be mixed. | `solo`, `manual`, `curated`, and `open` remain explicit; clients and relays reject cross-mode shortcuts. |
+| SR-19 | Wake and privacy extensions must not be overclaimed. | Wake is optional, opaque, and route-scoped; PIR, onion, and mixnet profiles remain experimental and disabled unless their exact requirements are met. |
+| SR-20 | Sensitive local state must be protected at rest. | Native stores encrypt by default; JavaScript raw adapters require an encrypted wrapper and an independently managed key. |
+| SR-21 | Persisted corruption must fail closed. | Strictly decode bounded current state and stop rather than discarding security-relevant rows or fields. |
+| SR-22 | Transport security must complement E2EE. | Validate TLS normally and support explicit certificate pins; transport TLS never substitutes for payload encryption. |
+| SR-23 | Security-sensitive operations must be domain-separated. | Pairing, route mutation, direct controls, group commits, wake staging, and federation signatures use distinct authenticated purposes. |
+| SR-24 | Claims must match evidence. | Stable, provisional, and experimental module status is explicit; external audit, side-channel review, formal proof, and production anonymity are not implied by tests. |
 
-Trust-on-first-use does not authenticate the first connection beyond normal platform
-certificate validation. Automatic leaf-certificate pins also require operator review when
-the relay legitimately renews or replaces its certificate. A manually verified pin should
-be used when the first connection is within the threat model.
+## Acknowledgement semantics
 
-## Non-Goals
+Noctweave distinguishes:
 
-- No claim of defeating a compromised operating system.
-- No claim of global network anonymity.
-- No claim of single-server cryptographic PIR.
-- No claim of RFC 9420 MLS interoperability or a formally proven group implementation.
-- No claim of guaranteed closed-app delivery without OS-permitted execution.
+1. local persistence of a send intent;
+2. relay acceptance of encrypted route packets;
+3. peer storage and processing, when the peer elects to emit a receipt;
+4. peer read, when the peer elects to emit a read receipt.
 
-## Acceptance Gate For New Security Claims
+A transport response or cursor commit must not be presented as a read receipt.
 
-Any new security claim must include:
+## Non-goals
 
-1. A source-level implementation reference.
-2. A deterministic automated test or verifier.
-3. Documentation describing threat model limits.
-4. A roadmap status update that separates repository evidence from external validation.
+- defeating a compromised operating system;
+- erasing copies already received by another party;
+- global network anonymity;
+- single-server cryptographic PIR;
+- RFC 9420 interoperability for the experimental PQ group provider;
+- guaranteed closed-app delivery without platform execution permission;
+- account recovery or restoration of burned authority.
+
+## Acceptance gate for a new claim
+
+A new security claim requires:
+
+1. a normative protocol statement;
+2. source-level implementation evidence;
+3. deterministic negative and positive tests;
+4. strict cross-language vectors when more than one implementation exists;
+5. documented metadata and operational limits;
+6. an honest assurance label distinguishing internal evidence from independent
+   review.

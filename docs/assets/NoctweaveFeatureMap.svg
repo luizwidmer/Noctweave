@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" role="img" aria-labelledby="title desc">
   <title id="title">Noctweave protocol stack and optional capabilities</title>
-  <desc id="desc">The required Noctweave foundation includes identity continuity, session establishment, encrypted messaging, and relay delivery. Optional capabilities add groups, attachment offload, federation discovery, and metadata reduction.</desc>
+  <desc id="desc">The required Noctweave foundation includes fresh relationship authority, post-quantum sessions, encrypted events, and opaque-route delivery. Optional capabilities add groups, attachment offload, federation discovery, and metadata research.</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1020"/>
@@ -24,22 +24,22 @@
       <line x1="600" y1="190" x2="600" y2="246" stroke="#B7F4EE" stroke-opacity="0.25"/>
       <line x1="870" y1="190" x2="870" y2="246" stroke="#B7F4EE" stroke-opacity="0.25"/>
 
-      <text x="195" y="211" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">Identity continuity</text>
-      <text x="195" y="237" fill="#D1D5E0" font-size="14" text-anchor="middle">ML-DSA-65 signatures</text>
+      <text x="195" y="211" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">Relationship authority</text>
+      <text x="195" y="237" fill="#D1D5E0" font-size="14" text-anchor="middle">fresh ML-DSA-65 keys</text>
       <text x="465" y="211" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">Session establishment</text>
       <text x="465" y="237" fill="#D1D5E0" font-size="14" text-anchor="middle">ML-KEM-768 prekeys</text>
       <text x="735" y="211" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">Message protection</text>
       <text x="735" y="237" fill="#D1D5E0" font-size="14" text-anchor="middle">AES-256-GCM + ratchets</text>
       <text x="1005" y="211" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">Relay delivery</text>
-      <text x="1005" y="237" fill="#D1D5E0" font-size="14" text-anchor="middle">mailboxes + actor proofs</text>
+      <text x="1005" y="237" fill="#D1D5E0" font-size="14" text-anchor="middle">opaque routes + cursors</text>
     </g>
 
     <text x="60" y="315" fill="#B7F4EE" font-size="14" font-weight="700" letter-spacing="1.5">OPTIONAL CAPABILITIES</text>
     <g>
       <rect x="60" y="338" width="250" height="105" rx="18" fill="#151d31" stroke="#3b4b68"/>
-      <text x="82" y="373" fill="#F3F5FA" font-size="18" font-weight="700">Group messaging</text>
-      <text x="82" y="402" fill="#A8ADBD" font-size="14">signed membership commits</text>
-      <text x="82" y="424" fill="#A8ADBD" font-size="14">retained epoch recovery</text>
+      <text x="82" y="373" fill="#F3F5FA" font-size="18" font-weight="700">Experimental groups</text>
+      <text x="82" y="402" fill="#A8ADBD" font-size="14">group-scoped credentials</text>
+      <text x="82" y="424" fill="#A8ADBD" font-size="14">epochs + durable fanout</text>
 
       <rect x="337" y="338" width="250" height="105" rx="18" fill="#151d31" stroke="#3b4b68"/>
       <text x="359" y="373" fill="#F3F5FA" font-size="18" font-weight="700">Attachments</text>
@@ -48,11 +48,11 @@
 
       <rect x="614" y="338" width="250" height="105" rx="18" fill="#151d31" stroke="#3b4b68"/>
       <text x="636" y="373" fill="#F3F5FA" font-size="18" font-weight="700">Federation</text>
-      <text x="636" y="402" fill="#A8ADBD" font-size="14">manual and curated routing</text>
-      <text x="636" y="424" fill="#A8ADBD" font-size="14">bounded open DHT / PEX</text>
+      <text x="636" y="402" fill="#A8ADBD" font-size="14">operator discovery + policy</text>
+      <text x="636" y="424" fill="#A8ADBD" font-size="14">clients submit to peer routes</text>
 
       <rect x="891" y="338" width="250" height="105" rx="18" fill="#151d31" stroke="#3b4b68"/>
-      <text x="913" y="373" fill="#F3F5FA" font-size="18" font-weight="700">Metadata reduction</text>
+      <text x="913" y="373" fill="#F3F5FA" font-size="18" font-weight="700">Metadata research</text>
       <text x="913" y="402" fill="#A8ADBD" font-size="14">temporal buckets + PIR tools</text>
       <text x="913" y="424" fill="#A8ADBD" font-size="14">onion and mixnet primitives</text>
     </g>

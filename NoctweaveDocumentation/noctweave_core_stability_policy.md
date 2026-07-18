@@ -1,67 +1,36 @@
 # NoctweaveCore Stability Policy
 
-Last updated: June 2026
+The architecture-revision branch defines the Noctweave 1.0 origin. Public APIs,
+wire objects, persisted state, CLI behavior, JavaScript models, Linux relay
+models, OpenAPI, and test vectors must describe that one architecture.
 
-This policy defines how `NoctweaveCore` evolves as a public Swift library and how releases should communicate compatibility expectations.
+Research-build state and wire formats are not supported surfaces. Git history
+is their record; the 1.0 runtime contains no adapters, aliases, importers, or
+dual protocol paths.
 
-## Current Status
+## Release numbering
 
-`NoctweaveCore` is pre-1.0. Public APIs are candidate library surface, not app-private implementation detail, but source stability is not frozen yet. Breaking changes are allowed before 1.0 only when they move the protocol, relay compatibility, state model, or headless client API toward the documented Noctweave design.
+- `1.0.0` freezes the documented stable core.
+- `1.x` adds backward-compatible stable API or optional-module features.
+- `1.x.y` fixes defects without changing authenticated semantics.
+- a post-1.0 breaking public API, wire, or persisted-state change requires the
+  next major version and an explicit specification decision.
 
-## Versioning Model
+Experimental modules may change under their explicit profile/version and must
+never be presented as part of the stable core.
 
-Noctweave uses semantic versioning once `NoctweaveCore` reaches `1.0.0`.
+## Change gate
 
-- `0.x.y`: development releases. Public API, wire format, and local state format may change with documentation and tests.
-- `1.x.y`: stable releases. Source-compatible API additions use minor versions. Bug fixes and documentation-only changes use patch versions.
-- `2.0.0+`: reserved for source-breaking public API changes, incompatible wire-format changes, or incompatible persisted-state changes after 1.0.
+A public protocol change requires:
 
-Release candidates should use tags such as `0.9.0-rc.1` only when the release artifact is intended for external testing.
+1. philosophy-filter review;
+2. normative specification and exact field semantics;
+3. bounds, errors, downgrade behavior, and metadata analysis;
+4. strict positive and negative decoding tests;
+5. shared vectors and differential tests for multi-language structures;
+6. Swift Core and Linux relay build/test success where applicable;
+7. JavaScript tests and desktop type-check where applicable;
+8. updated security requirements, extension status, and public documentation.
 
-## Public Compatibility Surfaces
-
-The following surfaces must be reviewed before every release:
-
-- Swift public API exported by `NoctweaveCore`
-- `NoctweaveCLI` command names, required flags, and JSON output shapes
-- relay request/response models and OpenAPI schema
-- encrypted message, contact-share, prekey, group, and attachment wire formats
-- `ClientState` and relay SQLite persistence formats
-- Docker relay flags and environment variables
-
-## Pre-1.0 Change Rules
-
-Before 1.0, a breaking change is acceptable only if the same commit or release includes:
-
-- a roadmap or protocol documentation update explaining the change;
-- tests covering the changed behavior or wire/state compatibility boundary;
-- updated CLI or operator documentation when command behavior changes;
-- explicit release notes if existing test deployments must reset state.
-
-There is no legacy-data migration requirement before 1.0 unless a specific release claims one. This project is still pre-release, so obsolete fallbacks should be removed instead of carried indefinitely.
-
-## 1.0 Stability Rules
-
-After 1.0:
-
-- removing or renaming public Swift symbols is a major-version change;
-- changing required CLI flags or incompatible JSON output fields is a major-version change;
-- adding optional CLI flags, optional JSON fields, or new public Swift symbols is a minor-version change;
-- bug fixes that preserve documented behavior are patch-version changes;
-- wire-format changes must keep versioned decoders unless the release is a major version;
-- persisted-state changes must include migration tests unless the release explicitly declares a reset requirement.
-
-## Deprecation Policy
-
-After 1.0, public APIs should be deprecated for at least one minor release before removal. Deprecations must include a replacement path in documentation or release notes. Cryptographic emergency removals are exempt, but must be called out as security-driven breaking changes.
-
-## Release Checklist
-
-Before tagging a public release:
-
-1. Run `scripts/verify-release.sh`.
-2. Run `scripts/run-tests.sh`.
-3. Confirm `noctweave_relay_openapi.yaml` matches relay behavior.
-4. Confirm `noctweave_cli_usage.md` matches `NoctweaveCLI help`.
-5. Confirm `noctweave_core_public_api.md` lists newly exposed candidate APIs.
-6. Record breaking changes, reset requirements, cryptographic dependency changes, and Docker flag changes in release notes.
+No release may advertise an optional module solely because models or research
+code exist. The runtime and tests must implement the exact advertised methods.

@@ -1,45 +1,111 @@
-# Decentralized Wake Plan
+# Optional Wake and Opaque-Route Prefetch
 
-Noctweave does not require APNs or any equivalent centralized notification authority for message delivery. That means closed-app instant delivery is intentionally not guaranteed by the protocol. The wake direction is a decentralized relay-advertised pull model that can improve latency while preserving the no-central-server stance.
+Status: implemented experimental `nw.wake@1` profile; never required for
+Noctweave Core conformance or message availability.
 
-## Implemented Model
+Noctweave wake is optional background synchronization over independently
+authorized opaque receive routes. It is not a notification service and is not
+part of contact discovery. The relay sees only a random route identifier,
+bounded synchronization requests, and fixed-bucket encrypted packets.
 
-Relays can advertise `wakeSupport` metadata:
+## Scheduling
 
-- `pullOnly`: clients schedule jittered authenticated fetches
-- `longPoll`: compatible clients may hold a fetch window open for bounded relay-selected timeouts
-- `minPollIntervalSeconds` and `maxPollIntervalSeconds`: operator bounds for client fetch cadence
-- `jitterPermille`: deterministic spread to avoid synchronized client polling
-- `longPollTimeoutSeconds`: bounded timeout for long-poll capable relays
+A relay may advertise `wakeSupport` with one of two modes:
 
-Clients derive a local wake plan using `DecentralizedWakePlanner`. The planner uses identity-local seed material, relay identifier, current time bucket, and failure count to produce bounded jitter and backoff without contacting any third-party notification service.
+- `pullOnly` schedules bounded authenticated route synchronization.
+- `longPoll` permits a bounded wait inside the same synchronization operation.
 
-Compatible clients can render advertised wake policy metadata. Active sync loops consume the policy when the client is unlocked and the operating system permits background or foreground network work. If a relay does not advertise wake metadata, clients fall back to bounded pull-only local defaults.
+The advertisement also supplies minimum and maximum intervals, a jitter bound,
+and an optional long-poll timeout. Values are normalized when constructed and
+the current wire decoder rejects unknown fields or noncanonical values.
 
-For clients with multiple active identities, every active identity contributes to the next fetch cadence. Relays with advertised wake policy use their relay-provided plan; relays without advertised policy use the local default cadence so they are not delayed by slower policies from other active identities.
+Each local receive route has a freshly random 32-byte `routeJitterSeed`. The
+seed never leaves local storage. `DecentralizedWakePlanner` combines that seed
+with the opaque `routeID`, relay identifier, minute bucket, and bounded failure
+step to produce deterministic local jitter. Separate routes therefore do not
+share scheduling material. A failure on one route does not delay a healthy
+route, and duplicate scheduling entries for the same route are collapsed.
 
-Linux relays can advertise wake policy settings, and the HTTP/WebSocket relay path supports bounded long-poll fetches when operators enable long-poll mode.
+`DecentralizedPrefetchExecutionPlanner` bounds routes per cycle, packets per
+route, and total packets per cycle. Long-poll operation remains subject to the
+same aggregate work limit.
 
-## Security Properties
+## Prefetch Flow
 
-- No relay receives plaintext messages through this mechanism.
-- No central push service receives device tokens or message metadata.
-- Jitter reduces synchronized polling spikes and timing correlation.
-- Failure backoff prevents repeated connection failures from becoming relay load amplification.
+1. Synchronize one opaque route after its last durably committed cursor.
+2. Accept only packets whose embedded route matches the requested `routeID`.
+3. Canonically encode each `OpaqueRouteReceivedPacketV2` without opening its
+   encrypted frame.
+4. Store the page as one `DecentralizedPrefetchBatch`, protected by a separate
+   32-byte local storage key.
+5. In foreground processing, verify each canonical packet envelope, validate
+   the route revision, reassemble packet fragments, decrypt the route payload,
+   and durably apply the resulting events.
+6. Commit `deferredCommitCursor` only after every packet in the staged page has
+   completed that processing sequence.
+7. Remove the encrypted local batch after the cursor commit succeeds.
 
-## Limits
+A crash before step 6 leaves the relay cursor unchanged, so the page remains
+recoverable. Repeated packets are handled by the opaque-route packet and event
+idempotency layers. Prefetch never copies a live ratchet or route payload key
+into the staged records.
 
-- This is not a push-notification system.
-- Operating systems may still suspend or terminate clients according to local policy.
-- Closed-app instant delivery remains out of scope unless a future decentralized wake mechanism can work within platform constraints without introducing a central credential holder.
-- Long-polling increases relay connection occupancy and should be operator-configurable.
+## Current Stored Schema
 
-## Verification Coverage
+`DecentralizedPrefetchRecord` contains exactly:
 
-- Policy normalization clamps unsafe operator values into bounded ranges.
-- Planner output is deterministic for the same identity, relay, time bucket, and failure count.
-- Multi-identity simulation coverage verifies jitter spread across a relay window.
-- Missing relay policy falls back to bounded pull-only polling defaults.
-- Mixed-profile scheduling coverage verifies identities without advertised relay policy still use the local fallback cadence.
-- Mixed-health scheduling coverage verifies a backed-off identity does not delay fetch cadence for another active identity that is still healthy.
-- Relay info round-trips preserve advertised `wakeSupport` metadata.
+```text
+version
+envelopeID
+routeID
+routeRevision
+stagedAt
+sealedPacketEnvelope
+```
+
+`DecentralizedPrefetchBatch` contains exactly:
+
+```text
+version
+routeID
+relayIdentifier
+records
+fetchedAfter
+deferredCommitCursor
+highWatermark
+retentionFloor
+hasMore
+stagedAt
+```
+
+Both decoders reject missing, extra, malformed, noncanonical, cross-route, or
+duplicate packet state. The stored file is an authenticated encrypted envelope;
+the route identifier, relay label, cursors, packet metadata, and ciphertext are
+not visible in the file's outer JSON.
+
+## Security Boundary
+
+- Wake policy is scheduling metadata only. It grants no cryptographic power.
+- The route-local jitter seed stays local and is unrelated across routes.
+- Relays never receive plaintext through wake or prefetch.
+- Prefetch stages ciphertext only and does not need route decryption material.
+- Cursor advancement is deferred until verified durable processing.
+- Local staging uses authenticated encryption, atomic file replacement,
+  restrictive filesystem permissions, size limits, and best-effort overwrite
+  before removal.
+- Missing relay policy falls back to bounded pull-only scheduling.
+
+## Platform Limits
+
+Operating systems may suspend background work. Closed-app instant delivery is
+therefore not guaranteed. Long polling consumes relay connections and remains
+operator-configurable. No external push provider is required for protocol
+correctness.
+
+## Verification
+
+Focused tests cover strict policy decoding, deterministic route-scoped jitter,
+route deduplication, independent failure backoff, execution limits, real
+opaque-route synchronization, ciphertext-only staging, deferred cursor state,
+cross-route rejection, corrupt envelope rejection, encrypted local persistence,
+wrong-key failure, and relay-info round trips.

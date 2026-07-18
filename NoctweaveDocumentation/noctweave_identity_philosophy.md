@@ -1,158 +1,89 @@
 # Noctweave Identity Philosophy
 
-**Status:** normative design filter for the 1.0 architecture
+Status: normative for the Noctweave 1.0 architecture.
 
-Noctweave is not an account system with privacy features added around it. It is
-a private messaging protocol built from disposable identity generations,
-pairwise relationships, ciphertext-only delivery, and user-controlled
-infrastructure.
+## Identity is contextual
 
-This document decides whether an idea belongs in Noctweave before that idea is
-allowed into the protocol.
+Noctweave does not give a person a protocol account. A local persona is only a
+label and encrypted-storage container. It has no public key, network address,
+inbox, recovery authority, provider identity, or wire identifier.
 
-## Core Invariants
+Every pairwise relationship is created with fresh ML-DSA and ML-KEM material.
+Every group uses a fresh group-scoped member handle and credential. Material
+from one relationship or group is never reused to authenticate another.
 
-1. **No permanent account.** The protocol has no global account identifier,
-   recovery authority, device registry, or provider-controlled user record.
-2. **Identity generations are disposable.** One generation owns its own
-   identity keys, endpoint keys, prekeys, inboxes, route authority, endpoint
-   set, and self-sync state. None of those objects silently survives a burn.
-3. **Continuity is pairwise and optional.** A user may disclose a transition to
-   selected relationships. No global continuity record or public directory is
-   required, and unselected relationships receive no cryptographic link.
-4. **Endpoints do not become identities.** A phone, desktop, or browser may be
-   an independently keyed endpoint inside one generation. Its authorization is
-   bounded by that generation and must prove possession of its own keys.
-5. **A burn destroys reachability.** Completion requires retiring every known
-   old inbox route, removing old endpoint and self-sync authority, discarding
-   old private state, clearing local cross-generation audit links, and sending
-   continuity only to explicitly selected contacts.
-6. **Relationships reveal the minimum.** Endpoint handles, certificate
-   references, and routes are relationship-scoped wherever practical. Relays
-   are never given identity fingerprints, explicit contact or endpoint graphs,
-   or plaintext social metadata. Unavoidable inference at a final relay must
-   be stated precisely: if several opaque routes terminate at one inbox, that
-   relay can correlate them to the inbox generation and observe their traffic.
-   A feature is not privacy-preserving merely because its labels are opaque.
-7. **Infrastructure remains replaceable.** Relays store and route bounded
-   ciphertext. Self-hosting and explicit federation trust domains remain
-   first-class; no vendor account, history service, push service, or recovery
-   service becomes mandatory.
-8. **Features fail closed and stay bounded.** Unknown security controls cannot
-   mutate state. Logs, queues, endpoint sets, replay records, archives, and
-   retries all have explicit limits and deterministic recovery behavior.
+This means two contacts cannot compare Noctweave keys, handles, routes, or
+identifiers to learn that they are speaking with the same local persona.
 
-## Terminology
+```text
+local persona — never transmitted
+├── relationship A — fresh authority, endpoint, prekeys, routes
+├── relationship B — unrelated authority, endpoint, prekeys, routes
+└── group C — unrelated group member handle and credential
+```
 
-| Term | Meaning |
-| --- | --- |
-| Identity generation | A deliberately bounded cryptographic lifetime, not a stable account or persona. |
-| Local endpoint | One independently keyed protocol participant within one identity generation. |
-| Endpoint set | The bounded endpoints authorized only for the current generation. |
-| Relationship | Pairwise local state and optional continuity between two parties. |
-| Identity burn | Creation of an unrelated generation plus complete old-generation teardown. |
-| Authority rotation | A continuity-preserving key transition inside the same generation; it is not a privacy burn. |
+## Pairing
 
-Noctweave 1.0 starts from this model as a clean protocol origin. Pre-1.0
-research state, account-shaped terminology, and obsolete wire or persisted
-formats are rejected rather than carried into the production architecture.
+Contact pairing begins with a one-use, expiring, purpose-bound rendezvous. The
+public invitation contains only random rendezvous capability material. The
+participants exchange their fresh relationship pseudonyms, PQ public material,
+and opaque receive routes inside the encrypted rendezvous session.
 
-## The Borrowing Filter
+The presented alias is relationship-specific. Applications must not silently
+substitute a persona label for it.
 
-An external protocol feature may be adopted only when all of these answers are
-acceptable:
+## One relationship endpoint
 
-1. Does it work without creating a stable global user, account, recovery key,
-   public device ID, or permanent inbox?
-2. Is every new identifier bounded to a generation, relationship, route, or
-   local database?
-3. Can a user burn an identity without an old provider, old endpoint, or
-   recovery authority linking the replacement?
-4. Can relays implement it while remaining plaintext-blind and without learning
-   the contact or endpoint graph?
-5. Is authorization proven cryptographically, purpose-bound, expiring where
-   appropriate, replay-safe, and resource-bounded?
-6. Does failure preserve the previous durable state or leave a resumable,
-   idempotent journal?
-7. Can self-hosted and federated deployments use it without a privileged vendor
-   service?
+The 1.0 direct protocol binds exactly one independently generated endpoint to
+each side of a relationship. An endpoint is not a device or installation. It
+does not belong to a persona-wide registry and cannot be authorized for other
+relationships.
 
-If any answer is no, the feature is redesigned, isolated as an explicitly
-experimental extension, or left out.
+Prekeys and routes can roll through signed, relationship-bound operations.
+There is no device list, endpoint set, sibling authorization, recovery key, or
+revocation history.
 
-## Good Lessons We Keep
+## Selective continuity
 
-- Independently keyed endpoints, because shared ratchet and prekey state is
-  unsafe, but endpoint authorization ends with its identity generation.
-- Ordered encrypted event streams, opaque per-endpoint cursors, idempotent
-  transaction IDs, local echo, and distinct relay-accepted/delivered/read
-  states.
-- Typed immutable application events, separate authenticated control frames,
-  and explicit capability/ciphersuite negotiation bound into transcripts.
-- Durable mutation intents for crash-safe sends, route changes, endpoint-set
-  changes, group commits, and burns.
-- Pairwise opaque routes with make-before-break rotation, bounded overlap, and
-  authenticated retirement.
-- Explicit group roles and policies inside signed group state, with each local
-  endpoint represented independently.
-- Read-only encrypted history projections that contain no live keys, ratchets,
-  route authority, cursors, or implicit authorization.
-- Modular relay capabilities and a small stable core with separately named
-  experimental privacy extensions.
+Continuity is never inferred. A user may explicitly offer one existing contact
+a successor one-use pairing invitation. Outbound offers and inbound acceptance
+are controlled by local policy for that relationship.
 
-## Ideas We Leave Out
+Contacts who do not receive and accept an offer see a fresh unrelated
+relationship. No global old-to-new mapping exists.
 
-- Stable inbox accounts, global device graphs, permanent recovery authorities,
-  provider-managed identity, and phone-number or wallet account assumptions.
-- Exporting or importing a live profile containing private identity keys,
-  ratchets, prekeys, routes, cursor state, or self-sync authority.
-- Public user IDs, public relay lists, public contact graphs, server-readable
-  event relations, or globally reusable endpoint identifiers.
-- Destructive single-consumer queues as the synchronization model, permanent
-  relay history, or a required centralized history server.
-- Gossip-based broadcast delivery as the default direct-message transport.
-- Shared live ratchet state across endpoints or fallback to obsolete
-  ciphersuites and wire formats.
-- Calling a manifest-only endpoint removal "revocation" when routes, self-sync,
-  group state, and delivery authority have not also been removed.
+## Burn
 
-## Required Burn Postconditions
+Burning a persona removes its local relationship and group records and creates
+an unrelated empty local persona. It does not archive old live authority or
+publish a burn event. Previously issued opaque routes expire according to
+their bounded relay lifetime; their existence does not link the replacement.
 
-After a completed burn:
+Noctweave cannot erase ciphertext, screenshots, exports, or records already
+held by other parties.
 
-- the new identity, generation ID, endpoint keys, prekeys, inbox ID, inbox
-  access key, route credentials, and self-sync secret are freshly generated;
-- every known old inbox has an authenticated, durably retryable retirement;
-- old relays reject new delivery and consumer registration for retired inboxes;
-- no old private key remains solely to finish cleanup;
-- no old conversation ratchet, group state, route set, cursor, endpoint
-  manifest, or self-sync event is active in the new generation;
-- the local profile contains no general old-to-new continuity record;
-- only selected contacts receive an old-key-authenticated reset message; and
-- those reset messages are exact durable ciphertexts retried idempotently.
+## Groups
 
-A key swap that does not satisfy these postconditions is an authority rotation,
-not an identity burn.
+A group member is represented by one group-scoped handle and one active
+credential. Replacing that credential requires an explicit signed group commit.
+The group transcript contains no pairwise relationship ID or persona ID.
 
-If the only endpoint holding an old inbox authority is lost, creating a fresh
-generation is local abandonment, not a completed burn. Noctweave must say so
-plainly; it must not disguise the missing remote teardown with a recovery
-account or by copying authority keys across endpoints. Multi-endpoint support
-stays inactive until each admitted endpoint can participate and be removed
-without weakening these postconditions.
+The current post-quantum group provider is Noctweave-specific and experimental.
+Its use of epochs, commits, welcomes, roles, and policies does not imply RFC
+9420 compatibility.
 
-## Conformance Rule
+## Explicit non-goals
 
-Every new architecture proposal must state:
+The 1.0 identity model has no:
 
-- its identifier and authority scopes;
-- what survives identity burn and why;
-- relay-visible metadata;
-- unlinkability limits, including colluding contacts or relays;
-- bounded-resource limits;
-- downgrade behavior;
-- crash and retry semantics; and
-- deterministic tests for its security-relevant invariants.
+- global user ID or stable public key;
+- account, username, phone number, DID, or wallet identity;
+- global inbox or permanent relay address;
+- device or installation authorization;
+- multi-device self-sync channel;
+- recovery authority or key escrow;
+- portable live-profile import;
+- automatic identity continuity;
+- required hosted identity or notification service.
 
-Passing ordinary functional tests is necessary but insufficient. A change that
-violates this philosophy is a failed change even when its test suite is green.
+These are architectural exclusions, not missing setup steps.
