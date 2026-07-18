@@ -18,11 +18,113 @@ enum AttachmentBlobStoreError: Error {
 }
 
 struct AttachmentExternalRecord: Codable, Equatable {
+    static let maximumByteCount = 256 * 1024
+
     let backend: String
     let locator: String
     let byteCount: Int
     let sha256Hex: String
     let expiresAt: Date
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case backend
+        case locator
+        case byteCount
+        case sha256Hex
+        case expiresAt
+    }
+
+    init(
+        backend: String,
+        locator: String,
+        byteCount: Int,
+        sha256Hex: String,
+        expiresAt: Date
+    ) {
+        self.backend = backend
+        self.locator = locator
+        self.byteCount = byteCount
+        self.sha256Hex = sha256Hex
+        self.expiresAt = expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: AttachmentExternalRecordCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "External attachment fields must match the current schema exactly"
+                )
+            )
+        }
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            backend: try values.decode(String.self, forKey: .backend),
+            locator: try values.decode(String.self, forKey: .locator),
+            byteCount: try values.decode(Int.self, forKey: .byteCount),
+            sha256Hex: try values.decode(String.self, forKey: .sha256Hex),
+            expiresAt: try values.decode(Date.self, forKey: .expiresAt)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .locator,
+                in: values,
+                debugDescription: "External attachment record is structurally invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                .init(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "External attachment record is structurally invalid"
+                )
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(backend, forKey: .backend)
+        try values.encode(locator, forKey: .locator)
+        try values.encode(byteCount, forKey: .byteCount)
+        try values.encode(sha256Hex, forKey: .sha256Hex)
+        try values.encode(expiresAt, forKey: .expiresAt)
+    }
+
+    var isStructurallyValid: Bool {
+        backend == AttachmentStorageMode.ipfs.rawValue
+            && (1...Self.maximumByteCount).contains(byteCount)
+            && expiresAt.timeIntervalSince1970.isFinite
+            && Self.isValidLocator(locator)
+            && sha256Hex.utf8.count == 64
+            && sha256Hex.utf8.allSatisfy {
+                (0x30...0x39).contains($0) || (0x61...0x66).contains($0)
+            }
+    }
+
+    private static func isValidLocator(_ value: String) -> Bool {
+        value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+            && (20...128).contains(value.utf8.count)
+            && value.unicodeScalars.allSatisfy(CharacterSet.alphanumerics.contains)
+    }
+}
+
+private struct AttachmentExternalRecordCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
 }
 
 protocol AttachmentBlobStore {

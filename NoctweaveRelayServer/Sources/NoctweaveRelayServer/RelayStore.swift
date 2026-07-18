@@ -727,25 +727,7 @@ final class RelayStore {
 
 
     private func validateCurrentSnapshot(_ snapshot: RelayStoreSnapshot) throws {
-        guard snapshot.version == RelayStoreSnapshot.schemaVersion,
-              snapshot.opaqueRouteRuntimeV2.isStructurallyValid,
-              snapshot.rendezvousRoutesV2.allSatisfy({ key, record in
-                  Data(base64Encoded: key)?.count == SHA256.byteCount
-                      && record.isStructurallyValid
-              }),
-              snapshot.attachments.allSatisfy({ _, records in
-                  records.allSatisfy {
-                      $0.chunkIndex >= 0
-                          && $0.storedAt.timeIntervalSince1970.isFinite
-                          && $0.expiresAt.timeIntervalSince1970.isFinite
-                          && $0.expiresAt >= $0.storedAt
-                          && (($0.payload != nil) != ($0.external != nil))
-                  }
-              }),
-              snapshot.federationNodes.allSatisfy({ _, record in
-                  record.lastHeartbeatAt.timeIntervalSince1970.isFinite
-                      && record.expiresAt.timeIntervalSince1970.isFinite
-              }) else {
+        guard snapshot.isStructurallyValid else {
             throw RelayStorePersistenceError.invalidCurrentState
         }
     }
@@ -1038,9 +1020,98 @@ final class RelayStore {
     }
 }
 
+private struct RelayStoreSnapshotCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func requireExactRelayStoreSnapshotFields<Key: CodingKey & CaseIterable>(
+    _ decoder: Decoder,
+    _ keyType: Key.Type,
+    context: String
+) throws where Key.AllCases: Collection {
+    let strict = try decoder.container(keyedBy: RelayStoreSnapshotCodingKey.self)
+    guard Set(strict.allKeys.map(\.stringValue))
+            == Set(keyType.allCases.map(\.stringValue)) else {
+        throw DecodingError.dataCorrupted(
+            .init(
+                codingPath: decoder.codingPath,
+                debugDescription: "\(context) fields must match the current schema exactly"
+            )
+        )
+    }
+}
+
+private func invalidRelayStoreSnapshotEncoding(
+    _ value: Any,
+    _ encoder: Encoder,
+    context: String
+) -> EncodingError {
+    .invalidValue(
+        value,
+        .init(
+            codingPath: encoder.codingPath,
+            debugDescription: "\(context) is structurally invalid"
+        )
+    )
+}
+
 private struct RendezvousRelayStoredFrameV2: Codable {
     let frame: RendezvousRelayCiphertextFrameV2
     let ciphertextDigest: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case frame
+        case ciphertextDigest
+    }
+
+    init(frame: RendezvousRelayCiphertextFrameV2, ciphertextDigest: Data) {
+        self.frame = frame
+        self.ciphertextDigest = ciphertextDigest
+    }
+
+    init(from decoder: Decoder) throws {
+        try requireExactRelayStoreSnapshotFields(
+            decoder,
+            CodingKeys.self,
+            context: "Stored rendezvous frame"
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            frame: try values.decode(RendezvousRelayCiphertextFrameV2.self, forKey: .frame),
+            ciphertextDigest: try values.decode(Data.self, forKey: .ciphertextDigest)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .frame,
+                in: values,
+                debugDescription: "Stored rendezvous frame is structurally invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw invalidRelayStoreSnapshotEncoding(
+                self,
+                encoder,
+                context: "Stored rendezvous frame"
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(frame, forKey: .frame)
+        try values.encode(ciphertextDigest, forKey: .ciphertextDigest)
+    }
 
     var isStructurallyValid: Bool {
         frame.isStructurallyValid
@@ -1055,6 +1126,77 @@ private struct RendezvousRelayLaneRecordV2: Codable {
     let deleteCapabilityDigest: Data
     var deletedAt: Date?
     var frames: [RendezvousRelayStoredFrameV2]
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case publishCapabilityDigest
+        case readCapabilityDigest
+        case deleteCapabilityDigest
+        case deletedAt
+        case frames
+    }
+
+    init(
+        publishCapabilityDigest: Data,
+        readCapabilityDigest: Data,
+        deleteCapabilityDigest: Data,
+        deletedAt: Date?,
+        frames: [RendezvousRelayStoredFrameV2]
+    ) {
+        self.publishCapabilityDigest = publishCapabilityDigest
+        self.readCapabilityDigest = readCapabilityDigest
+        self.deleteCapabilityDigest = deleteCapabilityDigest
+        self.deletedAt = deletedAt
+        self.frames = frames
+    }
+
+    init(from decoder: Decoder) throws {
+        try requireExactRelayStoreSnapshotFields(
+            decoder,
+            CodingKeys.self,
+            context: "Stored rendezvous lane"
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            publishCapabilityDigest: try values.decode(
+                Data.self,
+                forKey: .publishCapabilityDigest
+            ),
+            readCapabilityDigest: try values.decode(Data.self, forKey: .readCapabilityDigest),
+            deleteCapabilityDigest: try values.decode(
+                Data.self,
+                forKey: .deleteCapabilityDigest
+            ),
+            deletedAt: try values.decodeIfPresent(Date.self, forKey: .deletedAt),
+            frames: try values.decode([RendezvousRelayStoredFrameV2].self, forKey: .frames)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .publishCapabilityDigest,
+                in: values,
+                debugDescription: "Stored rendezvous lane is structurally invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw invalidRelayStoreSnapshotEncoding(
+                self,
+                encoder,
+                context: "Stored rendezvous lane"
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(publishCapabilityDigest, forKey: .publishCapabilityDigest)
+        try values.encode(readCapabilityDigest, forKey: .readCapabilityDigest)
+        try values.encode(deleteCapabilityDigest, forKey: .deleteCapabilityDigest)
+        if let deletedAt {
+            try values.encode(deletedAt, forKey: .deletedAt)
+        } else {
+            try values.encodeNil(forKey: .deletedAt)
+        }
+        try values.encode(frames, forKey: .frames)
+    }
 
     var isStructurallyValid: Bool {
         let digests = [
@@ -1089,6 +1231,74 @@ private struct RendezvousRelayRouteRecordV2: Codable {
     var retiredAt: Date?
     var lanes: [String: RendezvousRelayLaneRecordV2]
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case registrationDigest
+        case registeredAt
+        case expiresAt
+        case retiredAt
+        case lanes
+    }
+
+    init(
+        registrationDigest: Data,
+        registeredAt: Date,
+        expiresAt: Date,
+        retiredAt: Date?,
+        lanes: [String: RendezvousRelayLaneRecordV2]
+    ) {
+        self.registrationDigest = registrationDigest
+        self.registeredAt = registeredAt
+        self.expiresAt = expiresAt
+        self.retiredAt = retiredAt
+        self.lanes = lanes
+    }
+
+    init(from decoder: Decoder) throws {
+        try requireExactRelayStoreSnapshotFields(
+            decoder,
+            CodingKeys.self,
+            context: "Stored rendezvous route"
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            registrationDigest: try values.decode(Data.self, forKey: .registrationDigest),
+            registeredAt: try values.decode(Date.self, forKey: .registeredAt),
+            expiresAt: try values.decode(Date.self, forKey: .expiresAt),
+            retiredAt: try values.decodeIfPresent(Date.self, forKey: .retiredAt),
+            lanes: try values.decode(
+                [String: RendezvousRelayLaneRecordV2].self,
+                forKey: .lanes
+            )
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .registrationDigest,
+                in: values,
+                debugDescription: "Stored rendezvous route is structurally invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw invalidRelayStoreSnapshotEncoding(
+                self,
+                encoder,
+                context: "Stored rendezvous route"
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(registrationDigest, forKey: .registrationDigest)
+        try values.encode(registeredAt, forKey: .registeredAt)
+        try values.encode(expiresAt, forKey: .expiresAt)
+        if let retiredAt {
+            try values.encode(retiredAt, forKey: .retiredAt)
+        } else {
+            try values.encodeNil(forKey: .retiredAt)
+        }
+        try values.encode(lanes, forKey: .lanes)
+    }
+
     var isStructurallyValid: Bool {
         let lifetime = expiresAt.timeIntervalSince(registeredAt)
         guard registrationDigest.count == SHA256.byteCount,
@@ -1119,6 +1329,15 @@ private struct RelayStoreSnapshot: Codable {
     let federationNodes: [String: FederationNodeRecord]
     let coordinatorPinnedPublicKeys: [String: Data]
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case rendezvousRoutesV2
+        case opaqueRouteRuntimeV2
+        case attachments
+        case federationNodes
+        case coordinatorPinnedPublicKeys
+    }
+
     static let empty = RelayStoreSnapshot(
         version: schemaVersion,
         rendezvousRoutesV2: [:],
@@ -1143,6 +1362,75 @@ private struct RelayStoreSnapshot: Codable {
         self.federationNodes = federationNodes
         self.coordinatorPinnedPublicKeys = coordinatorPinnedPublicKeys
     }
+
+    init(from decoder: Decoder) throws {
+        try requireExactRelayStoreSnapshotFields(
+            decoder,
+            CodingKeys.self,
+            context: "Relay store snapshot"
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            version: try values.decode(Int.self, forKey: .version),
+            rendezvousRoutesV2: try values.decode(
+                [String: RendezvousRelayRouteRecordV2].self,
+                forKey: .rendezvousRoutesV2
+            ),
+            opaqueRouteRuntimeV2: try values.decode(
+                OpaqueRouteRuntimeStateV2.self,
+                forKey: .opaqueRouteRuntimeV2
+            ),
+            attachments: try values.decode(
+                [String: [AttachmentRecord]].self,
+                forKey: .attachments
+            ),
+            federationNodes: try values.decode(
+                [String: FederationNodeRecord].self,
+                forKey: .federationNodes
+            ),
+            coordinatorPinnedPublicKeys: try values.decode(
+                [String: Data].self,
+                forKey: .coordinatorPinnedPublicKeys
+            )
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .version,
+                in: values,
+                debugDescription: "Relay store snapshot is structurally invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw invalidRelayStoreSnapshotEncoding(
+                self,
+                encoder,
+                context: "Relay store snapshot"
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(version, forKey: .version)
+        try values.encode(rendezvousRoutesV2, forKey: .rendezvousRoutesV2)
+        try values.encode(opaqueRouteRuntimeV2, forKey: .opaqueRouteRuntimeV2)
+        try values.encode(attachments, forKey: .attachments)
+        try values.encode(federationNodes, forKey: .federationNodes)
+        try values.encode(coordinatorPinnedPublicKeys, forKey: .coordinatorPinnedPublicKeys)
+    }
+
+    var isStructurallyValid: Bool {
+        version == Self.schemaVersion
+            && opaqueRouteRuntimeV2.isStructurallyValid
+            && rendezvousRoutesV2.allSatisfy { key, record in
+                Data(base64Encoded: key)?.count == SHA256.byteCount
+                    && record.isStructurallyValid
+            }
+            && attachments.values.allSatisfy { records in
+                records.allSatisfy(\.isStructurallyValid)
+            }
+            && federationNodes.values.allSatisfy(\.isStructurallyValid)
+    }
 }
 
 private struct AttachmentRecord: Codable {
@@ -1151,6 +1439,88 @@ private struct AttachmentRecord: Codable {
     let external: AttachmentExternalRecord?
     let storedAt: Date
     let expiresAt: Date
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case chunkIndex
+        case payload
+        case external
+        case storedAt
+        case expiresAt
+    }
+
+    init(
+        chunkIndex: Int,
+        payload: EncryptedPayload?,
+        external: AttachmentExternalRecord?,
+        storedAt: Date,
+        expiresAt: Date
+    ) {
+        self.chunkIndex = chunkIndex
+        self.payload = payload
+        self.external = external
+        self.storedAt = storedAt
+        self.expiresAt = expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        try requireExactRelayStoreSnapshotFields(
+            decoder,
+            CodingKeys.self,
+            context: "Stored attachment"
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            chunkIndex: try values.decode(Int.self, forKey: .chunkIndex),
+            payload: try values.decodeIfPresent(EncryptedPayload.self, forKey: .payload),
+            external: try values.decodeIfPresent(
+                AttachmentExternalRecord.self,
+                forKey: .external
+            ),
+            storedAt: try values.decode(Date.self, forKey: .storedAt),
+            expiresAt: try values.decode(Date.self, forKey: .expiresAt)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .chunkIndex,
+                in: values,
+                debugDescription: "Stored attachment is structurally invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw invalidRelayStoreSnapshotEncoding(
+                self,
+                encoder,
+                context: "Stored attachment"
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(chunkIndex, forKey: .chunkIndex)
+        if let payload {
+            try values.encode(payload, forKey: .payload)
+        } else {
+            try values.encodeNil(forKey: .payload)
+        }
+        if let external {
+            try values.encode(external, forKey: .external)
+        } else {
+            try values.encodeNil(forKey: .external)
+        }
+        try values.encode(storedAt, forKey: .storedAt)
+        try values.encode(expiresAt, forKey: .expiresAt)
+    }
+
+    var isStructurallyValid: Bool {
+        chunkIndex >= 0
+            && payload?.isStructurallyValid != false
+            && external?.isStructurallyValid != false
+            && storedAt.timeIntervalSince1970.isFinite
+            && expiresAt.timeIntervalSince1970.isFinite
+            && expiresAt >= storedAt
+            && ((payload != nil) != (external != nil))
+    }
 }
 
 private enum SQLiteRelayStateStoreError: Error, CustomStringConvertible {
