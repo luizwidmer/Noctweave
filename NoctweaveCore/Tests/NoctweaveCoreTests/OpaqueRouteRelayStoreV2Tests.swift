@@ -5,6 +5,46 @@ import XCTest
 final class OpaqueRouteRelayStoreV2Tests: XCTestCase {
     private let origin = Date(timeIntervalSince1970: 300_000)
 
+    func testReadCredentialAloneBuildsExactSyncAndCommitRequests() async throws {
+        let fixture = try await makeFixture()
+        let syncID = OpaqueRouteIdempotencyKeyV2.generate()
+        let syncNonce = OpaqueRouteProofNonceV2.generate()
+        let fullSync = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 17,
+            requestID: syncID,
+            authorizedAt: origin,
+            nonce: syncNonce
+        )
+        let readOnlySync = try fixture.material.readCredential.makeSyncRequest(
+            routeID: fixture.material.routeID,
+            after: nil,
+            limit: 17,
+            requestID: syncID,
+            authorizedAt: origin,
+            nonce: syncNonce
+        )
+        XCTAssertEqual(readOnlySync, fullSync)
+
+        let cursor = OpaqueRouteCursorV2(rawValue: Data(repeating: 0xA5, count: 68))
+        let commitID = OpaqueRouteIdempotencyKeyV2.generate()
+        let commitNonce = OpaqueRouteProofNonceV2.generate()
+        let fullCommit = try fixture.material.makeCommitRequest(
+            cursor: cursor,
+            requestID: commitID,
+            authorizedAt: origin,
+            nonce: commitNonce
+        )
+        let readOnlyCommit = try fixture.material.readCredential.makeCommitRequest(
+            routeID: fixture.material.routeID,
+            cursor: cursor,
+            requestID: commitID,
+            authorizedAt: origin,
+            nonce: commitNonce
+        )
+        XCTAssertEqual(readOnlyCommit, fullCommit)
+    }
+
     func testAppendSyncCommitAndExactExpiredRetries() async throws {
         let fixture = try await makeFixture()
         let first = try makePacket(

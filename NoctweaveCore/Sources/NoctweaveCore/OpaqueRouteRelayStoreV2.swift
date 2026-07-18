@@ -263,18 +263,58 @@ public extension OpaqueRouteClientCapabilityMaterialV2 {
         authorizedAt: Date = Date(),
         nonce: OpaqueRouteProofNonceV2 = .generate()
     ) throws -> OpaqueRouteSyncRequestV2 {
+        try readCredential.makeSyncRequest(
+            routeID: routeID,
+            after: cursor,
+            limit: limit,
+            requestID: requestID,
+            authorizedAt: authorizedAt,
+            nonce: nonce
+        )
+    }
+
+    func makeCommitRequest(
+        cursor: OpaqueRouteCursorV2,
+        requestID: OpaqueRouteIdempotencyKeyV2 = .generate(),
+        authorizedAt: Date = Date(),
+        nonce: OpaqueRouteProofNonceV2 = .generate()
+    ) throws -> OpaqueRouteCommitRequestV2 {
+        try readCredential.makeCommitRequest(
+            routeID: routeID,
+            cursor: cursor,
+            requestID: requestID,
+            authorizedAt: authorizedAt,
+            nonce: nonce
+        )
+    }
+}
+
+/// Read-only request construction for constrained helpers such as wake or
+/// widget extensions. No send, renewal, teardown, payload-decryption, persona,
+/// or relationship authority is required or synthesized.
+public extension RouteReadCredentialV2 {
+    func makeSyncRequest(
+        routeID: OpaqueReceiveRouteIDV2,
+        after cursor: OpaqueRouteCursorV2?,
+        limit: UInt16,
+        requestID: OpaqueRouteIdempotencyKeyV2 = .generate(),
+        authorizedAt: Date = Date(),
+        nonce: OpaqueRouteProofNonceV2 = .generate()
+    ) throws -> OpaqueRouteSyncRequestV2 {
         let provisional = OpaqueRouteSyncRequestV2(
             routeID: routeID,
             requestID: requestID,
             after: cursor,
             limit: limit,
-            authorization: try makeReadAuthorization(
+            authorization: try makeAuthorization(
+                routeID: routeID,
                 operationDigest: Data(repeating: 0, count: NoctweaveOpaqueRoutesV2.digestBytes),
                 authorizedAt: authorizedAt,
                 nonce: nonce
             )
         )
-        let proof = try makeReadAuthorization(
+        let proof = try makeAuthorization(
+            routeID: routeID,
             operationDigest: provisional.operationDigest,
             authorizedAt: authorizedAt,
             nonce: nonce
@@ -289,6 +329,7 @@ public extension OpaqueRouteClientCapabilityMaterialV2 {
     }
 
     func makeCommitRequest(
+        routeID: OpaqueReceiveRouteIDV2,
         cursor: OpaqueRouteCursorV2,
         requestID: OpaqueRouteIdempotencyKeyV2 = .generate(),
         authorizedAt: Date = Date(),
@@ -298,13 +339,15 @@ public extension OpaqueRouteClientCapabilityMaterialV2 {
             routeID: routeID,
             requestID: requestID,
             cursor: cursor,
-            authorization: try makeReadAuthorization(
+            authorization: try makeAuthorization(
+                routeID: routeID,
                 operationDigest: Data(repeating: 0, count: NoctweaveOpaqueRoutesV2.digestBytes),
                 authorizedAt: authorizedAt,
                 nonce: nonce
             )
         )
-        let proof = try makeReadAuthorization(
+        let proof = try makeAuthorization(
+            routeID: routeID,
             operationDigest: provisional.operationDigest,
             authorizedAt: authorizedAt,
             nonce: nonce

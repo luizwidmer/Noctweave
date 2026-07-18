@@ -271,6 +271,22 @@ public struct RouteReadCredentialV2: Codable, Equatable, Hashable,
     public var description: String { "RouteReadCredentialV2(<redacted>)" }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [:], displayStyle: .struct) }
+
+    public func makeAuthorization(
+        routeID: OpaqueReceiveRouteIDV2,
+        operationDigest: Data,
+        authorizedAt: Date,
+        nonce: OpaqueRouteProofNonceV2 = .generate()
+    ) throws -> OpaqueRouteAuthorizationProofV2 {
+        try OpaqueRouteAuthorizationProofV2.make(
+            authority: .read,
+            routeID: routeID,
+            operationDigest: operationDigest,
+            authorizedAt: authorizedAt,
+            nonce: nonce,
+            secret: rawValue
+        )
+    }
 }
 
 public struct RouteRenewCapabilityV2: Codable, Equatable, Hashable,
