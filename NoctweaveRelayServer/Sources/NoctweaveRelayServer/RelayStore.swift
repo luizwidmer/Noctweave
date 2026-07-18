@@ -18,11 +18,58 @@ enum RelayStoreError: Error, Equatable {
     case invalidChunkIndex
     case invalidAttachmentPayload
     case attachmentBlobUnavailable
+    case invalidCoordinatorPublicKey
 }
 
 enum RelayStorePersistenceError: Error {
     case injectedFailure
     case invalidCurrentState
+}
+
+enum RelayStoreCurrentLimits {
+    static let maximumRendezvousRouteRecords = 100_000
+    static let maximumActiveRendezvousRoutes = 2_048
+    static let maximumAttachmentIDs = 4_096
+    static let maximumAttachmentChunksPerID = 512
+    static let maximumFederationNodes = 10_000
+    /// Retains bounded TOFU history across coordinator rotation. This is
+    /// intentionally larger than the 16 concurrently configured coordinators.
+    static let maximumCoordinatorPinnedPublicKeys = 256
+}
+
+private func federationNodeStorageKey(_ endpoint: RelayEndpoint) -> String {
+    "\(endpoint.host.lowercased()):\(endpoint.port):\(endpoint.useTLS ? 1 : 0):\(endpoint.transport.rawValue)"
+}
+
+private func isCanonicalFederationNodeStorageKey(_ value: String) -> Bool {
+    guard !value.isEmpty,
+          value.utf8.count <= 273,
+          value == value.trimmingCharacters(in: .whitespacesAndNewlines),
+          value.unicodeScalars.allSatisfy({
+              !CharacterSet.controlCharacters.contains($0)
+          }) else {
+        return false
+    }
+    let fields = value.split(separator: ":", omittingEmptySubsequences: false)
+    guard fields.count >= 4,
+          let transportField = fields.last,
+          let transport = RelayEndpointTransport(rawValue: String(transportField)),
+          let tlsField = fields.dropLast().last,
+          tlsField == "0" || tlsField == "1",
+          let portField = fields.dropLast(2).last,
+          let port = UInt16(portField),
+          port > 0 else {
+        return false
+    }
+    let host = fields.dropLast(3).joined(separator: ":")
+    let endpoint = RelayEndpoint(
+        host: host,
+        port: port,
+        useTLS: tlsField == "1",
+        transport: transport
+    )
+    return endpoint.isStructurallyValid
+        && federationNodeStorageKey(endpoint) == value
 }
 
 final class RelayStore {
@@ -44,14 +91,14 @@ final class RelayStore {
     private let attachmentTTL: TimeInterval = 3600
     private let minimumAttachmentTTL: TimeInterval = 60
     private let maximumAttachmentTTL: TimeInterval = 6 * 3600
-    private let maxAttachmentChunks = 512
+    private let maxAttachmentChunks = RelayStoreCurrentLimits.maximumAttachmentChunksPerID
     private let maxAttachmentChunkPayloadBytes = 128 * 1024
-    private let maxAttachmentIds = 4_096
+    private let maxAttachmentIds = RelayStoreCurrentLimits.maximumAttachmentIDs
     private let coordinatorDefaultNodeTTL: TimeInterval = 180
     private let coordinatorMaximumNodeTTL: TimeInterval = 900
-    private let maxFederationNodes = 10_000
-    private let maxActiveRendezvousRoutesV2 = 2_048
-    private let maxLifetimeRendezvousRoutesV2 = 100_000
+    private let maxFederationNodes = RelayStoreCurrentLimits.maximumFederationNodes
+    private let maxActiveRendezvousRoutesV2 = RelayStoreCurrentLimits.maximumActiveRendezvousRoutes
+    private let maxLifetimeRendezvousRoutesV2 = RelayStoreCurrentLimits.maximumRendezvousRouteRecords
     private var coordinatorDirectoryCache: [FederationNodeRecord] = []
     private var generalRequestAttemptsBySource: [String: [Date]] = [:]
     private var federationRegistrationAttemptsBySource: [String: [Date]] = [:]
@@ -347,7 +394,7 @@ final class RelayStore {
 
     func fetchAttachment(attachmentId: UUID, chunkIndex: Int) throws -> AttachmentChunk? {
         try performSync {
-            guard chunkIndex >= 0 else {
+            guard (0..<maxAttachmentChunks).contains(chunkIndex) else {
                 throw RelayStoreError.invalidChunkIndex
             }
             pruneAttachmentsLocked(now: Date())
@@ -708,7 +755,17 @@ final class RelayStore {
 
     func pinCoordinatorPublicKey(_ key: Data, for endpoint: RelayEndpoint) throws {
         try performSync {
-            coordinatorPinnedPublicKeys[federationNodeKey(endpoint)] = key
+            guard endpoint.isStructurallyValid,
+                  key.count == OQSSignatureVerifier.mlDSA65PublicKeyBytes else {
+                throw RelayStoreError.invalidCoordinatorPublicKey
+            }
+            let storageKey = federationNodeKey(endpoint)
+            guard coordinatorPinnedPublicKeys[storageKey] != nil
+                    || coordinatorPinnedPublicKeys.count
+                        < RelayStoreCurrentLimits.maximumCoordinatorPinnedPublicKeys else {
+                throw RelayStoreError.relayCapacityExceeded
+            }
+            coordinatorPinnedPublicKeys[storageKey] = key
             try saveLocked()
         }
     }
@@ -907,7 +964,7 @@ final class RelayStore {
     }
 
     private func federationNodeKey(_ endpoint: RelayEndpoint) -> String {
-        "\(endpoint.host.lowercased()):\(endpoint.port):\(endpoint.useTLS ? 1 : 0):\(endpoint.transport.rawValue)"
+        federationNodeStorageKey(endpoint)
     }
 
     private func normalizedFederationSourceKey(_ value: String) -> String {
@@ -1370,6 +1427,22 @@ private struct RelayStoreSnapshot: Codable {
             context: "Relay store snapshot"
         )
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        try Self.requireBoundedMap(
+            in: values,
+            forKey: .rendezvousRoutesV2,
+            maximumCount: RelayStoreCurrentLimits.maximumRendezvousRouteRecords
+        )
+        try Self.requireBoundedAttachmentMap(in: values)
+        try Self.requireBoundedMap(
+            in: values,
+            forKey: .federationNodes,
+            maximumCount: RelayStoreCurrentLimits.maximumFederationNodes
+        )
+        try Self.requireBoundedMap(
+            in: values,
+            forKey: .coordinatorPinnedPublicKeys,
+            maximumCount: RelayStoreCurrentLimits.maximumCoordinatorPinnedPublicKeys
+        )
         self.init(
             version: try values.decode(Int.self, forKey: .version),
             rendezvousRoutesV2: try values.decode(
@@ -1402,6 +1475,52 @@ private struct RelayStoreSnapshot: Codable {
         }
     }
 
+    private static func requireBoundedMap(
+        in values: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys,
+        maximumCount: Int
+    ) throws {
+        let map = try values.nestedContainer(
+            keyedBy: RelayStoreSnapshotCodingKey.self,
+            forKey: key
+        )
+        guard map.allKeys.count <= maximumCount else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key,
+                in: values,
+                debugDescription: "Relay store snapshot map exceeds its current bound"
+            )
+        }
+    }
+
+    private static func requireBoundedAttachmentMap(
+        in values: KeyedDecodingContainer<CodingKeys>
+    ) throws {
+        let attachments = try values.nestedContainer(
+            keyedBy: RelayStoreSnapshotCodingKey.self,
+            forKey: .attachments
+        )
+        guard attachments.allKeys.count <= RelayStoreCurrentLimits.maximumAttachmentIDs else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .attachments,
+                in: values,
+                debugDescription: "Relay store attachment map exceeds its current bound"
+            )
+        }
+        for key in attachments.allKeys {
+            let records = try attachments.nestedUnkeyedContainer(forKey: key)
+            guard records.count.map({
+                $0 <= RelayStoreCurrentLimits.maximumAttachmentChunksPerID
+            }) == true else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .attachments,
+                    in: values,
+                    debugDescription: "Relay store attachment record list exceeds its current bound"
+                )
+            }
+        }
+    }
+
     func encode(to encoder: Encoder) throws {
         guard isStructurallyValid else {
             throw invalidRelayStoreSnapshotEncoding(
@@ -1420,16 +1539,40 @@ private struct RelayStoreSnapshot: Codable {
     }
 
     var isStructurallyValid: Bool {
-        version == Self.schemaVersion
-            && opaqueRouteRuntimeV2.isStructurallyValid
-            && rendezvousRoutesV2.allSatisfy { key, record in
-                Data(base64Encoded: key)?.count == SHA256.byteCount
-                    && record.isStructurallyValid
-            }
-            && attachments.values.allSatisfy { records in
-                records.allSatisfy(\.isStructurallyValid)
-            }
-            && federationNodes.values.allSatisfy(\.isStructurallyValid)
+        guard version == Self.schemaVersion,
+              opaqueRouteRuntimeV2.isStructurallyValid,
+              rendezvousRoutesV2.count
+                <= RelayStoreCurrentLimits.maximumRendezvousRouteRecords,
+              rendezvousRoutesV2.values.lazy.filter({ $0.retiredAt == nil }).count
+                <= RelayStoreCurrentLimits.maximumActiveRendezvousRoutes,
+              rendezvousRoutesV2.allSatisfy({ key, record in
+                  guard let digest = Data(base64Encoded: key) else { return false }
+                  return digest.count == SHA256.byteCount
+                      && digest.base64EncodedString() == key
+                      && record.isStructurallyValid
+              }),
+              attachments.count <= RelayStoreCurrentLimits.maximumAttachmentIDs,
+              attachments.allSatisfy({ attachmentID, records in
+                  UUID(uuidString: attachmentID)?.uuidString == attachmentID
+                      && records.count
+                        <= RelayStoreCurrentLimits.maximumAttachmentChunksPerID
+                      && Set(records.map(\.chunkIndex)).count == records.count
+                      && records.allSatisfy(\.isStructurallyValid)
+              }),
+              federationNodes.count <= RelayStoreCurrentLimits.maximumFederationNodes,
+              federationNodes.allSatisfy({ key, record in
+                  key == federationNodeStorageKey(record.endpoint)
+                      && record.isStructurallyValid
+              }),
+              coordinatorPinnedPublicKeys.count
+                <= RelayStoreCurrentLimits.maximumCoordinatorPinnedPublicKeys,
+              coordinatorPinnedPublicKeys.allSatisfy({ key, publicKey in
+                  isCanonicalFederationNodeStorageKey(key)
+                      && publicKey.count == OQSSignatureVerifier.mlDSA65PublicKeyBytes
+              }) else {
+            return false
+        }
+        return true
     }
 }
 
@@ -1513,7 +1656,7 @@ private struct AttachmentRecord: Codable {
     }
 
     var isStructurallyValid: Bool {
-        chunkIndex >= 0
+        (0..<RelayStoreCurrentLimits.maximumAttachmentChunksPerID).contains(chunkIndex)
             && payload?.isStructurallyValid != false
             && external?.isStructurallyValid != false
             && storedAt.timeIntervalSince1970.isFinite

@@ -1,4 +1,5 @@
 import Foundation
+import Crypto
 import XCTest
 #if canImport(SQLite3)
 import SQLite3
@@ -31,7 +32,10 @@ final class RelayStoreCurrentTests: XCTestCase {
             useTLS: true,
             transport: .http
         )
-        let pinnedKey = Data(repeating: 0x44, count: 32)
+        let pinnedKey = Data(
+            repeating: 0x44,
+            count: OQSSignatureVerifier.mlDSA65PublicKeyBytes
+        )
 
         let writer = RelayStore(fileURL: url, temporalBucketSeconds: 0)
         _ = try writer.storeAttachment(
@@ -200,6 +204,150 @@ final class RelayStoreCurrentTests: XCTestCase {
         }
     }
 
+    func testPersistedSnapshotRejectsInvalidMapBoundsAndKeys() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("relay.sqlite")
+        try writeRichSnapshot(to: url)
+        let original = try readSnapshotData(from: url)
+
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            var routes = try XCTUnwrap(snapshot["rendezvousRoutesV2"] as? [String: Any])
+            let entry = try XCTUnwrap(routes.first)
+            routes.removeValue(forKey: entry.key)
+            routes["not-canonical-base64"] = entry.value
+            snapshot["rendezvousRoutesV2"] = routes
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            let routes = try XCTUnwrap(snapshot["rendezvousRoutesV2"] as? [String: Any])
+            let route = try XCTUnwrap(routes.first?.value)
+            var active: [String: Any] = [:]
+            for index in 0...RelayStoreCurrentLimits.maximumActiveRendezvousRoutes {
+                var bytes = [UInt8](repeating: 0, count: SHA256.byteCount)
+                var value = UInt64(index)
+                for offset in 0..<MemoryLayout<UInt64>.size {
+                    bytes[bytes.count - 1 - offset] = UInt8(value & 0xff)
+                    value >>= 8
+                }
+                active[Data(bytes).base64EncodedString()] = route
+            }
+            snapshot["rendezvousRoutesV2"] = active
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            snapshot["rendezvousRoutesV2"] = Dictionary(
+                uniqueKeysWithValues: (0...RelayStoreCurrentLimits.maximumRendezvousRouteRecords)
+                    .map { ("route-\($0)", NSNull() as Any) }
+            )
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            var attachments = try XCTUnwrap(snapshot["attachments"] as? [String: Any])
+            let entry = try XCTUnwrap(attachments.first)
+            attachments.removeValue(forKey: entry.key)
+            attachments["not-a-uuid"] = entry.value
+            snapshot["attachments"] = attachments
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            snapshot["attachments"] = Dictionary(
+                uniqueKeysWithValues: (0...RelayStoreCurrentLimits.maximumAttachmentIDs)
+                    .map { _ in (UUID().uuidString, NSNull() as Any) }
+            )
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            var attachments = try XCTUnwrap(snapshot["attachments"] as? [String: Any])
+            let key = try XCTUnwrap(attachments.keys.first)
+            attachments[key] = Array(
+                repeating: NSNull(),
+                count: RelayStoreCurrentLimits.maximumAttachmentChunksPerID + 1
+            )
+            snapshot["attachments"] = attachments
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            var attachments = try XCTUnwrap(snapshot["attachments"] as? [String: Any])
+            let key = try XCTUnwrap(attachments.keys.first)
+            let records = try XCTUnwrap(attachments[key] as? [[String: Any]])
+            attachments[key] = [records[0], records[0]]
+            snapshot["attachments"] = attachments
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            var attachments = try XCTUnwrap(snapshot["attachments"] as? [String: Any])
+            let key = try XCTUnwrap(attachments.keys.first)
+            var records = try XCTUnwrap(attachments[key] as? [[String: Any]])
+            records[0]["chunkIndex"] = RelayStoreCurrentLimits.maximumAttachmentChunksPerID
+            attachments[key] = records
+            snapshot["attachments"] = attachments
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            var nodes = try XCTUnwrap(snapshot["federationNodes"] as? [String: Any])
+            let entry = try XCTUnwrap(nodes.first)
+            nodes.removeValue(forKey: entry.key)
+            nodes["other.example.org:443:1:http"] = entry.value
+            snapshot["federationNodes"] = nodes
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            snapshot["federationNodes"] = Dictionary(
+                uniqueKeysWithValues: (0...RelayStoreCurrentLimits.maximumFederationNodes)
+                    .map { ("relay-\($0).example.org:443:1:http", NSNull() as Any) }
+            )
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            var pins = try XCTUnwrap(
+                snapshot["coordinatorPinnedPublicKeys"] as? [String: Any]
+            )
+            let entry = try XCTUnwrap(pins.first)
+            pins.removeValue(forKey: entry.key)
+            pins["not-an-endpoint-key"] = entry.value
+            snapshot["coordinatorPinnedPublicKeys"] = pins
+        }
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            var pins = try XCTUnwrap(
+                snapshot["coordinatorPinnedPublicKeys"] as? [String: Any]
+            )
+            let key = try XCTUnwrap(pins.keys.first)
+            pins[key] = Data(repeating: 0x71, count: 32).base64EncodedString()
+            snapshot["coordinatorPinnedPublicKeys"] = pins
+        }
+        XCTAssertEqual(RelayStoreCurrentLimits.maximumCoordinatorPinnedPublicKeys, 256)
+        try assertSnapshotRejectsMutation(original: original, at: url) { snapshot in
+            snapshot["coordinatorPinnedPublicKeys"] = Dictionary(
+                uniqueKeysWithValues: (0...RelayStoreCurrentLimits.maximumCoordinatorPinnedPublicKeys)
+                    .map { ("coordinator-\($0).example.org:443:1:http", NSNull() as Any) }
+            )
+        }
+    }
+
+    func testCoordinatorPinRequiresExactMLDSA65KeyAndSupportsIPv6StorageKeys() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("relay.sqlite")
+        let endpoint = RelayEndpoint(
+            host: "2001:db8::1",
+            port: 443,
+            useTLS: true,
+            transport: .http
+        )
+        let store = RelayStore(fileURL: url)
+
+        XCTAssertThrowsError(
+            try store.pinCoordinatorPublicKey(Data(repeating: 0x81, count: 32), for: endpoint)
+        ) { error in
+            XCTAssertEqual(error as? RelayStoreError, .invalidCoordinatorPublicKey)
+        }
+        XCTAssertNil(store.pinnedCoordinatorPublicKey(for: endpoint))
+
+        let publicKey = Data(
+            repeating: 0x82,
+            count: OQSSignatureVerifier.mlDSA65PublicKeyBytes
+        )
+        try store.pinCoordinatorPublicKey(publicKey, for: endpoint)
+        let reloaded = RelayStore(fileURL: url)
+        try reloaded.load()
+        XCTAssertEqual(reloaded.pinnedCoordinatorPublicKey(for: endpoint), publicKey)
+    }
+
     private func writeRichSnapshot(to url: URL) throws {
         let store = RelayStore(fileURL: url, temporalBucketSeconds: 0)
         let now = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
@@ -265,19 +413,27 @@ final class RelayStoreCurrentTests: XCTestCase {
             ),
             ttlSeconds: 300
         )
+        let federationEndpoint = RelayEndpoint(
+            host: "relay.example.org",
+            port: 443,
+            useTLS: true,
+            transport: .http
+        )
         _ = try store.registerFederationNode(
             FederationNodeRegistrationRequest(
-                endpoint: RelayEndpoint(
-                    host: "relay.example.org",
-                    port: 443,
-                    useTLS: true,
-                    transport: .http
-                ),
+                endpoint: federationEndpoint,
                 relayInfo: RelayConfiguration(
                     federation: FederationDescriptor(mode: .open)
                 ).makeInfo(),
                 ttlSeconds: 300
             )
+        )
+        try store.pinCoordinatorPublicKey(
+            Data(
+                repeating: 0x61,
+                count: OQSSignatureVerifier.mlDSA65PublicKeyBytes
+            ),
+            for: federationEndpoint
         )
     }
 
