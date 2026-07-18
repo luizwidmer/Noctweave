@@ -348,6 +348,33 @@ public struct OpaqueRoutePacketV2: Codable, Equatable {
         )
     }
 
+    /// Reauthorizes the exact relay operation without resealing content or
+    /// changing its idempotent packet identifier. Callers must persist the
+    /// returned packet before any retry I/O.
+    public func refreshingAuthorization(
+        sendCapability: RouteSendCapabilityV2,
+        authorizedAt: Date
+    ) throws -> OpaqueRoutePacketV2 {
+        guard sendCapability.isStructurallyValid,
+              authorizedAt.timeIntervalSince1970.isFinite else {
+            throw OpaqueRoutePacketV2Error.invalidPacket
+        }
+        let refreshed = OpaqueRoutePacketV2(
+            routeID: routeID,
+            packetID: packetID,
+            sealedFrame: sealedFrame,
+            authorization: try sendCapability.makeAuthorization(
+                routeID: routeID,
+                operationDigest: operationDigest,
+                authorizedAt: authorizedAt
+            )
+        )
+        guard refreshed.isStructurallyValid else {
+            throw OpaqueRoutePacketV2Error.invalidPacket
+        }
+        return refreshed
+    }
+
     static func operationDigest(
         routeID: OpaqueReceiveRouteIDV2,
         packetID: OpaqueRoutePacketIDV2,

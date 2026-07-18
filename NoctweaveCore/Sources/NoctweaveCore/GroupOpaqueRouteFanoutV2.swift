@@ -83,6 +83,32 @@ public struct GroupOpaqueRoutePublicationV2: Codable, Equatable, Identifiable {
         }
     }
 
+    private init(
+        version: Int,
+        id: UUID,
+        groupID: UUID,
+        protocolEnvelopeID: UUID,
+        destinationCredentialHandle: GroupScopedCredentialHandleV2,
+        destinationRouteID: OpaqueReceiveRouteIDV2,
+        destinationRelay: RelayEndpoint,
+        sendCapability: RouteSendCapabilityV2,
+        bundleID: OpaqueRouteBundleIDV2,
+        packets: [OpaqueRoutePacketV2],
+        createdAt: Date
+    ) {
+        self.version = version
+        self.id = id
+        self.groupID = groupID
+        self.protocolEnvelopeID = protocolEnvelopeID
+        self.destinationCredentialHandle = destinationCredentialHandle
+        self.destinationRouteID = destinationRouteID
+        self.destinationRelay = destinationRelay
+        self.sendCapability = sendCapability
+        self.bundleID = bundleID
+        self.packets = packets
+        self.createdAt = createdAt
+    }
+
     public init(from decoder: Decoder) throws {
         let strict = try decoder.container(keyedBy: GroupOpaqueRouteFanoutCodingKey.self)
         guard Set(strict.allKeys.map(\.stringValue))
@@ -163,6 +189,40 @@ public struct GroupOpaqueRoutePublicationV2: Codable, Equatable, Identifiable {
                 $0.routeID == destinationRouteID && $0.isStructurallyValid
             }
             && createdAt.timeIntervalSince1970.isFinite
+    }
+
+    func refreshingExpiredAuthorizations(at date: Date) throws -> Self {
+        let expiryWindow = NoctweaveOpaqueRoutesV2.maximumAuthorizationClockSkew
+        guard packets.contains(where: {
+            $0.authorization.authorizedAt.addingTimeInterval(expiryWindow) < date
+        }) else { return self }
+        let refreshed = Self(
+            version: version,
+            id: id,
+            groupID: groupID,
+            protocolEnvelopeID: protocolEnvelopeID,
+            destinationCredentialHandle: destinationCredentialHandle,
+            destinationRouteID: destinationRouteID,
+            destinationRelay: destinationRelay,
+            sendCapability: sendCapability,
+            bundleID: bundleID,
+            packets: try packets.map {
+                try $0.refreshingAuthorization(
+                    sendCapability: sendCapability,
+                    authorizedAt: date
+                )
+            },
+            createdAt: createdAt
+        )
+        guard refreshed.isStructurallyValid,
+              zip(packets, refreshed.packets).allSatisfy({
+                  $0.packetID == $1.packetID
+                      && $0.sealedFrame == $1.sealedFrame
+                      && $0.operationDigest == $1.operationDigest
+              }) else {
+            throw GroupOpaqueRouteFanoutV2Error.invalidPlan
+        }
+        return refreshed
     }
 }
 
@@ -316,6 +376,27 @@ public struct GroupOpaqueRouteFanoutPlanV2: Codable, Equatable {
                     && $0.isStructurallyValid
             }
             && createdAt.timeIntervalSince1970.isFinite
+    }
+
+    func replacingPublication(
+        _ publication: GroupOpaqueRoutePublicationV2
+    ) throws -> Self {
+        guard let index = publications.firstIndex(where: { $0.id == publication.id }) else {
+            throw GroupOpaqueRouteFanoutV2Error.invalidPlan
+        }
+        var updated = publications
+        updated[index] = publication
+        let result = Self(
+            version: version,
+            groupID: groupID,
+            protocolEnvelopeID: protocolEnvelopeID,
+            publications: updated,
+            createdAt: createdAt
+        )
+        guard result.isStructurallyValid else {
+            throw GroupOpaqueRouteFanoutV2Error.invalidPlan
+        }
+        return result
     }
 
     private static func publicationOrdering(

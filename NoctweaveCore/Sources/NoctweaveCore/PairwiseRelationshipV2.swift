@@ -195,6 +195,36 @@ public struct PendingOpaqueRouteDeliveryV2: Codable, Equatable, Identifiable {
         }
     }
 
+    private init(
+        version: Int,
+        id: UUID,
+        intentID: UUID,
+        logicalEventID: UUID,
+        relationshipID: UUID,
+        directSessionID: String,
+        messageCounter: UInt64,
+        destinationRouteID: OpaqueReceiveRouteIDV2,
+        destinationRelay: RelayEndpoint,
+        bundleID: OpaqueRouteBundleIDV2,
+        payloadDigest: Data,
+        packets: [OpaqueRoutePacketV2],
+        queuedAt: Date
+    ) {
+        self.version = version
+        self.id = id
+        self.intentID = intentID
+        self.logicalEventID = logicalEventID
+        self.relationshipID = relationshipID
+        self.directSessionID = directSessionID
+        self.messageCounter = messageCounter
+        self.destinationRouteID = destinationRouteID
+        self.destinationRelay = destinationRelay
+        self.bundleID = bundleID
+        self.payloadDigest = payloadDigest
+        self.packets = packets
+        self.queuedAt = queuedAt
+    }
+
     public init(from decoder: Decoder) throws {
         let strict = try decoder.container(keyedBy: PairwiseRelationshipCodingKey.self)
         guard Set(strict.allKeys.map(\.stringValue))
@@ -283,6 +313,45 @@ public struct PendingOpaqueRouteDeliveryV2: Codable, Equatable, Identifiable {
 
     public var isStructurallyValid: Bool {
         (try? isStructurallyValidThrowing) == true
+    }
+
+    func refreshingExpiredAuthorizations(
+        sendCapability: RouteSendCapabilityV2,
+        at date: Date
+    ) throws -> PendingOpaqueRouteDeliveryV2 {
+        let expiryWindow = NoctweaveOpaqueRoutesV2.maximumAuthorizationClockSkew
+        guard packets.contains(where: {
+            $0.authorization.authorizedAt.addingTimeInterval(expiryWindow) < date
+        }) else { return self }
+        let refreshed = PendingOpaqueRouteDeliveryV2(
+            version: version,
+            id: id,
+            intentID: intentID,
+            logicalEventID: logicalEventID,
+            relationshipID: relationshipID,
+            directSessionID: directSessionID,
+            messageCounter: messageCounter,
+            destinationRouteID: destinationRouteID,
+            destinationRelay: destinationRelay,
+            bundleID: bundleID,
+            payloadDigest: payloadDigest,
+            packets: try packets.map {
+                try $0.refreshingAuthorization(
+                    sendCapability: sendCapability,
+                    authorizedAt: date
+                )
+            },
+            queuedAt: queuedAt
+        )
+        guard try refreshed.isStructurallyValidThrowing,
+              zip(packets, refreshed.packets).allSatisfy({
+                  $0.packetID == $1.packetID
+                      && $0.sealedFrame == $1.sealedFrame
+                      && $0.operationDigest == $1.operationDigest
+              }) else {
+            throw PairwiseRelationshipV2Error.invalidState
+        }
+        return refreshed
     }
 }
 

@@ -459,12 +459,14 @@ public struct GroupOpaqueRouteDestinationSnapshotV2: Codable, Equatable {
 public enum GroupOpaqueRouteOutboundOperationKindV2: String, Codable, Equatable {
     case application
     case epoch
+    case deletion
 }
 
 public enum GroupOpaqueRouteArtifactKindV2: String, Codable, Equatable {
     case application
     case epochTransition
     case epochWelcome
+    case deletion
 }
 
 public struct GroupOpaqueRoutePublicationAcceptanceV2: Codable, Equatable {
@@ -665,6 +667,26 @@ public struct GroupOpaqueRoutePublicationAttemptV2: Codable, Equatable, Identifi
             acceptance: accepted
         )
     }
+
+    fileprivate func replacingPublication(
+        _ publication: GroupOpaqueRoutePublicationV2
+    ) throws -> Self {
+        guard publication.id == self.publication.id,
+              acceptance == nil else {
+            throw GroupOpaqueRouteTransportV2Error.invalidOperation
+        }
+        let result = Self(
+            publication: publication,
+            predecessorPublicationID: predecessorPublicationID,
+            attemptCount: attemptCount,
+            lastAttemptAt: lastAttemptAt,
+            acceptance: nil
+        )
+        guard result.isStructurallyValid else {
+            throw GroupOpaqueRouteTransportV2Error.invalidOperation
+        }
+        return result
+    }
 }
 
 public struct GroupOpaqueRouteTransportDeliveryV2: Codable, Equatable, Identifiable {
@@ -798,6 +820,30 @@ public struct GroupOpaqueRouteTransportDeliveryV2: Codable, Equatable, Identifia
             requiredCredentialHandles: requiredCredentialHandles,
             plan: plan,
             attempts: next
+        )
+        guard result.isStructurallyValid else {
+            throw GroupOpaqueRouteTransportV2Error.invalidOperation
+        }
+        return result
+    }
+
+    fileprivate func refreshingPublicationAuthorization(
+        publicationID: UUID,
+        at date: Date
+    ) throws -> Self {
+        guard let index = attempts.firstIndex(where: { $0.id == publicationID }) else {
+            throw GroupOpaqueRouteTransportV2Error.publicationNotFound
+        }
+        let refreshed = try attempts[index].publication.refreshingExpiredAuthorizations(at: date)
+        if refreshed == attempts[index].publication { return self }
+        var nextAttempts = attempts
+        nextAttempts[index] = try nextAttempts[index].replacingPublication(refreshed)
+        let result = Self(
+            id: id,
+            artifactKind: artifactKind,
+            requiredCredentialHandles: requiredCredentialHandles,
+            plan: try plan.replacingPublication(refreshed),
+            attempts: nextAttempts
         )
         guard result.isStructurallyValid else {
             throw GroupOpaqueRouteTransportV2Error.invalidOperation
@@ -981,6 +1027,13 @@ public struct GroupOpaqueRouteOutboundOperationV2: Codable, Equatable, Identifia
                                 == transitionByDestinationRoute[key]
                         }
                 }
+        case .deletion:
+            return deliveries.count == 1
+                && deliveries[0].artifactKind == .deletion
+                && deliveries[0].plan.protocolEnvelopeID == logicalID
+                && deliveries[0].attempts.allSatisfy {
+                    $0.predecessorPublicationID == nil
+                }
         }
     }
 
@@ -1046,6 +1099,35 @@ public struct GroupOpaqueRouteOutboundOperationV2: Codable, Equatable, Identifia
             throw GroupOpaqueRouteTransportV2Error.invalidOperation
         }
         return (result, attempt.publication)
+    }
+
+    fileprivate func refreshingPublicationAuthorization(
+        publicationID: UUID,
+        at date: Date
+    ) throws -> Self {
+        guard let index = deliveries.firstIndex(where: {
+            $0.attempts.contains(where: { $0.id == publicationID })
+        }) else {
+            throw GroupOpaqueRouteTransportV2Error.publicationNotFound
+        }
+        var updatedDeliveries = deliveries
+        updatedDeliveries[index] = try updatedDeliveries[index]
+            .refreshingPublicationAuthorization(publicationID: publicationID, at: date)
+        if updatedDeliveries == deliveries { return self }
+        let result = Self(
+            id: id,
+            groupID: groupID,
+            kind: kind,
+            logicalID: logicalID,
+            destinationSnapshots: destinationSnapshots,
+            deliveries: updatedDeliveries,
+            createdAt: createdAt,
+            updatedAt: max(updatedAt, date)
+        )
+        guard result.isStructurallyValid else {
+            throw GroupOpaqueRouteTransportV2Error.invalidOperation
+        }
+        return result
     }
 
     fileprivate func recordingAcceptance(
@@ -1115,6 +1197,38 @@ public struct GroupOpaqueRouteOutboundOperationV2: Codable, Equatable, Identifia
             groupID: groupID,
             kind: .application,
             logicalID: eventID,
+            destinationSnapshots: snapshots,
+            deliveries: [delivery],
+            createdAt: date,
+            updatedAt: date
+        )
+        guard result.isStructurallyValid else {
+            throw GroupOpaqueRouteTransportV2Error.invalidOperation
+        }
+        return result
+    }
+
+    fileprivate static func deletion(
+        tombstone: SignedGroupDeletionTombstoneV2,
+        groupID: UUID,
+        snapshots: [GroupOpaqueRouteDestinationSnapshotV2],
+        at date: Date
+    ) throws -> Self {
+        let plan = try GroupOpaqueRouteFanoutPlanV2.create(
+            envelope: .groupDeletionV2(tombstone),
+            groupID: groupID,
+            destinations: snapshots.map(\.fanoutDestination),
+            at: date
+        )
+        let delivery = GroupOpaqueRouteTransportDeliveryV2(
+            artifactKind: .deletion,
+            requiredCredentialHandles: snapshots.map { $0.credential.credentialHandle },
+            plan: plan
+        )
+        let result = Self(
+            groupID: groupID,
+            kind: .deletion,
+            logicalID: tombstone.id,
             destinationSnapshots: snapshots,
             deliveries: [delivery],
             createdAt: date,
@@ -1315,6 +1429,55 @@ extension NoctweavePQGroupRuntimeV2 {
         return operation
     }
 
+    /// Persists the exact deletion tombstone packets for every current remote
+    /// group credential before relay I/O. A terminal local group remains able
+    /// to finish only this retained transport operation.
+    public func prepareDeletionTransport(
+        tombstoneID: UUID,
+        routeSets: [SignedGroupOpaqueRouteSetV2],
+        at date: Date = Date()
+    ) async throws -> GroupOpaqueRouteOutboundOperationV2? {
+        if let existing = record.outboundTransportOperations.first(where: {
+            $0.kind == .deletion && $0.logicalID == tombstoneID
+        }) {
+            return existing
+        }
+        guard let deletion = record.deletionState,
+              deletion.origin == .local,
+              deletion.publicationState == .pending,
+              deletion.deletedState.tombstone.id == tombstoneID else {
+            throw GroupRuntimeError.publicationNotFound
+        }
+        let recipients = record.signedState.activeCredentials.filter {
+            $0.memberHandle != record.localCredential.memberHandle
+        }
+        guard !recipients.isEmpty else {
+            guard routeSets.isEmpty else {
+                throw GroupOpaqueRouteTransportV2Error.invalidRouteSet
+            }
+            return nil
+        }
+        let snapshots = try makeDestinationSnapshots(
+            credentials: recipients,
+            routeSets: routeSets,
+            at: date
+        )
+        let operation = try GroupOpaqueRouteOutboundOperationV2.deletion(
+            tombstone: deletion.deletedState.tombstone,
+            groupID: record.groupId,
+            snapshots: snapshots,
+            at: date
+        )
+        guard record.outboundTransportOperations.count
+                < GroupOpaqueRouteOutboundOperationV2.maximumJournalEntries else {
+            throw GroupOpaqueRouteTransportV2Error.capacityReached
+        }
+        try await persist(record.replacing(
+            outboundTransportOperations: record.outboundTransportOperations + [operation]
+        ))
+        return operation
+    }
+
     public func eligibleOutboundTransportPublications(
         operationID: UUID
     ) throws -> [GroupOpaqueRoutePublicationV2] {
@@ -1334,14 +1497,28 @@ extension NoctweavePQGroupRuntimeV2 {
         publicationID: UUID,
         at date: Date = Date()
     ) async throws -> GroupOpaqueRoutePublicationV2 {
-        try requireActiveRuntime()
         guard let index = record.outboundTransportOperations.firstIndex(where: {
             $0.id == operationID
         }) else {
             throw GroupOpaqueRouteTransportV2Error.operationNotFound
         }
-        let (updated, publication) = try record.outboundTransportOperations[index]
-            .recordingAttempt(publicationID: publicationID, at: date)
+        if record.outboundTransportOperations[index].kind == .deletion {
+            guard record.deletionState?.deletedState.tombstone.id
+                    == record.outboundTransportOperations[index].logicalID else {
+                throw GroupOpaqueRouteTransportV2Error.invalidOperation
+            }
+        } else {
+            try requireActiveRuntime()
+        }
+        let refreshed = try record.outboundTransportOperations[index]
+            .refreshingPublicationAuthorization(
+                publicationID: publicationID,
+                at: date
+            )
+        let (updated, publication) = try refreshed.recordingAttempt(
+            publicationID: publicationID,
+            at: date
+        )
         var operations = record.outboundTransportOperations
         operations[index] = updated
         try await persist(record.replacing(outboundTransportOperations: operations))
@@ -1357,11 +1534,18 @@ extension NoctweavePQGroupRuntimeV2 {
         receipts: [OpaqueRouteAppendReceiptV2],
         at date: Date = Date()
     ) async throws {
-        try requireActiveRuntime()
         guard let operationIndex = record.outboundTransportOperations.firstIndex(where: {
             $0.id == operationID
         }) else {
             throw GroupOpaqueRouteTransportV2Error.operationNotFound
+        }
+        if record.outboundTransportOperations[operationIndex].kind == .deletion {
+            guard record.deletionState?.deletedState.tombstone.id
+                    == record.outboundTransportOperations[operationIndex].logicalID else {
+                throw GroupOpaqueRouteTransportV2Error.invalidOperation
+            }
+        } else {
+            try requireActiveRuntime()
         }
         let updatedOperation = try record.outboundTransportOperations[operationIndex]
             .recordingAcceptance(
@@ -1420,6 +1604,16 @@ extension NoctweavePQGroupRuntimeV2 {
         if remoteCredentials.isEmpty { return true }
         return record.outboundTransportOperations.contains {
             $0.kind == .epoch && $0.logicalID == intent.id && $0.isComplete
+        }
+    }
+
+    internal func hasCompletedDeletionTransport(tombstoneID: UUID) -> Bool {
+        let remoteCredentials = record.signedState.activeCredentials.filter {
+            $0.memberHandle != record.localCredential.memberHandle
+        }
+        if remoteCredentials.isEmpty { return true }
+        return record.outboundTransportOperations.contains {
+            $0.kind == .deletion && $0.logicalID == tombstoneID && $0.isComplete
         }
     }
 

@@ -459,7 +459,8 @@ public struct ClientState: Codable, Equatable {
                 newValue.isStructurallyValid
                     && protocolScopesAreUnique(
                         relationships: updated.flatMap(\.relationships),
-                        groupRuntimes: updated.flatMap(\.groupRuntimes)
+                        groupRuntimes: updated.flatMap(\.groupRuntimes),
+                        pendingGroupAdmissions: updated.flatMap(\.pendingGroupAdmissions)
                     ),
                 "Cannot install a persona that reuses relationship- or group-scoped authority"
             )
@@ -483,7 +484,8 @@ public struct ClientState: Codable, Equatable {
             && Set(personas.map(\.id)).count == personas.count
             && protocolScopesAreUnique(
                 relationships: personas.flatMap(\.relationships),
-                groupRuntimes: personas.flatMap(\.groupRuntimes)
+                groupRuntimes: personas.flatMap(\.groupRuntimes),
+                pendingGroupAdmissions: personas.flatMap(\.pendingGroupAdmissions)
             )
             && personas.contains(where: { $0.id == activePersonaID })
             && relayPreferences.count <= Self.maximumRelayPreferences

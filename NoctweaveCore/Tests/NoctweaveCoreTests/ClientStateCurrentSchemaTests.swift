@@ -41,6 +41,7 @@ final class ClientStateCurrentSchemaTests: XCTestCase {
                 "displayName",
                 "relationships",
                 "groupRuntimes",
+                "pendingGroupAdmissions",
                 "createdAt"
             ])
         )

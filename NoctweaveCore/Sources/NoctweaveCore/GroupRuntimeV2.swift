@@ -574,7 +574,7 @@ public struct GroupEpochForkQuarantine: Codable, Equatable, Identifiable {
 }
 
 public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
-    public static let version = 4
+    public static let version = 5
     public static let maximumQuarantinedForks = 64
     public static let maximumPeerEpochJournalEntries = 256
     public static let peerEpochRecentWindow = 192
@@ -601,6 +601,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
     public let pendingApplicationPublications: [PendingGroupApplicationPublicationV2]
     public let processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]
     public let outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2]
+    public let inboundTransport: GroupOpaqueRouteInboundStateV2
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case formatVersion
@@ -620,6 +621,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         case pendingApplicationPublications
         case processedApplicationEnvelopes
         case outboundTransportOperations
+        case inboundTransport
     }
 
     public init(
@@ -639,7 +641,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         events: [GroupConversationEventV2] = [],
         pendingApplicationPublications: [PendingGroupApplicationPublicationV2] = [],
         processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2] = [],
-        outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2] = []
+        outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2] = [],
+        inboundTransport: GroupOpaqueRouteInboundStateV2 = .init()
     ) {
         self.formatVersion = formatVersion
         self.groupId = groupId
@@ -683,6 +686,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
             return $0.id.uuidString < $1.id.uuidString
         }
+        self.inboundTransport = inboundTransport
     }
 
     public init(from decoder: Decoder) throws {
@@ -721,6 +725,10 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             [GroupOpaqueRouteOutboundOperationV2].self,
             forKey: .outboundTransportOperations
         )
+        let decodedInboundTransport = try values.decode(
+            GroupOpaqueRouteInboundStateV2.self,
+            forKey: .inboundTransport
+        )
         self.init(
             formatVersion: try values.decode(Int.self, forKey: .formatVersion),
             groupId: try values.decode(UUID.self, forKey: .groupId),
@@ -747,7 +755,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             events: decodedEvents,
             pendingApplicationPublications: decodedPending,
             processedApplicationEnvelopes: decodedProcessed,
-            outboundTransportOperations: decodedOutboundTransport
+            outboundTransportOperations: decodedOutboundTransport,
+            inboundTransport: decodedInboundTransport
         )
         guard epochIntents == intents,
               quarantinedForks == forks,
@@ -758,6 +767,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               pendingApplicationPublications == decodedPending,
               processedApplicationEnvelopes == decodedProcessed,
               outboundTransportOperations == decodedOutboundTransport,
+              inboundTransport == decodedInboundTransport,
               try isStructurallyValidThrowing else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "Invalid group runtime record")
@@ -802,6 +812,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             outboundTransportOperations,
             forKey: .outboundTransportOperations
         )
+        try values.encode(inboundTransport, forKey: .inboundTransport)
     }
 
     public var isStructurallyValidThrowing: Bool {
@@ -886,6 +897,11 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               outboundTransportOperations.allSatisfy({
                   $0.groupID == groupId && $0.isStructurallyValid
               }),
+              inboundTransport.isStructurallyValid,
+              inboundTransport.advertisedRouteSet.map({ $0.groupID == groupId }) ?? true,
+              inboundTransport.epochStaging.transitions.allSatisfy({
+                  $0.commit.groupId == groupId
+              }),
               outboundTransportOperations.allSatisfy({ operation in
                   guard operation.kind == .epoch,
                         let intent = epochIntents.first(where: {
@@ -935,6 +951,12 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                       return epochIntents.contains {
                           $0.id == operation.logicalID && $0.requiresRecoveryState
                       }
+                  case .deletion:
+                      return deletionState.map {
+                          $0.origin == .local
+                              && $0.publicationState == .pending
+                              && $0.deletedState.tombstone.id == operation.logicalID
+                      } ?? false
                   }
               }),
               Set(processedApplicationEnvelopes.lazy.filter {
@@ -956,7 +978,11 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                       pendingLocalCredentials.isEmpty,
                       pendingApplicationPublications.isEmpty,
                       epochIntents.isEmpty,
-                      outboundTransportOperations.isEmpty else {
+                      outboundTransportOperations.count <= 1,
+                      outboundTransportOperations.allSatisfy({
+                          $0.kind == .deletion
+                              && $0.logicalID == deletionState.deletedState.tombstone.id
+                      }) else {
                     return false
                 }
             _ = try deletionState.deletedState.verified(previousState: signedState)
@@ -1097,7 +1123,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         events: [GroupConversationEventV2]? = nil,
         pendingApplicationPublications: [PendingGroupApplicationPublicationV2]? = nil,
         processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]? = nil,
-        outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2]? = nil
+        outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2]? = nil,
+        inboundTransport: GroupOpaqueRouteInboundStateV2? = nil
     ) -> GroupRuntimeRecord {
         GroupRuntimeRecord(
             formatVersion: formatVersion,
@@ -1119,7 +1146,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             processedApplicationEnvelopes: processedApplicationEnvelopes
                 ?? self.processedApplicationEnvelopes,
             outboundTransportOperations: outboundTransportOperations
-                ?? self.outboundTransportOperations
+                ?? self.outboundTransportOperations,
+            inboundTransport: inboundTransport ?? self.inboundTransport
         )
     }
 
@@ -1161,6 +1189,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         try add(pendingApplicationPublications)
         try add(processedApplicationEnvelopes)
         try add(outboundTransportOperations)
+        try add(inboundTransport)
         return total
     }
 
@@ -1406,7 +1435,8 @@ public actor NoctweavePQGroupRuntimeV2 {
     ) async throws {
         guard let deletion = record.deletionState,
               deletion.origin == .local,
-              deletion.deletedState.tombstone.id == tombstoneID else {
+              deletion.deletedState.tombstone.id == tombstoneID,
+              hasCompletedDeletionTransport(tombstoneID: tombstoneID) else {
             throw GroupRuntimeError.publicationNotFound
         }
         let completed = try deletion.markingPublished(at: date)

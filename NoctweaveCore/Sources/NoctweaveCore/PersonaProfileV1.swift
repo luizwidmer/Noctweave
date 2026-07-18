@@ -4,6 +4,7 @@ public enum PersonaProfileV1Error: Error, Equatable {
     case invalidState
     case relationshipCapacityReached
     case groupCapacityReached
+    case groupAdmissionCapacityReached
 }
 
 /// A persona is local presentation and storage organization only. It has no
@@ -14,12 +15,14 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
     public static let version = 1
     public static let maximumRelationships = 4_096
     public static let maximumGroupRuntimes = 256
+    public static let maximumPendingGroupAdmissions = 32
 
     public let version: Int
     public let id: UUID
     public var displayName: String
     public internal(set) var relationships: [PairwiseRelationshipV2]
     public internal(set) var groupRuntimes: [GroupRuntimeRecord]
+    public internal(set) var pendingGroupAdmissions: [PendingGroupAdmissionV2]
     public let createdAt: Date
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -28,6 +31,7 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
         case displayName
         case relationships
         case groupRuntimes
+        case pendingGroupAdmissions
         case createdAt
     }
 
@@ -41,6 +45,7 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
         self.displayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         self.relationships = []
         self.groupRuntimes = []
+        self.pendingGroupAdmissions = []
         self.createdAt = createdAt
         guard try isStructurallyValidThrowing else {
             throw PersonaProfileV1Error.invalidState
@@ -67,6 +72,10 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
             forKey: .relationships
         )
         groupRuntimes = try container.decode([GroupRuntimeRecord].self, forKey: .groupRuntimes)
+        pendingGroupAdmissions = try container.decode(
+            [PendingGroupAdmissionV2].self,
+            forKey: .pendingGroupAdmissions
+        )
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         guard try isStructurallyValidThrowing else {
             throw DecodingError.dataCorruptedError(
@@ -93,6 +102,7 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
         try container.encode(displayName, forKey: .displayName)
         try container.encode(relationships, forKey: .relationships)
         try container.encode(groupRuntimes, forKey: .groupRuntimes)
+        try container.encode(pendingGroupAdmissions, forKey: .pendingGroupAdmissions)
         try container.encode(createdAt, forKey: .createdAt)
     }
 
@@ -103,6 +113,9 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
             }
             for groupRuntime in groupRuntimes {
                 guard try groupRuntime.isStructurallyValidThrowing else { return false }
+            }
+            for admission in pendingGroupAdmissions {
+                guard try admission.isStructurallyValidThrowing else { return false }
             }
             return hasValidAggregateStructureAfterRelationshipPreflight
         }
@@ -118,9 +131,17 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
               Set(relationships.map(\.id)).count == relationships.count,
               groupRuntimes.count <= Self.maximumGroupRuntimes,
               Set(groupRuntimes.map(\.groupId)).count == groupRuntimes.count,
+              pendingGroupAdmissions.count <= Self.maximumPendingGroupAdmissions,
+              Set(pendingGroupAdmissions.map(\.id)).count == pendingGroupAdmissions.count,
+              Set(pendingGroupAdmissions.map(\.groupID)).count
+                == pendingGroupAdmissions.count,
+              Set(groupRuntimes.map(\.groupId)).isDisjoint(
+                with: Set(pendingGroupAdmissions.map(\.groupID))
+              ),
               protocolScopesAreUnique(
                   relationships: relationships,
-                  groupRuntimes: groupRuntimes
+                  groupRuntimes: groupRuntimes,
+                  pendingGroupAdmissions: pendingGroupAdmissions
               ),
               createdAt.timeIntervalSince1970.isFinite else {
             return false
@@ -149,7 +170,8 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
         }
         guard protocolScopesAreUnique(
             relationships: updated,
-            groupRuntimes: groupRuntimes
+            groupRuntimes: groupRuntimes,
+            pendingGroupAdmissions: pendingGroupAdmissions
         ) else {
             throw PersonaProfileV1Error.invalidState
         }
@@ -171,11 +193,65 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
         }
         guard protocolScopesAreUnique(
             relationships: relationships,
-            groupRuntimes: updated
+            groupRuntimes: updated,
+            pendingGroupAdmissions: pendingGroupAdmissions
         ) else {
             throw PersonaProfileV1Error.invalidState
         }
         groupRuntimes = updated
+    }
+
+    public mutating func insert(
+        pendingGroupAdmission admission: PendingGroupAdmissionV2
+    ) throws {
+        guard try admission.isStructurallyValidThrowing,
+              !pendingGroupAdmissions.contains(where: {
+                  $0.id == admission.id || $0.groupID == admission.groupID
+              }),
+              !groupRuntimes.contains(where: { $0.groupId == admission.groupID }) else {
+            throw PersonaProfileV1Error.invalidState
+        }
+        guard pendingGroupAdmissions.count < Self.maximumPendingGroupAdmissions else {
+            throw PersonaProfileV1Error.groupAdmissionCapacityReached
+        }
+        let updated = pendingGroupAdmissions + [admission]
+        guard protocolScopesAreUnique(
+            relationships: relationships,
+            groupRuntimes: groupRuntimes,
+            pendingGroupAdmissions: updated
+        ) else {
+            throw PersonaProfileV1Error.invalidState
+        }
+        pendingGroupAdmissions = updated
+    }
+
+    public mutating func replace(
+        pendingGroupAdmission admission: PendingGroupAdmissionV2
+    ) throws {
+        guard try admission.isStructurallyValidThrowing,
+              let index = pendingGroupAdmissions.firstIndex(where: {
+                  $0.id == admission.id && $0.groupID == admission.groupID
+              }) else {
+            throw PersonaProfileV1Error.invalidState
+        }
+        var updated = pendingGroupAdmissions
+        updated[index] = admission
+        guard protocolScopesAreUnique(
+            relationships: relationships,
+            groupRuntimes: groupRuntimes,
+            pendingGroupAdmissions: updated
+        ) else {
+            throw PersonaProfileV1Error.invalidState
+        }
+        pendingGroupAdmissions = updated
+    }
+
+    @discardableResult
+    public mutating func removePendingGroupAdmission(id: UUID) -> PendingGroupAdmissionV2? {
+        guard let index = pendingGroupAdmissions.firstIndex(where: { $0.id == id }) else {
+            return nil
+        }
+        return pendingGroupAdmissions.remove(at: index)
     }
 
 }
@@ -185,7 +261,8 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
 /// routes are never reused, including between separate local personas.
 func protocolScopesAreUnique(
     relationships: [PairwiseRelationshipV2],
-    groupRuntimes: [GroupRuntimeRecord]
+    groupRuntimes: [GroupRuntimeRecord],
+    pendingGroupAdmissions: [PendingGroupAdmissionV2] = []
 ) -> Bool {
     var scopeIDs = Set<UUID>()
     var signingKeys = Set<Data>()
@@ -268,6 +345,35 @@ func protocolScopesAreUnique(
         signingKeys.formUnion(groupSigningKeys)
         agreementKeys.formUnion(groupAgreementKeys)
         admissionDigests.formUnion(groupAdmissionDigests)
+    }
+
+    for admission in pendingGroupAdmissions {
+        guard scopeIDs.insert(admission.groupID).inserted,
+              opaqueHandles.insert(admission.localCredential.memberHandle.rawValue).inserted,
+              opaqueHandles.insert(admission.localCredential.credentialHandle.rawValue).inserted,
+              signingKeys.insert(
+                  admission.localCredential.signingKey.publicKeyData
+              ).inserted,
+              agreementKeys.insert(
+                  admission.localCredential.agreementKey.publicKeyData
+              ).inserted,
+              admissionDigests.insert(admission.localCredential.admissionDigest).inserted else {
+            return false
+        }
+        let routes = [admission.pendingRoute?.clientCapabilities.routeID]
+            .compactMap { $0 }
+            + [admission.activeRoute?.id].compactMap { $0 }
+        let payloadKeys = [admission.pendingRoute?.payloadKey]
+            .compactMap { $0 }
+            + [admission.activeRoute?.localRoute.payloadKey].compactMap { $0 }
+        guard Set(routes).count == routes.count,
+              Set(payloadKeys).count == payloadKeys.count,
+              routeIDs.isDisjoint(with: Set(routes)),
+              routePayloadKeys.isDisjoint(with: Set(payloadKeys)) else {
+            return false
+        }
+        routeIDs.formUnion(routes)
+        routePayloadKeys.formUnion(payloadKeys)
     }
     return true
 }
