@@ -3,6 +3,31 @@ import XCTest
 @testable import NoctweaveRelayServer
 
 final class RelayWireExactEnvelopeTests: XCTestCase {
+    func testOpenDiscoveryGatewayRequiresExactEnvelopeResponse() throws {
+        XCTAssertEqual(
+            try OpenFederationDHTHTTPGatewayTransport.decodeQueryResponse(
+                Data(#"{"records":[]}"#.utf8),
+                limit: 4
+            ),
+            []
+        )
+
+        for invalid in [
+            Data(),
+            Data(#"[]"#.utf8),
+            Data(#"{"records":[],"legacy":true}"#.utf8)
+        ] {
+            XCTAssertThrowsError(
+                try OpenFederationDHTHTTPGatewayTransport.decodeQueryResponse(invalid, limit: 4)
+            ) { error in
+                XCTAssertEqual(
+                    error as? OpenFederationDHTGatewayTransportError,
+                    .invalidResponse
+                )
+            }
+        }
+    }
+
     func testHealthEnvelopeIsExactAndCorrelated() throws {
         let requestID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
         let request = RelayRequest.health(requestID: requestID)

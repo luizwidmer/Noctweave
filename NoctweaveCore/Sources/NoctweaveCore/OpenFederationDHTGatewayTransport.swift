@@ -71,16 +71,19 @@ public final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTrans
         applyCommonHeaders(to: &request)
         let (data, response) = try await boundedLoad(request)
         try validate(response: response, data: data)
-        guard !data.isEmpty else {
-            return []
+        return try Self.decodeQueryResponse(data, limit: limit)
+    }
+
+    static func decodeQueryResponse(_ data: Data, limit: Int) throws -> [OpenFederationDHTRecord] {
+        guard (1...OpenFederationDHTDiscoveryConfiguration.maximumQueryRecords).contains(limit) else {
+            throw OpenFederationDHTGatewayTransportError.invalidResponse
         }
-        if let envelope = try? NoctweaveCoder.decode(GatewayQueryResponse.self, from: data) {
+        do {
+            let envelope = try NoctweaveCoder.decode(GatewayQueryResponse.self, from: data)
             return Array(envelope.records.prefix(max(1, limit)))
+        } catch {
+            throw OpenFederationDHTGatewayTransportError.invalidResponse
         }
-        if let records = try? NoctweaveCoder.decode([OpenFederationDHTRecord].self, from: data) {
-            return Array(records.prefix(max(1, limit)))
-        }
-        throw OpenFederationDHTGatewayTransportError.invalidResponse
     }
 
     private func makeRecordsURL(namespace: String? = nil, limit: Int? = nil) -> URL? {
@@ -118,7 +121,7 @@ public final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTrans
     private func applyCommonHeaders(to request: inout URLRequest) {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Noctyra-DHT-Gateway/1", forHTTPHeaderField: "User-Agent")
+        request.setValue("Noctweave-Relay-DHT-Gateway/1", forHTTPHeaderField: "User-Agent")
         if let authToken {
             request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         }
@@ -161,5 +164,35 @@ public final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTrans
 
     private struct GatewayQueryResponse: Codable {
         let records: [OpenFederationDHTRecord]
+
+        private enum CodingKeys: String, CodingKey {
+            case records
+        }
+
+        init(from decoder: Decoder) throws {
+            let strict = try decoder.container(keyedBy: GatewayCodingKey.self)
+            guard Set(strict.allKeys.map(\.stringValue)) == [CodingKeys.records.rawValue] else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: decoder.codingPath, debugDescription: "Gateway response fields are not exact")
+                )
+            }
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            records = try container.decode([OpenFederationDHTRecord].self, forKey: .records)
+        }
+    }
+
+    private struct GatewayCodingKey: CodingKey {
+        let stringValue: String
+        let intValue: Int?
+
+        init?(stringValue: String) {
+            self.stringValue = stringValue
+            intValue = nil
+        }
+
+        init?(intValue: Int) {
+            stringValue = String(intValue)
+            self.intValue = intValue
+        }
     }
 }

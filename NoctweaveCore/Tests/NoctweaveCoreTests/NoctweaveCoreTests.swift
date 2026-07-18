@@ -1902,6 +1902,31 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(protocolHarness.requestCount, 1)
     }
 
+    func testOpenFederationDHTHTTPGatewayTransportRequiresExactEnvelopeResponse() throws {
+        XCTAssertEqual(
+            try OpenFederationDHTHTTPGatewayTransport.decodeQueryResponse(
+                Data(#"{"records":[]}"#.utf8),
+                limit: 4
+            ),
+            []
+        )
+
+        for invalid in [
+            Data(),
+            Data(#"[]"#.utf8),
+            Data(#"{"records":[],"legacy":true}"#.utf8)
+        ] {
+            XCTAssertThrowsError(
+                try OpenFederationDHTHTTPGatewayTransport.decodeQueryResponse(invalid, limit: 4)
+            ) { error in
+                XCTAssertEqual(
+                    error as? OpenFederationDHTGatewayTransportError,
+                    .invalidResponse
+                )
+            }
+        }
+    }
+
     func testOpenFederationDHTHTTPGatewayRefreshAppliesPoisoningAndFloodGuards() async throws {
         let now = Date(timeIntervalSince1970: 1_000)
         let federationName = "gateway-net"
