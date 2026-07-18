@@ -68,6 +68,10 @@ public enum SignedGroupV2Error: Error, Equatable {
 public struct GroupScopedCredentialHandleV2: RawRepresentable, Codable, Equatable, Hashable {
     public let rawValue: String
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case rawValue
+    }
+
     public init(rawValue: String) {
         self.rawValue = rawValue
     }
@@ -90,6 +94,36 @@ public struct GroupScopedCredentialHandleV2: RawRepresentable, Codable, Equatabl
             return false
         }
         return decoded.base64EncodedString() == rawValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactSignedGroupKeys(
+            decoder,
+            required: Set(CodingKeys.allCases.map(\.rawValue))
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(rawValue: try values.decode(String.self, forKey: .rawValue))
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .rawValue,
+                in: values,
+                debugDescription: "Invalid group-scoped credential handle"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                .init(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Invalid group-scoped credential handle"
+                )
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(rawValue, forKey: .rawValue)
     }
 }
 

@@ -361,6 +361,10 @@ public struct GroupPermissionPolicy: Codable, Equatable {
 public struct GroupScopedMemberHandleV2: RawRepresentable, Codable, Equatable, Hashable {
     public let rawValue: String
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case rawValue
+    }
+
     public init(rawValue: String) {
         self.rawValue = rawValue
     }
@@ -382,6 +386,33 @@ public struct GroupScopedMemberHandleV2: RawRepresentable, Codable, Equatable, H
             return false
         }
         return decoded.base64EncodedString() == rawValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactGroupArchitectureKeys(decoder, CodingKeys.self)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(rawValue: try values.decode(String.self, forKey: .rawValue))
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .rawValue,
+                in: values,
+                debugDescription: "Invalid group-scoped member handle"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                .init(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Invalid group-scoped member handle"
+                )
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(rawValue, forKey: .rawValue)
     }
 }
 
