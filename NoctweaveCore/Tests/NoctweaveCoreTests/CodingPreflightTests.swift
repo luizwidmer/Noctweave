@@ -55,7 +55,8 @@ final class CodingPreflightTests: XCTestCase {
         let inputs = [
             #"{"value":1,"\u0076alue":2}"#,
             #"{"/":1,"\/":2}"#,
-            #"{"😀":1,"\uD83D\uDE00":2}"#
+            #"{"😀":1,"\uD83D\uDE00":2}"#,
+            #"{"é":1,"e\u0301":2}"#
         ]
 
         for input in inputs {
@@ -82,6 +83,19 @@ final class CodingPreflightTests: XCTestCase {
         assertPreflightRejects(
             Data([0xEF, 0xBB, 0xBF]) + Data(#"{"value":1}"#.utf8),
             containing: "malformed input"
+        )
+    }
+
+    func testRejectsUnpairedUnicodeSurrogates() throws {
+        for input in [#"{"value":"\uD800"}"#, #"{"value":"\uDC00"}"#] {
+            assertPreflightRejects(Data(input.utf8), containing: "malformed input")
+        }
+        XCTAssertEqual(
+            try NoctweaveCoder.decode(
+                [String: String].self,
+                from: Data(#"{"value":"\uD83D\uDE00"}"#.utf8)
+            ),
+            ["value": "😀"]
         )
     }
 

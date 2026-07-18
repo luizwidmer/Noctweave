@@ -680,13 +680,24 @@ private struct RelayRawJSONValidator {
                 case 0x22, 0x2F, 0x5C, 0x62, 0x66, 0x6E, 0x72, 0x74:
                     index += 1
                 case 0x75:
-                    guard index + 4 < bytes.count else {
-                        throw error("Relay JSON Unicode escape is incomplete")
+                    guard let first = hexCodeUnit(startingAt: index + 1) else {
+                        throw error("Relay JSON Unicode escape is incomplete or invalid")
                     }
-                    for position in (index + 1)...(index + 4) where !Self.isHexDigit(bytes[position]) {
-                        throw error("Relay JSON Unicode escape is invalid")
+                    if (0xD800...0xDBFF).contains(first) {
+                        guard index + 10 < bytes.count,
+                              bytes[index + 5] == 0x5C,
+                              bytes[index + 6] == 0x75,
+                              let second = hexCodeUnit(startingAt: index + 7),
+                              (0xDC00...0xDFFF).contains(second) else {
+                            throw error("Relay JSON Unicode surrogate is unpaired")
+                        }
+                        index += 11
+                    } else {
+                        guard !(0xDC00...0xDFFF).contains(first) else {
+                            throw error("Relay JSON Unicode surrogate is unpaired")
+                        }
+                        index += 5
                     }
-                    index += 5
                 default:
                     throw error("Relay JSON string escape is invalid")
                 }
@@ -755,8 +766,23 @@ private struct RelayRawJSONValidator {
 
     private static func isDigit(_ byte: UInt8) -> Bool { (0x30...0x39).contains(byte) }
 
-    private static func isHexDigit(_ byte: UInt8) -> Bool {
-        (0x30...0x39).contains(byte) || (0x41...0x46).contains(byte) || (0x61...0x66).contains(byte)
+    private func hexCodeUnit(startingAt start: Int) -> UInt16? {
+        guard start >= 0, start + 4 <= bytes.count else { return nil }
+        var value: UInt16 = 0
+        for position in start..<(start + 4) {
+            guard let nibble = Self.hexNibble(bytes[position]) else { return nil }
+            value = (value << 4) | UInt16(nibble)
+        }
+        return value
+    }
+
+    private static func hexNibble(_ byte: UInt8) -> UInt8? {
+        switch byte {
+        case 0x30...0x39: return byte - 0x30
+        case 0x41...0x46: return byte - 0x41 + 10
+        case 0x61...0x66: return byte - 0x61 + 10
+        default: return nil
+        }
     }
 
     private func error(_ description: String) -> DecodingError {

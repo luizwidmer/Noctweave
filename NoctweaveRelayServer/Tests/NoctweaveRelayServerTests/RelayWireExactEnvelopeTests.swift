@@ -80,6 +80,13 @@ final class RelayWireExactEnvelopeTests: XCTestCase {
 
         let escapedResponse = Data(#"{"requestID":"11111111-2222-3333-4444-555555555555","module":"nw.core","version":2,"method":"health","status":"success","body":{},"\u0062ody":{},"error":null}"#.utf8)
         assertWireDecodeRejects(escapedResponse, as: RelayResponse.self, containing: "duplicate object member")
+
+        let canonicallyEquivalent = Data(#"{"é":1,"e\u0301":2}"#.utf8)
+        assertWireDecodeRejects(
+            canonicallyEquivalent,
+            as: [String: Int].self,
+            containing: "duplicate object member"
+        )
     }
 
     func testRawWireDecoderRejectsNestedDuplicatesAndExcessiveNesting() throws {
@@ -102,6 +109,21 @@ final class RelayWireExactEnvelopeTests: XCTestCase {
         let request = Data([0xEF, 0xBB, 0xBF])
             + Data(#"{"requestID":"11111111-2222-3333-4444-555555555555","module":"nw.core","version":2,"method":"health","body":{},"authToken":null}"#.utf8)
         assertWireDecodeRejects(request, as: RelayRequest.self, containing: "invalid value")
+    }
+
+    func testRawWireDecoderRejectsUnpairedUnicodeSurrogates() throws {
+        for input in [#"{"value":"\uD800"}"#, #"{"value":"\uDC00"}"#] {
+            assertWireDecodeRejects(
+                Data(input.utf8),
+                as: [String: String].self,
+                containing: "surrogate is unpaired"
+            )
+        }
+        let decoded = try RelayCodec.decodeWire(
+            [String: String].self,
+            from: Data(#"{"value":"\uD83D\uDE00"}"#.utf8)
+        )
+        XCTAssertEqual(decoded, ["value": "😀"])
     }
 
     private func object(_ data: Data) throws -> [String: Any] {
