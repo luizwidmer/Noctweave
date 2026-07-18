@@ -131,6 +131,7 @@ private struct OnionAAD: Codable {
 
 public enum OnionTransport {
     public static let currentVersion = 1
+    static let layerKeyDerivationSalt = Data("org.noctweave.onion-transport.layer-key/v1".utf8)
     public static let maximumHops = 8
     public static let maximumFinalPayloadBytes = 256 * 1024
     public static let maximumLayerBytes = 2 * 1024 * 1024
@@ -254,7 +255,7 @@ public enum OnionTransport {
     private static func deriveLayerKey(sharedSecret: Data, hopId: String) -> Data {
         CryptoBox.deriveChainKey(
             sharedSecret: sharedSecret,
-            salt: Data("NoctyraOnionTransport-v1".utf8),
+            salt: layerKeyDerivationSalt,
             info: Data("hop:\(hopId)".utf8)
         )
     }

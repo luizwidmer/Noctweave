@@ -9,6 +9,7 @@ import Glibc
 public actor ClientStateStore {
     public static let maximumPlaintextBytes = 64 * 1024 * 1024
     public static let maximumStoredBytes = 96 * 1024 * 1024
+    static let secureStorageService = "org.noctweave.securestorage"
     private let fileURL: URL
     private let useEncryption: Bool
     private let suppliedEncryptionKey: SymmetricKey?
@@ -127,7 +128,7 @@ public actor ClientStateStore {
             return suppliedEncryptionKey
         }
         return try SecureStorageKeyProvider.shared.loadOrCreateKey(
-            service: "com.noctyra.securestorage",
+            service: Self.secureStorageService,
             account: "vault-key-v1"
         )
     }

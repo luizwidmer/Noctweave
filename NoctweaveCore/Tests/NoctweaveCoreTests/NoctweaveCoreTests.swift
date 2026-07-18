@@ -3674,7 +3674,7 @@ private final class DHTGatewayURLProtocolHarness {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [DHTGatewayURLProtocol.self]
         let token = UUID().uuidString
-        configuration.httpAdditionalHeaders = ["X-Noctyra-Test-Token": token]
+        configuration.httpAdditionalHeaders = ["X-Noctweave-Test-Token": token]
         DHTGatewayURLProtocol.register(harness: self, token: token)
         return URLSession(configuration: configuration)
     }
@@ -3799,7 +3799,7 @@ private final class DHTGatewayURLProtocol: URLProtocol {
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
-        request.value(forHTTPHeaderField: "X-Noctyra-Test-Token") != nil
+        request.value(forHTTPHeaderField: "X-Noctweave-Test-Token") != nil
     }
 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest {
@@ -3807,7 +3807,7 @@ private final class DHTGatewayURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
-        guard let token = request.value(forHTTPHeaderField: "X-Noctyra-Test-Token"),
+        guard let token = request.value(forHTTPHeaderField: "X-Noctweave-Test-Token"),
               let harness = Self.harness(for: token),
               let url = request.url else {
             client?.urlProtocol(self, didFailWithError: OpenFederationDHTGatewayTransportError.invalidURL)

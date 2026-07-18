@@ -676,12 +676,12 @@ public struct ChatListSettings: Codable, Equatable {
 }
 
 public enum SecureTypingKeyboard: String, Codable, CaseIterable, Identifiable, Equatable {
-    case noctyra
+    case noctweave
     case apple
 
     public var id: String { rawValue }
-    public var displayName: String { self == .noctyra ? "Noctyra keyboard" : "Apple keyboard" }
-    public var shortName: String { self == .noctyra ? "Noctyra" : "Apple" }
+    public var displayName: String { self == .noctweave ? "Noctweave keyboard" : "Apple keyboard" }
+    public var shortName: String { self == .noctweave ? "Noctweave" : "Apple" }
 }
 
 public struct PrivacySettings: Codable, Equatable {
@@ -703,7 +703,7 @@ public struct PrivacySettings: Codable, Equatable {
 
     public init(
         secureTypingEnabled: Bool = true,
-        secureTypingKeyboard: SecureTypingKeyboard = .noctyra,
+        secureTypingKeyboard: SecureTypingKeyboard = .noctweave,
         useSecureCameraCapture: Bool = true,
         autoDownloadAttachments: Bool = true,
         hideSensitiveWhenUnfocused: Bool = true,

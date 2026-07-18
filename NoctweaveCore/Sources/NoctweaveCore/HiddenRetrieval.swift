@@ -523,6 +523,9 @@ public struct HiddenRetrievalPIRResponseShare: Codable, Equatable {
 }
 
 public enum HiddenRetrievalPlanner {
+    static let rankingDomain = Data("org.noctweave.hidden-retrieval.rank/v1".utf8)
+    static let xorPIRMaskDomain = Data("org.noctweave.hidden-retrieval.xor-pir-mask/v1".utf8)
+
     public static func makeCoverQuery(
         bucketId: String,
         availableRecordIds: [String],
@@ -866,7 +869,7 @@ public enum HiddenRetrievalPlanner {
         targetRecordId: String,
         secret: Data
     ) -> [UInt8] {
-        var data = Data("noctyra-hidden-retrieval-v1".utf8)
+        var data = rankingDomain
         data.append(Data(bucketId.utf8))
         data.append(0)
         data.append(Data(targetRecordId.utf8))
@@ -888,7 +891,7 @@ public enum HiddenRetrievalPlanner {
         var output = Data()
         var blockCounter: UInt64 = 0
         while output.count < byteCount {
-            var data = Data("noctyra-hidden-retrieval-xor-pir-v1".utf8)
+            var data = xorPIRMaskDomain
             data.append(Data(bucketId.utf8))
             data.append(0)
             data.append(Data(targetRecordId.utf8))

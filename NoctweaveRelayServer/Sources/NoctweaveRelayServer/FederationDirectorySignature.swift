@@ -9,13 +9,13 @@ enum FederationDirectorySignature {
                   let bundle = try? RelayCodec.decoder().decode(DirectorySigningKeyBundle.self, from: raw),
                   bundle.algorithm == algorithm,
                   let probeSignature = OQSSignatureVerifier.shared.sign(
-                data: Self.probePayload,
+                data: Self.keyProbeDomain,
                 privateKey: bundle.privateKeyData,
                 publicKey: bundle.publicKeyData
                   ),
                   OQSSignatureVerifier.shared.verify(
                 signature: probeSignature,
-                data: Self.probePayload,
+                data: Self.keyProbeDomain,
                 publicKey: bundle.publicKeyData
                   ) else {
                 return Data()
@@ -38,13 +38,13 @@ enum FederationDirectorySignature {
               let bundle = try? RelayCodec.decoder().decode(DirectorySigningKeyBundle.self, from: privateKeyData),
               bundle.algorithm == algorithm,
               let probeSignature = OQSSignatureVerifier.shared.sign(
-                data: Self.probePayload,
+                data: Self.keyProbeDomain,
                 privateKey: bundle.privateKeyData,
                 publicKey: bundle.publicKeyData
               ),
               OQSSignatureVerifier.shared.verify(
                 signature: probeSignature,
-                data: Self.probePayload,
+                data: Self.keyProbeDomain,
                 publicKey: bundle.publicKeyData
               ) else {
             return nil
@@ -92,7 +92,7 @@ enum FederationDirectorySignature {
         )
     }
 
-    private static let probePayload = Data("noctyra-directory-key-probe-v1".utf8)
+    static let keyProbeDomain = Data("org.noctweave.federation.directory-key-probe/v1".utf8)
 
     private enum DirectorySigningError: Error {
         case signingUnavailable
