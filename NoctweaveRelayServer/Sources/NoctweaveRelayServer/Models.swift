@@ -152,7 +152,7 @@ struct FederationDescriptor: Codable, Equatable {
     }
 
     var isStructurallyValid: Bool {
-        (name.map { isBoundedModelText($0, maximumUTF8Bytes: 128) } ?? true)
+        (name.map { isBoundedModelText($0, maximumUTF8Bytes: 1_024) } ?? true)
             && (description.map {
                 isBoundedModelText($0, maximumUTF8Bytes: 1_024)
             } ?? true)
@@ -213,8 +213,8 @@ struct HiddenRetrievalPIRReplica: Codable, Equatable {
     }
 
     var isStructurallyValid: Bool {
-        isBoundedModelText(replicaId, maximumUTF8Bytes: 128)
-            && isBoundedModelText(operatorId, maximumUTF8Bytes: 128)
+        isBoundedModelText(replicaId, maximumUTF8Bytes: 1_024)
+            && isBoundedModelText(operatorId, maximumUTF8Bytes: 1_024)
             && endpoint.isStructurallyValid
     }
 }
@@ -238,16 +238,18 @@ struct HiddenRetrievalSupport: Codable, Equatable {
         maxCoverSetSize: Int = 32,
         replicatedXorPIRReplicas: [HiddenRetrievalPIRReplica]? = nil
     ) {
-        let normalizedMax = max(2, maxCoverSetSize)
+        let normalizedMax = min(max(2, maxCoverSetSize), 4_096)
         self.mode = mode
         self.maxCoverSetSize = normalizedMax
         self.defaultCoverSetSize = min(max(2, defaultCoverSetSize), normalizedMax)
-        self.replicatedXorPIRReplicas = replicatedXorPIRReplicas?.map {
-            HiddenRetrievalPIRReplica(
-                replicaId: $0.replicaId,
-                operatorId: $0.operatorId,
-                endpoint: $0.endpoint
-            )
+        self.replicatedXorPIRReplicas = replicatedXorPIRReplicas.map { replicas in
+            Array(replicas.prefix(256)).map {
+                HiddenRetrievalPIRReplica(
+                    replicaId: $0.replicaId,
+                    operatorId: $0.operatorId,
+                    endpoint: $0.endpoint
+                )
+            }
         }
     }
 
@@ -269,6 +271,7 @@ struct HiddenRetrievalSupport: Codable, Equatable {
         )
         guard self.defaultCoverSetSize == defaultCoverSetSize,
               self.maxCoverSetSize == maxCoverSetSize,
+              replicatedXorPIRReplicas == replicas,
               isStructurallyValid else {
             throw DecodingError.dataCorruptedError(
                 forKey: .mode,
@@ -290,11 +293,25 @@ struct HiddenRetrievalSupport: Codable, Equatable {
     }
 
     var isStructurallyValid: Bool {
-        (2...4_096).contains(defaultCoverSetSize)
-            && (defaultCoverSetSize...4_096).contains(maxCoverSetSize)
-            && (replicatedXorPIRReplicas?.count ?? 0) <= 16
-            && (replicatedXorPIRReplicas?.allSatisfy(\.isStructurallyValid) ?? true)
-            && (mode == .replicatedXorPIR || replicatedXorPIRReplicas == nil)
+        guard (2...4_096).contains(defaultCoverSetSize),
+              (defaultCoverSetSize...4_096).contains(maxCoverSetSize) else {
+            return false
+        }
+        guard let replicas = replicatedXorPIRReplicas else {
+            return mode != .replicatedXorPIR
+        }
+        guard !replicas.isEmpty,
+              replicas.count <= 256,
+              replicas.allSatisfy(\.isStructurallyValid) else {
+            return false
+        }
+        let replicaIDs = replicas.map { $0.replicaId.lowercased() }
+        let operatorIDs = replicas.map { $0.operatorId.lowercased() }
+        let endpointKeys = replicas.map { relayEndpointModelKey($0.endpoint) }
+        return Set(replicaIDs).count == replicas.count
+            && Set(operatorIDs).count == replicas.count
+            && Set(endpointKeys).count == replicas.count
+            && (mode != .replicatedXorPIR || replicas.count >= 2)
     }
 }
 
@@ -2603,14 +2620,112 @@ struct UploadAttachmentRequest: Codable, Equatable {
     let chunkIndex: Int
     let payload: EncryptedPayload
     let ttlSeconds: Int?
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case attachmentId
+        case chunkIndex
+        case payload
+        case ttlSeconds
+    }
+
+    init(
+        attachmentId: UUID,
+        chunkIndex: Int,
+        payload: EncryptedPayload,
+        ttlSeconds: Int? = nil
+    ) {
+        self.attachmentId = attachmentId
+        self.chunkIndex = chunkIndex
+        self.payload = payload
+        self.ttlSeconds = ttlSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        try requireExactModelFields(decoder, CodingKeys.self, context: "Attachment upload request")
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            attachmentId: try values.decode(UUID.self, forKey: .attachmentId),
+            chunkIndex: try values.decode(Int.self, forKey: .chunkIndex),
+            payload: try values.decode(EncryptedPayload.self, forKey: .payload),
+            ttlSeconds: try values.decodeIfPresent(Int.self, forKey: .ttlSeconds)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .chunkIndex,
+                in: values,
+                debugDescription: "Attachment upload request is structurally invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw invalidModelEncoding(self, encoder, context: "Attachment upload request")
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(attachmentId, forKey: .attachmentId)
+        try values.encode(chunkIndex, forKey: .chunkIndex)
+        try values.encode(payload, forKey: .payload)
+        try values.encode(ttlSeconds, forKey: .ttlSeconds)
+    }
+
+    var isStructurallyValid: Bool {
+        let payloadBytes = payload.nonce.count + payload.ciphertext.count + payload.tag.count
+        return (0..<AttachmentChunk.maximumChunkCount).contains(chunkIndex)
+            && payload.isStructurallyValid
+            && payloadBytes <= AttachmentChunk.maximumPayloadBytes
+            && (ttlSeconds.map { (60...2_592_000).contains($0) } ?? true)
+    }
 }
 
 struct FetchAttachmentRequest: Codable, Equatable {
     let attachmentId: UUID
     let chunkIndex: Int
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case attachmentId
+        case chunkIndex
+    }
+
+    init(attachmentId: UUID, chunkIndex: Int) {
+        self.attachmentId = attachmentId
+        self.chunkIndex = chunkIndex
+    }
+
+    init(from decoder: Decoder) throws {
+        try requireExactModelFields(decoder, CodingKeys.self, context: "Attachment fetch request")
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            attachmentId: try values.decode(UUID.self, forKey: .attachmentId),
+            chunkIndex: try values.decode(Int.self, forKey: .chunkIndex)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .chunkIndex,
+                in: values,
+                debugDescription: "Attachment fetch request is structurally invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw invalidModelEncoding(self, encoder, context: "Attachment fetch request")
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(attachmentId, forKey: .attachmentId)
+        try values.encode(chunkIndex, forKey: .chunkIndex)
+    }
+
+    var isStructurallyValid: Bool {
+        (0..<AttachmentChunk.maximumChunkCount).contains(chunkIndex)
+    }
 }
 
 struct AttachmentChunk: Codable, Equatable {
+    static let maximumChunkCount = 512
+    static let maximumPayloadBytes = 128 * 1_024
+
     let attachmentId: UUID
     let chunkIndex: Int
     let payload: EncryptedPayload
@@ -2655,7 +2770,10 @@ struct AttachmentChunk: Codable, Equatable {
     }
 
     var isStructurallyValid: Bool {
-        chunkIndex >= 0 && payload.isStructurallyValid
+        let payloadBytes = payload.nonce.count + payload.ciphertext.count + payload.tag.count
+        return (0..<Self.maximumChunkCount).contains(chunkIndex)
+            && payload.isStructurallyValid
+            && payloadBytes <= Self.maximumPayloadBytes
     }
 }
 
