@@ -80,7 +80,7 @@ final class RelayHandler: ChannelInboundHandler {
             return
         }
         do {
-            let request = try RelayCodec.decoder().decode(RelayRequest.self, from: payload)
+            let request = try RelayCodec.decodeWire(RelayRequest.self, from: payload)
             let responseContext = NIOContextBox(context)
             handle(request, context: context).whenComplete { result in
                 switch result {
@@ -1075,7 +1075,7 @@ final class RelayHandler: ChannelInboundHandler {
                     let status = (response as? HTTPURLResponse)?.statusCode ?? -1
                     throw RelayForwardHTTPError.badStatus(status)
                 }
-                let decoded = try RelayCodec.decoder().decode(RelayResponse.self, from: data)
+                let decoded = try RelayCodec.decodeWire(RelayResponse.self, from: data)
                 guard decoded.isResponse(to: request) else {
                     throw RelayForwardHTTPError.invalidResponseBinding
                 }
@@ -1206,7 +1206,7 @@ private final class ForwardingHandler: ChannelInboundHandler {
             return
         }
         do {
-            let response = try RelayCodec.decoder().decode(RelayResponse.self, from: payload)
+            let response = try RelayCodec.decodeWire(RelayResponse.self, from: payload)
             guard response.isResponse(to: expectedRequest) else {
                 throw RelayForwardHTTPError.invalidResponseBinding
             }

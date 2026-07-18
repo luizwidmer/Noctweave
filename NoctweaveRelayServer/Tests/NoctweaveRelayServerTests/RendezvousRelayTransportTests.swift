@@ -679,7 +679,7 @@ private final class RendezvousRelayResponseHandler: ChannelInboundHandler {
         }
         do {
             resolved = true
-            promise.succeed(try RelayCodec.decoder().decode(RelayResponse.self, from: bytes))
+            promise.succeed(try RelayCodec.decodeWire(RelayResponse.self, from: bytes))
             context.close(promise: nil)
         } catch {
             fail(error, context: context)

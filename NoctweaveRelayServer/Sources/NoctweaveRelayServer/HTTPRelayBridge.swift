@@ -195,7 +195,7 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
         }
 
         let payload = requestBody.readData(length: requestBody.readableBytes) ?? Data()
-        guard let request = try? RelayCodec.decoder().decode(RelayRequest.self, from: payload) else {
+        guard let request = try? RelayCodec.decodeWire(RelayRequest.self, from: payload) else {
             sendHTTPResponse(
                 status: .badRequest,
                 body: Data(#"{"error":"Malformed relay request"}"#.utf8),
@@ -316,7 +316,7 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
                 context.close(promise: nil)
                 return
             }
-            guard let request = try? RelayCodec.decoder().decode(RelayRequest.self, from: payload) else {
+            guard let request = try? RelayCodec.decodeWire(RelayRequest.self, from: payload) else {
                 context.close(promise: nil)
                 return
             }

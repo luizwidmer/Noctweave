@@ -75,10 +75,10 @@ final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTransport {
         guard !data.isEmpty else {
             return []
         }
-        if let envelope = try? RelayCodec.decoder().decode(GatewayQueryResponse.self, from: data) {
+        if let envelope = try? RelayCodec.decodeWire(GatewayQueryResponse.self, from: data) {
             return Array(envelope.records.prefix(max(1, limit)))
         }
-        if let records = try? RelayCodec.decoder().decode([OpenFederationDHTRecord].self, from: data) {
+        if let records = try? RelayCodec.decodeWire([OpenFederationDHTRecord].self, from: data) {
             return Array(records.prefix(max(1, limit)))
         }
         throw OpenFederationDHTGatewayTransportError.invalidResponse

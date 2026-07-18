@@ -13,7 +13,7 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
             OpaqueRouteAppendSubmissionV2(packet: packet, sendCapability: fixture.send)
         )
         let encoded = try RelayCodec.encoder(sortedKeys: true).encode(request)
-        let decoded = try RelayCodec.decoder().decode(RelayRequest.self, from: encoded)
+        let decoded = try RelayCodec.decodeWire(RelayRequest.self, from: encoded)
         guard case .appendOpaqueRoute(let submission) = decoded.body else {
             return XCTFail("Expected opaque route append request body")
         }

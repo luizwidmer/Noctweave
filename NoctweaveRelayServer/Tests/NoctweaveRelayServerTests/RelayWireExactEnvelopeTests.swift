@@ -19,12 +19,12 @@ final class RelayWireExactEnvelopeTests: XCTestCase {
         let responseObject = try object(RelayCodec.encoder().encode(response))
         XCTAssertEqual(Set(responseObject.keys), ["requestID", "module", "version", "method", "status", "body", "error"])
         XCTAssertTrue(responseObject["error"] is NSNull)
-        XCTAssertTrue(try RelayCodec.decoder().decode(RelayResponse.self, from: RelayCodec.encoder().encode(response)).isResponse(to: request))
+        XCTAssertTrue(try RelayCodec.decodeWire(RelayResponse.self, from: RelayCodec.encoder().encode(response)).isResponse(to: request))
     }
 
     func testRequestRejectsOldShapeUnknownFieldsAndBindingMismatches() throws {
         XCTAssertThrowsError(
-            try RelayCodec.decoder().decode(
+            try RelayCodec.decodeWire(
                 RelayRequest.self,
                 from: Data(#"{"type":"health"}"#.utf8)
             )
@@ -71,21 +71,75 @@ final class RelayWireExactEnvelopeTests: XCTestCase {
         XCTAssertThrowsError(try decodeResponse(malformed))
     }
 
+    func testRawWireDecoderRejectsRepeatedAndEscapedEquivalentMemberNames() throws {
+        let repeatedRequest = Data(#"{"requestID":"11111111-2222-3333-4444-555555555555","module":"nw.core","version":2,"method":"health","method":"info","body":{},"authToken":null}"#.utf8)
+        assertWireDecodeRejects(repeatedRequest, as: RelayRequest.self, containing: "duplicate object member")
+
+        let escapedRequest = Data(#"{"requestID":"11111111-2222-3333-4444-555555555555","module":"nw.core","version":2,"method":"health","\u006dethod":"info","body":{},"authToken":null}"#.utf8)
+        assertWireDecodeRejects(escapedRequest, as: RelayRequest.self, containing: "duplicate object member")
+
+        let escapedResponse = Data(#"{"requestID":"11111111-2222-3333-4444-555555555555","module":"nw.core","version":2,"method":"health","status":"success","body":{},"\u0062ody":{},"error":null}"#.utf8)
+        assertWireDecodeRejects(escapedResponse, as: RelayResponse.self, containing: "duplicate object member")
+    }
+
+    func testRawWireDecoderRejectsNestedDuplicatesAndExcessiveNesting() throws {
+        let nestedDuplicate = Data(#"{"requestID":"11111111-2222-3333-4444-555555555555","module":"nw.core","version":2,"method":"health","body":{"x":null,"\u0078":null},"authToken":null}"#.utf8)
+        assertWireDecodeRejects(nestedDuplicate, as: RelayRequest.self, containing: "duplicate object member")
+
+        let nestedPrefix = String(repeating: #"{"x":"#, count: 129)
+        let nestedSuffix = String(repeating: "}", count: 129)
+        let tooDeep = Data(#"{"requestID":"11111111-2222-3333-4444-555555555555","module":"nw.core","version":2,"method":"health","body":\#(nestedPrefix){}\#(nestedSuffix),"authToken":null}"#.utf8)
+        assertWireDecodeRejects(tooDeep, as: RelayRequest.self, containing: "maximum nesting depth")
+    }
+
+    func testRawWireDecoderPreservesValidEscapedMemberNames() throws {
+        let escapedUniqueKey = Data(#"{"requestID":"11111111-2222-3333-4444-555555555555","m\u006fdule":"nw.core","version":2,"method":"health","body":{},"authToken":null}"#.utf8)
+        let decoded = try RelayCodec.decodeWire(RelayRequest.self, from: escapedUniqueKey)
+        XCTAssertEqual(decoded.binding, .init(module: .core, version: 2, method: .health))
+    }
+
+    func testRawWireDecoderRejectsUTF8ByteOrderMark() {
+        let request = Data([0xEF, 0xBB, 0xBF])
+            + Data(#"{"requestID":"11111111-2222-3333-4444-555555555555","module":"nw.core","version":2,"method":"health","body":{},"authToken":null}"#.utf8)
+        assertWireDecodeRejects(request, as: RelayRequest.self, containing: "invalid value")
+    }
+
     private func object(_ data: Data) throws -> [String: Any] {
         try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
     private func decodeRequest(_ value: [String: Any]) throws -> RelayRequest {
-        try RelayCodec.decoder().decode(
+        try RelayCodec.decodeWire(
             RelayRequest.self,
             from: JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         )
     }
 
     private func decodeResponse(_ value: [String: Any]) throws -> RelayResponse {
-        try RelayCodec.decoder().decode(
+        try RelayCodec.decodeWire(
             RelayResponse.self,
             from: JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         )
+    }
+
+    private func assertWireDecodeRejects<T: Decodable>(
+        _ data: Data,
+        as type: T.Type,
+        containing expected: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertThrowsError(
+            try RelayCodec.decodeWire(type, from: data),
+            file: file,
+            line: line
+        ) { error in
+            XCTAssertTrue(
+                String(describing: error).contains(expected),
+                "Expected \(error) to contain \(expected)",
+                file: file,
+                line: line
+            )
+        }
     }
 }

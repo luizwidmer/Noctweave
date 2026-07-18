@@ -63,7 +63,7 @@ final class OpenFederationDHTHTTPRelayQueryClient: OpenFederationDHTRelayQueryCl
         guard (200..<300).contains(http.statusCode) else {
             throw OpenFederationDHTNativeOverlayTransportError.badStatus(http.statusCode)
         }
-        guard let decoded = try? RelayCodec.decoder().decode(RelayResponse.self, from: data) else {
+        guard let decoded = try? RelayCodec.decodeWire(RelayResponse.self, from: data) else {
             throw OpenFederationDHTNativeOverlayTransportError.invalidResponse
         }
         guard decoded.isResponse(to: request) else {

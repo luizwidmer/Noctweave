@@ -194,7 +194,7 @@ private final class OpaqueRouteRelayResponseHandler: ChannelInboundHandler {
             return
         }
         do {
-            succeed(try RelayCodec.decoder().decode(RelayResponse.self, from: responseData))
+            succeed(try RelayCodec.decodeWire(RelayResponse.self, from: responseData))
         } catch {
             fail(error)
         }

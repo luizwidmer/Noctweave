@@ -549,3 +549,217 @@ private func relayWireError(_ decoder: Decoder, _ description: String) -> Decodi
 private func relayWireError(_ encoder: Encoder, _ description: String) -> EncodingError {
     .invalidValue(description, .init(codingPath: encoder.codingPath, debugDescription: description))
 }
+
+extension RelayCodec {
+    /// Decodes relay wire JSON only after validating the raw object structure.
+    ///
+    /// Foundation's `JSONDecoder` collapses duplicate object members before a
+    /// `Decodable` implementation can inspect them. Protocol inputs must use
+    /// this entry point so an attacker cannot smuggle conflicting values under
+    /// repeated or escape-equivalent member names.
+    static func decodeWire<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        var validator = RelayRawJSONValidator(data: data)
+        try validator.validate()
+        return try decoder().decode(type, from: data)
+    }
+}
+
+private struct RelayRawJSONValidator {
+    private static let maximumNestingDepth = 128
+
+    private let bytes: [UInt8]
+    private var index: Int
+
+    init(data: Data) {
+        bytes = Array(data)
+        index = 0
+    }
+
+    mutating func validate() throws {
+        guard String(bytes: bytes, encoding: .utf8) != nil else {
+            throw error("Relay JSON is not valid UTF-8")
+        }
+        skipWhitespace()
+        try parseValue(containerDepth: 0)
+        skipWhitespace()
+        guard index == bytes.count else {
+            throw error("Relay JSON contains trailing data")
+        }
+    }
+
+    private mutating func parseValue(containerDepth: Int) throws {
+        guard index < bytes.count else { throw error("Relay JSON ended before a value") }
+        switch bytes[index] {
+        case 0x7B: // {
+            try enterContainer(from: containerDepth)
+            try parseObject(depth: containerDepth + 1)
+        case 0x5B: // [
+            try enterContainer(from: containerDepth)
+            try parseArray(depth: containerDepth + 1)
+        case 0x22: // "
+            _ = try consumeString()
+        case 0x74: // true
+            try consumeLiteral([0x74, 0x72, 0x75, 0x65])
+        case 0x66: // false
+            try consumeLiteral([0x66, 0x61, 0x6C, 0x73, 0x65])
+        case 0x6E: // null
+            try consumeLiteral([0x6E, 0x75, 0x6C, 0x6C])
+        case 0x2D, 0x30...0x39: // - or digit
+            try consumeNumber()
+        default:
+            throw error("Relay JSON contains an invalid value")
+        }
+    }
+
+    private mutating func enterContainer(from depth: Int) throws {
+        guard depth < Self.maximumNestingDepth else {
+            throw error("Relay JSON exceeds the maximum nesting depth")
+        }
+    }
+
+    private mutating func parseObject(depth: Int) throws {
+        index += 1
+        skipWhitespace()
+        if consume(0x7D) { return }
+
+        var memberNames = Set<String>()
+        while true {
+            guard index < bytes.count, bytes[index] == 0x22 else {
+                throw error("Relay JSON object member name is invalid")
+            }
+            let nameRange = try consumeString()
+            let nameData = Data(bytes[nameRange])
+            guard let name = try? JSONSerialization.jsonObject(
+                with: nameData,
+                options: [.fragmentsAllowed]
+            ) as? String else {
+                throw error("Relay JSON object member name is invalid")
+            }
+            guard memberNames.insert(name).inserted else {
+                throw error("Relay JSON contains a duplicate object member")
+            }
+
+            skipWhitespace()
+            guard consume(0x3A) else { throw error("Relay JSON object is missing a colon") }
+            skipWhitespace()
+            try parseValue(containerDepth: depth)
+            skipWhitespace()
+            if consume(0x7D) { return }
+            guard consume(0x2C) else { throw error("Relay JSON object is missing a comma") }
+            skipWhitespace()
+        }
+    }
+
+    private mutating func parseArray(depth: Int) throws {
+        index += 1
+        skipWhitespace()
+        if consume(0x5D) { return }
+
+        while true {
+            try parseValue(containerDepth: depth)
+            skipWhitespace()
+            if consume(0x5D) { return }
+            guard consume(0x2C) else { throw error("Relay JSON array is missing a comma") }
+            skipWhitespace()
+        }
+    }
+
+    private mutating func consumeString() throws -> Range<Int> {
+        let start = index
+        index += 1
+        while index < bytes.count {
+            let byte = bytes[index]
+            switch byte {
+            case 0x22:
+                index += 1
+                return start..<index
+            case 0x5C:
+                index += 1
+                guard index < bytes.count else { throw error("Relay JSON string escape is incomplete") }
+                switch bytes[index] {
+                case 0x22, 0x2F, 0x5C, 0x62, 0x66, 0x6E, 0x72, 0x74:
+                    index += 1
+                case 0x75:
+                    guard index + 4 < bytes.count else {
+                        throw error("Relay JSON Unicode escape is incomplete")
+                    }
+                    for position in (index + 1)...(index + 4) where !Self.isHexDigit(bytes[position]) {
+                        throw error("Relay JSON Unicode escape is invalid")
+                    }
+                    index += 5
+                default:
+                    throw error("Relay JSON string escape is invalid")
+                }
+            case 0x00...0x1F:
+                throw error("Relay JSON string contains a control byte")
+            default:
+                index += 1
+            }
+        }
+        throw error("Relay JSON string is unterminated")
+    }
+
+    private mutating func consumeLiteral(_ literal: [UInt8]) throws {
+        guard index + literal.count <= bytes.count,
+              Array(bytes[index..<(index + literal.count)]) == literal else {
+            throw error("Relay JSON literal is invalid")
+        }
+        index += literal.count
+    }
+
+    private mutating func consumeNumber() throws {
+        if consume(0x2D), index == bytes.count {
+            throw error("Relay JSON number is incomplete")
+        }
+
+        if consume(0x30) {
+            if index < bytes.count, Self.isDigit(bytes[index]) {
+                throw error("Relay JSON number has a leading zero")
+            }
+        } else {
+            guard index < bytes.count, (0x31...0x39).contains(bytes[index]) else {
+                throw error("Relay JSON number is invalid")
+            }
+            index += 1
+            while index < bytes.count, Self.isDigit(bytes[index]) { index += 1 }
+        }
+
+        if consume(0x2E) {
+            guard index < bytes.count, Self.isDigit(bytes[index]) else {
+                throw error("Relay JSON fraction is incomplete")
+            }
+            while index < bytes.count, Self.isDigit(bytes[index]) { index += 1 }
+        }
+
+        if index < bytes.count, bytes[index] == 0x65 || bytes[index] == 0x45 {
+            index += 1
+            if index < bytes.count, bytes[index] == 0x2B || bytes[index] == 0x2D { index += 1 }
+            guard index < bytes.count, Self.isDigit(bytes[index]) else {
+                throw error("Relay JSON exponent is incomplete")
+            }
+            while index < bytes.count, Self.isDigit(bytes[index]) { index += 1 }
+        }
+    }
+
+    private mutating func skipWhitespace() {
+        while index < bytes.count, [0x20, 0x09, 0x0A, 0x0D].contains(bytes[index]) {
+            index += 1
+        }
+    }
+
+    private mutating func consume(_ byte: UInt8) -> Bool {
+        guard index < bytes.count, bytes[index] == byte else { return false }
+        index += 1
+        return true
+    }
+
+    private static func isDigit(_ byte: UInt8) -> Bool { (0x30...0x39).contains(byte) }
+
+    private static func isHexDigit(_ byte: UInt8) -> Bool {
+        (0x30...0x39).contains(byte) || (0x41...0x46).contains(byte) || (0x61...0x66).contains(byte)
+    }
+
+    private func error(_ description: String) -> DecodingError {
+        .dataCorrupted(.init(codingPath: [], debugDescription: description))
+    }
+}
