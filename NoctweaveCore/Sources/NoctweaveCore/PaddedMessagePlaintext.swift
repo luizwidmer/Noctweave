@@ -3,19 +3,8 @@ import Foundation
 enum PaddedMessagePlaintext {
     static let minimumPaddedBytes = 512
     static let maximumPaddedBytes = 65_536
-    private static let groupPayloadMagic = Data([0x4E, 0x57, 0x47, 0x50, 0x01]) // NWGP v1
     private static let wirePayloadV2Magic = Data([0x4E, 0x50, 0x41, 0x44, 0x02]) // NPAD v2
     private static let headerBytes = 9
-
-    /// Experimental group payloads have their own wire discriminator. They
-    /// are not accepted by the direct-message decoder.
-    static func encodeGroupMessageBody(_ body: MessageBody) throws -> Data {
-        try encode(body, magic: groupPayloadMagic)
-    }
-
-    static func decodeGroupMessageBody(_ data: Data) throws -> MessageBody {
-        try decode(MessageBody.self, from: data, magic: groupPayloadMagic)
-    }
 
     static func encodeWirePayloadV2(_ payload: WirePayloadV2) throws -> Data {
         guard payload.isStructurallyValid else { throw WirePayloadV2Error.invalidPayload }
