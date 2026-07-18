@@ -829,13 +829,13 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
     ) throws {
         guard credential.isStructurallyValid,
               credential.groupId == membership.groupId,
-              let credential = membership.credentials.first(where: {
+              let projectedCredential = membership.credentials.first(where: {
                   $0.credentialHandle == credential.credentialHandle
               }),
-              credential.memberHandle == credential.memberHandle,
-              credential.admissionDigest == credential.admissionDigest,
-              credential.signingPublicKey == credential.signingKey.publicKeyData,
-              credential.agreementPublicKey == credential.agreementKey.publicKeyData else {
+              projectedCredential.memberHandle == credential.memberHandle,
+              projectedCredential.admissionDigest == credential.admissionDigest,
+              projectedCredential.signingPublicKey == credential.signingKey.publicKeyData,
+              projectedCredential.agreementPublicKey == credential.agreementKey.publicKeyData else {
             throw NoctweavePQGroupExperimentalErrorV2.invalidCredential
         }
     }

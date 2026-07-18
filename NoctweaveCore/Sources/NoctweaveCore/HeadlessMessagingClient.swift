@@ -425,7 +425,7 @@ public actor HeadlessMessagingClient {
             sentAt: date
         )
         if sent.acceptedDeliveryCount > 0 {
-            var current = try relationship(relationshipID)
+            var current = try self.relationship(relationshipID)
             try finalizeProtocolIntent(
                 id: intent.id,
                 relationship: &current,
@@ -692,7 +692,7 @@ public actor HeadlessMessagingClient {
         guard try relationship(relationshipID).localPolicy.allowsUserSending else {
             throw HeadlessMessagingClientError.relationshipConsentRequired
         }
-        try await publishPendingDeliveries(relationshipID: relationshipID)
+        return try await publishPendingDeliveries(relationshipID: relationshipID)
     }
 
     public func sync(

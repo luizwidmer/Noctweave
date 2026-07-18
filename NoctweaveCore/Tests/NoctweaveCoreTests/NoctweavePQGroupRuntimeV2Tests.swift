@@ -129,13 +129,16 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
             let route = publication.destinationRouteID == firstRoute.routeID
                 ? firstRoute
                 : secondRoute
-            var reassembler = OpaqueRoutePacketReassemblerV2()
+            var reassembler = try OpaqueRoutePacketReassemblerV2()
             var reconstructed: OpaqueRouteReassembledBundleV2?
             for packet in publication.packets {
-                reconstructed = try reassembler.accept(packet.open(
+                if case let .complete(bundle) = try reassembler.consume(
+                    packet,
                     payloadKey: route.payloadKey,
                     routeRevision: route.routeRevision
-                )) ?? reconstructed
+                ) {
+                    reconstructed = bundle
+                }
             }
             XCTAssertEqual(reconstructed?.payload, encodedEnvelope)
         }

@@ -95,7 +95,22 @@ final class ArchitectureV2RelayWireTests: XCTestCase {
         guard case .opaqueRouteCommit(let committed)? = commitResponse.successBody else {
             return XCTFail("Expected opaque route commit response")
         }
-        XCTAssertEqual(committed.committedCursor, batch.nextCursor)
+        XCTAssertTrue(committed.committedCursor.isStructurallyValid)
+
+        let afterCommit = try material.makeSyncRequest(
+            after: committed.committedCursor,
+            limit: 8
+        )
+        let afterCommitResponse = try await client.send(.syncOpaqueRouteV2(
+            SyncOpaqueRouteRelayRequestV2(
+                request: afterCommit,
+                readCredential: material.readCredential
+            )
+        ))
+        guard case .opaqueRouteSync(let afterCommitBatch)? = afterCommitResponse.successBody else {
+            return XCTFail("Expected post-commit opaque route sync response")
+        }
+        XCTAssertTrue(afterCommitBatch.packets.isEmpty)
 
         let renewal = try material.makeRenewRequest(
             current: created,

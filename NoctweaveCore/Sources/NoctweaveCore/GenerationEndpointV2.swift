@@ -848,7 +848,7 @@ private struct RelationshipEndpointAuthorizationReferenceV4: Codable {
     let authoritySignature: Data
 }
 
-private struct RelationshipEndpointPrekeyPayloadV4: Codable {
+private struct RelationshipEndpointPrekeyPayloadV4: Encodable {
     let purpose = "Noctweave/relationship-endpoint-prekey-package/v4"
     let endpointAuthorizationDigest: Data
     let bundle: PrekeyBundle

@@ -93,7 +93,7 @@ final class EnvelopeWireVectorTests: XCTestCase {
             0
         )
         XCTAssertTrue(envelope.verifySignature(
-            groupClientSigningPublicKey: signingKey.publicKeyData
+            groupCredentialSigningPublicKey: signingKey.publicKeyData
         ))
     }
 
