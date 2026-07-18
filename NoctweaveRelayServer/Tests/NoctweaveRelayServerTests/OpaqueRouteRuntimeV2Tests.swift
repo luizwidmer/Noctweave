@@ -27,6 +27,10 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
             authorization: packet.authorization
         )
         XCTAssertFalse(malformed.isStructurallyValid)
+        XCTAssertThrowsError(try RelayCodec.encoder(sortedKeys: true).encode(malformed))
+        XCTAssertThrowsError(try RelayCodec.encoder(sortedKeys: true).encode(
+            RouteReadCredentialV2(rawValue: Data(repeating: 0, count: 32))
+        ))
     }
 
     func testPersistenceRestartIdempotencyCursorAndByteFidelity() throws {
@@ -312,6 +316,142 @@ final class OpaqueRouteRuntimeV2Tests: XCTestCase {
             ).opaqueRouteRuntimeEnabled
         )
     }
+
+    func testOpaqueRouteWireAndPersistenceRejectUnknownNestedFields() throws {
+        let fixture = Fixture()
+        let create = try fixture.create(at: fixture.now)
+
+        var createObject = try opaqueRouteRelayJSONObject(create)
+        var requestObject = try XCTUnwrap(createObject["request"] as? [String: Any])
+        var leaseObject = try XCTUnwrap(requestObject["lease"] as? [String: Any])
+        var policyObject = try XCTUnwrap(leaseObject["policy"] as? [String: Any])
+        policyObject["unexpected"] = true
+        leaseObject["policy"] = policyObject
+        requestObject["lease"] = leaseObject
+        createObject["request"] = requestObject
+        XCTAssertThrowsError(try RelayCodec.decodeWire(
+            OpaqueRouteCreateSubmissionV2.self,
+            from: opaqueRouteRelayJSONData(createObject)
+        ))
+
+        let sync = try fixture.sync(
+            at: fixture.now.addingTimeInterval(1),
+            discriminator: 0xA1
+        )
+        var syncObject = try opaqueRouteRelayJSONObject(sync)
+        var syncRequest = try XCTUnwrap(syncObject["request"] as? [String: Any])
+        XCTAssertTrue(syncRequest["after"] is NSNull)
+        syncRequest.removeValue(forKey: "after")
+        syncObject["request"] = syncRequest
+        XCTAssertThrowsError(try RelayCodec.decodeWire(
+            OpaqueRouteSyncSubmissionV2.self,
+            from: opaqueRouteRelayJSONData(syncObject)
+        ))
+
+        let packet = try fixture.packet(
+            at: fixture.now.addingTimeInterval(2),
+            fill: 0xA2
+        )
+        let append = OpaqueRouteAppendSubmissionV2(
+            packet: packet,
+            sendCapability: fixture.send
+        )
+        var appendObject = try opaqueRouteRelayJSONObject(append)
+        var packetObject = try XCTUnwrap(appendObject["packet"] as? [String: Any])
+        var authorization = try XCTUnwrap(packetObject["authorization"] as? [String: Any])
+        var nonce = try XCTUnwrap(authorization["nonce"] as? [String: Any])
+        nonce["unexpected"] = true
+        authorization["nonce"] = nonce
+        packetObject["authorization"] = authorization
+        appendObject["packet"] = packetObject
+        XCTAssertThrowsError(try RelayCodec.decodeWire(
+            OpaqueRouteAppendSubmissionV2.self,
+            from: opaqueRouteRelayJSONData(appendObject)
+        ))
+
+        var state = OpaqueRouteRuntimeStateV2()
+        _ = try state.create(create, confidentialTransport: true, receivedAt: fixture.now)
+        _ = try state.append(
+            append,
+            confidentialTransport: true,
+            receivedAt: fixture.now.addingTimeInterval(2)
+        )
+        _ = try state.sync(
+            try fixture.sync(
+                at: fixture.now.addingTimeInterval(3),
+                discriminator: 0xA3
+            ),
+            confidentialTransport: true,
+            receivedAt: fixture.now.addingTimeInterval(3)
+        )
+
+        var stateObject = try opaqueRouteRelayJSONObject(state)
+        var routes = try XCTUnwrap(stateObject["routes"] as? [String: Any])
+        let routeKey = try XCTUnwrap(routes.keys.first)
+        var persistedRoute = try XCTUnwrap(routes[routeKey] as? [String: Any])
+        persistedRoute["unexpected"] = true
+        routes[routeKey] = persistedRoute
+        stateObject["routes"] = routes
+        XCTAssertThrowsError(try RelayCodec.decodeWire(
+            OpaqueRouteRuntimeStateV2.self,
+            from: opaqueRouteRelayJSONData(stateObject)
+        ))
+
+        var cachedResultObject: Any = try opaqueRouteRelayJSONObject(state)
+        XCTAssertTrue(opaqueRouteInjectUnknownField(
+            into: &cachedResultObject,
+            objectContaining: "kind"
+        ))
+        XCTAssertThrowsError(try RelayCodec.decodeWire(
+            OpaqueRouteRuntimeStateV2.self,
+            from: try JSONSerialization.data(
+                withJSONObject: cachedResultObject,
+                options: [.sortedKeys]
+            )
+        ))
+    }
+}
+
+private func opaqueRouteRelayJSONObject<T: Encodable>(_ value: T) throws -> [String: Any] {
+    let data = try RelayCodec.encoder(sortedKeys: true).encode(value)
+    return try XCTUnwrap(
+        JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+}
+
+private func opaqueRouteRelayJSONData(_ object: [String: Any]) throws -> Data {
+    try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+}
+
+private func opaqueRouteInjectUnknownField(
+    into value: inout Any,
+    objectContaining key: String
+) -> Bool {
+    if var object = value as? [String: Any] {
+        if object[key] != nil {
+            object["unexpected"] = true
+            value = object
+            return true
+        }
+        for childKey in object.keys.sorted() {
+            var child = object[childKey] as Any
+            if opaqueRouteInjectUnknownField(into: &child, objectContaining: key) {
+                object[childKey] = child
+                value = object
+                return true
+            }
+        }
+    } else if var array = value as? [Any] {
+        for index in array.indices {
+            var child = array[index]
+            if opaqueRouteInjectUnknownField(into: &child, objectContaining: key) {
+                array[index] = child
+                value = array
+                return true
+            }
+        }
+    }
+    return false
 }
 
 private struct Fixture {
