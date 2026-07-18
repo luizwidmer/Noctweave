@@ -683,7 +683,10 @@ public enum ContactPairingHandshakeV2 {
     /// Executes the typed handshake state machine. Network adapters transport
     /// the returned rendezvous frames in the same order; this helper proves the
     /// cryptographic and persistence objects without assigning trust to a relay.
-    public static func establish(
+    /// Test/conformance orchestration only. Production callers drive the
+    /// offerer and responder flows independently and never co-locate both
+    /// participants' private relationship state.
+    static func establish(
         pendingOffer: inout PendingRendezvousOfferV2,
         invitation: ContactPairingInvitationV2,
         offerer: PreparedContactParticipantV2,

@@ -18,8 +18,8 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
     public let version: Int
     public let id: UUID
     public var displayName: String
-    public var relationships: [PairwiseRelationshipV2]
-    public var groupRuntimes: [GroupRuntimeRecord]
+    public internal(set) var relationships: [PairwiseRelationshipV2]
+    public internal(set) var groupRuntimes: [GroupRuntimeRecord]
     public let createdAt: Date
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -106,6 +106,10 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
               groupRuntimes.count <= Self.maximumGroupRuntimes,
               Set(groupRuntimes.map(\.groupId)).count == groupRuntimes.count,
               groupRuntimes.allSatisfy(\.isStructurallyValid),
+              protocolScopesAreUnique(
+                  relationships: relationships,
+                  groupRuntimes: groupRuntimes
+              ),
               createdAt.timeIntervalSince1970.isFinite else {
             return false
         }
@@ -118,30 +122,138 @@ public struct PersonaProfileV1: Codable, Equatable, Identifiable {
         guard relationship.isStructurallyValid else {
             throw PersonaProfileV1Error.invalidState
         }
-        if let index = relationships.firstIndex(where: { $0.id == relationship.id }) {
-            relationships[index] = relationship
-            return
+        var updated = relationships
+        if let index = updated.firstIndex(where: { $0.id == relationship.id }) {
+            updated[index] = relationship
+        } else {
+            guard updated.count < Self.maximumRelationships else {
+                throw PersonaProfileV1Error.relationshipCapacityReached
+            }
+            updated.append(relationship)
         }
-        guard relationships.count < Self.maximumRelationships else {
-            throw PersonaProfileV1Error.relationshipCapacityReached
+        guard protocolScopesAreUnique(
+            relationships: updated,
+            groupRuntimes: groupRuntimes
+        ) else {
+            throw PersonaProfileV1Error.invalidState
         }
-        relationships.append(relationship)
+        relationships = updated
     }
 
     public mutating func upsert(groupRuntime: GroupRuntimeRecord) throws {
         guard groupRuntime.isStructurallyValid else {
             throw PersonaProfileV1Error.invalidState
         }
-        if let index = groupRuntimes.firstIndex(where: { $0.groupId == groupRuntime.groupId }) {
-            groupRuntimes[index] = groupRuntime
-            return
+        var updated = groupRuntimes
+        if let index = updated.firstIndex(where: { $0.groupId == groupRuntime.groupId }) {
+            updated[index] = groupRuntime
+        } else {
+            guard updated.count < Self.maximumGroupRuntimes else {
+                throw PersonaProfileV1Error.groupCapacityReached
+            }
+            updated.append(groupRuntime)
         }
-        guard groupRuntimes.count < Self.maximumGroupRuntimes else {
-            throw PersonaProfileV1Error.groupCapacityReached
+        guard protocolScopesAreUnique(
+            relationships: relationships,
+            groupRuntimes: updated
+        ) else {
+            throw PersonaProfileV1Error.invalidState
         }
-        groupRuntimes.append(groupRuntime)
+        groupRuntimes = updated
     }
 
+}
+
+/// Enforces the core privacy invariant at the persisted aggregate boundary:
+/// relationship and group authorities, credentials, endpoints, handles, and
+/// routes are never reused, including between separate local personas.
+func protocolScopesAreUnique(
+    relationships: [PairwiseRelationshipV2],
+    groupRuntimes: [GroupRuntimeRecord]
+) -> Bool {
+    var scopeIDs = Set<UUID>()
+    var signingKeys = Set<Data>()
+    var agreementKeys = Set<Data>()
+    var opaqueHandles = Set<String>()
+    var routeIDs = Set<OpaqueReceiveRouteIDV2>()
+    var routePayloadKeys = Set<OpaqueRoutePayloadKeyV2>()
+    var admissionDigests = Set<Data>()
+
+    for relationship in relationships {
+        let local = relationship.localIdentity
+        let peer = relationship.peerIdentity
+        guard scopeIDs.insert(relationship.id).inserted,
+              scopeIDs.insert(local.id).inserted,
+              scopeIDs.insert(peer.id).inserted,
+              signingKeys.insert(local.relationshipAuthority.signingKey.publicKeyData).inserted,
+              signingKeys.insert(local.localEndpoint.signingKey.publicKeyData).inserted,
+              signingKeys.insert(peer.signingPublicKey).inserted,
+              signingKeys.insert(peer.endpointBinding.signingPublicKey).inserted,
+              agreementKeys.insert(local.relationshipAuthority.agreementKey.publicKeyData).inserted,
+              agreementKeys.insert(local.localEndpoint.agreementKey.publicKeyData).inserted,
+              agreementKeys.insert(peer.agreementPublicKey).inserted,
+              agreementKeys.insert(peer.endpointBinding.agreementPublicKey).inserted,
+              opaqueHandles.insert(relationship.localEndpointHandle.rawValue).inserted,
+              opaqueHandles.insert(peer.sendRoutes.ownerEndpointHandle.rawValue).inserted else {
+            return false
+        }
+
+        for route in relationship.localAdvertisedRoutes.routes + peer.sendRoutes.routes {
+            guard routeIDs.insert(route.routeID).inserted,
+                  routePayloadKeys.insert(route.payloadKey).inserted else {
+                return false
+            }
+        }
+    }
+
+    for runtime in groupRuntimes {
+        guard scopeIDs.insert(runtime.groupId).inserted else { return false }
+
+        // A runtime may retain the same credential in its accepted state and
+        // in one or more recovery intents. Collapse repetitions within this
+        // group, then require the resulting scope to be disjoint from every
+        // relationship and every other group.
+        var memberHandles = Set<String>()
+        var credentialHandles = Set<String>()
+        var groupSigningKeys = Set<Data>()
+        var groupAgreementKeys = Set<Data>()
+        var groupAdmissionDigests = Set<Data>()
+
+        func collect(_ state: SignedGroupStateV2) {
+            memberHandles.formUnion(state.members.map { $0.id.rawValue })
+            credentialHandles.formUnion(
+                state.memberCredentials.map { $0.credentialHandle.rawValue }
+            )
+            groupSigningKeys.formUnion(state.memberCredentials.map(\.signingPublicKey))
+            groupAgreementKeys.formUnion(state.memberCredentials.map(\.agreementPublicKey))
+            groupAdmissionDigests.formUnion(state.memberCredentials.map(\.admissionDigest))
+        }
+
+        collect(runtime.signedState)
+        for intent in runtime.epochIntents {
+            collect(intent.nextSignedState)
+        }
+        memberHandles.insert(runtime.localCredential.memberHandle.rawValue)
+        credentialHandles.insert(runtime.localCredential.credentialHandle.rawValue)
+        groupSigningKeys.insert(runtime.localCredential.signingKey.publicKeyData)
+        groupAgreementKeys.insert(runtime.localCredential.agreementKey.publicKeyData)
+        groupAdmissionDigests.insert(runtime.localCredential.admissionDigest)
+
+        guard memberHandles.isDisjoint(with: credentialHandles),
+              opaqueHandles.isDisjoint(with: memberHandles),
+              opaqueHandles.isDisjoint(with: credentialHandles),
+              signingKeys.isDisjoint(with: groupSigningKeys),
+              agreementKeys.isDisjoint(with: groupAgreementKeys),
+              admissionDigests.isDisjoint(with: groupAdmissionDigests) else {
+            return false
+        }
+        opaqueHandles.formUnion(memberHandles)
+        opaqueHandles.formUnion(credentialHandles)
+        signingKeys.formUnion(groupSigningKeys)
+        agreementKeys.formUnion(groupAgreementKeys)
+        admissionDigests.formUnion(groupAdmissionDigests)
+    }
+    return true
 }
 
 private struct PersonaProfileCodingKey: CodingKey {

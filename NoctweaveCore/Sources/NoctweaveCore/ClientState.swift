@@ -323,8 +323,8 @@ public struct ClientState: Codable, Equatable {
     public static let maximumCertificatePins = 2_048
 
     public let version: Int
-    public var personas: [PersonaProfileV1]
-    public var activePersonaID: UUID
+    public internal(set) var personas: [PersonaProfileV1]
+    public internal(set) var activePersonaID: UUID
     public var relayPreferences: [LocalRelayPreference]
     public var relaySourcePreferences: [LocalRelaySourcePreference]
     public var appearance: AppearanceSettings
@@ -442,7 +442,7 @@ public struct ClientState: Codable, Equatable {
         try container.encode(hasAcceptedTermsOfUse, forKey: .hasAcceptedTermsOfUse)
     }
 
-    public var activePersona: PersonaProfileV1 {
+    public internal(set) var activePersona: PersonaProfileV1 {
         get {
             guard let persona = personas.first(where: { $0.id == activePersonaID }) else {
                 preconditionFailure("Validated client state lost its active persona")
@@ -453,7 +453,17 @@ public struct ClientState: Codable, Equatable {
             guard let index = personas.firstIndex(where: { $0.id == newValue.id }) else {
                 preconditionFailure("Cannot replace an unknown persona")
             }
-            personas[index] = newValue
+            var updated = personas
+            updated[index] = newValue
+            precondition(
+                newValue.isStructurallyValid
+                    && protocolScopesAreUnique(
+                        relationships: updated.flatMap(\.relationships),
+                        groupRuntimes: updated.flatMap(\.groupRuntimes)
+                    ),
+                "Cannot install a persona that reuses relationship- or group-scoped authority"
+            )
+            personas = updated
         }
     }
 
@@ -463,6 +473,10 @@ public struct ClientState: Codable, Equatable {
             && personas.count <= Self.maximumPersonas
             && Set(personas.map(\.id)).count == personas.count
             && personas.allSatisfy(\.isStructurallyValid)
+            && protocolScopesAreUnique(
+                relationships: personas.flatMap(\.relationships),
+                groupRuntimes: personas.flatMap(\.groupRuntimes)
+            )
             && personas.contains(where: { $0.id == activePersonaID })
             && relayPreferences.count <= Self.maximumRelayPreferences
             && Set(relayPreferences.map(\.id)).count == relayPreferences.count
@@ -508,7 +522,10 @@ public struct ClientState: Codable, Equatable {
         var persona = personas[index]
         try body(&persona)
         guard persona.isStructurallyValid else { throw ClientStateError.invalidState }
-        personas[index] = persona
+        var candidate = self
+        candidate.personas[index] = persona
+        guard candidate.isStructurallyValid else { throw ClientStateError.invalidState }
+        self = candidate
     }
 
 }

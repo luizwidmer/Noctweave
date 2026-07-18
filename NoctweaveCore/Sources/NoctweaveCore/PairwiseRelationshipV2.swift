@@ -312,7 +312,7 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
         case createdAt
     }
 
-    public init(
+    init(
         localIdentity: LocalPairwiseIdentityV2,
         localEndpointHandle: RelationshipEndpointHandle,
         localReceiveRoutes: [LocalOpaqueReceiveRouteV2],

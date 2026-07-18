@@ -298,6 +298,53 @@ final class ContactPairingV2Tests: XCTestCase {
         )
     }
 
+    func testPersistedPersonasRejectReusedRelationshipAuthorityEndpointAndRoute() throws {
+        var first = try makeHandshakeFixture()
+        let firstResult = try ContactPairingHandshakeV2.establish(
+            pendingOffer: &first.pending,
+            invitation: first.invitation,
+            offerer: first.offerer,
+            responder: first.responder,
+            ledger: &first.ledger,
+            at: origin.addingTimeInterval(1)
+        )
+        var second = try makeHandshakeFixture(offset: 20)
+        let reusedResult = try ContactPairingHandshakeV2.establish(
+            pendingOffer: &second.pending,
+            invitation: second.invitation,
+            offerer: first.offerer,
+            responder: second.responder,
+            ledger: &second.ledger,
+            at: origin.addingTimeInterval(21)
+        )
+        XCTAssertNotEqual(firstResult.relationshipID, reusedResult.relationshipID)
+        XCTAssertEqual(
+            firstResult.offererRelationship.localIdentity.relationshipAuthority.signingKey.publicKeyData,
+            reusedResult.offererRelationship.localIdentity.relationshipAuthority.signingKey.publicKeyData
+        )
+
+        var persona = try PersonaProfileV1(displayName: "Local", createdAt: origin)
+        try persona.upsert(relationship: firstResult.offererRelationship)
+        XCTAssertThrowsError(
+            try persona.upsert(relationship: reusedResult.offererRelationship)
+        ) { error in
+            XCTAssertEqual(error as? PersonaProfileV1Error, .invalidState)
+        }
+
+        var state = try ClientState(displayName: "First", createdAt: origin)
+        try state.updateActivePersona {
+            try $0.upsert(relationship: firstResult.offererRelationship)
+        }
+        _ = try state.addPersona(displayName: "Second", createdAt: origin)
+        XCTAssertThrowsError(
+            try state.updateActivePersona {
+                try $0.upsert(relationship: reusedResult.offererRelationship)
+            }
+        ) { error in
+            XCTAssertEqual(error as? ClientStateError, .invalidState)
+        }
+    }
+
     private func makeHandshakeFixture(
         offset: TimeInterval = 0
     ) throws -> (
