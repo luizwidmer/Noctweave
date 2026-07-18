@@ -28,7 +28,7 @@ struct ServerConfig {
       --attachments-enabled <bool>     Enable or disable attachment chunks
       --attachment-storage <mode>      inline or ipfs
       --opaque-route-runtime <bool>   Enable the direct-delivery runtime (default: true)
-      --rendezvous-transport <bool>    Enable experimental identity-blind rendezvous transport
+      --rendezvous-transport <bool>    Enable bounded one-use rendezvous transport
       --temporal-bucket-seconds <n>    Metadata timing bucket; 0 disables it
       --help, -h                       Show this help without starting a relay
       --version                        Print the relay software version
