@@ -31,6 +31,13 @@ public struct RelayEndpoint: Codable, Equatable {
         self.directorySigningPublicKey = directorySigningPublicKey
     }
 
+    public var isStructurallyValid: Bool {
+        relayIsBoundedRequiredText(host, maximumBytes: 255)
+            && port > 0
+            && (tlsCertificateFingerprintSHA256.map { $0.count == 32 } ?? true)
+            && (directorySigningPublicKey.map(SigningKeyPair.isValidPublicKey) ?? true)
+    }
+
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case host
         case port
@@ -58,9 +65,15 @@ public struct RelayEndpoint: Codable, Equatable {
         transport = try container.decode(RelayEndpointTransport.self, forKey: .transport)
         tlsCertificateFingerprintSHA256 = try container.decodeIfPresent(Data.self, forKey: .tlsCertificateFingerprintSHA256)
         directorySigningPublicKey = try container.decodeIfPresent(Data.self, forKey: .directorySigningPublicKey)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Relay endpoint is invalid")
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Relay endpoint is invalid")
+        }
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(host, forKey: .host)
         try container.encode(port, forKey: .port)
@@ -1087,6 +1100,44 @@ public struct UploadAttachmentRequest: Codable, Equatable {
         self.payload = payload
         self.ttlSeconds = ttlSeconds
     }
+
+    public var isStructurallyValid: Bool {
+        let payloadBytes = payload.nonce.count + payload.ciphertext.count + payload.tag.count
+        return (0..<AttachmentChunk.maximumChunkCount).contains(chunkIndex)
+            && payload.isStructurallyValid
+            && payloadBytes <= AttachmentChunk.maximumPayloadBytes
+            && (ttlSeconds.map { (60...2_592_000).contains($0) } ?? true)
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case attachmentId
+        case chunkIndex
+        case payload
+        case ttlSeconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        attachmentId = try container.decode(UUID.self, forKey: .attachmentId)
+        chunkIndex = try container.decode(Int.self, forKey: .chunkIndex)
+        payload = try container.decode(EncryptedPayload.self, forKey: .payload)
+        ttlSeconds = try container.decodeIfPresent(Int.self, forKey: .ttlSeconds)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Attachment upload request is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Attachment upload request is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(attachmentId, forKey: .attachmentId)
+        try container.encode(chunkIndex, forKey: .chunkIndex)
+        try container.encode(payload, forKey: .payload)
+        try container.encode(ttlSeconds, forKey: .ttlSeconds)
+    }
 }
 
 public struct FetchAttachmentRequest: Codable, Equatable {
@@ -1096,6 +1147,34 @@ public struct FetchAttachmentRequest: Codable, Equatable {
     public init(attachmentId: UUID, chunkIndex: Int) {
         self.attachmentId = attachmentId
         self.chunkIndex = chunkIndex
+    }
+
+    public var isStructurallyValid: Bool {
+        (0..<AttachmentChunk.maximumChunkCount).contains(chunkIndex)
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case attachmentId
+        case chunkIndex
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        attachmentId = try container.decode(UUID.self, forKey: .attachmentId)
+        chunkIndex = try container.decode(Int.self, forKey: .chunkIndex)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Attachment fetch request is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Attachment fetch request is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(attachmentId, forKey: .attachmentId)
+        try container.encode(chunkIndex, forKey: .chunkIndex)
     }
 }
 
@@ -1108,6 +1187,39 @@ public struct FederationNodeRegistrationRequest: Codable, Equatable {
         self.endpoint = endpoint
         self.relayInfo = relayInfo
         self.ttlSeconds = ttlSeconds
+    }
+
+    public var isStructurallyValid: Bool {
+        endpoint.isStructurallyValid
+            && relayInfo.isStructurallyValid
+            && (ttlSeconds.map { (1...900).contains($0) } ?? true)
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case endpoint
+        case relayInfo
+        case ttlSeconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        endpoint = try container.decode(RelayEndpoint.self, forKey: .endpoint)
+        relayInfo = try container.decode(RelayInfo.self, forKey: .relayInfo)
+        ttlSeconds = try container.decodeIfPresent(Int.self, forKey: .ttlSeconds)
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Federation node registration request is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Federation node registration request is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(endpoint, forKey: .endpoint)
+        try container.encode(relayInfo, forKey: .relayInfo)
+        try container.encode(ttlSeconds, forKey: .ttlSeconds)
     }
 }
 
@@ -1130,6 +1242,47 @@ public struct ListFederationNodesRequest: Codable, Equatable {
         self.onlyHealthy = onlyHealthy
         self.maxStalenessSeconds = maxStalenessSeconds
         self.requireSignedSnapshot = requireSignedSnapshot
+    }
+
+    public var isStructurallyValid: Bool {
+        relayIsBoundedText(federationName, maximumBytes: 1_024)
+            && (maxStalenessSeconds.map { (1...86_400).contains($0) } ?? true)
+    }
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case mode
+        case federationName
+        case onlyHealthy
+        case maxStalenessSeconds
+        case requireSignedSnapshot
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: Set(CodingKeys.allCases.map(\.rawValue)))
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decodeIfPresent(FederationMode.self, forKey: .mode)
+        federationName = try container.decodeIfPresent(String.self, forKey: .federationName)
+        onlyHealthy = try container.decodeIfPresent(Bool.self, forKey: .onlyHealthy)
+        maxStalenessSeconds = try container.decodeIfPresent(Int.self, forKey: .maxStalenessSeconds)
+        requireSignedSnapshot = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .requireSignedSnapshot
+        )
+        guard isStructurallyValid else {
+            throw relayWireError(decoder, "Federation node list request is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw relayWireError(encoder, "Federation node list request is invalid")
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(mode, forKey: .mode)
+        try container.encode(federationName, forKey: .federationName)
+        try container.encode(onlyHealthy, forKey: .onlyHealthy)
+        try container.encode(maxStalenessSeconds, forKey: .maxStalenessSeconds)
+        try container.encode(requireSignedSnapshot, forKey: .requireSignedSnapshot)
     }
 }
 
@@ -2245,18 +2398,30 @@ public enum RelayRequestBody: Equatable {
             try container.encode(value.laneId, forKey: relayWireKey("laneId"))
             try container.encode(value.deleteCapability, forKey: relayWireKey("deleteCapability"))
         case .uploadAttachment(let value):
+            guard value.isStructurallyValid else {
+                throw relayWireError(encoder, "Attachment upload request is invalid")
+            }
             try container.encode(value.attachmentId, forKey: relayWireKey("attachmentId"))
             try container.encode(value.chunkIndex, forKey: relayWireKey("chunkIndex"))
             try container.encode(value.payload, forKey: relayWireKey("payload"))
             try relayEncodeOptional(value.ttlSeconds, key: "ttlSeconds", into: &container)
         case .fetchAttachment(let value):
+            guard value.isStructurallyValid else {
+                throw relayWireError(encoder, "Attachment fetch request is invalid")
+            }
             try container.encode(value.attachmentId, forKey: relayWireKey("attachmentId"))
             try container.encode(value.chunkIndex, forKey: relayWireKey("chunkIndex"))
         case .registerFederationNode(let value):
+            guard value.isStructurallyValid else {
+                throw relayWireError(encoder, "Federation node registration request is invalid")
+            }
             try container.encode(value.endpoint, forKey: relayWireKey("endpoint"))
             try container.encode(value.relayInfo, forKey: relayWireKey("relayInfo"))
             try relayEncodeOptional(value.ttlSeconds, key: "ttlSeconds", into: &container)
         case .listFederationNodes(let value):
+            guard value.isStructurallyValid else {
+                throw relayWireError(encoder, "Federation node list request is invalid")
+            }
             try relayEncodeOptional(value.mode, key: "mode", into: &container)
             try relayEncodeOptional(value.federationName, key: "federationName", into: &container)
             try relayEncodeOptional(value.onlyHealthy, key: "onlyHealthy", into: &container)
@@ -2413,6 +2578,9 @@ public struct RelayRequest: Codable, Equatable {
     public func encode(to encoder: Encoder) throws {
         guard binding.isCurrent else {
             throw relayWireError(encoder, "Cannot encode a non-current relay request")
+        }
+        guard authToken.map({ !$0.isEmpty && $0.utf8.count <= RelayClient.maxAuthenticationBytes }) ?? true else {
+            throw relayWireError(encoder, "Relay authentication token is invalid")
         }
         var container = encoder.container(keyedBy: RelayRequestCodingKeys.self)
         try container.encode(requestID, forKey: .requestID)

@@ -282,6 +282,9 @@ struct RelayRequest: Codable, Equatable {
 
     func encode(to encoder: Encoder) throws {
         guard binding.isCurrent else { throw relayWireError(encoder, "Cannot encode unsupported relay binding") }
+        guard authToken.map({ !$0.isEmpty && $0.utf8.count <= 4_096 }) ?? true else {
+            throw relayWireError(encoder, "Relay auth token is invalid")
+        }
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(requestID, forKey: .requestID)
         try container.encode(module, forKey: .module)
@@ -339,9 +342,19 @@ struct RelayErrorBody: Codable, Equatable {
 struct FederationNodesResponseBody: Equatable {
     let nodes: [FederationNodeRecord]
     let snapshot: FederationDirectorySnapshot?
+
     init(nodes: [FederationNodeRecord], snapshot: FederationDirectorySnapshot? = nil) {
         self.nodes = nodes
         self.snapshot = snapshot
+    }
+
+    var isStructurallyValid: Bool {
+        guard nodes.count <= 10_000,
+              nodes.allSatisfy(\.isStructurallyValid),
+              Set(nodes.map { relayWireEndpointKey($0.endpoint) }).count == nodes.count else {
+            return false
+        }
+        return snapshot.map { $0.isStructurallyValid && $0.nodes == nodes } ?? true
     }
 }
 
@@ -399,10 +412,14 @@ enum RelaySuccessBody: Equatable {
         case (.federation, .register), (.federation, .list):
             try relayRequireExactObject(decoder, keys: ["nodes", "snapshot"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .federationNodes(.init(
+            let value = FederationNodesResponseBody(
                 nodes: try container.decode([FederationNodeRecord].self, forKey: relayWireKey("nodes")),
                 snapshot: try container.decodeIfPresent(FederationDirectorySnapshot.self, forKey: relayWireKey("snapshot"))
-            ))
+            )
+            guard value.isStructurallyValid else {
+                throw relayWireError(decoder, "Federation nodes response is invalid")
+            }
+            return .federationNodes(value)
         case (.openDiscovery, .listDHT):
             return .dhtRecords(try relayDecodeSingle([OpenFederationDHTRecord].self, from: decoder, key: "records"))
         default:
@@ -422,6 +439,9 @@ enum RelaySuccessBody: Equatable {
         case .rendezvousSync(let value): try container.encode(value, forKey: relayWireKey("batch"))
         case .attachment(let value): try container.encode(value, forKey: relayWireKey("chunk"))
         case .federationNodes(let value):
+            guard value.isStructurallyValid else {
+                throw relayWireError(encoder, "Federation nodes response is invalid")
+            }
             try container.encode(value.nodes, forKey: relayWireKey("nodes"))
             try relayEncodeOptional(value.snapshot, key: "snapshot", into: &container)
         case .dhtRecords(let value): try container.encode(value, forKey: relayWireKey("records"))
@@ -531,6 +551,15 @@ private func relayDecodeSingle<T: Decodable>(_ type: T.Type, from decoder: Decod
     try relayRequireExactObject(decoder, keys: [key])
     let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
     return try container.decode(T.self, forKey: relayWireKey(key))
+}
+
+private func relayWireEndpointKey(_ endpoint: RelayEndpoint) -> String {
+    [
+        endpoint.host.lowercased(),
+        String(endpoint.port),
+        endpoint.useTLS ? "1" : "0",
+        endpoint.transport.rawValue
+    ].joined(separator: "\u{0}")
 }
 
 private func relayEncodeOptional<T: Encodable>(_ value: T?, key: String, into container: inout KeyedEncodingContainer<RelayWireCodingKey>) throws {
