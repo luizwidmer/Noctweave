@@ -47,6 +47,26 @@ final class RelayWireExactEnvelopeTests: XCTestCase {
         XCTAssertThrowsError(try decodeRequest(encoded))
     }
 
+    func testOpenDiscoveryExclusivelyOwnsDHTBindings() throws {
+        XCTAssertTrue(RelayOperationBinding(module: .federation, version: 1, method: .register).isCurrent)
+        XCTAssertTrue(RelayOperationBinding(module: .federation, version: 1, method: .list).isCurrent)
+        XCTAssertFalse(RelayOperationBinding(module: .federation, version: 1, method: .publishDHT).isCurrent)
+        XCTAssertFalse(RelayOperationBinding(module: .federation, version: 1, method: .listDHT).isCurrent)
+        XCTAssertTrue(RelayOperationBinding(module: .openDiscovery, version: 1, method: .publishDHT).isCurrent)
+        XCTAssertTrue(RelayOperationBinding(module: .openDiscovery, version: 1, method: .listDHT).isCurrent)
+
+        let request = RelayRequest.listOpenFederationDHTRecords(
+            ListOpenFederationDHTRecordsRequest(namespace: "noctweave/open/example", limit: 4)
+        )
+        XCTAssertEqual(request.binding, .init(module: .openDiscovery, version: 1, method: .listDHT))
+        let data = try RelayCodec.encoder().encode(request)
+        XCTAssertEqual(try RelayCodec.decodeWire(RelayRequest.self, from: data), request)
+
+        var wrongModule = try object(data)
+        wrongModule["module"] = "nw.federation"
+        XCTAssertThrowsError(try decodeRequest(wrongModule))
+    }
+
     func testErrorBranchesAreBoundedExactAndExclusive() throws {
         let request = RelayRequest.info()
         let response = RelayResponse.error(

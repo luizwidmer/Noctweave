@@ -94,8 +94,8 @@ components:
             - $ref: "#/components/schemas/BlobFetchRequestBinding"
             - $ref: "#/components/schemas/FederationRegisterRequestBinding"
             - $ref: "#/components/schemas/FederationListRequestBinding"
-            - $ref: "#/components/schemas/FederationPublishDHTRequestBinding"
-            - $ref: "#/components/schemas/FederationListDHTRequestBinding"
+            - $ref: "#/components/schemas/OpenDiscoveryPublishDHTRequestBinding"
+            - $ref: "#/components/schemas/OpenDiscoveryListDHTRequestBinding"
     RelayModuleID:
       type: string
       enum:
@@ -104,6 +104,7 @@ components:
         - nw.rendezvous-transport
         - nw.blobs
         - nw.federation
+        - nw.open-discovery
     RelayMethodID:
       type: string
       enum: [health, info, create, renew, teardown, append, sync, commit, register, delete, upload, fetch, list, publish-dht, list-dht]
@@ -310,17 +311,17 @@ components:
         version: { const: 1 }
         method: { const: list }
         body: { $ref: "#/components/schemas/ListFederationNodesRequest" }
-    FederationPublishDHTRequestBinding:
+    OpenDiscoveryPublishDHTRequestBinding:
       type: object
       properties:
-        module: { const: nw.federation }
+        module: { const: nw.open-discovery }
         version: { const: 1 }
         method: { const: publish-dht }
         body: { $ref: "#/components/schemas/PublishOpenFederationDHTRecordRequest" }
-    FederationListDHTRequestBinding:
+    OpenDiscoveryListDHTRequestBinding:
       type: object
       properties:
-        module: { const: nw.federation }
+        module: { const: nw.open-discovery }
         version: { const: 1 }
         method: { const: list-dht }
         body: { $ref: "#/components/schemas/ListOpenFederationDHTRecordsRequest" }

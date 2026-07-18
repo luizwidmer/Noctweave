@@ -594,6 +594,7 @@ struct RelayConfiguration: Codable, Equatable {
                 onionEnabled: advertisedOnionTransport != nil,
                 mixnetEnabled: advertisedMixnetTransport != nil,
                 opaqueRouteRuntimeEnabled: isOpaqueRouteRuntimeEnabled,
+                openDiscoveryEnabled: advertisedOpenFederationDiscovery?.dhtNodeEnabled == true,
                 rendezvousTransportEnabled: isRendezvousTransportEnabled
             ),
             requiresPassword: requiresPassword,

@@ -21,6 +21,7 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         XCTAssertFalse(manifest.supports(module: "nw.routes", version: 3))
         XCTAssertTrue(manifest.supports(module: "nw.blobs", version: 1))
         XCTAssertFalse(manifest.supports(module: "nw.groups", version: 1))
+        XCTAssertFalse(manifest.supports(module: "nw.open-discovery", version: 1))
         let disabled = RelayConfiguration(
             opaqueRouteRuntimeEnabled: false
         ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
@@ -30,6 +31,35 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         let encoded = try JSONEncoder().encode(info)
         let decoded = try JSONDecoder().decode(RelayInfo.self, from: encoded)
         XCTAssertEqual(decoded.protocolCapabilities, manifest)
+    }
+
+    func testOpenDiscoveryAdvertisementIsExperimentalAndFeatureGated() throws {
+        let enabled = RelayConfiguration(
+            federation: FederationDescriptor(mode: .open, name: "example"),
+            openFederationDHTEnabled: true,
+            allowPrivateFederationEndpoints: true
+        ).makeInfo()
+        let enabledManifest = try XCTUnwrap(enabled.protocolCapabilities)
+        XCTAssertEqual(
+            enabledManifest.modules.first { $0.module == "nw.open-discovery" }?.status,
+            .experimental
+        )
+        XCTAssertEqual(
+            enabledManifest.modules.first { $0.module == "nw.federation" }?.status,
+            .stable
+        )
+
+        let disabled = RelayConfiguration(
+            federation: FederationDescriptor(mode: .open, name: "example"),
+            openFederationDHTEnabled: false,
+            allowPrivateFederationEndpoints: true
+        ).makeInfo()
+        XCTAssertFalse(
+            try XCTUnwrap(disabled.protocolCapabilities).supports(
+                module: "nw.open-discovery",
+                version: 1
+            )
+        )
     }
 
     func testDefaultRelayDoesNotAdvertiseUnavailableModules() throws {

@@ -76,6 +76,7 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
         onionEnabled: Bool,
         mixnetEnabled: Bool,
         opaqueRouteRuntimeEnabled: Bool = true,
+        openDiscoveryEnabled: Bool = false,
         rendezvousTransportEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
@@ -102,6 +103,15 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
         if mixnetEnabled {
             modules.append(
                 RelayModuleCapabilityV2(module: "nw.privacy.mixnet", versions: [1], status: .experimental)
+            )
+        }
+        if openDiscoveryEnabled {
+            modules.append(
+                RelayModuleCapabilityV2(
+                    module: "nw.open-discovery",
+                    versions: [1],
+                    status: .experimental
+                )
             )
         }
         if rendezvousTransportEnabled {

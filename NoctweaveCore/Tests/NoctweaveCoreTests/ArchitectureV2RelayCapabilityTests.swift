@@ -28,12 +28,42 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
         XCTAssertFalse(manifest.modules.contains { $0.module == "nw.blobs" })
         XCTAssertFalse(manifest.modules.contains { $0.module == "nw.groups" })
         XCTAssertFalse(manifest.modules.contains { $0.module == "nw.wake" })
+        XCTAssertFalse(manifest.modules.contains { $0.module == "nw.open-discovery" })
 
         let roundTrip = try NoctweaveCoder.decode(
             RelayInfo.self,
             from: NoctweaveCoder.encode(info, sortedKeys: true)
         )
         XCTAssertEqual(roundTrip.protocolCapabilities, manifest)
+    }
+
+    func testRelayAdvertisesExperimentalOpenDiscoveryOnlyWhenDHTIsEnabled() throws {
+        let enabled = RelayConfiguration(
+            federation: FederationDescriptor(mode: .open, name: "example"),
+            openFederationDHTEnabled: true,
+            allowPrivateFederationEndpoints: true
+        ).makeInfo()
+        let enabledManifest = try XCTUnwrap(enabled.protocolCapabilities)
+        XCTAssertEqual(
+            enabledManifest.modules.first { $0.module == "nw.open-discovery" }?.status,
+            .experimental
+        )
+        XCTAssertEqual(
+            enabledManifest.modules.first { $0.module == "nw.federation" }?.status,
+            .stable
+        )
+
+        let disabled = RelayConfiguration(
+            federation: FederationDescriptor(mode: .open, name: "example"),
+            openFederationDHTEnabled: false,
+            allowPrivateFederationEndpoints: true
+        ).makeInfo()
+        XCTAssertFalse(
+            try XCTUnwrap(disabled.protocolCapabilities).supports(
+                module: "nw.open-discovery",
+                version: 1
+            )
+        )
     }
 
     func testDirectV4NegotiatesOnlyCoreAndDirect() throws {

@@ -6,11 +6,12 @@ enum RelayModuleID: String, Codable, CaseIterable {
     case rendezvousTransport = "nw.rendezvous-transport"
     case blobs = "nw.blobs"
     case federation = "nw.federation"
+    case openDiscovery = "nw.open-discovery"
 
     var currentVersion: Int {
         switch self {
         case .core, .opaqueRoute, .rendezvousTransport: return 2
-        case .blobs, .federation: return 1
+        case .blobs, .federation, .openDiscovery: return 1
         }
     }
 }
@@ -47,7 +48,8 @@ struct RelayOperationBinding: Codable, Equatable, Hashable {
         .opaqueRoute: [.create, .renew, .teardown, .append, .sync, .commit],
         .rendezvousTransport: [.register, .append, .sync, .delete],
         .blobs: [.upload, .fetch],
-        .federation: [.register, .list, .publishDHT, .listDHT]
+        .federation: [.register, .list],
+        .openDiscovery: [.publishDHT, .listDHT]
     ]
 }
 
@@ -87,8 +89,8 @@ enum RelayRequestBody: Equatable {
         case .fetchAttachment: return .init(module: .blobs, version: 1, method: .fetch)
         case .registerFederationNode: return .init(module: .federation, version: 1, method: .register)
         case .listFederationNodes: return .init(module: .federation, version: 1, method: .list)
-        case .publishDHTRecord: return .init(module: .federation, version: 1, method: .publishDHT)
-        case .listDHTRecords: return .init(module: .federation, version: 1, method: .listDHT)
+        case .publishDHTRecord: return .init(module: .openDiscovery, version: 1, method: .publishDHT)
+        case .listDHTRecords: return .init(module: .openDiscovery, version: 1, method: .listDHT)
         }
     }
 
@@ -125,9 +127,9 @@ enum RelayRequestBody: Equatable {
             return .registerFederationNode(try relayDecodeExact(FederationNodeRegistrationRequest.self, from: decoder, keys: ["endpoint", "relayInfo", "ttlSeconds"]))
         case (.federation, .list):
             return .listFederationNodes(try relayDecodeExact(ListFederationNodesRequest.self, from: decoder, keys: ["mode", "federationName", "onlyHealthy", "maxStalenessSeconds", "requireSignedSnapshot"]))
-        case (.federation, .publishDHT):
+        case (.openDiscovery, .publishDHT):
             return .publishDHTRecord(try relayDecodeExact(PublishOpenFederationDHTRecordRequest.self, from: decoder, keys: ["namespace", "record"]))
-        case (.federation, .listDHT):
+        case (.openDiscovery, .listDHT):
             return .listDHTRecords(try relayDecodeExact(ListOpenFederationDHTRecordsRequest.self, from: decoder, keys: ["namespace", "limit"]))
         default:
             throw relayWireError(decoder, "Relay binding does not identify a current request body")
@@ -362,7 +364,7 @@ enum RelaySuccessBody: Equatable {
                 || binding == .init(module: .rendezvousTransport, version: 2, method: .register)
                 || binding == .init(module: .rendezvousTransport, version: 2, method: .append)
                 || binding == .init(module: .rendezvousTransport, version: 2, method: .delete)
-                || binding == .init(module: .federation, version: 1, method: .publishDHT)
+                || binding == .init(module: .openDiscovery, version: 1, method: .publishDHT)
         case .relayInfo: return binding == .init(module: .core, version: 2, method: .info)
         case .opaqueRoute: return binding.module == .opaqueRoute && binding.version == 2 && [.create, .renew, .teardown].contains(binding.method)
         case .opaqueRouteAppend: return binding == .init(module: .opaqueRoute, version: 2, method: .append)
@@ -371,13 +373,13 @@ enum RelaySuccessBody: Equatable {
         case .rendezvousSync: return binding == .init(module: .rendezvousTransport, version: 2, method: .sync)
         case .attachment: return binding.module == .blobs && binding.version == 1 && [.upload, .fetch].contains(binding.method)
         case .federationNodes: return binding.module == .federation && binding.version == 1 && [.register, .list].contains(binding.method)
-        case .dhtRecords: return binding == .init(module: .federation, version: 1, method: .listDHT)
+        case .dhtRecords: return binding == .init(module: .openDiscovery, version: 1, method: .listDHT)
         }
     }
 
     static func decode(for binding: RelayOperationBinding, from decoder: Decoder) throws -> RelaySuccessBody {
         switch (binding.module, binding.method) {
-        case (.core, .health), (.rendezvousTransport, .register), (.rendezvousTransport, .append), (.rendezvousTransport, .delete), (.federation, .publishDHT):
+        case (.core, .health), (.rendezvousTransport, .register), (.rendezvousTransport, .append), (.rendezvousTransport, .delete), (.openDiscovery, .publishDHT):
             try relayRequireExactObject(decoder, keys: [])
             return .empty
         case (.core, .info):
@@ -401,7 +403,7 @@ enum RelaySuccessBody: Equatable {
                 nodes: try container.decode([FederationNodeRecord].self, forKey: relayWireKey("nodes")),
                 snapshot: try container.decodeIfPresent(FederationDirectorySnapshot.self, forKey: relayWireKey("snapshot"))
             ))
-        case (.federation, .listDHT):
+        case (.openDiscovery, .listDHT):
             return .dhtRecords(try relayDecodeSingle([OpenFederationDHTRecord].self, from: decoder, key: "records"))
         default:
             throw relayWireError(decoder, "Relay operation has no success body")
