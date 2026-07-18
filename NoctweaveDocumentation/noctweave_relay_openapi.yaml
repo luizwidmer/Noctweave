@@ -373,6 +373,9 @@ components:
       properties:
         nodes:
           type: array
+          maxItems: 10000
+          uniqueItems: true
+          description: Relay endpoints MUST be unique after canonical endpoint normalization.
           items: { $ref: "#/components/schemas/FederationNodeRecord" }
         snapshot:
           oneOf:
@@ -596,14 +599,16 @@ components:
       additionalProperties: false
     OpaqueRouteSyncRequestV2:
       type: object
-      required: [routeID, requestID, limit, authorization]
+      required: [routeID, requestID, after, limit, authorization]
       properties:
         routeID:
           $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
         requestID:
           $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
         after:
-          $ref: "#/components/schemas/OpaqueRouteCursorV2"
+          oneOf:
+            - $ref: "#/components/schemas/OpaqueRouteCursorV2"
+            - type: "null"
         limit:
           type: integer
           minimum: 1
@@ -683,7 +688,7 @@ components:
       required:
         [version, routeID, sendCapabilityDigest, readCredentialDigest,
          renewCapabilityDigest, teardownCapabilityDigest, lease, status,
-         createdAt, creationIdempotencyKey, creationDigest,
+         createdAt, tornDownAt, creationIdempotencyKey, creationDigest,
          lastIdempotencyKey, lastTransitionDigest]
       properties:
         version:
@@ -720,7 +725,7 @@ components:
           type: string
           format: date-time
         tornDownAt:
-          type: string
+          type: [string, "null"]
           format: date-time
         creationIdempotencyKey:
           $ref: "#/components/schemas/OpaqueRouteOpaque32V2"
@@ -999,6 +1004,7 @@ components:
         module:
           type: string
           pattern: "^nw\\."
+          minLength: 3
           maxLength: 96
         versions:
           type: array
@@ -1015,6 +1021,9 @@ components:
         limits:
           type: object
           maxProperties: 32
+          propertyNames:
+            minLength: 1
+            maxLength: 96
           additionalProperties:
             type: integer
             format: uint64
@@ -1035,65 +1044,266 @@ components:
           type: array
           minItems: 1
           maxItems: 64
+          uniqueItems: true
+          description: |
+            Modules MUST be sorted by module identifier, contain unique module
+            identifiers, and include nw.core version 2.
           items:
             $ref: "#/components/schemas/RelayModuleCapabilityV2"
       additionalProperties: false
+    FederationDescriptor:
+      type: object
+      required: [mode, name, description]
+      properties:
+        mode:
+          type: string
+          enum: [solo, manual, curated, open]
+        name:
+          type: [string, "null"]
+          maxLength: 1024
+          description: When non-null, UTF-8 encoding MUST be at most 1024 bytes.
+        description:
+          type: [string, "null"]
+          maxLength: 1024
+          description: When non-null, UTF-8 encoding MUST be at most 1024 bytes.
+      additionalProperties: false
     RelayEndpoint:
       type: object
-      required: [host, port]
+      required:
+        [host, port, useTLS, transport, tlsCertificateFingerprintSHA256,
+         directorySigningPublicKey]
       properties:
         host:
           type: string
+          minLength: 1
+          maxLength: 255
+          description: |
+            Trimmed UTF-8 hostname or address with no control characters and
+            at most 255 encoded bytes.
         port:
           type: integer
           minimum: 1
           maximum: 65535
         useTLS:
           type: boolean
-          default: false
         transport:
           type: string
           enum: [tcp, http, websocket]
-          default: tcp
         tlsCertificateFingerprintSHA256:
-          type: string
+          type: [string, "null"]
           contentEncoding: base64
+          minLength: 44
+          maxLength: 44
         directorySigningPublicKey:
-          type: string
+          type: [string, "null"]
           contentEncoding: base64
+          minLength: 2604
+          maxLength: 2604
+          description: Base64-encoded current ML-DSA-65 public key when present.
+      additionalProperties: false
+    HiddenRetrievalPIRReplica:
+      type: object
+      required: [replicaId, operatorId, endpoint]
+      properties:
+        replicaId:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Trimmed UTF-8 identifier of at most 1024 encoded bytes.
+        operatorId:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Trimmed UTF-8 identifier of at most 1024 encoded bytes.
+        endpoint:
+          $ref: "#/components/schemas/RelayEndpoint"
+      additionalProperties: false
+    HiddenRetrievalSupport:
+      type: object
+      required:
+        [mode, defaultCoverSetSize, maxCoverSetSize, replicatedXorPIRReplicas]
+      description: |
+        defaultCoverSetSize MUST be no greater than maxCoverSetSize. Replica,
+        operator, and canonical endpoint identifiers MUST each be unique. The
+        replicatedXorPIR mode requires at least two replicas; a null replica
+        list is permitted only for coverQuery.
+      properties:
+        mode:
+          type: string
+          enum: [coverQuery, replicatedXorPIR]
+        defaultCoverSetSize:
+          type: integer
+          minimum: 2
+          maximum: 4096
+        maxCoverSetSize:
+          type: integer
+          minimum: 2
+          maximum: 4096
+        replicatedXorPIRReplicas:
+          oneOf:
+            - type: array
+              minItems: 1
+              maxItems: 256
+              uniqueItems: true
+              items:
+                $ref: "#/components/schemas/HiddenRetrievalPIRReplica"
+            - type: "null"
+      oneOf:
+        - properties:
+            mode: { const: coverQuery }
+        - properties:
+            mode: { const: replicatedXorPIR }
+            replicatedXorPIRReplicas:
+              type: array
+              minItems: 2
+              maxItems: 256
+      additionalProperties: false
+    OnionTransportSupport:
+      type: object
+      required: [enabled, maxHops, requiresFixedSizePackets]
+      properties:
+        enabled: { type: boolean }
+        maxHops:
+          type: integer
+          minimum: 1
+          maximum: 8
+        requiresFixedSizePackets: { type: boolean }
+      additionalProperties: false
+    MixnetTransportSupport:
+      type: object
+      required:
+        [enabled, batchIntervalSeconds, minBatchSize, coverPacketsPerBatch,
+         maxDelaySeconds]
+      properties:
+        enabled: { type: boolean }
+        batchIntervalSeconds:
+          type: integer
+          minimum: 5
+          maximum: 3600
+        minBatchSize:
+          type: integer
+          minimum: 1
+          maximum: 256
+        coverPacketsPerBatch:
+          type: integer
+          minimum: 0
+          maximum: 256
+        maxDelaySeconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+      additionalProperties: false
+    DecentralizedWakeSupport:
+      type: object
+      required:
+        [mode, minPollIntervalSeconds, maxPollIntervalSeconds, jitterPermille,
+         longPollTimeoutSeconds]
+      description: |
+        minPollIntervalSeconds MUST be no greater than maxPollIntervalSeconds.
+        pullOnly requires a null timeout. longPoll requires a timeout between 5
+        and maxPollIntervalSeconds.
+      properties:
+        mode:
+          type: string
+          enum: [pullOnly, longPoll]
+        minPollIntervalSeconds:
+          type: integer
+          minimum: 5
+          maximum: 86400
+        maxPollIntervalSeconds:
+          type: integer
+          minimum: 5
+          maximum: 86400
+        jitterPermille:
+          type: integer
+          minimum: 0
+          maximum: 1000
+        longPollTimeoutSeconds:
+          type: [integer, "null"]
+          minimum: 5
+          maximum: 86400
+      oneOf:
+        - properties:
+            mode: { const: pullOnly }
+            longPollTimeoutSeconds: { type: "null" }
+        - properties:
+            mode: { const: longPoll }
+            longPollTimeoutSeconds: { type: integer, minimum: 5, maximum: 86400 }
+      additionalProperties: false
+    OpenFederationDiscoverySupport:
+      type: object
+      required:
+        [dhtNodeEnabled, peerExchangeEnabled, peerExchangeLimit,
+         requirePublicEndpoint, maxDHTRecords, maxDHTRecordsPerHost,
+         maxDHTQueryRecords]
+      description: maxDHTRecordsPerHost MUST be no greater than maxDHTRecords.
+      properties:
+        dhtNodeEnabled: { type: boolean }
+        peerExchangeEnabled: { type: boolean }
+        peerExchangeLimit:
+          type: integer
+          minimum: 0
+          maximum: 128
+        requirePublicEndpoint: { type: boolean }
+        maxDHTRecords:
+          type: integer
+          minimum: 1
+          maximum: 256
+        maxDHTRecordsPerHost:
+          type: integer
+          minimum: 1
+          maximum: 16
+        maxDHTQueryRecords:
+          type: integer
+          minimum: 1
+          maximum: 512
       additionalProperties: false
     EncryptedPayload:
       type: object
       required: [nonce, ciphertext, tag]
       properties:
-        nonce: { type: string, contentEncoding: base64 }
-        ciphertext: { type: string, contentEncoding: base64 }
-        tag: { type: string, contentEncoding: base64 }
+        nonce:
+          type: string
+          contentEncoding: base64
+          minLength: 16
+          maxLength: 16
+        ciphertext:
+          type: string
+          contentEncoding: base64
+          minLength: 4
+          maxLength: 174728
+        tag:
+          type: string
+          contentEncoding: base64
+          minLength: 24
+          maxLength: 24
       additionalProperties: false
     UploadAttachmentRequest:
       type: object
       required: [attachmentId, chunkIndex, payload, ttlSeconds]
       properties:
         attachmentId: { type: string, format: uuid }
-        chunkIndex: { type: integer, minimum: 0 }
+        chunkIndex: { type: integer, minimum: 0, maximum: 511 }
         payload: { $ref: "#/components/schemas/EncryptedPayload" }
         ttlSeconds:
           type: [integer, "null"]
           minimum: 60
+          maximum: 2592000
       additionalProperties: false
     FetchAttachmentRequest:
       type: object
       required: [attachmentId, chunkIndex]
       properties:
         attachmentId: { type: string, format: uuid }
-        chunkIndex: { type: integer, minimum: 0 }
+        chunkIndex: { type: integer, minimum: 0, maximum: 511 }
       additionalProperties: false
     AttachmentChunk:
       type: object
       required: [attachmentId, chunkIndex, payload]
+      description: Decoded nonce, ciphertext, and tag bytes total at most 131072 bytes.
       properties:
         attachmentId: { type: string, format: uuid }
-        chunkIndex: { type: integer, minimum: 0 }
+        chunkIndex: { type: integer, minimum: 0, maximum: 511 }
         payload: { $ref: "#/components/schemas/EncryptedPayload" }
       additionalProperties: false
     FederationNodeRegistrationRequest:
@@ -1105,6 +1315,7 @@ components:
         ttlSeconds:
           type: [integer, "null"]
           minimum: 1
+          maximum: 900
       additionalProperties: false
     ListFederationNodesRequest:
       type: object
@@ -1113,16 +1324,23 @@ components:
         mode:
           type: [string, "null"]
           enum: [solo, manual, curated, open, null]
-        federationName: { type: [string, "null"] }
+        federationName:
+          type: [string, "null"]
+          maxLength: 1024
+          description: When non-null, UTF-8 encoding MUST be at most 1024 bytes.
         onlyHealthy: { type: [boolean, "null"] }
         maxStalenessSeconds:
           type: [integer, "null"]
           minimum: 1
+          maximum: 86400
         requireSignedSnapshot: { type: [boolean, "null"] }
       additionalProperties: false
     FederationNodeRecord:
       type: object
       required: [endpoint, relayInfo, lastHeartbeatAt, expiresAt]
+      description: |
+        Timestamps use canonical whole-second UTC encoding. expiresAt MUST be
+        later than lastHeartbeatAt and no more than 900 seconds after it.
       properties:
         endpoint: { $ref: "#/components/schemas/RelayEndpoint" }
         relayInfo: { $ref: "#/components/schemas/RelayInfo" }
@@ -1131,19 +1349,48 @@ components:
       additionalProperties: false
     FederationDirectorySnapshot:
       type: object
-      required: [version, mode, issuedAt, validUntil, maxStalenessSeconds, nodes]
+      required:
+        [version, mode, federationName, issuedAt, validUntil,
+         maxStalenessSeconds, nodes, signatureAlgorithm, signature]
+      description: |
+        Timestamps use canonical whole-second UTC encoding. validUntil MUST be
+        later than issuedAt and no more than maxStalenessSeconds after it.
+        Canonical relay endpoints in nodes MUST be unique. signatureAlgorithm
+        and signature are either both null or a complete ML-DSA-65 signature.
       properties:
         version: { type: integer, const: 1 }
         mode: { type: string, enum: [solo, manual, curated, open] }
-        federationName: { type: string }
+        federationName:
+          type: [string, "null"]
+          maxLength: 1024
+          description: When non-null, UTF-8 encoding MUST be at most 1024 bytes.
         issuedAt: { type: string, format: date-time }
         validUntil: { type: string, format: date-time }
-        maxStalenessSeconds: { type: integer, minimum: 1 }
+        maxStalenessSeconds: { type: integer, minimum: 1, maximum: 86400 }
         nodes:
           type: array
+          maxItems: 10000
+          uniqueItems: true
           items: { $ref: "#/components/schemas/FederationNodeRecord" }
-        signatureAlgorithm: { type: string }
-        signature: { type: string, contentEncoding: base64 }
+        signatureAlgorithm:
+          type: [string, "null"]
+          enum: [ML-DSA-65, null]
+        signature:
+          type: [string, "null"]
+          contentEncoding: base64
+          minLength: 4412
+          maxLength: 4412
+      oneOf:
+        - properties:
+            signatureAlgorithm: { type: "null" }
+            signature: { type: "null" }
+        - properties:
+            signatureAlgorithm: { const: ML-DSA-65 }
+            signature:
+              type: string
+              contentEncoding: base64
+              minLength: 4412
+              maxLength: 4412
       additionalProperties: false
     OpenFederationDHTRecord:
       type: object
@@ -1178,50 +1425,160 @@ components:
       additionalProperties: false
     RelayInfo:
       type: object
+      required:
+        - kind
+        - federation
+        - temporalBucketSeconds
+        - temporalBucketScheduleSeconds
+        - attachmentDefaultTTLSeconds
+        - attachmentMaxTTLSeconds
+        - attachmentsEnabled
+        - attachmentStorageBackend
+        - hiddenRetrieval
+        - onionTransport
+        - mixnetTransport
+        - wakeSupport
+        - relayName
+        - operatorNote
+        - softwareVersion
+        - protocolCapabilities
+        - requiresPassword
+        - tlsEnabled
+        - transport
+        - federationCoordinatorEndpoints
+        - coordinatorReportedRelayCount
+        - coordinatorRegistrationAuthRequired
+        - curatedStrictPolicyEnabled
+        - curatedCoordinatorQuorum
+        - curatedRequireSignedDirectory
+        - federationDirectoryPublicKey
+        - knownOpenPeers
+        - openFederationDiscovery
+        - advertisedAt
+      description: |
+        Current exact relay advertisement. Every key is present; unavailable
+        optional values are encoded as explicit null. All dates use canonical
+        whole-second UTC encoding. Endpoint arrays contain canonical unique
+        endpoints. temporalBucketScheduleSeconds is sorted and unique, and an
+        attachment maximum TTL cannot be lower than its default TTL.
       properties:
         kind:
           type: string
           enum: [standard, discovery, bridge, privateRelay, coordinator]
         federation:
-          type: object
+          $ref: "#/components/schemas/FederationDescriptor"
         temporalBucketSeconds:
           type: integer
+          minimum: 0
+          maximum: 86400
         temporalBucketScheduleSeconds:
-          type: array
-          items:
-            type: integer
+          oneOf:
+            - type: array
+              minItems: 1
+              maxItems: 16
+              uniqueItems: true
+              items:
+                type: integer
+                minimum: 1
+                maximum: 86400
+            - type: "null"
         attachmentDefaultTTLSeconds:
-          type: integer
+          type: [integer, "null"]
+          minimum: 60
+          maximum: 2592000
         attachmentMaxTTLSeconds:
-          type: integer
+          type: [integer, "null"]
+          minimum: 60
+          maximum: 2592000
         attachmentsEnabled:
-          type: boolean
+          type: [boolean, "null"]
         attachmentStorageBackend:
-          type: string
+          type: [string, "null"]
+          maxLength: 1024
+          description: When non-null, UTF-8 encoding MUST be at most 1024 bytes.
         hiddenRetrieval:
-          type: object
+          oneOf:
+            - $ref: "#/components/schemas/HiddenRetrievalSupport"
+            - type: "null"
         onionTransport:
-          type: object
+          oneOf:
+            - $ref: "#/components/schemas/OnionTransportSupport"
+            - type: "null"
         mixnetTransport:
-          type: object
+          oneOf:
+            - $ref: "#/components/schemas/MixnetTransportSupport"
+            - type: "null"
+        wakeSupport:
+          oneOf:
+            - $ref: "#/components/schemas/DecentralizedWakeSupport"
+            - type: "null"
         relayName:
-          type: string
+          type: [string, "null"]
+          maxLength: 1024
+          description: When non-null, UTF-8 encoding MUST be at most 1024 bytes.
         operatorNote:
-          type: string
+          type: [string, "null"]
+          maxLength: 1024
+          description: When non-null, UTF-8 encoding MUST be at most 1024 bytes.
         softwareVersion:
-          type: string
+          type: [string, "null"]
+          maxLength: 1024
           readOnly: true
-          description: Binary-defined software identifier; not operator-controlled.
+          description: |
+            Binary-defined software identifier; not operator-controlled. When
+            non-null, UTF-8 encoding MUST be at most 1024 bytes.
         protocolCapabilities:
-          $ref: "#/components/schemas/RelayCapabilityManifestV2"
+          oneOf:
+            - $ref: "#/components/schemas/RelayCapabilityManifestV2"
+            - type: "null"
         requiresPassword:
-          type: boolean
+          type: [boolean, "null"]
         tlsEnabled:
-          type: boolean
+          type: [boolean, "null"]
         transport:
-          type: string
-          enum: [tcp, http, websocket]
+          type: [string, "null"]
+          enum: [tcp, http, websocket, null]
+        federationCoordinatorEndpoints:
+          oneOf:
+            - type: array
+              maxItems: 16
+              uniqueItems: true
+              items:
+                $ref: "#/components/schemas/RelayEndpoint"
+            - type: "null"
+        coordinatorReportedRelayCount:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 1000000
+        coordinatorRegistrationAuthRequired:
+          type: [boolean, "null"]
+        curatedStrictPolicyEnabled:
+          type: [boolean, "null"]
+        curatedCoordinatorQuorum:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 16
+        curatedRequireSignedDirectory:
+          type: [boolean, "null"]
+        federationDirectoryPublicKey:
+          type: [string, "null"]
+          contentEncoding: base64
+          minLength: 2604
+          maxLength: 2604
+          description: Base64-encoded current ML-DSA-65 public key when present.
+        knownOpenPeers:
+          oneOf:
+            - type: array
+              maxItems: 128
+              uniqueItems: true
+              items:
+                $ref: "#/components/schemas/RelayEndpoint"
+            - type: "null"
+        openFederationDiscovery:
+          oneOf:
+            - $ref: "#/components/schemas/OpenFederationDiscoverySupport"
+            - type: "null"
         advertisedAt:
           type: string
           format: date-time
-      additionalProperties: true
+      additionalProperties: false
