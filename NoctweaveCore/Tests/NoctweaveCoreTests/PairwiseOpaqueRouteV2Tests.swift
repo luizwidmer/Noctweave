@@ -20,7 +20,7 @@ final class PairwiseOpaqueRouteV2Tests: XCTestCase {
         ] {
             XCTAssertFalse(text.contains(secret.base64EncodedString()))
         }
-        XCTAssertEqual(String(describing: peerRoute), "PairwiseSendRouteV2(<redacted>)")
+        XCTAssertEqual(String(describing: peerRoute), "OpaqueSendRouteV2(<redacted>)")
         XCTAssertTrue(Mirror(reflecting: peerRoute).children.isEmpty)
         XCTAssertEqual(String(describing: fixture.local), "LocalOpaqueReceiveRouteV2(<redacted>)")
         XCTAssertTrue(Mirror(reflecting: fixture.local).children.isEmpty)
@@ -29,14 +29,12 @@ final class PairwiseOpaqueRouteV2Tests: XCTestCase {
     func testIntroductionIsRendezvousBoundCurrentAndStrict() throws {
         let routeFixture = try makeRouteFixture()
         let pairwiseIdentity = try LocalPairwiseIdentityV2.generate(
-            displayName: "Ephemeral Alice",
+            relationshipPseudonym: "Ephemeral Alice",
             createdAt: origin
         )
         let rendezvousDigest = Data(repeating: 0xA7, count: 32)
         let relationshipID = try PairwiseRelationshipIDV2.derive(from: rendezvousDigest)
         let endpointHandle = RelationshipEndpointHandle.generate(
-            identityGenerationId: pairwiseIdentity.generationID,
-            endpointId: pairwiseIdentity.localEndpoint.id,
             relationshipId: relationshipID
         )
         let routeSet = try pairwiseIdentity.makeInitialRouteSet(
@@ -89,6 +87,19 @@ final class PairwiseOpaqueRouteV2Tests: XCTestCase {
         ))
 
         let encoded = try NoctweaveCoder.encode(introduction, sortedKeys: true)
+        let encodedText = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        XCTAssertTrue(encodedText.contains("Ephemeral Alice"))
+        XCTAssertFalse(encodedText.contains("Private local persona name that must never leave"))
+        for forbiddenField in [
+            "displayName",
+            "relationshipGenerationID",
+            "endpointSetCheckpoint",
+            "preferredEndpoint",
+            "manifestEpoch",
+            "allowContinuity",
+        ] {
+            XCTAssertFalse(encodedText.contains(forbiddenField))
+        }
         var object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
         )
@@ -119,18 +130,17 @@ final class PairwiseOpaqueRouteV2Tests: XCTestCase {
 
     func testPairwiseIdentityKeysAreNeverReusedAcrossContacts() throws {
         let first = try LocalPairwiseIdentityV2.generate(
-            displayName: "Same local alias",
+            relationshipPseudonym: "Same local alias",
             createdAt: origin
         )
         let second = try LocalPairwiseIdentityV2.generate(
-            displayName: "Same local alias",
+            relationshipPseudonym: "Same local alias",
             createdAt: origin
         )
 
-        XCTAssertNotEqual(first.generationID, second.generationID)
         XCTAssertNotEqual(
-            first.relationshipIdentity.signingKey.publicKeyData,
-            second.relationshipIdentity.signingKey.publicKeyData
+            first.relationshipAuthority.signingKey.publicKeyData,
+            second.relationshipAuthority.signingKey.publicKeyData
         )
         XCTAssertNotEqual(
             first.localEndpoint.signingKey.publicKeyData,

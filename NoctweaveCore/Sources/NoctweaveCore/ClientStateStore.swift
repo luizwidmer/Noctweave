@@ -48,8 +48,8 @@ public actor ClientStateStore {
     }
 
     public func save(_ state: ClientState) throws {
-        guard state.isCurrentBaselineValid else {
-            throw ClientStateError.invalidCurrentState
+        guard state.isStructurallyValid else {
+            throw ClientStateError.invalidState
         }
         let directory = fileURL.deletingLastPathComponent()
         if !FileManager.default.fileExists(atPath: directory.path) {
@@ -146,6 +146,75 @@ public actor ClientStateStore {
 private struct EncryptedStateEnvelope: Codable {
     let version: Int
     let sealed: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case sealed
+    }
+
+    init(version: Int, sealed: Data) {
+        self.version = version
+        self.sealed = sealed
+    }
+
+    init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: EncryptedStateEnvelopeCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Encrypted state fields must match the current schema exactly"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        sealed = try container.decode(Data.self, forKey: .sealed)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .sealed,
+                in: container,
+                debugDescription: "Invalid encrypted state envelope"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Invalid encrypted state envelope"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(sealed, forKey: .sealed)
+    }
+
+    var isStructurallyValid: Bool {
+        version == 1
+            && sealed.count > 12 + 16
+            && sealed.count <= ClientStateStore.maximumStoredBytes
+    }
+}
+
+private struct EncryptedStateEnvelopeCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
 }
 
 private enum ClientStateStoreError: Error {

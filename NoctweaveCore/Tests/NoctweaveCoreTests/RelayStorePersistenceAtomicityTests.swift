@@ -20,105 +20,6 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
         }
     }
 
-    func testFailedDirectDeliveryRollsBackThenExactRetryPersistsWithoutSequenceGap() async throws {
-        let fixture = try makeCorePersistentRelayFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let store = RelayStore(storeURL: fixture.storeURL, temporalBucketSeconds: 0)
-        let inboxId = InboxAddress.generate()
-        let direct = structurallyValidCoreEnvelope(marker: 0x11)
-        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
-
-        await store.failNextPersistenceForTesting()
-        await assertCoreFailure {
-            _ = try await store.deliver(direct, to: inboxId)
-        }
-        let afterFailedDirect = try await store.fetch(inboxId: inboxId)
-        XCTAssertTrue(afterFailedDirect.isEmpty)
-        let directCount = try await store.deliver(direct, to: inboxId)
-        XCTAssertEqual(directCount, 1)
-
-        let reloaded = RelayStore(storeURL: fixture.storeURL, temporalBucketSeconds: 0)
-        try await reloaded.loadFromDisk()
-        try await reloaded.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
-        let consumerId = MailboxConsumerId.generate()
-        _ = try await reloaded.registerMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumerId,
-            consumerSigningPublicKey: Data(repeating: 0xA1, count: 1_952),
-            startingSequence: 0
-        )
-        let batch = try await reloaded.syncMailbox(
-            inboxId: inboxId,
-            consumerId: consumerId,
-            maxCount: 10
-        )
-        XCTAssertEqual(batch.events.map(\.sequence), [1])
-        XCTAssertEqual(batch.events.map(\.envelope.id), [direct.id])
-    }
-
-    func testMalformedEnvelopeIsRejectedBeforeMailboxSequenceAllocation() async throws {
-        let store = RelayStore()
-        let inboxId = InboxAddress.generate()
-        let malformed = structurallyValidCoreEnvelope(marker: 0x41, signatureBytes: 100_000)
-        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
-        await assertCoreFailure {
-            _ = try await store.deliver(malformed, to: inboxId)
-        }
-        let retained = try await store.fetch(inboxId: inboxId)
-        XCTAssertTrue(retained.isEmpty)
-    }
-
-    func testFailedConsumerRegistrationAndRevocationRollBackBeforeIdempotentRetry() async throws {
-        let fixture = try makeCorePersistentRelayFixture()
-        defer { try? FileManager.default.removeItem(at: fixture.directory) }
-        let store = RelayStore(storeURL: fixture.storeURL, temporalBucketSeconds: 0)
-        let inboxId = InboxAddress.generate()
-        let consumerId = MailboxConsumerId.generate()
-        let publicKey = Data(repeating: 0xA2, count: 1_952)
-        try await store.registerInbox(inboxId: inboxId, accessPublicKey: Data([0x01]))
-
-        await store.failNextPersistenceForTesting()
-        await assertCoreFailure {
-            _ = try await store.registerMailboxConsumer(
-                inboxId: inboxId,
-                consumerId: consumerId,
-                consumerSigningPublicKey: publicKey
-            )
-        }
-        let afterFailedRegistration = await store.mailboxConsumers(inboxId: inboxId)
-        XCTAssertTrue(afterFailedRegistration.isEmpty)
-        _ = try await store.registerMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumerId,
-            consumerSigningPublicKey: publicKey
-        )
-
-        await store.failNextPersistenceForTesting()
-        await assertCoreFailure {
-            _ = try await store.revokeMailboxConsumer(
-                inboxId: inboxId,
-                consumerId: consumerId
-            )
-        }
-        let afterFailedRevocation = await store.mailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumerId
-        )
-        XCTAssertEqual(afterFailedRevocation?.state, .active)
-        _ = try await store.revokeMailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumerId
-        )
-
-        let reloaded = RelayStore(storeURL: fixture.storeURL, temporalBucketSeconds: 0)
-        try await reloaded.loadFromDisk()
-        let persisted = await reloaded.mailboxConsumer(
-            inboxId: inboxId,
-            consumerId: consumerId
-        )
-        XCTAssertEqual(persisted?.state, .revoked)
-    }
-
     func testFailedExternalAttachmentReplacementPreservesDurableBlobAndCleansOrphan() async throws {
         let fixture = try makeCorePersistentRelayFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }
@@ -181,27 +82,6 @@ private func makeCorePersistentRelayFixture() throws -> (directory: URL, storeUR
         .appendingPathComponent("noctweave-core-relay-atomicity-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     return (directory, directory.appendingPathComponent("relay.sqlite"))
-}
-
-private func structurallyValidCoreEnvelope(
-    marker: UInt8,
-    signatureBytes: Int = 3_309
-) -> ProtocolEnvelopeV1 {
-    makeTestProtocolEnvelope(
-        conversationId: "atomicity-\(marker)",
-        counter: UInt64(marker),
-        sentAt: Date(timeIntervalSince1970: 1_700_000_000),
-        payload: EncryptedPayload(
-            nonce: Data(repeating: marker, count: 12),
-            ciphertext: Data(repeating: marker, count: 512),
-            tag: Data(repeating: marker, count: 16)
-        ),
-        signature: Data(repeating: marker, count: signatureBytes)
-    )
-}
-
-private func canonicalRelayFingerprint(_ marker: UInt8) -> String {
-    Data(repeating: marker, count: 32).base64EncodedString()
 }
 
 private func atomicityAttachmentPayload(_ marker: UInt8) -> EncryptedPayload {

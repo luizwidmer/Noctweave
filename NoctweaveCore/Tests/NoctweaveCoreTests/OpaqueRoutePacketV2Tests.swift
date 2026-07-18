@@ -630,3 +630,43 @@ private struct OpaqueRoutePacketSharedVector: Decodable {
     let authorization: Authorization
     let expected: Expected
 }
+
+private extension OpaqueRouteSealedBundleV2 {
+    static func seal(
+        _ payload: Data,
+        routeRevision: UInt64,
+        paddingBucket: OpaqueRoutePaddingBucketV2,
+        payloadKey: OpaqueRoutePayloadKeyV2,
+        routeCapabilities: OpaqueRouteClientCapabilityMaterialV2,
+        authorizedAt: Date,
+        bundleID: OpaqueRouteBundleIDV2 = .generate()
+    ) throws -> OpaqueRouteSealedBundleV2 {
+        let sendRoute = try OpaqueSendRouteV2(
+            routeID: routeCapabilities.routeID,
+            relay: RelayEndpoint(
+                host: "relay.example",
+                port: 443,
+                useTLS: true,
+                transport: .websocket
+            ),
+            sendCapability: routeCapabilities.sendCapability,
+            payloadKey: payloadKey,
+            routeRevision: routeRevision,
+            policy: OpaqueRoutePolicyV2(
+                paddingBucket: paddingBucket,
+                retentionBucket: .sixHours,
+                quotaBucket: .packets256
+            ),
+            validFrom: authorizedAt,
+            expiresAt: authorizedAt.addingTimeInterval(3_600),
+            state: .active,
+            testedAt: authorizedAt
+        )
+        return try seal(
+            payload,
+            to: sendRoute,
+            authorizedAt: authorizedAt,
+            bundleID: bundleID
+        )
+    }
+}

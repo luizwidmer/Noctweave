@@ -1,6 +1,37 @@
 import CryptoKit
 import Foundation
 
+private struct StrictPQGroupCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func requireExactPQGroupKeys<Key: CodingKey & CaseIterable>(
+    _ decoder: Decoder,
+    _ keyType: Key.Type
+) throws where Key.AllCases: Collection {
+    let strict = try decoder.container(keyedBy: StrictPQGroupCodingKey.self)
+    guard Set(strict.allKeys.map(\.stringValue))
+            == Set(keyType.allCases.map(\.stringValue)) else {
+        throw DecodingError.dataCorrupted(
+            .init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Group credential fields must match the current schema exactly"
+            )
+        )
+    }
+}
+
 public enum NoctweavePQGroupExperimentalErrorV2: Error, Equatable {
     case invalidCredential
     case invalidMembership
@@ -10,7 +41,7 @@ public enum NoctweavePQGroupExperimentalErrorV2: Error, Equatable {
     case invalidEpochPackage
     case wrongDestination
     case staleEpoch
-    case localClientRemoved
+    case localCredentialRemoved
     case invalidApplicationEnvelope
     case replay
     case outOfOrder
@@ -18,46 +49,74 @@ public enum NoctweavePQGroupExperimentalErrorV2: Error, Equatable {
     case counterExhausted
 }
 
-/// Private material used by exactly one group-scoped client.
-public struct LocalGroupClientCredential: Codable, Equatable {
+/// Private material for the single active credential of one group-scoped member.
+public struct LocalGroupCredentialV2: Codable, Equatable {
     public let groupId: UUID
-    public let groupUserId: UUID
-    public let clientHandle: GroupScopedClientHandleV2
-    public let keyPackageDigest: Data
+    public let memberHandle: GroupScopedMemberHandleV2
+    public let credentialHandle: GroupScopedCredentialHandleV2
+    public let admissionDigest: Data
     public let signingKey: SigningKeyPair
     public let agreementKey: AgreementKeyPair
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case groupId
+        case memberHandle
+        case credentialHandle
+        case admissionDigest
+        case signingKey
+        case agreementKey
+    }
+
     public init(
         groupId: UUID,
-        groupUserId: UUID,
-        clientHandle: GroupScopedClientHandleV2,
-        keyPackageDigest: Data,
+        memberHandle: GroupScopedMemberHandleV2,
+        credentialHandle: GroupScopedCredentialHandleV2,
+        admissionDigest: Data,
         signingKey: SigningKeyPair,
         agreementKey: AgreementKeyPair
     ) {
         self.groupId = groupId
-        self.groupUserId = groupUserId
-        self.clientHandle = clientHandle
-        self.keyPackageDigest = keyPackageDigest
+        self.memberHandle = memberHandle
+        self.credentialHandle = credentialHandle
+        self.admissionDigest = admissionDigest
         self.signingKey = signingKey
         self.agreementKey = agreementKey
     }
 
+    public init(from decoder: Decoder) throws {
+        try requireExactPQGroupKeys(decoder, CodingKeys.self)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            groupId: try values.decode(UUID.self, forKey: .groupId),
+            memberHandle: try values.decode(GroupScopedMemberHandleV2.self, forKey: .memberHandle),
+            credentialHandle: try values.decode(GroupScopedCredentialHandleV2.self, forKey: .credentialHandle),
+            admissionDigest: try values.decode(Data.self, forKey: .admissionDigest),
+            signingKey: try values.decode(SigningKeyPair.self, forKey: .signingKey),
+            agreementKey: try values.decode(AgreementKeyPair.self, forKey: .agreementKey)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid local group credential")
+            )
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        clientHandle.isStructurallyValid
-            && keyPackageDigest.count == 32
+        memberHandle.isStructurallyValid
+            && credentialHandle.isStructurallyValid
+            && admissionDigest.count == 32
             && SigningKeyPair.isValidPublicKey(signingKey.publicKeyData)
             && AgreementKeyPair.isValidPublicKey(agreementKey.publicKeyData)
     }
 
     public static func == (
-        lhs: LocalGroupClientCredential,
-        rhs: LocalGroupClientCredential
+        lhs: LocalGroupCredentialV2,
+        rhs: LocalGroupCredentialV2
     ) -> Bool {
         lhs.groupId == rhs.groupId
-            && lhs.groupUserId == rhs.groupUserId
-            && lhs.clientHandle == rhs.clientHandle
-            && lhs.keyPackageDigest == rhs.keyPackageDigest
+            && lhs.memberHandle == rhs.memberHandle
+            && lhs.credentialHandle == rhs.credentialHandle
+            && lhs.admissionDigest == rhs.admissionDigest
             && lhs.signingKey.privateKeyData == rhs.signingKey.privateKeyData
             && lhs.signingKey.publicKeyData == rhs.signingKey.publicKeyData
             && lhs.agreementKey.privateKeyData == rhs.agreementKey.privateKeyData
@@ -102,45 +161,47 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         try membership(
             groupId: state.groupId,
             epoch: state.epoch,
-            users: state.users,
-            leaves: state.clientLeaves
+            members: state.members,
+            leaves: state.memberCredentials
         )
     }
 
     public func membership(
         groupId: UUID,
         epoch: UInt64,
-        users: [GroupUser],
-        leaves: [GroupClientLeafV2]
+        members: [GroupMemberV2],
+        leaves: [GroupMemberCredentialV2]
     ) throws -> GroupProviderMembershipV2 {
         guard epoch > 0 else { throw NoctweavePQGroupExperimentalErrorV2.invalidMembership }
-        let activeUserIds = Set(users.filter { $0.isActive(at: epoch) }.map(\.id))
-        let clients = leaves.filter {
-            $0.isActive(at: epoch) && activeUserIds.contains($0.userId)
+        let activeMemberHandles = Set(members.filter { $0.isActive(at: epoch) }.map(\.id))
+        let credentials = leaves.filter {
+            $0.isActive(at: epoch) && activeMemberHandles.contains($0.memberHandle)
         }.map {
-            GroupProviderClientV2(
-                userId: $0.userId,
-                clientHandle: $0.clientHandle,
-                keyPackageDigest: $0.keyPackageDigest,
+            GroupProviderCredentialV2(
+                memberHandle: $0.memberHandle,
+                credentialHandle: $0.credentialHandle,
+                admissionDigest: $0.admissionDigest,
                 signingPublicKey: $0.signingPublicKey,
                 agreementPublicKey: $0.agreementPublicKey
             )
-        }.sorted { $0.clientHandle.rawValue < $1.clientHandle.rawValue }
-        guard !clients.isEmpty,
-              clients.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalClientLeaves else {
+        }.sorted { $0.credentialHandle.rawValue < $1.credentialHandle.rawValue }
+        guard !credentials.isEmpty,
+              credentials.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials,
+              credentials.count == activeMemberHandles.count,
+              Set(credentials.map(\.memberHandle)).count == credentials.count else {
             throw NoctweavePQGroupExperimentalErrorV2.invalidMembership
         }
         let digestPayload = PQGroupMembershipDigestPayloadV2(
             groupId: groupId,
             epoch: epoch,
             selection: Self.selection,
-            clients: clients
+            credentials: credentials
         )
         let membership = GroupProviderMembershipV2(
             groupId: groupId,
             epoch: epoch,
             selection: Self.selection,
-            clients: clients,
+            credentials: credentials,
             membershipDigest: try pqGroupDigest(
                 domain: "Noctweave/PQGroupExperimentalV2/membership",
                 encoded: digestPayload
@@ -161,19 +222,19 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
     public func validateActiveState(
         _ state: GroupCryptoState,
         signedState: SignedGroupStateV2,
-        localCredential: LocalGroupClientCredential
+        localCredential: LocalGroupCredentialV2
     ) throws {
         let localState = try requireActiveState(state)
         try validateSignedBinding(localState, signedState: signedState)
         try validate(localCredential, in: try membership(from: signedState))
-        guard localState.localClientHandle == localCredential.clientHandle else {
+        guard localState.localCredentialHandle == localCredential.credentialHandle else {
             throw NoctweavePQGroupExperimentalErrorV2.invalidCredential
         }
     }
 
     public func prepareGenesis(
         membership: GroupProviderMembershipV2,
-        localCredential: LocalGroupClientCredential
+        localCredential: LocalGroupCredentialV2
     ) throws -> GroupCryptoPreparedEpochV2 {
         try validateMembership(membership)
         try validate(localCredential, in: membership)
@@ -187,12 +248,12 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             selection: Self.selection,
             currentMembershipDigest: nil,
             proposedMembershipDigest: membership.membershipDigest,
-            authorClientHandle: localCredential.clientHandle
+            authorCredentialHandle: localCredential.credentialHandle
         )
         return try makePreparedEpoch(
             proposal: proposal,
             proposedMembership: membership,
-            localClientHandle: localCredential.clientHandle
+            localCredentialHandle: localCredential.credentialHandle
         )
     }
 
@@ -200,16 +261,21 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         state: GroupCryptoState,
         currentMembership: GroupProviderMembershipV2,
         proposedMembership: GroupProviderMembershipV2,
-        localCredential: LocalGroupClientCredential
+        localCredential: LocalGroupCredentialV2,
+        nextLocalCredential: LocalGroupCredentialV2? = nil
     ) throws -> GroupCryptoPreparedEpochV2 {
         let localState = try requireActiveState(state)
         try validateMembership(currentMembership)
         try validateMembership(proposedMembership)
         try validate(localCredential, in: currentMembership)
+        let nextCredential = nextLocalCredential ?? localCredential
+        try validate(nextCredential, in: proposedMembership)
         guard localState.groupId == currentMembership.groupId,
               localState.epoch == currentMembership.epoch,
               localState.membershipDigest == currentMembership.membershipDigest,
-              localState.localClientHandle == localCredential.clientHandle,
+              localState.localCredentialHandle == localCredential.credentialHandle,
+              nextCredential.groupId == localCredential.groupId,
+              nextCredential.memberHandle == localCredential.memberHandle,
               proposedMembership.groupId == currentMembership.groupId,
               currentMembership.epoch < UInt64.max,
               proposedMembership.epoch == currentMembership.epoch + 1 else {
@@ -222,12 +288,12 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             selection: Self.selection,
             currentMembershipDigest: currentMembership.membershipDigest,
             proposedMembershipDigest: proposedMembership.membershipDigest,
-            authorClientHandle: localCredential.clientHandle
+            authorCredentialHandle: localCredential.credentialHandle
         )
         return try makePreparedEpoch(
             proposal: proposal,
             proposedMembership: proposedMembership,
-            localClientHandle: localCredential.clientHandle
+            localCredentialHandle: nextCredential.credentialHandle
         )
     }
 
@@ -266,13 +332,13 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         acceptance: GroupCryptoAcceptedEpochV2,
         commitBytes: Data,
         localPackage: GroupWelcomePackage,
-        localCredential: LocalGroupClientCredential
+        localCredential: LocalGroupCredentialV2
     ) throws -> GroupCryptoState {
         let currentState = try requireActiveState(state)
         try validateMembership(currentMembership)
         try validateMembership(proposedMembership)
         try validate(localCredential, in: currentMembership)
-        guard currentState.localClientHandle == localCredential.clientHandle,
+        guard currentState.localCredentialHandle == localCredential.credentialHandle,
               currentState.epoch == currentMembership.epoch,
               currentState.membershipDigest == currentMembership.membershipDigest,
               proposedMembership.groupId == currentMembership.groupId,
@@ -283,10 +349,10 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
               acceptance.proposal.proposedMembershipDigest == proposedMembership.membershipDigest else {
             throw NoctweavePQGroupExperimentalErrorV2.staleEpoch
         }
-        guard proposedMembership.clients.contains(where: {
-            $0.clientHandle == localCredential.clientHandle
+        guard proposedMembership.credentials.contains(where: {
+            $0.credentialHandle == localCredential.credentialHandle
         }) else {
-            throw NoctweavePQGroupExperimentalErrorV2.localClientRemoved
+            throw NoctweavePQGroupExperimentalErrorV2.localCredentialRemoved
         }
         let commit = try decodeAndValidateCommit(commitBytes, acceptance: acceptance)
         return try openEpochPackage(
@@ -303,7 +369,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         membership: GroupProviderMembershipV2,
         acceptance: GroupCryptoAcceptedEpochV2,
         commitBytes: Data,
-        localCredential: LocalGroupClientCredential
+        localCredential: LocalGroupCredentialV2
     ) throws -> GroupCryptoState {
         try validateMembership(membership)
         try validate(localCredential, in: membership)
@@ -326,7 +392,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         _ event: Data,
         state: GroupCryptoState,
         signedState: SignedGroupStateV2,
-        localCredential: LocalGroupClientCredential,
+        localCredential: LocalGroupCredentialV2,
         eventId: UUID = UUID(),
         sentAt: Date = Date()
     ) throws -> NoctweavePQGroupApplicationSealV2 {
@@ -337,9 +403,9 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         var localState = try requireActiveState(state)
         try validateSignedBinding(localState, signedState: signedState)
         try validate(localCredential, in: try membership(from: signedState))
-        guard localState.localClientHandle == localCredential.clientHandle,
+        guard localState.localCredentialHandle == localCredential.credentialHandle,
               let chainIndex = localState.senderChains.firstIndex(where: {
-                  $0.clientHandle == localCredential.clientHandle
+                  $0.credentialHandle == localCredential.credentialHandle
               }) else {
             throw NoctweavePQGroupExperimentalErrorV2.invalidCredential
         }
@@ -350,7 +416,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         let bucketedSentAt = pqGroupBucketedDate(sentAt)
         let aad = try applicationAAD(
             state: localState,
-            senderClientHandle: localCredential.clientHandle,
+            senderCredentialHandle: localCredential.credentialHandle,
             eventId: eventId,
             messageCounter: chain.nextSendCounter,
             sentAt: bucketedSentAt
@@ -359,7 +425,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             chainKey: chain.sendChainKey,
             groupId: localState.groupId,
             epoch: localState.epoch,
-            clientHandle: chain.clientHandle,
+            credentialHandle: chain.credentialHandle,
             counter: chain.nextSendCounter
         )
         let payload = try CryptoBox.encrypt(
@@ -371,7 +437,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             groupId: localState.groupId,
             epoch: localState.epoch,
             transcriptHash: try requiredTranscriptHash(localState),
-            senderClientHandle: localCredential.clientHandle,
+            senderCredentialHandle: localCredential.credentialHandle,
             eventId: eventId,
             messageCounter: chain.nextSendCounter,
             sentAt: bucketedSentAt,
@@ -383,7 +449,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
                 chainKey: chain.sendChainKey,
                 groupId: localState.groupId,
                 epoch: localState.epoch,
-                clientHandle: chain.clientHandle,
+                credentialHandle: chain.credentialHandle,
                 counter: chain.nextSendCounter
             )
         )
@@ -405,14 +471,14 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
               envelope.groupId == signedState.groupId,
               envelope.epoch == signedState.epoch,
               envelope.transcriptHash == signedState.confirmedTranscriptHash,
-              let senderLeaf = signedState.activeClientLeaves.first(where: {
-                  $0.clientHandle == envelope.senderClientHandle
+              let senderLeaf = signedState.activeCredentials.first(where: {
+                  $0.credentialHandle == envelope.senderCredentialHandle
               }),
               envelope.verifySignature(
-                  groupClientSigningPublicKey: senderLeaf.signingPublicKey
+                  groupCredentialSigningPublicKey: senderLeaf.signingPublicKey
               ),
               let chainIndex = localState.senderChains.firstIndex(where: {
-                  $0.clientHandle == envelope.senderClientHandle
+                  $0.credentialHandle == envelope.senderCredentialHandle
               }) else {
             throw NoctweavePQGroupExperimentalErrorV2.invalidApplicationEnvelope
         }
@@ -428,7 +494,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         }
         let aad = try applicationAAD(
             state: localState,
-            senderClientHandle: envelope.senderClientHandle,
+            senderCredentialHandle: envelope.senderCredentialHandle,
             eventId: envelope.eventId,
             messageCounter: envelope.messageCounter,
             sentAt: envelope.sentAt
@@ -437,7 +503,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             chainKey: chain.receiveChainKey,
             groupId: localState.groupId,
             epoch: localState.epoch,
-            clientHandle: chain.clientHandle,
+            credentialHandle: chain.credentialHandle,
             counter: chain.nextReceiveCounter
         )
         let plaintext: Data
@@ -459,7 +525,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
                 chainKey: chain.receiveChainKey,
                 groupId: localState.groupId,
                 epoch: localState.epoch,
-                clientHandle: chain.clientHandle,
+                credentialHandle: chain.credentialHandle,
                 counter: chain.nextReceiveCounter
             )
         )
@@ -473,7 +539,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
     private func makePreparedEpoch(
         proposal: GroupCryptoEpochProposalV2,
         proposedMembership: GroupProviderMembershipV2,
-        localClientHandle: GroupScopedClientHandleV2
+        localCredentialHandle: GroupScopedCredentialHandleV2
     ) throws -> GroupCryptoPreparedEpochV2 {
         guard proposal.isStructurallyValid,
               proposedMembership.membershipDigest == proposal.proposedMembershipDigest,
@@ -488,21 +554,21 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             epoch: proposal.nextEpoch
         )
         var cores: [PQGroupEpochSecretPackageCoreV2] = []
-        var entries: [PQGroupDestinationPackageDigestV2] = []
-        for client in proposedMembership.clients {
+        var entries: [PQGroupDestinationAdmissionDigestV2] = []
+        for credential in proposedMembership.credentials {
             let core = try makePackageCore(
                 proposal: proposal,
-                client: client,
+                credential: credential,
                 epochSecret: epochSecret,
                 commitment: commitment
             )
             cores.append(core)
-            entries.append(PQGroupDestinationPackageDigestV2(
-                destinationClientHandle: client.clientHandle,
+            entries.append(PQGroupDestinationAdmissionDigestV2(
+                destinationCredentialHandle: credential.credentialHandle,
                 packageDigest: try packageDigest(core)
             ))
         }
-        entries.sort { $0.destinationClientHandle.rawValue < $1.destinationClientHandle.rawValue }
+        entries.sort { $0.destinationCredentialHandle.rawValue < $1.destinationCredentialHandle.rawValue }
         let commit = PQGroupEpochCommitV2(
             proposal: proposal,
             epochSecretCommitment: commitment,
@@ -515,7 +581,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         let providerCommitDigest = Data(SHA256.hash(data: commitBytes))
         let welcomes = try cores.map { core in
             GroupWelcomePackage(
-                destination: core.destinationClientHandle,
+                destination: core.destinationCredentialHandle,
                 bytes: try NoctweaveCoder.encode(
                     PQGroupEpochSecretPackageV2(
                         core: core,
@@ -529,7 +595,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         let provisional = try makeLocalState(
             proposal: proposal,
             membership: proposedMembership,
-            localClientHandle: localClientHandle,
+            localCredentialHandle: localCredentialHandle,
             epochSecret: epochSecret,
             commitment: commitment,
             providerCommitDigest: providerCommitDigest,
@@ -551,17 +617,17 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
 
     private func makePackageCore(
         proposal: GroupCryptoEpochProposalV2,
-        client: GroupProviderClientV2,
+        credential: GroupProviderCredentialV2,
         epochSecret: Data,
         commitment: Data
     ) throws -> PQGroupEpochSecretPackageCoreV2 {
-        let kemOutput = try AgreementKeyPair.encapsulate(to: client.agreementPublicKey)
+        let kemOutput = try AgreementKeyPair.encapsulate(to: credential.agreementPublicKey)
         var sharedSecret = kemOutput.sharedSecret
         defer { sharedSecret.secureWipe() }
         let wrapKey = derivePackageKey(
             sharedSecret: sharedSecret,
             proposal: proposal,
-            client: client,
+            credential: credential,
             commitment: commitment
         )
         let plaintext = PQGroupEpochSecretPlaintextV2(
@@ -573,8 +639,8 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         )
         let aad = try packageAAD(
             proposal: proposal,
-            destinationClientHandle: client.clientHandle,
-            destinationKeyPackageDigest: client.keyPackageDigest,
+            destinationCredentialHandle: credential.credentialHandle,
+            destinationAdmissionDigest: credential.admissionDigest,
             commitment: commitment
         )
         let sealed = try CryptoBox.encrypt(
@@ -585,8 +651,8 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         return PQGroupEpochSecretPackageCoreV2(
             groupId: proposal.groupId,
             epoch: proposal.nextEpoch,
-            destinationClientHandle: client.clientHandle,
-            destinationKeyPackageDigest: client.keyPackageDigest,
+            destinationCredentialHandle: credential.credentialHandle,
+            destinationAdmissionDigest: credential.admissionDigest,
             kemCiphertext: kemOutput.ciphertext,
             encryptedEpochSecret: sealed
         )
@@ -597,17 +663,17 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         commit: PQGroupEpochCommitV2,
         membership: GroupProviderMembershipV2,
         acceptance: GroupCryptoAcceptedEpochV2,
-        localCredential: LocalGroupClientCredential
+        localCredential: LocalGroupCredentialV2
     ) throws -> GroupCryptoState {
-        guard welcome.destination == localCredential.clientHandle,
-              let client = membership.clients.first(where: {
-                  $0.clientHandle == localCredential.clientHandle
+        guard welcome.destination == localCredential.credentialHandle,
+              let credential = membership.credentials.first(where: {
+                  $0.credentialHandle == localCredential.credentialHandle
               }) else {
             throw NoctweavePQGroupExperimentalErrorV2.wrongDestination
         }
         let package: PQGroupEpochSecretPackageV2
         do {
-            package = try NoctweaveCoder.decode(
+            package = try decodePQGroupExact(
                 PQGroupEpochSecretPackageV2.self,
                 from: welcome.bytes
             )
@@ -617,12 +683,12 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         guard package.isStructurallyValid,
               package.core.groupId == membership.groupId,
               package.core.epoch == membership.epoch,
-              package.core.destinationClientHandle == localCredential.clientHandle,
-              package.core.destinationKeyPackageDigest == localCredential.keyPackageDigest,
+              package.core.destinationCredentialHandle == localCredential.credentialHandle,
+              package.core.destinationAdmissionDigest == localCredential.admissionDigest,
               package.epochSecretCommitment == commit.epochSecretCommitment,
               package.destinationPackageDigests == commit.destinationPackageDigests,
               let entry = commit.destinationPackageDigests.first(where: {
-                  $0.destinationClientHandle == localCredential.clientHandle
+                  $0.destinationCredentialHandle == localCredential.credentialHandle
               }),
               entry.packageDigest == (try? packageDigest(package.core)) else {
             throw NoctweavePQGroupExperimentalErrorV2.invalidEpochPackage
@@ -639,7 +705,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         let wrapKey = derivePackageKey(
             sharedSecret: sharedSecret,
             proposal: commit.proposal,
-            client: client,
+            credential: credential,
             commitment: commit.epochSecretCommitment
         )
         let opened: Data
@@ -649,8 +715,8 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
                 key: SymmetricKey(data: wrapKey),
                 authenticatedData: try packageAAD(
                     proposal: commit.proposal,
-                    destinationClientHandle: client.clientHandle,
-                    destinationKeyPackageDigest: client.keyPackageDigest,
+                    destinationCredentialHandle: credential.credentialHandle,
+                    destinationAdmissionDigest: credential.admissionDigest,
                     commitment: commit.epochSecretCommitment
                 )
             )
@@ -659,7 +725,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         }
         let plaintext: PQGroupEpochSecretPlaintextV2
         do {
-            plaintext = try NoctweaveCoder.decode(
+            plaintext = try decodePQGroupExact(
                 PQGroupEpochSecretPlaintextV2.self,
                 from: opened
             )
@@ -681,7 +747,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         return try makeLocalState(
             proposal: commit.proposal,
             membership: membership,
-            localClientHandle: localCredential.clientHandle,
+            localCredentialHandle: localCredential.credentialHandle,
             epochSecret: plaintext.epochSecret,
             commitment: commit.epochSecretCommitment,
             providerCommitDigest: acceptance.providerCommitDigest,
@@ -703,7 +769,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         }
         let commit: PQGroupEpochCommitV2
         do {
-            commit = try NoctweaveCoder.decode(PQGroupEpochCommitV2.self, from: bytes)
+            commit = try decodePQGroupExact(PQGroupEpochCommitV2.self, from: bytes)
         } catch {
             throw NoctweavePQGroupExperimentalErrorV2.invalidCommit
         }
@@ -723,16 +789,16 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             throw NoctweavePQGroupExperimentalErrorV2.invalidEpochPackage
         }
         for welcome in welcomes {
-            guard let package = try? NoctweaveCoder.decode(
+            guard let package = try? decodePQGroupExact(
                 PQGroupEpochSecretPackageV2.self,
                 from: welcome.bytes
             ),
                 package.isStructurallyValid,
-                package.core.destinationClientHandle == welcome.destination,
+                package.core.destinationCredentialHandle == welcome.destination,
                 package.epochSecretCommitment == commit.epochSecretCommitment,
                 package.destinationPackageDigests == commit.destinationPackageDigests,
                 let entry = commit.destinationPackageDigests.first(where: {
-                    $0.destinationClientHandle == welcome.destination
+                    $0.destinationCredentialHandle == welcome.destination
                 }),
                 entry.packageDigest == (try? packageDigest(package.core)) else {
                 throw NoctweavePQGroupExperimentalErrorV2.invalidEpochPackage
@@ -743,14 +809,14 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
     private func validateMembership(_ membership: GroupProviderMembershipV2) throws {
         guard membership.isStructurallyValid,
               membership.selection == Self.selection,
-              membership.clients.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalClientLeaves,
+              membership.credentials.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials,
               membership.membershipDigest == (try? pqGroupDigest(
                   domain: "Noctweave/PQGroupExperimentalV2/membership",
                   encoded: PQGroupMembershipDigestPayloadV2(
                       groupId: membership.groupId,
                       epoch: membership.epoch,
                       selection: membership.selection,
-                      clients: membership.clients
+                      credentials: membership.credentials
                   )
               )) else {
             throw NoctweavePQGroupExperimentalErrorV2.invalidMembership
@@ -758,18 +824,18 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
     }
 
     private func validate(
-        _ credential: LocalGroupClientCredential,
+        _ credential: LocalGroupCredentialV2,
         in membership: GroupProviderMembershipV2
     ) throws {
         guard credential.isStructurallyValid,
               credential.groupId == membership.groupId,
-              let client = membership.clients.first(where: {
-                  $0.clientHandle == credential.clientHandle
+              let credential = membership.credentials.first(where: {
+                  $0.credentialHandle == credential.credentialHandle
               }),
-              client.userId == credential.groupUserId,
-              client.keyPackageDigest == credential.keyPackageDigest,
-              client.signingPublicKey == credential.signingKey.publicKeyData,
-              client.agreementPublicKey == credential.agreementKey.publicKeyData else {
+              credential.memberHandle == credential.memberHandle,
+              credential.admissionDigest == credential.admissionDigest,
+              credential.signingPublicKey == credential.signingKey.publicKeyData,
+              credential.agreementPublicKey == credential.agreementKey.publicKeyData else {
             throw NoctweavePQGroupExperimentalErrorV2.invalidCredential
         }
     }
@@ -794,7 +860,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
     private func makeLocalState(
         proposal: GroupCryptoEpochProposalV2,
         membership: GroupProviderMembershipV2,
-        localClientHandle: GroupScopedClientHandleV2,
+        localCredentialHandle: GroupScopedCredentialHandleV2,
         epochSecret: Data,
         commitment: Data,
         providerCommitDigest: Data,
@@ -808,29 +874,29 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             epoch: proposal.nextEpoch,
             membershipDigest: membership.membershipDigest
         )
-        let chains = membership.clients.map { client -> PQGroupSenderChainStateV2 in
+        let chains = membership.credentials.map { credential -> PQGroupSenderChainStateV2 in
             let senderRoot = deriveSenderRoot(
                 epochRoot: epochRoot,
                 groupId: proposal.groupId,
                 epoch: proposal.nextEpoch,
                 membershipDigest: membership.membershipDigest,
-                clientHandle: client.clientHandle
+                credentialHandle: credential.credentialHandle
             )
             return PQGroupSenderChainStateV2(
-                clientHandle: client.clientHandle,
+                credentialHandle: credential.credentialHandle,
                 nextSendCounter: 0,
                 sendChainKey: senderRoot,
                 nextReceiveCounter: 0,
                 receiveChainKey: senderRoot
             )
-        }.sorted { $0.clientHandle.rawValue < $1.clientHandle.rawValue }
+        }.sorted { $0.credentialHandle.rawValue < $1.credentialHandle.rawValue }
         let state = PQGroupLocalCryptoStateV2(
             version: Self.stateVersion,
             activation: activation,
             selection: Self.selection,
             groupId: proposal.groupId,
             epoch: proposal.nextEpoch,
-            localClientHandle: localClientHandle,
+            localCredentialHandle: localCredentialHandle,
             membershipDigest: membership.membershipDigest,
             epochSecret: epochSecret,
             epochSecretCommitment: commitment,
@@ -874,7 +940,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         }
         let decoded: PQGroupLocalCryptoStateV2
         do {
-            decoded = try NoctweaveCoder.decode(
+            decoded = try decodePQGroupExact(
                 PQGroupLocalCryptoStateV2.self,
                 from: state.opaqueState
             )
@@ -899,16 +965,16 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
 
     private func packageAAD(
         proposal: GroupCryptoEpochProposalV2,
-        destinationClientHandle: GroupScopedClientHandleV2,
-        destinationKeyPackageDigest: Data,
+        destinationCredentialHandle: GroupScopedCredentialHandleV2,
+        destinationAdmissionDigest: Data,
         commitment: Data
     ) throws -> Data {
         try NoctweaveCoder.encode(
             PQGroupPackageAADV2(
                 domain: "Noctweave/PQGroupExperimentalV2/package-aad",
                 proposal: proposal,
-                destinationClientHandle: destinationClientHandle,
-                destinationKeyPackageDigest: destinationKeyPackageDigest,
+                destinationCredentialHandle: destinationCredentialHandle,
+                destinationAdmissionDigest: destinationAdmissionDigest,
                 epochSecretCommitment: commitment
             ),
             sortedKeys: true
@@ -917,7 +983,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
 
     private func applicationAAD(
         state: PQGroupLocalCryptoStateV2,
-        senderClientHandle: GroupScopedClientHandleV2,
+        senderCredentialHandle: GroupScopedCredentialHandleV2,
         eventId: UUID,
         messageCounter: UInt64,
         sentAt: Date
@@ -930,7 +996,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
                 groupId: state.groupId,
                 epoch: state.epoch,
                 transcriptHash: try requiredTranscriptHash(state),
-                senderClientHandle: senderClientHandle,
+                senderCredentialHandle: senderCredentialHandle,
                 eventId: eventId,
                 messageCounter: messageCounter,
                 sentAt: sentAt
@@ -951,33 +1017,33 @@ private struct PQGroupMembershipDigestPayloadV2: Codable {
     let groupId: UUID
     let epoch: UInt64
     let selection: GroupProtocolSelectionV2
-    let clients: [GroupProviderClientV2]
+    let credentials: [GroupProviderCredentialV2]
 }
 
-private struct PQGroupDestinationPackageDigestV2: Codable, Equatable {
-    let destinationClientHandle: GroupScopedClientHandleV2
+private struct PQGroupDestinationAdmissionDigestV2: Codable, Equatable {
+    let destinationCredentialHandle: GroupScopedCredentialHandleV2
     let packageDigest: Data
 
     var isStructurallyValid: Bool {
-        destinationClientHandle.isStructurallyValid && packageDigest.count == 32
+        destinationCredentialHandle.isStructurallyValid && packageDigest.count == 32
     }
 }
 
 private struct PQGroupEpochCommitV2: Codable, Equatable {
     let proposal: GroupCryptoEpochProposalV2
     let epochSecretCommitment: Data
-    let destinationPackageDigests: [PQGroupDestinationPackageDigestV2]
+    let destinationPackageDigests: [PQGroupDestinationAdmissionDigestV2]
 
     var isStructurallyValid: Bool {
         proposal.isStructurallyValid
             && epochSecretCommitment.count == 32
             && !destinationPackageDigests.isEmpty
             && destinationPackageDigests.count
-                <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalClientLeaves
+                <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials
             && destinationPackageDigests == destinationPackageDigests.sorted {
-                $0.destinationClientHandle.rawValue < $1.destinationClientHandle.rawValue
+                $0.destinationCredentialHandle.rawValue < $1.destinationCredentialHandle.rawValue
             }
-            && Set(destinationPackageDigests.map(\.destinationClientHandle)).count
+            && Set(destinationPackageDigests.map(\.destinationCredentialHandle)).count
                 == destinationPackageDigests.count
             && destinationPackageDigests.allSatisfy(\.isStructurallyValid)
     }
@@ -986,15 +1052,15 @@ private struct PQGroupEpochCommitV2: Codable, Equatable {
 private struct PQGroupEpochSecretPackageCoreV2: Codable, Equatable {
     let groupId: UUID
     let epoch: UInt64
-    let destinationClientHandle: GroupScopedClientHandleV2
-    let destinationKeyPackageDigest: Data
+    let destinationCredentialHandle: GroupScopedCredentialHandleV2
+    let destinationAdmissionDigest: Data
     let kemCiphertext: Data
     let encryptedEpochSecret: EncryptedPayload
 
     var isStructurallyValid: Bool {
         epoch > 0
-            && destinationClientHandle.isStructurallyValid
-            && destinationKeyPackageDigest.count == 32
+            && destinationCredentialHandle.isStructurallyValid
+            && destinationAdmissionDigest.count == 32
             && !kemCiphertext.isEmpty
             && encryptedEpochSecret.nonce.count == 12
             && !encryptedEpochSecret.ciphertext.isEmpty
@@ -1005,18 +1071,18 @@ private struct PQGroupEpochSecretPackageCoreV2: Codable, Equatable {
 private struct PQGroupEpochSecretPackageV2: Codable, Equatable {
     let core: PQGroupEpochSecretPackageCoreV2
     let epochSecretCommitment: Data
-    let destinationPackageDigests: [PQGroupDestinationPackageDigestV2]
+    let destinationPackageDigests: [PQGroupDestinationAdmissionDigestV2]
 
     var isStructurallyValid: Bool {
         core.isStructurallyValid
             && epochSecretCommitment.count == 32
             && !destinationPackageDigests.isEmpty
             && destinationPackageDigests.count
-                <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalClientLeaves
+                <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials
             && destinationPackageDigests == destinationPackageDigests.sorted {
-                $0.destinationClientHandle.rawValue < $1.destinationClientHandle.rawValue
+                $0.destinationCredentialHandle.rawValue < $1.destinationCredentialHandle.rawValue
             }
-            && Set(destinationPackageDigests.map(\.destinationClientHandle)).count
+            && Set(destinationPackageDigests.map(\.destinationCredentialHandle)).count
                 == destinationPackageDigests.count
             && destinationPackageDigests.allSatisfy(\.isStructurallyValid)
     }
@@ -1033,8 +1099,8 @@ private struct PQGroupEpochSecretPlaintextV2: Codable {
 private struct PQGroupPackageAADV2: Codable {
     let domain: String
     let proposal: GroupCryptoEpochProposalV2
-    let destinationClientHandle: GroupScopedClientHandleV2
-    let destinationKeyPackageDigest: Data
+    let destinationCredentialHandle: GroupScopedCredentialHandleV2
+    let destinationAdmissionDigest: Data
     let epochSecretCommitment: Data
 }
 
@@ -1045,28 +1111,28 @@ private struct PQGroupApplicationAADV2: Codable {
     let groupId: UUID
     let epoch: UInt64
     let transcriptHash: Data
-    let senderClientHandle: GroupScopedClientHandleV2
+    let senderCredentialHandle: GroupScopedCredentialHandleV2
     let eventId: UUID
     let messageCounter: UInt64
     let sentAt: Date
 }
 
 private struct PQGroupSenderChainStateV2: Codable, Equatable {
-    let clientHandle: GroupScopedClientHandleV2
+    let credentialHandle: GroupScopedCredentialHandleV2
     let nextSendCounter: UInt64
     let sendChainKey: Data
     let nextReceiveCounter: UInt64
     let receiveChainKey: Data
 
     var isStructurallyValid: Bool {
-        clientHandle.isStructurallyValid
+        credentialHandle.isStructurallyValid
             && sendChainKey.count == 32
             && receiveChainKey.count == 32
     }
 
     func advancingSend(nextKey: Data) -> PQGroupSenderChainStateV2 {
         PQGroupSenderChainStateV2(
-            clientHandle: clientHandle,
+            credentialHandle: credentialHandle,
             nextSendCounter: nextSendCounter + 1,
             sendChainKey: nextKey,
             nextReceiveCounter: nextReceiveCounter,
@@ -1076,7 +1142,7 @@ private struct PQGroupSenderChainStateV2: Codable, Equatable {
 
     func advancingReceive(nextKey: Data) -> PQGroupSenderChainStateV2 {
         PQGroupSenderChainStateV2(
-            clientHandle: clientHandle,
+            credentialHandle: credentialHandle,
             nextSendCounter: nextSendCounter,
             sendChainKey: sendChainKey,
             nextReceiveCounter: nextReceiveCounter + 1,
@@ -1091,7 +1157,7 @@ private struct PQGroupLocalCryptoStateV2: Codable, Equatable {
     let selection: GroupProtocolSelectionV2
     let groupId: UUID
     let epoch: UInt64
-    let localClientHandle: GroupScopedClientHandleV2
+    let localCredentialHandle: GroupScopedCredentialHandleV2
     let membershipDigest: Data
     let epochSecret: Data
     let epochSecretCommitment: Data
@@ -1104,7 +1170,7 @@ private struct PQGroupLocalCryptoStateV2: Codable, Equatable {
         version == 1
             && selection == .currentExperimental
             && epoch > 0
-            && localClientHandle.isStructurallyValid
+            && localCredentialHandle.isStructurallyValid
             && membershipDigest.count == 32
             && epochSecret.count == 32
             && epochSecretCommitment.count == 32
@@ -1117,12 +1183,12 @@ private struct PQGroupLocalCryptoStateV2: Codable, Equatable {
                     && acceptedTranscriptHash?.count == 32))
             && !senderChains.isEmpty
             && senderChains.count
-                <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalClientLeaves
+                <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials
             && senderChains == senderChains.sorted {
-                $0.clientHandle.rawValue < $1.clientHandle.rawValue
+                $0.credentialHandle.rawValue < $1.credentialHandle.rawValue
             }
-            && Set(senderChains.map(\.clientHandle)).count == senderChains.count
-            && senderChains.contains { $0.clientHandle == localClientHandle }
+            && Set(senderChains.map(\.credentialHandle)).count == senderChains.count
+            && senderChains.contains { $0.credentialHandle == localCredentialHandle }
             && senderChains.allSatisfy(\.isStructurallyValid)
             && epochSecretCommitment == NoctweavePQGroupExperimentalProviderV2
                 .computeEpochSecretCommitment(
@@ -1142,7 +1208,7 @@ private struct PQGroupLocalCryptoStateV2: Codable, Equatable {
             selection: selection,
             groupId: groupId,
             epoch: epoch,
-            localClientHandle: localClientHandle,
+            localCredentialHandle: localCredentialHandle,
             membershipDigest: membershipDigest,
             epochSecret: epochSecret,
             epochSecretCommitment: epochSecretCommitment,
@@ -1188,7 +1254,7 @@ private func epochSecretCommitment(
 private func derivePackageKey(
     sharedSecret: Data,
     proposal: GroupCryptoEpochProposalV2,
-    client: GroupProviderClientV2,
+    credential: GroupProviderCredentialV2,
     commitment: Data
 ) -> Data {
     pqGroupHKDF(
@@ -1202,8 +1268,8 @@ private func derivePackageKey(
             parts: [
                 Data(proposal.groupId.uuidString.lowercased().utf8),
                 pqGroupUInt64(proposal.nextEpoch),
-                Data(client.clientHandle.rawValue.utf8),
-                client.keyPackageDigest
+                Data(credential.credentialHandle.rawValue.utf8),
+                credential.admissionDigest
             ]
         )
     )
@@ -1233,7 +1299,7 @@ private func deriveSenderRoot(
     groupId: UUID,
     epoch: UInt64,
     membershipDigest: Data,
-    clientHandle: GroupScopedClientHandleV2
+    credentialHandle: GroupScopedCredentialHandleV2
 ) -> Data {
     pqGroupHKDF(
         input: epochRoot,
@@ -1246,7 +1312,7 @@ private func deriveSenderRoot(
             parts: [
                 Data(groupId.uuidString.lowercased().utf8),
                 pqGroupUInt64(epoch),
-                Data(clientHandle.rawValue.utf8)
+                Data(credentialHandle.rawValue.utf8)
             ]
         )
     )
@@ -1256,7 +1322,7 @@ private func deriveMessageKey(
     chainKey: Data,
     groupId: UUID,
     epoch: UInt64,
-    clientHandle: GroupScopedClientHandleV2,
+    credentialHandle: GroupScopedCredentialHandleV2,
     counter: UInt64
 ) -> Data {
     pqGroupHKDF(
@@ -1267,7 +1333,7 @@ private func deriveMessageKey(
         ),
         info: pqGroupDomainMaterial(
             "Noctweave/PQGroupExperimentalV2/message-key",
-            parts: [Data(clientHandle.rawValue.utf8), pqGroupUInt64(counter)]
+            parts: [Data(credentialHandle.rawValue.utf8), pqGroupUInt64(counter)]
         )
     )
 }
@@ -1276,7 +1342,7 @@ private func deriveNextChainKey(
     chainKey: Data,
     groupId: UUID,
     epoch: UInt64,
-    clientHandle: GroupScopedClientHandleV2,
+    credentialHandle: GroupScopedCredentialHandleV2,
     counter: UInt64
 ) -> Data {
     pqGroupHKDF(
@@ -1287,7 +1353,7 @@ private func deriveNextChainKey(
         ),
         info: pqGroupDomainMaterial(
             "Noctweave/PQGroupExperimentalV2/chain-next",
-            parts: [Data(clientHandle.rawValue.utf8), pqGroupUInt64(counter)]
+            parts: [Data(credentialHandle.rawValue.utf8), pqGroupUInt64(counter)]
         )
     )
 }
@@ -1321,6 +1387,19 @@ private func pqGroupRandomData(count: Int) -> Data {
     return Data((0..<count).map { _ in
         UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
     })
+}
+
+/// Provider control objects use one canonical representation. This rejects
+/// unknown fields and alternate encodings before any state transition.
+private func decodePQGroupExact<Value: Codable>(
+    _ type: Value.Type,
+    from data: Data
+) throws -> Value {
+    let decoded = try NoctweaveCoder.decode(type, from: data)
+    guard try NoctweaveCoder.encode(decoded, sortedKeys: true) == data else {
+        throw NoctweavePQGroupExperimentalErrorV2.invalidState
+    }
+    return decoded
 }
 
 private func pqGroupBucketedDate(_ date: Date) -> Date {

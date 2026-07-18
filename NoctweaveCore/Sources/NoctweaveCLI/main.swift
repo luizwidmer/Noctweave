@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 import NoctweaveCore
 
 #if os(Linux)
@@ -24,10 +23,7 @@ struct NoctweaveCLI {
 }
 
 private struct CommandRunner {
-    private static let maximumContactPackageBytes = 512 * 1024
-    private static let maximumRawRequestBytes = 512 * 1024
-    private static let maximumAttachmentBytes = AttachmentDescriptor.maximumTransportBytes
-
+    private static let maximumRawRequestBytes = 512 * 1_024
     let arguments: [String]
 
     func run() async throws {
@@ -35,672 +31,287 @@ private struct CommandRunner {
             printHelp()
             return
         }
-
-        let options = try ParsedOptions(arguments: Array(arguments.dropFirst()))
+        let options = try ParsedOptions(Array(arguments.dropFirst()))
         switch command {
         case "help", "--help", "-h":
             printHelp()
         case "init":
-            try await initialize(options: options)
-        case "register":
-            try await headlessClient(from: options).registerInbox()
-            FileHandle.standardOutput.writeLine("registered")
+            try await initialize(options)
         case "status":
-            try await writeJSON(headlessClient(from: options).status())
-        case "export-contact":
-            try await exportContact(options: options)
-        case "import-contact":
-            let contact = try await importContact(options: options)
-            try writeJSON(contact)
-        case "contacts":
-            try await writeJSON(headlessClient(from: options).contacts())
-        case "continuity-audit":
-            try await writeJSON(headlessClient(from: options).continuityAudit())
-        case "purge-continuity-audit":
-            try await purgeContinuityAudit(options: options)
+            try await status(options)
+        case "relationships":
+            let client = try await headlessClient(options)
+            try writeJSON(await client.activePersona().relationships)
+        case "prepare-participant":
+            try await prepareParticipant(options)
+        case "pairing-invitation":
+            try await pairingInvitation(options)
         case "send":
-            try await sendText(options: options)
-        case "send-attachment":
-            try await sendAttachment(options: options, voice: false)
-        case "send-voice":
-            try await sendAttachment(options: options, voice: true)
-        case "receive":
-            try await receive(options: options)
-        case "download-attachment":
-            try await downloadAttachment(options: options)
-        case "allow-identity-reset":
-            try await allowIdentityReset(options: options)
-        case "rotate-identity":
-            try await rotateIdentity(options: options)
-        case "burn-identity":
-            try await burnIdentity(options: options)
+            try await sendText(options)
+        case "sync":
+            try await sync(options)
+        case "burn-persona":
+            try await burnPersona(options)
         case "endpoint":
-            let endpoint = try endpoint(from: options)
-            try writeJSON(endpoint)
+            try writeJSON(try endpoint(options))
         case "health", "relay-health":
-            try await send(.health(), options: options)
+            try await sendRelay(.health(), options: options)
         case "info", "relay-info":
-            try await send(.info(), options: options)
+            try await sendRelay(.info(), options: options)
         case "raw", "send-raw":
-            let request = try request(from: options)
-            try await send(request, options: options)
+            try await sendRelay(try relayRequest(options), options: options)
         default:
             throw CLIError("Unknown command: \(command). Run `NoctweaveCLI help`.")
         }
     }
 
-    private func initialize(options: ParsedOptions) async throws {
-        guard let displayName = options.value(for: "--display-name") ?? options.value(for: "--name") else {
-            throw CLIError("Missing display name. Use `--display-name <name>`.")
+    private func initialize(_ options: ParsedOptions) async throws {
+        let name = try required(options, "--display-name")
+        let store = try stateStore(options)
+        if try await store.load() != nil {
+            throw CLIError("State already exists.")
         }
-        let relay = try endpoint(from: options)
-        let client = try headlessClient(from: options)
-        let status = try await client.createState(
-            displayName: displayName,
-            relay: relay,
-            overwrite: try options.boolValue(for: "--overwrite") ?? false
+        let client = try await HeadlessMessagingClient.open(
+            stateStore: store,
+            displayName: name
         )
-        if try options.boolValue(for: "--register") ?? true {
-            try await client.registerInbox()
-        }
-        try writeJSON(status)
+        try writeJSON(await client.snapshot())
     }
 
-    private func exportContact(options: ParsedOptions) async throws {
-        let client = try headlessClient(from: options)
-        if let password = try contactPassword(from: options) {
-            var data = try await client.exportContactPackage(password: password)
-            defer { data.secureWipe() }
-            guard let out = options.value(for: "--out") else {
-                throw CLIError("Password-protected exports require `--out <path>` to avoid binary data in the terminal.")
-            }
-            try data.write(to: URL(fileURLWithPath: out), options: [.atomic])
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: URL(fileURLWithPath: out).path
-            )
-            FileHandle.standardOutput.writeLine(out)
-            return
-        }
-        FileHandle.standardOutput.writeLine(try await client.exportContactCode())
+    private func status(_ options: ParsedOptions) async throws {
+        let client = try await headlessClient(options)
+        try writeJSON(await client.snapshot())
     }
 
-    private func importContact(options: ParsedOptions) async throws -> Contact {
-        let client = try headlessClient(from: options)
-        if let code = options.value(for: "--code") {
-            return try await client.importContactCode(code)
-        }
-        guard let file = options.value(for: "--file") else {
-            throw CLIError("Missing contact input. Use `--code <contact-code>` or `--file <path> --password-file <path>`.")
-        }
-        guard let password = try contactPassword(from: options) else {
-            throw CLIError("Password-protected contact files require `--password-file <path>` or `--password <password>`.")
-        }
-        var data = try readBoundedFile(
-            at: URL(fileURLWithPath: file),
-            maximumBytes: Self.maximumContactPackageBytes,
-            label: "Contact package"
+    private func prepareParticipant(_ options: ParsedOptions) async throws {
+        let output = try required(options, "--out")
+        let client = try await headlessClient(options)
+        let pending = try await client.prepareContactParticipant(
+            relay: try endpoint(options),
+            relationshipPseudonym: options.value("--relationship-pseudonym")
+                ?? "Noctweave peer"
         )
-        defer { data.secureWipe() }
-        return try await client.importContactPackage(data, password: password)
+        let prepared = try await client.activateContactParticipant(pending)
+        try writeSensitiveJSON(prepared, to: output)
+        FileHandle.standardOutput.writeLine(output)
     }
 
-    private func sendText(options: ParsedOptions) async throws {
-        guard let selector = options.value(for: "--to") else {
-            throw CLIError("Missing recipient. Use `--to <contact-name|fingerprint|uuid>`.")
+    private func pairingInvitation(_ options: ParsedOptions) async throws {
+        let output = try required(options, "--out")
+        let lifetime = try options.int("--lifetime") ?? 600
+        guard (30...3_600).contains(lifetime) else {
+            throw CLIError("Pairing invitation lifetime must be between 30 and 3600 seconds.")
         }
-        guard let text = options.value(for: "--text") else {
-            throw CLIError("Missing message text. Use `--text <message>`.")
-        }
-        let sent = try await headlessClient(from: options).sendText(to: selector, text: text)
-        try writeJSON(sent)
-    }
-
-    private func sendAttachment(options: ParsedOptions, voice: Bool) async throws {
-        guard let selector = options.value(for: "--to") else {
-            throw CLIError("Missing recipient. Use `--to <contact-name|fingerprint|uuid>`.")
-        }
-        var input = try attachmentInput(from: options, voice: voice)
-        defer { input.data.secureWipe() }
-        let client = try headlessClient(from: options)
-        let sent: HeadlessSentAttachment
-        if voice {
-            sent = try await client.sendVoice(
-                to: selector,
-                data: input.data,
-                fileName: input.fileName,
-                mimeType: input.mimeType,
-                chunkSize: input.chunkSize,
-                ttlSeconds: input.ttlSeconds
-            )
-        } else {
-            sent = try await client.sendAttachment(
-                to: selector,
-                data: input.data,
-                fileName: input.fileName,
-                mimeType: input.mimeType,
-                chunkSize: input.chunkSize,
-                ttlSeconds: input.ttlSeconds
-            )
-        }
-        try writeJSON(sent)
-    }
-
-    private func receive(options: ParsedOptions) async throws {
-        let maxCount = try options.intValue(for: "--max") ?? 25
-        let longPoll = try options.intValue(for: "--long-poll")
-        let acknowledge = !(try options.boolValue(for: "--no-ack") ?? false)
-        let messages = try await headlessClient(from: options).receive(
-            maxCount: maxCount,
-            longPollTimeoutSeconds: longPoll,
-            acknowledge: acknowledge
+        let client = try await headlessClient(options)
+        let createdAt = Date()
+        let result = try await client.makeContactPairingInvitation(
+            createdAt: createdAt,
+            expiresAt: createdAt.addingTimeInterval(TimeInterval(lifetime))
         )
-        try writeJSON(messages)
+        try writeSensitiveJSON(PairingOfferFile(
+            pending: result.pending,
+            invitation: result.invitation
+        ), to: output)
+        FileHandle.standardOutput.writeLine(try result.invitation.encoded())
     }
 
-    private func downloadAttachment(options: ParsedOptions) async throws {
-        guard let rawId = options.value(for: "--id"),
-              let attachmentId = UUID(uuidString: rawId) else {
-            throw CLIError("Missing or invalid attachment id. Use `--id <uuid>`.")
+    private func sendText(_ options: ParsedOptions) async throws {
+        let relationshipID = try relationshipIdentifier(options)
+        let text = try required(options, "--text")
+        try writeJSON(try await headlessClient(options).sendText(
+            text,
+            relationshipID: relationshipID
+        ))
+    }
+
+    private func sync(_ options: ParsedOptions) async throws {
+        let relationshipID = try relationshipIdentifier(options)
+        let maximum = try options.int("--max") ?? 128
+        guard let limit = UInt16(exactly: maximum), limit > 0 else {
+            throw CLIError("Sync maximum must be a positive 16-bit integer.")
         }
-        guard let out = options.value(for: "--out") else {
-            throw CLIError("Missing output path. Use `--out <path-or-directory>`.")
+        try writeJSON(try await headlessClient(options).sync(
+            relationshipID: relationshipID,
+            maximumPackets: limit
+        ))
+    }
+
+    private func burnPersona(_ options: ParsedOptions) async throws {
+        guard options.value("--confirm") == "BURN" else {
+            throw CLIError("Persona burn requires `--confirm BURN`.")
         }
-        let fetched = try await headlessClient(from: options).fetchAttachment(id: attachmentId)
-        guard fetched.descriptor.isStructurallyValid() else {
-            throw CLIError("Attachment metadata is malformed or exceeds transport limits.")
+        let replacementName = try required(options, "--replacement-name")
+        try writeJSON(try await headlessClient(options).burnActivePersona(
+            replacementDisplayName: replacementName
+        ))
+    }
+
+    private func headlessClient(_ options: ParsedOptions) async throws -> HeadlessMessagingClient {
+        let store = try stateStore(options)
+        guard let state = try await store.load() else {
+            throw CLIError("No state exists. Run `NoctweaveCLI init` first.")
         }
-        let outputURL = try resolvedAttachmentOutputURL(
-            rawPath: out,
-            descriptor: fetched.descriptor,
-            attachmentId: attachmentId
-        )
-        try FileManager.default.createDirectory(
-            at: outputURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        if FileManager.default.fileExists(atPath: outputURL.path),
-           !(try options.boolValue(for: "--overwrite") ?? false) {
-            throw CLIError("Output file already exists. Use `--overwrite true` to replace it.")
-        }
-        var outputData = fetched.data
-        defer { outputData.secureWipe() }
-        try outputData.write(to: outputURL, options: [.atomic])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: outputURL.path)
-        try writeJSON(
-            CLIDownloadedAttachment(
-                attachmentId: attachmentId,
-                outputPath: outputURL.path,
-                byteCount: outputData.count,
-                sha256Base64: AttachmentCrypto.sha256(outputData).base64EncodedString(),
-                descriptor: fetched.descriptor
-            )
+        return try HeadlessMessagingClient(stateStore: store, initialState: state)
+    }
+
+    private func stateStore(_ options: ParsedOptions) throws -> ClientStateStore {
+        let path = options.value("--state") ?? "./noctweave-state.json"
+        let plaintext = try options.bool("--plaintext") ?? false
+        return ClientStateStore(
+            fileURL: URL(fileURLWithPath: path),
+            useEncryption: !plaintext
         )
     }
 
-    private func allowIdentityReset(options: ParsedOptions) async throws {
-        guard let selector = options.value(for: "--contact") else {
-            throw CLIError("Missing contact. Use `--contact <contact-name|fingerprint|uuid>`.")
+    private func relationshipIdentifier(_ options: ParsedOptions) throws -> UUID {
+        let raw = try required(options, "--relationship")
+        guard let id = UUID(uuidString: raw) else {
+            throw CLIError("Relationship identifier must be a UUID.")
         }
-        let allow = try options.boolValue(for: "--allow") ?? true
-        let contact = try await headlessClient(from: options).setContactIdentityReset(selector: selector, allow: allow)
-        try writeJSON(contact)
+        return id
     }
 
-    private func rotateIdentity(options: ParsedOptions) async throws {
-        try requireConfirmation(options, key: "--confirm", expected: "ROTATE")
-        let contactIds = try rotationContinuityContactIds(from: options)
-        let result = try await headlessClient(from: options).rotateIdentity(
-            preservingContinuityWith: contactIds
-        )
-        try writeJSON(result)
+    private func endpoint(_ options: ParsedOptions) throws -> RelayEndpoint {
+        try RelayEndpointParser.parse(try required(options, "--relay"))
     }
 
-    private func burnIdentity(options: ParsedOptions) async throws {
-        try requireConfirmation(options, key: "--confirm", expected: "BURN")
-        let result = try await headlessClient(from: options).burnIdentity()
-        try writeJSON(result)
-    }
-
-    private func purgeContinuityAudit(options: ParsedOptions) async throws {
-        try requireConfirmation(options, key: "--confirm", expected: "PURGE")
-        let result = try await headlessClient(from: options).purgeContinuityAudit()
-        try writeJSON(result)
-    }
-
-    private func send(_ request: RelayRequest, options: ParsedOptions) async throws {
-        let endpoint = try endpoint(from: options)
-        let authToken = try relayAuthToken(from: options)
-        let timeout = try options.doubleValue(for: "--timeout") ?? RelayClient.defaultTimeout
-        let client = RelayClient(endpoint: endpoint, authToken: authToken)
-        let response = try await client.send(request, timeout: timeout)
+    private func sendRelay(_ request: RelayRequest, options: ParsedOptions) async throws {
+        let timeout = try options.double("--timeout") ?? RelayClient.defaultTimeout
+        let response = try await RelayClient(
+            endpoint: try endpoint(options),
+            authToken: try authToken(options)
+        ).send(request, timeout: timeout)
         try writeJSON(response)
     }
 
-    private func endpoint(from options: ParsedOptions) throws -> RelayEndpoint {
-        guard let relay = options.value(for: "--relay") ?? options.value(for: "-r") else {
-            throw CLIError("Missing relay endpoint. Use `--relay <url|host:port>`.")
-        }
-        return try RelayEndpointParser.parse(relay)
-    }
-
-    private func request(from options: ParsedOptions) throws -> RelayRequest {
-        guard let raw = options.value(for: "--request") ?? options.value(for: "--json") else {
-            throw CLIError("Missing request JSON. Use `--request '<json>'`, `--request @path`, or `--request -`.")
-        }
+    private func relayRequest(_ options: ParsedOptions) throws -> RelayRequest {
+        let raw = try required(options, "--request")
         let data: Data
-        if raw == "-" {
-            data = try readBoundedStandardInput(maximumBytes: Self.maximumRawRequestBytes)
-        } else if raw.hasPrefix("@") {
+        if raw.hasPrefix("@") {
             let path = String(raw.dropFirst())
-            guard !path.isEmpty else {
-                throw CLIError("Request file path is empty.")
+            let attributes = try FileManager.default.attributesOfItem(atPath: path)
+            guard let size = attributes[.size] as? NSNumber,
+                  size.intValue <= Self.maximumRawRequestBytes else {
+                throw CLIError("Relay request file exceeds the size limit.")
             }
-            data = try readBoundedFile(
-                at: URL(fileURLWithPath: path),
-                maximumBytes: Self.maximumRawRequestBytes,
-                label: "Relay request"
-            )
+            data = try Data(contentsOf: URL(fileURLWithPath: path))
         } else {
             data = Data(raw.utf8)
         }
-        guard data.count <= Self.maximumRawRequestBytes else {
-            throw CLIError("Relay request exceeds the 512 KB limit.")
+        guard !data.isEmpty, data.count <= Self.maximumRawRequestBytes else {
+            throw CLIError("Relay request is empty or exceeds the size limit.")
         }
         return try NoctweaveCoder.decode(RelayRequest.self, from: data)
     }
 
-    private func headlessClient(from options: ParsedOptions) throws -> HeadlessMessagingClient {
-        let stateURL = stateURL(from: options)
-        let encrypted = try options.boolValue(for: "--encrypted-state") ?? true
-        let stateKey = try stateEncryptionKey(
-            from: options,
-            stateURL: stateURL,
-            encrypted: encrypted
-        )
-        return HeadlessMessagingClient(
-            stateURL: stateURL,
-            useEncryptedStore: encrypted,
-            stateEncryptionKey: stateKey,
-            authToken: try relayAuthToken(from: options),
-            timeout: try options.doubleValue(for: "--timeout") ?? RelayClient.defaultTimeout
-        )
+    private func authToken(_ options: ParsedOptions) throws -> String? {
+        guard let path = options.value("--auth-file") else { return nil }
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        guard let size = attributes[.size] as? NSNumber, size.intValue <= 4_096 else {
+            throw CLIError("Relay authentication file exceeds the size limit.")
+        }
+        let value = try String(contentsOfFile: path, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { throw CLIError("Relay authentication file is empty.") }
+        return value
     }
 
-    private func stateEncryptionKey(
-        from options: ParsedOptions,
-        stateURL: URL,
-        encrypted: Bool
-    ) throws -> SymmetricKey? {
-        guard encrypted else { return nil }
-        let configuredPath = (
-            options.value(for: "--state-key-file")
-                ?? ProcessInfo.processInfo.environment["NOCTWEAVE_CLI_STATE_KEY_FILE"]
-        ).flatMap { $0.isEmpty ? nil : $0 }
-        #if os(Linux)
-        let keyURL = configuredPath.map(URL.init(fileURLWithPath:)) ?? defaultStateKeyURL(for: stateURL)
-        return try loadOrCreateStateKey(
-            at: keyURL,
-            allowCreate: arguments.first == "init"
-        )
-        #else
-        guard let configuredPath, !configuredPath.isEmpty else {
-            return nil
-        }
-        return try loadOrCreateStateKey(
-            at: URL(fileURLWithPath: configuredPath),
-            allowCreate: arguments.first == "init"
-        )
-        #endif
-    }
-
-    private func defaultStateKeyURL(for stateURL: URL) -> URL {
-        stateURL.deletingPathExtension().appendingPathExtension("key")
-    }
-
-    private func loadOrCreateStateKey(at keyURL: URL, allowCreate: Bool) throws -> SymmetricKey {
-        let fileManager = FileManager.default
-        if fileManager.fileExists(atPath: keyURL.path) {
-            let attributes = try fileManager.attributesOfItem(atPath: keyURL.path)
-            if let mode = (attributes[.posixPermissions] as? NSNumber)?.intValue,
-               mode & 0o077 != 0 {
-                throw CLIError("State key file must not be readable by group or other users (chmod 600).")
-            }
-            var encoded = try readBoundedFile(at: keyURL, maximumBytes: 256, label: "State key file")
-            defer { encoded.secureWipe() }
-            var keyData: Data
-            if encoded.count == 32 {
-                keyData = encoded
-            } else {
-                guard let text = String(data: encoded, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      let decoded = Data(base64Encoded: text),
-                      decoded.count == 32,
-                      decoded.base64EncodedString() == text else {
-                    throw CLIError("State key file must contain exactly 32 raw bytes or canonical base64 for 32 bytes.")
-                }
-                keyData = decoded
-            }
-            defer { keyData.secureWipe() }
-            return SymmetricKey(data: keyData)
-        }
-        guard allowCreate else {
-            throw CLIError("Encrypted state key is missing. Restore the key file or run `init` with a new state path.")
-        }
-        let directory = keyURL.deletingLastPathComponent()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
-        let key = SymmetricKey(size: .bits256)
-        var keyData = key.withUnsafeBytes { Data($0) }
-        defer { keyData.secureWipe() }
-        var encoded = Data((keyData.base64EncodedString() + "\n").utf8)
-        defer { encoded.secureWipe() }
-        try encoded.write(to: keyURL, options: [.atomic])
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyURL.path)
-        return key
-    }
-
-    private func contactPassword(from options: ParsedOptions) throws -> String? {
-        if let path = options.value(for: "--password-file") {
-            return try readSecret(at: URL(fileURLWithPath: path), label: "Contact password")
-        }
-        if let password = ProcessInfo.processInfo.environment["NOCTWEAVE_CONTACT_PASSWORD"], !password.isEmpty {
-            return password
-        }
-        return options.value(for: "--password")
-    }
-
-    private func relayAuthToken(from options: ParsedOptions) throws -> String? {
-        if let path = options.value(for: "--auth-file") {
-            return try readSecret(at: URL(fileURLWithPath: path), label: "Relay auth token")
-        }
-        if let token = ProcessInfo.processInfo.environment["NOCTWEAVE_RELAY_AUTH_TOKEN"], !token.isEmpty {
-            return token
-        }
-        return options.value(for: "--auth")
-    }
-
-    private func readSecret(at url: URL, label: String) throws -> String {
-        var data = try readBoundedFile(at: url, maximumBytes: 4_096, label: label)
-        defer { data.secureWipe() }
-        guard let value = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .newlines),
-              !value.isEmpty,
-              !value.unicodeScalars.contains(where: { $0.value == 0 }) else {
-            throw CLIError("\(label) file is empty or malformed.")
+    private func required(_ options: ParsedOptions, _ name: String) throws -> String {
+        guard let value = options.value(name), !value.isEmpty else {
+            throw CLIError("Missing required option `\(name)`.")
         }
         return value
     }
 
-    private func stateURL(from options: ParsedOptions) -> URL {
-        if let path = options.value(for: "--state") {
-            return URL(fileURLWithPath: path)
-        }
-        if let path = ProcessInfo.processInfo.environment["NOCTWEAVE_CLI_STATE"], !path.isEmpty {
-            return URL(fileURLWithPath: path)
-        }
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home
-            .appendingPathComponent(".noctweave", isDirectory: true)
-            .appendingPathComponent("headless-state.json")
-    }
-
     private func writeJSON<T: Encodable>(_ value: T) throws {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(value)
+        var data = try NoctweaveCoder.encode(value)
+        defer { data.wipeCLIOutputBuffer() }
         FileHandle.standardOutput.write(data)
-        FileHandle.standardOutput.writeLine("")
+        FileHandle.standardOutput.write(Data([0x0a]))
     }
 
-    private func requireConfirmation(_ options: ParsedOptions, key: String, expected: String) throws {
-        guard options.value(for: key) == expected else {
-            throw CLIError("Missing confirmation. Use `\(key) \(expected)`.")
-        }
-    }
-
-    private func rotationContinuityContactIds(from options: ParsedOptions) throws -> Set<UUID> {
-        guard let raw = options.value(for: "--preserve-with")?.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        ), !raw.isEmpty else {
-            throw CLIError(
-                "Identity rotation requires an explicit continuity choice. Use `--preserve-with <contact-uuid,...>` or `--preserve-with none`."
-            )
-        }
-        if raw.lowercased() == "none" {
-            return []
-        }
-        let values = raw.split(separator: ",", omittingEmptySubsequences: false)
-        guard values.count <= IdentityMutationJournalV2.maximumNotifications else {
-            throw CLIError(
-                "Identity rotation supports at most \(IdentityMutationJournalV2.maximumNotifications) continuity recipients."
-            )
-        }
-        var result: Set<UUID> = []
-        for value in values {
-            let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !candidate.isEmpty, let id = UUID(uuidString: candidate) else {
-                throw CLIError("Invalid contact UUID in `--preserve-with`: \(candidate)")
-            }
-            result.insert(id)
-        }
-        return result
-    }
-
-    private func attachmentInput(from options: ParsedOptions, voice: Bool) throws -> CLIAttachmentInput {
-        guard let file = options.value(for: "--file") else {
-            throw CLIError("Missing file. Use `--file <path>`.")
-        }
-        let fileURL = URL(fileURLWithPath: file)
-        let data = try readBoundedFile(
-            at: fileURL,
-            maximumBytes: Self.maximumAttachmentBytes,
-            label: "Attachment"
+    private func writeSensitiveJSON<T: Encodable>(_ value: T, to path: String) throws {
+        var data = try NoctweaveCoder.encode(value)
+        defer { data.wipeCLIOutputBuffer() }
+        let url = URL(fileURLWithPath: path)
+        try data.write(to: url, options: Data.WritingOptions.atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
         )
-        let mimeType = options.value(for: "--mime") ?? defaultMIMEType(for: fileURL, voice: voice)
-        let chunkSize = try options.intValue(for: "--chunk-size") ?? 64 * 1024
-        let ttlSeconds = try options.intValue(for: "--ttl")
-        return CLIAttachmentInput(
-            data: data,
-            fileName: nil,
-            mimeType: mimeType,
-            chunkSize: chunkSize,
-            ttlSeconds: ttlSeconds
-        )
-    }
-
-    private func resolvedAttachmentOutputURL(
-        rawPath: String,
-        descriptor: AttachmentDescriptor,
-        attachmentId: UUID
-    ) throws -> URL {
-        let url = URL(fileURLWithPath: rawPath)
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-           isDirectory.boolValue {
-            return url.appendingPathComponent("\(attachmentId.uuidString).bin", isDirectory: false)
-        }
-        return url
-    }
-
-    private func readBoundedFile(at url: URL, maximumBytes: Int, label: String) throws -> Data {
-        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        guard attributes[.type] as? FileAttributeType == .typeRegular,
-              let size = attributes[.size] as? NSNumber,
-              size.intValue >= 0,
-              size.intValue <= maximumBytes else {
-            throw CLIError("\(label) exceeds the \(maximumBytes) byte limit.")
-        }
-        let data = try Data(contentsOf: url, options: [.uncached])
-        guard data.count <= maximumBytes else {
-            throw CLIError("\(label) exceeds the \(maximumBytes) byte limit.")
-        }
-        return data
-    }
-
-    private func readBoundedStandardInput(maximumBytes: Int) throws -> Data {
-        var data = Data()
-        while true {
-            let remaining = maximumBytes + 1 - data.count
-            if remaining <= 0 {
-                throw CLIError("Relay request exceeds the 512 KB limit.")
-            }
-            guard let chunk = try FileHandle.standardInput.read(upToCount: min(64 * 1024, remaining)),
-                  !chunk.isEmpty else {
-                return data
-            }
-            data.append(chunk)
-        }
-    }
-
-    private func defaultMIMEType(for url: URL, voice: Bool) -> String {
-        if voice {
-            return "audio/m4a"
-        }
-        switch url.pathExtension.lowercased() {
-        case "jpg", "jpeg":
-            return "image/jpeg"
-        case "png":
-            return "image/png"
-        case "gif":
-            return "image/gif"
-        case "webp":
-            return "image/webp"
-        case "m4a":
-            return "audio/m4a"
-        case "mp3":
-            return "audio/mpeg"
-        case "wav":
-            return "audio/wav"
-        case "txt":
-            return "text/plain"
-        case "json":
-            return "application/json"
-        case "pdf":
-            return "application/pdf"
-        default:
-            return "application/octet-stream"
-        }
     }
 
     private func printHelp() {
         FileHandle.standardOutput.writeLine("""
-        NoctweaveCLI
+        NoctweaveCLI — pairwise-private Noctweave 1.0 architecture
 
-        Usage:
-          NoctweaveCLI init --display-name <name> --relay <url|host:port> [--state path]
-          NoctweaveCLI register [--state path] [--auth-file path]
-          NoctweaveCLI status [--state path]
-          NoctweaveCLI export-contact [--state path]
-          NoctweaveCLI export-contact --password-file <path> --out contact.noctweave [--state path]
-          NoctweaveCLI import-contact --code <contact-code> [--state path]
-          NoctweaveCLI import-contact --file contact.noctweave --password-file <path> [--state path]
-          NoctweaveCLI contacts [--state path]
-          NoctweaveCLI continuity-audit [--state path]
-          NoctweaveCLI purge-continuity-audit --confirm PURGE [--state path]
-          NoctweaveCLI send --to <contact-name|fingerprint|uuid> --text <message> [--state path]
-          NoctweaveCLI send-attachment --to <contact> --file <path> [--mime type] [--ttl seconds] [--state path]
-          NoctweaveCLI send-voice --to <contact> --file <path> [--mime audio/m4a] [--ttl seconds] [--state path]
-          NoctweaveCLI receive [--max count] [--long-poll seconds] [--state path]
-          NoctweaveCLI download-attachment --id <uuid> --out <path-or-directory> [--overwrite true] [--state path]
-          NoctweaveCLI allow-identity-reset --contact <contact> --allow true [--state path]
-          NoctweaveCLI rotate-identity --confirm ROTATE --preserve-with <contact-uuid,...|none> [--state path]
-          NoctweaveCLI burn-identity --confirm BURN [--state path]
-          NoctweaveCLI endpoint --relay <url|host:port>
-          NoctweaveCLI health --relay <url|host:port> [--auth-file path] [--timeout seconds]
-          NoctweaveCLI info --relay <url|host:port> [--auth-file path] [--timeout seconds]
-          NoctweaveCLI raw --relay <url|host:port> --request '<relay-request-json>'
-          NoctweaveCLI raw --relay <url|host:port> --request @request.json
+          init --display-name <local-label> [--state path] [--plaintext true]
+          status [--state path] [--plaintext true]
+          relationships [--state path] [--plaintext true]
+          prepare-participant --relay <https|wss|tls URL> --out <private-file> [--relationship-pseudonym label]
+          pairing-invitation --out <private-file> [--lifetime seconds]
+          send --relationship <uuid> --text <message>
+          sync --relationship <uuid> [--max packets]
+          burn-persona --confirm BURN --replacement-name <local-label>
+          endpoint --relay <url|host:port>
+          health --relay <url|host:port> [--auth-file path] [--timeout seconds]
+          info --relay <url|host:port> [--auth-file path] [--timeout seconds]
+          raw --relay <url|host:port> --request '<json|@path>'
 
-        Relay endpoint examples:
-          127.0.0.1:9339
-          http://127.0.0.1:9339
-          https://relay.example
-          ws://127.0.0.1:9339
-          wss://relay.example
-          tcp://relay.local:9339
-          tls://relay.example:9339
-
-        Headless client state:
-          --state defaults to ~/.noctweave/headless-state.json or NOCTWEAVE_CLI_STATE.
-          State is encrypted by default. Apple platforms use Keychain; Linux uses a 0600 key file.
-          Override the Linux key path with --state-key-file or NOCTWEAVE_CLI_STATE_KEY_FILE.
-          Use --encrypted-state false only for explicitly accepted plaintext development state.
-
-        Secret input:
-          Prefer --password-file and --auth-file so secrets do not appear in process arguments.
-          NOCTWEAVE_CONTACT_PASSWORD and NOCTWEAVE_RELAY_AUTH_TOKEN are also supported.
+        Personas are local containers. Pairing creates independent, unlinkable
+        relationship identities and opaque relay routes. Personas never become
+        network identifiers.
         """)
     }
 }
 
-private struct CLIAttachmentInput {
-    var data: Data
-    let fileName: String?
-    let mimeType: String
-    let chunkSize: Int
-    let ttlSeconds: Int?
-}
-
-private struct CLIDownloadedAttachment: Codable {
-    let attachmentId: UUID
-    let outputPath: String
-    let byteCount: Int
-    let sha256Base64: String
-    let descriptor: AttachmentDescriptor
+private struct PairingOfferFile: Codable {
+    let pending: PendingRendezvousOfferV2
+    let invitation: ContactPairingInvitationV2
 }
 
 private struct ParsedOptions {
     private let values: [String: String]
 
-    init(arguments: [String]) throws {
+    init(_ arguments: [String]) throws {
         var parsed: [String: String] = [:]
-        var index = arguments.startIndex
-        while index < arguments.endIndex {
+        var index = 0
+        while index < arguments.count {
             let key = arguments[index]
-            guard key.hasPrefix("-") else {
-                throw CLIError("Unexpected argument: \(key).")
+            guard key.hasPrefix("--"), parsed[key] == nil else {
+                throw CLIError("Invalid or duplicate option: \(key)")
             }
-            let valueIndex = arguments.index(after: index)
-            guard valueIndex < arguments.endIndex else {
-                throw CLIError("Missing value for \(key).")
+            guard index + 1 < arguments.count else {
+                throw CLIError("Option requires a value: \(key)")
             }
-            parsed[key] = arguments[valueIndex]
-            index = arguments.index(after: valueIndex)
+            parsed[key] = arguments[index + 1]
+            index += 2
         }
         values = parsed
     }
 
-    func value(for key: String) -> String? {
-        values[key]
+    func value(_ key: String) -> String? { values[key] }
+
+    func int(_ key: String) throws -> Int? {
+        guard let raw = value(key) else { return nil }
+        guard let value = Int(raw) else { throw CLIError("Invalid integer for `\(key)`.") }
+        return value
     }
 
-    func doubleValue(for key: String) throws -> Double? {
-        guard let value = values[key] else { return nil }
-        guard let parsed = Double(value), parsed.isFinite, parsed > 0 else {
-            throw CLIError("Invalid numeric value for \(key): \(value).")
+    func double(_ key: String) throws -> Double? {
+        guard let raw = value(key) else { return nil }
+        guard let value = Double(raw), value.isFinite else {
+            throw CLIError("Invalid number for `\(key)`.")
         }
-        return parsed
+        return value
     }
 
-    func intValue(for key: String) throws -> Int? {
-        guard let value = values[key] else { return nil }
-        guard let parsed = Int(value), parsed > 0 else {
-            throw CLIError("Invalid integer value for \(key): \(value).")
-        }
-        return parsed
-    }
-
-    func boolValue(for key: String) throws -> Bool? {
-        guard let value = values[key]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
-            return nil
-        }
-        switch value {
-        case "1", "true", "yes", "y", "on":
-            return true
-        case "0", "false", "no", "n", "off":
-            return false
-        default:
-            throw CLIError("Invalid boolean value for \(key): \(value).")
+    func bool(_ key: String) throws -> Bool? {
+        guard let raw = value(key)?.lowercased() else { return nil }
+        switch raw {
+        case "true", "1", "yes": return true
+        case "false", "0", "no": return false
+        default: throw CLIError("Invalid boolean for `\(key)`.")
         }
     }
 }
@@ -709,29 +320,23 @@ private struct CLIError: Error {
     let message: String
     let exitCode: Int
 
-    init(_ message: String, exitCode: Int = 2) {
+    init(_ message: String, exitCode: Int = 1) {
         self.message = message
         self.exitCode = exitCode
     }
 }
 
 private extension FileHandle {
-    func writeLine(_ line: String) {
-        write(Data((line + "\n").utf8))
+    func writeLine(_ value: String) {
+        write(Data((value + "\n").utf8))
     }
 }
 
 private extension Data {
-    mutating func secureWipe() {
-        guard !isEmpty else { return }
-        let byteCount = count
+    mutating func wipeCLIOutputBuffer() {
         withUnsafeMutableBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress else { return }
-            #if os(Linux)
-            _ = memset(baseAddress, 0, byteCount)
-            #else
-            _ = memset_s(baseAddress, byteCount, 0, byteCount)
-            #endif
+            memset(baseAddress, 0, rawBuffer.count)
         }
         removeAll(keepingCapacity: false)
     }

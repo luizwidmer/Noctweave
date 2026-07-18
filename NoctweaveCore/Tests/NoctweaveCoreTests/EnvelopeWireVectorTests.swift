@@ -75,7 +75,7 @@ final class EnvelopeWireVectorTests: XCTestCase {
             groupId: UUID(),
             epoch: 7,
             transcriptHash: Data(repeating: 0x21, count: 32),
-            senderClientHandle: GroupScopedClientHandleV2.generate(),
+            senderCredentialHandle: GroupScopedCredentialHandleV2.generate(),
             messageCounter: 9,
             sentAt: requested,
             payload: EncryptedPayload(
@@ -104,7 +104,7 @@ final class EnvelopeWireVectorTests: XCTestCase {
             groupId: UUID(uuidString: "33333333-3333-4333-8333-333333333333")!,
             epoch: 1,
             transcriptHash: Data(repeating: 0x41, count: 32),
-            senderClientHandle: GroupScopedClientHandleV2(
+            senderCredentialHandle: GroupScopedCredentialHandleV2(
                 rawValue: Data(repeating: 0x42, count: 32).base64EncodedString()
             ),
             eventId: UUID(uuidString: "44444444-4444-4444-8444-444444444444")!,

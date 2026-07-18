@@ -2,23 +2,42 @@ import XCTest
 @testable import NoctweaveCore
 
 final class EndpointPrekeyRotationTests: XCTestCase {
-    func testRenewalKeepsStableAuthorizationAndRetainsOldPrivateKeyUntilExpiry() throws {
+    func testPairwiseRenewalAtomicallyRefreshesTheOnlyEndpointBinding() throws {
+        let now = Date()
+        let createdAt = now.addingTimeInterval(
+            -PrekeyBundle.maximumAge + PrekeyState.signedPrekeyRenewalLeadTime
+        )
+        var identity = try LocalPairwiseIdentityV2.generate(
+            relationshipPseudonym: "One relationship",
+            createdAt: createdAt
+        )
+        let authorization = identity.endpointBinding.authorizationDigest
+
+        XCTAssertTrue(try identity.renewEndpointPrekeyIfNeeded(at: now))
+        XCTAssertEqual(identity.endpointBinding.authorizationDigest, authorization)
+        XCTAssertTrue(identity.isStructurallyValid)
+        XCTAssertEqual(identity.localEndpoint.prekeys.retiredSignedPrekeys.count, 1)
+    }
+
+    func testRenewalKeepsStableRelationshipAuthorizationAndSessionBinding() throws {
         let now = Date()
         let issuedAt = now.addingTimeInterval(
             -PrekeyBundle.maximumAge + PrekeyState.signedPrekeyRenewalLeadTime
         )
-        var local = try endpointFixture(name: "Alice", prekeyIssuedAt: issuedAt)
-        let peer = try endpointFixture(name: "Bob", prekeyIssuedAt: now)
-        let original = local.endpoint
+        var local = try endpointFixture(pseudonym: "Alice-for-Bob", prekeyIssuedAt: issuedAt)
+        let peer = try endpointFixture(pseudonym: "Bob-for-Alice", prekeyIssuedAt: now)
+        let original = local.binding
         let originalPrekey = original.prekeyBundle.signedPrekey
         let originalAuthorizationDigest = try XCTUnwrap(original.authorizationDigest)
-        let originalBinding = try PairwiseEndpointBindingV4.derive(
-            localIdentityGenerationId: local.generationId,
-            localIdentitySigningPublicKey: local.identity.signingKey.publicKeyData,
+        let relationshipID = UUID()
+        let localHandle = RelationshipEndpointHandle.generate(relationshipId: relationshipID)
+        let peerHandle = RelationshipEndpointHandle.generate(relationshipId: relationshipID)
+        let originalTranscript = try PairwiseEndpointBindingV4.create(
+            relationshipId: relationshipID,
+            localEndpointHandle: localHandle,
+            peerEndpointHandle: peerHandle,
             localEndpoint: original,
-            peerIdentityGenerationId: peer.generationId,
-            peerIdentitySigningPublicKey: peer.identity.signingKey.publicKeyData,
-            peerEndpoint: peer.endpoint
+            peerEndpoint: peer.binding
         )
 
         XCTAssertTrue(try local.localEndpoint.renewSignedPrekeyIfNeeded(at: now))
@@ -43,23 +62,20 @@ final class EndpointPrekeyRotationTests: XCTestCase {
         )
         XCTAssertEqual(refreshed.authorizationDigest, originalAuthorizationDigest)
         XCTAssertEqual(refreshed.authoritySignature, original.authoritySignature)
-        XCTAssertEqual(refreshed.possessionSignature, original.possessionSignature)
         XCTAssertNotEqual(refreshed.prekeyBundle.signedPrekey.id, originalPrekey.id)
         XCTAssertNoThrow(try refreshed.verified(
-            identityPublicKey: local.identity.signingKey.publicKeyData,
-            manifest: local.manifest,
+            authoritySigningPublicKey: local.authority.signingKey.publicKeyData,
             now: now
         ))
 
-        let refreshedBinding = try PairwiseEndpointBindingV4.derive(
-            localIdentityGenerationId: local.generationId,
-            localIdentitySigningPublicKey: local.identity.signingKey.publicKeyData,
+        let refreshedTranscript = try PairwiseEndpointBindingV4.create(
+            relationshipId: relationshipID,
+            localEndpointHandle: localHandle,
+            peerEndpointHandle: peerHandle,
             localEndpoint: refreshed,
-            peerIdentityGenerationId: peer.generationId,
-            peerIdentitySigningPublicKey: peer.identity.signingKey.publicKeyData,
-            peerEndpoint: peer.endpoint
+            peerEndpoint: peer.binding
         )
-        XCTAssertEqual(refreshedBinding, originalBinding)
+        XCTAssertEqual(refreshedTranscript, originalTranscript)
 
         XCTAssertNil(local.localEndpoint.prekeys.signedPrekeyKeyPair(
             id: originalPrekey.id,
@@ -71,52 +87,55 @@ final class EndpointPrekeyRotationTests: XCTestCase {
 
     func testFreshPrekeyDoesNotRotateAndTamperedOrExpiredPackageFailsClosed() throws {
         let now = Date()
-        var fixture = try endpointFixture(name: "Alice", prekeyIssuedAt: now)
-        let endpoint = fixture.endpoint
+        var fixture = try endpointFixture(pseudonym: "Alice-for-Bob", prekeyIssuedAt: now)
+        let binding = fixture.binding
 
         XCTAssertFalse(try fixture.localEndpoint.renewSignedPrekeyIfNeeded(at: now))
         XCTAssertTrue(fixture.localEndpoint.prekeys.retiredSignedPrekeys.isEmpty)
 
-        let tampered = CertifiedGenerationEndpoint(
-            identityGenerationId: endpoint.identityGenerationId,
-            identityAuthorityPublicKey: endpoint.identityAuthorityPublicKey,
-            manifestEpoch: endpoint.manifestEpoch,
-            manifestDigest: endpoint.manifestDigest,
-            endpointId: endpoint.endpointId,
-            signingPublicKey: endpoint.signingPublicKey,
-            agreementPublicKey: endpoint.agreementPublicKey,
-            capabilities: endpoint.capabilities,
-            prekeyBundle: endpoint.prekeyBundle,
+        let tampered = RelationshipEndpointBindingV4(
+            signingPublicKey: binding.signingPublicKey,
+            agreementPublicKey: binding.agreementPublicKey,
+            capabilities: binding.capabilities,
+            prekeyBundle: binding.prekeyBundle,
             prekeyPackageSignature: Data(repeating: 0, count: 3_309),
-            issuedAt: endpoint.issuedAt,
-            authoritySignature: endpoint.authoritySignature,
-            possessionSignature: endpoint.possessionSignature
+            issuedAt: binding.issuedAt,
+            authoritySignature: binding.authoritySignature
         )
         XCTAssertThrowsError(try tampered.verified(
-            identityPublicKey: fixture.identity.signingKey.publicKeyData,
-            manifest: fixture.manifest,
+            authoritySigningPublicKey: fixture.authority.signingKey.publicKeyData,
             now: now
         ))
-        XCTAssertFalse(endpoint.isStructurallyValid(
-            now: endpoint.prekeyBundle.signedPrekey.expiresAt
+        XCTAssertFalse(binding.isStructurallyValid(
+            now: binding.prekeyBundle.signedPrekey.expiresAt
         ))
+    }
+
+    func testBindingSchemaContainsNoEndpointSetOrDeviceLifecycleState() throws {
+        let fixture = try endpointFixture(pseudonym: "Relationship-only", prekeyIssuedAt: Date())
+        let text = try XCTUnwrap(String(
+            data: NoctweaveCoder.encode(fixture.binding, sortedKeys: true),
+            encoding: .utf8
+        ))
+        for forbidden in ["manifest", "checkpoint", "epoch", "device", "installation", "revok"] {
+            XCTAssertFalse(text.lowercased().contains(forbidden))
+        }
     }
 }
 
 private struct EndpointPrekeyRotationFixture {
-    let identity: Identity
-    let generationId: UUID
-    var localEndpoint: LocalEndpointState
-    let manifest: EndpointSetManifest
-    let endpoint: CertifiedGenerationEndpoint
+    let authority: RelationshipAuthorityV2
+    var localEndpoint: LocalRelationshipEndpointV2
+    let binding: RelationshipEndpointBindingV4
 }
 
 private func endpointFixture(
-    name: String,
+    pseudonym: String,
     prekeyIssuedAt: Date
 ) throws -> EndpointPrekeyRotationFixture {
-    let identity = try Identity.generate(displayName: name)
-    let generationId = UUID()
+    let authority = try RelationshipAuthorityV2.generate(
+        relationshipPseudonym: pseudonym
+    )
     let endpointSigning = try SigningKeyPair.generate()
     let endpointAgreement = try AgreementKeyPair.generate()
     let signedPrekeyPair = try AgreementKeyPair.generate()
@@ -125,9 +144,7 @@ private func endpointFixture(
         signingKey: endpointSigning,
         issuedAt: prekeyIssuedAt
     )
-    let localEndpoint = LocalEndpointState(
-        id: UUID(),
-        identityGenerationId: generationId,
+    let localEndpoint = LocalRelationshipEndpointV2(
         signingKey: endpointSigning,
         agreementKey: endpointAgreement,
         prekeys: PrekeyState(
@@ -141,23 +158,13 @@ private func endpointFixture(
         ),
         createdAt: prekeyIssuedAt
     )
-    let manifest = try EndpointSetManifest.create(
-        identityGenerationId: generationId,
-        epoch: 0,
-        endpoints: [localEndpoint.publicRecord(addedEpoch: 0)],
-        identity: identity,
-        issuedAt: prekeyIssuedAt
-    )
     return EndpointPrekeyRotationFixture(
-        identity: identity,
-        generationId: generationId,
+        authority: authority,
         localEndpoint: localEndpoint,
-        manifest: manifest,
-        endpoint: try CertifiedGenerationEndpoint.create(
-            identity: identity,
+        binding: try RelationshipEndpointBindingV4.create(
+            authority: authority,
             endpoint: localEndpoint,
-            manifest: manifest,
-            issuedAt: Date()
+            issuedAt: prekeyIssuedAt
         )
     )
 }

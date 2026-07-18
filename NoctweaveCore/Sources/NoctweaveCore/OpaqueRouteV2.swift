@@ -1,15 +1,15 @@
 import CryptoKit
 import Foundation
 
-/// Protocol models for an independent, lease-bounded relay route. This module
-/// is deliberately not advertised by any relay capability manifest yet.
+/// Protocol models for an independent, lease-bounded relay route. This is the
+/// current direct-message relay substrate.
 ///
 /// An opaque route is not an alias for an inbox. It has no account, identity,
 /// generation, endpoint, relationship, provider, or owner field. Relays see a
 /// random route identifier and domain-separated credential digests only.
 public enum NoctweaveOpaqueRoutesV2 {
     public static let version = 2
-    public static let advertisedByDefault = false
+    public static let advertisedByDefault = true
 
     public static let credentialBytes = 32
     public static let digestBytes = 32
@@ -191,6 +191,22 @@ public struct RouteSendCapabilityV2: Codable, Equatable, Hashable,
     public var description: String { "RouteSendCapabilityV2(<redacted>)" }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [:], displayStyle: .struct) }
+
+    public func makeAuthorization(
+        routeID: OpaqueReceiveRouteIDV2,
+        operationDigest: Data,
+        authorizedAt: Date,
+        nonce: OpaqueRouteProofNonceV2 = .generate()
+    ) throws -> OpaqueRouteAuthorizationProofV2 {
+        try OpaqueRouteAuthorizationProofV2.make(
+            authority: .send,
+            routeID: routeID,
+            operationDigest: operationDigest,
+            authorizedAt: authorizedAt,
+            nonce: nonce,
+            secret: rawValue
+        )
+    }
 }
 
 public struct RouteReadCredentialV2: Codable, Equatable, Hashable,

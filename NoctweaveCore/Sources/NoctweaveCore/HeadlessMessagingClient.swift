@@ -1,2776 +1,1638 @@
 import CryptoKit
 import Foundation
-#if canImport(Security)
-import Security
-#endif
-
-public struct HeadlessClientStatus: Codable, Equatable {
-    public let displayName: String
-    public let fingerprint: String
-    public let inboxId: String
-    public let relay: RelayEndpoint
-    public let contactCount: Int
-    public let conversationCount: Int
-
-    public init(
-        displayName: String,
-        fingerprint: String,
-        inboxId: String,
-        relay: RelayEndpoint,
-        contactCount: Int,
-        conversationCount: Int
-    ) {
-        self.displayName = displayName
-        self.fingerprint = fingerprint
-        self.inboxId = inboxId
-        self.relay = relay
-        self.contactCount = contactCount
-        self.conversationCount = conversationCount
-    }
-}
-
-public struct HeadlessSentMessage: Codable, Equatable {
-    public let contact: Contact
-    public let envelopeId: UUID
-    public let messageCounter: UInt64
-    public let storedCount: Int
-
-    public init(contact: Contact, envelopeId: UUID, messageCounter: UInt64, storedCount: Int) {
-        self.contact = contact
-        self.envelopeId = envelopeId
-        self.messageCounter = messageCounter
-        self.storedCount = storedCount
-    }
-}
-
-public struct HeadlessSentAttachment: Codable, Equatable {
-    public let contact: Contact
-    public let envelopeId: UUID
-    public let messageCounter: UInt64
-    public let descriptor: AttachmentDescriptor
-    public let uploadedChunkCount: Int
-    public let storedCount: Int
-
-    public init(
-        contact: Contact,
-        envelopeId: UUID,
-        messageCounter: UInt64,
-        descriptor: AttachmentDescriptor,
-        uploadedChunkCount: Int,
-        storedCount: Int
-    ) {
-        self.contact = contact
-        self.envelopeId = envelopeId
-        self.messageCounter = messageCounter
-        self.descriptor = descriptor
-        self.uploadedChunkCount = uploadedChunkCount
-        self.storedCount = storedCount
-    }
-}
-
-public struct HeadlessFetchedAttachment: Codable, Equatable {
-    public let descriptor: AttachmentDescriptor
-    public let data: Data
-
-    public init(descriptor: AttachmentDescriptor, data: Data) {
-        self.descriptor = descriptor
-        self.data = data
-    }
-}
-
-public struct HeadlessReceivedMessage: Codable, Equatable {
-    public let contact: Contact
-    public let envelopeId: UUID
-    public let messageCounter: UInt64
-    public let body: MessageBody
-    public let sentAt: Date
-
-    public init(
-        contact: Contact,
-        envelopeId: UUID,
-        messageCounter: UInt64,
-        body: MessageBody,
-        sentAt: Date
-    ) {
-        self.contact = contact
-        self.envelopeId = envelopeId
-        self.messageCounter = messageCounter
-        self.body = body
-        self.sentAt = sentAt
-    }
-}
-
-public struct HeadlessIdentityChangeResult: Codable, Equatable {
-    public let oldFingerprint: String
-    public let newFingerprint: String
-    public let notifiedContacts: [String]
-    public let failedContacts: [String]
-
-    public init(
-        oldFingerprint: String,
-        newFingerprint: String,
-        notifiedContacts: [String],
-        failedContacts: [String]
-    ) {
-        self.oldFingerprint = oldFingerprint
-        self.newFingerprint = newFingerprint
-        self.notifiedContacts = notifiedContacts
-        self.failedContacts = failedContacts
-    }
-}
-
-public struct HeadlessContinuityAudit: Codable, Equatable {
-    public let profileId: UUID
-    public let fingerprint: String
-    public let events: [ContinuityEvent]
-
-    public init(profileId: UUID, fingerprint: String, events: [ContinuityEvent]) {
-        self.profileId = profileId
-        self.fingerprint = fingerprint
-        self.events = events
-    }
-}
-
-public struct HeadlessContinuityAuditPurgeResult: Codable, Equatable {
-    public let profileId: UUID
-    public let fingerprint: String
-    public let purgedCount: Int
-
-    public init(profileId: UUID, fingerprint: String, purgedCount: Int) {
-        self.profileId = profileId
-        self.fingerprint = fingerprint
-        self.purgedCount = purgedCount
-    }
-}
 
 public enum HeadlessMessagingClientError: Error, Equatable {
-    case stateAlreadyExists
-    case missingState
-    case missingInboxAccessKey
-    case missingEndpoint
-    case identityMutationInProgress(String)
-    case directOutboxFull(Int)
-    case directDeliveryRequiresAction(UUID)
-    case contactNotFound(String)
-    case ambiguousContact(String)
-    case inboundEnvelopeConflict(UUID)
-    case identityRotationSelectionMismatch
-    case attachmentNotFound(String)
-    case missingAttachmentKey(String)
-    case invalidAttachmentDescriptor
-    case attachmentDigestMismatch(String)
-    case relayRejected(String)
-    case unsupportedInboundSession
+    case invalidState
+    case relationshipNotFound
+    case relayRejected
+    case invalidRelayResponse
+    case noUsableRoute
+    case conflictingEnvelope
+    case incompleteBundle
+    case continuityNotAllowed
+    case routeGapDetected
+    case unsupportedContentType
+    case relationshipConsentRequired
+    case relationshipBlocked
+    case receiptDisabled
 }
 
-extension HeadlessMessagingClientError: LocalizedError {
-    public var errorDescription: String? {
-        switch self {
-        case .stateAlreadyExists:
-            return "Headless client state already exists. Use a different --state path or --overwrite true."
-        case .missingState:
-            return "Headless client state was not found. Run `NoctweaveCLI init` first."
-        case .missingInboxAccessKey:
-            return "Headless client state is missing its inbox access key."
-        case .missingEndpoint:
-            return "Headless client state is missing its architecture-v2 endpoint."
-        case .identityMutationInProgress(let detail):
-            return "An identity mutation is already in progress: \(detail)"
-        case .directOutboxFull(let maximum):
-            return "The durable direct-message outbox is full (maximum \(maximum)). Retry pending deliveries before sending another message."
-        case .directDeliveryRequiresAction(let envelopeId):
-            return "Direct delivery `\(envelopeId.uuidString)` reached a permanent rejection or the bounded retry limit. Inspect the relay configuration, then explicitly rearm the preserved ciphertext."
-        case .contactNotFound(let selector):
-            return "No contact matched `\(selector)`."
-        case .ambiguousContact(let selector):
-            return "More than one contact matched `\(selector)`. Use the contact UUID or fingerprint."
-        case .inboundEnvelopeConflict(let eventId):
-            return "Inbound event `\(eventId.uuidString)` conflicts with a previously processed signed envelope. The mailbox cursor was not advanced."
-        case .identityRotationSelectionMismatch:
-            return "The requested continuity recipients do not match the durably prepared identity rotation. Resume it with the same contact IDs."
-        case .attachmentNotFound(let selector):
-            return "No attachment matched `\(selector)` in local state."
-        case .missingAttachmentKey(let selector):
-            return "Attachment `\(selector)` is missing local recovery metadata."
-        case .invalidAttachmentDescriptor:
-            return "Attachment metadata is malformed or exceeds Noctweave transport limits."
-        case .attachmentDigestMismatch(let selector):
-            return "Attachment `\(selector)` failed digest verification."
-        case .relayRejected(let message):
-            return "Relay rejected the request: \(message)"
-        case .unsupportedInboundSession:
-            return "Received a message without an existing session or session-init KEM ciphertext."
-        }
-    }
+public struct HeadlessSendResult: Codable, Equatable {
+    public let event: ConversationEvent
+    public let envelope: DirectEnvelopeV4
+    public let acceptedDeliveryCount: Int
+    public let pendingDeliveryCount: Int
 }
 
+public struct HeadlessSyncResult: Codable, Equatable {
+    public let relationshipID: UUID
+    public let receivedEvents: [ConversationEvent]
+    public let committedCursor: OpaqueRouteCursorV2?
+    public let hasMore: Bool
+}
+
+/// Public headless client for the clean 1.0 architecture. A persona is local
+/// organization only; all cryptographic state and delivery authority is scoped
+/// to a `PairwiseRelationshipV2`.
 public actor HeadlessMessagingClient {
-    public let store: ClientStateStore
-    public let authToken: String?
-    public let timeout: TimeInterval
-    private let stateMutationGate = AsyncOperationGate()
+    private var state: ClientState
+    private let stateStore: ClientStateStore
+    private var sessionsByID: [String: Conversation] = [:]
+    private var reassemblersByRoute: [OpaqueReceiveRouteIDV2: OpaqueRoutePacketReassemblerV2] = [:]
 
     public init(
-        stateURL: URL,
-        useEncryptedStore: Bool,
-        stateEncryptionKey: SymmetricKey? = nil,
-        authToken: String? = nil,
-        timeout: TimeInterval = RelayClient.defaultTimeout
-    ) {
-        self.store = ClientStateStore(
-            fileURL: stateURL,
-            useEncryption: useEncryptedStore,
-            encryptionKey: stateEncryptionKey
-        )
-        self.authToken = authToken
-        self.timeout = timeout
-    }
-
-    public func createState(
-        displayName: String,
-        relay: RelayEndpoint,
-        overwrite: Bool = false
-    ) async throws -> HeadlessClientStatus {
-        if !overwrite, try await store.load() != nil {
-            throw HeadlessMessagingClientError.stateAlreadyExists
+        stateStore: ClientStateStore,
+        initialState: ClientState
+    ) throws {
+        guard initialState.isStructurallyValid else {
+            throw HeadlessMessagingClientError.invalidState
         }
-        let identity = try Identity.generate(displayName: displayName)
-        let inboxAccessKey = try SigningKeyPair.generate()
-        var state = try ClientState(
-            identity: identity,
-            relay: relay,
-            inboxAccessKey: inboxAccessKey
-        )
-        state.relayServers = [
-            RelayServerRecord(
-                name: relay.host,
-                endpoint: relay
-            )
-        ]
-        try await store.save(state)
-        return status(for: state)
+        self.stateStore = stateStore
+        self.state = initialState
     }
 
-    public func status() async throws -> HeadlessClientStatus {
-        try await status(for: loadState())
-    }
-
-    public func registerInbox() async throws {
-        var state = try await loadState()
-        let accessKey = try inboxAccessKey(from: state)
-        var request = RegisterInboxRequest.privacyMinimizedV2(
-            inboxId: state.inboxId,
-            accessPublicKey: accessKey.publicKeyData
-        )
-        let proof = try Self.makeActorProof(signingKey: accessKey) { actorProof in
-            try request.signableData(for: actorProof)
-        }
-        request = .privacyMinimizedV2(
-            inboxId: state.inboxId,
-            accessPublicKey: accessKey.publicKeyData,
-            accessProof: proof
-        )
-        let response = try await relayClient(for: state.relay).send(.registerInbox(request), timeout: timeout)
-        try requireOK(response)
-        _ = try await ensureMailboxConsumer(state: &state, accessKey: accessKey)
-        try await store.save(state)
-    }
-
-    /// Returns the active route credential identifier that one already
-    /// admitted endpoint can use to sponsor another route credential in the
-    /// same identity generation. This does not admit an endpoint. No inbox
-    /// authority or private key material leaves this client.
-    public func mailboxRouteSponsorshipContext() async throws -> MailboxRouteSponsorshipContext {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        var state = try await loadState()
-        let accessKey = try inboxAccessKey(from: state)
-        let mailbox = try await ensureMailboxConsumer(state: &state, accessKey: accessKey)
-        return MailboxRouteSponsorshipContext(
-            inboxId: state.inboxId,
-            relay: state.relay,
-            sponsorConsumerId: mailbox.consumerId
-        )
-    }
-
-    /// Sponsors a fresh route credential for an endpoint that was admitted
-    /// separately through the generation-scoped endpoint-admission protocol.
-    /// The caller supplies a draft containing the route public key, sponsor
-    /// ID, and route-possession proof; this client adds the inbox-authority and
-    /// active-route sponsor proofs and publishes it.
-    @discardableResult
-    public func sponsorMailboxRouteCredential(
-        _ proposed: RegisterMailboxConsumerRequest
-    ) async throws -> MailboxConsumerRegistration {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        var state = try await loadState()
-        let accessKey = try inboxAccessKey(from: state)
-        let sponsor = try await ensureMailboxConsumer(state: &state, accessKey: accessKey)
-        guard proposed.inboxId == state.inboxId,
-              proposed.sponsorConsumerId == sponsor.consumerId,
-              proposed.consumerId != sponsor.consumerId,
-              SigningKeyPair.isValidPublicKey(proposed.consumerSigningPublicKey),
-              let consumerProof = proposed.consumerProof,
-              consumerProof.publicSigningKey == proposed.consumerSigningPublicKey,
-              consumerProof.isConsistentFingerprint() else {
-            throw HeadlessMessagingClientError.relayRejected("Invalid sponsored mailbox registration")
-        }
-        let draft = RegisterMailboxConsumerRequest(
-            inboxId: state.inboxId,
-            consumerId: proposed.consumerId,
-            consumerSigningPublicKey: proposed.consumerSigningPublicKey,
-            sponsorConsumerId: sponsor.consumerId,
-            startingSequence: proposed.startingSequence,
-            consumerProof: consumerProof
-        )
-        let consumerSignableData = try draft.consumerSignableData(for: consumerProof)
-        guard consumerProof.verify(signableData: consumerSignableData) else {
-            throw HeadlessMessagingClientError.relayRejected("Invalid new-consumer possession proof")
-        }
-        let authorityProof = try Self.makeActorProof(signingKey: accessKey) { proof in
-            try draft.authoritySignableData(for: proof)
-        }
-        let sponsorProof = try Self.makeActorProof(signingKey: sponsor.consumerKey) { proof in
-            try draft.sponsorSignableData(for: proof)
-        }
-        let request = RegisterMailboxConsumerRequest(
-            inboxId: state.inboxId,
-            consumerId: proposed.consumerId,
-            consumerSigningPublicKey: proposed.consumerSigningPublicKey,
-            sponsorConsumerId: sponsor.consumerId,
-            startingSequence: proposed.startingSequence,
-            authorityProof: authorityProof,
-            consumerProof: consumerProof,
-            sponsorProof: sponsorProof
-        )
-        let response = try await relayClient(for: state.relay).send(
-            .registerMailboxConsumer(request),
-            timeout: timeout
-        )
-        guard response.type == .mailboxConsumer,
-              let registration = response.mailboxConsumer,
-              registration.consumerId == proposed.consumerId,
-              registration.consumerSigningPublicKey == proposed.consumerSigningPublicKey,
-              registration.state == .active else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-        return registration
-    }
-
-    public func exportContactCode() async throws -> String {
-        var state = try await loadState()
-        let inboxAccessPublicKey = state.inboxAccessKey?.publicKeyData
-        let offer = try issueCertifiedContactOffer(
-            state: &state,
-            inboxAccessPublicKey: inboxAccessPublicKey
-        )
-        try await store.save(state)
-        return try ContactOfferCode.encode(offer)
-    }
-
-    public func exportContactPackage(password: String) async throws -> Data {
-        var state = try await loadState()
-        let inboxAccessPublicKey = state.inboxAccessKey?.publicKeyData
-        let offer = try issueCertifiedContactOffer(
-            state: &state,
-            inboxAccessPublicKey: inboxAccessPublicKey
-        )
-        try await store.save(state)
-        return try ContactShare.encode(offer, password: password)
-    }
-
-    public func importContactCode(_ code: String) async throws -> Contact {
-        let offer = try ContactOfferCode.decode(code)
-        return try await importContactOffer(offer)
-    }
-
-    public func importContactPackage(_ data: Data, password: String) async throws -> Contact {
-        let offer = try ContactShare.decode(data, password: password)
-        return try await importContactOffer(offer)
-    }
-
-    public func contacts() async throws -> [Contact] {
-        try await loadState().contacts.sorted { lhs, rhs in
-            lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
-        }
-    }
-
-    public func continuityAudit() async throws -> HeadlessContinuityAudit {
-        let state = try await loadState()
-        return continuityAudit(for: state)
-    }
-
-    public func purgeContinuityAudit() async throws -> HeadlessContinuityAuditPurgeResult {
-        var state = try await loadState()
-        let before = continuityAudit(for: state)
-        state.purgeContinuityEvents()
-        try await store.save(state)
-        return HeadlessContinuityAuditPurgeResult(
-            profileId: before.profileId,
-            fingerprint: before.fingerprint,
-            purgedCount: before.events.count
-        )
-    }
-
-    public func setContactIdentityReset(selector: String, allow: Bool) async throws -> Contact {
-        var state = try await loadState()
-        var contact = try resolveContact(selector, in: state.contacts)
-        contact.allowIdentityReset = allow
-        state.updateContact(contact)
-        try await store.save(state)
-        return contact
-    }
-
-    /// Rotates the current generation's identity authority and discloses the
-    /// old-key-authenticated continuity statement only to the explicitly
-    /// selected contacts. Passing an empty set is the explicit choice to
-    /// disclose continuity to nobody. This is an in-generation authority
-    /// rotation, not an unlinkability boundary; callers that need severance
-    /// must use identity burn.
-    public func rotateIdentity(
-        preservingContinuityWith contactIds: Set<UUID>
-    ) async throws -> HeadlessIdentityChangeResult {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        var state = try await loadState()
-        if let existing = state.identityMutationV2 {
-            guard existing.kind == .rotation else {
-                throw HeadlessMessagingClientError.identityMutationInProgress(existing.kind.rawValue)
-            }
-            guard Set(existing.notifications.map(\.contactId)) == contactIds else {
-                throw HeadlessMessagingClientError.identityRotationSelectionMismatch
-            }
-            _ = try await retryPendingDirectDeliveriesUnlocked(maxCount: 256)
-            return identityMutationResult(existing, state: try await loadState())
-        }
-        let knownContactIds = Set(state.contacts.map(\.id))
-        guard contactIds.isSubset(of: knownContactIds) else {
-            let unknownId = contactIds
-                .subtracting(knownContactIds)
-                .map(\.uuidString)
-                .sorted()
-                .first ?? "unknown"
-            throw HeadlessMessagingClientError.contactNotFound(unknownId)
-        }
-        let selectedContacts = state.contacts.filter { contactIds.contains($0.id) }
-        let existingPendingIds = state.pendingDirectDeliveries.map(\.id)
-        guard selectedContacts.count + existingPendingIds.count
-                <= IdentityMutationJournalV2.maximumNotifications,
-              existingPendingIds.count <= NoctweaveArchitectureV2.maximumIntentDependencies else {
-            throw HeadlessMessagingClientError.identityMutationInProgress(
-                "retry pending sends before rotating"
+    public static func open(
+        stateStore: ClientStateStore,
+        displayName: String
+    ) async throws -> HeadlessMessagingClient {
+        if let existing = try await stateStore.load() {
+            return try HeadlessMessagingClient(
+                stateStore: stateStore,
+                initialState: existing
             )
         }
-        for pending in state.pendingDirectDeliveries {
-            try ensurePreparedIntent(for: pending, dependencies: [], state: &state)
-        }
-
-        let rotationContext = try state.identity.rotateKeys()
-
-        let oldFingerprint = rotationContext.oldFingerprint
-        let newFingerprint = state.identity.fingerprint
-        let mutationAt = max(Date(), state.endpointSetManifest?.issuedAt ?? .distantPast)
-        state.appendContinuityEvent(
-            ContinuityEvent(
-                kind: .identityRotated,
-                timestamp: mutationAt,
-                oldFingerprint: oldFingerprint,
-                newFingerprint: newFingerprint
-            )
+        let state = try ClientState(displayName: displayName)
+        try await stateStore.save(state)
+        return try HeadlessMessagingClient(
+            stateStore: stateStore,
+            initialState: state
         )
-        state.prekeys = try PrekeyState.generate(identity: state.identity)
-        try state.resignEndpointSetManifestAfterIdentityRotation(at: mutationAt)
-
-        var notifications: [IdentityMutationNotificationV2] = []
-        for contact in selectedContacts {
-            guard contact.usesCertifiedGenerationEndpoint,
-                  let endpoint = state.localEndpoint else {
-                throw HeadlessMessagingClientError.unsupportedInboundSession
-            }
-            let peerEndpoint = try contact.certifiedGenerationEndpoint()
-            let selected = try directSendEndpointContext(
-                contact: contact,
-                peerEndpoint: peerEndpoint,
-                state: &state
-            )
-            var conversation: Conversation
-            var bootstrap = DirectBootstrapV4.none
-            if let existing = state.conversation(
-                for: contact.id,
-                endpointSession: selected.endpointSession
-            ) {
-                conversation = existing
-            } else {
-                let session = try MessageEngine.createOutboundEndpointSession(
-                    localEndpoint: endpoint,
-                    localCertificate: selected.localEndpoint,
-                    pairwiseBinding: selected.binding,
-                    contact: contact
-                )
-                conversation = session.conversation
-                bootstrap = .signedPrekey(
-                    kemCiphertext: session.kemCiphertext,
-                    prekey: session.prekey
-                )
-            }
-            let eventId = UUID()
-            let envelope = try MessageEngine.encryptDirectV4(
-                wirePayload: .control(.identityRotation(rotationContext.rotation)),
-                eventId: eventId,
-                senderSigningKey: endpoint.signingKey,
-                senderEndpoint: selected.localEndpoint,
-                recipientEndpoint: peerEndpoint,
-                pairwiseBinding: selected.binding,
-                conversation: &conversation,
-                bootstrap: bootstrap,
-                sentAt: mutationAt
-            )
-            conversation.markMessageProcessed()
-            state.upsert(conversation: conversation)
-            let pending = PendingDirectDelivery(
-                contactId: contact.id,
-                inboxId: contact.inboxId,
-                preferredRelay: state.relay,
-                destinationRelay: contact.relay,
-                envelope: envelope,
-                queuedAt: mutationAt
-            )
-            state.pendingDirectDeliveries.append(pending)
-            try ensurePreparedIntent(
-                for: pending,
-                dependencies: existingPendingIds,
-                state: &state
-            )
-            notifications.append(
-                IdentityMutationNotificationV2(
-                    id: envelope.id,
-                    contactId: contact.id,
-                    contactDisplayName: contact.displayName,
-                    signerPublicKey: endpoint.signingKey.publicKeyData
-                )
-            )
-        }
-        let journal = IdentityMutationJournalV2(
-            kind: .rotation,
-            phase: .cleanupComplete,
-            oldFingerprint: oldFingerprint,
-            oldSigningPublicKey: rotationContext.oldSigningKey.publicKeyData,
-            newFingerprint: newFingerprint,
-            notifications: notifications,
-            createdAt: mutationAt
-        )
-        guard journal.isStructurallyValid else {
-            throw IdentityProfileStateError.invalidCurrentState
-        }
-        state.identityMutationV2 = journal
-        // This is the rollback boundary: the new identity, manifest, sessions,
-        // exact old-key-signed ciphertexts, and intents become durable together.
-        try await store.save(state)
-        _ = try await retryPendingDirectDeliveriesUnlocked(maxCount: 256)
-        return identityMutationResult(journal, state: try await loadState())
     }
 
-    public func burnIdentity() async throws -> HeadlessIdentityChangeResult {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        var state = try await loadState()
-        if let existing = state.identityMutationV2 {
-            guard existing.kind == .burn else {
-                throw HeadlessMessagingClientError.identityMutationInProgress(existing.kind.rawValue)
-            }
-            return try await resumeIdentityBurnUnlocked(existing)
+    public func snapshot() -> ClientState { state }
+
+    public func activePersona() -> PersonaProfileV1 { state.activePersona }
+
+    public func relationship(_ relationshipID: UUID) throws -> PairwiseRelationshipV2 {
+        guard let relationship = state.activePersona.relationships.first(where: {
+            $0.id == relationshipID
+        }) else {
+            throw HeadlessMessagingClientError.relationshipNotFound
         }
-        let oldIdentity = state.identity
-        let oldFingerprint = oldIdentity.fingerprint
-        let oldInboxAccessKey = try inboxAccessKey(from: state)
-        let retainedContacts = state.contacts.filter(\.allowIdentityReset)
-        guard retainedContacts.count <= IdentityMutationJournalV2.maximumNotifications else {
-            throw HeadlessMessagingClientError.identityMutationInProgress("too many reset contacts")
-        }
-        let staged = try StagedIdentityGenerationV2.generate(
-            displayName: oldIdentity.displayName,
-            relay: state.relay
-        )
-        guard let stagedEndpoint = staged.issuedContactEndpointsV2.first else {
-            throw IdentityProfileStateError.invalidCurrentState
-        }
-        let newOffer = try ContactOffer.createCertified(
-            displayName: staged.identity.displayName,
-            inboxId: staged.inboxId,
-            relay: staged.relay,
-            identity: staged.identity,
-            identityGenerationId: staged.identityGenerationId,
-            endpointSetManifest: staged.endpointSetManifest,
-            preferredGenerationEndpoint: stagedEndpoint,
-            inboxAccessPublicKey: staged.inboxAccessKey.publicKeyData
-        )
-        let reset = try IdentityReset.create(
-            newOffer: newOffer,
-            signingKey: oldIdentity.signingKey
-        )
-        var notifications: [IdentityMutationNotificationV2] = []
-        for contact in retainedContacts {
-            guard contact.usesCertifiedGenerationEndpoint,
-                  let endpoint = state.localEndpoint else {
-                throw HeadlessMessagingClientError.unsupportedInboundSession
-            }
-            let peerEndpoint = try contact.certifiedGenerationEndpoint()
-            let selected = try directSendEndpointContext(
-                contact: contact,
-                peerEndpoint: peerEndpoint,
-                state: &state
-            )
-            var conversation: Conversation
-            var bootstrap = DirectBootstrapV4.none
-            if let existing = state.conversation(
-                for: contact.id,
-                endpointSession: selected.endpointSession
-            ) {
-                conversation = existing
-            } else {
-                let session = try MessageEngine.createOutboundEndpointSession(
-                    localEndpoint: endpoint,
-                    localCertificate: selected.localEndpoint,
-                    pairwiseBinding: selected.binding,
-                    contact: contact
-                )
-                conversation = session.conversation
-                bootstrap = .signedPrekey(
-                    kemCiphertext: session.kemCiphertext,
-                    prekey: session.prekey
-                )
-            }
-            let eventId = UUID()
-            let envelope = try MessageEngine.encryptDirectV4(
-                wirePayload: .control(.identityReset(reset)),
-                eventId: eventId,
-                senderSigningKey: endpoint.signingKey,
-                senderEndpoint: selected.localEndpoint,
-                recipientEndpoint: peerEndpoint,
-                pairwiseBinding: selected.binding,
-                conversation: &conversation,
-                bootstrap: bootstrap,
-                sentAt: staged.createdAt
-            )
-            let pending = PendingDirectDelivery(
-                contactId: contact.id,
-                inboxId: contact.inboxId,
-                preferredRelay: state.relay,
-                destinationRelay: contact.relay,
-                envelope: envelope,
-                queuedAt: staged.createdAt
-            )
-            notifications.append(
-                IdentityMutationNotificationV2(
-                    id: envelope.id,
-                    contactId: contact.id,
-                    contactDisplayName: contact.displayName,
-                    signerPublicKey: endpoint.signingKey.publicKeyData,
-                    stagedDelivery: pending
-                )
-            )
-        }
-        // Persist exact retirement requests before cutover so every known old
-        // route can be destroyed without retaining the old inbox private key.
-        let retirementRequest = try RetireInboxRequest.make(
-            inboxId: state.inboxId,
-            accessSigningKey: oldInboxAccessKey,
-            signedAt: staged.createdAt
-        )
-        var retirementRelaysByRoute = [
-            Self.mailboxRouteKey(relay: state.relay, inboxId: state.inboxId): state.relay
-        ]
-        for (routeKey, credential) in state.localEndpoint?.mailboxCredentialsByRoute ?? [:] {
-            if credential.inboxId == state.inboxId.lowercased(),
-               let relay = credential.relay {
-                retirementRelaysByRoute[routeKey] = relay
-            }
-        }
-        let pendingRetirements = retirementRelaysByRoute
-            .sorted(by: { $0.key < $1.key })
-            .map { _, relay in
-                PendingInboxRetirementV2(relay: relay, request: retirementRequest)
-            }
-        let journal = IdentityMutationJournalV2(
-            kind: .burn,
-            phase: .prepared,
-            oldFingerprint: oldFingerprint,
-            oldSigningPublicKey: oldIdentity.signingKey.publicKeyData,
-            newFingerprint: staged.identity.fingerprint,
-            notifications: notifications,
-            stagedBurn: staged,
-            pendingInboxRetirements: pendingRetirements,
-            createdAt: staged.createdAt
-        )
-        guard journal.isStructurallyValid else {
-            throw IdentityProfileStateError.invalidCurrentState
-        }
-        state.identityMutationV2 = journal
-        // No external state has changed yet; a failed save leaves the old
-        // identity completely untouched and usable.
-        try await store.save(state)
-        return try await resumeIdentityBurnUnlocked(journal)
+        return relationship
     }
 
-    public func sendText(to selector: String, text: String) async throws -> HeadlessSentMessage {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        return try await sendTextUnlocked(to: selector, text: text)
-    }
-
-    @discardableResult
-    public func retryPendingDirectDeliveries(maxCount: Int = 64) async throws -> Int {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        return try await retryPendingDirectDeliveriesUnlocked(maxCount: maxCount)
-    }
-
-    /// Explicitly rearms the exact preserved ciphertext after retry exhaustion
-    /// or a permanent relay rejection. No ratchet or envelope bytes change.
-    public func rearmPendingDirectDelivery(envelopeId: UUID) async throws {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        var state = try await loadState()
-        guard let pendingIndex = state.pendingDirectDeliveries.firstIndex(where: {
-            $0.id == envelopeId
-        }), let intentIndex = state.protocolIntents.firstIndex(where: {
-            $0.id == envelopeId
-        }), let rearmed = state.protocolIntents[intentIndex].rearming(at: Date()) else {
-            throw HeadlessMessagingClientError.directDeliveryRequiresAction(envelopeId)
+    public func addRelationship(
+        _ relationship: PairwiseRelationshipV2,
+        consent: RelationshipConsentStateV2 = .accepted
+    ) async throws {
+        var relationship = relationship
+        relationship.localPolicy.consent = consent
+        guard relationship.isStructurallyValid else {
+            throw HeadlessMessagingClientError.invalidState
         }
-        state.protocolIntents[intentIndex] = rearmed
-        state.pendingDirectDeliveries[pendingIndex].attemptCount = 0
-        state.pendingDirectDeliveries[pendingIndex].lastAttemptAt = nil
-        try await store.save(state)
+        try state.updateActivePersona { persona in
+            try persona.upsert(relationship: relationship)
+        }
+        try await persist()
     }
 
-    private func retryPendingDirectDeliveriesUnlocked(maxCount: Int) async throws -> Int {
-        var state = try await loadState()
-        var deliveredCount = 0
-        var firstActionRequired: UUID?
-        var blockedConversationIds = Set<String>()
-        let pendingIds = state.pendingDirectDeliveries.prefix(max(1, min(maxCount, 256))).map(\.id)
-        for pendingId in pendingIds {
-            guard let pendingIndex = state.pendingDirectDeliveries.firstIndex(where: { $0.id == pendingId }) else {
-                continue
-            }
-            let pending = state.pendingDirectDeliveries[pendingIndex]
-            if blockedConversationIds.contains(pending.envelope.conversationId) {
-                continue
-            }
-            let attemptId = UUID()
-            let now = Date()
-            let intentIndex: Int
-            if let existing = state.protocolIntents.firstIndex(where: { $0.id == pendingId }) {
-                intentIndex = existing
-            } else {
-                let digest = Data(SHA256.hash(data: try NoctweaveCoder.encode(pending.envelope, sortedKeys: true)))
-                state.protocolIntents.append(
-                    .prepare(
-                        id: pendingId,
-                        kind: .sendEvent,
-                        targetIdentifier: Data(pending.contactId.uuidString.lowercased().utf8),
-                        payloadDigest: digest,
-                        createdAt: pending.queuedAt
-                    )
-                )
-                intentIndex = state.protocolIntents.count - 1
-            }
-            let currentIntent = state.protocolIntents[intentIndex]
-            if currentIntent.state == .permanentFailure
-                || currentIntent.attemptCount
-                    >= UInt32(NoctweaveArchitectureV2.maximumIntentAttempts) {
-                firstActionRequired = firstActionRequired ?? pendingId
-                blockedConversationIds.insert(pending.envelope.conversationId)
-                continue
-            }
-            guard let attempting = currentIntent.beginningAttempt(
-                id: attemptId,
-                completedIntentIds: Self.completedIntentIds(in: state),
-                at: now
-            ) else {
-                continue
-            }
-            state.protocolIntents[intentIndex] = attempting
-            let boundedAttemptCount = max(0, state.pendingDirectDeliveries[pendingIndex].attemptCount)
-            state.pendingDirectDeliveries[pendingIndex].attemptCount = min(
-                boundedAttemptCount,
-                NoctweaveArchitectureV2.maximumIntentAttempts - 1
-            ) + 1
-            state.pendingDirectDeliveries[pendingIndex].lastAttemptAt = now
-            try await store.save(state)
-            do {
-                _ = try await deliver(pending: pending)
-                try await finalizeDirectDeliveryIntent(
-                    envelopeId: pendingId,
-                    attemptId: attemptId,
-                    state: &state
-                )
-                deliveredCount += 1
-            } catch {
-                try await recordDirectDeliveryFailure(
-                    envelopeId: pendingId,
-                    attemptId: attemptId,
-                    error: error,
-                    state: &state
-                )
-                if state.protocolIntents.first(where: { $0.id == pendingId })?.state
-                    == .permanentFailure {
-                    firstActionRequired = firstActionRequired ?? pendingId
-                    blockedConversationIds.insert(pending.envelope.conversationId)
+    /// Updates only local presentation/consent policy for one unlinkable
+    /// relationship. No control event or relay-visible metadata is emitted.
+    public func setRelationshipLocalPolicy(
+        _ policy: RelationshipLocalPolicyV2,
+        relationshipID: UUID,
+        at date: Date = Date()
+    ) async throws {
+        guard policy.isStructurallyValid,
+              date.timeIntervalSince1970.isFinite else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        var relationship = try relationship(relationshipID)
+        relationship.localPolicy = policy
+        if policy.consent == .blocked {
+            relationship.pendingDeliveries.removeAll(keepingCapacity: false)
+            for index in relationship.protocolIntents.indices
+                where !relationship.protocolIntents[index].state.isTerminal
+                    && (relationship.protocolIntents[index].kind == .sendEvent
+                        || relationship.protocolIntents[index].kind == .publishContinuity) {
+                if let failed = relationship.protocolIntents[index].failingPermanently(
+                    errorClass: .authorizationRejected,
+                    at: max(date, relationship.protocolIntents[index].updatedAt)
+                ) {
+                    relationship.protocolIntents[index] = failed
                 }
             }
+            sessionsByID = sessionsByID.filter { $0.value.relationshipID != relationshipID }
         }
-        if identityMutationCanBeCleared(in: state) {
-            state.identityMutationV2 = nil
-            try await store.save(state)
-        }
-        if let firstActionRequired {
-            // Other conversations were still given a chance to make progress;
-            // the caller now gets an explicit recovery handle for the first
-            // preserved ciphertext that needs rearming or dismissal.
-            throw HeadlessMessagingClientError.directDeliveryRequiresAction(firstActionRequired)
-        }
-        return deliveredCount
+        try replaceRelationship(relationship)
+        try await persist()
     }
 
-    private func sendTextUnlocked(to selector: String, text: String) async throws -> HeadlessSentMessage {
-        var state = try await loadState()
-        let contact = try resolveContact(selector, in: state.contacts)
-        try requireContinuityDeliveryReady(for: contact, state: state)
-        var conversation: Conversation
-        var bootstrap = DirectBootstrapV4.none
-        let eventId = UUID()
-        let clientTransactionId = UUID()
-        guard contact.usesCertifiedGenerationEndpoint,
-              let endpoint = state.localEndpoint else {
-            throw HeadlessMessagingClientError.unsupportedInboundSession
-        }
-        let peerEndpoint = try contact.certifiedGenerationEndpoint()
-        let selected = try directSendEndpointContext(
-            contact: contact,
-            peerEndpoint: peerEndpoint,
-            state: &state
+    /// Blocking succeeds locally before any network action. Relay teardown is
+    /// best-effort and relationship-scoped; failed routes remain available for
+    /// a later retry without re-enabling message processing.
+    @discardableResult
+    public func blockRelationship(
+        _ relationshipID: UUID,
+        at date: Date = Date()
+    ) async throws -> [OpaqueReceiveRouteIDV2] {
+        var policy = try relationship(relationshipID).localPolicy
+        policy.consent = .blocked
+        try await setRelationshipLocalPolicy(
+            policy,
+            relationshipID: relationshipID,
+            at: date
         )
-        let senderEndpoint = selected.localEndpoint
-        let binding = selected.binding
-        let endpointSession = selected.endpointSession
-        if let existing = state.conversation(for: contact.id, endpointSession: endpointSession) {
-            conversation = existing
-        } else {
-            let session = try MessageEngine.createOutboundEndpointSession(
-                localEndpoint: endpoint,
-                localCertificate: senderEndpoint,
-                pairwiseBinding: binding,
-                contact: contact
-            )
-            conversation = session.conversation
-            bootstrap = .signedPrekey(
-                kemCiphertext: session.kemCiphertext,
-                prekey: session.prekey
-            )
-        }
-        let eventTimestamp = Date()
-        guard let content = EncodedContent.text(text) else {
-            throw WirePayloadV2Error.invalidKnownApplicationContent
-        }
-        let event = ConversationEvent(
-            id: eventId,
-            clientTransactionId: clientTransactionId,
-            conversationId: conversation.id,
-            authorEndpointHandle: binding.localEndpointHandle,
-            createdAt: eventTimestamp,
-            kind: .application,
-            content: content
+        return try await teardownBlockedRelationshipRoutes(
+            relationshipID: relationshipID,
+            at: date
         )
-        let envelope = try MessageEngine.encryptDirectV4(
-            wirePayload: .application(event),
-            eventId: eventId,
-            senderSigningKey: endpoint.signingKey,
-            senderEndpoint: senderEndpoint,
-            recipientEndpoint: peerEndpoint,
-            pairwiseBinding: binding,
-            conversation: &conversation,
-            bootstrap: bootstrap,
-            sentAt: eventTimestamp
-        )
-        _ = MessageEngine.appendMessage(
-            id: eventId,
-            body: .text(text),
-            direction: .sent,
-            counter: envelope.messageCounter,
-            timestamp: envelope.sentAt,
-            conversation: &conversation
-        )
-        state.upsert(conversation: conversation)
-        try persistDirectEvent(event, contact: contact, binding: binding, state: &state)
+    }
 
-        let attemptId = try await persistDirectDeliveryIntent(
-            envelope: envelope,
-            contact: contact,
-            state: &state
-        )
-        let response: RelayResponse
-        do {
-            response = try await deliver(envelope: envelope, to: contact, from: state)
-            try await finalizeDirectDeliveryIntent(
-                envelopeId: envelope.id,
-                attemptId: attemptId,
-                state: &state
-            )
-        } catch {
-            try await recordDirectDeliveryFailure(
-                envelopeId: envelope.id,
-                attemptId: attemptId,
-                error: error,
-                state: &state
-            )
-            throw error
+    public func addGroupRuntime(_ record: GroupRuntimeRecord) async throws {
+        guard record.isStructurallyValid else {
+            throw HeadlessMessagingClientError.invalidState
         }
-        return HeadlessSentMessage(
-            contact: contact,
-            envelopeId: envelope.id,
-            messageCounter: envelope.messageCounter,
-            storedCount: response.delivered?.storedCount ?? 0
+        try state.updateActivePersona { persona in
+            try persona.upsert(groupRuntime: record)
+        }
+        try await persist()
+    }
+
+    /// Opens the group runtime against this client's encrypted state store.
+    /// The returned actor remains group-scoped and transport-independent; every
+    /// mutation is written back atomically to the active local persona.
+    public func openGroupRuntime(
+        groupID: UUID
+    ) throws -> NoctweavePQGroupRuntimeV2 {
+        guard let record = state.activePersona.groupRuntimes.first(where: {
+            $0.groupId == groupID
+        }) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let persistence = HeadlessGroupRuntimePersistence(
+            initialRecord: record,
+            saveHandler: { [self] updated in
+                try await persistGroupRuntime(updated)
+            }
+        )
+        return try NoctweavePQGroupRuntimeV2(
+            record: record,
+            persistence: persistence
+        )
+    }
+
+    /// Publishes a previously persisted group fanout plan. A credential is
+    /// reported accepted when at least one of its opaque routes durably accepts
+    /// every packet; redundant routes are availability copies, not extra
+    /// membership identities.
+    public func publishGroupFanoutPlan(
+        _ plan: GroupOpaqueRouteFanoutPlanV2
+    ) async throws -> [GroupScopedCredentialHandleV2] {
+        guard plan.isStructurallyValid else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        var accepted = Set<GroupScopedCredentialHandleV2>()
+        for publication in plan.publications {
+            var routeAccepted = true
+            for packet in publication.packets {
+                do {
+                    let response = try await relayClient(
+                        for: publication.destinationRelay
+                    ).send(.appendOpaqueRouteV2(
+                        AppendOpaqueRouteRelayRequestV2(
+                            packet: packet,
+                            sendCapability: publication.sendCapability
+                        )
+                    ))
+                    guard case .opaqueRouteAppend = response.successBody else {
+                        routeAccepted = false
+                        break
+                    }
+                } catch {
+                    routeAccepted = false
+                    break
+                }
+            }
+            if routeAccepted {
+                accepted.insert(publication.destinationCredentialHandle)
+            }
+        }
+        return accepted.sorted { $0.rawValue < $1.rawValue }
+    }
+
+    public func setContinuityPolicy(
+        _ policy: RelationshipContinuityPolicyV2,
+        relationshipID: UUID
+    ) async throws {
+        var relationship = try relationship(relationshipID)
+        relationship.continuityPolicy = policy
+        try replaceRelationship(relationship)
+        try await persist()
+    }
+
+    public func continuityInvitation(
+        relationshipID: UUID,
+        eventID: UUID,
+        at date: Date = Date()
+    ) throws -> ContactPairingInvitationV2 {
+        let relationship = try relationship(relationshipID)
+        guard relationship.localPolicy.consent == .accepted,
+              relationship.continuityPolicy.allowsReceiving,
+              let event = relationship.events.first(where: { $0.id == eventID }),
+              event.kind == .control,
+              event.content.type == RelationshipControlKindV2.continuityOffer.contentType else {
+            throw HeadlessMessagingClientError.continuityNotAllowed
+        }
+        let offer = try NoctweaveCoder.decode(
+            RelationshipContinuityOfferV2.self,
+            from: event.content.payload
+        )
+        guard try NoctweaveCoder.encode(offer, sortedKeys: true) == event.content.payload,
+              offer.relationshipID == relationshipID,
+              date.timeIntervalSince1970.isFinite,
+              date < offer.expiresAt else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        return offer.invitation
+    }
+
+    public func prepareContactParticipant(
+        relay: RelayEndpoint,
+        relationshipPseudonym: String = "Noctweave peer",
+        policy: OpaqueRoutePolicyV2 = OpaqueRoutePolicyV2(
+            paddingBucket: .bytes4096,
+            retentionBucket: .sixHours,
+            quotaBucket: .packets256
+        ),
+        createdAt: Date = Date()
+    ) throws -> PendingContactParticipantV2 {
+        try PendingContactParticipantV2.prepare(
+            relationshipPseudonym: relationshipPseudonym,
+            relay: relay,
+            policy: policy,
+            createdAt: createdAt
+        )
+    }
+
+    public func activateContactParticipant(
+        _ pending: PendingContactParticipantV2
+    ) async throws -> PreparedContactParticipantV2 {
+        let response = try await relayClient(for: pending.relay).send(
+            .createOpaqueRouteV2(
+                CreateOpaqueRouteRelayRequestV2(
+                    request: pending.routeCreateRequest,
+                    renewCapability: pending.clientCapabilities.renewCapability
+                )
+            )
+        )
+        guard case .opaqueRoute(let route)? = response.successBody else {
+            throw HeadlessMessagingClientError.relayRejected
+        }
+        return try pending.activate(createdRoute: route)
+    }
+
+    public func makeContactPairingInvitation(
+        createdAt: Date = Date(),
+        expiresAt: Date
+    ) throws -> (
+        pending: PendingRendezvousOfferV2,
+        invitation: ContactPairingInvitationV2
+    ) {
+        try ContactPairingHandshakeV2.makeOffer(
+            createdAt: createdAt,
+            expiresAt: expiresAt
+        )
+    }
+
+    public func prepareRouteRollover(
+        relay: RelayEndpoint,
+        policy: OpaqueRoutePolicyV2 = OpaqueRoutePolicyV2(
+            paddingBucket: .bytes4096,
+            retentionBucket: .sixHours,
+            quotaBucket: .packets256
+        ),
+        createdAt: Date = Date()
+    ) throws -> PendingLocalOpaqueReceiveRouteV2 {
+        try PendingLocalOpaqueReceiveRouteV2.prepare(
+            relay: relay,
+            policy: policy,
+            createdAt: createdAt
+        )
+    }
+
+    /// Creates a replacement route, adds it as testing state, journals the
+    /// mutation, and publishes the signed route-set successor through the old
+    /// working path. The old route remains active until a targeted probe is
+    /// received on the replacement route.
+    public func beginRouteRollover(
+        _ pending: PendingLocalOpaqueReceiveRouteV2,
+        relationshipID: UUID,
+        at date: Date = Date()
+    ) async throws -> HeadlessSendResult {
+        var relationship = try relationship(relationshipID)
+        guard pending.isStructurallyValid,
+              relationship.localReceiveRoutes.count
+                < PairwiseRelationshipV2.maximumReceiveRoutes,
+              !relationship.localReceiveRoutes.contains(where: {
+                  $0.route.routeID == pending.clientCapabilities.routeID
+              }) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let response = try await relayClient(for: pending.relay).send(
+            .createOpaqueRouteV2(
+                CreateOpaqueRouteRelayRequestV2(
+                    request: pending.createRequest,
+                    renewCapability: pending.clientCapabilities.renewCapability
+                )
+            )
+        )
+        guard case .opaqueRoute(let createdRoute)? = response.successBody else {
+            throw HeadlessMessagingClientError.relayRejected
+        }
+        let localRoute = try pending.activate(createdRoute: createdRoute)
+        let advertised = try localRoute.peerSendRoute(state: .testing)
+        let successor = try relationship.localAdvertisedRoutes.addingTestingRoute(
+            advertised,
+            signingKey: relationship.localIdentity.localEndpoint.signingKey,
+            issuedAt: date
+        )
+        relationship.localReceiveRoutes.append(localRoute)
+        relationship.localAdvertisedRoutes = successor
+        guard let digest = successor.digest else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        _ = try relationship.appendProtocolIntent(.prepare(
+            kind: .rolloverRoute,
+            targetIdentifier: pending.clientCapabilities.routeID.rawValue,
+            expectedEpoch: successor.revision,
+            payloadDigest: digest,
+            createdAt: date,
+            expiresAt: createdRoute.lease.expiresAt
+        ))
+        try replaceRelationship(relationship)
+        try await persist()
+        return try await publishLocalRouteSet(
+            relationshipID: relationshipID,
+            sentAt: date
+        )
+    }
+
+    public func publishLocalRouteSet(
+        relationshipID: UUID,
+        sentAt: Date = Date()
+    ) async throws -> HeadlessSendResult {
+        let relationship = try relationship(relationshipID)
+        return try await sendRelationshipControl(
+            kind: .routeSetUpdate,
+            payload: RelationshipRouteSetUpdateV2(
+                relationshipID: relationshipID,
+                routeSet: relationship.localAdvertisedRoutes
+            ),
+            relationshipID: relationshipID,
+            sentAt: sentAt
+        )
+    }
+
+    /// Rotates only the short-lived prekey of this relationship endpoint and
+    /// publishes the refreshed binding through the established relationship.
+    /// No persona-wide key or cross-relationship identifier exists.
+    public func renewRelationshipPrekeyIfNeeded(
+        relationshipID: UUID,
+        at date: Date = Date()
+    ) async throws -> HeadlessSendResult? {
+        var relationship = try relationship(relationshipID)
+        guard try relationship.localIdentity.renewEndpointPrekeyIfNeeded(at: date) else {
+            return nil
+        }
+        let bindingData = try NoctweaveCoder.encode(
+            relationship.localIdentity.endpointBinding,
+            sortedKeys: true
+        )
+        let intent = ProtocolIntentV2.prepare(
+            kind: .renewRelationshipPrekey,
+            targetIdentifier: Data(relationship.localEndpointHandle.rawValue.utf8),
+            payloadDigest: Data(SHA256.hash(data: bindingData)),
+            createdAt: date,
+            expiresAt: date.addingTimeInterval(24 * 60 * 60)
+        )
+        _ = try relationship.appendProtocolIntent(intent)
+        try replaceRelationship(relationship)
+        try await persist()
+        let sent = try await publishCurrentRelationshipPrekey(
+            relationshipID: relationshipID,
+            sentAt: date
+        )
+        if sent.acceptedDeliveryCount > 0 {
+            var current = try relationship(relationshipID)
+            try finalizeProtocolIntent(
+                id: intent.id,
+                relationship: &current,
+                at: Date()
+            )
+            try replaceRelationship(current)
+            try await persist()
+        }
+        return sent
+    }
+
+    public func publishCurrentRelationshipPrekey(
+        relationshipID: UUID,
+        sentAt: Date = Date()
+    ) async throws -> HeadlessSendResult {
+        let relationship = try relationship(relationshipID)
+        return try await sendRelationshipControl(
+            kind: .endpointPrekeyUpdate,
+            payload: RelationshipEndpointPrekeyUpdateV2(
+                relationshipID: relationshipID,
+                endpointBinding: relationship.localIdentity.endpointBinding
+            ),
+            relationshipID: relationshipID,
+            sentAt: sentAt
+        )
+    }
+
+    /// Revokes routes whose overlap window has elapsed, publishes each signed
+    /// successor before teardown, then erases the local route capability only
+    /// after the relay confirms teardown.
+    public func finalizeDrainedRoutes(
+        relationshipID: UUID,
+        at date: Date = Date()
+    ) async throws -> [OpaqueReceiveRouteIDV2] {
+        var finalized: [OpaqueReceiveRouteIDV2] = []
+        while true {
+            var relationship = try relationship(relationshipID)
+            let candidate = relationship.localAdvertisedRoutes.routes.first {
+                route in
+                relationship.localReceiveRoutes.contains {
+                    $0.route.routeID == route.routeID
+                } && ((route.state == .draining
+                        && route.drainAfter.map { date >= $0 } == true)
+                    || route.state == .revoked)
+            }
+            guard let candidate,
+                  let localRoute = relationship.localReceiveRoutes.first(where: {
+                      $0.route.routeID == candidate.routeID
+                  }) else {
+                break
+            }
+            if candidate.state == .draining {
+                relationship.localAdvertisedRoutes = try relationship.localAdvertisedRoutes
+                    .revokingDrainedRoute(
+                        candidate.routeID,
+                        signingKey: relationship.localIdentity.localEndpoint.signingKey,
+                        issuedAt: date
+                    )
+                try replaceRelationship(relationship)
+                try await persist()
+            }
+            let published = try await publishLocalRouteSet(
+                relationshipID: relationshipID,
+                sentAt: date
+            )
+            guard published.acceptedDeliveryCount > 0 else { break }
+
+            let teardown = try localRoute.clientCapabilities.makeTeardownRequest(
+                current: localRoute.route,
+                authorizedAt: date,
+                idempotencyKey: .generate()
+            )
+            let response = try await relayClient(for: localRoute.relay).send(
+                .teardownOpaqueRouteV2(
+                    TeardownOpaqueRouteRelayRequestV2(
+                        request: teardown,
+                        teardownCapability: localRoute.clientCapabilities.teardownCapability
+                    )
+                )
+            )
+            guard case .opaqueRoute(let tornDown)? = response.successBody,
+                  tornDown.status == .tornDown else {
+                throw HeadlessMessagingClientError.relayRejected
+            }
+            relationship = try self.relationship(relationshipID)
+            relationship.localReceiveRoutes.removeAll {
+                $0.route.routeID == candidate.routeID
+            }
+            try replaceRelationship(relationship)
+            try await persist()
+            finalized.append(candidate.routeID)
+        }
+        return finalized
+    }
+
+    /// Tears down only the blocked relationship's opaque receive routes. The
+    /// signed route snapshot is retained as historical relationship evidence,
+    /// while successfully torn-down capability material is removed locally.
+    @discardableResult
+    public func teardownBlockedRelationshipRoutes(
+        relationshipID: UUID,
+        at date: Date = Date()
+    ) async throws -> [OpaqueReceiveRouteIDV2] {
+        guard date.timeIntervalSince1970.isFinite,
+              try relationship(relationshipID).localPolicy.consent == .blocked else {
+            throw HeadlessMessagingClientError.relationshipBlocked
+        }
+        let routeIDs = try relationship(relationshipID).localReceiveRoutes.map {
+            $0.route.routeID
+        }
+        var tornDown: [OpaqueReceiveRouteIDV2] = []
+        for routeID in routeIDs {
+            var relationship = try relationship(relationshipID)
+            guard let localRoute = relationship.localReceiveRoutes.first(where: {
+                $0.route.routeID == routeID
+            }) else {
+                continue
+            }
+            do {
+                let teardown = try localRoute.clientCapabilities.makeTeardownRequest(
+                    current: localRoute.route,
+                    authorizedAt: date,
+                    idempotencyKey: .generate()
+                )
+                let response = try await relayClient(for: localRoute.relay).send(
+                    .teardownOpaqueRouteV2(
+                        TeardownOpaqueRouteRelayRequestV2(
+                            request: teardown,
+                            teardownCapability: localRoute.clientCapabilities.teardownCapability
+                        )
+                    )
+                )
+                guard case .opaqueRoute(let result)? = response.successBody,
+                      result.status == .tornDown else {
+                    continue
+                }
+                relationship = try self.relationship(relationshipID)
+                relationship.localReceiveRoutes.removeAll {
+                    $0.route.routeID == routeID
+                }
+                try replaceRelationship(relationship)
+                try await persist()
+                tornDown.append(routeID)
+            } catch {
+                continue
+            }
+        }
+        return tornDown
+    }
+
+    public func sendText(
+        _ text: String,
+        relationshipID: UUID,
+        sentAt: Date = Date()
+    ) async throws -> HeadlessSendResult {
+        try await send(
+            body: .text(text),
+            relationshipID: relationshipID,
+            sentAt: sentAt
         )
     }
 
     public func sendAttachment(
-        to selector: String,
-        data: Data,
-        fileName: String?,
-        mimeType: String = "application/octet-stream",
-        chunkSize: Int = 64 * 1024,
-        ttlSeconds: Int? = nil
-    ) async throws -> HeadlessSentAttachment {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        return try await sendAttachmentUnlocked(
-            to: selector,
-            data: data,
-            fileName: fileName,
-            mimeType: mimeType,
-            chunkSize: chunkSize,
-            ttlSeconds: ttlSeconds
+        _ descriptor: AttachmentDescriptor,
+        relationshipID: UUID,
+        sentAt: Date = Date()
+    ) async throws -> HeadlessSendResult {
+        try await send(
+            body: .attachment(descriptor),
+            relationshipID: relationshipID,
+            sentAt: sentAt
         )
     }
 
-    private func sendAttachmentUnlocked(
-        to selector: String,
-        data: Data,
-        fileName: String?,
-        mimeType: String,
-        chunkSize: Int,
-        ttlSeconds: Int?
-    ) async throws -> HeadlessSentAttachment {
-        var state = try await loadState()
-        let contact = try resolveContact(selector, in: state.contacts)
-        try requireContinuityDeliveryReady(for: contact, state: state)
-        var conversation: Conversation
-        var bootstrap = DirectBootstrapV4.none
-        let eventId = UUID()
-        let clientTransactionId = UUID()
-        guard contact.usesCertifiedGenerationEndpoint,
-              let endpoint = state.localEndpoint else {
-            throw HeadlessMessagingClientError.unsupportedInboundSession
+    /// Explicitly emits a voluntary read receipt. Delivery receipts are
+    /// generated automatically after durable inbound processing; read receipts
+    /// are never generated without this call.
+    public func markRead(
+        eventID: UUID,
+        relationshipID: UUID,
+        sentAt: Date = Date()
+    ) async throws -> HeadlessSendResult {
+        let relationship = try relationship(relationshipID)
+        guard relationship.localPolicy.allowsUserSending,
+              relationship.localPolicy.readReceiptsEnabled,
+              isReceiptablePeerEvent(eventID, in: relationship),
+              !hasLocalReceipt(
+                  type: .readReceipt,
+                  targetEventID: eventID,
+                  in: relationship
+              ) else {
+            throw HeadlessMessagingClientError.invalidState
         }
-        let peerEndpoint = try contact.certifiedGenerationEndpoint()
-        let selected = try directSendEndpointContext(
-            contact: contact,
-            peerEndpoint: peerEndpoint,
-            state: &state
+        return try await sendReceipt(
+            type: .readReceipt,
+            targetEventID: eventID,
+            relationshipID: relationshipID,
+            sentAt: sentAt
         )
-        let senderEndpoint = selected.localEndpoint
-        let binding = selected.binding
-        let endpointSession = selected.endpointSession
-        if let existing = state.conversation(for: contact.id, endpointSession: endpointSession) {
-            conversation = existing
-        } else {
-            let session = try MessageEngine.createOutboundEndpointSession(
-                localEndpoint: endpoint,
-                localCertificate: senderEndpoint,
-                pairwiseBinding: binding,
-                contact: contact
-            )
-            conversation = session.conversation
-            bootstrap = .signedPrekey(
-                kemCiphertext: session.kemCiphertext,
-                prekey: session.prekey
-            )
+    }
+
+    public func sendRelationshipControl<Payload: Codable>(
+        kind: RelationshipControlKindV2,
+        payload: Payload,
+        relationshipID: UUID,
+        destinationRouteIDs: Set<OpaqueReceiveRouteIDV2>? = nil,
+        sentAt: Date = Date()
+    ) async throws -> HeadlessSendResult {
+        var relationship = try relationship(relationshipID)
+        guard relationship.localPolicy.consent != .blocked else {
+            throw HeadlessMessagingClientError.relationshipBlocked
         }
-        let prepared = try MessageEngine.prepareMessageKey(conversation: &conversation)
-        let context = AttachmentCryptoContext(
-            conversationId: conversation.id,
-            sessionId: conversation.sessionId,
-            messageCounter: prepared.counter
+        if relationship.localPolicy.consent == .pendingRequest,
+           !kind.isRelationshipMaintenanceV2 {
+            throw HeadlessMessagingClientError.relationshipConsentRequired
+        }
+        if kind == .continuityOffer, !relationship.continuityPolicy.allowsSending {
+            throw HeadlessMessagingClientError.continuityNotAllowed
+        }
+        let eventID = UUID()
+        let control = try AuthenticatedRelationshipControlV2.create(
+            kind: kind,
+            payload: payload,
+            relationshipID: relationship.id,
+            eventID: eventID,
+            senderEndpointHandle: relationship.localEndpointHandle,
+            issuedAt: sentAt,
+            signingKey: relationship.localIdentity.localEndpoint.signingKey
         )
-        let (descriptor, chunks) = try Self.encryptAttachmentChunks(
-            data: data,
-            fileName: nil,
-            mimeType: mimeType,
-            chunkSize: chunkSize,
-            messageKey: prepared.key,
-            context: context,
-            relayTTLSeconds: ttlSeconds
+        let wirePayload = try WirePayloadV2.control(control)
+        return try await persistAndPublish(
+            wirePayload: wirePayload,
+            event: controlAuditEvent(
+                control,
+                relationship: relationship,
+                createdAt: sentAt
+            ),
+            relationship: &relationship,
+            destinationRouteIDs: destinationRouteIDs,
+            sentAt: sentAt
         )
-        try await upload(chunks: chunks, to: contact.relay, ttlSeconds: ttlSeconds)
-        let eventTimestamp = Date()
-        let content = EncodedContent(
-            type: .attachment,
-            payload: try NoctweaveCoder.encode(descriptor, sortedKeys: true),
-            fallbackText: Self.attachmentTitle(for: descriptor),
-            disposition: .visible
+    }
+
+    public func sendContinuityOffer(
+        relationshipID: UUID,
+        invitation: ContactPairingInvitationV2,
+        sentAt: Date = Date()
+    ) async throws -> HeadlessSendResult {
+        try await sendRelationshipControl(
+            kind: .continuityOffer,
+            payload: RelationshipContinuityOfferV2(
+                relationshipID: relationshipID,
+                invitation: invitation,
+                expiresAt: invitation.offer.expiresAt
+            ),
+            relationshipID: relationshipID,
+            sentAt: sentAt
         )
+    }
+
+    public func retryPendingDeliveries(
+        relationshipID: UUID
+    ) async throws -> Int {
+        guard try relationship(relationshipID).localPolicy.allowsUserSending else {
+            throw HeadlessMessagingClientError.relationshipConsentRequired
+        }
+        try await publishPendingDeliveries(relationshipID: relationshipID)
+    }
+
+    public func sync(
+        relationshipID: UUID,
+        maximumPackets: UInt16 = UInt16(NoctweaveOpaqueRouteRelayStoreV2.maximumSyncPage)
+    ) async throws -> [HeadlessSyncResult] {
+        var results: [HeadlessSyncResult] = []
+        let relationship = try relationship(relationshipID)
+        for routeIndex in relationship.localReceiveRoutes.indices {
+            results.append(try await syncRoute(
+                relationshipID: relationshipID,
+                routeIndex: routeIndex,
+                maximumPackets: maximumPackets
+            ))
+        }
+        return results
+    }
+
+    /// Burns only the active local persona and creates an unrelated replacement.
+    /// No continuity event, shared identifier, key or relay route is emitted.
+    public func burnActivePersona(
+        replacementDisplayName: String,
+        at date: Date = Date()
+    ) async throws -> PersonaProfileV1 {
+        let replacement = try PersonaProfileV1(
+            displayName: replacementDisplayName,
+            createdAt: date
+        )
+        guard let index = state.personas.firstIndex(where: {
+            $0.id == state.activePersonaID
+        }) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        state.personas[index] = replacement
+        state.activePersonaID = replacement.id
+        sessionsByID.removeAll(keepingCapacity: false)
+        reassemblersByRoute.removeAll(keepingCapacity: false)
+        try await persist()
+        return replacement
+    }
+
+    private func send(
+        body: MessageBody,
+        relationshipID: UUID,
+        sentAt: Date
+    ) async throws -> HeadlessSendResult {
+        var relationship = try relationship(relationshipID)
+        guard relationship.localPolicy.allowsUserSending else {
+            if relationship.localPolicy.consent == .blocked {
+                throw HeadlessMessagingClientError.relationshipBlocked
+            }
+            throw HeadlessMessagingClientError.relationshipConsentRequired
+        }
+        let eventID = UUID()
+        let transactionID = UUID()
+        let wirePayload = try WirePayloadV2.projectingMessageBody(
+            body,
+            eventId: eventID,
+            clientTransactionId: transactionID,
+            conversationId: relationship.conversationID,
+            authorEndpointHandle: relationship.localEndpointHandle,
+            createdAt: sentAt
+        )
+        guard let event = wirePayload.application else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        return try await persistAndPublish(
+            wirePayload: wirePayload,
+            event: event,
+            relationship: &relationship,
+            sentAt: sentAt
+        )
+    }
+
+    private func sendReceipt(
+        type: ContentTypeId,
+        targetEventID: UUID,
+        relationshipID: UUID,
+        sentAt: Date
+    ) async throws -> HeadlessSendResult {
+        var relationship = try relationship(relationshipID)
+        guard relationship.localPolicy.allowsUserSending else {
+            if relationship.localPolicy.consent == .blocked {
+                throw HeadlessMessagingClientError.relationshipBlocked
+            }
+            throw HeadlessMessagingClientError.relationshipConsentRequired
+        }
+        guard (type != .deliveryReceipt
+                || relationship.localPolicy.deliveryReceiptsEnabled),
+              (type != .readReceipt
+                || relationship.localPolicy.readReceiptsEnabled) else {
+            throw HeadlessMessagingClientError.receiptDisabled
+        }
+        let content: EncodedContent?
+        switch type {
+        case .deliveryReceipt:
+            content = .deliveryReceipt(targetEventId: targetEventID)
+        case .readReceipt:
+            content = .readReceipt(targetEventId: targetEventID)
+        default:
+            content = nil
+        }
+        guard let content,
+              isReceiptablePeerEvent(targetEventID, in: relationship) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
         let event = ConversationEvent(
-            id: eventId,
-            clientTransactionId: clientTransactionId,
-            conversationId: conversation.id,
-            authorEndpointHandle: binding.localEndpointHandle,
-            createdAt: eventTimestamp,
-            kind: .application,
+            conversationId: relationship.conversationID,
+            authorEndpointHandle: relationship.localEndpointHandle,
+            createdAt: sentAt,
+            kind: .receipt,
             content: content
         )
+        return try await persistAndPublish(
+            wirePayload: try .application(event),
+            event: event,
+            relationship: &relationship,
+            sentAt: sentAt
+        )
+    }
+
+    private func persistAndPublish(
+        wirePayload: WirePayloadV2,
+        event: ConversationEvent,
+        relationship: inout PairwiseRelationshipV2,
+        destinationRouteIDs: Set<OpaqueReceiveRouteIDV2>? = nil,
+        sentAt: Date
+    ) async throws -> HeadlessSendResult {
+        if event.kind == .application || event.kind == .receipt {
+            guard relationship.localPolicy.allowsUserSending else {
+                if relationship.localPolicy.consent == .blocked {
+                    throw HeadlessMessagingClientError.relationshipBlocked
+                }
+                throw HeadlessMessagingClientError.relationshipConsentRequired
+            }
+            guard relationship.peerIdentity.endpointBinding.capabilities
+                .supports(contentType: event.content.type) else {
+                throw HeadlessMessagingClientError.unsupportedContentType
+            }
+        }
+        let sessionResult: (Conversation, DirectBootstrapV4)
+        if let existing = sessionsByID.values.first(where: {
+            $0.relationshipID == relationship.id
+        }) {
+            sessionResult = (existing, .none)
+        } else {
+            let created = try MessageEngine.createOutboundEndpointSession(
+                relationship: relationship,
+                now: sentAt
+            )
+            sessionResult = (
+                created.conversation,
+                .signedPrekey(
+                    kemCiphertext: created.kemCiphertext,
+                    prekey: created.prekey
+                )
+            )
+        }
+        var conversation = sessionResult.0
         let envelope = try MessageEngine.encryptDirectV4(
-            wirePayload: .application(event),
-            eventId: eventId,
-            senderSigningKey: endpoint.signingKey,
-            senderEndpoint: senderEndpoint,
-            recipientEndpoint: peerEndpoint,
-            pairwiseBinding: binding,
-            conversation: conversation,
-            messageCounter: prepared.counter,
-            messageKey: prepared.key,
-            bootstrap: bootstrap,
-            sentAt: eventTimestamp
-        )
-        _ = MessageEngine.appendMessage(
-            id: eventId,
-            body: .attachment(descriptor),
-            direction: .sent,
-            counter: envelope.messageCounter,
-            timestamp: envelope.sentAt,
+            wirePayload: wirePayload,
+            eventID: event.id,
+            relationship: relationship,
             conversation: &conversation,
-            attachmentRelay: contact.relay,
-            messageKey: prepared.key
+            bootstrap: sessionResult.1,
+            sentAt: sentAt
         )
-        state.upsert(conversation: conversation)
-        try persistDirectEvent(event, contact: contact, binding: binding, state: &state)
-        let attemptId = try await persistDirectDeliveryIntent(
-            envelope: envelope,
-            contact: contact,
-            state: &state
-        )
-        let response: RelayResponse
-        do {
-            response = try await deliver(envelope: envelope, to: contact, from: state)
-            try await finalizeDirectDeliveryIntent(
-                envelopeId: envelope.id,
-                attemptId: attemptId,
-                state: &state
-            )
-        } catch {
-            try await recordDirectDeliveryFailure(
-                envelopeId: envelope.id,
-                attemptId: attemptId,
-                error: error,
-                state: &state
-            )
-            throw error
-        }
-        return HeadlessSentAttachment(
-            contact: contact,
-            envelopeId: envelope.id,
-            messageCounter: envelope.messageCounter,
-            descriptor: descriptor,
-            uploadedChunkCount: chunks.count,
-            storedCount: response.delivered?.storedCount ?? 0
-        )
-    }
-
-    public func sendVoice(
-        to selector: String,
-        data: Data,
-        fileName: String?,
-        mimeType: String = "audio/m4a",
-        chunkSize: Int = 64 * 1024,
-        ttlSeconds: Int? = nil
-    ) async throws -> HeadlessSentAttachment {
-        try await sendAttachment(
-            to: selector,
-            data: data,
-            fileName: fileName,
-            mimeType: mimeType,
-            chunkSize: chunkSize,
-            ttlSeconds: ttlSeconds
-        )
-    }
-
-    public func fetchAttachment(id: UUID) async throws -> HeadlessFetchedAttachment {
-        let state = try await loadState()
-        let info = try attachmentInfo(id: id, in: state)
-        guard let messageKeyData = info.messageKeyData,
-              let context = info.cryptoContext else {
-            throw HeadlessMessagingClientError.missingAttachmentKey(id.uuidString)
-        }
-        guard info.descriptor.isStructurallyValid() else {
-            throw HeadlessMessagingClientError.invalidAttachmentDescriptor
-        }
-        let relay = info.relay ?? state.relay
-        let messageKey = AttachmentCrypto.key(from: messageKeyData)
-        var recovered = Data()
-        recovered.reserveCapacity(info.descriptor.byteCount)
-        do {
-            for chunkIndex in 0..<info.descriptor.chunkCount {
-                let response = try await relayClient(for: relay).send(
-                    .fetchAttachment(FetchAttachmentRequest(attachmentId: id, chunkIndex: chunkIndex)),
-                    timeout: timeout
-                )
-                guard response.type == .attachment, let chunk = response.attachment else {
-                    throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-                }
-                let byteCount = Self.attachmentChunkPlaintextSize(
-                    descriptor: info.descriptor,
-                    chunkIndex: chunkIndex
-                )
-                let aad = AttachmentCrypto.authenticatedData(
-                    conversationId: context.conversationId,
-                    sessionId: context.sessionId,
-                    messageCounter: context.messageCounter,
-                    attachmentId: id,
-                    chunkIndex: chunkIndex,
-                    byteCount: byteCount
-                )
-                var plaintext = try AttachmentCrypto.decryptChunk(
-                    payload: chunk.payload,
-                    messageKey: messageKey,
-                    attachmentId: id,
-                    chunkIndex: chunkIndex,
-                    authenticatedData: aad
-                )
-                recovered.append(plaintext)
-                plaintext.secureWipe()
-            }
-            guard recovered.count == info.descriptor.byteCount,
-                  AttachmentCrypto.sha256(recovered) == info.descriptor.sha256 else {
-                throw HeadlessMessagingClientError.attachmentDigestMismatch(id.uuidString)
-            }
-            return HeadlessFetchedAttachment(descriptor: info.descriptor, data: recovered)
-        } catch {
-            recovered.secureWipe()
-            throw error
-        }
-    }
-
-    public func receive(maxCount: Int = 25, longPollTimeoutSeconds: Int? = nil, acknowledge: Bool = true) async throws -> [HeadlessReceivedMessage] {
-        await stateMutationGate.acquire()
-        defer { stateMutationGate.release() }
-        return try await receiveUnlocked(
-            maxCount: maxCount,
-            longPollTimeoutSeconds: longPollTimeoutSeconds,
-            acknowledge: acknowledge
-        )
-    }
-
-    private func receiveUnlocked(
-        maxCount: Int,
-        longPollTimeoutSeconds: Int?,
-        acknowledge: Bool
-    ) async throws -> [HeadlessReceivedMessage] {
-        var state = try await loadState()
-        let accessKey = try inboxAccessKey(from: state)
-        let mailbox = try await ensureMailboxConsumer(state: &state, accessKey: accessKey)
-        if let pending = state.localEndpoint?.pendingMailboxCommitsByStream[mailbox.routeKey] {
-            try await finalizeMailboxCursorCommit(
-                pending,
-                state: &state,
-                consumerId: mailbox.consumerId,
-                routeKey: mailbox.routeKey
-            )
-        }
-        let committedCursor = state.localEndpoint?.cursorsByStream[mailbox.routeKey]
-        var sync = SyncMailboxRequest(
-            inboxId: state.inboxId,
-            consumerId: mailbox.consumerId,
-            cursor: committedCursor,
-            maxCount: max(1, maxCount),
-            longPollTimeoutSeconds: longPollTimeoutSeconds
-        )
-        let proof = try Self.makeActorProof(signingKey: mailbox.consumerKey) { actorProof in
-            try sync.signableData(for: actorProof)
-        }
-        sync = SyncMailboxRequest(
-            inboxId: state.inboxId,
-            consumerId: mailbox.consumerId,
-            cursor: committedCursor,
-            maxCount: max(1, maxCount),
-            longPollTimeoutSeconds: longPollTimeoutSeconds,
-            consumerProof: proof
-        )
-        let response = try await relayClient(for: state.relay).send(
-            .syncMailbox(sync),
-            timeout: timeout + TimeInterval(longPollTimeoutSeconds ?? 0)
-        )
-        guard response.type == .mailboxSync,
-              let batch = response.mailboxSync,
-              batch.isStructurallyValid else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-        guard let committedSequence = state.localEndpoint?
-                .committedSequencesByStream[mailbox.routeKey],
-              batch.isContiguous(after: committedSequence) else {
-            throw HeadlessMessagingClientError.relayRejected(
-                "Mailbox sync response contains a sequence gap"
-            )
-        }
-
-        var received: [HeadlessReceivedMessage] = []
-        for sequenced in batch.events {
-            do {
-                guard case .directV4(let envelope) = sequenced.envelope else {
-                    throw HeadlessMessagingClientError.unsupportedInboundSession
-                }
-                if let message = try receiveCertifiedDirectEnvelope(envelope, state: &state) {
-                    received.append(message)
-                }
-            } catch {
-                guard let reason = Self.transportQuarantineReason(for: error) else {
-                    // Local state corruption, storage/runtime failure, and
-                    // unavailable cryptographic primitives remain retryable
-                    // failures and must not advance the cursor.
-                    throw error
-                }
-                try Self.recordTransportQuarantine(
-                    sequenced,
-                    routeKey: mailbox.routeKey,
-                    reason: reason,
-                    state: &state
-                )
-            }
-        }
-
-        if acknowledge, !batch.events.isEmpty {
-            guard var endpoint = state.localEndpoint else {
-                throw HeadlessMessagingClientError.missingEndpoint
-            }
-            let pending = PendingMailboxCursorCommit(
-                cursor: batch.nextCursor,
-                sequence: batch.nextSequence
-            )
-            endpoint.pendingMailboxCommitsByStream[mailbox.routeKey] = pending
-            state.localEndpoint = endpoint
-            try await store.save(state)
-            try await finalizeMailboxCursorCommit(
-                pending,
-                state: &state,
-                consumerId: mailbox.consumerId,
-                routeKey: mailbox.routeKey
-            )
-        } else {
-            try await store.save(state)
-        }
-        return received
-    }
-
-    private func receiveCertifiedDirectEnvelope(
-        _ envelope: DirectEnvelopeV4,
-        state: inout ClientState
-    ) throws -> HeadlessReceivedMessage? {
-        guard let resolved = state.resolveCertifiedDirectContext(envelope),
-              let endpoint = state.localEndpoint,
-              let localManifest = state.endpointSetManifest else {
-            throw HeadlessMessagingClientError.unsupportedInboundSession
-        }
-        var contact = resolved.contact
-        let peerEndpoint = try contact.certifiedGenerationEndpoint()
-        let endpointSession = DirectEndpointSessionIdentity(
-            contactId: contact.id,
-            localEndpointId: endpoint.id,
-            localEndpointHandle: resolved.binding.localEndpointHandle,
-            localCertificateReferenceDigest: resolved.binding.localCertificateReferenceDigest,
-            localManifestEpoch: resolved.localEndpoint.manifestEpoch,
-            peerEndpointId: peerEndpoint.endpointId,
-            peerEndpointHandle: resolved.binding.peerEndpointHandle,
-            peerCertificateReferenceDigest: resolved.binding.peerCertificateReferenceDigest,
-            peerManifestEpoch: peerEndpoint.manifestEpoch
-        )
-        let previousConversation = state.conversation(
-            for: contact.id,
-            endpointSession: endpointSession
-        )
-        var conversation: Conversation
-        if let previousConversation {
-            conversation = previousConversation
-        } else if envelope.bootstrap.signedPrekeyMaterial != nil {
-            conversation = try MessageEngine.createInboundEndpointSession(
-                localEndpoint: endpoint,
-                localCertificate: resolved.localEndpoint,
-                senderEndpoint: peerEndpoint,
-                pairwiseBinding: resolved.binding,
-                contact: contact,
-                bootstrap: envelope.bootstrap
-            )
-        } else {
-            throw HeadlessMessagingClientError.unsupportedInboundSession
-        }
-        // The direct-v4 context is useful for routing, but it is not trusted
-        // until the certified endpoint signature has been verified.
-        guard envelope.verifySignature(publicSigningKey: peerEndpoint.signingPublicKey) else {
-            throw CryptoError.invalidSignature
-        }
-        guard let inboundDigest = try Self.unseenInboundEnvelopeDigest(
-            envelope,
-            sourceScopeId: contact.id,
-            logicalEventId: envelope.eventId,
-            state: state
-        ) else {
-            return nil
-        }
-        if conversation.messages.contains(where: { $0.id == envelope.eventId })
-            || state.relationshipsV2.contains(where: { relationship in
-                relationship.contactId == contact.id
-                    && relationship.events.contains(where: { $0.id == envelope.eventId })
-            })
-            || state.quarantinedControlEvents.contains(where: { $0.id == envelope.eventId }) {
-            throw HeadlessMessagingClientError.inboundEnvelopeConflict(envelope.eventId)
-        }
-        let decrypted: DirectV4DecryptionResultV2
-        do {
-            decrypted = try MessageEngine.decryptDirectV4Payload(
-                envelope: envelope,
-                contact: contact,
-                localIdentity: state.identity,
-                localEndpoint: endpoint,
-                localManifest: localManifest,
-                localCertificate: resolved.localEndpoint,
-                pairwiseBinding: resolved.binding,
-                conversation: &conversation
-            )
-        } catch {
-            guard envelope.bootstrap.signedPrekeyMaterial != nil else { throw error }
-            conversation = try MessageEngine.createInboundEndpointSession(
-                localEndpoint: endpoint,
-                localCertificate: resolved.localEndpoint,
-                senderEndpoint: peerEndpoint,
-                pairwiseBinding: resolved.binding,
-                contact: contact,
-                bootstrap: envelope.bootstrap
-            )
-            decrypted = try MessageEngine.decryptDirectV4Payload(
-                envelope: envelope,
-                contact: contact,
-                localIdentity: state.identity,
-                localEndpoint: endpoint,
-                localManifest: localManifest,
-                localCertificate: resolved.localEndpoint,
-                pairwiseBinding: resolved.binding,
-                conversation: &conversation
-            )
-            if let previousConversation {
-                conversation.messages = previousConversation.messages
-                conversation.unreadCount = previousConversation.unreadCount
-            }
-        }
-        Self.recordInboundEnvelopeReceipt(
-            envelope,
-            sourceScopeId: contact.id,
-            logicalEventId: envelope.eventId,
-            digest: inboundDigest,
-            state: &state
-        )
-        let body: MessageBody
-        switch decrypted.disposition {
-        case .application(let event, let projection):
-            try persistDirectEvent(
-                event,
-                contact: contact,
-                binding: resolved.binding,
-                state: &state
-            )
-            guard let visibleBody = projection.body else {
-                conversation.markMessageProcessed()
-                state.upsert(conversation: conversation)
-                return nil
-            }
-            body = visibleBody
-        case .control(let control, let auditEvent):
-            try persistDirectEvent(
-                auditEvent,
-                contact: contact,
-                binding: resolved.binding,
-                state: &state
-            )
-            body = control.body
-        case .quarantinedControl(let quarantined):
-            state.quarantinedControlEvents.append(quarantined)
-            state.quarantinedControlEvents = Array(
-                state.quarantinedControlEvents.suffix(
-                    NoctweaveArchitectureV2.maximumQuarantinedControlEvents
-                )
-            )
-            conversation.markMessageProcessed()
-            state.upsert(conversation: conversation)
-            return nil
-        }
-        _ = MessageEngine.appendMessage(
-            id: envelope.eventId,
-            body: body,
-            direction: .received,
-            counter: envelope.messageCounter,
-            timestamp: envelope.sentAt,
-            conversation: &conversation,
-            attachmentRelay: state.relay,
-            messageKey: decrypted.messageKey
-        )
-        conversation.markMessageProcessed()
-        switch body {
-        case .identityRotation(let rotation):
-            let previousFingerprint = contact.fingerprint
-            if contact.apply(rotation: rotation) {
-                state.updateContact(contact)
-                state.appendContinuityEvent(
-                    ContinuityEvent(
-                        kind: .contactRotationReceived,
-                        contactId: contact.id,
-                        contactDisplayName: contact.displayName,
-                        oldFingerprint: previousFingerprint,
-                        newFingerprint: contact.fingerprint
-                    )
-                )
-            }
-        case .identityReset(let reset):
-            let previousFingerprint = contact.fingerprint
-            if contact.apply(reset: reset) {
-                state.updateContact(contact)
-                state.appendContinuityEvent(
-                    ContinuityEvent(
-                        kind: .contactResetReceived,
-                        contactId: contact.id,
-                        contactDisplayName: contact.displayName,
-                        oldFingerprint: previousFingerprint,
-                        newFingerprint: contact.fingerprint
-                    )
-                )
-            }
-        case .text, .attachment, .sessionReset, .resendRequest:
-            break
-        }
-        state.upsert(conversation: conversation)
-        return HeadlessReceivedMessage(
-            contact: contact,
-            envelopeId: envelope.id,
-            messageCounter: envelope.messageCounter,
-            body: body,
-            sentAt: envelope.sentAt
-        )
-    }
-
-    private func persistDirectEvent(
-        _ event: ConversationEvent,
-        contact: Contact,
-        binding: PairwiseEndpointBindingV4,
-        state: inout ClientState
-    ) throws {
-        guard event.isStructurallyValid else {
-            throw WirePayloadV2Error.invalidApplicationEvent
-        }
-        if let index = state.relationshipsV2.firstIndex(where: {
-            $0.id == binding.relationshipId && $0.contactId == contact.id
-        }) {
-            guard state.localEndpoint?.relationshipHandles[binding.relationshipId]
-                    == binding.localEndpointHandle else {
-                throw IdentityProfileStateError.invalidCurrentState
-            }
-            _ = state.relationshipsV2[index].includeConversationIds([event.conversationId])
-            guard state.relationshipsV2[index].appendEvent(event) else {
-                throw IdentityProfileStateError.invalidCurrentState
-            }
-            return
-        }
-
-        let relationship = RelationshipStateV2(
-            id: binding.relationshipId,
-            contactId: contact.id,
-            localEndpointHandle: binding.localEndpointHandle,
-            conversationIds: [event.conversationId],
-            events: [event]
-        )
-        guard relationship.isStructurallyValid,
-              state.relationshipsV2.count < 4_096,
-              !state.relationshipsV2.contains(where: { $0.id == binding.relationshipId }) else {
-            throw IdentityProfileStateError.invalidCurrentState
-        }
-        guard var endpoint = state.localEndpoint,
-              endpoint.relationshipHandles[binding.relationshipId]
-                .map({ $0 == binding.localEndpointHandle }) ?? true else {
-            throw IdentityProfileStateError.invalidCurrentState
-        }
-        endpoint.relationshipHandles[binding.relationshipId]
-            = binding.localEndpointHandle
-        state.relationshipsV2.append(relationship)
-        state.relationshipsV2.sort { $0.id.uuidString < $1.id.uuidString }
-        state.localEndpoint = endpoint
-    }
-
-    private static func transportQuarantineReason(
-        for error: Error
-    ) -> TransportQuarantineReasonV2? {
-        if let clientError = error as? HeadlessMessagingClientError {
-            switch clientError {
-            case .contactNotFound:
-                return .unknownSender
-            case .unsupportedInboundSession:
-                return .incompatibleProfile
-            case .inboundEnvelopeConflict:
-                return .replayConflict
-            default:
-                return nil
-            }
-        }
-        if let cryptoError = error as? CryptoError {
-            switch cryptoError {
-            case .invalidSignature, .invalidPublicKey:
-                return .invalidAttribution
-            case .invalidPayload, .counterOutOfOrder, .counterReplay, .counterWindowExceeded:
-                return .invalidCiphertext
-            case .invalidPrivateKey, .algorithmUnavailable, .operationFailed:
-                return nil
-            }
-        }
-        if error is WirePayloadV2Error || error is DecodingError {
-            return .unsupportedPayload
-        }
-        return nil
-    }
-
-    private static func recordTransportQuarantine(
-        _ sequenced: SequencedEnvelope,
-        routeKey: String,
-        reason: TransportQuarantineReasonV2,
-        state: inout ClientState
-    ) throws {
-        let streamDigest = Data(SHA256.hash(data: Data(routeKey.utf8)))
-        let envelopeDigest = Data(
-            SHA256.hash(
-                data: try NoctweaveCoder.encode(sequenced.envelope, sortedKeys: true)
-            )
-        )
-        if let existing = state.quarantinedTransportEnvelopesV2.first(where: {
-            $0.streamDigest == streamDigest && $0.sequence == sequenced.sequence
-        }) {
-            guard existing.envelopeId == sequenced.envelope.id,
-                  existing.envelopeDigest == envelopeDigest,
-                  existing.reason == reason else {
-                throw HeadlessMessagingClientError.inboundEnvelopeConflict(
-                    sequenced.envelope.id
-                )
-            }
-            return
-        }
-        if state.quarantinedTransportEnvelopesV2.count
-            >= NoctweaveArchitectureV2.maximumQuarantinedTransportEnvelopes {
-            state.quarantinedTransportEnvelopesV2.removeFirst(
-                NoctweaveArchitectureV2.maximumQuarantinedTransportEnvelopes / 8
-            )
-        }
-        state.quarantinedTransportEnvelopesV2.append(
-            QuarantinedTransportEnvelopeV2(
-                streamDigest: streamDigest,
-                sequence: sequenced.sequence,
-                envelopeId: sequenced.envelope.id,
-                envelopeDigest: envelopeDigest,
-                reason: reason
-            )
-        )
-    }
-
-    /// Returns the canonical digest for a new envelope, `nil` for an exact
-    /// already-verified replay, and fails closed for any logical-ID or
-    /// envelope-ID reuse with different signed bytes.
-    private static func unseenInboundEnvelopeDigest(
-        _ envelope: DirectEnvelopeV4,
-        sourceScopeId: UUID,
-        logicalEventId: UUID,
-        state: ClientState
-    ) throws -> Data? {
-        let digest = Data(
-            SHA256.hash(data: try NoctweaveCoder.encode(envelope, sortedKeys: true))
-        )
-        guard let existing = state.inboundEnvelopeReceiptsV2.first(where: {
-            $0.isReplayCandidate(
-                sourceScopeId: sourceScopeId,
-                logicalEventId: logicalEventId,
-                envelopeId: envelope.id
-            )
-        }) else {
-            return digest
-        }
-        guard existing.isExactReplay(
-            sourceScopeId: sourceScopeId,
-            logicalEventId: logicalEventId,
-            envelopeId: envelope.id,
-            envelopeDigest: digest
-        ) else {
-            throw HeadlessMessagingClientError.inboundEnvelopeConflict(logicalEventId)
-        }
-        return nil
-    }
-
-    private static func recordInboundEnvelopeReceipt(
-        _ envelope: DirectEnvelopeV4,
-        sourceScopeId: UUID,
-        logicalEventId: UUID,
-        digest: Data,
-        state: inout ClientState
-    ) {
-        if state.inboundEnvelopeReceiptsV2.count
-            >= NoctweaveArchitectureV2.maximumInboundEnvelopeReceipts {
-            // This is a verification cache, not recoverable protocol state.
-            // An evicted ancient replay is processed through the ratchet and
-            // fails authentication instead of being skipped by ID alone.
-            state.inboundEnvelopeReceiptsV2.removeFirst(
-                NoctweaveArchitectureV2.maximumInboundEnvelopeReceipts / 8
-            )
-        }
-        state.inboundEnvelopeReceiptsV2.append(
-            InboundEnvelopeReceiptV2(
-                sourceScopeId: sourceScopeId,
-                logicalEventId: logicalEventId,
-                envelopeId: envelope.id,
-                envelopeDigest: digest
-            )
-        )
-    }
-
-    private func importContactOffer(_ offer: ContactOffer) async throws -> Contact {
-        var state = try await loadState()
-        let contact = try MessageEngine.contact(from: offer)
-        state.upsert(contact: contact)
-        if let peerEndpoint = contact.preferredGenerationEndpoint {
-            let localEndpoint = try certifiedLocalEndpoint(state: &state)
-            let binding = try pairwiseBinding(
-                localEndpoint: localEndpoint,
-                contact: contact,
-                peerEndpoint: peerEndpoint
-            )
-            if let existing = state.relationshipsV2.first(where: {
-                $0.id == binding.relationshipId && $0.contactId == contact.id
-            }) {
-                guard existing.localEndpointHandle == binding.localEndpointHandle,
-                      state.localEndpoint?.relationshipHandles[binding.relationshipId]
-                        == binding.localEndpointHandle else {
-                    throw HeadlessMessagingClientError.relayRejected(
-                        "Certified contact relationship does not match existing state"
-                    )
-                }
-            } else {
-                guard var endpoint = state.localEndpoint,
-                      !state.relationshipsV2.contains(where: {
-                          $0.id == binding.relationshipId && $0.contactId != contact.id
-                      }) else {
-                    throw HeadlessMessagingClientError.missingEndpoint
-                }
-                if let shellIndex = state.relationshipsV2.firstIndex(where: {
-                    $0.contactId == contact.id
-                        && $0.events.isEmpty
-                        && $0.routeSets.isEmpty
-                        && $0.eventCheckpoint == nil
-                }) {
-                    let shell = state.relationshipsV2[shellIndex]
-                    guard endpoint.relationshipHandles[shell.id]
-                            == shell.localEndpointHandle,
-                          endpoint.relationshipHandles[binding.relationshipId]
-                            .map({ $0 == binding.localEndpointHandle }) ?? true else {
-                        throw HeadlessMessagingClientError.missingEndpoint
-                    }
-                    let rebound = RelationshipStateV2(
-                        id: binding.relationshipId,
-                        contactId: contact.id,
-                        localEndpointHandle: binding.localEndpointHandle,
-                        conversationIds: shell.conversationIds,
-                        createdAt: shell.createdAt
-                    )
-                    guard rebound.isStructurallyValid else {
-                        throw HeadlessMessagingClientError.missingEndpoint
-                    }
-                    endpoint.relationshipHandles.removeValue(forKey: shell.id)
-                    endpoint.relationshipHandles[binding.relationshipId]
-                        = binding.localEndpointHandle
-                    state.relationshipsV2[shellIndex] = rebound
-                } else {
-                    guard state.relationshipsV2.count < 4_096,
-                          endpoint.relationshipHandles[binding.relationshipId] == nil else {
-                        throw HeadlessMessagingClientError.missingEndpoint
-                    }
-                    endpoint.relationshipHandles[binding.relationshipId]
-                        = binding.localEndpointHandle
-                    state.relationshipsV2.append(
-                        RelationshipStateV2(
-                            id: binding.relationshipId,
-                            contactId: contact.id,
-                            localEndpointHandle: binding.localEndpointHandle
-                        )
-                    )
-                }
-                state.relationshipsV2.sort { $0.id.uuidString < $1.id.uuidString }
-                state.localEndpoint = endpoint
-            }
-        }
-        try await store.save(state)
-        return contact
-    }
-
-    private func ensureMailboxConsumer(
-        state: inout ClientState,
-        accessKey: SigningKeyPair
-    ) async throws -> (
-        consumerId: MailboxConsumerId,
-        consumerKey: SigningKeyPair,
-        routeKey: String
-    ) {
-        guard var endpoint = state.localEndpoint else {
-            throw HeadlessMessagingClientError.missingEndpoint
-        }
-        let routeKey = Self.mailboxRouteKey(relay: state.relay, inboxId: state.inboxId)
-        let hadCredential = endpoint.mailboxCredentialsByRoute[routeKey] != nil
-        let credential = try endpoint.ensureMailboxCredential(
-            for: routeKey,
-            relay: state.relay,
-            inboxId: state.inboxId
-        )
-        if !hadCredential {
-            endpoint.cursorsByStream.removeValue(forKey: routeKey)
-            endpoint.pendingMailboxCommitsByStream.removeValue(forKey: routeKey)
-            state.localEndpoint = endpoint
-            // Persist the route-specific ID and key before registration. If a
-            // response or process is lost, the retry reuses the same tracked
-            // credential instead of leaking another active consumer.
-            try await store.save(state)
-        }
-
-        let startingSequence = endpoint.committedSequencesByStream[routeKey] ?? 0
-        let request = try Self.makeMailboxConsumerRegistrationRequest(
-            inboxId: state.inboxId,
-            consumerId: credential.consumerId,
-            startingSequence: startingSequence,
-            authorityKey: accessKey,
-            consumerKey: credential.signingKey
-        )
-        let response = try await relayClient(for: state.relay).send(
-            .registerMailboxConsumer(request),
-            timeout: timeout
-        )
-        guard response.type == .mailboxConsumer,
-              let registration = response.mailboxConsumer,
-              registration.consumerId == credential.consumerId,
-              registration.consumerSigningPublicKey == credential.signingKey.publicKeyData,
-              registration.state == .active else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-        // The relay's idempotent registration response is the authoritative
-        // recovery source after a lost response.
-        endpoint.committedSequencesByStream[routeKey] = registration.committedSequence
-        state.localEndpoint = endpoint
-        try await store.save(state)
-        return (credential.consumerId, credential.signingKey, routeKey)
-    }
-
-    private func revokeMailboxConsumer(
-        inboxId: String,
-        relay: RelayEndpoint,
-        accessKey: SigningKeyPair,
-        consumerId: MailboxConsumerId
-    ) async throws {
-        var request = RevokeMailboxConsumerRequest(inboxId: inboxId, consumerId: consumerId)
-        let proof = try Self.makeActorProof(signingKey: accessKey) { actorProof in
-            try request.signableData(for: actorProof)
-        }
-        request = RevokeMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: consumerId,
-            authorityProof: proof
-        )
-        let response = try await relayClient(for: relay).send(.revokeMailboxConsumer(request), timeout: timeout)
-        guard response.type == .mailboxConsumer,
-              response.mailboxConsumer?.state == .revoked else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-    }
-
-    private func retireInbox(_ retirement: PendingInboxRetirementV2) async throws {
-        guard retirement.isStructurallyValid else {
-            throw IdentityProfileStateError.invalidCurrentState
-        }
-        let response = try await relayClient(for: retirement.relay).send(
-            .retireInbox(retirement.request),
-            timeout: timeout
-        )
-        guard response.type == .ok else {
-            throw HeadlessMessagingClientError.relayRejected(
-                Self.redactedRelayRejection(response)
-            )
-        }
-    }
-
-    private func finalizeMailboxCursorCommit(
-        _ pending: PendingMailboxCursorCommit,
-        state: inout ClientState,
-        consumerId: MailboxConsumerId,
-        routeKey: String
-    ) async throws {
-        guard pending.isStructurallyValid else {
-            throw HeadlessMessagingClientError.relayRejected("Invalid pending mailbox cursor")
-        }
-        var request = CommitMailboxCursorRequest(
-            inboxId: state.inboxId,
-            consumerId: consumerId,
-            cursor: pending.cursor,
-            sequence: pending.sequence
-        )
-        guard let consumerKey = state.localEndpoint?
-                .mailboxCredentialsByRoute[routeKey]?.signingKey else {
-            throw HeadlessMessagingClientError.missingEndpoint
-        }
-        let proof = try Self.makeActorProof(signingKey: consumerKey) { actorProof in
-            try request.signableData(for: actorProof)
-        }
-        request = CommitMailboxCursorRequest(
-            inboxId: state.inboxId,
-            consumerId: consumerId,
-            cursor: pending.cursor,
-            sequence: pending.sequence,
-            consumerProof: proof
-        )
-        let response = try await relayClient(for: state.relay).send(
-            .commitMailboxCursor(request),
-            timeout: timeout
-        )
-        guard response.type == .mailboxConsumer,
-              let committed = response.mailboxConsumer,
-              committed.consumerId == consumerId,
-              committed.committedSequence == pending.sequence else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-        guard var endpoint = state.localEndpoint else {
-            throw HeadlessMessagingClientError.missingEndpoint
-        }
-        endpoint.cursorsByStream[routeKey] = pending.cursor
-        endpoint.committedSequencesByStream[routeKey] = pending.sequence
-        endpoint.pendingMailboxCommitsByStream.removeValue(forKey: routeKey)
-        state.localEndpoint = endpoint
-        try await store.save(state)
-    }
-
-    private func registerInbox(for state: ClientState) async throws {
-        let accessKey = try inboxAccessKey(from: state)
-        var request = RegisterInboxRequest.privacyMinimizedV2(
-            inboxId: state.inboxId,
-            accessPublicKey: accessKey.publicKeyData
-        )
-        let proof = try Self.makeActorProof(signingKey: accessKey) { actorProof in
-            try request.signableData(for: actorProof)
-        }
-        request = .privacyMinimizedV2(
-            inboxId: state.inboxId,
-            accessPublicKey: accessKey.publicKeyData,
-            accessProof: proof
-        )
-        let response = try await relayClient(for: state.relay).send(.registerInbox(request), timeout: timeout)
-        try requireOK(response)
-    }
-
-    private func deliver(envelope: DirectEnvelopeV4, to contact: Contact, from state: ClientState) async throws -> RelayResponse {
-        let response = try await relayClient(for: contact.relay).send(
-            .deliver(
-                DeliverRequest(
-                    inboxId: contact.inboxId,
-                    routingToken: contact.inboxId,
-                    envelope: .directV4(envelope),
-                    destinationRelay: nil
-                )
-            ),
-            timeout: timeout
-        )
-        guard response.type == .delivered || response.type == .ok else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-        return response
-    }
-
-    private func deliver(pending: PendingDirectDelivery) async throws -> RelayResponse {
-        let response = try await relayClient(for: pending.destinationRelay).send(
-            .deliver(
-                DeliverRequest(
-                    inboxId: pending.inboxId,
-                    routingToken: pending.inboxId,
-                    envelope: .directV4(pending.envelope),
-                    destinationRelay: nil
-                )
-            ),
-            timeout: timeout
-        )
-        guard response.type == .delivered || response.type == .ok else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-        }
-        return response
-    }
-
-    private func persistDirectDeliveryIntent(
-        envelope: DirectEnvelopeV4,
-        contact: Contact,
-        state: inout ClientState
-    ) async throws -> UUID {
-        let now = Date()
-        let attemptId = UUID()
-        if !state.pendingDirectDeliveries.contains(where: { $0.id == envelope.id }) {
-            guard state.pendingDirectDeliveries.count
-                    < NoctweaveArchitectureV2.maximumPendingDirectDeliveries else {
-                throw HeadlessMessagingClientError.directOutboxFull(
-                    NoctweaveArchitectureV2.maximumPendingDirectDeliveries
-                )
-            }
-            state.pendingDirectDeliveries.append(
-                PendingDirectDelivery(
-                    contactId: contact.id,
-                    inboxId: contact.inboxId,
-                    preferredRelay: state.relay,
-                    destinationRelay: contact.relay,
-                    envelope: envelope,
-                    queuedAt: now,
-                    attemptCount: 1,
-                    lastAttemptAt: now
-                )
-            )
-        }
-        if !state.protocolIntents.contains(where: { $0.id == envelope.id }) {
-            let protectedIntentIds = Set(state.pendingDirectDeliveries.map(\.id))
-                .union(state.identityMutationV2?.notificationIds ?? [])
-                .union(
-                    state.protocolIntents
-                        .filter { !$0.state.isTerminal }
-                        .flatMap(\.dependencies)
-                )
-            let requiredPruneCount = max(
-                0,
-                state.protocolIntents.count + 1
-                    - NoctweaveArchitectureV2.maximumProtocolIntents
-            )
-            let prunable = state.protocolIntents
-                .filter { $0.state.isTerminal && !protectedIntentIds.contains($0.id) }
-                .sorted {
-                    if $0.updatedAt == $1.updatedAt {
-                        return $0.id.uuidString < $1.id.uuidString
-                    }
-                    return $0.updatedAt < $1.updatedAt
-                }
-            guard prunable.count >= requiredPruneCount else {
-                throw HeadlessMessagingClientError.directOutboxFull(
-                    NoctweaveArchitectureV2.maximumProtocolIntents
-                )
-            }
-            let prunedIds = Set(prunable.prefix(requiredPruneCount).map(\.id))
-            state.protocolIntents.removeAll { prunedIds.contains($0.id) }
-            guard state.protocolIntents.count
-                    < NoctweaveArchitectureV2.maximumProtocolIntents else {
-                throw HeadlessMessagingClientError.directOutboxFull(
-                    NoctweaveArchitectureV2.maximumProtocolIntents
-                )
-            }
-            let digest = Data(SHA256.hash(data: try NoctweaveCoder.encode(envelope, sortedKeys: true)))
-            let prepared = ProtocolIntentV2.prepare(
-                id: envelope.id,
-                kind: .sendEvent,
-                targetIdentifier: Data(contact.id.uuidString.lowercased().utf8),
-                payloadDigest: digest,
-                createdAt: now
-            )
-            guard let attempting = prepared.beginningAttempt(
-                id: attemptId,
-                completedIntentIds: Self.completedIntentIds(in: state),
-                at: now
-            ) else {
-                throw HeadlessMessagingClientError.relayRejected("Unable to prepare durable send intent")
-            }
-            state.protocolIntents.append(attempting)
-        }
-        try await store.save(state)
-        return attemptId
-    }
-
-    private func finalizeDirectDeliveryIntent(
-        envelopeId: UUID,
-        attemptId: UUID,
-        state: inout ClientState
-    ) async throws {
-        if let index = state.protocolIntents.firstIndex(where: { $0.id == envelopeId }) {
-            let transitionAt = max(Date(), state.protocolIntents[index].updatedAt)
-            guard let published = state.protocolIntents[index].advancing(
-                to: .published,
-                attemptId: attemptId,
-                at: transitionAt
-            ), let committed = published.advancing(
-                to: .committed,
-                attemptId: attemptId,
-                at: transitionAt
-            ), let finalized = committed.advancing(
-                to: .finalized,
-                attemptId: attemptId,
-                at: transitionAt
-            ) else {
-                throw HeadlessMessagingClientError.relayRejected("Unable to finalize durable send intent")
-            }
-            state.protocolIntents[index] = finalized
-        }
-        // Drop the recoverable ciphertext only after the journal transition is
-        // known to be valid. A transition error must leave the exact envelope
-        // available for idempotent replay.
-        state.pendingDirectDeliveries.removeAll { $0.id == envelopeId }
-        try await store.save(state)
-    }
-
-    private func recordDirectDeliveryFailure(
-        envelopeId: UUID,
-        attemptId: UUID,
-        error: Error,
-        state: inout ClientState
-    ) async throws {
-        let now = Date()
-        if let pendingIndex = state.pendingDirectDeliveries.firstIndex(where: { $0.id == envelopeId }) {
-            state.pendingDirectDeliveries[pendingIndex].lastAttemptAt = now
-        }
-        if let intentIndex = state.protocolIntents.firstIndex(where: { $0.id == envelopeId }) {
-            let intent = state.protocolIntents[intentIndex]
-            let explicitRejection: Bool
-            if case .relayRejected = error as? HeadlessMessagingClientError {
-                explicitRejection = true
-            } else {
-                explicitRejection = false
-            }
-            if explicitRejection,
-               let failed = intent.failingPermanently(errorClass: .relayRejected, at: now) {
-                state.protocolIntents[intentIndex] = failed
-            } else if intent.attemptCount
-                        >= UInt32(NoctweaveArchitectureV2.maximumIntentAttempts),
-                      let failed = intent.failingPermanently(
-                        errorClass: .attemptLimitExceeded,
-                        at: now
-                      ) {
-                state.protocolIntents[intentIndex] = failed
-            } else if let failed = intent.recordingTransientFailure(
-                attemptId: attemptId,
-                errorClass: .relayUnavailable,
-                retryNotBefore: now.addingTimeInterval(1),
-                at: now
-            ) {
-                state.protocolIntents[intentIndex] = failed
-            }
-        }
-        try await store.save(state)
-    }
-
-    private static func completedIntentIds(in state: ClientState) -> Set<UUID> {
-        Set(state.protocolIntents.filter { $0.state == .finalized }.map(\.id))
-    }
-
-    private func ensurePreparedIntent(
-        for pending: PendingDirectDelivery,
-        dependencies: [UUID],
-        state: inout ClientState
-    ) throws {
-        guard dependencies.count <= NoctweaveArchitectureV2.maximumIntentDependencies,
-              pending.envelope.isStructurallyValid else {
-            throw IdentityProfileStateError.invalidCurrentState
-        }
-        let encoded = try NoctweaveCoder.encode(pending.envelope, sortedKeys: true)
-        let digest = Data(SHA256.hash(data: encoded))
-        let target = Data(pending.contactId.uuidString.lowercased().utf8)
-        if let existing = state.protocolIntents.first(where: { $0.id == pending.id }) {
-            guard existing.kind == .sendEvent,
-                  !existing.state.isTerminal,
-                  existing.targetIdentifier == target,
-                  existing.payloadDigest == digest else {
-                throw IdentityProfileStateError.invalidCurrentState
-            }
-            return
-        }
-        let protectedIntentIds = Set(state.pendingDirectDeliveries.map(\.id))
-            .union(state.identityMutationV2?.notificationIds ?? [])
-            .union(
-                state.protocolIntents
-                    .filter { !$0.state.isTerminal }
-                    .flatMap(\.dependencies)
-            )
-        let requiredPruneCount = max(
-            0,
-            state.protocolIntents.count + 1
-                - NoctweaveArchitectureV2.maximumProtocolIntents
-        )
-        let prunable = state.protocolIntents
-            .filter { $0.state.isTerminal && !protectedIntentIds.contains($0.id) }
-            .sorted {
-                if $0.updatedAt == $1.updatedAt {
-                    return $0.id.uuidString < $1.id.uuidString
-                }
-                return $0.updatedAt < $1.updatedAt
-            }
-        guard prunable.count >= requiredPruneCount else {
-            throw IdentityProfileStateError.invalidCurrentState
-        }
-        let prunedIds = Set(prunable.prefix(requiredPruneCount).map(\.id))
-        state.protocolIntents.removeAll { prunedIds.contains($0.id) }
-        guard state.protocolIntents.count
-                < NoctweaveArchitectureV2.maximumProtocolIntents else {
-            throw IdentityProfileStateError.invalidCurrentState
+        let envelopeBytes = try NoctweaveCoder.encode(envelope, sortedKeys: true)
+        guard try relationship.appendEvent(event) else {
+            throw HeadlessMessagingClientError.conflictingEnvelope
         }
         let intent = ProtocolIntentV2.prepare(
-            id: pending.id,
             kind: .sendEvent,
-            targetIdentifier: target,
-            payloadDigest: digest,
-            dependencies: dependencies,
-            createdAt: pending.queuedAt
+            targetIdentifier: Data(event.id.uuidString.lowercased().utf8),
+            payloadDigest: Data(SHA256.hash(data: envelopeBytes)),
+            createdAt: sentAt,
+            expiresAt: sentAt.addingTimeInterval(24 * 60 * 60)
         )
-        guard intent.isStructurallyValid else {
-            throw IdentityProfileStateError.invalidCurrentState
-        }
-        state.protocolIntents.append(intent)
-    }
+        _ = try relationship.appendProtocolIntent(intent)
+        let deliveries = try relationship.enqueue(
+            logicalEventID: event.id,
+            payload: envelopeBytes,
+            destinationRouteIDs: destinationRouteIDs,
+            at: sentAt
+        )
+        guard !deliveries.isEmpty else { throw HeadlessMessagingClientError.noUsableRoute }
+        _ = try relationship.recordDeliveryState(
+            DeliveryStateRecord(
+                eventId: event.id,
+                destinationEndpoint: relationship.peerIdentity.sendRoutes.ownerEndpointHandle,
+                state: .locallyPersisted,
+                updatedAt: sentAt
+            )
+        )
+        try replaceRelationship(relationship)
+        sessionsByID[conversation.sessionId] = conversation
+        try await persist()
 
-    private func identityMutationResult(
-        _ journal: IdentityMutationJournalV2,
-        state: ClientState
-    ) -> HeadlessIdentityChangeResult {
-        let finalizedIds = Set(state.protocolIntents.filter { $0.state == .finalized }.map(\.id))
-        let notified = journal.notifications.filter { finalizedIds.contains($0.id) }
-        let failed = journal.notifications.filter { !finalizedIds.contains($0.id) }
-        return HeadlessIdentityChangeResult(
-            oldFingerprint: journal.oldFingerprint,
-            newFingerprint: journal.newFingerprint,
-            notifiedContacts: notified.map(\.contactDisplayName),
-            failedContacts: failed.map(\.contactDisplayName)
+        let accepted = try await publishPendingDeliveries(
+            relationshipID: relationship.id
+        )
+        let current = try self.relationship(relationship.id)
+        return HeadlessSendResult(
+            event: event,
+            envelope: envelope,
+            acceptedDeliveryCount: accepted,
+            pendingDeliveryCount: current.pendingDeliveries.count
         )
     }
 
-    /// A staged burn may be resumed after a crash without allowing unrelated
-    /// application sends to race the cutover. After the immediate local
-    /// cutover, each retained relationship remains blocked only until its exact
-    /// continuity ciphertext has reached the relay and its intent is durable.
-    /// Rotation uses the same per-contact rule so peers cannot observe a
-    /// new identity key before the signed continuity notice.
-    private func requireContinuityDeliveryReady(
-        for contact: Contact,
-        state: ClientState
-    ) throws {
-        guard let journal = state.identityMutationV2 else { return }
-        if journal.phase == .prepared || journal.phase == .newRouteReady {
-            throw HeadlessMessagingClientError.identityMutationInProgress(
-                "\(journal.kind.rawValue) cutover is pending; resume the identity operation first"
-            )
-        }
-        guard let notification = journal.notifications.first(where: { $0.contactId == contact.id }) else {
-            return
-        }
-        let intentIsFinalized = state.protocolIntents.contains {
-            $0.id == notification.id && $0.state == .finalized
-        }
-        let ciphertextIsPending = state.pendingDirectDeliveries.contains { $0.id == notification.id }
-        guard intentIsFinalized, !ciphertextIsPending else {
-            throw HeadlessMessagingClientError.identityMutationInProgress(
-                "\(journal.kind.rawValue) continuity delivery to \(contact.displayName) is pending; retry pending direct deliveries first"
-            )
-        }
-    }
-
-    private func identityMutationCanBeCleared(in state: ClientState) -> Bool {
-        guard let journal = state.identityMutationV2,
-              journal.phase == .cleanupComplete else { return false }
-        let finalizedIds = Set(state.protocolIntents.filter { $0.state == .finalized }.map(\.id))
-        let pendingIds = Set(state.pendingDirectDeliveries.map(\.id))
-        return journal.notificationIds.isSubset(of: finalizedIds)
-            && journal.notificationIds.isDisjoint(with: pendingIds)
-    }
-
-    private func resumeIdentityBurnUnlocked(
-        _ originalJournal: IdentityMutationJournalV2
-    ) async throws -> HeadlessIdentityChangeResult {
-        var state = try await loadState()
-        guard var journal = state.identityMutationV2,
-              journal.id == originalJournal.id,
-              journal.kind == .burn else {
-            throw IdentityProfileStateError.invalidCurrentState
-        }
-
-        if journal.phase == .prepared {
-            guard let staged = journal.stagedBurn else {
-                throw IdentityProfileStateError.invalidCurrentState
+    private func publishPendingDeliveries(
+        relationshipID: UUID
+    ) async throws -> Int {
+        var relationship = try relationship(relationshipID)
+        guard relationship.localPolicy.allowsUserSending else {
+            if relationship.localPolicy.consent == .blocked {
+                throw HeadlessMessagingClientError.relationshipBlocked
             }
-            try await registerStagedIdentityRoute(staged)
-            let transitionAt = max(Date(), journal.updatedAt)
-            guard journal.markNewRouteReady(at: transitionAt) else {
-                throw IdentityProfileStateError.invalidCurrentState
-            }
-            state.identityMutationV2 = journal
-            // Replaying a lost response reuses the staged inbox and consumer;
-            // both relay registrations are idempotent.
-            try await store.save(state)
+            throw HeadlessMessagingClientError.relationshipConsentRequired
         }
-
-        if journal.phase == .newRouteReady {
-            let transitionAt = max(Date(), journal.updatedAt)
-            try state.cutOverStagedIdentityBurn(at: transitionAt)
-            // The old identity remains active on disk until this atomic save.
-            try await store.save(state)
-            guard let updatedJournal = state.identityMutationV2 else {
-                throw IdentityProfileStateError.invalidCurrentState
+        var acceptedIDs = Set<UUID>()
+        let now = Date()
+        let sendCapabilities = Dictionary(
+            uniqueKeysWithValues: relationship.peerIdentity.sendRoutes.routes.map {
+                ($0.routeID, $0.sendCapability)
             }
-            journal = updatedJournal
+        )
+        guard relationship.pendingDeliveries.allSatisfy({
+            sendCapabilities[$0.destinationRouteID] != nil
+        }) else {
+            throw HeadlessMessagingClientError.invalidState
         }
-
-        if journal.phase == .cutoverComplete {
-            // Retire routes independently so one unavailable relay cannot keep
-            // already reachable old routes alive. Each successful removal is
-            // persisted before the next network attempt.
-            for retirement in journal.pendingInboxRetirements {
+        for deliveryIndex in relationship.pendingDeliveries.indices {
+            let delivery = relationship.pendingDeliveries[deliveryIndex]
+            guard let sendCapability = sendCapabilities[delivery.destinationRouteID] else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            var accepted = true
+            for packet in delivery.packets {
                 do {
-                    try await retireInbox(retirement)
-                    let transitionAt = max(Date(), journal.updatedAt)
-                    guard journal.markInboxRetired(
-                        routeIdentifier: retirement.routeIdentifier,
-                        at: transitionAt
-                    ) else {
-                        throw IdentityProfileStateError.invalidCurrentState
+                    let response = try await relayClient(
+                        for: delivery.destinationRelay
+                    ).send(.appendOpaqueRouteV2(
+                        AppendOpaqueRouteRelayRequestV2(
+                            packet: packet,
+                            sendCapability: sendCapability
+                        )
+                    ))
+                    guard case .opaqueRouteAppend = response.successBody else {
+                        accepted = false
+                        break
                     }
-                    state.identityMutationV2 = journal
-                    try await store.save(state)
                 } catch {
-                    // The exact private-key-free request remains durable and
-                    // can be retried after restart or relay recovery.
+                    accepted = false
+                    break
+                }
+            }
+            if relationship.pendingDeliveries[deliveryIndex].attemptCount < UInt32.max {
+                relationship.pendingDeliveries[deliveryIndex].attemptCount += 1
+            }
+            relationship.pendingDeliveries[deliveryIndex].lastAttemptAt = max(
+                now,
+                delivery.queuedAt
+            )
+            if accepted { acceptedIDs.insert(delivery.id) }
+        }
+
+        if !acceptedIDs.isEmpty {
+            let acceptedEvents = Set(relationship.pendingDeliveries
+                .filter { acceptedIDs.contains($0.id) }
+                .map(\.logicalEventID))
+            relationship.pendingDeliveries.removeAll { acceptedIDs.contains($0.id) }
+            let fullyAcceptedEvents = acceptedEvents.filter { eventID in
+                !relationship.pendingDeliveries.contains { $0.logicalEventID == eventID }
+            }
+            for index in relationship.deliveryStates.indices
+                where acceptedEvents.contains(relationship.deliveryStates[index].eventId) {
+                _ = relationship.deliveryStates[index].advance(
+                    to: .relayAccepted,
+                    at: max(now, relationship.deliveryStates[index].updatedAt)
+                )
+            }
+            for index in relationship.protocolIntents.indices
+                where relationship.protocolIntents[index].kind == .sendEvent
+                    && !relationship.protocolIntents[index].state.isTerminal
+                    && relationship.protocolIntents[index].targetIdentifier.flatMap({
+                        UUID(uuidString: String(decoding: $0, as: UTF8.self))
+                    }).map(fullyAcceptedEvents.contains) == true {
+                let attemptID = UUID()
+                let transitionAt = max(now, relationship.protocolIntents[index].updatedAt)
+                guard let begun = relationship.protocolIntents[index].beginningAttempt(
+                    id: attemptID,
+                    completedIntentIds: completedIntentIDs(in: relationship),
+                    at: transitionAt
+                ), let published = begun.advancing(to: .published, attemptId: attemptID, at: transitionAt),
+                   let committed = published.advancing(to: .committed, attemptId: attemptID, at: transitionAt),
+                   let finalized = committed.advancing(to: .finalized, attemptId: attemptID, at: transitionAt) else {
                     continue
                 }
+                relationship.protocolIntents[index] = finalized
             }
         }
-
-        _ = try await retryPendingDirectDeliveriesUnlocked(maxCount: 256)
-        return identityMutationResult(originalJournal, state: try await loadState())
+        try replaceRelationship(relationship)
+        try await persist()
+        return acceptedIDs.count
     }
 
-    private func registerStagedIdentityRoute(
-        _ staged: StagedIdentityGenerationV2
-    ) async throws {
-        guard staged.isStructurallyValid,
-              let credential = staged.mailboxCredential else {
-            throw IdentityProfileStateError.invalidCurrentState
+    private func syncRoute(
+        relationshipID: UUID,
+        routeIndex: Int,
+        maximumPackets: UInt16
+    ) async throws -> HeadlessSyncResult {
+        var relationship = try relationship(relationshipID)
+        guard relationship.localReceiveRoutes.indices.contains(routeIndex) else {
+            throw HeadlessMessagingClientError.invalidState
         }
-        var inboxRequest = RegisterInboxRequest.privacyMinimizedV2(
-            inboxId: staged.inboxId,
-            accessPublicKey: staged.inboxAccessKey.publicKeyData
-        )
-        let inboxProof = try Self.makeActorProof(signingKey: staged.inboxAccessKey) { proof in
-            try inboxRequest.signableData(for: proof)
+        let route = relationship.localReceiveRoutes[routeIndex]
+        guard route.gapState == nil else {
+            throw HeadlessMessagingClientError.routeGapDetected
         }
-        inboxRequest = .privacyMinimizedV2(
-            inboxId: staged.inboxId,
-            accessPublicKey: staged.inboxAccessKey.publicKeyData,
-            accessProof: inboxProof
-        )
-        let inboxResponse = try await relayClient(for: staged.relay).send(
-            .registerInbox(inboxRequest),
-            timeout: timeout
-        )
-        try requireOK(inboxResponse)
-
-        let consumerRequest = try Self.makeMailboxConsumerRegistrationRequest(
-            inboxId: staged.inboxId,
-            consumerId: credential.consumerId,
-            startingSequence: 0,
-            authorityKey: staged.inboxAccessKey,
-            consumerKey: credential.signingKey
-        )
-        let consumerResponse = try await relayClient(for: staged.relay).send(
-            .registerMailboxConsumer(consumerRequest),
-            timeout: timeout
-        )
-        guard consumerResponse.type == .mailboxConsumer,
-              consumerResponse.mailboxConsumer?.consumerId == credential.consumerId,
-              consumerResponse.mailboxConsumer?.consumerSigningPublicKey
-                == credential.signingKey.publicKeyData,
-              consumerResponse.mailboxConsumer?.state == .active else {
-            throw HeadlessMessagingClientError.relayRejected(
-                Self.redactedRelayRejection(consumerResponse)
+        let request = try route.clientCapabilities.makeSyncRequest(
+            after: route.committedCursor,
+            limit: min(
+                maximumPackets,
+                UInt16(NoctweaveOpaqueRouteRelayStoreV2.maximumSyncPage)
             )
-        }
-    }
-
-    private func loadState() async throws -> ClientState {
-        guard let state = try await store.load() else {
-            throw HeadlessMessagingClientError.missingState
-        }
-        return state
-    }
-
-    private func inboxAccessKey(from state: ClientState) throws -> SigningKeyPair {
-        guard let key = state.inboxAccessKey else {
-            throw HeadlessMessagingClientError.missingInboxAccessKey
-        }
-        return key
-    }
-
-    private func contactOffer(for state: ClientState) throws -> ContactOffer {
-        guard let generationId = state.identityGenerationId,
-              state.localEndpoint != nil,
-              let manifest = state.endpointSetManifest,
-              let endpoint = state.issuedContactEndpointsV2.last else {
-            throw HeadlessMessagingClientError.missingEndpoint
-        }
-        return try ContactOffer.createCertified(
-            displayName: state.identity.displayName,
-            inboxId: state.inboxId,
-            relay: state.relay,
-            identity: state.identity,
-            identityGenerationId: generationId,
-            endpointSetManifest: manifest,
-            preferredGenerationEndpoint: endpoint,
-            inboxAccessPublicKey: state.inboxAccessKey?.publicKeyData
         )
-    }
-
-    private func issueCertifiedContactOffer(
-        state: inout ClientState,
-        inboxAccessPublicKey: Data?
-    ) throws -> ContactOffer {
-        guard let generationId = state.identityGenerationId,
-              let manifest = state.endpointSetManifest else {
-            throw HeadlessMessagingClientError.missingEndpoint
-        }
-        let endpoint = try currentCertifiedEndpoint(state: &state)
-        return try ContactOffer.createCertified(
-            displayName: state.identity.displayName,
-            inboxId: state.inboxId,
-            relay: state.relay,
-            identity: state.identity,
-            identityGenerationId: generationId,
-            endpointSetManifest: manifest,
-            preferredGenerationEndpoint: endpoint,
-            inboxAccessPublicKey: inboxAccessPublicKey
-        )
-    }
-
-    private func certifiedLocalEndpoint(state: inout ClientState) throws -> CertifiedGenerationEndpoint {
-        try currentCertifiedEndpoint(state: &state)
-    }
-
-    private func currentCertifiedEndpoint(
-        state: inout ClientState,
-        now: Date = Date()
-    ) throws -> CertifiedGenerationEndpoint {
-        guard var endpoint = state.localEndpoint,
-              let generationId = state.identityGenerationId,
-              let manifest = state.endpointSetManifest,
-              endpoint.identityGenerationId == generationId else {
-            throw HeadlessMessagingClientError.missingEndpoint
-        }
-        _ = try endpoint.renewSignedPrekeyIfNeeded(at: now)
-        state.localEndpoint = endpoint
-
-        if let index = state.issuedContactEndpointsV2.lastIndex(where: {
-            $0.identityGenerationId == generationId
-                && $0.identityAuthorityPublicKey == state.identity.signingKey.publicKeyData
-                && $0.manifestEpoch == manifest.epoch
-                && $0.manifestDigest == manifest.digest
-                && $0.endpointId == endpoint.id
-                && $0.signingPublicKey == endpoint.signingKey.publicKeyData
-                && $0.agreementPublicKey == endpoint.agreementKey.publicKeyData
-        }) {
-            let current = state.issuedContactEndpointsV2[index]
-            let isAuthorized = (try? current.verified(
-                identityPublicKey: state.identity.signingKey.publicKeyData,
-                manifest: manifest,
-                now: current.prekeyBundle.createdAt
-            )) != nil
-            if isAuthorized {
-                if current.prekeyBundle.signedPrekey.id == endpoint.prekeys.signedPrekeyId,
-                   current.isStructurallyValid(now: now) {
-                    return current
-                }
-                let refreshed = try current.refreshingPrekeyPackage(
-                    using: endpoint,
-                    at: now
+        let response = try await relayClient(for: route.relay).send(
+            .syncOpaqueRouteV2(
+                SyncOpaqueRouteRelayRequestV2(
+                    request: request,
+                    readCredential: route.clientCapabilities.readCredential
                 )
-                var endpoints = state.issuedContactEndpointsV2
-                endpoints[index] = refreshed
-                state.issuedContactEndpointsV2 = endpoints
-                return refreshed
-            }
-        }
-
-        guard state.issuedContactEndpointsV2.count
-                < NoctweaveArchitectureV2.maximumIssuedContactEndpoints else {
-            throw HeadlessMessagingClientError.missingEndpoint
-        }
-        let certificate = try CertifiedGenerationEndpoint.create(
-            identity: state.identity,
-            endpoint: endpoint,
-            manifest: manifest,
-            issuedAt: now
-        )
-        state.issuedContactEndpointsV2.append(certificate)
-        return certificate
-    }
-
-    private func pairwiseBinding(
-        localEndpoint: CertifiedGenerationEndpoint,
-        contact: Contact,
-        peerEndpoint: CertifiedGenerationEndpoint
-    ) throws -> PairwiseEndpointBindingV4 {
-        guard contact.identityGenerationId == peerEndpoint.identityGenerationId else {
-            throw CryptoError.invalidPayload
-        }
-        return try PairwiseEndpointBindingV4.derive(
-            localIdentityGenerationId: localEndpoint.identityGenerationId,
-            localIdentitySigningPublicKey: localEndpoint.identityAuthorityPublicKey,
-            localEndpoint: localEndpoint,
-            peerIdentityGenerationId: peerEndpoint.identityGenerationId,
-            peerIdentitySigningPublicKey: peerEndpoint.identityAuthorityPublicKey,
-            peerEndpoint: peerEndpoint
-        )
-    }
-
-    private func directSendEndpointContext(
-        contact: Contact,
-        peerEndpoint: CertifiedGenerationEndpoint,
-        state: inout ClientState
-    ) throws -> (
-        localEndpoint: CertifiedGenerationEndpoint,
-        binding: PairwiseEndpointBindingV4,
-        endpointSession: DirectEndpointSessionIdentity
-    ) {
-        guard let localEndpoint = state.localEndpoint else {
-            throw HeadlessMessagingClientError.missingEndpoint
-        }
-        if state.issuedContactEndpointsV2.isEmpty {
-            _ = try certifiedLocalEndpoint(state: &state)
-        }
-        var fallback: (
-            CertifiedGenerationEndpoint,
-            PairwiseEndpointBindingV4,
-            DirectEndpointSessionIdentity
-        )?
-        for certificate in state.issuedContactEndpointsV2.reversed() where
-            certificate.identityGenerationId == localEndpoint.identityGenerationId
-                && certificate.endpointId == localEndpoint.id
-                && certificate.signingPublicKey == localEndpoint.signingKey.publicKeyData
-                && certificate.agreementPublicKey == localEndpoint.agreementKey.publicKeyData {
-            let binding = try pairwiseBinding(
-                localEndpoint: certificate,
-                contact: contact,
-                peerEndpoint: peerEndpoint
             )
-            let session = DirectEndpointSessionIdentity(
-                contactId: contact.id,
-                localEndpointId: localEndpoint.id,
-                localEndpointHandle: binding.localEndpointHandle,
-                localCertificateReferenceDigest: binding.localCertificateReferenceDigest,
-                localManifestEpoch: certificate.manifestEpoch,
-                peerEndpointId: peerEndpoint.endpointId,
-                peerEndpointHandle: binding.peerEndpointHandle,
-                peerCertificateReferenceDigest: binding.peerCertificateReferenceDigest,
-                peerManifestEpoch: peerEndpoint.manifestEpoch
-            )
-            if state.conversation(for: contact.id, endpointSession: session) != nil {
-                return (certificate, binding, session)
-            }
-            if fallback == nil {
-                fallback = (certificate, binding, session)
+        )
+        guard case .opaqueRouteSync(let batch)? = response.successBody else {
+            throw HeadlessMessagingClientError.invalidRelayResponse
+        }
+        if let gap = opaqueRouteGap(
+            in: batch,
+            relativeTo: route,
+            detectedAt: Date()
+        ) {
+            relationship.localReceiveRoutes[routeIndex].gapState = gap
+            try replaceRelationship(relationship)
+            try await persist()
+            throw HeadlessMessagingClientError.routeGapDetected
+        }
+
+        var reassembler = try reassemblersByRoute[route.route.routeID]
+            ?? OpaqueRoutePacketReassemblerV2()
+        var workingSessions = sessionsByID
+        var received: [ConversationEvent] = []
+        for receivedPacket in batch.packets {
+            switch try reassembler.consume(
+                receivedPacket.packet,
+                payloadKey: route.payloadKey,
+                routeRevision: receivedPacket.routeRevision
+            ) {
+            case .accepted, .duplicate:
+                continue
+            case .complete(let bundle):
+                if relationship.localPolicy.acceptsInboundEvents {
+                    if let event = try processInboundBundle(
+                        bundle,
+                        sourceRouteID: route.route.routeID,
+                        relationship: &relationship,
+                        sessions: &workingSessions
+                    ) {
+                        received.append(event)
+                    }
+                }
             }
         }
-        guard let fallback else { throw HeadlessMessagingClientError.missingEndpoint }
-        return fallback
-    }
+        reassemblersByRoute[route.route.routeID] = reassembler
+        sessionsByID = workingSessions
+        try replaceRelationship(relationship)
+        try await persist()
 
-    private func status(for state: ClientState) -> HeadlessClientStatus {
-        HeadlessClientStatus(
-            displayName: state.identity.displayName,
-            fingerprint: state.identity.fingerprint,
-            inboxId: state.inboxId,
-            relay: state.relay,
-            contactCount: state.contacts.count,
-            conversationCount: state.conversations.count
+        if relationship.localPolicy.consent != .blocked {
+            for eventID in deliveryReceiptTargets(in: relationship) {
+                _ = try await sendReceipt(
+                    type: .deliveryReceipt,
+                    targetEventID: eventID,
+                    relationshipID: relationshipID,
+                    sentAt: Date()
+                )
+            }
+            relationship = try self.relationship(relationshipID)
+            for probe in routeProbesToSend(in: relationship) {
+                _ = try await sendRelationshipControl(
+                    kind: .routeProbe,
+                    payload: probe,
+                    relationshipID: relationshipID,
+                    destinationRouteIDs: [probe.routeID],
+                    sentAt: Date()
+                )
+            }
+            relationship = try self.relationship(relationshipID)
+            if localRouteSetNeedsPublication(in: relationship) {
+                _ = try await publishLocalRouteSet(
+                    relationshipID: relationshipID,
+                    sentAt: Date()
+                )
+            }
+        }
+        relationship = try self.relationship(relationshipID)
+
+        guard reassembler.pendingBundleCount == 0 else {
+            return HeadlessSyncResult(
+                relationshipID: relationshipID,
+                receivedEvents: received,
+                committedCursor: route.committedCursor,
+                hasMore: true
+            )
+        }
+        let commit = try route.clientCapabilities.makeCommitRequest(
+            cursor: batch.nextCursor
+        )
+        let commitResponse = try await relayClient(for: route.relay).send(
+            .commitOpaqueRouteV2(
+                CommitOpaqueRouteRelayRequestV2(
+                    request: commit,
+                    readCredential: route.clientCapabilities.readCredential
+                )
+            )
+        )
+        guard case .opaqueRouteCommit(let committed)? = commitResponse.successBody,
+              committed.committedCursor == batch.nextCursor else {
+            throw HeadlessMessagingClientError.invalidRelayResponse
+        }
+        relationship.localReceiveRoutes[routeIndex].committedCursor = batch.nextCursor
+        relationship.localReceiveRoutes[routeIndex].committedSequence = batch.nextSequence
+        relationship.localReceiveRoutes[routeIndex].committedRecordDigest = batch.nextRecordDigest
+        try replaceRelationship(relationship)
+        try await persist()
+        return HeadlessSyncResult(
+            relationshipID: relationshipID,
+            receivedEvents: received,
+            committedCursor: batch.nextCursor,
+            hasMore: batch.hasMore
         )
     }
 
-    private func continuityAudit(for state: ClientState) -> HeadlessContinuityAudit {
-        let profile = state.identityProfile(id: state.activeIdentityId)
-        return HeadlessContinuityAudit(
-            profileId: state.activeIdentityId,
-            fingerprint: state.identity.fingerprint,
-            events: profile?.continuityEvents ?? []
+    private func opaqueRouteGap(
+        in batch: OpaqueRouteSyncResponseV2,
+        relativeTo route: LocalOpaqueReceiveRouteV2,
+        detectedAt: Date
+    ) -> OpaqueRouteGapStateV2? {
+        let reason: OpaqueRouteGapReasonV2?
+        if batch.retentionFloorSequence > route.committedSequence {
+            reason = .retentionExpired
+        } else if batch.startsAfterSequence < route.committedSequence
+            || batch.nextSequence < route.committedSequence {
+            reason = .cursorRegression
+        } else if batch.startsAfterSequence != route.committedSequence {
+            reason = .sequenceDiscontinuity
+        } else if batch.startsAfterRecordDigest != route.committedRecordDigest
+            || !batch.isStructurallyValid {
+            reason = .digestChainBreak
+        } else {
+            reason = nil
+        }
+        return reason.map {
+            OpaqueRouteGapStateV2(
+                reason: $0,
+                expectedSequence: route.committedSequence,
+                observedSequence: batch.startsAfterSequence,
+                retentionFloorSequence: batch.retentionFloorSequence,
+                detectedAt: detectedAt
+            )
+        }
+    }
+
+    private func processInboundBundle(
+        _ bundle: OpaqueRouteReassembledBundleV2,
+        sourceRouteID: OpaqueReceiveRouteIDV2,
+        relationship: inout PairwiseRelationshipV2,
+        sessions: inout [String: Conversation]
+    ) throws -> ConversationEvent? {
+        let envelope = try NoctweaveCoder.decode(DirectEnvelopeV4.self, from: bundle.payload)
+        let digest = Data(SHA256.hash(data: bundle.payload))
+        if let prior = relationship.inboundReceipts.first(where: {
+            $0.isReplayCandidate(
+                sourceScopeId: relationship.id,
+                logicalEventId: envelope.eventId,
+                envelopeId: envelope.id
+            )
+        }) {
+            guard prior.isExactReplay(
+                sourceScopeId: relationship.id,
+                logicalEventId: envelope.eventId,
+                envelopeId: envelope.id,
+                envelopeDigest: digest
+            ) else {
+                throw HeadlessMessagingClientError.conflictingEnvelope
+            }
+            return nil
+        }
+
+        var conversation: Conversation
+        if let existing = sessions[envelope.sessionId] {
+            conversation = existing
+        } else {
+            guard envelope.bootstrap.signedPrekeyMaterial != nil else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            conversation = try MessageEngine.createInboundEndpointSession(
+                relationship: relationship,
+                bootstrap: envelope.bootstrap,
+                now: envelope.sentAt
+            )
+            guard conversation.sessionId == envelope.sessionId else {
+                throw HeadlessMessagingClientError.conflictingEnvelope
+            }
+        }
+        let result = try MessageEngine.decryptDirectV4(
+            envelope: envelope,
+            relationship: relationship,
+            conversation: &conversation
+        )
+        let event: ConversationEvent
+        switch result.disposition {
+        case .application(let application, let projection):
+            event = application
+            switch projection {
+            case .deliveryReceipt(let receipt):
+                try applyPeerReceipt(
+                    receipt,
+                    state: .peerStored,
+                    event: application,
+                    relationship: &relationship
+                )
+            case .readReceipt(let receipt):
+                try applyPeerReceipt(
+                    receipt,
+                    state: .peerRead,
+                    event: application,
+                    relationship: &relationship
+                )
+            default:
+                break
+            }
+            if let body = projection.body {
+                _ = MessageEngine.appendMessage(
+                    id: application.id,
+                    body: body,
+                    direction: .received,
+                    counter: envelope.messageCounter,
+                    timestamp: envelope.sentAt,
+                    conversation: &conversation,
+                    messageKey: result.messageKey
+                )
+            }
+        case .control(let control, let auditEvent):
+            event = auditEvent
+            switch control {
+            case .sessionReset:
+                conversation.markReset()
+            case .routeSetUpdate(let update):
+                try applyPeerRouteSetUpdate(update, relationship: &relationship)
+            case .routeProbe(let probe):
+                try applyRouteProbe(
+                    probe,
+                    sourceRouteID: sourceRouteID,
+                    receivedAt: auditEvent.createdAt,
+                    relationship: &relationship
+                )
+            case .endpointPrekeyUpdate(let update):
+                try applyPeerPrekeyUpdate(update, relationship: &relationship)
+            case .resendRequest, .continuityOffer:
+                break
+            }
+        case .quarantinedControl(let quarantine):
+            event = quarantine.event
+        }
+        _ = try relationship.appendEvent(event)
+        _ = try relationship.recordInboundReceipt(
+            InboundEnvelopeReceiptV2(
+                sourceScopeId: relationship.id,
+                logicalEventId: envelope.eventId,
+                envelopeId: envelope.id,
+                envelopeDigest: digest,
+                processedAt: Date()
+            )
+        )
+        conversation.markMessageProcessed()
+        sessions[conversation.sessionId] = conversation
+        return event
+    }
+
+    private func applyPeerReceipt(
+        _ receipt: EventReceiptContentV1,
+        state: MessageDeliveryState,
+        event: ConversationEvent,
+        relationship: inout PairwiseRelationshipV2
+    ) throws {
+        guard event.authorEndpointHandle
+                == relationship.peerIdentity.sendRoutes.ownerEndpointHandle,
+              let target = relationship.events.first(where: {
+                  $0.id == receipt.targetEventId
+              }),
+              target.authorEndpointHandle == relationship.localEndpointHandle,
+              target.kind != .receipt else {
+            throw HeadlessMessagingClientError.conflictingEnvelope
+        }
+        for index in relationship.deliveryStates.indices
+            where relationship.deliveryStates[index].eventId == target.id
+                && relationship.deliveryStates[index].destinationEndpoint
+                    == relationship.peerIdentity.sendRoutes.ownerEndpointHandle {
+            _ = relationship.deliveryStates[index].advance(
+                to: state,
+                at: max(event.createdAt, relationship.deliveryStates[index].updatedAt)
+            )
+        }
+    }
+
+    private func applyPeerRouteSetUpdate(
+        _ update: RelationshipRouteSetUpdateV2,
+        relationship: inout PairwiseRelationshipV2
+    ) throws {
+        guard update.relationshipID == relationship.id,
+              update.routeSet.ownerEndpointHandle
+                == relationship.peerIdentity.sendRoutes.ownerEndpointHandle else {
+            throw HeadlessMessagingClientError.conflictingEnvelope
+        }
+        if update.routeSet == relationship.peerIdentity.sendRoutes { return }
+        guard update.routeSet.isValidSuccessor(
+            of: relationship.peerIdentity.sendRoutes,
+            ownerSigningPublicKey: relationship.peerIdentity.endpointBinding.signingPublicKey
+        ) else {
+            throw HeadlessMessagingClientError.conflictingEnvelope
+        }
+        relationship.peerIdentity.sendRoutes = update.routeSet
+    }
+
+    private func applyPeerPrekeyUpdate(
+        _ update: RelationshipEndpointPrekeyUpdateV2,
+        relationship: inout PairwiseRelationshipV2
+    ) throws {
+        guard update.relationshipID == relationship.id else {
+            throw HeadlessMessagingClientError.conflictingEnvelope
+        }
+        let current = relationship.peerIdentity.endpointBinding
+        let candidate = update.endpointBinding
+        if candidate == current { return }
+        guard candidate.signingPublicKey == current.signingPublicKey,
+              candidate.agreementPublicKey == current.agreementPublicKey,
+              candidate.capabilities == current.capabilities,
+              candidate.issuedAt == current.issuedAt,
+              candidate.authoritySignature == current.authoritySignature,
+              candidate.authorizationDigest == current.authorizationDigest,
+              candidate.prekeyBundle.createdAt > current.prekeyBundle.createdAt,
+              (try? candidate.verified(
+                  authoritySigningPublicKey: relationship.peerIdentity.signingPublicKey,
+                  now: candidate.prekeyBundle.createdAt
+              )) != nil else {
+            throw HeadlessMessagingClientError.conflictingEnvelope
+        }
+        relationship.peerIdentity.endpointBinding = candidate
+    }
+
+    private func applyRouteProbe(
+        _ probe: RelationshipRouteProbeV2,
+        sourceRouteID: OpaqueReceiveRouteIDV2,
+        receivedAt: Date,
+        relationship: inout PairwiseRelationshipV2
+    ) throws {
+        guard probe.relationshipID == relationship.id,
+              probe.routeID == sourceRouteID,
+              probe.routeSetRevision == relationship.localAdvertisedRoutes.revision,
+              relationship.localAdvertisedRoutes.routes.contains(where: {
+                  $0.routeID == probe.routeID && $0.state == .testing
+              }) else {
+            throw HeadlessMessagingClientError.conflictingEnvelope
+        }
+        let replaced = relationship.localAdvertisedRoutes.routes.compactMap {
+            $0.state == .active ? $0.routeID : nil
+        }
+        guard !replaced.isEmpty else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        relationship.localAdvertisedRoutes = try relationship.localAdvertisedRoutes
+            .promotingProbedRoute(
+                probe.routeID,
+                replacing: replaced,
+                testedAt: receivedAt,
+                overlapUntil: receivedAt.addingTimeInterval(5 * 60),
+                signingKey: relationship.localIdentity.localEndpoint.signingKey,
+                issuedAt: receivedAt
+            )
+        if let intent = relationship.protocolIntents.first(where: {
+            $0.kind == .rolloverRoute
+                && $0.targetIdentifier == probe.routeID.rawValue
+                && !$0.state.isTerminal
+        }) {
+            try finalizeProtocolIntent(
+                id: intent.id,
+                relationship: &relationship,
+                at: receivedAt
+            )
+        }
+    }
+
+    private func routeProbesToSend(
+        in relationship: PairwiseRelationshipV2
+    ) -> [RelationshipRouteProbeV2] {
+        let sent = Set(relationship.events.compactMap { event -> String? in
+            guard event.authorEndpointHandle == relationship.localEndpointHandle,
+                  event.kind == .control,
+                  event.content.type == RelationshipControlKindV2.routeProbe.contentType,
+                  let probe = try? NoctweaveCoder.decode(
+                      RelationshipRouteProbeV2.self,
+                      from: event.content.payload
+                  ), probe.routeSetRevision == relationship.peerIdentity.sendRoutes.revision else {
+                return nil
+            }
+            return probe.routeID.rawValue.base64EncodedString()
+        })
+        return relationship.peerIdentity.sendRoutes.routes.compactMap { route in
+            let key = route.routeID.rawValue.base64EncodedString()
+            guard route.state == .testing, !sent.contains(key) else { return nil }
+            return RelationshipRouteProbeV2(
+                relationshipID: relationship.id,
+                routeID: route.routeID,
+                routeSetRevision: relationship.peerIdentity.sendRoutes.revision
+            )
+        }
+    }
+
+    private func localRouteSetNeedsPublication(
+        in relationship: PairwiseRelationshipV2
+    ) -> Bool {
+        guard relationship.localAdvertisedRoutes.revision > 0 else { return false }
+        return !relationship.events.contains { event in
+            guard event.authorEndpointHandle == relationship.localEndpointHandle,
+                  event.kind == .control,
+                  event.content.type
+                    == RelationshipControlKindV2.routeSetUpdate.contentType,
+                  let update = try? NoctweaveCoder.decode(
+                      RelationshipRouteSetUpdateV2.self,
+                      from: event.content.payload
+                  ) else {
+                return false
+            }
+            return update.routeSet == relationship.localAdvertisedRoutes
+        }
+    }
+
+    private func deliveryReceiptTargets(
+        in relationship: PairwiseRelationshipV2
+    ) -> [UUID] {
+        guard relationship.localPolicy.allowsUserSending,
+              relationship.localPolicy.deliveryReceiptsEnabled,
+              relationship.peerIdentity.endpointBinding.capabilities
+            .supports(contentType: .deliveryReceipt) else {
+            return []
+        }
+        let receipted = Set(relationship.events.compactMap { event -> UUID? in
+            guard event.authorEndpointHandle == relationship.localEndpointHandle,
+                  event.kind == .receipt,
+                  event.content.type == .deliveryReceipt,
+                  let receipt = try? NoctweaveCoder.decode(
+                      EventReceiptContentV1.self,
+                      from: event.content.payload
+                  ) else {
+                return nil
+            }
+            return receipt.targetEventId
+        })
+        return relationship.events.compactMap { event in
+            guard event.authorEndpointHandle
+                    == relationship.peerIdentity.sendRoutes.ownerEndpointHandle,
+                  event.kind == .application,
+                  !receipted.contains(event.id) else {
+                return nil
+            }
+            return event.id
+        }
+    }
+
+    private func isReceiptablePeerEvent(
+        _ eventID: UUID,
+        in relationship: PairwiseRelationshipV2
+    ) -> Bool {
+        relationship.events.contains {
+            $0.id == eventID
+                && $0.authorEndpointHandle
+                    == relationship.peerIdentity.sendRoutes.ownerEndpointHandle
+                && $0.kind == .application
+        }
+    }
+
+    private func hasLocalReceipt(
+        type: ContentTypeId,
+        targetEventID: UUID,
+        in relationship: PairwiseRelationshipV2
+    ) -> Bool {
+        relationship.events.contains { event in
+            guard event.authorEndpointHandle == relationship.localEndpointHandle,
+                  event.kind == .receipt,
+                  event.content.type == type,
+                  let receipt = try? NoctweaveCoder.decode(
+                      EventReceiptContentV1.self,
+                      from: event.content.payload
+                  ) else {
+                return false
+            }
+            return receipt.targetEventId == targetEventID
+        }
+    }
+
+    private func controlAuditEvent(
+        _ control: AuthenticatedRelationshipControlV2,
+        relationship: PairwiseRelationshipV2,
+        createdAt: Date
+    ) -> ConversationEvent {
+        ConversationEvent(
+            id: control.eventID,
+            clientTransactionId: control.nonce,
+            conversationId: relationship.conversationID,
+            authorEndpointHandle: relationship.localEndpointHandle,
+            createdAt: createdAt,
+            kind: .control,
+            content: EncodedContent(
+                type: control.type,
+                parameters: ["wirePayloadVersion": String(NoctweaveWirePayloadV2.version)],
+                payload: control.encodedPayload,
+                fallbackText: nil,
+                disposition: .silent
+            )
         )
     }
 
-    private func upload(chunks: [AttachmentChunk], to relay: RelayEndpoint, ttlSeconds: Int?) async throws {
-        let client = relayClient(for: relay)
-        for chunk in chunks {
-            let response = try await client.send(
-                .uploadAttachment(
-                    UploadAttachmentRequest(
-                        attachmentId: chunk.attachmentId,
-                        chunkIndex: chunk.chunkIndex,
-                        payload: chunk.payload,
-                        ttlSeconds: ttlSeconds
-                    )
-                ),
-                timeout: timeout
-            )
-            guard response.type == .attachment || response.type == .ok else {
-                throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
-            }
+    private func replaceRelationship(_ relationship: PairwiseRelationshipV2) throws {
+        var compacted = relationship
+        try compacted.compactDurableState()
+        try state.updateActivePersona { persona in
+            try persona.upsert(relationship: compacted)
         }
     }
 
-    private func attachmentInfo(id: UUID, in state: ClientState) throws -> AttachmentInfo {
-        for conversation in state.conversations {
-            if let info = conversation.messages.compactMap(\.attachment).first(where: { $0.descriptor.id == id }) {
-                return info
-            }
+    private func completedIntentIDs(
+        in relationship: PairwiseRelationshipV2
+    ) -> Set<UUID> {
+        Set(relationship.protocolIntents.filter {
+            $0.state == .finalized
+        }.map(\.id))
+    }
+
+    private func finalizeProtocolIntent(
+        id: UUID,
+        relationship: inout PairwiseRelationshipV2,
+        at date: Date
+    ) throws {
+        guard let index = relationship.protocolIntents.firstIndex(where: {
+            $0.id == id
+        }) else {
+            throw HeadlessMessagingClientError.invalidState
         }
-        throw HeadlessMessagingClientError.attachmentNotFound(id.uuidString)
+        let current = relationship.protocolIntents[index]
+        if current.state == .finalized { return }
+        let attemptID = current.lastAttemptId ?? UUID()
+        guard let begun = current.beginningAttempt(
+            id: attemptID,
+            completedIntentIds: completedIntentIDs(in: relationship),
+            at: max(date, current.updatedAt)
+        ), let published = begun.advancing(
+            to: .published,
+            attemptId: attemptID,
+            at: max(date, begun.updatedAt)
+        ), let committed = published.advancing(
+            to: .committed,
+            attemptId: attemptID,
+            at: max(date, published.updatedAt)
+        ), let finalized = committed.advancing(
+            to: .finalized,
+            attemptId: attemptID,
+            at: max(date, committed.updatedAt)
+        ) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        relationship.protocolIntents[index] = finalized
     }
 
     private func relayClient(for endpoint: RelayEndpoint) -> RelayClient {
-        RelayClient(endpoint: endpoint, authToken: authToken)
+        let token = state.relayPreferences.first(where: {
+            $0.endpoint == endpoint
+        })?.accessPassword
+        return RelayClient(endpoint: endpoint, authToken: token)
     }
 
-    private func requireOK(_ response: RelayResponse) throws {
-        guard response.type == .ok || response.type == .delivered else {
-            throw HeadlessMessagingClientError.relayRejected(Self.redactedRelayRejection(response))
+    private func persist() async throws {
+        guard state.isStructurallyValid else {
+            throw HeadlessMessagingClientError.invalidState
         }
+        try await stateStore.save(state)
     }
 
-    private static func redactedRelayRejection(_ response: RelayResponse) -> String {
-        guard let error = response.error?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !error.isEmpty else {
-            return response.type == .error
-                ? "Relay rejected the request."
-                : "Relay returned an unexpected response."
+    private func persistGroupRuntime(_ record: GroupRuntimeRecord) async throws {
+        guard record.isStructurallyValid else {
+            throw HeadlessMessagingClientError.invalidState
         }
+        try state.updateActivePersona { persona in
+            try persona.upsert(groupRuntime: record)
+        }
+        try await persist()
+    }
+}
 
-        let lowercased = error.lowercased()
-        if lowercased.contains("unauthorized") || lowercased.contains("forbidden") {
-            return "Relay authorization failed."
-        }
-        if lowercased.contains("proof") || lowercased.contains("signature") {
-            return "Relay proof verification failed."
-        }
-        if lowercased.contains("not found") || lowercased.contains("not registered") {
-            return "Relay resource was not found."
-        }
-        if lowercased.contains("rate") || lowercased.contains("quota") || lowercased.contains("limit") {
-            return "Relay rate limit was reached."
-        }
-        if lowercased.contains("disabled") || lowercased.contains("not allowed") {
-            return "Relay policy rejected the request."
-        }
-        if lowercased.contains("invalid") || lowercased.contains("malformed") || lowercased.contains("missing") {
-            return "Relay rejected an invalid request."
-        }
-        return "Relay rejected the request."
+private actor HeadlessGroupRuntimePersistence: GroupRuntimeRecordPersistence {
+    private var record: GroupRuntimeRecord
+    private let saveHandler: @Sendable (GroupRuntimeRecord) async throws -> Void
+
+    init(
+        initialRecord: GroupRuntimeRecord,
+        saveHandler: @escaping @Sendable (GroupRuntimeRecord) async throws -> Void
+    ) {
+        record = initialRecord
+        self.saveHandler = saveHandler
     }
 
-    private func resolveContact(_ selector: String, in contacts: [Contact]) throws -> Contact {
-        let needle = selector.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !needle.isEmpty else {
-            throw HeadlessMessagingClientError.contactNotFound(selector)
-        }
-        let matches = contacts.filter { contact in
-            contact.id.uuidString.caseInsensitiveCompare(needle) == .orderedSame
-                || contact.fingerprint.caseInsensitiveCompare(needle) == .orderedSame
-                || contact.displayName.localizedCaseInsensitiveCompare(needle) == .orderedSame
-        }
-        guard !matches.isEmpty else {
-            throw HeadlessMessagingClientError.contactNotFound(selector)
-        }
-        guard matches.count == 1 else {
-            throw HeadlessMessagingClientError.ambiguousContact(selector)
-        }
-        return matches[0]
-    }
+    func load() async throws -> GroupRuntimeRecord? { record }
 
-    private static func randomBytes(count: Int) throws -> Data {
-        var bytes = [UInt8](repeating: 0, count: count)
-        #if canImport(Security)
-        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
-        guard status == errSecSuccess else {
-            throw CryptoError.operationFailed
+    func save(_ record: GroupRuntimeRecord) async throws {
+        guard record.isStructurallyValid else {
+            throw GroupRuntimeError.invalidRecord
         }
-        #else
-        for index in bytes.indices {
-            bytes[index] = UInt8.random(in: 0...255)
-        }
-        #endif
-        return Data(bytes)
+        try await saveHandler(record)
+        self.record = record
     }
+}
 
-    private static func encryptAttachmentChunks(
-        data: Data,
-        fileName: String?,
-        mimeType: String,
-        chunkSize: Int,
-        messageKey: SymmetricKey,
-        context: AttachmentCryptoContext,
-        relayTTLSeconds: Int?
-    ) throws -> (AttachmentDescriptor, [AttachmentChunk]) {
-        guard !data.isEmpty, data.count <= AttachmentDescriptor.maximumTransportBytes else {
-            throw HeadlessMessagingClientError.invalidAttachmentDescriptor
+private extension RelationshipControlKindV2 {
+    var isRelationshipMaintenanceV2: Bool {
+        switch self {
+        case .routeSetUpdate, .routeProbe, .endpointPrekeyUpdate:
+            return true
+        case .sessionReset, .resendRequest, .continuityOffer:
+            return false
         }
-        let safeChunkSize = max(1, min(chunkSize, AttachmentDescriptor.maximumTransportChunkBytes))
-        let attachmentId = UUID()
-        let chunkCount = (data.count / safeChunkSize) + (data.count % safeChunkSize == 0 ? 0 : 1)
-        guard chunkCount <= AttachmentDescriptor.maximumTransportChunks else {
-            throw HeadlessMessagingClientError.invalidAttachmentDescriptor
-        }
-        let normalizedMIME = mimeType.trimmingCharacters(in: .whitespacesAndNewlines)
-        let descriptor = AttachmentDescriptor(
-            id: attachmentId,
-            fileName: nil,
-            mimeType: normalizedMIME.isEmpty
-                ? "application/octet-stream"
-                : normalizedMIME,
-            byteCount: data.count,
-            sha256: AttachmentCrypto.sha256(data),
-            chunkCount: chunkCount,
-            chunkSize: safeChunkSize,
-            relayTTLSeconds: relayTTLSeconds
-        )
-        guard descriptor.isStructurallyValid() else {
-            throw HeadlessMessagingClientError.invalidAttachmentDescriptor
-        }
-        var chunks: [AttachmentChunk] = []
-        chunks.reserveCapacity(chunkCount)
-        for chunkIndex in 0..<chunkCount {
-            let start = data.index(data.startIndex, offsetBy: chunkIndex * safeChunkSize)
-            let endOffset = min(data.count, (chunkIndex + 1) * safeChunkSize)
-            let end = data.index(data.startIndex, offsetBy: endOffset)
-            let plaintext = data[start..<end]
-            let aad = AttachmentCrypto.authenticatedData(
-                conversationId: context.conversationId,
-                sessionId: context.sessionId,
-                messageCounter: context.messageCounter,
-                attachmentId: attachmentId,
-                chunkIndex: chunkIndex,
-                byteCount: plaintext.count
-            )
-            var plaintextCopy = Data(plaintext)
-            let payload: EncryptedPayload
-            do {
-                defer { plaintextCopy.secureWipe() }
-                payload = try AttachmentCrypto.encryptChunk(
-                    plaintext: plaintextCopy,
-                    messageKey: messageKey,
-                    attachmentId: attachmentId,
-                    chunkIndex: chunkIndex,
-                    authenticatedData: aad
-                )
-            }
-            chunks.append(AttachmentChunk(attachmentId: attachmentId, chunkIndex: chunkIndex, payload: payload))
-        }
-        return (descriptor, chunks)
-    }
-
-    private static func attachmentTitle(for descriptor: AttachmentDescriptor) -> String {
-        let mimeType = descriptor.mimeType
-            .split(separator: ";", maxSplits: 1)
-            .first?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() ?? descriptor.mimeType.lowercased()
-        if mimeType.hasPrefix("audio/") {
-            return "Voice message"
-        }
-        if mimeType.hasPrefix("image/") {
-            return "Image"
-        }
-        return "Attachment"
-    }
-
-    private static func attachmentChunkPlaintextSize(
-        descriptor: AttachmentDescriptor,
-        chunkIndex: Int
-    ) -> Int {
-        guard descriptor.chunkCount > 0 else { return 0 }
-        if chunkIndex == descriptor.chunkCount - 1 {
-            return descriptor.byteCount - (descriptor.chunkSize * chunkIndex)
-        }
-        return descriptor.chunkSize
-    }
-
-    private static func mailboxRouteKey(relay: RelayEndpoint, inboxId: String) -> String {
-        "\(relay.transport.rawValue):\(relay.useTLS ? 1 : 0):\(relay.host.lowercased()):\(relay.port):\(inboxId.lowercased())"
-    }
-
-    private static func makeActorProof(
-        signingKey: SigningKeyPair,
-        signableDataBuilder: (RelayActorProof) throws -> Data
-    ) throws -> RelayActorProof {
-        let signedAt = Date()
-        let nonce = UUID()
-        let placeholder = RelayActorProof(
-            fingerprint: CryptoBox.fingerprint(for: signingKey.publicKeyData),
-            publicSigningKey: signingKey.publicKeyData,
-            signedAt: signedAt,
-            nonce: nonce,
-            signature: Data()
-        )
-        let signableData = try signableDataBuilder(placeholder)
-        return try RelayActorProof.make(
-            signingKey: signingKey,
-            signableData: signableData,
-            signedAt: signedAt,
-            nonce: nonce
-        )
-    }
-
-    /// Creates the two independent proofs required to bind an opaque relay
-    /// consumer to one route. The inbox key authorizes the binding; the fresh
-    /// route key proves possession and becomes the only key accepted for
-    /// subsequent sync and cursor commits.
-    private static func makeMailboxConsumerRegistrationRequest(
-        inboxId: String,
-        consumerId: MailboxConsumerId,
-        startingSequence: UInt64?,
-        authorityKey: SigningKeyPair,
-        consumerKey: SigningKeyPair,
-        sponsorConsumerId: MailboxConsumerId? = nil,
-        sponsorKey: SigningKeyPair? = nil
-    ) throws -> RegisterMailboxConsumerRequest {
-        guard (sponsorConsumerId == nil) == (sponsorKey == nil) else {
-            throw CryptoError.invalidPayload
-        }
-        let draft = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: consumerId,
-            consumerSigningPublicKey: consumerKey.publicKeyData,
-            sponsorConsumerId: sponsorConsumerId,
-            startingSequence: startingSequence
-        )
-        let authorityProof = try makeActorProof(signingKey: authorityKey) { proof in
-            try draft.authoritySignableData(for: proof)
-        }
-        let consumerProof = try makeActorProof(signingKey: consumerKey) { proof in
-            try draft.consumerSignableData(for: proof)
-        }
-        let sponsorProof = try sponsorKey.map { sponsorKey in
-            try makeActorProof(signingKey: sponsorKey) { proof in
-                try draft.sponsorSignableData(for: proof)
-            }
-        }
-        return RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: consumerId,
-            consumerSigningPublicKey: consumerKey.publicKeyData,
-            sponsorConsumerId: sponsorConsumerId,
-            startingSequence: startingSequence,
-            authorityProof: authorityProof,
-            consumerProof: consumerProof,
-            sponsorProof: sponsorProof
-        )
     }
 }

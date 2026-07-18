@@ -23,13 +23,11 @@ func makeTestDirectEnvelope(
         senderEndpointHandle: RelationshipEndpointHandle(
             rawValue: Data(repeating: 0x51, count: 32).base64EncodedString()
         ),
-        senderCertificateDigest: Data(repeating: 0x52, count: 32),
-        senderEndpointSetEpoch: 1,
+        senderBindingDigest: Data(repeating: 0x52, count: 32),
         recipientEndpointHandle: RelationshipEndpointHandle(
             rawValue: Data(repeating: 0x53, count: 32).base64EncodedString()
         ),
-        recipientCertificateDigest: Data(repeating: 0x54, count: 32),
-        recipientEndpointSetEpoch: 1,
+        recipientBindingDigest: Data(repeating: 0x54, count: 32),
         cipherSuite: DirectV4CipherSuite.identifier,
         negotiatedCapabilitiesDigest: Data(repeating: 0x55, count: 32),
         bootstrap: .none,

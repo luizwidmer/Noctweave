@@ -1,384 +1,133 @@
-import CryptoKit
+import Foundation
 import XCTest
 @testable import NoctweaveCore
 
 final class ArchitectureV2RelayWireTests: XCTestCase {
-    func testMailboxConsumerAuthorityProofCanonicalBytesMatchJavaScriptVector() throws {
-        let consumerId = MailboxConsumerId(
-            rawValue: Data(repeating: 0x33, count: 32).base64EncodedString()
-        )
-        let request = RegisterMailboxConsumerRequest(
-            inboxId: "noctweave1qvpsxqcrqvpsxqcrqvpsxqcrqvpsxqcrqvpsxqcrqvpsxqcrqvpskx0f2v",
-            consumerId: consumerId,
-            consumerSigningPublicKey: Data(repeating: 0x22, count: 1_952),
-            startingSequence: 7
-        )
-        let signedAt = try XCTUnwrap(
-            ISO8601DateFormatter().date(from: "2026-07-16T12:34:56Z")
-        )
-        let proof = RelayActorProof(
-            fingerprint: "",
-            publicSigningKey: Data(),
-            signedAt: signedAt,
-            nonce: try XCTUnwrap(UUID(uuidString: "11111111-1111-4111-8111-111111111111")),
-            signature: Data()
-        )
-
-        let digest = SHA256.hash(data: try request.authoritySignableData(for: proof))
-        XCTAssertEqual(
-            digest.map { String(format: "%02x", $0) }.joined(),
-            "5298f3e02de00b173dab621c147252f3988d32d9ecbfe8b1592fda649cd90f2f"
-        )
-    }
-
-    func testMailboxRawValueTypesUseCanonicalStringWireShape() throws {
-        let consumerId = MailboxConsumerId(
-            rawValue: Data(repeating: 0x33, count: 32).base64EncodedString()
-        )
-        let cursor = MailboxCursor(rawValue: "opaque:7")
-        let request = CommitMailboxCursorRequest(
-            inboxId: "noctweave1qvpsxqcrqvpsxqcrqvpsxqcrqvpsxqcrqvpsxqcrqvpsxqcrqvpskx0f2v",
-            consumerId: consumerId,
-            cursor: cursor,
-            sequence: 7
-        )
-        let encoded = try NoctweaveCoder.encode(request, sortedKeys: true)
-        let object = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-        )
-        XCTAssertEqual(object["consumerId"] as? String, consumerId.rawValue)
-        XCTAssertEqual(object["cursor"] as? String, cursor.rawValue)
-        XCTAssertNoThrow(try NoctweaveCoder.decode(CommitMailboxCursorRequest.self, from: encoded))
-    }
-
-    func testRelayWireKeepsMailboxEventsUntilEveryConsumerCommits() async throws {
+    func testOpaqueRouteLifecycleAcrossRelayWire() async throws {
         let port = UInt16.random(in: 58_100...60_000)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
-        let server = RelayServer(store: RelayStore())
+        let server = RelayServer(
+            store: RelayStore(),
+            opaqueRouteStore: OpaqueRouteRelayStoreV2()
+        )
         try server.start(host: "127.0.0.1", port: port)
         defer { server.stop() }
         try await Task.sleep(nanoseconds: 200_000_000)
 
         let client = RelayClient(endpoint: endpoint)
-        let accessKey = try SigningKeyPair.generate()
-        let inboxId = InboxAddress.derived(from: accessKey.publicKeyData)
-        var inboxRegistration = RegisterInboxRequest.privacyMinimizedV2(
-            inboxId: inboxId,
-            accessPublicKey: accessKey.publicKeyData
+        let material = try OpaqueRouteClientCapabilityMaterialV2()
+        let payloadKey = OpaqueRoutePayloadKeyV2.generate()
+        let issuedAt = Date()
+        let policy = OpaqueRoutePolicyV2(
+            paddingBucket: .bytes4096,
+            retentionBucket: .oneHour,
+            quotaBucket: .packets64
         )
-        inboxRegistration = RegisterInboxRequest.privacyMinimizedV2(
-            inboxId: inboxId,
-            accessPublicKey: accessKey.publicKeyData,
-            accessProof: try makeProof(key: accessKey) { try inboxRegistration.signableData(for: $0) }
+        let lease = try OpaqueRouteLeaseV2(
+            issuedAt: issuedAt,
+            expiresAt: issuedAt.addingTimeInterval(3_600),
+            policy: policy
         )
-        let inboxResponse = try await client.send(.registerInbox(inboxRegistration))
-        XCTAssertEqual(inboxResponse.type, .ok)
+        let create = try material.makeCreateRequest(
+            lease: lease,
+            idempotencyKey: .generate()
+        )
 
-        let phone = MailboxConsumerId.generate()
-        let desktop = MailboxConsumerId.generate()
-        let phoneKey = try SigningKeyPair.generate()
-        let desktopKey = try SigningKeyPair.generate()
-        let phoneDraft = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: phone,
-            consumerSigningPublicKey: phoneKey.publicKeyData,
-            startingSequence: 0
-        )
-        let phoneRegistration = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: phone,
-            consumerSigningPublicKey: phoneKey.publicKeyData,
-            startingSequence: 0,
-            authorityProof: try makeProof(key: accessKey) { try phoneDraft.authoritySignableData(for: $0) },
-            consumerProof: try makeProof(key: phoneKey) { try phoneDraft.consumerSignableData(for: $0) }
-        )
-        let phoneResponse = try await client.send(.registerMailboxConsumer(phoneRegistration))
-        XCTAssertEqual(phoneResponse.mailboxConsumer?.consumerId, phone)
-
-        let unsponsoredDesktopDraft = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: desktop,
-            consumerSigningPublicKey: desktopKey.publicKeyData,
-            startingSequence: 0
-        )
-        let unsponsoredDesktop = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: desktop,
-            consumerSigningPublicKey: desktopKey.publicKeyData,
-            startingSequence: 0,
-            authorityProof: try makeProof(key: accessKey) {
-                try unsponsoredDesktopDraft.authoritySignableData(for: $0)
-            },
-            consumerProof: try makeProof(key: desktopKey) {
-                try unsponsoredDesktopDraft.consumerSignableData(for: $0)
-            }
-        )
-        let unsponsoredResponse = try await client.send(.registerMailboxConsumer(unsponsoredDesktop))
-        XCTAssertEqual(unsponsoredResponse.type, .error)
-
-        let desktopDraft = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: desktop,
-            consumerSigningPublicKey: desktopKey.publicKeyData,
-            sponsorConsumerId: phone,
-            startingSequence: 0
-        )
-        let desktopAuthorityProof = try makeProof(key: accessKey) {
-            try desktopDraft.authoritySignableData(for: $0)
+        let createResponse = try await client.send(.createOpaqueRouteV2(
+            CreateOpaqueRouteRelayRequestV2(
+                request: create,
+                renewCapability: material.renewCapability
+            )
+        ))
+        guard case .opaqueRoute(let created)? = createResponse.successBody else {
+            return XCTFail("Expected opaque route create response")
         }
-        let desktopConsumerProof = try makeProof(key: desktopKey) {
-            try desktopDraft.consumerSignableData(for: $0)
+        XCTAssertEqual(created.routeID, material.routeID)
+
+        let sendRoute = try OpaqueSendRouteV2(
+            routeID: material.routeID,
+            relay: endpoint,
+            sendCapability: material.sendCapability,
+            payloadKey: payloadKey,
+            routeRevision: created.lease.renewalSequence,
+            policy: created.lease.policy,
+            validFrom: created.lease.issuedAt,
+            expiresAt: created.lease.expiresAt,
+            state: .active,
+            testedAt: created.lease.issuedAt
+        )
+        let packet = try XCTUnwrap(
+            OpaqueRouteSealedBundleV2.seal(
+                Data("opaque relay wire".utf8),
+                to: sendRoute
+            ).packets.first
+        )
+        let appendResponse = try await client.send(.appendOpaqueRouteV2(
+            AppendOpaqueRouteRelayRequestV2(
+                packet: packet,
+                sendCapability: material.sendCapability
+            )
+        ))
+        guard case .opaqueRouteAppend(let receipt)? = appendResponse.successBody else {
+            return XCTFail("Expected opaque route append response")
         }
-        let wrongSponsorRegistration = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: desktop,
-            consumerSigningPublicKey: desktopKey.publicKeyData,
-            sponsorConsumerId: phone,
-            startingSequence: 0,
-            authorityProof: desktopAuthorityProof,
-            consumerProof: desktopConsumerProof,
-            sponsorProof: try makeProof(key: desktopKey) {
-                try desktopDraft.sponsorSignableData(for: $0)
-            }
-        )
-        let wrongSponsorResponse = try await client.send(
-            .registerMailboxConsumer(wrongSponsorRegistration)
-        )
-        XCTAssertEqual(wrongSponsorResponse.type, .error)
+        XCTAssertEqual(receipt.packetID, packet.packetID)
 
-        let desktopRegistration = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: desktop,
-            consumerSigningPublicKey: desktopKey.publicKeyData,
-            sponsorConsumerId: phone,
-            startingSequence: 0,
-            authorityProof: try makeProof(key: accessKey) {
-                try desktopDraft.authoritySignableData(for: $0)
-            },
-            consumerProof: try makeProof(key: desktopKey) {
-                try desktopDraft.consumerSignableData(for: $0)
-            },
-            sponsorProof: try makeProof(key: phoneKey) {
-                try desktopDraft.sponsorSignableData(for: $0)
-            }
-        )
-        let desktopResponse = try await client.send(.registerMailboxConsumer(desktopRegistration))
-        XCTAssertEqual(desktopResponse.mailboxConsumer?.consumerId, desktop)
+        let sync = try material.makeSyncRequest(after: nil, limit: 8)
+        let syncResponse = try await client.send(.syncOpaqueRouteV2(
+            SyncOpaqueRouteRelayRequestV2(
+                request: sync,
+                readCredential: material.readCredential
+            )
+        ))
+        guard case .opaqueRouteSync(let batch)? = syncResponse.successBody else {
+            return XCTFail("Expected opaque route sync response")
+        }
+        XCTAssertEqual(batch.packets.map(\.packet.packetID), [packet.packetID])
 
-        let envelope = makeEnvelope()
-        let deliveryResponse = try await client.send(
-            .deliver(DeliverRequest(inboxId: inboxId, envelope: envelope))
-        )
-        XCTAssertEqual(deliveryResponse.type, .delivered)
-        let phoneBatch = try await sync(client: client, key: phoneKey, inboxId: inboxId, consumer: phone)
-        XCTAssertEqual(phoneBatch.events.map(\.id), [envelope.id])
+        let commit = try material.makeCommitRequest(cursor: batch.nextCursor)
+        let commitResponse = try await client.send(.commitOpaqueRouteV2(
+            CommitOpaqueRouteRelayRequestV2(
+                request: commit,
+                readCredential: material.readCredential
+            )
+        ))
+        guard case .opaqueRouteCommit(let committed)? = commitResponse.successBody else {
+            return XCTFail("Expected opaque route commit response")
+        }
+        XCTAssertEqual(committed.committedCursor, batch.nextCursor)
 
-        var wrongKeySync = SyncMailboxRequest(inboxId: inboxId, consumerId: phone, maxCount: 10)
-        wrongKeySync = SyncMailboxRequest(
-            inboxId: inboxId,
-            consumerId: phone,
-            maxCount: 10,
-            consumerProof: try makeProof(key: desktopKey) { try wrongKeySync.signableData(for: $0) }
+        let renewal = try material.makeRenewRequest(
+            current: created,
+            newExpiry: created.lease.expiresAt.addingTimeInterval(3_600),
+            authorizedAt: Date(),
+            idempotencyKey: .generate()
         )
-        let wrongKeySyncResponse = try await client.send(.syncMailbox(wrongKeySync))
-        XCTAssertEqual(wrongKeySyncResponse.type, .error)
+        let renewalResponse = try await client.send(.renewOpaqueRouteV2(
+            RenewOpaqueRouteRelayRequestV2(
+                request: renewal,
+                renewCapability: material.renewCapability
+            )
+        ))
+        guard case .opaqueRoute(let renewed)? = renewalResponse.successBody else {
+            return XCTFail("Expected opaque route renewal response")
+        }
+        XCTAssertEqual(renewed.lease.renewalSequence, 1)
 
-        var wrongKeyCommit = CommitMailboxCursorRequest(
-            inboxId: inboxId,
-            consumerId: phone,
-            cursor: phoneBatch.nextCursor,
-            sequence: phoneBatch.nextSequence
+        let teardown = try material.makeTeardownRequest(
+            current: renewed,
+            authorizedAt: Date(),
+            idempotencyKey: .generate()
         )
-        wrongKeyCommit = CommitMailboxCursorRequest(
-            inboxId: inboxId,
-            consumerId: phone,
-            cursor: phoneBatch.nextCursor,
-            sequence: phoneBatch.nextSequence,
-            consumerProof: try makeProof(key: desktopKey) { try wrongKeyCommit.signableData(for: $0) }
-        )
-        let wrongKeyCommitResponse = try await client.send(.commitMailboxCursor(wrongKeyCommit))
-        XCTAssertEqual(wrongKeyCommitResponse.type, .error)
-
-        _ = try await commit(
-            client: client,
-            key: phoneKey,
-            inboxId: inboxId,
-            consumer: phone,
-            batch: phoneBatch
-        )
-        let desktopBatch = try await sync(client: client, key: desktopKey, inboxId: inboxId, consumer: desktop)
-        XCTAssertEqual(desktopBatch.events.map(\.id), [envelope.id])
-        _ = try await commit(
-            client: client,
-            key: desktopKey,
-            inboxId: inboxId,
-            consumer: desktop,
-            batch: desktopBatch
-        )
-        let empty = try await sync(client: client, key: phoneKey, inboxId: inboxId, consumer: phone)
-        XCTAssertTrue(empty.events.isEmpty)
-        XCTAssertEqual(empty.retentionFloor, 1)
-
-        var legacyFetch = FetchRequest(inboxId: inboxId, maxCount: 10)
-        legacyFetch = FetchRequest(
-            inboxId: inboxId,
-            maxCount: 10,
-            accessProof: try makeProof(key: accessKey) { try legacyFetch.signableData(for: $0) }
-        )
-        let legacyFetchResponse = try await client.send(.fetch(legacyFetch))
-        XCTAssertEqual(legacyFetchResponse.type, .error)
-
-        var revocation = RevokeMailboxConsumerRequest(inboxId: inboxId, consumerId: phone)
-        revocation = RevokeMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: phone,
-            authorityProof: try makeProof(key: accessKey) { try revocation.signableData(for: $0) }
-        )
-        let revocationResponse = try await client.send(.revokeMailboxConsumer(revocation))
-        XCTAssertEqual(revocationResponse.mailboxConsumer?.state, .revoked)
-        var revokedSync = SyncMailboxRequest(inboxId: inboxId, consumerId: phone, maxCount: 10)
-        revokedSync = SyncMailboxRequest(
-            inboxId: inboxId,
-            consumerId: phone,
-            maxCount: 10,
-            consumerProof: try makeProof(key: phoneKey) { try revokedSync.signableData(for: $0) }
-        )
-        let revokedSyncResponse = try await client.send(.syncMailbox(revokedSync))
-        XCTAssertEqual(revokedSyncResponse.type, .error)
-
-        let rejectedConsumer = MailboxConsumerId.generate()
-        let rejectedKey = try SigningKeyPair.generate()
-        let revokedSponsorDraft = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: rejectedConsumer,
-            consumerSigningPublicKey: rejectedKey.publicKeyData,
-            sponsorConsumerId: phone
-        )
-        let revokedSponsorRequest = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: rejectedConsumer,
-            consumerSigningPublicKey: rejectedKey.publicKeyData,
-            sponsorConsumerId: phone,
-            authorityProof: try makeProof(key: accessKey) {
-                try revokedSponsorDraft.authoritySignableData(for: $0)
-            },
-            consumerProof: try makeProof(key: rejectedKey) {
-                try revokedSponsorDraft.consumerSignableData(for: $0)
-            },
-            sponsorProof: try makeProof(key: phoneKey) {
-                try revokedSponsorDraft.sponsorSignableData(for: $0)
-            }
-        )
-        let revokedSponsorResponse = try await client.send(
-            .registerMailboxConsumer(revokedSponsorRequest)
-        )
-        XCTAssertEqual(revokedSponsorResponse.type, .error)
-
-        var desktopRevocation = RevokeMailboxConsumerRequest(inboxId: inboxId, consumerId: desktop)
-        desktopRevocation = RevokeMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: desktop,
-            authorityProof: try makeProof(key: accessKey) {
-                try desktopRevocation.signableData(for: $0)
-            }
-        )
-        _ = try await client.send(.revokeMailboxConsumer(desktopRevocation))
-        let lastDeviceDraft = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: rejectedConsumer,
-            consumerSigningPublicKey: rejectedKey.publicKeyData
-        )
-        let lastDeviceRequest = RegisterMailboxConsumerRequest(
-            inboxId: inboxId,
-            consumerId: rejectedConsumer,
-            consumerSigningPublicKey: rejectedKey.publicKeyData,
-            authorityProof: try makeProof(key: accessKey) {
-                try lastDeviceDraft.authoritySignableData(for: $0)
-            },
-            consumerProof: try makeProof(key: rejectedKey) {
-                try lastDeviceDraft.consumerSignableData(for: $0)
-            }
-        )
-        let lastDeviceResponse = try await client.send(
-            .registerMailboxConsumer(lastDeviceRequest)
-        )
-        XCTAssertEqual(lastDeviceResponse.type, .error)
-    }
-
-    private func sync(
-        client: RelayClient,
-        key: SigningKeyPair,
-        inboxId: String,
-        consumer: MailboxConsumerId
-    ) async throws -> MailboxSyncBatch {
-        var request = SyncMailboxRequest(inboxId: inboxId, consumerId: consumer, maxCount: 10)
-        request = SyncMailboxRequest(
-            inboxId: inboxId,
-            consumerId: consumer,
-            maxCount: 10,
-            consumerProof: try makeProof(key: key) { try request.signableData(for: $0) }
-        )
-        let response = try await client.send(.syncMailbox(request))
-        XCTAssertEqual(response.type, .mailboxSync)
-        return try XCTUnwrap(response.mailboxSync)
-    }
-
-    private func commit(
-        client: RelayClient,
-        key: SigningKeyPair,
-        inboxId: String,
-        consumer: MailboxConsumerId,
-        batch: MailboxSyncBatch
-    ) async throws -> MailboxConsumerRegistration {
-        var request = CommitMailboxCursorRequest(
-            inboxId: inboxId,
-            consumerId: consumer,
-            cursor: batch.nextCursor,
-            sequence: batch.nextSequence
-        )
-        request = CommitMailboxCursorRequest(
-            inboxId: inboxId,
-            consumerId: consumer,
-            cursor: batch.nextCursor,
-            sequence: batch.nextSequence,
-            consumerProof: try makeProof(key: key) { try request.signableData(for: $0) }
-        )
-        let response = try await client.send(.commitMailboxCursor(request))
-        return try XCTUnwrap(response.mailboxConsumer)
-    }
-
-    private func makeProof(
-        key: SigningKeyPair,
-        signable: (RelayActorProof) throws -> Data
-    ) throws -> RelayActorProof {
-        let signedAt = Date()
-        let nonce = UUID()
-        let placeholder = RelayActorProof(
-            fingerprint: CryptoBox.fingerprint(for: key.publicKeyData),
-            publicSigningKey: key.publicKeyData,
-            signedAt: signedAt,
-            nonce: nonce,
-            signature: Data()
-        )
-        return try RelayActorProof.make(
-            signingKey: key,
-            signableData: signable(placeholder),
-            signedAt: signedAt,
-            nonce: nonce
-        )
-    }
-
-    private func makeEnvelope() -> ProtocolEnvelopeV1 {
-        makeTestProtocolEnvelope(
-            conversationId: "wire-mailbox-v2",
-            counter: 1,
-            sentAt: Date(timeIntervalSince1970: 2_000),
-            payload: EncryptedPayload(
-                nonce: Data(repeating: 0x32, count: 12),
-                ciphertext: Data(repeating: 0x33, count: PaddedMessagePlaintext.minimumPaddedBytes),
-                tag: Data(repeating: 0x34, count: 16)
-            ),
-            signature: Data(repeating: 0x35, count: 3_309)
-        )
+        let teardownResponse = try await client.send(.teardownOpaqueRouteV2(
+            TeardownOpaqueRouteRelayRequestV2(
+                request: teardown,
+                teardownCapability: material.teardownCapability
+            )
+        ))
+        guard case .opaqueRoute(let tornDown)? = teardownResponse.successBody else {
+            return XCTFail("Expected opaque route teardown response")
+        }
+        XCTAssertEqual(tornDown.status, .tornDown)
     }
 }

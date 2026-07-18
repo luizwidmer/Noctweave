@@ -1,16 +1,45 @@
 import CryptoKit
 import Foundation
 
-/// Signed-state foundations for endpoint-aware groups.
+private struct StrictSignedGroupCodingKey: CodingKey, Hashable {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        self.intValue = nil
+    }
+
+    init?(intValue: Int) {
+        self.stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func requireExactSignedGroupKeys(
+    _ decoder: Decoder,
+    required: Set<String>,
+    optional: Set<String> = []
+) throws {
+    let strict = try decoder.container(keyedBy: StrictSignedGroupCodingKey.self)
+    let actual = Set(strict.allKeys.map(\.stringValue))
+    guard required.isSubset(of: actual), actual.isSubset(of: required.union(optional)) else {
+        throw DecodingError.dataCorrupted(
+            .init(codingPath: decoder.codingPath, debugDescription: "Unexpected group control schema")
+        )
+    }
+}
+
+/// Signed-state foundations for group-scoped membership and credentials.
 public enum NoctweaveSignedGroupV2 {
     public static let version = 2
     public static let experimentalProfile = GroupProtocolProfile.noctweavePQExperimentalV2
     public static let experimentalCipherSuite =
         "Noctweave-PQ-Group-Experimental-ML-KEM-768-ML-DSA-65-AES-256-GCM-SHA384-2"
-    public static let maximumKeyPackageBytes = 64 * 1_024
+    public static let maximumAdmissionBytes = 64 * 1_024
     public static let maximumStateBytes = 8 * 1_024 * 1_024
     public static let maximumWelcomeLifetimeSeconds: TimeInterval = 7 * 24 * 60 * 60
-    public static let maximumKeyPackageLifetimeSeconds: TimeInterval = 30 * 24 * 60 * 60
+    public static let maximumAdmissionLifetimeSeconds: TimeInterval = 30 * 24 * 60 * 60
     public static let maximumClockSkewSeconds: TimeInterval = 5 * 60
     public static let signatureBytes = 3_309
 }
@@ -19,11 +48,7 @@ public enum SignedGroupV2Error: Error, Equatable {
     case invalidStructure
     case unsupportedProfile
     case invalidContext
-    case invalidManifest
-    case endpointNotAuthorized
-    case invalidAuthoritySignature
-    case invalidEndpointSignature
-    case invalidClientSignature
+    case invalidCredentialSignature
     case invalidStateSignature
     case invalidCommitSignature
     case staleEpoch
@@ -33,32 +58,29 @@ public enum SignedGroupV2Error: Error, Equatable {
     case invalidTransition
     case wouldRemoveLastOwner
     case activeLeafLimitExceeded
-    case keyPackageMismatch
+    case admissionMismatch
     case invalidWelcomeSignature
-    case genesisTrustRequired
+    case genesisAdmissionRequired
     case groupDeleted
 }
 
-/// An opaque client handle that is unique to one group. It deliberately does
-/// not reuse a relationship-scoped or globally stable endpoint identifier.
-public struct GroupScopedClientHandleV2: RawRepresentable, Codable, Equatable, Hashable {
+/// An opaque credential handle generated independently for exactly one group.
+public struct GroupScopedCredentialHandleV2: RawRepresentable, Codable, Equatable, Hashable {
     public let rawValue: String
 
     public init(rawValue: String) {
         self.rawValue = rawValue
     }
 
-    /// Generates a group-only handle with no endpoint-derived input. The
-    /// endpoint binding, when one is locally verified, remains outside the
-    /// shared group transcript.
-    public static func generate() -> GroupScopedClientHandleV2 {
+    /// Generates a handle without any external identifier as input.
+    public static func generate() -> GroupScopedCredentialHandleV2 {
         var generator = SystemRandomNumberGenerator()
         while true {
             let bytes = Data((0..<32).map { _ in
                 UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
             })
             if bytes.contains(where: { $0 != 0 }) {
-                return GroupScopedClientHandleV2(rawValue: bytes.base64EncodedString())
+                return GroupScopedCredentialHandleV2(rawValue: bytes.base64EncodedString())
             }
         }
     }
@@ -71,97 +93,149 @@ public struct GroupScopedClientHandleV2: RawRepresentable, Codable, Equatable, H
     }
 }
 
-/// Privacy-minimized material committed for a new group client. It contains
-/// no identity-generation ID, endpoint ID, endpoint public key, manifest, full
-/// endpoint capability manifest, inbox, route, or relay identifier.
-public struct GroupClientAdmissionProjectionV2: Codable, Equatable, Identifiable {
+/// Self-authenticating, group-only admission material for one fresh credential.
+public struct GroupCredentialAdmissionV2: Codable, Equatable, Identifiable {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id
+        case version
+        case groupId
+        case memberHandle
+        case credentialHandle
+        case selection
+        case groupSigningPublicKey
+        case groupAgreementPublicKey
+        case contentTypes
+        case issuedAt
+        case expiresAt
+        case credentialPossessionSignature
+    }
+
     public let id: UUID
     public let version: Int
     public let groupId: UUID
-    public let groupUserId: UUID
-    public let clientHandle: GroupScopedClientHandleV2
+    public let memberHandle: GroupScopedMemberHandleV2
+    public let credentialHandle: GroupScopedCredentialHandleV2
     public let selection: GroupProtocolSelectionV2
     public let groupSigningPublicKey: Data
     public let groupAgreementPublicKey: Data
+    public let contentTypes: [ContentTypeCapabilityV2]
     public let issuedAt: Date
     public let expiresAt: Date
-    public let clientPossessionSignature: Data
+    public let credentialPossessionSignature: Data
 
     public init(
         id: UUID,
         version: Int = NoctweaveSignedGroupV2.version,
         groupId: UUID,
-        groupUserId: UUID,
-        clientHandle: GroupScopedClientHandleV2,
+        memberHandle: GroupScopedMemberHandleV2,
+        credentialHandle: GroupScopedCredentialHandleV2,
         selection: GroupProtocolSelectionV2,
         groupSigningPublicKey: Data,
         groupAgreementPublicKey: Data,
+        contentTypes: [ContentTypeCapabilityV2] = ProtocolCapabilityManifest.defaultContentTypes,
         issuedAt: Date,
         expiresAt: Date,
-        clientPossessionSignature: Data
+        credentialPossessionSignature: Data
     ) {
         self.id = id
         self.version = version
         self.groupId = groupId
-        self.groupUserId = groupUserId
-        self.clientHandle = clientHandle
+        self.memberHandle = memberHandle
+        self.credentialHandle = credentialHandle
         self.selection = selection
         self.groupSigningPublicKey = groupSigningPublicKey
         self.groupAgreementPublicKey = groupAgreementPublicKey
+        self.contentTypes = contentTypes.sorted {
+            ($0.authority, $0.name) < ($1.authority, $1.name)
+        }
         self.issuedAt = issuedAt
         self.expiresAt = expiresAt
-        self.clientPossessionSignature = clientPossessionSignature
+        self.credentialPossessionSignature = credentialPossessionSignature
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactSignedGroupKeys(
+            decoder,
+            required: Set(CodingKeys.allCases.map(\.rawValue))
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedContentTypes = try values.decode(
+            [ContentTypeCapabilityV2].self,
+            forKey: .contentTypes
+        )
+        self.init(
+            id: try values.decode(UUID.self, forKey: .id),
+            version: try values.decode(Int.self, forKey: .version),
+            groupId: try values.decode(UUID.self, forKey: .groupId),
+            memberHandle: try values.decode(GroupScopedMemberHandleV2.self, forKey: .memberHandle),
+            credentialHandle: try values.decode(GroupScopedCredentialHandleV2.self, forKey: .credentialHandle),
+            selection: try values.decode(GroupProtocolSelectionV2.self, forKey: .selection),
+            groupSigningPublicKey: try values.decode(Data.self, forKey: .groupSigningPublicKey),
+            groupAgreementPublicKey: try values.decode(Data.self, forKey: .groupAgreementPublicKey),
+            contentTypes: decodedContentTypes,
+            issuedAt: try values.decode(Date.self, forKey: .issuedAt),
+            expiresAt: try values.decode(Date.self, forKey: .expiresAt),
+            credentialPossessionSignature: try values.decode(Data.self, forKey: .credentialPossessionSignature)
+        )
+        guard contentTypes == decodedContentTypes, isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid group admission")
+            )
+        }
     }
 
     public static func create(
         id: UUID = UUID(),
         groupId: UUID,
-        groupUserId: UUID,
-        clientHandle: GroupScopedClientHandleV2 = .generate(),
+        memberHandle: GroupScopedMemberHandleV2,
+        credentialHandle: GroupScopedCredentialHandleV2 = .generate(),
         selection: GroupProtocolSelectionV2 = .currentExperimental,
         groupSigningKey: SigningKeyPair,
         groupAgreementKey: AgreementKeyPair,
+        contentTypes: [ContentTypeCapabilityV2] = ProtocolCapabilityManifest.defaultContentTypes,
         issuedAt: Date = Date(),
         expiresAt: Date
-    ) throws -> GroupClientAdmissionProjectionV2 {
-        var projection = GroupClientAdmissionProjectionV2(
+    ) throws -> GroupCredentialAdmissionV2 {
+        var projection = GroupCredentialAdmissionV2(
             id: id,
             groupId: groupId,
-            groupUserId: groupUserId,
-            clientHandle: clientHandle,
+            memberHandle: memberHandle,
+            credentialHandle: credentialHandle,
             selection: selection,
             groupSigningPublicKey: groupSigningKey.publicKeyData,
             groupAgreementPublicKey: groupAgreementKey.publicKeyData,
+            contentTypes: contentTypes,
             issuedAt: issuedAt,
             expiresAt: expiresAt,
-            clientPossessionSignature: Data()
+            credentialPossessionSignature: Data()
         )
         guard projection.isStructurallyValid(excludingSignature: true),
               let digest = projection.payloadDigest else {
             throw SignedGroupV2Error.invalidStructure
         }
-        projection = GroupClientAdmissionProjectionV2(
+        projection = GroupCredentialAdmissionV2(
             id: projection.id,
             groupId: projection.groupId,
-            groupUserId: projection.groupUserId,
-            clientHandle: projection.clientHandle,
+            memberHandle: projection.memberHandle,
+            credentialHandle: projection.credentialHandle,
             selection: projection.selection,
             groupSigningPublicKey: projection.groupSigningPublicKey,
             groupAgreementPublicKey: projection.groupAgreementPublicKey,
+            contentTypes: projection.contentTypes,
             issuedAt: projection.issuedAt,
             expiresAt: projection.expiresAt,
-            clientPossessionSignature: try groupSigningKey.sign(
+            credentialPossessionSignature: try groupSigningKey.sign(
                 try GroupAdmissionProjectionSignatureContextV2(
                     groupId: groupId,
-                    groupUserId: groupUserId,
-                    clientHandle: clientHandle,
+                    memberHandle: memberHandle,
+                    credentialHandle: credentialHandle,
                     payloadDigest: digest
                 ).signableData()
             )
         )
         return try projection.verified(
             forGroupId: groupId,
-            groupUserId: groupUserId,
+            memberHandle: memberHandle,
             selection: selection,
             now: issuedAt
         )
@@ -181,13 +255,13 @@ public struct GroupClientAdmissionProjectionV2: Codable, Equatable, Identifiable
 
     public func verified(
         forGroupId expectedGroupId: UUID,
-        groupUserId expectedGroupUserId: UUID,
+        memberHandle expectedMemberHandle: GroupScopedMemberHandleV2,
         selection expectedSelection: GroupProtocolSelectionV2,
         now: Date = Date()
-    ) throws -> GroupClientAdmissionProjectionV2 {
+    ) throws -> GroupCredentialAdmissionV2 {
         guard isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
         guard groupId == expectedGroupId,
-              groupUserId == expectedGroupUserId,
+              memberHandle == expectedMemberHandle,
               selection == expectedSelection else {
             throw SignedGroupV2Error.invalidContext
         }
@@ -196,16 +270,16 @@ public struct GroupClientAdmissionProjectionV2: Codable, Equatable, Identifiable
               now < expiresAt,
               let digest = payloadDigest,
               SigningKeyPair.verify(
-                  signature: clientPossessionSignature,
+                  signature: credentialPossessionSignature,
                   data: try GroupAdmissionProjectionSignatureContextV2(
                       groupId: groupId,
-                      groupUserId: groupUserId,
-                      clientHandle: clientHandle,
+                      memberHandle: memberHandle,
+                      credentialHandle: credentialHandle,
                       payloadDigest: digest
                   ).signableData(),
                   publicKeyData: groupSigningPublicKey
               ) else {
-            throw SignedGroupV2Error.invalidClientSignature
+            throw SignedGroupV2Error.invalidCredentialSignature
         }
         return self
     }
@@ -214,16 +288,17 @@ public struct GroupClientAdmissionProjectionV2: Codable, Equatable, Identifiable
         try? SignedGroupV2Hash.digest(payload)
     }
 
-    fileprivate var payload: GroupClientAdmissionProjectionPayloadV2 {
-        GroupClientAdmissionProjectionPayloadV2(
+    fileprivate var payload: GroupCredentialAdmissionPayloadV2 {
+        GroupCredentialAdmissionPayloadV2(
             version: version,
             id: id,
             groupId: groupId,
-            groupUserId: groupUserId,
-            clientHandle: clientHandle,
+            memberHandle: memberHandle,
+            credentialHandle: credentialHandle,
             selection: selection,
             groupSigningPublicKey: groupSigningPublicKey,
             groupAgreementPublicKey: groupAgreementPublicKey,
+            contentTypes: contentTypes,
             issuedAt: issuedAt,
             expiresAt: expiresAt
         )
@@ -231,568 +306,140 @@ public struct GroupClientAdmissionProjectionV2: Codable, Equatable, Identifiable
 
     private func isStructurallyValid(excludingSignature: Bool) -> Bool {
         version == NoctweaveSignedGroupV2.version
-            && clientHandle.isStructurallyValid
+            && memberHandle.isStructurallyValid
+            && credentialHandle.isStructurallyValid
             && selection.isStructurallyValid
             && selection == .currentExperimental
             && SigningKeyPair.isValidPublicKey(groupSigningPublicKey)
             && AgreementKeyPair.isValidPublicKey(groupAgreementPublicKey)
+            && !contentTypes.isEmpty
+            && contentTypes.count
+                <= NoctweaveArchitectureV2.maximumContentTypeCapabilities
+            && Set(contentTypes.map { "\($0.authority)\u{0}\($0.name)" }).count
+                == contentTypes.count
+            && contentTypes.allSatisfy(\.isStructurallyValid)
+            && contentTypes.contains {
+                $0.authority == ContentTypeId.text.authority
+                    && $0.name == ContentTypeId.text.name
+            }
             && issuedAt.timeIntervalSince1970.isFinite
             && expiresAt.timeIntervalSince1970.isFinite
             && expiresAt > issuedAt
             && expiresAt.timeIntervalSince(issuedAt)
-                <= NoctweaveSignedGroupV2.maximumKeyPackageLifetimeSeconds
+                <= NoctweaveSignedGroupV2.maximumAdmissionLifetimeSeconds
             && (excludingSignature
-                || clientPossessionSignature.count == NoctweaveSignedGroupV2.signatureBytes)
+                || credentialPossessionSignature.count == NoctweaveSignedGroupV2.signatureBytes)
     }
 }
 
-/// Adding a second client under an existing group user requires consent from
-/// one currently active client of that same user. An admin's commit signature
-/// alone cannot manufacture a sibling and impersonate that user.
-public struct GroupSiblingClientConsentV2: Codable, Equatable {
-    public let version: Int
-    public let groupId: UUID
-    public let groupUserId: UUID
-    public let newClientHandle: GroupScopedClientHandleV2
-    public let projectionDigest: Data
-    public let consentingClientHandle: GroupScopedClientHandleV2
-    public let baseEpoch: UInt64
-    public let nextEpoch: UInt64
-    public let signedAt: Date
-    public let signature: Data
-
-    public init(
-        version: Int = NoctweaveSignedGroupV2.version,
-        groupId: UUID,
-        groupUserId: UUID,
-        newClientHandle: GroupScopedClientHandleV2,
-        projectionDigest: Data,
-        consentingClientHandle: GroupScopedClientHandleV2,
-        baseEpoch: UInt64,
-        nextEpoch: UInt64,
-        signedAt: Date,
-        signature: Data
-    ) {
-        self.version = version
-        self.groupId = groupId
-        self.groupUserId = groupUserId
-        self.newClientHandle = newClientHandle
-        self.projectionDigest = projectionDigest
-        self.consentingClientHandle = consentingClientHandle
-        self.baseEpoch = baseEpoch
-        self.nextEpoch = nextEpoch
-        self.signedAt = signedAt
-        self.signature = signature
-    }
-
-    public static func create(
-        projection: GroupClientAdmissionProjectionV2,
-        currentState: SignedGroupStateV2,
-        consentingClientHandle: GroupScopedClientHandleV2,
-        signingKey: SigningKeyPair,
-        signedAt: Date = Date()
-    ) throws -> GroupSiblingClientConsentV2 {
-        guard let projectionDigest = projection.digest,
-              currentState.epoch < UInt64.max,
-              let leaf = currentState.activeClientLeaves.first(where: {
-                  $0.clientHandle == consentingClientHandle
-              }),
-              leaf.userId == projection.groupUserId,
-              leaf.signingPublicKey == signingKey.publicKeyData else {
-            throw SignedGroupV2Error.unauthorized
-        }
-        var consent = GroupSiblingClientConsentV2(
-            groupId: currentState.groupId,
-            groupUserId: projection.groupUserId,
-            newClientHandle: projection.clientHandle,
-            projectionDigest: projectionDigest,
-            consentingClientHandle: consentingClientHandle,
-            baseEpoch: currentState.epoch,
-            nextEpoch: currentState.epoch + 1,
-            signedAt: signedAt,
-            signature: Data()
-        )
-        consent = GroupSiblingClientConsentV2(
-            groupId: consent.groupId,
-            groupUserId: consent.groupUserId,
-            newClientHandle: consent.newClientHandle,
-            projectionDigest: consent.projectionDigest,
-            consentingClientHandle: consent.consentingClientHandle,
-            baseEpoch: consent.baseEpoch,
-            nextEpoch: consent.nextEpoch,
-            signedAt: consent.signedAt,
-            signature: try signingKey.sign(try consent.signatureContext().signableData())
-        )
-        return try consent.verified(projection: projection, currentState: currentState)
-    }
-
-    public var isStructurallyValid: Bool {
-        version == NoctweaveSignedGroupV2.version
-            && newClientHandle.isStructurallyValid
-            && projectionDigest.count == 32
-            && consentingClientHandle.isStructurallyValid
-            && baseEpoch > 0
-            && baseEpoch < UInt64.max
-            && nextEpoch == baseEpoch + 1
-            && signedAt.timeIntervalSince1970.isFinite
-            && signature.count == NoctweaveSignedGroupV2.signatureBytes
-    }
-
-    public func verified(
-        projection: GroupClientAdmissionProjectionV2,
-        currentState: SignedGroupStateV2
-    ) throws -> GroupSiblingClientConsentV2 {
-        guard isStructurallyValid,
-              projection.groupId == groupId,
-              projection.groupUserId == groupUserId,
-              projection.clientHandle == newClientHandle,
-              projection.digest == projectionDigest,
-              currentState.groupId == groupId,
-              currentState.epoch == baseEpoch,
-              let leaf = currentState.activeClientLeaves.first(where: {
-                  $0.clientHandle == consentingClientHandle
-              }),
-              leaf.userId == groupUserId,
-              signedAt >= currentState.signedAt,
-              SigningKeyPair.verify(
-                  signature: signature,
-                  data: try signatureContext().signableData(),
-                  publicKeyData: leaf.signingPublicKey
-              ) else {
-            throw SignedGroupV2Error.unauthorized
-        }
-        return self
-    }
-
-    private func signatureContext() throws -> GroupSiblingConsentSignatureContextV2 {
-        GroupSiblingConsentSignatureContextV2(
-            groupId: groupId,
-            groupUserId: groupUserId,
-            newClientHandle: newClientHandle,
-            projectionDigest: projectionDigest,
-            consentingClientHandle: consentingClientHandle,
-            baseEpoch: baseEpoch,
-            nextEpoch: nextEpoch,
-            signedAt: signedAt
-        )
-    }
-}
-
-/// A group-scoped client key package. The identity-generation signature
-/// authorizes the endpoint, the endpoint signature proves possession,
-/// and the group-client signature proves possession of the unlinkable group key.
-public struct GroupClientKeyPackageV2: Codable, Equatable, Identifiable {
-    public let id: UUID
-    public let version: Int
-    public let groupId: UUID
-    public let groupUserId: UUID
-    public let clientHandle: GroupScopedClientHandleV2
-    public let identityGenerationId: UUID
-    public let manifestEpoch: UInt64
-    public let manifestDigest: Data
-    public let endpointId: UUID
-    public let endpointSigningPublicKey: Data
-    public let endpointAgreementPublicKey: Data
-    public let groupSigningPublicKey: Data
-    public let groupAgreementPublicKey: Data
-    public let capabilities: ProtocolCapabilityManifest
-    public let issuedAt: Date
-    public let expiresAt: Date
-    public let authoritySignature: Data
-    public let endpointPossessionSignature: Data
-    public let groupClientPossessionSignature: Data
-
-    public init(
-        id: UUID,
-        version: Int = NoctweaveSignedGroupV2.version,
-        groupId: UUID,
-        groupUserId: UUID,
-        clientHandle: GroupScopedClientHandleV2,
-        identityGenerationId: UUID,
-        manifestEpoch: UInt64,
-        manifestDigest: Data,
-        endpointId: UUID,
-        endpointSigningPublicKey: Data,
-        endpointAgreementPublicKey: Data,
-        groupSigningPublicKey: Data,
-        groupAgreementPublicKey: Data,
-        capabilities: ProtocolCapabilityManifest,
-        issuedAt: Date,
-        expiresAt: Date,
-        authoritySignature: Data,
-        endpointPossessionSignature: Data,
-        groupClientPossessionSignature: Data
-    ) {
-        self.id = id
-        self.version = version
-        self.groupId = groupId
-        self.groupUserId = groupUserId
-        self.clientHandle = clientHandle
-        self.identityGenerationId = identityGenerationId
-        self.manifestEpoch = manifestEpoch
-        self.manifestDigest = manifestDigest
-        self.endpointId = endpointId
-        self.endpointSigningPublicKey = endpointSigningPublicKey
-        self.endpointAgreementPublicKey = endpointAgreementPublicKey
-        self.groupSigningPublicKey = groupSigningPublicKey
-        self.groupAgreementPublicKey = groupAgreementPublicKey
-        self.capabilities = capabilities
-        self.issuedAt = issuedAt
-        self.expiresAt = expiresAt
-        self.authoritySignature = authoritySignature
-        self.endpointPossessionSignature = endpointPossessionSignature
-        self.groupClientPossessionSignature = groupClientPossessionSignature
-    }
-
-    public static func create(
-        id: UUID = UUID(),
-        groupId: UUID,
-        groupUserId: UUID,
-        clientHandle: GroupScopedClientHandleV2,
-        identity: Identity,
-        endpoint: LocalEndpointState,
-        manifest: EndpointSetManifest,
-        groupSigningKey: SigningKeyPair,
-        groupAgreementKey: AgreementKeyPair,
-        issuedAt: Date = Date(),
-        expiresAt: Date
-    ) throws -> GroupClientKeyPackageV2 {
-        guard clientHandle.isStructurallyValid,
-              issuedAt.timeIntervalSince1970.isFinite,
-              issuedAt >= manifest.issuedAt,
-              let manifestDigest = manifest.digest,
-              manifest.verify(identityPublicKey: identity.signingKey.publicKeyData),
-              manifest.identityGenerationId == endpoint.identityGenerationId,
-              let record = manifest.endpoints.first(where: { $0.id == endpoint.id }),
-              record.isActive(at: issuedAt, manifestEpoch: manifest.epoch),
-              record.signingPublicKey == endpoint.signingKey.publicKeyData,
-              record.agreementPublicKey == endpoint.agreementKey.publicKeyData else {
-            throw SignedGroupV2Error.endpointNotAuthorized
-        }
-        let payload = GroupClientKeyPackagePayloadV2(
-            version: NoctweaveSignedGroupV2.version,
-            id: id,
-            groupId: groupId,
-            groupUserId: groupUserId,
-            clientHandle: clientHandle,
-            identityGenerationId: endpoint.identityGenerationId,
-            manifestEpoch: manifest.epoch,
-            manifestDigest: manifestDigest,
-            endpointId: endpoint.id,
-            endpointSigningPublicKey: endpoint.signingKey.publicKeyData,
-            endpointAgreementPublicKey: endpoint.agreementKey.publicKeyData,
-            groupSigningPublicKey: groupSigningKey.publicKeyData,
-            groupAgreementPublicKey: groupAgreementKey.publicKeyData,
-            capabilities: record.capabilities,
-            issuedAt: issuedAt,
-            expiresAt: expiresAt
-        )
-        let payloadDigest = try SignedGroupV2Hash.digest(payload)
-        let authoritySignature = try identity.signingKey.sign(
-            try GroupKeyPackageAuthorityContextV2(payloadDigest: payloadDigest).signableData()
-        )
-        let endpointSignature = try endpoint.signingKey.sign(
-            try GroupKeyPackageEndpointContextV2(
-                payloadDigest: payloadDigest,
-                authoritySignatureDigest: SignedGroupV2Hash.digest(authoritySignature)
-            ).signableData()
-        )
-        let groupClientSignature = try groupSigningKey.sign(
-            try GroupKeyPackageClientContextV2(
-                payloadDigest: payloadDigest,
-                authoritySignatureDigest: SignedGroupV2Hash.digest(authoritySignature),
-                endpointSignatureDigest: SignedGroupV2Hash.digest(endpointSignature)
-            ).signableData()
-        )
-        let package = GroupClientKeyPackageV2(
-            id: id,
-            groupId: groupId,
-            groupUserId: groupUserId,
-            clientHandle: clientHandle,
-            identityGenerationId: endpoint.identityGenerationId,
-            manifestEpoch: manifest.epoch,
-            manifestDigest: manifestDigest,
-            endpointId: endpoint.id,
-            endpointSigningPublicKey: endpoint.signingKey.publicKeyData,
-            endpointAgreementPublicKey: endpoint.agreementKey.publicKeyData,
-            groupSigningPublicKey: groupSigningKey.publicKeyData,
-            groupAgreementPublicKey: groupAgreementKey.publicKeyData,
-            capabilities: record.capabilities,
-            issuedAt: issuedAt,
-            expiresAt: expiresAt,
-            authoritySignature: authoritySignature,
-            endpointPossessionSignature: endpointSignature,
-            groupClientPossessionSignature: groupClientSignature
-        )
-        guard package.isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
-        return package
-    }
-
-    public var digest: Data? {
-        guard let encoded = try? NoctweaveCoder.encode(self, sortedKeys: true) else { return nil }
-        return Data(SHA256.hash(data: encoded))
-    }
-
-    public var isStructurallyValid: Bool {
-        guard version == NoctweaveSignedGroupV2.version,
-              clientHandle.isStructurallyValid,
-              manifestDigest.count == 32,
-              SigningKeyPair.isValidPublicKey(endpointSigningPublicKey),
-              AgreementKeyPair.isValidPublicKey(endpointAgreementPublicKey),
-              SigningKeyPair.isValidPublicKey(groupSigningPublicKey),
-              AgreementKeyPair.isValidPublicKey(groupAgreementPublicKey),
-              capabilities.isStructurallyValid,
-              issuedAt.timeIntervalSince1970.isFinite,
-              expiresAt.timeIntervalSince1970.isFinite,
-              expiresAt > issuedAt,
-              expiresAt.timeIntervalSince(issuedAt)
-                <= NoctweaveSignedGroupV2.maximumKeyPackageLifetimeSeconds,
-              authoritySignature.count == NoctweaveSignedGroupV2.signatureBytes,
-              endpointPossessionSignature.count == NoctweaveSignedGroupV2.signatureBytes,
-              groupClientPossessionSignature.count == NoctweaveSignedGroupV2.signatureBytes,
-              let encoded = try? NoctweaveCoder.encode(self, sortedKeys: true),
-              encoded.count <= NoctweaveSignedGroupV2.maximumKeyPackageBytes else {
-            return false
-        }
-        return endpointSigningPublicKey != groupSigningPublicKey
-            && endpointAgreementPublicKey != groupAgreementPublicKey
-    }
-
-    public func verified(
-        forGroupId expectedGroupId: UUID,
-        groupUserId expectedGroupUserId: UUID,
-        identityPublicKey: Data,
-        manifest: EndpointSetManifest,
-        now: Date = Date()
-    ) throws -> GroupClientKeyPackageV2 {
-        guard isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
-        guard groupId == expectedGroupId, groupUserId == expectedGroupUserId else {
-            throw SignedGroupV2Error.invalidContext
-        }
-        guard now.timeIntervalSince1970.isFinite,
-              issuedAt <= now.addingTimeInterval(NoctweaveSignedGroupV2.maximumClockSkewSeconds),
-              now < expiresAt else {
-            throw SignedGroupV2Error.invalidStructure
-        }
-        guard issuedAt >= manifest.issuedAt,
-              manifest.verify(identityPublicKey: identityPublicKey),
-              manifest.identityGenerationId == identityGenerationId,
-              manifest.epoch == manifestEpoch,
-              manifest.digest == manifestDigest else {
-            throw SignedGroupV2Error.invalidManifest
-        }
-        guard let record = manifest.endpoints.first(where: { $0.id == endpointId }),
-              record.isActive(at: now, manifestEpoch: manifest.epoch),
-              record.signingPublicKey == endpointSigningPublicKey,
-              record.agreementPublicKey == endpointAgreementPublicKey,
-              record.capabilities == capabilities else {
-            throw SignedGroupV2Error.endpointNotAuthorized
-        }
-        let payloadDigest = try SignedGroupV2Hash.digest(payload)
-        let authorityData = try GroupKeyPackageAuthorityContextV2(
-            payloadDigest: payloadDigest
-        ).signableData()
-        guard SigningKeyPair.verify(
-            signature: authoritySignature,
-            data: authorityData,
-            publicKeyData: identityPublicKey
-        ) else {
-            throw SignedGroupV2Error.invalidAuthoritySignature
-        }
-        let endpointData = try GroupKeyPackageEndpointContextV2(
-            payloadDigest: payloadDigest,
-            authoritySignatureDigest: SignedGroupV2Hash.digest(authoritySignature)
-        ).signableData()
-        guard SigningKeyPair.verify(
-            signature: endpointPossessionSignature,
-            data: endpointData,
-            publicKeyData: endpointSigningPublicKey
-        ) else {
-            throw SignedGroupV2Error.invalidEndpointSignature
-        }
-        let clientData = try GroupKeyPackageClientContextV2(
-            payloadDigest: payloadDigest,
-            authoritySignatureDigest: SignedGroupV2Hash.digest(authoritySignature),
-            endpointSignatureDigest: SignedGroupV2Hash.digest(endpointPossessionSignature)
-        ).signableData()
-        guard SigningKeyPair.verify(
-            signature: groupClientPossessionSignature,
-            data: clientData,
-            publicKeyData: groupSigningPublicKey
-        ) else {
-            throw SignedGroupV2Error.invalidClientSignature
-        }
-        return self
-    }
-
-    private var payload: GroupClientKeyPackagePayloadV2 {
-        GroupClientKeyPackagePayloadV2(
-            version: version,
-            id: id,
-            groupId: groupId,
-            groupUserId: groupUserId,
-            clientHandle: clientHandle,
-            identityGenerationId: identityGenerationId,
-            manifestEpoch: manifestEpoch,
-            manifestDigest: manifestDigest,
-            endpointId: endpointId,
-            endpointSigningPublicKey: endpointSigningPublicKey,
-            endpointAgreementPublicKey: endpointAgreementPublicKey,
-            groupSigningPublicKey: groupSigningPublicKey,
-            groupAgreementPublicKey: groupAgreementPublicKey,
-            capabilities: capabilities,
-            issuedAt: issuedAt,
-            expiresAt: expiresAt
-        )
-    }
-}
-
-/// Local trust input used when accepting one client into a signed group.
-///
-/// This value is deliberately not learned from the commit. The caller must
-/// supply the identity authority and latest trusted endpoint manifest from
-/// an authenticated contact, invitation, continuity, or self-sync path. That
-/// prevents a commit author from inventing a different identity authority for
-/// an existing group user while still leaving the signed commit self-contained
-/// with respect to the admitted client's key package.
-public struct GroupClientAdmissionTrustV2: Equatable {
-    public let groupUserId: UUID
-    public let identityPublicKey: Data
-    public let currentManifest: EndpointSetManifest
-
-    public init(
-        groupUserId: UUID,
-        identityPublicKey: Data,
-        currentManifest: EndpointSetManifest
-    ) {
-        self.groupUserId = groupUserId
-        self.identityPublicKey = identityPublicKey
-        self.currentManifest = currentManifest
-    }
-
-    public var isStructurallyValid: Bool {
-        SigningKeyPair.isValidPublicKey(identityPublicKey)
-            && currentManifest.verify(identityPublicKey: identityPublicKey)
-    }
-}
-
-/// External trust required to create or accept the first signed group state.
-///
-/// None of these values are learned from the candidate state. The caller pins
-/// the creator's identity authority, current endpoint manifest, and full
-/// group-scoped key package through an authenticated invitation, contact,
-/// continuity, or self-sync path. This prevents an epoch-one state from
-/// inventing the authority and client keys that are then used to verify itself.
-public struct GroupGenesisTrustV2: Equatable {
-    public let creatorUserId: UUID
-    public let identityPublicKey: Data
-    public let currentManifest: EndpointSetManifest
-    public let creatorKeyPackage: GroupClientKeyPackageV2
-
-    public init(
-        creatorUserId: UUID,
-        identityPublicKey: Data,
-        currentManifest: EndpointSetManifest,
-        creatorKeyPackage: GroupClientKeyPackageV2
-    ) {
-        self.creatorUserId = creatorUserId
-        self.identityPublicKey = identityPublicKey
-        self.currentManifest = currentManifest
-        self.creatorKeyPackage = creatorKeyPackage
-    }
-
-    public var isStructurallyValid: Bool {
-        SigningKeyPair.isValidPublicKey(identityPublicKey)
-            && creatorKeyPackage.isStructurallyValid
-            && creatorKeyPackage.groupUserId == creatorUserId
-            && currentManifest.verify(identityPublicKey: identityPublicKey)
-            && currentManifest.identityGenerationId == creatorKeyPackage.identityGenerationId
-            && currentManifest.epoch == creatorKeyPackage.manifestEpoch
-            && currentManifest.digest == creatorKeyPackage.manifestDigest
-    }
-
-    public func verified(
-        forGroupId expectedGroupId: UUID,
-        now: Date = Date()
-    ) throws -> GroupClientKeyPackageV2 {
-        guard isStructurallyValid else { throw SignedGroupV2Error.invalidManifest }
-        return try creatorKeyPackage.verified(
-            forGroupId: expectedGroupId,
-            groupUserId: creatorUserId,
-            identityPublicKey: identityPublicKey,
-            manifest: currentManifest,
-            now: now
-        )
-    }
-}
-
-public struct GroupClientLeafV2: Codable, Equatable, Identifiable {
-    public var id: GroupScopedClientHandleV2 { clientHandle }
-    public let userId: UUID
-    public let clientHandle: GroupScopedClientHandleV2
-    public let keyPackageDigest: Data
+public struct GroupMemberCredentialV2: Codable, Equatable, Identifiable {
+    public var id: GroupScopedCredentialHandleV2 { credentialHandle }
+    public let memberHandle: GroupScopedMemberHandleV2
+    public let credentialHandle: GroupScopedCredentialHandleV2
+    public let admissionDigest: Data
     public let signingPublicKey: Data
     public let agreementPublicKey: Data
+    public let contentTypes: [ContentTypeCapabilityV2]
     public let addedEpoch: UInt64
     public let removedEpoch: UInt64?
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case memberHandle
+        case credentialHandle
+        case admissionDigest
+        case signingPublicKey
+        case agreementPublicKey
+        case contentTypes
+        case addedEpoch
+        case removedEpoch
+    }
+
     public init(
-        userId: UUID,
-        clientHandle: GroupScopedClientHandleV2,
-        keyPackageDigest: Data,
+        memberHandle: GroupScopedMemberHandleV2,
+        credentialHandle: GroupScopedCredentialHandleV2,
+        admissionDigest: Data,
         signingPublicKey: Data,
         agreementPublicKey: Data,
+        contentTypes: [ContentTypeCapabilityV2] = ProtocolCapabilityManifest.defaultContentTypes,
         addedEpoch: UInt64,
         removedEpoch: UInt64? = nil
     ) {
-        self.userId = userId
-        self.clientHandle = clientHandle
-        self.keyPackageDigest = keyPackageDigest
+        self.memberHandle = memberHandle
+        self.credentialHandle = credentialHandle
+        self.admissionDigest = admissionDigest
         self.signingPublicKey = signingPublicKey
         self.agreementPublicKey = agreementPublicKey
+        self.contentTypes = contentTypes.sorted {
+            ($0.authority, $0.name) < ($1.authority, $1.name)
+        }
         self.addedEpoch = addedEpoch
         self.removedEpoch = removedEpoch
     }
 
-    public static func fromVerifiedPackage(
-        _ package: GroupClientKeyPackageV2,
-        addedEpoch: UInt64
-    ) throws -> GroupClientLeafV2 {
-        guard package.isStructurallyValid, let digest = package.digest else {
-            throw SignedGroupV2Error.invalidStructure
-        }
-        return GroupClientLeafV2(
-            userId: package.groupUserId,
-            clientHandle: package.clientHandle,
-            keyPackageDigest: digest,
-            signingPublicKey: package.groupSigningPublicKey,
-            agreementPublicKey: package.groupAgreementPublicKey,
-            addedEpoch: addedEpoch
+    public init(from decoder: Decoder) throws {
+        try requireExactSignedGroupKeys(
+            decoder,
+            required: Set(CodingKeys.allCases.map(\.rawValue)).subtracting([
+                CodingKeys.removedEpoch.rawValue
+            ]),
+            optional: [CodingKeys.removedEpoch.rawValue]
         )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedContentTypes = try values.decode(
+            [ContentTypeCapabilityV2].self,
+            forKey: .contentTypes
+        )
+        self.init(
+            memberHandle: try values.decode(GroupScopedMemberHandleV2.self, forKey: .memberHandle),
+            credentialHandle: try values.decode(GroupScopedCredentialHandleV2.self, forKey: .credentialHandle),
+            admissionDigest: try values.decode(Data.self, forKey: .admissionDigest),
+            signingPublicKey: try values.decode(Data.self, forKey: .signingPublicKey),
+            agreementPublicKey: try values.decode(Data.self, forKey: .agreementPublicKey),
+            contentTypes: decodedContentTypes,
+            addedEpoch: try values.decode(UInt64.self, forKey: .addedEpoch),
+            removedEpoch: try values.decodeIfPresent(UInt64.self, forKey: .removedEpoch)
+        )
+        guard contentTypes == decodedContentTypes, isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid group credential")
+            )
+        }
     }
 
     public static func fromVerifiedProjection(
-        _ projection: GroupClientAdmissionProjectionV2,
+        _ projection: GroupCredentialAdmissionV2,
         addedEpoch: UInt64
-    ) throws -> GroupClientLeafV2 {
+    ) throws -> GroupMemberCredentialV2 {
         guard projection.isStructurallyValid, let digest = projection.digest else {
             throw SignedGroupV2Error.invalidStructure
         }
-        return GroupClientLeafV2(
-            userId: projection.groupUserId,
-            clientHandle: projection.clientHandle,
-            keyPackageDigest: digest,
+        return GroupMemberCredentialV2(
+            memberHandle: projection.memberHandle,
+            credentialHandle: projection.credentialHandle,
+            admissionDigest: digest,
             signingPublicKey: projection.groupSigningPublicKey,
             agreementPublicKey: projection.groupAgreementPublicKey,
+            contentTypes: projection.contentTypes,
             addedEpoch: addedEpoch
         )
     }
 
     public var isStructurallyValid: Bool {
-        clientHandle.isStructurallyValid
-            && keyPackageDigest.count == 32
+        memberHandle.isStructurallyValid
+            && credentialHandle.isStructurallyValid
+            && admissionDigest.count == 32
             && SigningKeyPair.isValidPublicKey(signingPublicKey)
             && AgreementKeyPair.isValidPublicKey(agreementPublicKey)
+            && !contentTypes.isEmpty
+            && contentTypes.count
+                <= NoctweaveArchitectureV2.maximumContentTypeCapabilities
+            && Set(contentTypes.map { "\($0.authority)\u{0}\($0.name)" }).count
+                == contentTypes.count
+            && contentTypes.allSatisfy(\.isStructurallyValid)
+            && contentTypes.contains {
+                $0.authority == ContentTypeId.text.authority
+                    && $0.name == ContentTypeId.text.name
+            }
             && addedEpoch > 0
             && (removedEpoch.map { $0 > addedEpoch } ?? true)
     }
@@ -805,17 +452,16 @@ public struct GroupClientLeafV2: Codable, Equatable, Identifiable {
 }
 
 public enum SignedGroupCommitOperationV2: String, Codable, Equatable, CaseIterable {
-    case addClient
-    case removeClient
-    case addUser
-    case removeUser
+    case addMember
+    case replaceCredential
+    case removeMember
     case changeRole
     case changePolicy
     case updateMetadata
     case deleteGroup
 }
 
-/// A complete proposed next state. Carrying the full users, leaves, policy, and
+/// A complete proposed next state. Carrying the full members, leaves, policy, and
 /// metadata digest makes omission and mixed-operation attacks fail closed.
 public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
     public let id: UUID
@@ -827,17 +473,38 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
     public let baseEpoch: UInt64
     public let nextEpoch: UInt64
     public let previousTranscriptHash: Data
-    public let proposedUsers: [GroupUser]
-    public let proposedClientLeaves: [GroupClientLeafV2]
-    public let admissionProjection: GroupClientAdmissionProjectionV2?
-    public let siblingClientConsent: GroupSiblingClientConsentV2?
+    public let proposedMembers: [GroupMemberV2]
+    public let proposedCredentials: [GroupMemberCredentialV2]
+    public let admissionProjection: GroupCredentialAdmissionV2?
     public let proposedPermissions: GroupPermissionPolicy
     public let proposedMetadataDigest: Data?
-    public let authorClientHandle: GroupScopedClientHandleV2
+    public let authorCredentialHandle: GroupScopedCredentialHandleV2
     public let providerCommitDigest: Data
     public let idempotencyKey: Data
     public let createdAt: Date
     public let signature: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id
+        case version
+        case profile
+        case cipherSuite
+        case groupId
+        case operation
+        case baseEpoch
+        case nextEpoch
+        case previousTranscriptHash
+        case proposedMembers
+        case proposedCredentials
+        case admissionProjection
+        case proposedPermissions
+        case proposedMetadataDigest
+        case authorCredentialHandle
+        case providerCommitDigest
+        case idempotencyKey
+        case createdAt
+        case signature
+    }
 
     public init(
         id: UUID,
@@ -849,13 +516,12 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         baseEpoch: UInt64,
         nextEpoch: UInt64,
         previousTranscriptHash: Data,
-        proposedUsers: [GroupUser],
-        proposedClientLeaves: [GroupClientLeafV2],
-        admissionProjection: GroupClientAdmissionProjectionV2? = nil,
-        siblingClientConsent: GroupSiblingClientConsentV2? = nil,
+        proposedMembers: [GroupMemberV2],
+        proposedCredentials: [GroupMemberCredentialV2],
+        admissionProjection: GroupCredentialAdmissionV2? = nil,
         proposedPermissions: GroupPermissionPolicy,
         proposedMetadataDigest: Data?,
-        authorClientHandle: GroupScopedClientHandleV2,
+        authorCredentialHandle: GroupScopedCredentialHandleV2,
         providerCommitDigest: Data,
         idempotencyKey: Data,
         createdAt: Date,
@@ -870,37 +536,93 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         self.baseEpoch = baseEpoch
         self.nextEpoch = nextEpoch
         self.previousTranscriptHash = previousTranscriptHash
-        self.proposedUsers = proposedUsers.sorted { $0.id.uuidString < $1.id.uuidString }
-        self.proposedClientLeaves = proposedClientLeaves.sorted {
-            $0.clientHandle.rawValue < $1.clientHandle.rawValue
+        self.proposedMembers = proposedMembers.sorted { $0.id.rawValue < $1.id.rawValue }
+        self.proposedCredentials = proposedCredentials.sorted {
+            $0.credentialHandle.rawValue < $1.credentialHandle.rawValue
         }
         self.admissionProjection = admissionProjection
-        self.siblingClientConsent = siblingClientConsent
         self.proposedPermissions = proposedPermissions
         self.proposedMetadataDigest = proposedMetadataDigest
-        self.authorClientHandle = authorClientHandle
+        self.authorCredentialHandle = authorCredentialHandle
         self.providerCommitDigest = providerCommitDigest
         self.idempotencyKey = idempotencyKey
         self.createdAt = createdAt
         self.signature = signature
     }
 
-    /// Creates a group-only commit. Any endpoint authorization or
-    /// contact evidence is verified locally before this call and is not copied
-    /// into the shared group transcript. Adding a sibling client for an
-    /// existing group user additionally requires a signature from one of that
-    /// user's currently active group clients.
+    public init(from decoder: Decoder) throws {
+        try requireExactSignedGroupKeys(
+            decoder,
+            required: Set(CodingKeys.allCases.map(\.rawValue)).subtracting([
+                CodingKeys.admissionProjection.rawValue,
+                CodingKeys.proposedMetadataDigest.rawValue,
+            ]),
+            optional: [
+                CodingKeys.admissionProjection.rawValue,
+                CodingKeys.proposedMetadataDigest.rawValue,
+            ]
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let members = try values.decode([GroupMemberV2].self, forKey: .proposedMembers)
+        let credentials = try values.decode(
+            [GroupMemberCredentialV2].self,
+            forKey: .proposedCredentials
+        )
+        self.init(
+            id: try values.decode(UUID.self, forKey: .id),
+            version: try values.decode(Int.self, forKey: .version),
+            profile: try values.decode(GroupProtocolProfile.self, forKey: .profile),
+            cipherSuite: try values.decode(String.self, forKey: .cipherSuite),
+            groupId: try values.decode(UUID.self, forKey: .groupId),
+            operation: try values.decode(SignedGroupCommitOperationV2.self, forKey: .operation),
+            baseEpoch: try values.decode(UInt64.self, forKey: .baseEpoch),
+            nextEpoch: try values.decode(UInt64.self, forKey: .nextEpoch),
+            previousTranscriptHash: try values.decode(Data.self, forKey: .previousTranscriptHash),
+            proposedMembers: members,
+            proposedCredentials: credentials,
+            admissionProjection: try values.decodeIfPresent(
+                GroupCredentialAdmissionV2.self,
+                forKey: .admissionProjection
+            ),
+            proposedPermissions: try values.decode(
+                GroupPermissionPolicy.self,
+                forKey: .proposedPermissions
+            ),
+            proposedMetadataDigest: try values.decodeIfPresent(
+                Data.self,
+                forKey: .proposedMetadataDigest
+            ),
+            authorCredentialHandle: try values.decode(
+                GroupScopedCredentialHandleV2.self,
+                forKey: .authorCredentialHandle
+            ),
+            providerCommitDigest: try values.decode(Data.self, forKey: .providerCommitDigest),
+            idempotencyKey: try values.decode(Data.self, forKey: .idempotencyKey),
+            createdAt: try values.decode(Date.self, forKey: .createdAt),
+            signature: try values.decode(Data.self, forKey: .signature)
+        )
+        guard proposedMembers == members,
+              proposedCredentials == credentials,
+              isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid group commit")
+            )
+        }
+    }
+
+    /// Creates a group-only commit. Credential replacement is signed by the
+    /// member's current credential and carries possession proof for the fresh
+    /// replacement credential.
     public static func create(
         id: UUID = UUID(),
         operation: SignedGroupCommitOperationV2,
         currentState: SignedGroupStateV2,
-        proposedUsers: [GroupUser],
-        proposedClientLeaves: [GroupClientLeafV2],
-        admissionProjection: GroupClientAdmissionProjectionV2? = nil,
-        siblingClientConsent: GroupSiblingClientConsentV2? = nil,
+        proposedMembers: [GroupMemberV2],
+        proposedCredentials: [GroupMemberCredentialV2],
+        admissionProjection: GroupCredentialAdmissionV2? = nil,
         proposedPermissions: GroupPermissionPolicy,
         proposedMetadataDigest: Data?,
-        authorClientHandle: GroupScopedClientHandleV2,
+        authorCredentialHandle: GroupScopedCredentialHandleV2,
         providerCommitDigest: Data,
         idempotencyKey: Data,
         signingKey: SigningKeyPair,
@@ -916,13 +638,12 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             baseEpoch: currentState.epoch,
             nextEpoch: currentState.epoch + 1,
             previousTranscriptHash: currentState.confirmedTranscriptHash,
-            proposedUsers: proposedUsers,
-            proposedClientLeaves: proposedClientLeaves,
+            proposedMembers: proposedMembers,
+            proposedCredentials: proposedCredentials,
             admissionProjection: admissionProjection,
-            siblingClientConsent: siblingClientConsent,
             proposedPermissions: proposedPermissions,
             proposedMetadataDigest: proposedMetadataDigest,
-            authorClientHandle: authorClientHandle,
+            authorCredentialHandle: authorCredentialHandle,
             providerCommitDigest: providerCommitDigest,
             idempotencyKey: idempotencyKey,
             createdAt: createdAt,
@@ -932,8 +653,8 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             from: currentState,
             verifySignature: false
         )
-        guard let author = currentState.activeClientLeaves.first(where: {
-            $0.clientHandle == authorClientHandle
+        guard let author = currentState.activeCredentials.first(where: {
+            $0.credentialHandle == authorCredentialHandle
         }), author.signingPublicKey == signingKey.publicKeyData else {
             throw SignedGroupV2Error.unknownAuthor
         }
@@ -947,13 +668,12 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             baseEpoch: commit.baseEpoch,
             nextEpoch: commit.nextEpoch,
             previousTranscriptHash: commit.previousTranscriptHash,
-            proposedUsers: commit.proposedUsers,
-            proposedClientLeaves: commit.proposedClientLeaves,
+            proposedMembers: commit.proposedMembers,
+            proposedCredentials: commit.proposedCredentials,
             admissionProjection: commit.admissionProjection,
-            siblingClientConsent: commit.siblingClientConsent,
             proposedPermissions: commit.proposedPermissions,
             proposedMetadataDigest: commit.proposedMetadataDigest,
-            authorClientHandle: commit.authorClientHandle,
+            authorCredentialHandle: commit.authorCredentialHandle,
             providerCommitDigest: commit.providerCommitDigest,
             idempotencyKey: commit.idempotencyKey,
             createdAt: commit.createdAt,
@@ -977,12 +697,11 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
               baseEpoch < UInt64.max,
               nextEpoch == baseEpoch + 1,
               previousTranscriptHash.count == 32,
-              authorClientHandle.isStructurallyValid,
+              authorCredentialHandle.isStructurallyValid,
               providerCommitDigest.count == 32,
               idempotencyKey.count == 32,
               createdAt.timeIntervalSince1970.isFinite,
               admissionProjection?.isStructurallyValid ?? true,
-              siblingClientConsent?.isStructurallyValid ?? true,
               signature.count == NoctweaveSignedGroupV2.signatureBytes,
               let encoded = try? NoctweaveCoder.encode(payload, sortedKeys: true),
               encoded.count <= NoctweaveGroupArchitectureV2.maximumCommitBytes else {
@@ -990,15 +709,10 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         }
         let admissionFieldsAreValid: Bool
         switch operation {
-        case .addClient:
+        case .addMember, .replaceCredential:
             admissionFieldsAreValid = admissionProjection != nil
-                && siblingClientConsent != nil
-        case .addUser:
-            admissionFieldsAreValid = admissionProjection != nil
-                && siblingClientConsent == nil
-        case .removeClient, .removeUser, .changeRole, .changePolicy, .updateMetadata:
+        case .removeMember, .changeRole, .changePolicy, .updateMetadata:
             admissionFieldsAreValid = admissionProjection == nil
-                && siblingClientConsent == nil
         case .deleteGroup:
             admissionFieldsAreValid = false
         }
@@ -1007,8 +721,8 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             profile: profile,
             cipherSuite: cipherSuite,
             epoch: nextEpoch,
-            users: proposedUsers,
-            clientLeaves: proposedClientLeaves,
+            members: proposedMembers,
+            memberCredentials: proposedCredentials,
             permissions: proposedPermissions,
             metadataDigest: proposedMetadataDigest
         )) != nil
@@ -1039,13 +753,12 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             baseEpoch: baseEpoch,
             nextEpoch: nextEpoch,
             previousTranscriptHash: previousTranscriptHash,
-            proposedUsers: proposedUsers,
-            proposedClientLeaves: proposedClientLeaves,
+            proposedMembers: proposedMembers,
+            proposedCredentials: proposedCredentials,
             admissionProjection: admissionProjection,
-            siblingClientConsent: siblingClientConsent,
             proposedPermissions: proposedPermissions,
             proposedMetadataDigest: proposedMetadataDigest,
-            authorClientHandle: authorClientHandle,
+            authorCredentialHandle: authorCredentialHandle,
             providerCommitDigest: providerCommitDigest,
             idempotencyKey: idempotencyKey,
             createdAt: createdAt
@@ -1081,15 +794,15 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             profile: profile,
             cipherSuite: cipherSuite,
             epoch: nextEpoch,
-            users: proposedUsers,
-            clientLeaves: proposedClientLeaves,
+            members: proposedMembers,
+            memberCredentials: proposedCredentials,
             permissions: proposedPermissions,
             metadataDigest: proposedMetadataDigest
         )
-        guard let actorLeaf = currentState.activeClientLeaves.first(where: {
-            $0.clientHandle == authorClientHandle
-        }), let actorUser = currentState.activeUsers.first(where: {
-            $0.id == actorLeaf.userId
+        guard let actorLeaf = currentState.activeCredentials.first(where: {
+            $0.credentialHandle == authorCredentialHandle
+        }), let actorMember = currentState.activeMembers.first(where: {
+            $0.id == actorLeaf.memberHandle
         }) else {
             throw SignedGroupV2Error.unknownAuthor
         }
@@ -1110,11 +823,11 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
                 throw SignedGroupV2Error.invalidCommitSignature
             }
         }
-        let verifiedAddedLeaf: GroupClientLeafV2?
+        let verifiedAddedLeaf: GroupMemberCredentialV2?
         switch operation {
-        case .addClient, .addUser:
+        case .addMember, .replaceCredential:
             guard let admissionProjection else {
-                throw SignedGroupV2Error.keyPackageMismatch
+                throw SignedGroupV2Error.admissionMismatch
             }
             let selection = GroupProtocolSelectionV2(
                 profile: currentState.profile,
@@ -1122,36 +835,16 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
             )
             let verifiedProjection = try admissionProjection.verified(
                 forGroupId: groupId,
-                groupUserId: admissionProjection.groupUserId,
+                memberHandle: admissionProjection.memberHandle,
                 selection: selection,
                 now: createdAt
             )
-            switch operation {
-            case .addClient:
-                guard let siblingClientConsent,
-                      siblingClientConsent.signedAt <= createdAt.addingTimeInterval(
-                          NoctweaveSignedGroupV2.maximumClockSkewSeconds
-                      ) else {
-                    throw SignedGroupV2Error.unauthorized
-                }
-                _ = try siblingClientConsent.verified(
-                    projection: verifiedProjection,
-                    currentState: currentState
-                )
-            case .addUser:
-                guard siblingClientConsent == nil else {
-                    throw SignedGroupV2Error.invalidTransition
-                }
-            default:
-                throw SignedGroupV2Error.invalidTransition
-            }
-            verifiedAddedLeaf = try GroupClientLeafV2.fromVerifiedProjection(
+            verifiedAddedLeaf = try GroupMemberCredentialV2.fromVerifiedProjection(
                 verifiedProjection,
                 addedEpoch: nextEpoch
             )
-        case .removeClient, .removeUser, .changeRole, .changePolicy, .updateMetadata:
-            guard admissionProjection == nil,
-                  siblingClientConsent == nil else {
+        case .removeMember, .changeRole, .changePolicy, .updateMetadata:
+            guard admissionProjection == nil else {
                 throw SignedGroupV2Error.invalidTransition
             }
             verifiedAddedLeaf = nil
@@ -1161,11 +854,11 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         try SignedGroupTransitionValidatorV2.validate(
             operation: operation,
             currentState: currentState,
-            proposedUsers: proposedUsers,
-            proposedClientLeaves: proposedClientLeaves,
+            proposedMembers: proposedMembers,
+            proposedCredentials: proposedCredentials,
             proposedPermissions: proposedPermissions,
             proposedMetadataDigest: proposedMetadataDigest,
-            actorUser: actorUser,
+            actorMember: actorMember,
             actorLeaf: actorLeaf,
             verifiedAddedLeaf: verifiedAddedLeaf,
             nextEpoch: nextEpoch
@@ -1185,11 +878,27 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
     public let baseEpoch: UInt64
     public let deletedEpoch: UInt64
     public let previousTranscriptHash: Data
-    public let authorClientHandle: GroupScopedClientHandleV2
+    public let authorCredentialHandle: GroupScopedCredentialHandleV2
     public let reasonDigest: Data?
     public let idempotencyKey: Data
     public let createdAt: Date
     public let signature: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id
+        case version
+        case operation
+        case selection
+        case groupId
+        case baseEpoch
+        case deletedEpoch
+        case previousTranscriptHash
+        case authorCredentialHandle
+        case reasonDigest
+        case idempotencyKey
+        case createdAt
+        case signature
+    }
 
     public init(
         id: UUID,
@@ -1200,7 +909,7 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
         baseEpoch: UInt64,
         deletedEpoch: UInt64,
         previousTranscriptHash: Data,
-        authorClientHandle: GroupScopedClientHandleV2,
+        authorCredentialHandle: GroupScopedCredentialHandleV2,
         reasonDigest: Data?,
         idempotencyKey: Data,
         createdAt: Date,
@@ -1214,17 +923,51 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
         self.baseEpoch = baseEpoch
         self.deletedEpoch = deletedEpoch
         self.previousTranscriptHash = previousTranscriptHash
-        self.authorClientHandle = authorClientHandle
+        self.authorCredentialHandle = authorCredentialHandle
         self.reasonDigest = reasonDigest
         self.idempotencyKey = idempotencyKey
         self.createdAt = createdAt
         self.signature = signature
     }
 
+    public init(from decoder: Decoder) throws {
+        try requireExactSignedGroupKeys(
+            decoder,
+            required: Set(CodingKeys.allCases.map(\.rawValue)).subtracting([
+                CodingKeys.reasonDigest.rawValue
+            ]),
+            optional: [CodingKeys.reasonDigest.rawValue]
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try values.decode(UUID.self, forKey: .id),
+            version: try values.decode(Int.self, forKey: .version),
+            operation: try values.decode(SignedGroupCommitOperationV2.self, forKey: .operation),
+            selection: try values.decode(GroupProtocolSelectionV2.self, forKey: .selection),
+            groupId: try values.decode(UUID.self, forKey: .groupId),
+            baseEpoch: try values.decode(UInt64.self, forKey: .baseEpoch),
+            deletedEpoch: try values.decode(UInt64.self, forKey: .deletedEpoch),
+            previousTranscriptHash: try values.decode(Data.self, forKey: .previousTranscriptHash),
+            authorCredentialHandle: try values.decode(
+                GroupScopedCredentialHandleV2.self,
+                forKey: .authorCredentialHandle
+            ),
+            reasonDigest: try values.decodeIfPresent(Data.self, forKey: .reasonDigest),
+            idempotencyKey: try values.decode(Data.self, forKey: .idempotencyKey),
+            createdAt: try values.decode(Date.self, forKey: .createdAt),
+            signature: try values.decode(Data.self, forKey: .signature)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid group deletion")
+            )
+        }
+    }
+
     public static func create(
         id: UUID = UUID(),
         currentState: SignedGroupStateV2,
-        authorClientHandle: GroupScopedClientHandleV2,
+        authorCredentialHandle: GroupScopedCredentialHandleV2,
         reasonDigest: Data? = nil,
         idempotencyKey: Data,
         signingKey: SigningKeyPair,
@@ -1235,11 +978,11 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
               idempotencyKey.count == 32,
               reasonDigest?.count ?? 32 == 32,
               createdAt >= currentState.signedAt,
-              let authorLeaf = currentState.activeClientLeaves.first(where: {
-                  $0.clientHandle == authorClientHandle
+              let authorLeaf = currentState.activeCredentials.first(where: {
+                  $0.credentialHandle == authorCredentialHandle
               }),
-              let authorUser = currentState.activeUsers.first(where: {
-                  $0.id == authorLeaf.userId
+              let authorUser = currentState.activeMembers.first(where: {
+                  $0.id == authorLeaf.memberHandle
               }),
               currentState.permissions.allows(.deleteGroup, for: authorUser.role),
               authorLeaf.signingPublicKey == signingKey.publicKeyData else {
@@ -1259,7 +1002,7 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
             baseEpoch: currentState.epoch,
             deletedEpoch: currentState.epoch + 1,
             previousTranscriptHash: currentState.confirmedTranscriptHash,
-            authorClientHandle: authorClientHandle,
+            authorCredentialHandle: authorCredentialHandle,
             reasonDigest: reasonDigest,
             idempotencyKey: idempotencyKey,
             createdAt: createdAt,
@@ -1273,7 +1016,7 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
             baseEpoch: tombstone.baseEpoch,
             deletedEpoch: tombstone.deletedEpoch,
             previousTranscriptHash: tombstone.previousTranscriptHash,
-            authorClientHandle: tombstone.authorClientHandle,
+            authorCredentialHandle: tombstone.authorCredentialHandle,
             reasonDigest: tombstone.reasonDigest,
             idempotencyKey: tombstone.idempotencyKey,
             createdAt: tombstone.createdAt,
@@ -1296,7 +1039,7 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
             && baseEpoch < UInt64.max
             && deletedEpoch == baseEpoch + 1
             && previousTranscriptHash.count == 32
-            && authorClientHandle.isStructurallyValid
+            && authorCredentialHandle.isStructurallyValid
             && reasonDigest?.count ?? 32 == 32
             && idempotencyKey.count == 32
             && createdAt.timeIntervalSince1970.isFinite
@@ -1325,11 +1068,11 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
               createdAt >= currentState.signedAt else {
             throw SignedGroupV2Error.invalidContext
         }
-        guard let authorLeaf = currentState.activeClientLeaves.first(where: {
-            $0.clientHandle == authorClientHandle
+        guard let authorLeaf = currentState.activeCredentials.first(where: {
+            $0.credentialHandle == authorCredentialHandle
         }),
-              let authorUser = currentState.activeUsers.first(where: {
-                  $0.id == authorLeaf.userId
+              let authorUser = currentState.activeMembers.first(where: {
+                  $0.id == authorLeaf.memberHandle
               }),
               currentState.permissions.allows(.deleteGroup, for: authorUser.role),
               let digest,
@@ -1357,7 +1100,7 @@ public struct SignedGroupDeletionTombstoneV2: Codable, Equatable, Identifiable {
             baseEpoch: baseEpoch,
             deletedEpoch: deletedEpoch,
             previousTranscriptHash: previousTranscriptHash,
-            authorClientHandle: authorClientHandle,
+            authorCredentialHandle: authorCredentialHandle,
             reasonDigest: reasonDigest,
             idempotencyKey: idempotencyKey,
             createdAt: createdAt
@@ -1379,6 +1122,13 @@ public struct SignedDeletedGroupStateV2: Codable, Equatable, Identifiable {
     public let tombstoneDigest: Data
     public let terminalTranscriptHash: Data
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case tombstone
+        case tombstoneDigest
+        case terminalTranscriptHash
+    }
+
     public init(
         version: Int = NoctweaveSignedGroupV2.version,
         tombstone: SignedGroupDeletionTombstoneV2,
@@ -1389,6 +1139,25 @@ public struct SignedDeletedGroupStateV2: Codable, Equatable, Identifiable {
         self.tombstone = tombstone
         self.tombstoneDigest = tombstoneDigest
         self.terminalTranscriptHash = terminalTranscriptHash
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactSignedGroupKeys(
+            decoder,
+            required: Set(CodingKeys.allCases.map(\.rawValue))
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            version: try values.decode(Int.self, forKey: .version),
+            tombstone: try values.decode(SignedGroupDeletionTombstoneV2.self, forKey: .tombstone),
+            tombstoneDigest: try values.decode(Data.self, forKey: .tombstoneDigest),
+            terminalTranscriptHash: try values.decode(Data.self, forKey: .terminalTranscriptHash)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid deleted group state")
+            )
+        }
     }
 
     public static func create(
@@ -1478,15 +1247,33 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
     public let groupId: UUID
     public let epoch: UInt64
     public let previousTranscriptHash: Data?
-    public let users: [GroupUser]
-    public let clientLeaves: [GroupClientLeafV2]
+    public let members: [GroupMemberV2]
+    public let memberCredentials: [GroupMemberCredentialV2]
     public let permissions: GroupPermissionPolicy
     public let metadataDigest: Data?
-    public let authorClientHandle: GroupScopedClientHandleV2
+    public let authorCredentialHandle: GroupScopedCredentialHandleV2
     public let commitDigest: Data
     public let confirmedTranscriptHash: Data
     public let signedAt: Date
     public let signature: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case profile
+        case cipherSuite
+        case groupId
+        case epoch
+        case previousTranscriptHash
+        case members
+        case memberCredentials
+        case permissions
+        case metadataDigest
+        case authorCredentialHandle
+        case commitDigest
+        case confirmedTranscriptHash
+        case signedAt
+        case signature
+    }
 
     public init(
         version: Int = NoctweaveSignedGroupV2.version,
@@ -1495,11 +1282,11 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
         groupId: UUID,
         epoch: UInt64,
         previousTranscriptHash: Data?,
-        users: [GroupUser],
-        clientLeaves: [GroupClientLeafV2],
+        members: [GroupMemberV2],
+        memberCredentials: [GroupMemberCredentialV2],
         permissions: GroupPermissionPolicy,
         metadataDigest: Data?,
-        authorClientHandle: GroupScopedClientHandleV2,
+        authorCredentialHandle: GroupScopedCredentialHandleV2,
         commitDigest: Data,
         confirmedTranscriptHash: Data,
         signedAt: Date,
@@ -1511,23 +1298,76 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
         self.groupId = groupId
         self.epoch = epoch
         self.previousTranscriptHash = previousTranscriptHash
-        self.users = users.sorted { $0.id.uuidString < $1.id.uuidString }
-        self.clientLeaves = clientLeaves.sorted {
-            $0.clientHandle.rawValue < $1.clientHandle.rawValue
+        self.members = members.sorted { $0.id.rawValue < $1.id.rawValue }
+        self.memberCredentials = memberCredentials.sorted {
+            $0.credentialHandle.rawValue < $1.credentialHandle.rawValue
         }
         self.permissions = permissions
         self.metadataDigest = metadataDigest
-        self.authorClientHandle = authorClientHandle
+        self.authorCredentialHandle = authorCredentialHandle
         self.commitDigest = commitDigest
         self.confirmedTranscriptHash = confirmedTranscriptHash
         self.signedAt = signedAt
         self.signature = signature
     }
 
+    public init(from decoder: Decoder) throws {
+        try requireExactSignedGroupKeys(
+            decoder,
+            required: Set(CodingKeys.allCases.map(\.rawValue)).subtracting([
+                CodingKeys.previousTranscriptHash.rawValue,
+                CodingKeys.metadataDigest.rawValue,
+            ]),
+            optional: [
+                CodingKeys.previousTranscriptHash.rawValue,
+                CodingKeys.metadataDigest.rawValue,
+            ]
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedMembers = try values.decode([GroupMemberV2].self, forKey: .members)
+        let decodedCredentials = try values.decode(
+            [GroupMemberCredentialV2].self,
+            forKey: .memberCredentials
+        )
+        self.init(
+            version: try values.decode(Int.self, forKey: .version),
+            profile: try values.decode(GroupProtocolProfile.self, forKey: .profile),
+            cipherSuite: try values.decode(String.self, forKey: .cipherSuite),
+            groupId: try values.decode(UUID.self, forKey: .groupId),
+            epoch: try values.decode(UInt64.self, forKey: .epoch),
+            previousTranscriptHash: try values.decodeIfPresent(
+                Data.self,
+                forKey: .previousTranscriptHash
+            ),
+            members: decodedMembers,
+            memberCredentials: decodedCredentials,
+            permissions: try values.decode(GroupPermissionPolicy.self, forKey: .permissions),
+            metadataDigest: try values.decodeIfPresent(Data.self, forKey: .metadataDigest),
+            authorCredentialHandle: try values.decode(
+                GroupScopedCredentialHandleV2.self,
+                forKey: .authorCredentialHandle
+            ),
+            commitDigest: try values.decode(Data.self, forKey: .commitDigest),
+            confirmedTranscriptHash: try values.decode(
+                Data.self,
+                forKey: .confirmedTranscriptHash
+            ),
+            signedAt: try values.decode(Date.self, forKey: .signedAt),
+            signature: try values.decode(Data.self, forKey: .signature)
+        )
+        guard members == decodedMembers,
+              memberCredentials == decodedCredentials,
+              isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid signed group state")
+            )
+        }
+    }
+
     public static func initial(
         groupId: UUID,
-        creator: GroupUser,
-        creatorTrust: GroupGenesisTrustV2,
+        creator: GroupMemberV2,
+        creatorAdmission: GroupCredentialAdmissionV2,
         permissions: GroupPermissionPolicy = .default,
         metadataDigest: Data? = nil,
         providerGenesisDigest: Data,
@@ -1536,7 +1376,7 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
     ) throws -> SignedGroupStateV2 {
         let profile = NoctweaveSignedGroupV2.experimentalProfile
         let cipherSuite = NoctweaveSignedGroupV2.experimentalCipherSuite
-        guard creator.id == creatorTrust.creatorUserId,
+        guard creator.id == creatorAdmission.memberHandle,
               creator.role == .owner,
               creator.addedEpoch == 1,
               creator.removedEpoch == nil,
@@ -1544,25 +1384,27 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
               signedAt.timeIntervalSince1970.isFinite else {
             throw SignedGroupV2Error.invalidTransition
         }
-        let creatorPackage = try creatorTrust.verified(
+        let verifiedAdmission = try creatorAdmission.verified(
             forGroupId: groupId,
+            memberHandle: creator.id,
+            selection: .currentExperimental,
             now: signedAt
         )
-        guard creatorPackage.groupSigningPublicKey == signingKey.publicKeyData else {
+        guard verifiedAdmission.groupSigningPublicKey == signingKey.publicKeyData else {
             throw SignedGroupV2Error.unknownAuthor
         }
-        let creatorLeaf = try GroupClientLeafV2.fromVerifiedPackage(
-            creatorPackage,
+        let creatorLeaf = try GroupMemberCredentialV2.fromVerifiedProjection(
+            verifiedAdmission,
             addedEpoch: 1
         )
-        let users = [creator]
-        let clientLeaves = [creatorLeaf]
+        let members = [creator]
+        let memberCredentials = [creatorLeaf]
         try SignedGroupStateValidatorV2.validate(
             profile: profile,
             cipherSuite: cipherSuite,
             epoch: 1,
-            users: users,
-            clientLeaves: clientLeaves,
+            members: members,
+            memberCredentials: memberCredentials,
             permissions: permissions,
             metadataDigest: metadataDigest
         )
@@ -1572,16 +1414,16 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
             groupId: groupId,
             epoch: 1,
             previousTranscriptHash: nil,
-            users: users,
-            clientLeaves: clientLeaves,
+            members: members,
+            memberCredentials: memberCredentials,
             permissions: permissions,
             metadataDigest: metadataDigest,
-            authorClientHandle: creatorLeaf.clientHandle,
+            authorCredentialHandle: creatorLeaf.credentialHandle,
             commitDigest: providerGenesisDigest,
             signingKey: signingKey,
             signedAt: signedAt
         )
-        return try state.verified(genesisTrust: creatorTrust)
+        return try state.verified(genesisAdmission: verifiedAdmission)
     }
 
     public static func applying(
@@ -1590,8 +1432,8 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
         signingKey: SigningKeyPair
     ) throws -> SignedGroupStateV2 {
         _ = try commit.verifiedTransition(from: currentState)
-        guard let author = currentState.activeClientLeaves.first(where: {
-            $0.clientHandle == commit.authorClientHandle
+        guard let author = currentState.activeCredentials.first(where: {
+            $0.credentialHandle == commit.authorCredentialHandle
         }), author.signingPublicKey == signingKey.publicKeyData,
               let digest = commit.digest else {
             throw SignedGroupV2Error.unknownAuthor
@@ -1602,11 +1444,11 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
             groupId: commit.groupId,
             epoch: commit.nextEpoch,
             previousTranscriptHash: commit.previousTranscriptHash,
-            users: commit.proposedUsers,
-            clientLeaves: commit.proposedClientLeaves,
+            members: commit.proposedMembers,
+            memberCredentials: commit.proposedCredentials,
             permissions: commit.proposedPermissions,
             metadataDigest: commit.proposedMetadataDigest,
-            authorClientHandle: commit.authorClientHandle,
+            authorCredentialHandle: commit.authorCredentialHandle,
             commitDigest: digest,
             signingKey: signingKey,
             signedAt: commit.createdAt
@@ -1617,13 +1459,24 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
         )
     }
 
-    public var activeUsers: [GroupUser] {
-        users.filter { $0.isActive(at: epoch) }
+    public var activeMembers: [GroupMemberV2] {
+        members.filter { $0.isActive(at: epoch) }
     }
 
-    public var activeClientLeaves: [GroupClientLeafV2] {
-        let activeUserIds = Set(activeUsers.map(\.id))
-        return clientLeaves.filter { $0.isActive(at: epoch) && activeUserIds.contains($0.userId) }
+    public var activeCredentials: [GroupMemberCredentialV2] {
+        let activeMemberHandles = Set(activeMembers.map(\.id))
+        return memberCredentials.filter { $0.isActive(at: epoch) && activeMemberHandles.contains($0.memberHandle) }
+    }
+
+    /// The accepted state is signed by the credential that authorized its
+    /// transition. During credential replacement that key is retired at this
+    /// epoch, so it is intentionally distinct from `activeCredentials`.
+    fileprivate var transitionAuthorCredential: GroupMemberCredentialV2? {
+        memberCredentials.first {
+            $0.credentialHandle == authorCredentialHandle
+                && $0.addedEpoch <= epoch
+                && ($0.removedEpoch == nil || $0.removedEpoch == epoch)
+        }
     }
 
     public var isStructurallyValid: Bool {
@@ -1631,7 +1484,7 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
               epoch > 0,
               previousTranscriptHash?.count ?? 32 == 32,
               (epoch == 1 ? previousTranscriptHash == nil : previousTranscriptHash != nil),
-              authorClientHandle.isStructurallyValid,
+              authorCredentialHandle.isStructurallyValid,
               commitDigest.count == 32,
               confirmedTranscriptHash.count == 32,
               signedAt.timeIntervalSince1970.isFinite,
@@ -1646,8 +1499,8 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
             profile: profile,
             cipherSuite: cipherSuite,
             epoch: epoch,
-            users: users,
-            clientLeaves: clientLeaves,
+            members: members,
+            memberCredentials: memberCredentials,
             permissions: permissions,
             metadataDigest: metadataDigest
         )) != nil
@@ -1661,7 +1514,7 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
     public func verified(
         previousState: SignedGroupStateV2? = nil,
         commit: SignedGroupCommitV2? = nil,
-        genesisTrust: GroupGenesisTrustV2? = nil
+        genesisAdmission: GroupCredentialAdmissionV2? = nil
     ) throws -> SignedGroupStateV2 {
         guard isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
         let authorKey: Data
@@ -1679,48 +1532,55 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
             _ = try commit.verifiedTransition(from: previousState)
             guard commit.groupId == groupId,
                   commit.nextEpoch == epoch,
-                  commit.proposedUsers == users,
-                  commit.proposedClientLeaves == clientLeaves,
+                  commit.proposedMembers == members,
+                  commit.proposedCredentials == memberCredentials,
                   commit.proposedPermissions == permissions,
                   commit.proposedMetadataDigest == metadataDigest,
-                  commit.authorClientHandle == authorClientHandle,
+                  commit.authorCredentialHandle == authorCredentialHandle,
                   commit.digest == commitDigest,
                   commit.createdAt == signedAt else {
                 throw SignedGroupV2Error.invalidTransition
             }
-            guard let author = previousState.activeClientLeaves.first(where: {
-                $0.clientHandle == authorClientHandle
+            guard let author = previousState.activeCredentials.first(where: {
+                $0.credentialHandle == authorCredentialHandle
             }) else {
                 throw SignedGroupV2Error.unknownAuthor
             }
             authorKey = author.signingPublicKey
         } else {
-            guard let genesisTrust else { throw SignedGroupV2Error.genesisTrustRequired }
+            guard let genesisAdmission else {
+                throw SignedGroupV2Error.genesisAdmissionRequired
+            }
             guard epoch == 1,
                   previousTranscriptHash == nil,
                   commit == nil,
-                  users.count == 1,
-                  clientLeaves.count == 1,
-                  let creator = users.first,
-                  creator.id == genesisTrust.creatorUserId,
+                  members.count == 1,
+                  memberCredentials.count == 1,
+                  let creator = members.first,
+                  creator.id == genesisAdmission.memberHandle,
                   creator.role == .owner,
                   creator.addedEpoch == 1,
                   creator.removedEpoch == nil else {
                 throw SignedGroupV2Error.invalidTransition
             }
-            let creatorPackage = try genesisTrust.verified(
+            let verifiedAdmission = try genesisAdmission.verified(
                 forGroupId: groupId,
+                memberHandle: creator.id,
+                selection: GroupProtocolSelectionV2(
+                    profile: profile,
+                    cipherSuite: cipherSuite
+                ),
                 now: signedAt
             )
-            let expectedLeaf = try GroupClientLeafV2.fromVerifiedPackage(
-                creatorPackage,
+            let expectedLeaf = try GroupMemberCredentialV2.fromVerifiedProjection(
+                verifiedAdmission,
                 addedEpoch: 1
             )
-            guard clientLeaves[0] == expectedLeaf,
-                  authorClientHandle == expectedLeaf.clientHandle else {
-                throw SignedGroupV2Error.keyPackageMismatch
+            guard memberCredentials[0] == expectedLeaf,
+                  authorCredentialHandle == expectedLeaf.credentialHandle else {
+                throw SignedGroupV2Error.admissionMismatch
             }
-            authorKey = creatorPackage.groupSigningPublicKey
+            authorKey = verifiedAdmission.groupSigningPublicKey
         }
         let signatureData = try GroupStateSignatureContextV2(
             groupId: groupId,
@@ -1743,11 +1603,11 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
             groupId: groupId,
             epoch: epoch,
             previousTranscriptHash: previousTranscriptHash,
-            users: users,
-            clientLeaves: clientLeaves,
+            members: members,
+            memberCredentials: memberCredentials,
             permissions: permissions,
             metadataDigest: metadataDigest,
-            authorClientHandle: authorClientHandle,
+            authorCredentialHandle: authorCredentialHandle,
             commitDigest: commitDigest,
             signedAt: signedAt
         )
@@ -1759,23 +1619,23 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
         groupId: UUID,
         epoch: UInt64,
         previousTranscriptHash: Data?,
-        users: [GroupUser],
-        clientLeaves: [GroupClientLeafV2],
+        members: [GroupMemberV2],
+        memberCredentials: [GroupMemberCredentialV2],
         permissions: GroupPermissionPolicy,
         metadataDigest: Data?,
-        authorClientHandle: GroupScopedClientHandleV2,
+        authorCredentialHandle: GroupScopedCredentialHandleV2,
         commitDigest: Data,
         signingKey: SigningKeyPair,
         signedAt: Date
     ) throws -> SignedGroupStateV2 {
-        let orderedUsers = users.sorted { $0.id.uuidString < $1.id.uuidString }
-        let orderedLeaves = clientLeaves.sorted { $0.clientHandle.rawValue < $1.clientHandle.rawValue }
+        let orderedMembers = members.sorted { $0.id.rawValue < $1.id.rawValue }
+        let orderedLeaves = memberCredentials.sorted { $0.credentialHandle.rawValue < $1.credentialHandle.rawValue }
         try SignedGroupStateValidatorV2.validate(
             profile: profile,
             cipherSuite: cipherSuite,
             epoch: epoch,
-            users: orderedUsers,
-            clientLeaves: orderedLeaves,
+            members: orderedMembers,
+            memberCredentials: orderedLeaves,
             permissions: permissions,
             metadataDigest: metadataDigest
         )
@@ -1786,11 +1646,11 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
             groupId: groupId,
             epoch: epoch,
             previousTranscriptHash: previousTranscriptHash,
-            users: orderedUsers,
-            clientLeaves: orderedLeaves,
+            members: orderedMembers,
+            memberCredentials: orderedLeaves,
             permissions: permissions,
             metadataDigest: metadataDigest,
-            authorClientHandle: authorClientHandle,
+            authorCredentialHandle: authorCredentialHandle,
             commitDigest: commitDigest,
             signedAt: signedAt
         )
@@ -1808,11 +1668,11 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
             groupId: groupId,
             epoch: epoch,
             previousTranscriptHash: previousTranscriptHash,
-            users: orderedUsers,
-            clientLeaves: orderedLeaves,
+            members: orderedMembers,
+            memberCredentials: orderedLeaves,
             permissions: permissions,
             metadataDigest: metadataDigest,
-            authorClientHandle: authorClientHandle,
+            authorCredentialHandle: authorCredentialHandle,
             commitDigest: commitDigest,
             confirmedTranscriptHash: transcriptHash,
             signedAt: signedAt,
@@ -1830,13 +1690,31 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
     public let epoch: UInt64
     public let stateTranscriptHash: Data
     public let commitDigest: Data
-    public let authorClientHandle: GroupScopedClientHandleV2
-    public let destinationClientHandle: GroupScopedClientHandleV2
-    public let destinationKeyPackageDigest: Data
+    public let authorCredentialHandle: GroupScopedCredentialHandleV2
+    public let destinationCredentialHandle: GroupScopedCredentialHandleV2
+    public let destinationAdmissionDigest: Data
     public let encryptedWelcome: Data
     public let createdAt: Date
     public let expiresAt: Date
     public let signature: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id
+        case version
+        case profile
+        case cipherSuite
+        case groupId
+        case epoch
+        case stateTranscriptHash
+        case commitDigest
+        case authorCredentialHandle
+        case destinationCredentialHandle
+        case destinationAdmissionDigest
+        case encryptedWelcome
+        case createdAt
+        case expiresAt
+        case signature
+    }
 
     public init(
         id: UUID,
@@ -1847,9 +1725,9 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
         epoch: UInt64,
         stateTranscriptHash: Data,
         commitDigest: Data,
-        authorClientHandle: GroupScopedClientHandleV2,
-        destinationClientHandle: GroupScopedClientHandleV2,
-        destinationKeyPackageDigest: Data,
+        authorCredentialHandle: GroupScopedCredentialHandleV2,
+        destinationCredentialHandle: GroupScopedCredentialHandleV2,
+        destinationAdmissionDigest: Data,
         encryptedWelcome: Data,
         createdAt: Date,
         expiresAt: Date,
@@ -1863,30 +1741,68 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
         self.epoch = epoch
         self.stateTranscriptHash = stateTranscriptHash
         self.commitDigest = commitDigest
-        self.authorClientHandle = authorClientHandle
-        self.destinationClientHandle = destinationClientHandle
-        self.destinationKeyPackageDigest = destinationKeyPackageDigest
+        self.authorCredentialHandle = authorCredentialHandle
+        self.destinationCredentialHandle = destinationCredentialHandle
+        self.destinationAdmissionDigest = destinationAdmissionDigest
         self.encryptedWelcome = encryptedWelcome
         self.createdAt = createdAt
         self.expiresAt = expiresAt
         self.signature = signature
     }
 
+    public init(from decoder: Decoder) throws {
+        try requireExactSignedGroupKeys(
+            decoder,
+            required: Set(CodingKeys.allCases.map(\.rawValue))
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try values.decode(UUID.self, forKey: .id),
+            version: try values.decode(Int.self, forKey: .version),
+            profile: try values.decode(GroupProtocolProfile.self, forKey: .profile),
+            cipherSuite: try values.decode(String.self, forKey: .cipherSuite),
+            groupId: try values.decode(UUID.self, forKey: .groupId),
+            epoch: try values.decode(UInt64.self, forKey: .epoch),
+            stateTranscriptHash: try values.decode(Data.self, forKey: .stateTranscriptHash),
+            commitDigest: try values.decode(Data.self, forKey: .commitDigest),
+            authorCredentialHandle: try values.decode(
+                GroupScopedCredentialHandleV2.self,
+                forKey: .authorCredentialHandle
+            ),
+            destinationCredentialHandle: try values.decode(
+                GroupScopedCredentialHandleV2.self,
+                forKey: .destinationCredentialHandle
+            ),
+            destinationAdmissionDigest: try values.decode(
+                Data.self,
+                forKey: .destinationAdmissionDigest
+            ),
+            encryptedWelcome: try values.decode(Data.self, forKey: .encryptedWelcome),
+            createdAt: try values.decode(Date.self, forKey: .createdAt),
+            expiresAt: try values.decode(Date.self, forKey: .expiresAt),
+            signature: try values.decode(Data.self, forKey: .signature)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid group welcome")
+            )
+        }
+    }
+
     public static func create(
         id: UUID = UUID(),
         state: SignedGroupStateV2,
-        destinationClientHandle: GroupScopedClientHandleV2,
+        destinationCredentialHandle: GroupScopedCredentialHandleV2,
         encryptedWelcome: Data,
         signingKey: SigningKeyPair,
         createdAt: Date = Date(),
         expiresAt: Date
     ) throws -> SignedGroupWelcomeV2 {
         guard state.isStructurallyValid,
-              let author = state.activeClientLeaves.first(where: {
-                  $0.clientHandle == state.authorClientHandle
-              }), author.signingPublicKey == signingKey.publicKeyData,
-              let destination = state.activeClientLeaves.first(where: {
-                  $0.clientHandle == destinationClientHandle
+              let author = state.transitionAuthorCredential,
+              author.signingPublicKey == signingKey.publicKeyData,
+              let destination = state.activeCredentials.first(where: {
+                  $0.credentialHandle == destinationCredentialHandle
               }) else {
             throw SignedGroupV2Error.unknownAuthor
         }
@@ -1898,9 +1814,9 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
             epoch: state.epoch,
             stateTranscriptHash: state.confirmedTranscriptHash,
             commitDigest: state.commitDigest,
-            authorClientHandle: state.authorClientHandle,
-            destinationClientHandle: destinationClientHandle,
-            destinationKeyPackageDigest: destination.keyPackageDigest,
+            authorCredentialHandle: state.authorCredentialHandle,
+            destinationCredentialHandle: destinationCredentialHandle,
+            destinationAdmissionDigest: destination.admissionDigest,
             encryptedWelcome: encryptedWelcome,
             createdAt: createdAt,
             expiresAt: expiresAt,
@@ -1917,9 +1833,9 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
             epoch: welcome.epoch,
             stateTranscriptHash: welcome.stateTranscriptHash,
             commitDigest: welcome.commitDigest,
-            authorClientHandle: welcome.authorClientHandle,
-            destinationClientHandle: welcome.destinationClientHandle,
-            destinationKeyPackageDigest: welcome.destinationKeyPackageDigest,
+            authorCredentialHandle: welcome.authorCredentialHandle,
+            destinationCredentialHandle: welcome.destinationCredentialHandle,
+            destinationAdmissionDigest: welcome.destinationAdmissionDigest,
             encryptedWelcome: welcome.encryptedWelcome,
             createdAt: welcome.createdAt,
             expiresAt: welcome.expiresAt,
@@ -1950,14 +1866,14 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
               commitDigest == state.commitDigest else {
             throw SignedGroupV2Error.invalidContext
         }
-        guard let destination = state.activeClientLeaves.first(where: {
-            $0.clientHandle == destinationClientHandle
-        }), destination.keyPackageDigest == destinationKeyPackageDigest else {
-            throw SignedGroupV2Error.keyPackageMismatch
+        guard let destination = state.activeCredentials.first(where: {
+            $0.credentialHandle == destinationCredentialHandle
+        }), destination.admissionDigest == destinationAdmissionDigest else {
+            throw SignedGroupV2Error.admissionMismatch
         }
-        guard let author = state.activeClientLeaves.first(where: {
-            $0.clientHandle == authorClientHandle
-        }) else {
+        guard state.isStructurallyValid,
+              let author = state.transitionAuthorCredential,
+              author.credentialHandle == authorCredentialHandle else {
             throw SignedGroupV2Error.unknownAuthor
         }
         guard SigningKeyPair.verify(
@@ -1977,9 +1893,9 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
             && epoch > 0
             && stateTranscriptHash.count == 32
             && commitDigest.count == 32
-            && authorClientHandle.isStructurallyValid
-            && destinationClientHandle.isStructurallyValid
-            && destinationKeyPackageDigest.count == 32
+            && authorCredentialHandle.isStructurallyValid
+            && destinationCredentialHandle.isStructurallyValid
+            && destinationAdmissionDigest.count == 32
             && !encryptedWelcome.isEmpty
             && encryptedWelcome.count <= NoctweaveGroupArchitectureV2.maximumWelcomeBytes
             && createdAt.timeIntervalSince1970.isFinite
@@ -1999,9 +1915,9 @@ public struct SignedGroupWelcomeV2: Codable, Equatable, Identifiable {
             epoch: epoch,
             stateTranscriptHash: stateTranscriptHash,
             commitDigest: commitDigest,
-            authorClientHandle: authorClientHandle,
-            destinationClientHandle: destinationClientHandle,
-            destinationKeyPackageDigest: destinationKeyPackageDigest,
+            authorCredentialHandle: authorCredentialHandle,
+            destinationCredentialHandle: destinationCredentialHandle,
+            destinationAdmissionDigest: destinationAdmissionDigest,
             encryptedWelcomeDigest: SignedGroupV2Hash.digest(encryptedWelcome),
             createdAt: createdAt,
             expiresAt: expiresAt
@@ -2014,8 +1930,8 @@ private enum SignedGroupStateValidatorV2 {
         profile: GroupProtocolProfile,
         cipherSuite: String,
         epoch: UInt64,
-        users: [GroupUser],
-        clientLeaves: [GroupClientLeafV2],
+        members: [GroupMemberV2],
+        memberCredentials: [GroupMemberCredentialV2],
         permissions: GroupPermissionPolicy,
         metadataDigest: Data?
     ) throws {
@@ -2024,58 +1940,91 @@ private enum SignedGroupStateValidatorV2 {
             throw SignedGroupV2Error.unsupportedProfile
         }
         guard epoch > 0,
-              !users.isEmpty,
-              users.count <= NoctweaveGroupArchitectureV2.maximumUsers,
-              !clientLeaves.isEmpty,
-              clientLeaves.count <= NoctweaveGroupArchitectureV2.maximumClientLeaves,
-              Set(users.map(\.id)).count == users.count,
-              Set(clientLeaves.map(\.clientHandle)).count == clientLeaves.count,
-              Set(clientLeaves.map(\.keyPackageDigest)).count == clientLeaves.count,
-              Set(clientLeaves.map(\.signingPublicKey)).count == clientLeaves.count,
-              Set(clientLeaves.map(\.agreementPublicKey)).count == clientLeaves.count,
+              !members.isEmpty,
+              members.count <= NoctweaveGroupArchitectureV2.maximumMembers,
+              !memberCredentials.isEmpty,
+              memberCredentials.count <= NoctweaveGroupArchitectureV2.maximumGroupCredentials,
+              Set(members.map(\.id)).count == members.count,
+              Set(memberCredentials.map(\.credentialHandle)).count == memberCredentials.count,
+              Set(memberCredentials.map(\.admissionDigest)).count == memberCredentials.count,
+              Set(memberCredentials.map(\.signingPublicKey)).count == memberCredentials.count,
+              Set(memberCredentials.map(\.agreementPublicKey)).count == memberCredentials.count,
               permissions.isStructurallyValid,
               metadataDigest?.count ?? 32 == 32,
-              users.allSatisfy({
+              members.allSatisfy({
                   $0.isStructurallyValid
                       && $0.addedEpoch <= epoch
                       && ($0.removedEpoch.map { $0 <= epoch } ?? true)
               }),
-              clientLeaves.allSatisfy({
+              memberCredentials.allSatisfy({
                   $0.isStructurallyValid
                       && $0.addedEpoch <= epoch
                       && ($0.removedEpoch.map { $0 <= epoch } ?? true)
               }) else {
             throw SignedGroupV2Error.invalidStructure
         }
-        let usersById = Dictionary(uniqueKeysWithValues: users.map { ($0.id, $0) })
-        guard clientLeaves.allSatisfy({ leaf in
-            guard let user = usersById[leaf.userId] else { return false }
-            return leaf.addedEpoch >= user.addedEpoch
-                && (user.removedEpoch.map { removal in
+        let membersById = Dictionary(uniqueKeysWithValues: members.map { ($0.id, $0) })
+        guard memberCredentials.allSatisfy({ leaf in
+            guard let member = membersById[leaf.memberHandle] else { return false }
+            return leaf.addedEpoch >= member.addedEpoch
+                && (member.removedEpoch.map { removal in
                     leaf.removedEpoch.map { $0 <= removal } ?? false
                 } ?? true)
         }) else {
             throw SignedGroupV2Error.invalidStructure
         }
-        let activeUsers = users.filter { $0.isActive(at: epoch) }
-        let activeUserIds = Set(activeUsers.map(\.id))
-        let activeLeaves = clientLeaves.filter {
-            $0.isActive(at: epoch) && activeUserIds.contains($0.userId)
+        for member in members {
+            try validateCredentialTimeline(
+                for: member,
+                credentials: memberCredentials.filter { $0.memberHandle == member.id }
+            )
         }
-        guard activeLeaves.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalClientLeaves else {
+        let activeMembers = members.filter { $0.isActive(at: epoch) }
+        let activeMemberHandles = Set(activeMembers.map(\.id))
+        let activeLeaves = memberCredentials.filter {
+            $0.isActive(at: epoch) && activeMemberHandles.contains($0.memberHandle)
+        }
+        guard activeLeaves.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials else {
             throw SignedGroupV2Error.activeLeafLimitExceeded
         }
-        guard activeUsers.allSatisfy({ user in
-            activeLeaves.contains { $0.userId == user.id }
-        }), clientLeaves.filter({ $0.isActive(at: epoch) }).allSatisfy({
-            activeUserIds.contains($0.userId)
+        guard activeMembers.allSatisfy({ member in
+            activeLeaves.contains { $0.memberHandle == member.id }
+        }), activeLeaves.count == activeMembers.count,
+            Set(activeLeaves.map(\.memberHandle)).count == activeLeaves.count,
+            memberCredentials.filter({ $0.isActive(at: epoch) }).allSatisfy({
+            activeMemberHandles.contains($0.memberHandle)
         }) else {
             throw SignedGroupV2Error.invalidTransition
         }
-        let activeOwnerIds = Set(activeUsers.filter { $0.role == .owner }.map(\.id))
+        let activeOwnerIds = Set(activeMembers.filter { $0.role == .owner }.map(\.id))
         guard !activeOwnerIds.isEmpty,
-              activeLeaves.contains(where: { activeOwnerIds.contains($0.userId) }) else {
+              activeLeaves.contains(where: { activeOwnerIds.contains($0.memberHandle) }) else {
             throw SignedGroupV2Error.wouldRemoveLastOwner
+        }
+    }
+
+    private static func validateCredentialTimeline(
+        for member: GroupMemberV2,
+        credentials: [GroupMemberCredentialV2]
+    ) throws {
+        let ordered = credentials.sorted {
+            if $0.addedEpoch != $1.addedEpoch { return $0.addedEpoch < $1.addedEpoch }
+            return $0.credentialHandle.rawValue < $1.credentialHandle.rawValue
+        }
+        guard let first = ordered.first,
+              first.addedEpoch == member.addedEpoch else {
+            throw SignedGroupV2Error.invalidStructure
+        }
+        for index in ordered.indices {
+            let credential = ordered[index]
+            if index < ordered.index(before: ordered.endIndex) {
+                let next = ordered[ordered.index(after: index)]
+                guard credential.removedEpoch == next.addedEpoch else {
+                    throw SignedGroupV2Error.invalidStructure
+                }
+            } else if credential.removedEpoch != member.removedEpoch {
+                throw SignedGroupV2Error.invalidStructure
+            }
         }
     }
 }
@@ -2084,113 +2033,100 @@ private enum SignedGroupTransitionValidatorV2 {
     static func validate(
         operation: SignedGroupCommitOperationV2,
         currentState: SignedGroupStateV2,
-        proposedUsers: [GroupUser],
-        proposedClientLeaves: [GroupClientLeafV2],
+        proposedMembers: [GroupMemberV2],
+        proposedCredentials: [GroupMemberCredentialV2],
         proposedPermissions: GroupPermissionPolicy,
         proposedMetadataDigest: Data?,
-        actorUser: GroupUser,
-        actorLeaf: GroupClientLeafV2,
-        verifiedAddedLeaf: GroupClientLeafV2?,
+        actorMember: GroupMemberV2,
+        actorLeaf: GroupMemberCredentialV2,
+        verifiedAddedLeaf: GroupMemberCredentialV2?,
         nextEpoch: UInt64
     ) throws {
-        let oldUsers = dictionary(currentState.users, by: { $0.id })
-        let newUsers = dictionary(proposedUsers, by: { $0.id })
-        let oldLeaves = dictionary(currentState.clientLeaves, by: { $0.clientHandle })
-        let newLeaves = dictionary(proposedClientLeaves, by: { $0.clientHandle })
-        guard oldUsers.count == currentState.users.count,
-              newUsers.count == proposedUsers.count,
-              oldLeaves.count == currentState.clientLeaves.count,
-              newLeaves.count == proposedClientLeaves.count else {
+        let oldMembers = dictionary(currentState.members, by: { $0.id })
+        let newMembers = dictionary(proposedMembers, by: { $0.id })
+        let oldLeaves = dictionary(currentState.memberCredentials, by: { $0.credentialHandle })
+        let newLeaves = dictionary(proposedCredentials, by: { $0.credentialHandle })
+        guard oldMembers.count == currentState.members.count,
+              newMembers.count == proposedMembers.count,
+              oldLeaves.count == currentState.memberCredentials.count,
+              newLeaves.count == proposedCredentials.count else {
             throw SignedGroupV2Error.invalidTransition
         }
 
         switch operation {
-        case .addClient:
-            try requirePermission(.addClient, state: currentState, actor: actorUser)
-            guard proposedUsers == currentState.users,
+        case .replaceCredential:
+            guard proposedMembers == currentState.members,
                   proposedPermissions == currentState.permissions,
                   proposedMetadataDigest == currentState.metadataDigest,
                   Set(oldLeaves.keys).isSubset(of: Set(newLeaves.keys)),
                   newLeaves.count == oldLeaves.count + 1,
-                  oldLeaves.allSatisfy({ newLeaves[$0.key] == $0.value }),
                   let added = newLeaves.first(where: { oldLeaves[$0.key] == nil })?.value,
                   added == verifiedAddedLeaf,
+                  added.memberHandle == actorMember.id,
+                  added.credentialHandle != actorLeaf.credentialHandle,
                   added.addedEpoch == nextEpoch,
-                  added.removedEpoch == nil,
-                  currentState.activeUsers.contains(where: { $0.id == added.userId }) else {
+                  added.removedEpoch == nil else {
                 throw SignedGroupV2Error.invalidTransition
             }
-
-        case .removeClient:
-            guard proposedUsers == currentState.users,
-                  proposedPermissions == currentState.permissions,
-                  proposedMetadataDigest == currentState.metadataDigest,
-                  Set(oldLeaves.keys) == Set(newLeaves.keys) else {
-                throw SignedGroupV2Error.invalidTransition
-            }
-            let changed = oldLeaves.compactMap { key, old -> (GroupClientLeafV2, GroupClientLeafV2)? in
-                guard let new = newLeaves[key], new != old else { return nil }
+            let changed = oldLeaves.compactMap { handle, old -> (GroupMemberCredentialV2, GroupMemberCredentialV2)? in
+                guard let new = newLeaves[handle], new != old else { return nil }
                 return (old, new)
             }
             guard changed.count == 1,
-                  isRemoval(from: changed[0].0, to: changed[0].1, at: nextEpoch),
-                  changed[0].0.isActive(at: currentState.epoch),
-                  let targetUser = currentState.activeUsers.first(where: {
-                      $0.id == changed[0].0.userId
+                  changed[0].0 == actorLeaf,
+                  isRemoval(from: actorLeaf, to: changed[0].1, at: nextEpoch),
+                  oldLeaves.allSatisfy({ handle, old in
+                      handle == actorLeaf.credentialHandle
+                          ? newLeaves[handle] == changed[0].1
+                          : newLeaves[handle] == old
                   }) else {
                 throw SignedGroupV2Error.invalidTransition
             }
-            let isSelf = targetUser.id == actorUser.id
-                && changed[0].0.clientHandle == actorLeaf.clientHandle
-            if !isSelf {
-                try requirePermission(.removeClient, state: currentState, actor: actorUser)
-                try requireMayModerate(actor: actorUser, target: targetUser)
-            }
 
-        case .addUser:
-            try requirePermission(.addClient, state: currentState, actor: actorUser)
+        case .addMember:
+            try requirePermission(.addMember, state: currentState, actor: actorMember)
             guard proposedPermissions == currentState.permissions,
                   proposedMetadataDigest == currentState.metadataDigest,
-                  Set(oldUsers.keys).isSubset(of: Set(newUsers.keys)),
-                  newUsers.count == oldUsers.count + 1,
-                  oldUsers.allSatisfy({ newUsers[$0.key] == $0.value }),
+                  Set(oldMembers.keys).isSubset(of: Set(newMembers.keys)),
+                  newMembers.count == oldMembers.count + 1,
+                  oldMembers.allSatisfy({ newMembers[$0.key] == $0.value }),
                   Set(oldLeaves.keys).isSubset(of: Set(newLeaves.keys)),
                   newLeaves.count == oldLeaves.count + 1,
                   oldLeaves.allSatisfy({ newLeaves[$0.key] == $0.value }),
-                  let addedUser = newUsers.first(where: { oldUsers[$0.key] == nil })?.value,
+                  let addedMember = newMembers.first(where: { oldMembers[$0.key] == nil })?.value,
                   let addedLeaf = newLeaves.first(where: { oldLeaves[$0.key] == nil })?.value,
                   addedLeaf == verifiedAddedLeaf,
-                  addedUser.addedEpoch == nextEpoch,
-                  addedUser.removedEpoch == nil,
-                  addedLeaf.userId == addedUser.id,
+                  addedMember.addedEpoch == nextEpoch,
+                  addedMember.removedEpoch == nil,
+                  addedLeaf.memberHandle == addedMember.id,
                   addedLeaf.addedEpoch == nextEpoch,
                   addedLeaf.removedEpoch == nil,
-                  roleRank(addedUser.role) <= roleRank(actorUser.role) else {
+                  roleRank(addedMember.role) <= roleRank(actorMember.role) else {
                 throw SignedGroupV2Error.invalidTransition
             }
 
-        case .removeUser:
+        case .removeMember:
             guard proposedPermissions == currentState.permissions,
                   proposedMetadataDigest == currentState.metadataDigest,
-                  Set(oldUsers.keys) == Set(newUsers.keys),
+                  Set(oldMembers.keys) == Set(newMembers.keys),
                   Set(oldLeaves.keys) == Set(newLeaves.keys) else {
                 throw SignedGroupV2Error.invalidTransition
             }
-            let changedUsers = oldUsers.compactMap { key, old -> (GroupUser, GroupUser)? in
-                guard let new = newUsers[key], new != old else { return nil }
+            let changedMembers = oldMembers.compactMap { key, old -> (GroupMemberV2, GroupMemberV2)? in
+                guard let new = newMembers[key], new != old else { return nil }
                 return (old, new)
             }
-            guard changedUsers.count == 1,
-                  isRemoval(from: changedUsers[0].0, to: changedUsers[0].1, at: nextEpoch),
-                  changedUsers[0].0.isActive(at: currentState.epoch) else {
+            guard changedMembers.count == 1,
+                  isRemoval(from: changedMembers[0].0, to: changedMembers[0].1, at: nextEpoch),
+                  changedMembers[0].0.isActive(at: currentState.epoch) else {
                 throw SignedGroupV2Error.invalidTransition
             }
-            let target = changedUsers[0].0
+            let target = changedMembers[0].0
             for (handle, oldLeaf) in oldLeaves {
                 guard let newLeaf = newLeaves[handle] else {
                     throw SignedGroupV2Error.invalidTransition
                 }
-                if oldLeaf.userId == target.id && oldLeaf.isActive(at: currentState.epoch) {
+                if oldLeaf.memberHandle == target.id && oldLeaf.isActive(at: currentState.epoch) {
                     guard isRemoval(from: oldLeaf, to: newLeaf, at: nextEpoch) else {
                         throw SignedGroupV2Error.invalidTransition
                     }
@@ -2198,21 +2134,21 @@ private enum SignedGroupTransitionValidatorV2 {
                     throw SignedGroupV2Error.invalidTransition
                 }
             }
-            if target.id != actorUser.id {
-                try requirePermission(.removeClient, state: currentState, actor: actorUser)
-                try requireMayModerate(actor: actorUser, target: target)
+            if target.id != actorMember.id {
+                try requirePermission(.removeMember, state: currentState, actor: actorMember)
+                try requireMayModerate(actor: actorMember, target: target)
             }
 
         case .changeRole:
-            try requirePermission(.updatePolicy, state: currentState, actor: actorUser)
+            try requirePermission(.updatePolicy, state: currentState, actor: actorMember)
             guard proposedPermissions == currentState.permissions,
                   proposedMetadataDigest == currentState.metadataDigest,
-                  proposedClientLeaves == currentState.clientLeaves,
-                  Set(oldUsers.keys) == Set(newUsers.keys) else {
+                  proposedCredentials == currentState.memberCredentials,
+                  Set(oldMembers.keys) == Set(newMembers.keys) else {
                 throw SignedGroupV2Error.invalidTransition
             }
-            let changed = oldUsers.compactMap { key, old -> (GroupUser, GroupUser)? in
-                guard let new = newUsers[key], new != old else { return nil }
+            let changed = oldMembers.compactMap { key, old -> (GroupMemberV2, GroupMemberV2)? in
+                guard let new = newMembers[key], new != old else { return nil }
                 return (old, new)
             }
             guard changed.count == 1,
@@ -2224,15 +2160,15 @@ private enum SignedGroupTransitionValidatorV2 {
                 throw SignedGroupV2Error.invalidTransition
             }
             try requireMayChangeRole(
-                actor: actorUser,
+                actor: actorMember,
                 target: changed[0].0,
                 newRole: changed[0].1.role
             )
 
         case .changePolicy:
-            try requirePermission(.updatePolicy, state: currentState, actor: actorUser)
-            guard proposedUsers == currentState.users,
-                  proposedClientLeaves == currentState.clientLeaves,
+            try requirePermission(.updatePolicy, state: currentState, actor: actorMember)
+            guard proposedMembers == currentState.members,
+                  proposedCredentials == currentState.memberCredentials,
                   proposedMetadataDigest == currentState.metadataDigest,
                   proposedPermissions != currentState.permissions,
                   proposedPermissions.isStructurallyValid else {
@@ -2240,9 +2176,9 @@ private enum SignedGroupTransitionValidatorV2 {
             }
 
         case .updateMetadata:
-            try requirePermission(.updateMetadata, state: currentState, actor: actorUser)
-            guard proposedUsers == currentState.users,
-                  proposedClientLeaves == currentState.clientLeaves,
+            try requirePermission(.updateMetadata, state: currentState, actor: actorMember)
+            guard proposedMembers == currentState.members,
+                  proposedCredentials == currentState.memberCredentials,
                   proposedPermissions == currentState.permissions,
                   proposedMetadataDigest != currentState.metadataDigest,
                   proposedMetadataDigest?.count ?? 32 == 32 else {
@@ -2258,26 +2194,26 @@ private enum SignedGroupTransitionValidatorV2 {
     private static func requirePermission(
         _ permission: GroupPermission,
         state: SignedGroupStateV2,
-        actor: GroupUser
+        actor: GroupMemberV2
     ) throws {
         guard state.permissions.allows(permission, for: actor.role) else {
             throw SignedGroupV2Error.unauthorized
         }
     }
 
-    private static func requireMayModerate(actor: GroupUser, target: GroupUser) throws {
+    private static func requireMayModerate(actor: GroupMemberV2, target: GroupMemberV2) throws {
         guard actor.role == .owner || roleRank(actor.role) > roleRank(target.role) else {
             throw SignedGroupV2Error.unauthorized
         }
     }
 
     /// Self-service role changes are strict demotions only. Changing another
-    /// user requires the actor to outrank the target before the change, and the
+    /// member requires the actor to outrank the target before the change, and the
     /// actor cannot grant a role above their own. The state validator separately
     /// preserves the invariant that at least one active owner remains.
     private static func requireMayChangeRole(
-        actor: GroupUser,
-        target: GroupUser,
+        actor: GroupMemberV2,
+        target: GroupMemberV2,
         newRole: GroupRole
     ) throws {
         let actorRank = roleRank(actor.role)
@@ -2303,8 +2239,8 @@ private enum SignedGroupTransitionValidatorV2 {
     }
 
     private static func isRemoval(
-        from old: GroupUser,
-        to new: GroupUser,
+        from old: GroupMemberV2,
+        to new: GroupMemberV2,
         at epoch: UInt64
     ) -> Bool {
         old.id == new.id
@@ -2315,13 +2251,13 @@ private enum SignedGroupTransitionValidatorV2 {
     }
 
     private static func isRemoval(
-        from old: GroupClientLeafV2,
-        to new: GroupClientLeafV2,
+        from old: GroupMemberCredentialV2,
+        to new: GroupMemberCredentialV2,
         at epoch: UInt64
     ) -> Bool {
-        old.userId == new.userId
-            && old.clientHandle == new.clientHandle
-            && old.keyPackageDigest == new.keyPackageDigest
+        old.memberHandle == new.memberHandle
+            && old.credentialHandle == new.credentialHandle
+            && old.admissionDigest == new.admissionDigest
             && old.signingPublicKey == new.signingPublicKey
             && old.agreementPublicKey == new.agreementPublicKey
             && old.addedEpoch == new.addedEpoch
@@ -2339,41 +2275,26 @@ private enum SignedGroupTransitionValidatorV2 {
     }
 }
 
-fileprivate struct GroupClientAdmissionProjectionPayloadV2: Encodable {
+fileprivate struct GroupCredentialAdmissionPayloadV2: Encodable {
     let version: Int
     let id: UUID
     let groupId: UUID
-    let groupUserId: UUID
-    let clientHandle: GroupScopedClientHandleV2
+    let memberHandle: GroupScopedMemberHandleV2
+    let credentialHandle: GroupScopedCredentialHandleV2
     let selection: GroupProtocolSelectionV2
     let groupSigningPublicKey: Data
     let groupAgreementPublicKey: Data
+    let contentTypes: [ContentTypeCapabilityV2]
     let issuedAt: Date
     let expiresAt: Date
 }
 
 private struct GroupAdmissionProjectionSignatureContextV2: Encodable {
-    let purpose = "Noctweave/group-client-admission-projection/v2"
+    let purpose = "Noctweave/group-credential-admission-projection/v2"
     let groupId: UUID
-    let groupUserId: UUID
-    let clientHandle: GroupScopedClientHandleV2
+    let memberHandle: GroupScopedMemberHandleV2
+    let credentialHandle: GroupScopedCredentialHandleV2
     let payloadDigest: Data
-
-    func signableData() throws -> Data {
-        try NoctweaveCoder.encode(self, sortedKeys: true)
-    }
-}
-
-private struct GroupSiblingConsentSignatureContextV2: Encodable {
-    let purpose = "Noctweave/group-sibling-client-consent/v2"
-    let groupId: UUID
-    let groupUserId: UUID
-    let newClientHandle: GroupScopedClientHandleV2
-    let projectionDigest: Data
-    let consentingClientHandle: GroupScopedClientHandleV2
-    let baseEpoch: UInt64
-    let nextEpoch: UInt64
-    let signedAt: Date
 
     func signableData() throws -> Data {
         try NoctweaveCoder.encode(self, sortedKeys: true)
@@ -2389,7 +2310,7 @@ fileprivate struct GroupDeletionTombstonePayloadV2: Encodable {
     let baseEpoch: UInt64
     let deletedEpoch: UInt64
     let previousTranscriptHash: Data
-    let authorClientHandle: GroupScopedClientHandleV2
+    let authorCredentialHandle: GroupScopedCredentialHandleV2
     let reasonDigest: Data?
     let idempotencyKey: Data
     let createdAt: Date
@@ -2415,46 +2336,6 @@ private struct GroupDeletionTerminalTranscriptV2: Encodable {
     let tombstoneDigest: Data
 }
 
-private struct GroupClientKeyPackagePayloadV2: Encodable {
-    let version: Int
-    let id: UUID
-    let groupId: UUID
-    let groupUserId: UUID
-    let clientHandle: GroupScopedClientHandleV2
-    let identityGenerationId: UUID
-    let manifestEpoch: UInt64
-    let manifestDigest: Data
-    let endpointId: UUID
-    let endpointSigningPublicKey: Data
-    let endpointAgreementPublicKey: Data
-    let groupSigningPublicKey: Data
-    let groupAgreementPublicKey: Data
-    let capabilities: ProtocolCapabilityManifest
-    let issuedAt: Date
-    let expiresAt: Date
-}
-
-private struct GroupKeyPackageAuthorityContextV2: Encodable {
-    let purpose = "Noctweave/group-client-key-package-authority/v2"
-    let payloadDigest: Data
-    func signableData() throws -> Data { try NoctweaveCoder.encode(self, sortedKeys: true) }
-}
-
-private struct GroupKeyPackageEndpointContextV2: Encodable {
-    let purpose = "Noctweave/group-client-key-package-endpoint-possession/v2"
-    let payloadDigest: Data
-    let authoritySignatureDigest: Data
-    func signableData() throws -> Data { try NoctweaveCoder.encode(self, sortedKeys: true) }
-}
-
-private struct GroupKeyPackageClientContextV2: Encodable {
-    let purpose = "Noctweave/group-client-key-package-group-possession/v2"
-    let payloadDigest: Data
-    let authoritySignatureDigest: Data
-    let endpointSignatureDigest: Data
-    func signableData() throws -> Data { try NoctweaveCoder.encode(self, sortedKeys: true) }
-}
-
 fileprivate struct GroupCommitPayloadV2: Encodable {
     let version: Int
     let id: UUID
@@ -2465,13 +2346,12 @@ fileprivate struct GroupCommitPayloadV2: Encodable {
     let baseEpoch: UInt64
     let nextEpoch: UInt64
     let previousTranscriptHash: Data
-    let proposedUsers: [GroupUser]
-    let proposedClientLeaves: [GroupClientLeafV2]
-    let admissionProjection: GroupClientAdmissionProjectionV2?
-    let siblingClientConsent: GroupSiblingClientConsentV2?
+    let proposedMembers: [GroupMemberV2]
+    let proposedCredentials: [GroupMemberCredentialV2]
+    let admissionProjection: GroupCredentialAdmissionV2?
     let proposedPermissions: GroupPermissionPolicy
     let proposedMetadataDigest: Data?
-    let authorClientHandle: GroupScopedClientHandleV2
+    let authorCredentialHandle: GroupScopedCredentialHandleV2
     let providerCommitDigest: Data
     let idempotencyKey: Data
     let createdAt: Date
@@ -2493,11 +2373,11 @@ fileprivate struct GroupStateTranscriptPayloadV2: Encodable {
     let groupId: UUID
     let epoch: UInt64
     let previousTranscriptHash: Data?
-    let users: [GroupUser]
-    let clientLeaves: [GroupClientLeafV2]
+    let members: [GroupMemberV2]
+    let memberCredentials: [GroupMemberCredentialV2]
     let permissions: GroupPermissionPolicy
     let metadataDigest: Data?
-    let authorClientHandle: GroupScopedClientHandleV2
+    let authorCredentialHandle: GroupScopedCredentialHandleV2
     let commitDigest: Data
     let signedAt: Date
 }
@@ -2521,9 +2401,9 @@ private struct GroupWelcomeSignatureContextV2: Encodable {
     let epoch: UInt64
     let stateTranscriptHash: Data
     let commitDigest: Data
-    let authorClientHandle: GroupScopedClientHandleV2
-    let destinationClientHandle: GroupScopedClientHandleV2
-    let destinationKeyPackageDigest: Data
+    let authorCredentialHandle: GroupScopedCredentialHandleV2
+    let destinationCredentialHandle: GroupScopedCredentialHandleV2
+    let destinationAdmissionDigest: Data
     let encryptedWelcomeDigest: Data
     let createdAt: Date
     let expiresAt: Date

@@ -1,15 +1,49 @@
 import CryptoKit
 import Foundation
 
+private struct StrictGroupArchitectureCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func requireExactGroupArchitectureKeys<Key: CodingKey & CaseIterable>(
+    _ decoder: Decoder,
+    _ keyType: Key.Type,
+    optional: Set<String> = []
+) throws where Key.AllCases: Collection {
+    let strict = try decoder.container(keyedBy: StrictGroupArchitectureCodingKey.self)
+    let expected = Set(keyType.allCases.map(\.stringValue))
+    let required = expected.subtracting(optional)
+    let actual = Set(strict.allKeys.map(\.stringValue))
+    guard required.isSubset(of: actual), actual.isSubset(of: expected) else {
+        throw DecodingError.dataCorrupted(
+            .init(
+                codingPath: decoder.codingPath,
+                debugDescription: "Group fields must match the current schema exactly"
+            )
+        )
+    }
+}
+
 public enum NoctweaveGroupArchitectureV2 {
     public static let version = 2
     public static let moduleVersion: UInt16 = 2
-    public static let maximumUsers = 1_024
+    public static let maximumMembers = 1_024
     /// The current O(n) experimental PQ provider seals one epoch secret per
-    /// active client. Keep its operational bound below the larger abstract
+    /// active credential. Keep its operational bound below the larger abstract
     /// state-model ceiling reserved for future providers.
-    public static let maximumActiveExperimentalClientLeaves = 128
-    public static let maximumClientLeaves = 4_096
+    public static let maximumActiveExperimentalCredentials = 128
+    public static let maximumGroupCredentials = 4_096
     public static let maximumCryptoStateBytes = 16 * 1_024 * 1_024
     public static let maximumCommitBytes = 8 * 1_024 * 1_024
     public static let maximumWelcomeBytes = 4 * 1_024 * 1_024
@@ -73,9 +107,8 @@ public struct GroupProtocolSuiteOfferV2: Codable, Equatable, Hashable {
     }
 }
 
-/// Endpoint-advertised group support. This contains only group protocol
-/// information; it deliberately does not copy the endpoint's complete
-/// capability manifest into group membership state.
+/// Group-protocol support advertised for one group join. It is intentionally
+/// independent of any pairwise relationship or transport capability state.
 public struct GroupProtocolOfferV2: Codable, Equatable {
     public let moduleVersion: UInt16
     public let suites: [GroupProtocolSuiteOfferV2]
@@ -114,6 +147,12 @@ public struct GroupProtocolSelectionV2: Codable, Equatable, Hashable {
     public let profile: GroupProtocolProfile
     public let cipherSuite: String
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case moduleVersion
+        case profile
+        case cipherSuite
+    }
+
     public init(
         moduleVersion: UInt16 = NoctweaveGroupArchitectureV2.moduleVersion,
         profile: GroupProtocolProfile,
@@ -122,6 +161,21 @@ public struct GroupProtocolSelectionV2: Codable, Equatable, Hashable {
         self.moduleVersion = moduleVersion
         self.profile = profile
         self.cipherSuite = cipherSuite
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactGroupArchitectureKeys(decoder, CodingKeys.self)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            moduleVersion: try values.decode(UInt16.self, forKey: .moduleVersion),
+            profile: try values.decode(GroupProtocolProfile.self, forKey: .profile),
+            cipherSuite: try values.decode(String.self, forKey: .cipherSuite)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid group selection")
+            )
+        }
     }
 
     public static let currentExperimental = GroupProtocolSelectionV2(
@@ -200,8 +254,8 @@ public enum GroupRole: String, Codable, Equatable, Hashable, CaseIterable {
 }
 
 public enum GroupPermission: String, Codable, Equatable, Hashable, CaseIterable {
-    case addClient
-    case removeClient
+    case addMember
+    case removeMember
     case manageInvitations
     case updateMetadata
     case updatePolicy
@@ -232,9 +286,23 @@ public struct GroupPermissionEntry: Codable, Equatable {
     public let permission: GroupPermission
     public let rule: GroupPermissionRule
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case permission
+        case rule
+    }
+
     public init(permission: GroupPermission, rule: GroupPermissionRule) {
         self.permission = permission
         self.rule = rule
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactGroupArchitectureKeys(decoder, CodingKeys.self)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            permission: try values.decode(GroupPermission.self, forKey: .permission),
+            rule: try values.decode(GroupPermissionRule.self, forKey: .rule)
+        )
     }
 }
 
@@ -242,13 +310,29 @@ public struct GroupPermissionEntry: Codable, Equatable {
 public struct GroupPermissionPolicy: Codable, Equatable {
     public let entries: [GroupPermissionEntry]
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case entries
+    }
+
     public init(entries: [GroupPermissionEntry]) {
         self.entries = entries.sorted { $0.permission.rawValue < $1.permission.rawValue }
     }
 
+    public init(from decoder: Decoder) throws {
+        try requireExactGroupArchitectureKeys(decoder, CodingKeys.self)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let decoded = try values.decode([GroupPermissionEntry].self, forKey: .entries)
+        self.init(entries: decoded)
+        guard entries == decoded, isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid group policy")
+            )
+        }
+    }
+
     public static let `default` = GroupPermissionPolicy(entries: [
-        GroupPermissionEntry(permission: .addClient, rule: .admin),
-        GroupPermissionEntry(permission: .removeClient, rule: .admin),
+        GroupPermissionEntry(permission: .addMember, rule: .admin),
+        GroupPermissionEntry(permission: .removeMember, rule: .admin),
         GroupPermissionEntry(permission: .manageInvitations, rule: .admin),
         GroupPermissionEntry(permission: .updateMetadata, rule: .admin),
         GroupPermissionEntry(permission: .updatePolicy, rule: .owner),
@@ -271,21 +355,85 @@ public struct GroupPermissionPolicy: Codable, Equatable {
     }
 }
 
-public struct GroupUser: Codable, Equatable, Identifiable {
-    public let id: UUID
+/// An opaque member handle generated independently for exactly one group.
+/// A local application may privately associate it with a pairwise
+/// relationship, but that association is never group protocol state.
+public struct GroupScopedMemberHandleV2: RawRepresentable, Codable, Equatable, Hashable {
+    public let rawValue: String
+
+    public init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    public static func generate() -> GroupScopedMemberHandleV2 {
+        var generator = SystemRandomNumberGenerator()
+        while true {
+            let bytes = Data((0..<32).map { _ in
+                UInt8.random(in: UInt8.min...UInt8.max, using: &generator)
+            })
+            if bytes.contains(where: { $0 != 0 }) {
+                return GroupScopedMemberHandleV2(rawValue: bytes.base64EncodedString())
+            }
+        }
+    }
+
+    public var isStructurallyValid: Bool {
+        guard let decoded = Data(base64Encoded: rawValue), decoded.count == 32 else {
+            return false
+        }
+        return decoded.base64EncodedString() == rawValue
+    }
+}
+
+public struct GroupMemberV2: Codable, Equatable, Identifiable {
+    public let id: GroupScopedMemberHandleV2
     public let role: GroupRole
     public let addedEpoch: UInt64
     public let removedEpoch: UInt64?
 
-    public init(id: UUID, role: GroupRole, addedEpoch: UInt64, removedEpoch: UInt64? = nil) {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id
+        case role
+        case addedEpoch
+        case removedEpoch
+    }
+
+    public init(
+        id: GroupScopedMemberHandleV2,
+        role: GroupRole,
+        addedEpoch: UInt64,
+        removedEpoch: UInt64? = nil
+    ) {
         self.id = id
         self.role = role
         self.addedEpoch = addedEpoch
         self.removedEpoch = removedEpoch
     }
 
+    public init(from decoder: Decoder) throws {
+        try requireExactGroupArchitectureKeys(
+            decoder,
+            CodingKeys.self,
+            optional: [CodingKeys.removedEpoch.rawValue]
+        )
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try values.decode(GroupScopedMemberHandleV2.self, forKey: .id),
+            role: try values.decode(GroupRole.self, forKey: .role),
+            addedEpoch: try values.decode(UInt64.self, forKey: .addedEpoch),
+            removedEpoch: try values.decodeIfPresent(UInt64.self, forKey: .removedEpoch)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid group member")
+            )
+        }
+    }
+
     public var isStructurallyValid: Bool {
-        addedEpoch > 0 && (removedEpoch.map { $0 > addedEpoch } ?? true)
+        id.isStructurallyValid
+            && addedEpoch > 0
+            && (removedEpoch.map { $0 > addedEpoch } ?? true)
     }
 
     public func isActive(at epoch: UInt64) -> Bool {
@@ -295,13 +443,20 @@ public struct GroupUser: Codable, Equatable, Identifiable {
     }
 }
 
-/// One group leaf is one independently revocable endpoint.
+/// One active group member has exactly one active group credential.
 
 public struct GroupCryptoState: Codable, Equatable {
     public let selection: GroupProtocolSelectionV2
     public let groupId: UUID
     public let epoch: UInt64
     public let opaqueState: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case selection
+        case groupId
+        case epoch
+        case opaqueState
+    }
 
     public init(
         selection: GroupProtocolSelectionV2,
@@ -315,6 +470,22 @@ public struct GroupCryptoState: Codable, Equatable {
         self.opaqueState = opaqueState
     }
 
+    public init(from decoder: Decoder) throws {
+        try requireExactGroupArchitectureKeys(decoder, CodingKeys.self)
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            selection: try values.decode(GroupProtocolSelectionV2.self, forKey: .selection),
+            groupId: try values.decode(UUID.self, forKey: .groupId),
+            epoch: try values.decode(UInt64.self, forKey: .epoch),
+            opaqueState: try values.decode(Data.self, forKey: .opaqueState)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(codingPath: decoder.codingPath, debugDescription: "Invalid group crypto state")
+            )
+        }
+    }
+
     public var profile: GroupProtocolProfile { selection.profile }
     public var cipherSuite: String { selection.cipherSuite }
 
@@ -326,34 +497,35 @@ public struct GroupCryptoState: Codable, Equatable {
     }
 }
 
-/// The cryptographic provider sees only group-scoped clients. Generation,
-/// endpoint, relationship, inbox, and relay identifiers are intentionally not
-/// part of this boundary.
-public struct GroupProviderClientV2: Codable, Equatable, Identifiable {
-    public var id: GroupScopedClientHandleV2 { clientHandle }
-    public let userId: UUID
-    public let clientHandle: GroupScopedClientHandleV2
-    public let keyPackageDigest: Data
+/// The cryptographic provider sees only fresh group-scoped handles and keys.
+/// Any local association with a persona, relationship, route, or transport is
+/// intentionally outside this boundary.
+public struct GroupProviderCredentialV2: Codable, Equatable, Identifiable {
+    public var id: GroupScopedCredentialHandleV2 { credentialHandle }
+    public let memberHandle: GroupScopedMemberHandleV2
+    public let credentialHandle: GroupScopedCredentialHandleV2
+    public let admissionDigest: Data
     public let signingPublicKey: Data
     public let agreementPublicKey: Data
 
     public init(
-        userId: UUID,
-        clientHandle: GroupScopedClientHandleV2,
-        keyPackageDigest: Data,
+        memberHandle: GroupScopedMemberHandleV2,
+        credentialHandle: GroupScopedCredentialHandleV2,
+        admissionDigest: Data,
         signingPublicKey: Data,
         agreementPublicKey: Data
     ) {
-        self.userId = userId
-        self.clientHandle = clientHandle
-        self.keyPackageDigest = keyPackageDigest
+        self.memberHandle = memberHandle
+        self.credentialHandle = credentialHandle
+        self.admissionDigest = admissionDigest
         self.signingPublicKey = signingPublicKey
         self.agreementPublicKey = agreementPublicKey
     }
 
     public var isStructurallyValid: Bool {
-        clientHandle.isStructurallyValid
-            && keyPackageDigest.count == 32
+        memberHandle.isStructurallyValid
+            && credentialHandle.isStructurallyValid
+            && admissionDigest.count == 32
             && SigningKeyPair.isValidPublicKey(signingPublicKey)
             && AgreementKeyPair.isValidPublicKey(agreementPublicKey)
     }
@@ -363,7 +535,7 @@ public struct GroupProviderMembershipV2: Codable, Equatable {
     public let groupId: UUID
     public let epoch: UInt64
     public let selection: GroupProtocolSelectionV2
-    public let clients: [GroupProviderClientV2]
+    public let credentials: [GroupProviderCredentialV2]
     /// Digest of the policy-level proposed membership, before a provider
     /// commit or accepted transcript exists.
     public let membershipDigest: Data
@@ -372,25 +544,26 @@ public struct GroupProviderMembershipV2: Codable, Equatable {
         groupId: UUID,
         epoch: UInt64,
         selection: GroupProtocolSelectionV2,
-        clients: [GroupProviderClientV2],
+        credentials: [GroupProviderCredentialV2],
         membershipDigest: Data
     ) {
         self.groupId = groupId
         self.epoch = epoch
         self.selection = selection
-        self.clients = clients.sorted { $0.clientHandle.rawValue < $1.clientHandle.rawValue }
+        self.credentials = credentials.sorted { $0.credentialHandle.rawValue < $1.credentialHandle.rawValue }
         self.membershipDigest = membershipDigest
     }
 
     public var isStructurallyValid: Bool {
         epoch > 0
             && selection.isStructurallyValid
-            && !clients.isEmpty
-            && clients.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalClientLeaves
-            && Set(clients.map(\.clientHandle)).count == clients.count
-            && Set(clients.map(\.signingPublicKey)).count == clients.count
-            && Set(clients.map(\.agreementPublicKey)).count == clients.count
-            && clients.allSatisfy(\.isStructurallyValid)
+            && !credentials.isEmpty
+            && credentials.count <= NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials
+            && Set(credentials.map(\.credentialHandle)).count == credentials.count
+            && Set(credentials.map(\.memberHandle)).count == credentials.count
+            && Set(credentials.map(\.signingPublicKey)).count == credentials.count
+            && Set(credentials.map(\.agreementPublicKey)).count == credentials.count
+            && credentials.allSatisfy(\.isStructurallyValid)
             && membershipDigest.count == 32
     }
 }
@@ -405,7 +578,7 @@ public struct GroupCryptoEpochProposalV2: Codable, Equatable {
     public let selection: GroupProtocolSelectionV2
     public let currentMembershipDigest: Data?
     public let proposedMembershipDigest: Data
-    public let authorClientHandle: GroupScopedClientHandleV2
+    public let authorCredentialHandle: GroupScopedCredentialHandleV2
 
     public init(
         groupId: UUID,
@@ -414,7 +587,7 @@ public struct GroupCryptoEpochProposalV2: Codable, Equatable {
         selection: GroupProtocolSelectionV2,
         currentMembershipDigest: Data?,
         proposedMembershipDigest: Data,
-        authorClientHandle: GroupScopedClientHandleV2
+        authorCredentialHandle: GroupScopedCredentialHandleV2
     ) {
         self.groupId = groupId
         self.baseEpoch = baseEpoch
@@ -422,7 +595,7 @@ public struct GroupCryptoEpochProposalV2: Codable, Equatable {
         self.selection = selection
         self.currentMembershipDigest = currentMembershipDigest
         self.proposedMembershipDigest = proposedMembershipDigest
-        self.authorClientHandle = authorClientHandle
+        self.authorCredentialHandle = authorCredentialHandle
     }
 
     public var isStructurallyValid: Bool {
@@ -432,15 +605,15 @@ public struct GroupCryptoEpochProposalV2: Codable, Equatable {
             && currentMembershipDigest.map { $0.count == 32 } ?? (baseEpoch == 0)
             && (baseEpoch == 0 ? currentMembershipDigest == nil : currentMembershipDigest != nil)
             && proposedMembershipDigest.count == 32
-            && authorClientHandle.isStructurallyValid
+            && authorCredentialHandle.isStructurallyValid
     }
 }
 
 public struct GroupWelcomePackage: Codable, Equatable {
-    public let destination: GroupScopedClientHandleV2
+    public let destination: GroupScopedCredentialHandleV2
     public let bytes: Data
 
-    public init(destination: GroupScopedClientHandleV2, bytes: Data) {
+    public init(destination: GroupScopedCredentialHandleV2, bytes: Data) {
         self.destination = destination
         self.bytes = bytes
     }
@@ -488,7 +661,7 @@ public struct GroupCryptoPreparedEpochV2: Codable, Equatable, Identifiable {
             && provisionalState.selection == proposal.selection
             && !commitBytes.isEmpty
             && commitBytes.count <= NoctweaveGroupArchitectureV2.maximumCommitBytes
-            && welcomes.count <= NoctweaveGroupArchitectureV2.maximumClientLeaves
+            && welcomes.count <= NoctweaveGroupArchitectureV2.maximumGroupCredentials
             && Set(welcomes.map(\.destination)).count == welcomes.count
             && welcomes.allSatisfy(\.isStructurallyValid)
     }

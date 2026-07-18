@@ -18,7 +18,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
     public let ownerEndpointHandle: RelationshipEndpointHandle
     public let revision: UInt64
     public let previousDigest: Data?
-    public let routes: [PairwiseSendRouteV2]
+    public let routes: [OpaqueSendRouteV2]
     public let issuedAt: Date
     public let signature: Data
 
@@ -39,7 +39,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
         ownerEndpointHandle: RelationshipEndpointHandle,
         revision: UInt64,
         previousDigest: Data?,
-        routes: [PairwiseSendRouteV2],
+        routes: [OpaqueSendRouteV2],
         issuedAt: Date,
         signature: Data
     ) {
@@ -74,7 +74,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
             ),
             revision: try container.decode(UInt64.self, forKey: .revision),
             previousDigest: try container.decodeIfPresent(Data.self, forKey: .previousDigest),
-            routes: try container.decode([PairwiseSendRouteV2].self, forKey: .routes),
+            routes: try container.decode([OpaqueSendRouteV2].self, forKey: .routes),
             issuedAt: try container.decode(Date.self, forKey: .issuedAt),
             signature: try container.decode(Data.self, forKey: .signature)
         )
@@ -115,7 +115,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
     public static func create(
         relationshipID: UUID,
         ownerEndpointHandle: RelationshipEndpointHandle,
-        activeRoutes: [PairwiseSendRouteV2],
+        activeRoutes: [OpaqueSendRouteV2],
         issuedAt: Date,
         signingKey: SigningKeyPair
     ) throws -> PairwiseRouteSetV2 {
@@ -164,6 +164,21 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
         )
     }
 
+    /// Verifies one exact monotonic successor. Route sets are snapshots, so a
+    /// receiver never resolves forks or merges competing histories.
+    public func isValidSuccessor(
+        of previous: PairwiseRouteSetV2,
+        ownerSigningPublicKey: Data
+    ) -> Bool {
+        guard previous.revision < UInt64.max else { return false }
+        return relationshipID == previous.relationshipID
+            && ownerEndpointHandle == previous.ownerEndpointHandle
+            && revision == previous.revision + 1
+            && previousDigest == previous.digest
+            && issuedAt >= previous.issuedAt
+            && verify(ownerSigningPublicKey: ownerSigningPublicKey)
+    }
+
     public var digest: Data? {
         guard isStructurallyValid,
               let encoded = try? NoctweaveCoder.encode(self, sortedKeys: true) else {
@@ -172,7 +187,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
         return Data(SHA256.hash(data: encoded))
     }
 
-    public func usableRoutes(at date: Date) -> [PairwiseSendRouteV2] {
+    public func usableRoutes(at date: Date) -> [OpaqueSendRouteV2] {
         routes.filter { $0.isUsable(at: date) }.sorted {
             if $0.priority != $1.priority { return $0.priority < $1.priority }
             return Self.routeOrdering($0, $1)
@@ -180,7 +195,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
     }
 
     public func addingTestingRoute(
-        _ route: PairwiseSendRouteV2,
+        _ route: OpaqueSendRouteV2,
         signingKey: SigningKeyPair,
         issuedAt: Date
     ) throws -> PairwiseRouteSetV2 {
@@ -274,6 +289,54 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
         return try transitioning(routes: updated, signingKey: signingKey, issuedAt: issuedAt)
     }
 
+    /// Records a successful targeted probe and promotes the route in one
+    /// signed successor so the peer never needs an unpublished intermediate
+    /// testing snapshot to validate the hash chain.
+    public func promotingProbedRoute(
+        _ routeID: OpaqueReceiveRouteIDV2,
+        replacing replacedRouteIDs: [OpaqueReceiveRouteIDV2],
+        testedAt: Date,
+        overlapUntil: Date,
+        signingKey: SigningKeyPair,
+        issuedAt: Date
+    ) throws -> PairwiseRouteSetV2 {
+        let replacementIDs = Set(replacedRouteIDs)
+        guard !replacementIDs.isEmpty,
+              replacementIDs.count == replacedRouteIDs.count,
+              !replacementIDs.contains(routeID),
+              testedAt <= issuedAt,
+              overlapUntil > issuedAt,
+              let targetIndex = routes.firstIndex(where: { $0.routeID == routeID }) else {
+            throw PairwiseRouteSetV2Error.invalidTransition
+        }
+        let target = routes[targetIndex]
+        guard target.state == .testing,
+              target.testedAt == nil,
+              testedAt >= target.validFrom,
+              replacementIDs.allSatisfy({ id in
+                  routes.contains { $0.routeID == id && $0.state == .active }
+              }) else {
+            throw PairwiseRouteSetV2Error.invalidTransition
+        }
+        var updated = routes
+        updated[targetIndex] = try target.replacingLifecycle(
+            state: .active,
+            testedAt: testedAt,
+            drainAfter: nil,
+            revokedAt: nil
+        )
+        for index in updated.indices where replacementIDs.contains(updated[index].routeID) {
+            let route = updated[index]
+            updated[index] = try route.replacingLifecycle(
+                state: .draining,
+                testedAt: route.testedAt,
+                drainAfter: overlapUntil,
+                revokedAt: nil
+            )
+        }
+        return try transitioning(routes: updated, signingKey: signingKey, issuedAt: issuedAt)
+    }
+
     public func revokingDrainedRoute(
         _ routeID: OpaqueReceiveRouteIDV2,
         signingKey: SigningKeyPair,
@@ -323,7 +386,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
     }
 
     private func transitioning(
-        routes: [PairwiseSendRouteV2],
+        routes: [OpaqueSendRouteV2],
         signingKey: SigningKeyPair,
         issuedAt: Date
     ) throws -> PairwiseRouteSetV2 {
@@ -350,7 +413,7 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
         ownerEndpointHandle: RelationshipEndpointHandle,
         revision: UInt64,
         previousDigest: Data?,
-        routes: [PairwiseSendRouteV2],
+        routes: [OpaqueSendRouteV2],
         issuedAt: Date,
         signingKey: SigningKeyPair
     ) throws -> PairwiseRouteSetV2 {
@@ -394,8 +457,8 @@ public struct PairwiseRouteSetV2: Codable, Equatable {
     }
 
     private static func routeOrdering(
-        _ lhs: PairwiseSendRouteV2,
-        _ rhs: PairwiseSendRouteV2
+        _ lhs: OpaqueSendRouteV2,
+        _ rhs: OpaqueSendRouteV2
     ) -> Bool {
         lhs.routeID.rawValue.lexicographicallyPrecedes(rhs.routeID.rawValue)
     }
@@ -407,7 +470,7 @@ private struct PairwiseRouteSetSignaturePayloadV2: Codable {
     let ownerEndpointHandle: RelationshipEndpointHandle
     let revision: UInt64
     let previousDigest: Data?
-    let routes: [PairwiseSendRouteV2]
+    let routes: [OpaqueSendRouteV2]
     let issuedAt: Date
 }
 

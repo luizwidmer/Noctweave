@@ -6,8 +6,8 @@ import XCTest
 final class ArchitectureV2OpaqueRouteTests: XCTestCase {
     private let origin = Date(timeIntervalSince1970: 100_000)
 
-    func testRelayProjectionIsOpaqueDigestOnlyAndModuleRemainsDisabled() throws {
-        XCTAssertFalse(NoctweaveOpaqueRoutesV2.advertisedByDefault)
+    func testRelayProjectionIsOpaqueDigestOnlyAndModuleIsCurrent() throws {
+        XCTAssertTrue(NoctweaveOpaqueRoutesV2.advertisedByDefault)
 
         let (material, route, _) = try makeRoute()
         XCTAssertTrue(route.isStructurallyValid)

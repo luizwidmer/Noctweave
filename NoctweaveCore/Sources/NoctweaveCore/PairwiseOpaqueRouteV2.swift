@@ -1,5 +1,48 @@
 import Foundation
 
+public enum RelationshipRouteStateV2: String, Codable, Equatable, CaseIterable {
+    case testing
+    case active
+    case draining
+    case revoked
+}
+
+extension RelayEndpoint {
+    var isStructurallyValidRelationshipRouteEndpointV2: Bool {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedHost.isEmpty,
+              normalizedHost == host,
+              normalizedHost.utf8.count <= 255,
+              normalizedHost.unicodeScalars.allSatisfy({
+                  !CharacterSet.controlCharacters.contains($0)
+              }),
+              port > 0,
+              tlsCertificateFingerprintSHA256.map({ $0.count == 32 }) ?? true,
+              directorySigningPublicKey.map({ SigningKeyPair.isValidPublicKey($0) }) ?? true else {
+            return false
+        }
+        return true
+    }
+
+    /// Route capabilities are write authority. They require TLS except for
+    /// literal loopback development and same-host operator access.
+    var isConfidentialCapabilityTransportV2: Bool {
+        if useTLS { return true }
+        let normalizedHost = host.lowercased()
+        if normalizedHost == "localhost"
+            || normalizedHost == "::1"
+            || normalizedHost == "[::1]" {
+            return true
+        }
+        let octets = normalizedHost.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4,
+              octets.allSatisfy({ UInt8($0) != nil }) else {
+            return false
+        }
+        return octets.first == "127"
+    }
+}
+
 public enum PairwiseOpaqueRouteV2Error: Error, Equatable {
     case invalidRoute
     case invalidIntroduction
@@ -11,7 +54,7 @@ public enum PairwiseOpaqueRouteV2Error: Error, Equatable {
 /// The only route material disclosed to a peer. It is carried inside an
 /// authenticated pairwise or rendezvous ciphertext. Read, renewal, and
 /// teardown authority never leave the receiving endpoint that owns the route.
-public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
+public struct OpaqueSendRouteV2: Codable, Equatable, Identifiable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public var id: OpaqueReceiveRouteIDV2 { routeID }
     public let routeID: OpaqueReceiveRouteIDV2
@@ -180,8 +223,8 @@ public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
         testedAt: Date?,
         drainAfter: Date?,
         revokedAt: Date?
-    ) throws -> PairwiseSendRouteV2 {
-        try PairwiseSendRouteV2(
+    ) throws -> OpaqueSendRouteV2 {
+        try OpaqueSendRouteV2(
             routeID: routeID,
             relay: relay,
             sendCapability: sendCapability,
@@ -217,7 +260,7 @@ public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
         }
     }
 
-    public var description: String { "PairwiseSendRouteV2(<redacted>)" }
+    public var description: String { "OpaqueSendRouteV2(<redacted>)" }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [:], displayStyle: .struct) }
 }
@@ -225,6 +268,183 @@ public struct PairwiseSendRouteV2: Codable, Equatable, Identifiable,
 /// Endpoint-local receive authority. This record may be persisted only in the
 /// endpoint's encrypted state. It is never placed in a contact introduction,
 /// pairwise route set, group state, history projection, or relay response.
+public enum OpaqueRouteGapReasonV2: String, Codable, Equatable, CaseIterable {
+    case retentionExpired
+    case sequenceDiscontinuity
+    case digestChainBreak
+    case cursorRegression
+}
+
+public struct OpaqueRouteGapStateV2: Codable, Equatable {
+    public let reason: OpaqueRouteGapReasonV2
+    public let expectedSequence: UInt64
+    public let observedSequence: UInt64
+    public let retentionFloorSequence: UInt64
+    public let detectedAt: Date
+
+    public init(
+        reason: OpaqueRouteGapReasonV2,
+        expectedSequence: UInt64,
+        observedSequence: UInt64,
+        retentionFloorSequence: UInt64,
+        detectedAt: Date
+    ) {
+        self.reason = reason
+        self.expectedSequence = expectedSequence
+        self.observedSequence = observedSequence
+        self.retentionFloorSequence = retentionFloorSequence
+        self.detectedAt = detectedAt
+    }
+
+    public var isStructurallyValid: Bool {
+        detectedAt.timeIntervalSince1970.isFinite
+    }
+}
+
+/// Local capability material for a replacement receive route before the relay
+/// confirms creation. It contains no relationship or persona identifier.
+public struct PendingLocalOpaqueReceiveRouteV2: Codable, Equatable,
+    CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
+    public static let version = 2
+
+    public let version: Int
+    public let relay: RelayEndpoint
+    public let clientCapabilities: OpaqueRouteClientCapabilityMaterialV2
+    public let payloadKey: OpaqueRoutePayloadKeyV2
+    public let createRequest: OpaqueRouteCreateRequestV2
+    public let createdAt: Date
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case relay
+        case clientCapabilities
+        case payloadKey
+        case createRequest
+        case createdAt
+    }
+
+    private init(
+        relay: RelayEndpoint,
+        clientCapabilities: OpaqueRouteClientCapabilityMaterialV2,
+        payloadKey: OpaqueRoutePayloadKeyV2,
+        createRequest: OpaqueRouteCreateRequestV2,
+        createdAt: Date
+    ) {
+        self.version = Self.version
+        self.relay = relay
+        self.clientCapabilities = clientCapabilities
+        self.payloadKey = payloadKey
+        self.createRequest = createRequest
+        self.createdAt = createdAt
+    }
+
+    public static func prepare(
+        relay: RelayEndpoint,
+        policy: OpaqueRoutePolicyV2 = OpaqueRoutePolicyV2(
+            paddingBucket: .bytes4096,
+            retentionBucket: .sixHours,
+            quotaBucket: .packets256
+        ),
+        createdAt: Date = Date()
+    ) throws -> PendingLocalOpaqueReceiveRouteV2 {
+        let capabilities = try OpaqueRouteClientCapabilityMaterialV2()
+        let lease = try OpaqueRouteLeaseV2(
+            issuedAt: createdAt,
+            expiresAt: createdAt.addingTimeInterval(6 * 60 * 60),
+            policy: policy
+        )
+        let result = PendingLocalOpaqueReceiveRouteV2(
+            relay: relay,
+            clientCapabilities: capabilities,
+            payloadKey: .generate(),
+            createRequest: try capabilities.makeCreateRequest(
+                lease: lease,
+                idempotencyKey: .generate()
+            ),
+            createdAt: createdAt
+        )
+        guard result.isStructurallyValid else {
+            throw PairwiseOpaqueRouteV2Error.invalidRoute
+        }
+        return result
+    }
+
+    public init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: PairwiseOpaqueRouteCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Pending local route fields must match the current protocol exactly"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedVersion = try container.decode(Int.self, forKey: .version)
+        guard decodedVersion == Self.version else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .version,
+                in: container,
+                debugDescription: "Pending local route version is invalid"
+            )
+        }
+        self.init(
+            relay: try container.decode(RelayEndpoint.self, forKey: .relay),
+            clientCapabilities: try container.decode(
+                OpaqueRouteClientCapabilityMaterialV2.self,
+                forKey: .clientCapabilities
+            ),
+            payloadKey: try container.decode(OpaqueRoutePayloadKeyV2.self, forKey: .payloadKey),
+            createRequest: try container.decode(OpaqueRouteCreateRequestV2.self, forKey: .createRequest),
+            createdAt: try container.decode(Date.self, forKey: .createdAt)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .createRequest,
+                in: container,
+                debugDescription: "Pending local route is invalid"
+            )
+        }
+    }
+
+    public var isStructurallyValid: Bool {
+        version == Self.version
+            && relay.isStructurallyValidRelationshipRouteEndpointV2
+            && relay.isConfidentialCapabilityTransportV2
+            && clientCapabilities.isStructurallyValid
+            && payloadKey.isStructurallyValid
+            && createRequest.isStructurallyValid
+            && createRequest.routeID == clientCapabilities.routeID
+            && createRequest.lease.issuedAt == createdAt
+            && createdAt.timeIntervalSince1970.isFinite
+    }
+
+    public func activate(
+        createdRoute: OpaqueReceiveRouteV2
+    ) throws -> LocalOpaqueReceiveRouteV2 {
+        guard isStructurallyValid,
+              let transitionDigest = createRequest.transitionDigest,
+              createdRoute.status == .active,
+              createdRoute.routeID == createRequest.routeID,
+              createdRoute.creationIdempotencyKey == createRequest.idempotencyKey,
+              createdRoute.creationDigest == transitionDigest,
+              createdRoute.matches(clientCapabilities: clientCapabilities) else {
+            throw PairwiseOpaqueRouteV2Error.invalidRoute
+        }
+        return try LocalOpaqueReceiveRouteV2(
+            relay: relay,
+            route: createdRoute,
+            clientCapabilities: clientCapabilities,
+            payloadKey: payloadKey
+        )
+    }
+
+    public var description: String { "PendingLocalOpaqueReceiveRouteV2(<redacted>)" }
+    public var debugDescription: String { description }
+    public var customMirror: Mirror { Mirror(self, children: [:], displayStyle: .struct) }
+}
+
 public struct LocalOpaqueReceiveRouteV2: Codable, Equatable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public let relay: RelayEndpoint
@@ -232,20 +452,94 @@ public struct LocalOpaqueReceiveRouteV2: Codable, Equatable,
     public let clientCapabilities: OpaqueRouteClientCapabilityMaterialV2
     public let payloadKey: OpaqueRoutePayloadKeyV2
     public var committedCursor: OpaqueRouteCursorV2?
+    public var committedSequence: UInt64
+    public var committedRecordDigest: Data
+    public var gapState: OpaqueRouteGapStateV2?
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case relay
+        case route
+        case clientCapabilities
+        case payloadKey
+        case committedCursor
+        case committedSequence
+        case committedRecordDigest
+        case gapState
+    }
 
     public init(
         relay: RelayEndpoint,
         route: OpaqueReceiveRouteV2,
         clientCapabilities: OpaqueRouteClientCapabilityMaterialV2,
         payloadKey: OpaqueRoutePayloadKeyV2,
-        committedCursor: OpaqueRouteCursorV2? = nil
+        committedCursor: OpaqueRouteCursorV2? = nil,
+        committedSequence: UInt64 = 0,
+        committedRecordDigest: Data = Data(
+            repeating: 0,
+            count: NoctweaveOpaqueRoutesV2.digestBytes
+        ),
+        gapState: OpaqueRouteGapStateV2? = nil
     ) throws {
         self.relay = relay
         self.route = route
         self.clientCapabilities = clientCapabilities
         self.payloadKey = payloadKey
         self.committedCursor = committedCursor
+        self.committedSequence = committedSequence
+        self.committedRecordDigest = committedRecordDigest
+        self.gapState = gapState
         guard isStructurallyValid else { throw PairwiseOpaqueRouteV2Error.invalidRoute }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: PairwiseOpaqueRouteCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Local opaque route fields must match the current protocol exactly"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            relay: container.decode(RelayEndpoint.self, forKey: .relay),
+            route: container.decode(OpaqueReceiveRouteV2.self, forKey: .route),
+            clientCapabilities: container.decode(
+                OpaqueRouteClientCapabilityMaterialV2.self,
+                forKey: .clientCapabilities
+            ),
+            payloadKey: container.decode(OpaqueRoutePayloadKeyV2.self, forKey: .payloadKey),
+            committedCursor: container.decodeIfPresent(
+                OpaqueRouteCursorV2.self,
+                forKey: .committedCursor
+            ),
+            committedSequence: container.decode(UInt64.self, forKey: .committedSequence),
+            committedRecordDigest: container.decode(Data.self, forKey: .committedRecordDigest),
+            gapState: container.decodeIfPresent(OpaqueRouteGapStateV2.self, forKey: .gapState)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Local opaque route is invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(relay, forKey: .relay)
+        try container.encode(route, forKey: .route)
+        try container.encode(clientCapabilities, forKey: .clientCapabilities)
+        try container.encode(payloadKey, forKey: .payloadKey)
+        try container.encode(committedCursor, forKey: .committedCursor)
+        try container.encode(committedSequence, forKey: .committedSequence)
+        try container.encode(committedRecordDigest, forKey: .committedRecordDigest)
+        try container.encode(gapState, forKey: .gapState)
     }
 
     public var isStructurallyValid: Bool {
@@ -255,13 +549,21 @@ public struct LocalOpaqueReceiveRouteV2: Codable, Equatable,
             && route.matches(clientCapabilities: clientCapabilities)
             && payloadKey.isStructurallyValid
             && committedCursor?.isStructurallyValid != false
+            && committedRecordDigest.count == NoctweaveOpaqueRoutesV2.digestBytes
+            && (committedCursor != nil
+                || (committedSequence == 0
+                    && committedRecordDigest == Data(
+                        repeating: 0,
+                        count: NoctweaveOpaqueRoutesV2.digestBytes
+                    )))
+            && gapState?.isStructurallyValid != false
     }
 
     public func peerSendRoute(
         priority: UInt16 = 100,
         state: RelationshipRouteStateV2 = .active
-    ) throws -> PairwiseSendRouteV2 {
-        try PairwiseSendRouteV2(
+    ) throws -> OpaqueSendRouteV2 {
+        try OpaqueSendRouteV2(
             routeID: route.routeID,
             relay: relay,
             sendCapability: clientCapabilities.sendCapability,
@@ -289,12 +591,10 @@ public struct ContactIntroductionV2: Codable, Equatable {
     public static let version = 2
 
     public let version: Int
-    public let displayName: String
-    public let relationshipGenerationID: UUID
+    public let relationshipPseudonym: String
     public let relationshipSigningPublicKey: Data
     public let relationshipAgreementPublicKey: Data
-    public let endpointSetCheckpoint: EndpointSetCheckpointV4
-    public let preferredEndpoint: CertifiedGenerationEndpoint
+    public let endpointBinding: RelationshipEndpointBindingV4
     public let receiveRoutes: PairwiseRouteSetV2
     public let rendezvousTranscriptDigest: Data
     public let issuedAt: Date
@@ -303,12 +603,10 @@ public struct ContactIntroductionV2: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case version
-        case displayName
-        case relationshipGenerationID
+        case relationshipPseudonym
         case relationshipSigningPublicKey
         case relationshipAgreementPublicKey
-        case endpointSetCheckpoint
-        case preferredEndpoint
+        case endpointBinding
         case receiveRoutes
         case rendezvousTranscriptDigest
         case issuedAt
@@ -318,12 +616,10 @@ public struct ContactIntroductionV2: Codable, Equatable {
 
     public init(
         version: Int = Self.version,
-        displayName: String,
-        relationshipGenerationID: UUID,
+        relationshipPseudonym: String,
         relationshipSigningPublicKey: Data,
         relationshipAgreementPublicKey: Data,
-        endpointSetCheckpoint: EndpointSetCheckpointV4,
-        preferredEndpoint: CertifiedGenerationEndpoint,
+        endpointBinding: RelationshipEndpointBindingV4,
         receiveRoutes: PairwiseRouteSetV2,
         rendezvousTranscriptDigest: Data,
         issuedAt: Date,
@@ -331,12 +627,10 @@ public struct ContactIntroductionV2: Codable, Equatable {
         signature: Data
     ) {
         self.version = version
-        self.displayName = displayName
-        self.relationshipGenerationID = relationshipGenerationID
+        self.relationshipPseudonym = relationshipPseudonym
         self.relationshipSigningPublicKey = relationshipSigningPublicKey
         self.relationshipAgreementPublicKey = relationshipAgreementPublicKey
-        self.endpointSetCheckpoint = endpointSetCheckpoint
-        self.preferredEndpoint = preferredEndpoint
+        self.endpointBinding = endpointBinding
         self.receiveRoutes = receiveRoutes
         self.rendezvousTranscriptDigest = rendezvousTranscriptDigest
         self.issuedAt = issuedAt
@@ -358,12 +652,10 @@ public struct ContactIntroductionV2: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             version: try container.decode(Int.self, forKey: .version),
-            displayName: try container.decode(String.self, forKey: .displayName),
-            relationshipGenerationID: try container.decode(UUID.self, forKey: .relationshipGenerationID),
+            relationshipPseudonym: try container.decode(String.self, forKey: .relationshipPseudonym),
             relationshipSigningPublicKey: try container.decode(Data.self, forKey: .relationshipSigningPublicKey),
             relationshipAgreementPublicKey: try container.decode(Data.self, forKey: .relationshipAgreementPublicKey),
-            endpointSetCheckpoint: try container.decode(EndpointSetCheckpointV4.self, forKey: .endpointSetCheckpoint),
-            preferredEndpoint: try container.decode(CertifiedGenerationEndpoint.self, forKey: .preferredEndpoint),
+            endpointBinding: try container.decode(RelationshipEndpointBindingV4.self, forKey: .endpointBinding),
             receiveRoutes: try container.decode(PairwiseRouteSetV2.self, forKey: .receiveRoutes),
             rendezvousTranscriptDigest: try container.decode(Data.self, forKey: .rendezvousTranscriptDigest),
             issuedAt: try container.decode(Date.self, forKey: .issuedAt),
@@ -391,12 +683,10 @@ public struct ContactIntroductionV2: Codable, Equatable {
         }
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(version, forKey: .version)
-        try container.encode(displayName, forKey: .displayName)
-        try container.encode(relationshipGenerationID, forKey: .relationshipGenerationID)
+        try container.encode(relationshipPseudonym, forKey: .relationshipPseudonym)
         try container.encode(relationshipSigningPublicKey, forKey: .relationshipSigningPublicKey)
         try container.encode(relationshipAgreementPublicKey, forKey: .relationshipAgreementPublicKey)
-        try container.encode(endpointSetCheckpoint, forKey: .endpointSetCheckpoint)
-        try container.encode(preferredEndpoint, forKey: .preferredEndpoint)
+        try container.encode(endpointBinding, forKey: .endpointBinding)
         try container.encode(receiveRoutes, forKey: .receiveRoutes)
         try container.encode(rendezvousTranscriptDigest, forKey: .rendezvousTranscriptDigest)
         try container.encode(issuedAt, forKey: .issuedAt)
@@ -405,34 +695,26 @@ public struct ContactIntroductionV2: Codable, Equatable {
     }
 
     public static func create(
-        relationshipIdentity: Identity,
-        relationshipGenerationID: UUID,
-        endpointSetManifest: EndpointSetManifest,
-        preferredEndpoint: CertifiedGenerationEndpoint,
+        relationshipPseudonym: String,
+        relationshipAuthority: RelationshipAuthorityV2,
+        endpointBinding: RelationshipEndpointBindingV4,
         receiveRoutes: PairwiseRouteSetV2,
         rendezvousTranscriptDigest: Data,
         issuedAt: Date,
         expiresAt: Date
     ) throws -> ContactIntroductionV2 {
-        guard endpointSetManifest.identityGenerationId == relationshipGenerationID,
-              preferredEndpoint.identityGenerationId == relationshipGenerationID,
-              (try? preferredEndpoint.verified(
-                  identityPublicKey: relationshipIdentity.signingKey.publicKeyData,
-                  manifest: endpointSetManifest
+        guard relationshipPseudonym == relationshipAuthority.relationshipPseudonym,
+              (try? endpointBinding.verified(
+                  authoritySigningPublicKey: relationshipAuthority.signingKey.publicKeyData,
+                  now: endpointBinding.prekeyBundle.createdAt
               )) != nil else {
             throw PairwiseOpaqueRouteV2Error.invalidIntroduction
         }
-        let checkpoint = try EndpointSetCheckpointV4.create(
-            manifest: endpointSetManifest,
-            identity: relationshipIdentity
-        )
         var introduction = ContactIntroductionV2(
-            displayName: relationshipIdentity.displayName,
-            relationshipGenerationID: relationshipGenerationID,
-            relationshipSigningPublicKey: relationshipIdentity.signingKey.publicKeyData,
-            relationshipAgreementPublicKey: relationshipIdentity.agreementKey.publicKeyData,
-            endpointSetCheckpoint: checkpoint,
-            preferredEndpoint: preferredEndpoint,
+            relationshipPseudonym: relationshipPseudonym,
+            relationshipSigningPublicKey: relationshipAuthority.signingKey.publicKeyData,
+            relationshipAgreementPublicKey: relationshipAuthority.agreementKey.publicKeyData,
+            endpointBinding: endpointBinding,
             receiveRoutes: receiveRoutes,
             rendezvousTranscriptDigest: rendezvousTranscriptDigest,
             issuedAt: issuedAt,
@@ -443,17 +725,15 @@ public struct ContactIntroductionV2: Codable, Equatable {
             throw PairwiseOpaqueRouteV2Error.invalidIntroduction
         }
         introduction = ContactIntroductionV2(
-            displayName: introduction.displayName,
-            relationshipGenerationID: introduction.relationshipGenerationID,
+            relationshipPseudonym: introduction.relationshipPseudonym,
             relationshipSigningPublicKey: introduction.relationshipSigningPublicKey,
             relationshipAgreementPublicKey: introduction.relationshipAgreementPublicKey,
-            endpointSetCheckpoint: introduction.endpointSetCheckpoint,
-            preferredEndpoint: introduction.preferredEndpoint,
+            endpointBinding: introduction.endpointBinding,
             receiveRoutes: introduction.receiveRoutes,
             rendezvousTranscriptDigest: introduction.rendezvousTranscriptDigest,
             issuedAt: introduction.issuedAt,
             expiresAt: introduction.expiresAt,
-            signature: try relationshipIdentity.signingKey.sign(introduction.signableData())
+            signature: try relationshipAuthority.signingKey.sign(introduction.signableData())
         )
         guard introduction.isStructurallyValid else {
             throw PairwiseOpaqueRouteV2Error.invalidIntroduction
@@ -484,10 +764,9 @@ public struct ContactIntroductionV2: Codable, Equatable {
               ) else {
             throw PairwiseOpaqueRouteV2Error.invalidSignature
         }
-        guard (try? preferredEndpoint.verified(
-            identityPublicKey: relationshipSigningPublicKey,
-            checkpoint: endpointSetCheckpoint,
-            now: preferredEndpoint.prekeyBundle.createdAt
+        guard (try? endpointBinding.verified(
+            authoritySigningPublicKey: relationshipSigningPublicKey,
+            now: endpointBinding.prekeyBundle.createdAt
         )) != nil else {
             throw PairwiseOpaqueRouteV2Error.invalidIntroduction
         }
@@ -495,20 +774,17 @@ public struct ContactIntroductionV2: Codable, Equatable {
     }
 
     private var hasValidUnsignedStructure: Bool {
-        let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pseudonym = relationshipPseudonym.trimmingCharacters(in: .whitespacesAndNewlines)
         let introductionLifetime = expiresAt.timeIntervalSince(issuedAt)
         return version == Self.version
-            && !name.isEmpty
-            && name == displayName
-            && name.utf8.count <= 512
+            && !pseudonym.isEmpty
+            && pseudonym == relationshipPseudonym
+            && pseudonym.utf8.count <= 512
             && SigningKeyPair.isValidPublicKey(relationshipSigningPublicKey)
             && AgreementKeyPair.isValidPublicKey(relationshipAgreementPublicKey)
-            && endpointSetCheckpoint.identityGenerationId == relationshipGenerationID
-            && preferredEndpoint.identityGenerationId == relationshipGenerationID
-            && preferredEndpoint.manifestEpoch == endpointSetCheckpoint.epoch
             && receiveRoutes.isStructurallyValid
             && receiveRoutes.verify(
-                ownerSigningPublicKey: preferredEndpoint.signingPublicKey
+                ownerSigningPublicKey: endpointBinding.signingPublicKey
             )
             && !receiveRoutes.usableRoutes(at: issuedAt).isEmpty
             && rendezvousTranscriptDigest.count == 32
@@ -523,12 +799,10 @@ public struct ContactIntroductionV2: Codable, Equatable {
         try NoctweaveCoder.encode(
             ContactIntroductionSignaturePayloadV2(
                 version: version,
-                displayName: displayName,
-                relationshipGenerationID: relationshipGenerationID,
+                relationshipPseudonym: relationshipPseudonym,
                 relationshipSigningPublicKey: relationshipSigningPublicKey,
                 relationshipAgreementPublicKey: relationshipAgreementPublicKey,
-                endpointSetCheckpoint: endpointSetCheckpoint,
-                preferredEndpoint: preferredEndpoint,
+                endpointBinding: endpointBinding,
                 receiveRoutes: receiveRoutes,
                 rendezvousTranscriptDigest: rendezvousTranscriptDigest,
                 issuedAt: issuedAt,
@@ -541,12 +815,10 @@ public struct ContactIntroductionV2: Codable, Equatable {
 
 private struct ContactIntroductionSignaturePayloadV2: Codable {
     let version: Int
-    let displayName: String
-    let relationshipGenerationID: UUID
+    let relationshipPseudonym: String
     let relationshipSigningPublicKey: Data
     let relationshipAgreementPublicKey: Data
-    let endpointSetCheckpoint: EndpointSetCheckpointV4
-    let preferredEndpoint: CertifiedGenerationEndpoint
+    let endpointBinding: RelationshipEndpointBindingV4
     let receiveRoutes: PairwiseRouteSetV2
     let rendezvousTranscriptDigest: Data
     let issuedAt: Date

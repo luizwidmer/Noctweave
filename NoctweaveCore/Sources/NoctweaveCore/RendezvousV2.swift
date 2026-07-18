@@ -27,7 +27,6 @@ public enum RendezvousV2Error: Error, Equatable {
     case invalidOffer
     case invalidTransportCapability
     case invalidLimits
-    case purposeDisabled
     case wrongPurpose
     case expired
     case invalidRedemptionSecret
@@ -47,18 +46,6 @@ public enum RendezvousV2Error: Error, Equatable {
 
 public enum RendezvousPurposeV2: String, Codable, Equatable, Hashable, CaseIterable {
     case contactPairing
-    case endpointAdmission
-    case routeRollover
-    case groupInvitation
-    case historyTransfer
-}
-
-/// Only contact pairing is enabled at this model milestone. Future purposes must
-/// obtain their own typed state machine before this policy is widened.
-public enum RendezvousPurposePolicyV2 {
-    public static func allows(_ purpose: RendezvousPurposeV2) -> Bool {
-        purpose == .contactPairing
-    }
 }
 
 /// A transport adapter may interpret this random capability, but the protocol
@@ -66,6 +53,11 @@ public enum RendezvousPurposePolicyV2 {
 public struct RendezvousTransportCapabilityV2: Codable, Equatable, Hashable {
     public let opaqueValue: Data
     public let expiresAt: Date
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case opaqueValue
+        case expiresAt
+    }
 
     public init(opaqueValue: Data, expiresAt: Date) throws {
         self.opaqueValue = opaqueValue
@@ -86,12 +78,46 @@ public struct RendezvousTransportCapabilityV2: Codable, Equatable, Hashable {
         opaqueValue.count == NoctweaveRendezvousV2.transportCapabilityBytes
             && RendezvousCanonicalV2.isCanonicalTimestamp(expiresAt)
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictRendezvousContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Rendezvous transport capability"
+        )
+        opaqueValue = try container.decode(Data.self, forKey: .opaqueValue)
+        expiresAt = try container.decode(Date.self, forKey: .expiresAt)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .opaqueValue,
+                in: container,
+                debugDescription: "Invalid rendezvous transport capability"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidRendezvousEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid rendezvous transport capability"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(opaqueValue, forKey: .opaqueValue)
+        try container.encode(expiresAt, forKey: .expiresAt)
+    }
 }
 
 public struct RendezvousLimitsV2: Codable, Equatable, Hashable {
     /// This limit applies independently in each direction.
     public let maximumFrames: UInt16
     public let maximumFramePlaintextBytes: UInt32
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case maximumFrames
+        case maximumFramePlaintextBytes
+    }
 
     public static let contactPairing = RendezvousLimitsV2(
         uncheckedMaximumFrames: 16,
@@ -117,6 +143,38 @@ public struct RendezvousLimitsV2: Codable, Equatable, Hashable {
             && maximumFramePlaintextBytes > 0
             && maximumFramePlaintextBytes <= NoctweaveRendezvousV2.maximumFramePlaintextBytes
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictRendezvousContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Rendezvous limits"
+        )
+        maximumFrames = try container.decode(UInt16.self, forKey: .maximumFrames)
+        maximumFramePlaintextBytes = try container.decode(
+            UInt32.self,
+            forKey: .maximumFramePlaintextBytes
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .maximumFrames,
+                in: container,
+                debugDescription: "Invalid rendezvous limits"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidRendezvousEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid rendezvous limits"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(maximumFrames, forKey: .maximumFrames)
+        try container.encode(maximumFramePlaintextBytes, forKey: .maximumFramePlaintextBytes)
+    }
 }
 
 /// This is the complete public offer. Its transcript intentionally contains no
@@ -130,6 +188,17 @@ public struct RendezvousOfferV2: Codable, Equatable {
     public let createdAt: Date
     public let expiresAt: Date
     public let limits: RendezvousLimitsV2
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case purpose
+        case transportCapability
+        case oneTimeTokenDigest
+        case ephemeralAgreementPublicKey
+        case createdAt
+        case expiresAt
+        case limits
+    }
 
     public init(
         version: Int = NoctweaveRendezvousV2.version,
@@ -174,7 +243,6 @@ public struct RendezvousOfferV2: Codable, Equatable {
     ) -> Bool {
         isStructurallyValid
             && purpose == expectedPurpose
-            && RendezvousPurposePolicyV2.allows(purpose)
             && date.timeIntervalSince1970.isFinite
             && date >= createdAt
             && date < expiresAt
@@ -184,12 +252,63 @@ public struct RendezvousOfferV2: Codable, Equatable {
     public var transcriptDigest: Data {
         Data(SHA256.hash(data: RendezvousCanonicalV2.offerTranscript(self)))
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictRendezvousContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Rendezvous offer"
+        )
+        version = try container.decode(Int.self, forKey: .version)
+        purpose = try container.decode(RendezvousPurposeV2.self, forKey: .purpose)
+        transportCapability = try container.decode(
+            RendezvousTransportCapabilityV2.self,
+            forKey: .transportCapability
+        )
+        oneTimeTokenDigest = try container.decode(Data.self, forKey: .oneTimeTokenDigest)
+        ephemeralAgreementPublicKey = try container.decode(
+            Data.self,
+            forKey: .ephemeralAgreementPublicKey
+        )
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        expiresAt = try container.decode(Date.self, forKey: .expiresAt)
+        limits = try container.decode(RendezvousLimitsV2.self, forKey: .limits)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .version,
+                in: container,
+                debugDescription: "Invalid rendezvous offer"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidRendezvousEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid rendezvous offer"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(purpose, forKey: .purpose)
+        try container.encode(transportCapability, forKey: .transportCapability)
+        try container.encode(oneTimeTokenDigest, forKey: .oneTimeTokenDigest)
+        try container.encode(ephemeralAgreementPublicKey, forKey: .ephemeralAgreementPublicKey)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(expiresAt, forKey: .expiresAt)
+        try container.encode(limits, forKey: .limits)
+    }
 }
 
 /// Sensitive bearer material delivered separately from the public offer through
 /// the user-selected pairing channel. It is never placed in RendezvousOfferV2.
 public struct RendezvousRedemptionSecretV2: Codable, Equatable {
     public let oneTimeToken: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case oneTimeToken
+    }
 
     public init(oneTimeToken: Data) throws {
         self.oneTimeToken = oneTimeToken
@@ -207,6 +326,33 @@ public struct RendezvousRedemptionSecretV2: Codable, Equatable {
         let digest = Data(SHA256.hash(data: oneTimeToken))
         return RendezvousCanonicalV2.constantTimeEqual(digest, offer.oneTimeTokenDigest)
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictRendezvousContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Rendezvous redemption secret"
+        )
+        oneTimeToken = try container.decode(Data.self, forKey: .oneTimeToken)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .oneTimeToken,
+                in: container,
+                debugDescription: "Invalid rendezvous redemption secret"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidRendezvousEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid rendezvous redemption secret"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(oneTimeToken, forKey: .oneTimeToken)
+    }
 }
 
 /// A locally persisted offer. It is secret state and must be protected by the
@@ -218,7 +364,7 @@ public struct PendingRendezvousOfferV2: Codable {
     private var oneTimeToken: Data
     public private(set) var redeemedAt: Date?
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case offer
         case ephemeralAgreementKey
         case oneTimeToken
@@ -243,9 +389,6 @@ public struct PendingRendezvousOfferV2: Codable {
         createdAt: Date,
         limits: RendezvousLimitsV2 = .contactPairing
     ) throws -> PendingRendezvousOfferV2 {
-        guard RendezvousPurposePolicyV2.allows(purpose) else {
-            throw RendezvousV2Error.purposeDisabled
-        }
         let ephemeralAgreementKey = try AgreementKeyPair.generate()
         let oneTimeToken = SymmetricKey(size: .bits256).dataRepresentation
         let offer = try RendezvousOfferV2(
@@ -265,7 +408,11 @@ public struct PendingRendezvousOfferV2: Codable {
     }
 
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let container = try strictRendezvousContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Pending rendezvous offer"
+        )
         offer = try container.decode(RendezvousOfferV2.self, forKey: .offer)
         ephemeralAgreementKey = try container.decode(AgreementKeyPair.self, forKey: .ephemeralAgreementKey)
         oneTimeToken = try container.decode(Data.self, forKey: .oneTimeToken)
@@ -280,11 +427,17 @@ public struct PendingRendezvousOfferV2: Codable {
     }
 
     public func encode(to encoder: Encoder) throws {
+        try requireValidRendezvousEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid pending rendezvous state"
+        )
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(offer, forKey: .offer)
         try container.encode(ephemeralAgreementKey, forKey: .ephemeralAgreementKey)
         try container.encode(oneTimeToken, forKey: .oneTimeToken)
-        try container.encodeIfPresent(redeemedAt, forKey: .redeemedAt)
+        try container.encode(redeemedAt, forKey: .redeemedAt)
     }
 
     public var isRedeemed: Bool { redeemedAt != nil }
@@ -376,6 +529,15 @@ public struct RendezvousOpenV2: Codable, Equatable {
     public let tokenProof: Data
     public let openedAt: Date
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case purpose
+        case offerDigest
+        case kemCiphertext
+        case tokenProof
+        case openedAt
+    }
+
     public init(
         version: Int = NoctweaveRendezvousV2.version,
         purpose: RendezvousPurposeV2,
@@ -392,20 +554,65 @@ public struct RendezvousOpenV2: Codable, Equatable {
         self.openedAt = openedAt
     }
 
-    public func isStructurallyValid(for offer: RendezvousOfferV2) -> Bool {
+    public var isStructurallyValid: Bool {
         version == NoctweaveRendezvousV2.version
-            && purpose == offer.purpose
-            && offerDigest == offer.transcriptDigest
+            && offerDigest.count == SHA256.byteCount
             && !kemCiphertext.isEmpty
             && kemCiphertext.count <= NoctweaveRendezvousV2.maximumKEMCiphertextBytes
             && tokenProof.count == SHA256.byteCount
             && RendezvousCanonicalV2.isCanonicalTimestamp(openedAt)
+    }
+
+    public func isStructurallyValid(for offer: RendezvousOfferV2) -> Bool {
+        isStructurallyValid
+            && offer.isStructurallyValid
+            && purpose == offer.purpose
+            && offerDigest == offer.transcriptDigest
             && openedAt >= offer.createdAt
             && openedAt < offer.expiresAt
     }
 
     public var transcriptDigest: Data {
         Data(SHA256.hash(data: RendezvousCanonicalV2.openTranscript(self)))
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictRendezvousContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Rendezvous open"
+        )
+        self.init(
+            version: try container.decode(Int.self, forKey: .version),
+            purpose: try container.decode(RendezvousPurposeV2.self, forKey: .purpose),
+            offerDigest: try container.decode(Data.self, forKey: .offerDigest),
+            kemCiphertext: try container.decode(Data.self, forKey: .kemCiphertext),
+            tokenProof: try container.decode(Data.self, forKey: .tokenProof),
+            openedAt: try container.decode(Date.self, forKey: .openedAt)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .version,
+                in: container,
+                debugDescription: "Invalid rendezvous open"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidRendezvousEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid rendezvous open"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(purpose, forKey: .purpose)
+        try container.encode(offerDigest, forKey: .offerDigest)
+        try container.encode(kemCiphertext, forKey: .kemCiphertext)
+        try container.encode(tokenProof, forKey: .tokenProof)
+        try container.encode(openedAt, forKey: .openedAt)
     }
 }
 
@@ -469,6 +676,13 @@ private struct RendezvousRedemptionRecordV2: Codable, Equatable {
     let redeemedAt: Date
     let expiresAt: Date
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case offerDigest
+        case openDigest
+        case redeemedAt
+        case expiresAt
+    }
+
     var isStructurallyValid: Bool {
         offerDigest.count == SHA256.byteCount
             && openDigest.count == SHA256.byteCount
@@ -476,12 +690,63 @@ private struct RendezvousRedemptionRecordV2: Codable, Equatable {
             && expiresAt.timeIntervalSince1970.isFinite
             && redeemedAt < expiresAt
     }
+
+    init(
+        offerDigest: Data,
+        openDigest: Data,
+        redeemedAt: Date,
+        expiresAt: Date
+    ) {
+        self.offerDigest = offerDigest
+        self.openDigest = openDigest
+        self.redeemedAt = redeemedAt
+        self.expiresAt = expiresAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try strictRendezvousContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Rendezvous redemption record"
+        )
+        self.init(
+            offerDigest: try container.decode(Data.self, forKey: .offerDigest),
+            openDigest: try container.decode(Data.self, forKey: .openDigest),
+            redeemedAt: try container.decode(Date.self, forKey: .redeemedAt),
+            expiresAt: try container.decode(Date.self, forKey: .expiresAt)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .offerDigest,
+                in: container,
+                debugDescription: "Invalid rendezvous redemption record"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try requireValidRendezvousEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid rendezvous redemption record"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(offerDigest, forKey: .offerDigest)
+        try container.encode(openDigest, forKey: .openDigest)
+        try container.encode(redeemedAt, forKey: .redeemedAt)
+        try container.encode(expiresAt, forKey: .expiresAt)
+    }
 }
 
 /// Bounded local replay state. It contains only public transcript digests and
 /// timestamps, never the token, session key, or ML-KEM private key.
 public struct RendezvousRedemptionLedgerV2: Codable, Equatable {
     private var records: [RendezvousRedemptionRecordV2]
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case records
+    }
 
     public init() {
         records = []
@@ -497,6 +762,33 @@ public struct RendezvousRedemptionLedgerV2: Codable, Equatable {
 
     public func contains(offerDigest: Data) -> Bool {
         records.contains { $0.offerDigest == offerDigest }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictRendezvousContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Rendezvous redemption ledger"
+        )
+        records = try container.decode([RendezvousRedemptionRecordV2].self, forKey: .records)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .records,
+                in: container,
+                debugDescription: "Invalid rendezvous redemption ledger"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidRendezvousEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid rendezvous redemption ledger"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(records, forKey: .records)
     }
 
     fileprivate mutating func register(
@@ -551,12 +843,43 @@ public enum RendezvousMessageKindV2: String, Codable, Equatable, Hashable, CaseI
 public struct RendezvousSessionIDV2: RawRepresentable, Codable, Equatable, Hashable {
     public let rawValue: Data
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case rawValue
+    }
+
     public init(rawValue: Data) {
         self.rawValue = rawValue
     }
 
     public var isStructurallyValid: Bool {
         rawValue.count == SHA256.byteCount
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictRendezvousContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Rendezvous session identifier"
+        )
+        self.init(rawValue: try container.decode(Data.self, forKey: .rawValue))
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .rawValue,
+                in: container,
+                debugDescription: "Invalid rendezvous session identifier"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidRendezvousEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid rendezvous session identifier"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(rawValue, forKey: .rawValue)
     }
 }
 
@@ -568,6 +891,16 @@ public struct RendezvousFrameV2: Codable, Equatable {
     public let sequence: UInt64
     public let messageKind: RendezvousMessageKindV2
     public let payload: EncryptedPayload
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case sessionId
+        case purpose
+        case senderRole
+        case sequence
+        case messageKind
+        case payload
+    }
 
     public init(
         version: Int = NoctweaveRendezvousV2.version,
@@ -590,11 +923,53 @@ public struct RendezvousFrameV2: Codable, Equatable {
     public var isStructurallyValid: Bool {
         version == NoctweaveRendezvousV2.version
             && sessionId.isStructurallyValid
+            && messageKind.isAllowed(for: purpose)
             && sequence > 0
             && sequence <= UInt64(NoctweaveRendezvousV2.maximumFramesPerDirection)
             && payload.nonce.count == 12
             && payload.tag.count == 16
             && NoctweaveRendezvousV2.paddingBuckets.contains(payload.ciphertext.count)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictRendezvousContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Rendezvous frame"
+        )
+        self.init(
+            version: try container.decode(Int.self, forKey: .version),
+            sessionId: try container.decode(RendezvousSessionIDV2.self, forKey: .sessionId),
+            purpose: try container.decode(RendezvousPurposeV2.self, forKey: .purpose),
+            senderRole: try container.decode(RendezvousRoleV2.self, forKey: .senderRole),
+            sequence: try container.decode(UInt64.self, forKey: .sequence),
+            messageKind: try container.decode(RendezvousMessageKindV2.self, forKey: .messageKind),
+            payload: try container.decode(EncryptedPayload.self, forKey: .payload)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .version,
+                in: container,
+                debugDescription: "Invalid rendezvous frame"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidRendezvousEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid rendezvous frame"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(sessionId, forKey: .sessionId)
+        try container.encode(purpose, forKey: .purpose)
+        try container.encode(senderRole, forKey: .senderRole)
+        try container.encode(sequence, forKey: .sequence)
+        try container.encode(messageKind, forKey: .messageKind)
+        try container.encode(payload, forKey: .payload)
     }
 }
 
@@ -794,9 +1169,8 @@ public struct RendezvousSessionV2 {
     }
 
     private func validateActive(at date: Date) throws {
-        guard purpose == .contactPairing,
-              RendezvousPurposePolicyV2.allows(purpose) else {
-            throw RendezvousV2Error.purposeDisabled
+        guard purpose == .contactPairing else {
+            throw RendezvousV2Error.wrongPurpose
         }
         guard date.timeIntervalSince1970.isFinite,
               date >= openedAt,
@@ -822,9 +1196,6 @@ private enum RendezvousCanonicalV2 {
         }
         guard offer.purpose == expectedPurpose else {
             throw RendezvousV2Error.wrongPurpose
-        }
-        guard RendezvousPurposePolicyV2.allows(offer.purpose) else {
-            throw RendezvousV2Error.purposeDisabled
         }
         guard date.timeIntervalSince1970.isFinite,
               date >= offer.createdAt,
@@ -977,5 +1348,57 @@ private enum RendezvousCanonicalV2 {
         data.append(UInt8((value >> 16) & 0xff))
         data.append(UInt8((value >> 8) & 0xff))
         data.append(UInt8(value & 0xff))
+    }
+}
+
+private struct StrictRendezvousCodingKey: CodingKey, Hashable {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func strictRendezvousContainer<Key>(
+    _ decoder: Decoder,
+    keyedBy keyType: Key.Type,
+    description: String
+) throws -> KeyedDecodingContainer<Key>
+where Key: CodingKey & CaseIterable, Key.AllCases.Element == Key {
+    let strict = try decoder.container(keyedBy: StrictRendezvousCodingKey.self)
+    let actual = Set(strict.allKeys.map(\.stringValue))
+    let expected = Set(Key.allCases.map(\.stringValue))
+    guard actual == expected else {
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "\(description) fields must match the current protocol exactly"
+            )
+        )
+    }
+    return try decoder.container(keyedBy: keyType)
+}
+
+private func requireValidRendezvousEncoding<Value>(
+    _ isValid: Bool,
+    value: Value,
+    encoder: Encoder,
+    description: String
+) throws {
+    guard isValid else {
+        throw EncodingError.invalidValue(
+            value,
+            EncodingError.Context(
+                codingPath: encoder.codingPath,
+                debugDescription: description
+            )
+        )
     }
 }

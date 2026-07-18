@@ -428,7 +428,7 @@ public enum CryptoBox {
         } catch {
             // Authentication failure and malformed sealed-box bytes are
             // deterministic properties of this envelope. Normalize them so
-            // ordered mailbox consumers can quarantine the event without
+            // ordered opaque-route consumers can quarantine the event without
             // treating it as a transient crypto-runtime failure.
             throw CryptoError.invalidPayload
         }

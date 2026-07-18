@@ -101,7 +101,6 @@ public enum RelayKind: String, Codable, CaseIterable {
     case standard
     case discovery
     case bridge
-    case archive
     case privateRelay
     case coordinator
 }
@@ -321,7 +320,6 @@ public struct RelayConfiguration: Codable, Equatable {
     public var softwareVersion: String?
     public var accessPassword: String?
     public var coordinatorRegistrationToken: String?
-    public var federationForwardingAuthToken: String?
     public var tlsEnabled: Bool
     public var advertisedTLSEnabled: Bool?
     public var transport: RelayEndpointTransport
@@ -342,7 +340,6 @@ public struct RelayConfiguration: Codable, Equatable {
     public var advertisedEndpoint: RelayEndpoint?
     public var federationAllowList: [RelayEndpoint]
     public var allowPrivateFederationEndpoints: Bool
-    public var experimentalRouteCapabilitiesEnabled: Bool?
     public var rendezvousTransportEnabled: Bool?
 
     public init(
@@ -363,7 +360,6 @@ public struct RelayConfiguration: Codable, Equatable {
         softwareVersion: String? = nil,
         accessPassword: String? = nil,
         coordinatorRegistrationToken: String? = nil,
-        federationForwardingAuthToken: String? = nil,
         tlsEnabled: Bool = false,
         advertisedTLSEnabled: Bool? = nil,
         transport: RelayEndpointTransport = .tcp,
@@ -384,7 +380,6 @@ public struct RelayConfiguration: Codable, Equatable {
         advertisedEndpoint: RelayEndpoint? = nil,
         federationAllowList: [RelayEndpoint] = [],
         allowPrivateFederationEndpoints: Bool = false,
-        experimentalRouteCapabilitiesEnabled: Bool = false,
         rendezvousTransportEnabled: Bool = false
     ) {
         self.kind = kind
@@ -421,8 +416,6 @@ public struct RelayConfiguration: Codable, Equatable {
         self.accessPassword = normalizedAccessPassword?.isEmpty == false ? normalizedAccessPassword : nil
         let normalizedRegistrationToken = coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.coordinatorRegistrationToken = normalizedRegistrationToken?.isEmpty == false ? normalizedRegistrationToken : nil
-        let normalizedForwardingToken = federationForwardingAuthToken?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.federationForwardingAuthToken = normalizedForwardingToken?.isEmpty == false ? normalizedForwardingToken : nil
         self.tlsEnabled = tlsEnabled
         self.advertisedTLSEnabled = advertisedTLSEnabled
         self.transport = transport
@@ -445,12 +438,7 @@ public struct RelayConfiguration: Codable, Equatable {
         self.advertisedEndpoint = advertisedEndpoint
         self.federationAllowList = Array(federationAllowList.prefix(256))
         self.allowPrivateFederationEndpoints = allowPrivateFederationEndpoints
-        self.experimentalRouteCapabilitiesEnabled = experimentalRouteCapabilitiesEnabled ? true : nil
         self.rendezvousTransportEnabled = rendezvousTransportEnabled ? true : nil
-    }
-
-    public var opaqueRouteCapabilitiesEnabled: Bool {
-        experimentalRouteCapabilitiesEnabled == true
     }
 
     public var isRendezvousTransportEnabled: Bool {
@@ -548,621 +536,156 @@ public struct RelayConfiguration: Codable, Equatable {
     }
 }
 
-public enum RelayRequestType: String, Codable {
-    case deliver
-    case registerInbox
-    case retireInbox
-    case createInboxRouteCapability
-    case revokeInboxRouteCapability
-    case registerRendezvousTransportV2
-    case appendRendezvousTransportV2
-    case syncRendezvousTransportV2
-    case deleteRendezvousTransportV2
-    case fetch
-    case registerMailboxConsumer
-    case syncMailbox
-    case commitMailboxCursor
-    case revokeMailboxConsumer
+public enum RelayModuleID: String, Codable, CaseIterable {
+    case core = "nw.core"
+    case opaqueRoute = "nw.opaque-route"
+    case rendezvousTransport = "nw.rendezvous-transport"
+    case blobs = "nw.blobs"
+    case federation = "nw.federation"
+
+    public var currentVersion: Int {
+        switch self {
+        case .core, .opaqueRoute, .rendezvousTransport:
+            return 2
+        case .blobs, .federation:
+            return 1
+        }
+    }
+}
+
+public enum RelayMethodID: String, Codable, CaseIterable {
     case health
     case info
-    case uploadAttachment
-    case fetchAttachment
-    case registerFederationNode
-    case listFederationNodes
-    case publishOpenFederationDHTRecord
-    case listOpenFederationDHTRecords
-
+    case create
+    case renew
+    case teardown
+    case append
+    case sync
+    case commit
+    case register
+    case delete
+    case upload
+    case fetch
+    case list
+    case publishDHT = "publish-dht"
+    case listDHT = "list-dht"
 }
 
-public struct DeliverRequest: Codable, Equatable {
-    /// Present only for the transitional pre-v2 inbox-addressed path.
-    /// Capability-addressed delivery deliberately omits the inbox identifier.
-    public let inboxId: String?
-    public let routingToken: String?
-    public let inboxCapability: InboxRouteCapabilityV2?
-    public let envelope: ProtocolEnvelopeV1
-    public let destinationRelay: RelayEndpoint?
+public struct RelayOperationBinding: Codable, Equatable, Hashable {
+    public let module: RelayModuleID
+    public let version: Int
+    public let method: RelayMethodID
+
+    public init(module: RelayModuleID, version: Int, method: RelayMethodID) {
+        self.module = module
+        self.version = version
+        self.method = method
+    }
+
+    public var isCurrent: Bool {
+        version == module.currentVersion && Self.allowedMethods[module]?.contains(method) == true
+    }
+
+    private static let allowedMethods: [RelayModuleID: Set<RelayMethodID>] = [
+        .core: [.health, .info],
+        .opaqueRoute: [.create, .renew, .teardown, .append, .sync, .commit],
+        .rendezvousTransport: [.register, .append, .sync, .delete],
+        .blobs: [.upload, .fetch],
+        .federation: [.register, .list, .publishDHT, .listDHT]
+    ]
+}
+
+public struct CreateOpaqueRouteRelayRequestV2: Codable, Equatable {
+    public let request: OpaqueRouteCreateRequestV2
+    public let renewCapability: RouteRenewCapabilityV2
 
     public init(
-        inboxId: String,
-        routingToken: String? = nil,
-        envelope: ProtocolEnvelopeV1,
-        destinationRelay: RelayEndpoint? = nil
+        request: OpaqueRouteCreateRequestV2,
+        renewCapability: RouteRenewCapabilityV2
     ) {
-        self.inboxId = inboxId
-        self.routingToken = routingToken
-        self.inboxCapability = nil
-        self.envelope = envelope
-        self.destinationRelay = destinationRelay
+        self.request = request
+        self.renewCapability = renewCapability
     }
 
-    /// Constructs the future fail-closed delivery shape. Client relationship
-    /// publication is intentionally not wired yet; callers must obtain the
-    /// opaque capability through a separately authenticated private exchange.
-    public init(
-        inboxCapability: InboxRouteCapabilityV2,
-        envelope: ProtocolEnvelopeV1,
-        destinationRelay: RelayEndpoint? = nil
-    ) {
-        self.inboxId = nil
-        self.routingToken = nil
-        self.inboxCapability = inboxCapability
-        self.envelope = envelope
-        self.destinationRelay = destinationRelay
+    public var isStructurallyValid: Bool {
+        request.isStructurallyValid && renewCapability.isStructurallyValid
     }
 }
 
-public struct FetchRequest: Codable, Equatable {
-    public let inboxId: String
-    public let routingToken: String?
-    public let maxCount: Int?
-    public let longPollTimeoutSeconds: Int?
-    public let accessProof: RelayActorProof?
+public struct RenewOpaqueRouteRelayRequestV2: Codable, Equatable {
+    public let request: OpaqueRouteRenewRequestV2
+    public let renewCapability: RouteRenewCapabilityV2
 
     public init(
-        inboxId: String,
-        routingToken: String? = nil,
-        maxCount: Int? = nil,
-        longPollTimeoutSeconds: Int? = nil,
-        accessProof: RelayActorProof? = nil
+        request: OpaqueRouteRenewRequestV2,
+        renewCapability: RouteRenewCapabilityV2
     ) {
-        self.inboxId = inboxId
-        self.routingToken = routingToken
-        self.maxCount = maxCount
-        self.longPollTimeoutSeconds = longPollTimeoutSeconds
-        self.accessProof = accessProof
+        self.request = request
+        self.renewCapability = renewCapability
     }
 
-    public func signableData(for proof: RelayActorProof) throws -> Data {
-        return try NoctweaveCoder.encode(
-            InboxFetchProofPayload(
-                inboxId: inboxId,
-                routingToken: routingToken,
-                maxCount: maxCount,
-                longPollTimeoutSeconds: longPollTimeoutSeconds,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            ),
-            sortedKeys: true
-        )
+    public var isStructurallyValid: Bool {
+        request.isStructurallyValid && renewCapability.isStructurallyValid
     }
 }
 
-public struct RegisterInboxRequest: Codable, Equatable {
-    public static let privacyMinimizedVersion = 2
-
-    public let inboxId: String
-    public let accessPublicKey: Data
-    public let registrationVersion: Int
-    public let accessProof: RelayActorProof?
+public struct TeardownOpaqueRouteRelayRequestV2: Codable, Equatable {
+    public let request: OpaqueRouteTeardownRequestV2
+    public let teardownCapability: RouteTeardownCapabilityV2
 
     public init(
-        inboxId: String,
-        accessPublicKey: Data,
-        registrationVersion: Int = privacyMinimizedVersion,
-        accessProof: RelayActorProof? = nil
+        request: OpaqueRouteTeardownRequestV2,
+        teardownCapability: RouteTeardownCapabilityV2
     ) {
-        self.inboxId = inboxId
-        self.accessPublicKey = accessPublicKey
-        self.registrationVersion = registrationVersion
-        self.accessProof = accessProof
+        self.request = request
+        self.teardownCapability = teardownCapability
     }
 
-    public static func privacyMinimizedV2(
-        inboxId: String,
-        accessPublicKey: Data,
-        accessProof: RelayActorProof? = nil
-    ) -> RegisterInboxRequest {
-        RegisterInboxRequest(
-            inboxId: inboxId,
-            accessPublicKey: accessPublicKey,
-            registrationVersion: privacyMinimizedVersion,
-            accessProof: accessProof
-        )
-    }
-
-    public func signableData(for proof: RelayActorProof) throws -> Data {
-        return try NoctweaveCoder.encode(
-            InboxRegistrationProofPayloadV2(
-                inboxId: inboxId,
-                accessPublicKey: accessPublicKey,
-                registrationVersion: registrationVersion,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            ),
-            sortedKeys: true
-        )
+    public var isStructurallyValid: Bool {
+        request.isStructurallyValid && teardownCapability.isStructurallyValid
     }
 }
 
-/// Permanently removes the live state for one route-level inbox generation.
-///
-/// The proof is made by the inbox access key. Relays retain a compact,
-/// non-expiring non-resurrection record after the registration, stream
-/// consumers, and queued envelopes have been deleted.
-public struct RetireInboxRequest: Codable, Equatable {
-    public static let protocolVersion = 1
-    public static let signatureDomain = "org.noctweave.relay.retire-inbox"
+public struct AppendOpaqueRouteRelayRequestV2: Codable, Equatable {
+    public let packet: OpaqueRoutePacketV2
+    public let sendCapability: RouteSendCapabilityV2
 
-    public let inboxId: String
-    public let accessProof: RelayActorProof?
-
-    public init(inboxId: String, accessProof: RelayActorProof? = nil) {
-        self.inboxId = inboxId
-        self.accessProof = accessProof
+    public init(packet: OpaqueRoutePacketV2, sendCapability: RouteSendCapabilityV2) {
+        self.packet = packet
+        self.sendCapability = sendCapability
     }
 
-    /// Produces the exact, self-contained request that a burn journal can
-    /// persist before deleting the inbox access private key.
-    public static func make(
-        inboxId: String,
-        accessSigningKey: SigningKeyPair,
-        signedAt: Date = Date(),
-        nonce: UUID = UUID()
-    ) throws -> RetireInboxRequest {
-        guard InboxAddress.isBound(inboxId, to: accessSigningKey.publicKeyData) else {
-            throw RetireInboxRequestError.inboxAccessKeyMismatch
-        }
-        let proofTemplate = RelayActorProof(
-            fingerprint: CryptoBox.fingerprint(for: accessSigningKey.publicKeyData),
-            publicSigningKey: accessSigningKey.publicKeyData,
-            signedAt: signedAt,
-            nonce: nonce,
-            signature: Data()
-        )
-        let unsigned = RetireInboxRequest(inboxId: inboxId, accessProof: proofTemplate)
-        let proof = try RelayActorProof.make(
-            signingKey: accessSigningKey,
-            signableData: unsigned.signableData(for: proofTemplate),
-            signedAt: signedAt,
-            nonce: nonce
-        )
-        return RetireInboxRequest(inboxId: inboxId, accessProof: proof)
-    }
-
-    public func signableData(for proof: RelayActorProof) throws -> Data {
-        try NoctweaveCoder.encode(
-            InboxRetirementProofPayload(
-                domain: Self.signatureDomain,
-                version: Self.protocolVersion,
-                inboxId: inboxId,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            ),
-            sortedKeys: true
-        )
-    }
-
-    func requestDigest() throws -> Data {
-        Data(SHA256.hash(data: try NoctweaveCoder.encode(self, sortedKeys: true)))
+    public var isStructurallyValid: Bool {
+        packet.isStructurallyValid && sendCapability.isStructurallyValid
     }
 }
 
-public enum RetireInboxRequestError: Error, Equatable {
-    case inboxAccessKeyMismatch
-}
+public struct SyncOpaqueRouteRelayRequestV2: Codable, Equatable {
+    public let request: OpaqueRouteSyncRequestV2
+    public let readCredential: RouteReadCredentialV2
 
-public enum InboxRouteCapabilityMutationRequestError: Error, Equatable {
-    case invalidMutationState
-}
-
-public struct CreateInboxRouteCapabilityRequest: Codable, Equatable {
-    public static let protocolVersion = 3
-    public static let maximumMutationSequence: UInt64 = UInt64(UInt32.max)
-    public static let signatureDomain = "org.noctweave.relay.inbox-route-capability-mutation"
-
-    static func nextMutationSequence(after current: UInt64) -> UInt64 {
-        guard current < maximumMutationSequence else { return 0 }
-        return current + 1
+    public init(request: OpaqueRouteSyncRequestV2, readCredential: RouteReadCredentialV2) {
+        self.request = request
+        self.readCredential = readCredential
     }
 
-    public let inboxId: String
-    public let capability: InboxRouteCapabilityV2
-    public let relayScope: Data
-    public let mutationSequence: UInt64
-    public let authorityProof: RelayActorProof?
-
-    public init(
-        inboxId: String,
-        capability: InboxRouteCapabilityV2,
-        relayScope: Data,
-        mutationSequence: UInt64,
-        authorityProof: RelayActorProof? = nil
-    ) {
-        self.inboxId = inboxId
-        self.capability = capability
-        self.relayScope = relayScope
-        self.mutationSequence = mutationSequence
-        self.authorityProof = authorityProof
-    }
-
-    public func signableData(for proof: RelayActorProof) throws -> Data {
-        try inboxRouteCapabilityMutationSignableData(
-            operation: "create",
-            inboxId: inboxId,
-            capability: capability,
-            relayScope: relayScope,
-            mutationSequence: mutationSequence,
-            proof: proof
-        )
-    }
-
-    public func mutationDigest() throws -> Data {
-        try inboxRouteCapabilityMutationDigest(
-            operation: "create",
-            inboxId: inboxId,
-            capability: capability,
-            relayScope: relayScope,
-            mutationSequence: mutationSequence
-        )
+    public var isStructurallyValid: Bool {
+        request.isStructurallyValid && readCredential.isStructurallyValid
     }
 }
 
-public struct RevokeInboxRouteCapabilityRequest: Codable, Equatable {
-    public static let protocolVersion = CreateInboxRouteCapabilityRequest.protocolVersion
-    public static let signatureDomain = CreateInboxRouteCapabilityRequest.signatureDomain
+public struct CommitOpaqueRouteRelayRequestV2: Codable, Equatable {
+    public let request: OpaqueRouteCommitRequestV2
+    public let readCredential: RouteReadCredentialV2
 
-    public let inboxId: String
-    public let capability: InboxRouteCapabilityV2
-    public let relayScope: Data
-    public let mutationSequence: UInt64
-    public let authorityProof: RelayActorProof?
-
-    public init(
-        inboxId: String,
-        capability: InboxRouteCapabilityV2,
-        relayScope: Data,
-        mutationSequence: UInt64,
-        authorityProof: RelayActorProof? = nil
-    ) {
-        self.inboxId = inboxId
-        self.capability = capability
-        self.relayScope = relayScope
-        self.mutationSequence = mutationSequence
-        self.authorityProof = authorityProof
+    public init(request: OpaqueRouteCommitRequestV2, readCredential: RouteReadCredentialV2) {
+        self.request = request
+        self.readCredential = readCredential
     }
 
-    public func signableData(for proof: RelayActorProof) throws -> Data {
-        try inboxRouteCapabilityMutationSignableData(
-            operation: "revoke",
-            inboxId: inboxId,
-            capability: capability,
-            relayScope: relayScope,
-            mutationSequence: mutationSequence,
-            proof: proof
-        )
+    public var isStructurallyValid: Bool {
+        request.isStructurallyValid && readCredential.isStructurallyValid
     }
-
-    public func mutationDigest() throws -> Data {
-        try inboxRouteCapabilityMutationDigest(
-            operation: "revoke",
-            inboxId: inboxId,
-            capability: capability,
-            relayScope: relayScope,
-            mutationSequence: mutationSequence
-        )
-    }
-}
-
-private func inboxRouteCapabilityMutationSignableData(
-    operation: String,
-    inboxId: String,
-    capability: InboxRouteCapabilityV2,
-    relayScope: Data,
-    mutationSequence: UInt64,
-    proof: RelayActorProof
-) throws -> Data {
-    guard relayScope.count == 32,
-          relayScope.contains(where: { $0 != 0 }),
-          mutationSequence > 0,
-          mutationSequence <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
-        throw InboxRouteCapabilityMutationRequestError.invalidMutationState
-    }
-    return try NoctweaveCoder.encode(
-        InboxRouteCapabilityMutationProofPayload(
-            domain: CreateInboxRouteCapabilityRequest.signatureDomain,
-            version: CreateInboxRouteCapabilityRequest.protocolVersion,
-            operation: operation,
-            inboxId: inboxId,
-            capabilityDigest: capability.relayRegistryDigest,
-            relayScope: relayScope,
-            mutationSequence: mutationSequence,
-            signedAt: proof.signedAt,
-            nonce: proof.nonce
-        ),
-        sortedKeys: true
-    )
-}
-
-private func inboxRouteCapabilityMutationDigest(
-    operation: String,
-    inboxId: String,
-    capability: InboxRouteCapabilityV2,
-    relayScope: Data,
-    mutationSequence: UInt64
-) throws -> Data {
-    guard relayScope.count == 32,
-          relayScope.contains(where: { $0 != 0 }),
-          mutationSequence > 0,
-          mutationSequence <= CreateInboxRouteCapabilityRequest.maximumMutationSequence else {
-        throw InboxRouteCapabilityMutationRequestError.invalidMutationState
-    }
-    let payload = try NoctweaveCoder.encode(
-        InboxRouteCapabilityMutationStatePayload(
-            domain: "\(CreateInboxRouteCapabilityRequest.signatureDomain)/state",
-            version: CreateInboxRouteCapabilityRequest.protocolVersion,
-            operation: operation,
-            inboxId: inboxId,
-            capabilityDigest: capability.relayRegistryDigest,
-            relayScope: relayScope,
-            mutationSequence: mutationSequence
-        ),
-        sortedKeys: true
-    )
-    return Data(SHA256.hash(data: payload))
-}
-
-public struct RegisterMailboxConsumerRequest: Codable, Equatable {
-    public let inboxId: String
-    public let consumerId: MailboxConsumerId
-    public let consumerSigningPublicKey: Data
-    public let sponsorConsumerId: MailboxConsumerId?
-    public let startingSequence: UInt64?
-    public let authorityProof: RelayActorProof?
-    public let consumerProof: RelayActorProof?
-    public let sponsorProof: RelayActorProof?
-
-    public init(
-        inboxId: String,
-        consumerId: MailboxConsumerId,
-        consumerSigningPublicKey: Data,
-        sponsorConsumerId: MailboxConsumerId? = nil,
-        startingSequence: UInt64? = nil,
-        authorityProof: RelayActorProof? = nil,
-        consumerProof: RelayActorProof? = nil,
-        sponsorProof: RelayActorProof? = nil
-    ) {
-        self.inboxId = inboxId
-        self.consumerId = consumerId
-        self.consumerSigningPublicKey = consumerSigningPublicKey
-        self.sponsorConsumerId = sponsorConsumerId
-        self.startingSequence = startingSequence
-        self.authorityProof = authorityProof
-        self.consumerProof = consumerProof
-        self.sponsorProof = sponsorProof
-    }
-
-    public func authoritySignableData(for proof: RelayActorProof) throws -> Data {
-        try signableData(operation: "register-authority", proof: proof)
-    }
-
-    public func consumerSignableData(for proof: RelayActorProof) throws -> Data {
-        try signableData(operation: "register-possession", proof: proof)
-    }
-
-    public func sponsorSignableData(for proof: RelayActorProof) throws -> Data {
-        try signableData(operation: "register-sponsor", proof: proof)
-    }
-
-    private func signableData(operation: String, proof: RelayActorProof) throws -> Data {
-        try NoctweaveCoder.encode(
-            MailboxConsumerProofPayload(
-                operation: operation,
-                inboxId: inboxId,
-                consumerId: consumerId,
-                consumerSigningPublicKey: consumerSigningPublicKey,
-                sponsorConsumerId: sponsorConsumerId,
-                cursor: nil,
-                sequence: startingSequence,
-                maxCount: nil,
-                longPollTimeoutSeconds: nil,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            ),
-            sortedKeys: true
-        )
-    }
-}
-
-public struct SyncMailboxRequest: Codable, Equatable {
-    public let inboxId: String
-    public let consumerId: MailboxConsumerId
-    public let cursor: MailboxCursor?
-    public let maxCount: Int?
-    public let longPollTimeoutSeconds: Int?
-    public let consumerProof: RelayActorProof?
-
-    public init(
-        inboxId: String,
-        consumerId: MailboxConsumerId,
-        cursor: MailboxCursor? = nil,
-        maxCount: Int? = nil,
-        longPollTimeoutSeconds: Int? = nil,
-        consumerProof: RelayActorProof? = nil
-    ) {
-        self.inboxId = inboxId
-        self.consumerId = consumerId
-        self.cursor = cursor
-        self.maxCount = maxCount
-        self.longPollTimeoutSeconds = longPollTimeoutSeconds
-        self.consumerProof = consumerProof
-    }
-
-    public func signableData(for proof: RelayActorProof) throws -> Data {
-        try NoctweaveCoder.encode(
-            MailboxConsumerProofPayload(
-                operation: "sync",
-                inboxId: inboxId,
-                consumerId: consumerId,
-                consumerSigningPublicKey: nil,
-                sponsorConsumerId: nil,
-                cursor: cursor,
-                sequence: nil,
-                maxCount: maxCount,
-                longPollTimeoutSeconds: longPollTimeoutSeconds,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            ),
-            sortedKeys: true
-        )
-    }
-}
-
-public struct CommitMailboxCursorRequest: Codable, Equatable {
-    public let inboxId: String
-    public let consumerId: MailboxConsumerId
-    public let cursor: MailboxCursor
-    public let sequence: UInt64
-    public let consumerProof: RelayActorProof?
-
-    public init(
-        inboxId: String,
-        consumerId: MailboxConsumerId,
-        cursor: MailboxCursor,
-        sequence: UInt64,
-        consumerProof: RelayActorProof? = nil
-    ) {
-        self.inboxId = inboxId
-        self.consumerId = consumerId
-        self.cursor = cursor
-        self.sequence = sequence
-        self.consumerProof = consumerProof
-    }
-
-    public func signableData(for proof: RelayActorProof) throws -> Data {
-        try NoctweaveCoder.encode(
-            MailboxConsumerProofPayload(
-                operation: "commit",
-                inboxId: inboxId,
-                consumerId: consumerId,
-                consumerSigningPublicKey: nil,
-                sponsorConsumerId: nil,
-                cursor: cursor,
-                sequence: sequence,
-                maxCount: nil,
-                longPollTimeoutSeconds: nil,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            ),
-            sortedKeys: true
-        )
-    }
-}
-
-public struct RevokeMailboxConsumerRequest: Codable, Equatable {
-    public let inboxId: String
-    public let consumerId: MailboxConsumerId
-    public let authorityProof: RelayActorProof?
-
-    public init(
-        inboxId: String,
-        consumerId: MailboxConsumerId,
-        authorityProof: RelayActorProof? = nil
-    ) {
-        self.inboxId = inboxId
-        self.consumerId = consumerId
-        self.authorityProof = authorityProof
-    }
-
-    public func signableData(for proof: RelayActorProof) throws -> Data {
-        try NoctweaveCoder.encode(
-            MailboxConsumerProofPayload(
-                operation: "revoke-authority",
-                inboxId: inboxId,
-                consumerId: consumerId,
-                consumerSigningPublicKey: nil,
-                sponsorConsumerId: nil,
-                cursor: nil,
-                sequence: nil,
-                maxCount: nil,
-                longPollTimeoutSeconds: nil,
-                signedAt: proof.signedAt,
-                nonce: proof.nonce
-            ),
-            sortedKeys: true
-        )
-    }
-}
-
-private struct MailboxConsumerProofPayload: Codable {
-    let operation: String
-    let inboxId: String
-    let consumerId: MailboxConsumerId
-    let consumerSigningPublicKey: Data?
-    let sponsorConsumerId: MailboxConsumerId?
-    let cursor: MailboxCursor?
-    let sequence: UInt64?
-    let maxCount: Int?
-    let longPollTimeoutSeconds: Int?
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct InboxRegistrationProofPayloadV2: Codable {
-    let inboxId: String
-    let accessPublicKey: Data
-    let registrationVersion: Int
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct InboxRetirementProofPayload: Codable {
-    let domain: String
-    let version: Int
-    let inboxId: String
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct InboxRouteCapabilityMutationProofPayload: Codable {
-    let domain: String
-    let version: Int
-    let operation: String
-    let inboxId: String
-    let capabilityDigest: Data
-    let relayScope: Data
-    let mutationSequence: UInt64
-    let signedAt: Date
-    let nonce: UUID
-}
-
-private struct InboxRouteCapabilityMutationStatePayload: Codable {
-    let domain: String
-    let version: Int
-    let operation: String
-    let inboxId: String
-    let capabilityDigest: Data
-    let relayScope: Data
-    let mutationSequence: UInt64
-}
-
-private struct InboxFetchProofPayload: Codable {
-    let inboxId: String
-    let routingToken: String?
-    let maxCount: Int?
-    let longPollTimeoutSeconds: Int?
-    let signedAt: Date
-    let nonce: UUID
 }
 
 public struct UploadAttachmentRequest: Codable, Equatable {
@@ -1314,7 +837,10 @@ public enum RendezvousRelayTransportV2 {
     public static let maximumFramesPerLane: UInt64 = 32
     public static let maximumCiphertextBytesPerLane = 2_097_152
     public static let maximumSyncFrames = 32
-    public static let allowedCiphertextByteCounts = [4_096, 16_384, 65_536]
+    /// The outer transport layer wraps an already-padded encrypted rendezvous
+    /// frame. Its largest bucket therefore needs room for the inner 64 KiB
+    /// bucket plus authenticated transport framing.
+    public static let allowedCiphertextByteCounts = [4_096, 16_384, 65_536, 131_072]
 
     static func isCanonicalTimestamp(_ date: Date) -> Bool {
         let seconds = date.timeIntervalSince1970
@@ -1650,355 +1176,785 @@ public struct RendezvousRelaySyncBatchV2: Codable, Equatable {
     }
 }
 
+public enum RelayRequestBody: Equatable {
+    case empty
+    case createOpaqueRoute(CreateOpaqueRouteRelayRequestV2)
+    case renewOpaqueRoute(RenewOpaqueRouteRelayRequestV2)
+    case teardownOpaqueRoute(TeardownOpaqueRouteRelayRequestV2)
+    case appendOpaqueRoute(AppendOpaqueRouteRelayRequestV2)
+    case syncOpaqueRoute(SyncOpaqueRouteRelayRequestV2)
+    case commitOpaqueRoute(CommitOpaqueRouteRelayRequestV2)
+    case registerRendezvous(RegisterRendezvousTransportV2Request)
+    case appendRendezvous(AppendRendezvousTransportV2Request)
+    case syncRendezvous(SyncRendezvousTransportV2Request)
+    case deleteRendezvous(DeleteRendezvousTransportV2Request)
+    case uploadAttachment(UploadAttachmentRequest)
+    case fetchAttachment(FetchAttachmentRequest)
+    case registerFederationNode(FederationNodeRegistrationRequest)
+    case listFederationNodes(ListFederationNodesRequest)
+    case publishDHTRecord(PublishOpenFederationDHTRecordRequest)
+    case listDHTRecords(ListOpenFederationDHTRecordsRequest)
+
+    public var binding: RelayOperationBinding {
+        switch self {
+        case .empty:
+            preconditionFailure("An empty relay body requires an explicit core operation")
+        case .createOpaqueRoute:
+            return RelayOperationBinding(module: .opaqueRoute, version: 2, method: .create)
+        case .renewOpaqueRoute:
+            return RelayOperationBinding(module: .opaqueRoute, version: 2, method: .renew)
+        case .teardownOpaqueRoute:
+            return RelayOperationBinding(module: .opaqueRoute, version: 2, method: .teardown)
+        case .appendOpaqueRoute:
+            return RelayOperationBinding(module: .opaqueRoute, version: 2, method: .append)
+        case .syncOpaqueRoute:
+            return RelayOperationBinding(module: .opaqueRoute, version: 2, method: .sync)
+        case .commitOpaqueRoute:
+            return RelayOperationBinding(module: .opaqueRoute, version: 2, method: .commit)
+        case .registerRendezvous:
+            return RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .register)
+        case .appendRendezvous:
+            return RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .append)
+        case .syncRendezvous:
+            return RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .sync)
+        case .deleteRendezvous:
+            return RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .delete)
+        case .uploadAttachment:
+            return RelayOperationBinding(module: .blobs, version: 1, method: .upload)
+        case .fetchAttachment:
+            return RelayOperationBinding(module: .blobs, version: 1, method: .fetch)
+        case .registerFederationNode:
+            return RelayOperationBinding(module: .federation, version: 1, method: .register)
+        case .listFederationNodes:
+            return RelayOperationBinding(module: .federation, version: 1, method: .list)
+        case .publishDHTRecord:
+            return RelayOperationBinding(module: .federation, version: 1, method: .publishDHT)
+        case .listDHTRecords:
+            return RelayOperationBinding(module: .federation, version: 1, method: .listDHT)
+        }
+    }
+
+    fileprivate static func decode(
+        for binding: RelayOperationBinding,
+        from decoder: Decoder
+    ) throws -> RelayRequestBody {
+        switch (binding.module, binding.method) {
+        case (.core, .health), (.core, .info):
+            try relayRequireExactObject(decoder, keys: [])
+            return .empty
+        case (.opaqueRoute, .create):
+            return .createOpaqueRoute(try relayDecodeExact(
+                CreateOpaqueRouteRelayRequestV2.self,
+                from: decoder,
+                keys: ["request", "renewCapability"]
+            ))
+        case (.opaqueRoute, .renew):
+            return .renewOpaqueRoute(try relayDecodeExact(
+                RenewOpaqueRouteRelayRequestV2.self,
+                from: decoder,
+                keys: ["request", "renewCapability"]
+            ))
+        case (.opaqueRoute, .teardown):
+            return .teardownOpaqueRoute(try relayDecodeExact(
+                TeardownOpaqueRouteRelayRequestV2.self,
+                from: decoder,
+                keys: ["request", "teardownCapability"]
+            ))
+        case (.opaqueRoute, .append):
+            return .appendOpaqueRoute(try relayDecodeExact(
+                AppendOpaqueRouteRelayRequestV2.self,
+                from: decoder,
+                keys: ["packet", "sendCapability"]
+            ))
+        case (.opaqueRoute, .sync):
+            return .syncOpaqueRoute(try relayDecodeExact(
+                SyncOpaqueRouteRelayRequestV2.self,
+                from: decoder,
+                keys: ["request", "readCredential"]
+            ))
+        case (.opaqueRoute, .commit):
+            return .commitOpaqueRoute(try relayDecodeExact(
+                CommitOpaqueRouteRelayRequestV2.self,
+                from: decoder,
+                keys: ["request", "readCredential"]
+            ))
+        case (.rendezvousTransport, .register):
+            return .registerRendezvous(try relayDecodeExact(
+                RegisterRendezvousTransportV2Request.self,
+                from: decoder,
+                keys: ["version", "routeCapability", "expiresAt", "lanes"]
+            ))
+        case (.rendezvousTransport, .append):
+            return .appendRendezvous(try relayDecodeExact(
+                AppendRendezvousTransportV2Request.self,
+                from: decoder,
+                keys: ["routeCapability", "laneId", "publishCapability", "frame"]
+            ))
+        case (.rendezvousTransport, .sync):
+            return .syncRendezvous(try relayDecodeExact(
+                SyncRendezvousTransportV2Request.self,
+                from: decoder,
+                keys: ["routeCapability", "laneId", "readCapability", "afterSequence", "maxCount"]
+            ))
+        case (.rendezvousTransport, .delete):
+            return .deleteRendezvous(try relayDecodeExact(
+                DeleteRendezvousTransportV2Request.self,
+                from: decoder,
+                keys: ["routeCapability", "laneId", "deleteCapability"]
+            ))
+        case (.blobs, .upload):
+            return .uploadAttachment(try relayDecodeExact(
+                UploadAttachmentRequest.self,
+                from: decoder,
+                keys: ["attachmentId", "chunkIndex", "payload", "ttlSeconds"]
+            ))
+        case (.blobs, .fetch):
+            return .fetchAttachment(try relayDecodeExact(
+                FetchAttachmentRequest.self,
+                from: decoder,
+                keys: ["attachmentId", "chunkIndex"]
+            ))
+        case (.federation, .register):
+            return .registerFederationNode(try relayDecodeExact(
+                FederationNodeRegistrationRequest.self,
+                from: decoder,
+                keys: ["endpoint", "relayInfo", "ttlSeconds"]
+            ))
+        case (.federation, .list):
+            return .listFederationNodes(try relayDecodeExact(
+                ListFederationNodesRequest.self,
+                from: decoder,
+                keys: ["mode", "federationName", "onlyHealthy", "maxStalenessSeconds", "requireSignedSnapshot"]
+            ))
+        case (.federation, .publishDHT):
+            return .publishDHTRecord(try relayDecodeExact(
+                PublishOpenFederationDHTRecordRequest.self,
+                from: decoder,
+                keys: ["namespace", "record"]
+            ))
+        case (.federation, .listDHT):
+            return .listDHTRecords(try relayDecodeExact(
+                ListOpenFederationDHTRecordsRequest.self,
+                from: decoder,
+                keys: ["namespace", "limit"]
+            ))
+        default:
+            throw relayWireError(decoder, "Relay module, version, and method do not identify a current request body")
+        }
+    }
+
+    fileprivate func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: RelayWireCodingKey.self)
+        switch self {
+        case .empty:
+            break
+        case .createOpaqueRoute(let value):
+            try container.encode(value.request, forKey: relayWireKey("request"))
+            try container.encode(value.renewCapability, forKey: relayWireKey("renewCapability"))
+        case .renewOpaqueRoute(let value):
+            try container.encode(value.request, forKey: relayWireKey("request"))
+            try container.encode(value.renewCapability, forKey: relayWireKey("renewCapability"))
+        case .teardownOpaqueRoute(let value):
+            try container.encode(value.request, forKey: relayWireKey("request"))
+            try container.encode(value.teardownCapability, forKey: relayWireKey("teardownCapability"))
+        case .appendOpaqueRoute(let value):
+            try container.encode(value.packet, forKey: relayWireKey("packet"))
+            try container.encode(value.sendCapability, forKey: relayWireKey("sendCapability"))
+        case .syncOpaqueRoute(let value):
+            try container.encode(value.request, forKey: relayWireKey("request"))
+            try container.encode(value.readCredential, forKey: relayWireKey("readCredential"))
+        case .commitOpaqueRoute(let value):
+            try container.encode(value.request, forKey: relayWireKey("request"))
+            try container.encode(value.readCredential, forKey: relayWireKey("readCredential"))
+        case .registerRendezvous(let value):
+            try container.encode(value.version, forKey: relayWireKey("version"))
+            try container.encode(value.routeCapability, forKey: relayWireKey("routeCapability"))
+            try container.encode(value.expiresAt, forKey: relayWireKey("expiresAt"))
+            try container.encode(value.lanes, forKey: relayWireKey("lanes"))
+        case .appendRendezvous(let value):
+            try container.encode(value.routeCapability, forKey: relayWireKey("routeCapability"))
+            try container.encode(value.laneId, forKey: relayWireKey("laneId"))
+            try container.encode(value.publishCapability, forKey: relayWireKey("publishCapability"))
+            try container.encode(value.frame, forKey: relayWireKey("frame"))
+        case .syncRendezvous(let value):
+            try container.encode(value.routeCapability, forKey: relayWireKey("routeCapability"))
+            try container.encode(value.laneId, forKey: relayWireKey("laneId"))
+            try container.encode(value.readCapability, forKey: relayWireKey("readCapability"))
+            try container.encode(value.afterSequence, forKey: relayWireKey("afterSequence"))
+            try relayEncodeOptional(value.maxCount, key: "maxCount", into: &container)
+        case .deleteRendezvous(let value):
+            try container.encode(value.routeCapability, forKey: relayWireKey("routeCapability"))
+            try container.encode(value.laneId, forKey: relayWireKey("laneId"))
+            try container.encode(value.deleteCapability, forKey: relayWireKey("deleteCapability"))
+        case .uploadAttachment(let value):
+            try container.encode(value.attachmentId, forKey: relayWireKey("attachmentId"))
+            try container.encode(value.chunkIndex, forKey: relayWireKey("chunkIndex"))
+            try container.encode(value.payload, forKey: relayWireKey("payload"))
+            try relayEncodeOptional(value.ttlSeconds, key: "ttlSeconds", into: &container)
+        case .fetchAttachment(let value):
+            try container.encode(value.attachmentId, forKey: relayWireKey("attachmentId"))
+            try container.encode(value.chunkIndex, forKey: relayWireKey("chunkIndex"))
+        case .registerFederationNode(let value):
+            try container.encode(value.endpoint, forKey: relayWireKey("endpoint"))
+            try container.encode(value.relayInfo, forKey: relayWireKey("relayInfo"))
+            try relayEncodeOptional(value.ttlSeconds, key: "ttlSeconds", into: &container)
+        case .listFederationNodes(let value):
+            try relayEncodeOptional(value.mode, key: "mode", into: &container)
+            try relayEncodeOptional(value.federationName, key: "federationName", into: &container)
+            try relayEncodeOptional(value.onlyHealthy, key: "onlyHealthy", into: &container)
+            try relayEncodeOptional(value.maxStalenessSeconds, key: "maxStalenessSeconds", into: &container)
+            try relayEncodeOptional(value.requireSignedSnapshot, key: "requireSignedSnapshot", into: &container)
+        case .publishDHTRecord(let value):
+            try container.encode(value.namespace, forKey: relayWireKey("namespace"))
+            try container.encode(value.record, forKey: relayWireKey("record"))
+        case .listDHTRecords(let value):
+            try container.encode(value.namespace, forKey: relayWireKey("namespace"))
+            try relayEncodeOptional(value.limit, key: "limit", into: &container)
+        }
+    }
+}
+
 public struct RelayRequest: Codable, Equatable {
-    public let type: RelayRequestType
+    public let requestID: UUID
+    public let module: RelayModuleID
+    public let version: Int
+    public let method: RelayMethodID
+    public let body: RelayRequestBody
     public let authToken: String?
-    public let deliver: DeliverRequest?
-    public let registerInbox: RegisterInboxRequest?
-    public let retireInbox: RetireInboxRequest?
-    public let createInboxRouteCapability: CreateInboxRouteCapabilityRequest?
-    public let revokeInboxRouteCapability: RevokeInboxRouteCapabilityRequest?
-    public let registerRendezvousTransportV2: RegisterRendezvousTransportV2Request?
-    public let appendRendezvousTransportV2: AppendRendezvousTransportV2Request?
-    public let syncRendezvousTransportV2: SyncRendezvousTransportV2Request?
-    public let deleteRendezvousTransportV2: DeleteRendezvousTransportV2Request?
-    public let fetch: FetchRequest?
-    public let registerMailboxConsumer: RegisterMailboxConsumerRequest?
-    public let syncMailbox: SyncMailboxRequest?
-    public let commitMailboxCursor: CommitMailboxCursorRequest?
-    public let revokeMailboxConsumer: RevokeMailboxConsumerRequest?
-    public let uploadAttachment: UploadAttachmentRequest?
-    public let fetchAttachment: FetchAttachmentRequest?
-    public let registerFederationNode: FederationNodeRegistrationRequest?
-    public let listFederationNodes: ListFederationNodesRequest?
-    public let publishOpenFederationDHTRecord: PublishOpenFederationDHTRecordRequest?
-    public let listOpenFederationDHTRecords: ListOpenFederationDHTRecordsRequest?
 
-    public init(
-        type: RelayRequestType,
-        authToken: String? = nil,
-        deliver: DeliverRequest? = nil,
-        registerInbox: RegisterInboxRequest? = nil,
-        retireInbox: RetireInboxRequest? = nil,
-        createInboxRouteCapability: CreateInboxRouteCapabilityRequest? = nil,
-        revokeInboxRouteCapability: RevokeInboxRouteCapabilityRequest? = nil,
-        registerRendezvousTransportV2: RegisterRendezvousTransportV2Request? = nil,
-        appendRendezvousTransportV2: AppendRendezvousTransportV2Request? = nil,
-        syncRendezvousTransportV2: SyncRendezvousTransportV2Request? = nil,
-        deleteRendezvousTransportV2: DeleteRendezvousTransportV2Request? = nil,
-        fetch: FetchRequest? = nil,
-        registerMailboxConsumer: RegisterMailboxConsumerRequest? = nil,
-        syncMailbox: SyncMailboxRequest? = nil,
-        commitMailboxCursor: CommitMailboxCursorRequest? = nil,
-        revokeMailboxConsumer: RevokeMailboxConsumerRequest? = nil,
-        uploadAttachment: UploadAttachmentRequest? = nil,
-        fetchAttachment: FetchAttachmentRequest? = nil,
-        registerFederationNode: FederationNodeRegistrationRequest? = nil,
-        listFederationNodes: ListFederationNodesRequest? = nil,
-        publishOpenFederationDHTRecord: PublishOpenFederationDHTRecordRequest? = nil,
-        listOpenFederationDHTRecords: ListOpenFederationDHTRecordsRequest? = nil
+    public var binding: RelayOperationBinding {
+        RelayOperationBinding(module: module, version: version, method: method)
+    }
+
+    private init(
+        requestID: UUID = UUID(),
+        binding: RelayOperationBinding,
+        body: RelayRequestBody,
+        authToken: String? = nil
     ) {
-        self.type = type
+        self.requestID = requestID
+        module = binding.module
+        version = binding.version
+        method = binding.method
+        self.body = body
         self.authToken = authToken
-        self.deliver = deliver
-        self.registerInbox = registerInbox
-        self.retireInbox = retireInbox
-        self.createInboxRouteCapability = createInboxRouteCapability
-        self.revokeInboxRouteCapability = revokeInboxRouteCapability
-        self.registerRendezvousTransportV2 = registerRendezvousTransportV2
-        self.appendRendezvousTransportV2 = appendRendezvousTransportV2
-        self.syncRendezvousTransportV2 = syncRendezvousTransportV2
-        self.deleteRendezvousTransportV2 = deleteRendezvousTransportV2
-        self.fetch = fetch
-        self.registerMailboxConsumer = registerMailboxConsumer
-        self.syncMailbox = syncMailbox
-        self.commitMailboxCursor = commitMailboxCursor
-        self.revokeMailboxConsumer = revokeMailboxConsumer
-        self.uploadAttachment = uploadAttachment
-        self.fetchAttachment = fetchAttachment
-        self.registerFederationNode = registerFederationNode
-        self.listFederationNodes = listFederationNodes
-        self.publishOpenFederationDHTRecord = publishOpenFederationDHTRecord
-        self.listOpenFederationDHTRecords = listOpenFederationDHTRecords
     }
 
-    public static func deliver(_ request: DeliverRequest) -> RelayRequest {
-        RelayRequest(type: .deliver, deliver: request)
-    }
-
-    public static func registerInbox(_ request: RegisterInboxRequest) -> RelayRequest {
-        RelayRequest(type: .registerInbox, registerInbox: request)
-    }
-
-    public static func retireInbox(_ request: RetireInboxRequest) -> RelayRequest {
-        RelayRequest(type: .retireInbox, retireInbox: request)
-    }
-
-    public static func createInboxRouteCapability(
-        _ request: CreateInboxRouteCapabilityRequest
-    ) -> RelayRequest {
+    public static func health(requestID: UUID = UUID()) -> RelayRequest {
         RelayRequest(
-            type: .createInboxRouteCapability,
-            createInboxRouteCapability: request
+            requestID: requestID,
+            binding: RelayOperationBinding(module: .core, version: 2, method: .health),
+            body: .empty
         )
     }
 
-    public static func revokeInboxRouteCapability(
-        _ request: RevokeInboxRouteCapabilityRequest
-    ) -> RelayRequest {
+    public static func info(requestID: UUID = UUID()) -> RelayRequest {
         RelayRequest(
-            type: .revokeInboxRouteCapability,
-            revokeInboxRouteCapability: request
+            requestID: requestID,
+            binding: RelayOperationBinding(module: .core, version: 2, method: .info),
+            body: .empty
         )
     }
 
-    public static func registerRendezvousTransportV2(
-        _ request: RegisterRendezvousTransportV2Request
-    ) -> RelayRequest {
-        RelayRequest(
-            type: .registerRendezvousTransportV2,
-            registerRendezvousTransportV2: request
-        )
+    public static func createOpaqueRouteV2(_ request: CreateOpaqueRouteRelayRequestV2) -> RelayRequest {
+        RelayRequest(binding: requestBodyBinding(.createOpaqueRoute(request)), body: .createOpaqueRoute(request))
     }
 
-    public static func appendRendezvousTransportV2(
-        _ request: AppendRendezvousTransportV2Request
-    ) -> RelayRequest {
-        RelayRequest(
-            type: .appendRendezvousTransportV2,
-            appendRendezvousTransportV2: request
-        )
+    public static func renewOpaqueRouteV2(_ request: RenewOpaqueRouteRelayRequestV2) -> RelayRequest {
+        RelayRequest(binding: requestBodyBinding(.renewOpaqueRoute(request)), body: .renewOpaqueRoute(request))
     }
 
-    public static func syncRendezvousTransportV2(
-        _ request: SyncRendezvousTransportV2Request
-    ) -> RelayRequest {
-        RelayRequest(
-            type: .syncRendezvousTransportV2,
-            syncRendezvousTransportV2: request
-        )
+    public static func teardownOpaqueRouteV2(_ request: TeardownOpaqueRouteRelayRequestV2) -> RelayRequest {
+        RelayRequest(binding: requestBodyBinding(.teardownOpaqueRoute(request)), body: .teardownOpaqueRoute(request))
     }
 
-    public static func deleteRendezvousTransportV2(
-        _ request: DeleteRendezvousTransportV2Request
-    ) -> RelayRequest {
-        RelayRequest(
-            type: .deleteRendezvousTransportV2,
-            deleteRendezvousTransportV2: request
-        )
+    public static func appendOpaqueRouteV2(_ request: AppendOpaqueRouteRelayRequestV2) -> RelayRequest {
+        RelayRequest(binding: requestBodyBinding(.appendOpaqueRoute(request)), body: .appendOpaqueRoute(request))
     }
 
-    public static func fetch(_ request: FetchRequest) -> RelayRequest {
-        RelayRequest(type: .fetch, fetch: request)
+    public static func syncOpaqueRouteV2(_ request: SyncOpaqueRouteRelayRequestV2) -> RelayRequest {
+        RelayRequest(binding: requestBodyBinding(.syncOpaqueRoute(request)), body: .syncOpaqueRoute(request))
     }
 
-    public static func registerMailboxConsumer(_ request: RegisterMailboxConsumerRequest) -> RelayRequest {
-        RelayRequest(type: .registerMailboxConsumer, registerMailboxConsumer: request)
+    public static func commitOpaqueRouteV2(_ request: CommitOpaqueRouteRelayRequestV2) -> RelayRequest {
+        RelayRequest(binding: requestBodyBinding(.commitOpaqueRoute(request)), body: .commitOpaqueRoute(request))
     }
 
-    public static func syncMailbox(_ request: SyncMailboxRequest) -> RelayRequest {
-        RelayRequest(type: .syncMailbox, syncMailbox: request)
+    public static func registerRendezvousTransportV2(_ request: RegisterRendezvousTransportV2Request) -> RelayRequest {
+        RelayRequest(binding: requestBodyBinding(.registerRendezvous(request)), body: .registerRendezvous(request))
     }
 
-    public static func commitMailboxCursor(_ request: CommitMailboxCursorRequest) -> RelayRequest {
-        RelayRequest(type: .commitMailboxCursor, commitMailboxCursor: request)
+    public static func appendRendezvousTransportV2(_ request: AppendRendezvousTransportV2Request) -> RelayRequest {
+        RelayRequest(binding: requestBodyBinding(.appendRendezvous(request)), body: .appendRendezvous(request))
     }
 
-    public static func revokeMailboxConsumer(_ request: RevokeMailboxConsumerRequest) -> RelayRequest {
-        RelayRequest(type: .revokeMailboxConsumer, revokeMailboxConsumer: request)
+    public static func syncRendezvousTransportV2(_ request: SyncRendezvousTransportV2Request) -> RelayRequest {
+        RelayRequest(binding: requestBodyBinding(.syncRendezvous(request)), body: .syncRendezvous(request))
     }
 
-    public static func health() -> RelayRequest {
-        RelayRequest(type: .health)
-    }
-
-    public static func info() -> RelayRequest {
-        RelayRequest(type: .info)
+    public static func deleteRendezvousTransportV2(_ request: DeleteRendezvousTransportV2Request) -> RelayRequest {
+        RelayRequest(binding: requestBodyBinding(.deleteRendezvous(request)), body: .deleteRendezvous(request))
     }
 
     public static func uploadAttachment(_ request: UploadAttachmentRequest) -> RelayRequest {
-        RelayRequest(type: .uploadAttachment, uploadAttachment: request)
+        RelayRequest(binding: requestBodyBinding(.uploadAttachment(request)), body: .uploadAttachment(request))
     }
 
     public static func fetchAttachment(_ request: FetchAttachmentRequest) -> RelayRequest {
-        RelayRequest(type: .fetchAttachment, fetchAttachment: request)
+        RelayRequest(binding: requestBodyBinding(.fetchAttachment(request)), body: .fetchAttachment(request))
     }
 
     public static func registerFederationNode(_ request: FederationNodeRegistrationRequest) -> RelayRequest {
-        RelayRequest(type: .registerFederationNode, registerFederationNode: request)
+        RelayRequest(binding: requestBodyBinding(.registerFederationNode(request)), body: .registerFederationNode(request))
     }
 
     public static func listFederationNodes(_ request: ListFederationNodesRequest) -> RelayRequest {
-        RelayRequest(type: .listFederationNodes, listFederationNodes: request)
+        RelayRequest(binding: requestBodyBinding(.listFederationNodes(request)), body: .listFederationNodes(request))
     }
 
     public static func publishOpenFederationDHTRecord(_ request: PublishOpenFederationDHTRecordRequest) -> RelayRequest {
-        RelayRequest(type: .publishOpenFederationDHTRecord, publishOpenFederationDHTRecord: request)
+        RelayRequest(binding: requestBodyBinding(.publishDHTRecord(request)), body: .publishDHTRecord(request))
     }
 
     public static func listOpenFederationDHTRecords(_ request: ListOpenFederationDHTRecordsRequest) -> RelayRequest {
-        RelayRequest(type: .listOpenFederationDHTRecords, listOpenFederationDHTRecords: request)
+        RelayRequest(binding: requestBodyBinding(.listDHTRecords(request)), body: .listDHTRecords(request))
     }
 
     public func withAuthToken(_ token: String?) -> RelayRequest {
-        RelayRequest(
-            type: type,
-            authToken: token,
-            deliver: deliver,
-            registerInbox: registerInbox,
-            retireInbox: retireInbox,
-            createInboxRouteCapability: createInboxRouteCapability,
-            revokeInboxRouteCapability: revokeInboxRouteCapability,
-            registerRendezvousTransportV2: registerRendezvousTransportV2,
-            appendRendezvousTransportV2: appendRendezvousTransportV2,
-            syncRendezvousTransportV2: syncRendezvousTransportV2,
-            deleteRendezvousTransportV2: deleteRendezvousTransportV2,
-            fetch: fetch,
-            registerMailboxConsumer: registerMailboxConsumer,
-            syncMailbox: syncMailbox,
-            commitMailboxCursor: commitMailboxCursor,
-            revokeMailboxConsumer: revokeMailboxConsumer,
-            uploadAttachment: uploadAttachment,
-            fetchAttachment: fetchAttachment,
-            registerFederationNode: registerFederationNode,
-            listFederationNodes: listFederationNodes,
-            publishOpenFederationDHTRecord: publishOpenFederationDHTRecord,
-            listOpenFederationDHTRecords: listOpenFederationDHTRecords
+        RelayRequest(requestID: requestID, binding: binding, body: body, authToken: token)
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(
+            decoder,
+            keys: ["requestID", "module", "version", "method", "body", "authToken"]
         )
+        let container = try decoder.container(keyedBy: RelayRequestCodingKeys.self)
+        requestID = try container.decode(UUID.self, forKey: .requestID)
+        module = try container.decode(RelayModuleID.self, forKey: .module)
+        version = try container.decode(Int.self, forKey: .version)
+        method = try container.decode(RelayMethodID.self, forKey: .method)
+        authToken = try container.decodeIfPresent(String.self, forKey: .authToken)
+        let binding = RelayOperationBinding(module: module, version: version, method: method)
+        guard binding.isCurrent else {
+            throw relayWireError(decoder, "Relay request uses an unsupported module, version, or method")
+        }
+        body = try RelayRequestBody.decode(for: binding, from: container.superDecoder(forKey: .body))
+        if case .empty = body {
+            guard module == .core else {
+                throw relayWireError(decoder, "Empty request body is valid only for nw.core")
+            }
+        } else if body.binding != binding {
+            throw relayWireError(decoder, "Relay request body does not match its module binding")
+        }
+        guard authToken.map({ !$0.isEmpty && $0.utf8.count <= RelayClient.maxAuthenticationBytes }) ?? true else {
+            throw relayWireError(decoder, "Relay authentication token is invalid")
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard binding.isCurrent else {
+            throw relayWireError(encoder, "Cannot encode a non-current relay request")
+        }
+        var container = encoder.container(keyedBy: RelayRequestCodingKeys.self)
+        try container.encode(requestID, forKey: .requestID)
+        try container.encode(module, forKey: .module)
+        try container.encode(version, forKey: .version)
+        try container.encode(method, forKey: .method)
+        try body.encode(to: container.superEncoder(forKey: .body))
+        if let authToken {
+            try container.encode(authToken, forKey: .authToken)
+        } else {
+            try container.encodeNil(forKey: .authToken)
+        }
+    }
+
+    private enum RelayRequestCodingKeys: String, CodingKey {
+        case requestID
+        case module
+        case version
+        case method
+        case body
+        case authToken
     }
 }
 
-public enum RelayResponseType: String, Codable {
-    case ok
-    case delivered
-    case messages
-    case mailboxSync
-    case mailboxConsumer
-    case rendezvousSyncV2
-    case attachment
-    case federationNodes
-    case info
-    case openFederationDHTRecords
+public enum RelayResponseStatus: String, Codable {
+    case success
     case error
 }
 
-public struct DeliverResponse: Codable, Equatable {
-    public let storedCount: Int
+public enum RelayErrorCode: String, Codable, CaseIterable {
+    case authenticationRequired = "authentication-required"
+    case rateLimited = "rate-limited"
+    case invalidRequest = "invalid-request"
+    case unavailable
+    case notFound = "not-found"
+    case conflict
+    case capacity
+    case internalFailure = "internal-failure"
+}
 
-    public init(storedCount: Int) {
-        self.storedCount = storedCount
+public struct RelayErrorBody: Codable, Equatable {
+    public static let maximumMessageBytes = 512
+
+    public let code: RelayErrorCode
+    public let message: String
+    public let retryable: Bool
+
+    public init(code: RelayErrorCode, message: String, retryable: Bool = false) {
+        self.code = code
+        self.message = relayBoundedErrorMessage(message)
+        self.retryable = retryable
+    }
+
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(decoder, keys: ["code", "message", "retryable"])
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        code = try container.decode(RelayErrorCode.self, forKey: .code)
+        message = try container.decode(String.self, forKey: .message)
+        retryable = try container.decode(Bool.self, forKey: .retryable)
+        guard !message.isEmpty, message.utf8.count <= Self.maximumMessageBytes else {
+            throw relayWireError(decoder, "Relay error message is outside protocol bounds")
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case code
+        case message
+        case retryable
     }
 }
 
-/// Relay-local, inbox-generation-scoped authority returned after an
-/// authenticated inbox registration. It is not an account or provider ID and
-/// is removed with the inbox generation.
-public struct InboxRegistrationReceiptV3: Codable, Equatable {
-    public let routeMutationScope: Data
-    public let nextRouteMutationSequence: UInt64
+public struct FederationNodesResponseBody: Equatable {
+    public let nodes: [FederationNodeRecord]
+    public let snapshot: FederationDirectorySnapshot?
 
-    public init(
-        routeMutationScope: Data,
-        nextRouteMutationSequence: UInt64
-    ) {
-        self.routeMutationScope = routeMutationScope
-        self.nextRouteMutationSequence = nextRouteMutationSequence
+    public init(nodes: [FederationNodeRecord], snapshot: FederationDirectorySnapshot? = nil) {
+        self.nodes = nodes
+        self.snapshot = snapshot
+    }
+}
+
+public enum RelaySuccessBody: Equatable {
+    case empty
+    case relayInfo(RelayInfo)
+    case opaqueRoute(OpaqueReceiveRouteV2)
+    case opaqueRouteAppend(OpaqueRouteAppendReceiptV2)
+    case opaqueRouteSync(OpaqueRouteSyncResponseV2)
+    case opaqueRouteCommit(OpaqueRouteCommitResponseV2)
+    case rendezvousSync(RendezvousRelaySyncBatchV2)
+    case attachment(AttachmentChunk)
+    case federationNodes(FederationNodesResponseBody)
+    case dhtRecords([OpenFederationDHTRecord])
+
+    fileprivate func supports(_ binding: RelayOperationBinding) -> Bool {
+        switch self {
+        case .empty:
+            return binding == RelayOperationBinding(module: .core, version: 2, method: .health)
+                || binding == RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .register)
+                || binding == RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .append)
+                || binding == RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .delete)
+                || binding == RelayOperationBinding(module: .federation, version: 1, method: .publishDHT)
+        case .relayInfo:
+            return binding == RelayOperationBinding(module: .core, version: 2, method: .info)
+        case .opaqueRoute:
+            return binding.module == .opaqueRoute
+                && binding.version == 2
+                && [.create, .renew, .teardown].contains(binding.method)
+        case .opaqueRouteAppend:
+            return binding == RelayOperationBinding(module: .opaqueRoute, version: 2, method: .append)
+        case .opaqueRouteSync:
+            return binding == RelayOperationBinding(module: .opaqueRoute, version: 2, method: .sync)
+        case .opaqueRouteCommit:
+            return binding == RelayOperationBinding(module: .opaqueRoute, version: 2, method: .commit)
+        case .rendezvousSync:
+            return binding == RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .sync)
+        case .attachment:
+            return binding.module == .blobs && binding.version == 1 && [.upload, .fetch].contains(binding.method)
+        case .federationNodes:
+            return binding.module == .federation && binding.version == 1 && [.register, .list].contains(binding.method)
+        case .dhtRecords:
+            return binding == RelayOperationBinding(module: .federation, version: 1, method: .listDHT)
+        }
+    }
+
+    fileprivate static func decode(
+        for binding: RelayOperationBinding,
+        from decoder: Decoder
+    ) throws -> RelaySuccessBody {
+        switch (binding.module, binding.method) {
+        case (.core, .health),
+             (.rendezvousTransport, .register),
+             (.rendezvousTransport, .append),
+             (.rendezvousTransport, .delete),
+             (.federation, .publishDHT):
+            try relayRequireExactObject(decoder, keys: [])
+            return .empty
+        case (.core, .info):
+            try relayRequireExactObject(decoder, keys: ["relayInfo"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .relayInfo(try container.decode(RelayInfo.self, forKey: relayWireKey("relayInfo")))
+        case (.opaqueRoute, .create), (.opaqueRoute, .renew), (.opaqueRoute, .teardown):
+            try relayRequireExactObject(decoder, keys: ["route"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .opaqueRoute(try container.decode(OpaqueReceiveRouteV2.self, forKey: relayWireKey("route")))
+        case (.opaqueRoute, .append):
+            try relayRequireExactObject(decoder, keys: ["receipt"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .opaqueRouteAppend(try container.decode(OpaqueRouteAppendReceiptV2.self, forKey: relayWireKey("receipt")))
+        case (.opaqueRoute, .sync):
+            try relayRequireExactObject(decoder, keys: ["batch"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .opaqueRouteSync(try container.decode(OpaqueRouteSyncResponseV2.self, forKey: relayWireKey("batch")))
+        case (.opaqueRoute, .commit):
+            try relayRequireExactObject(decoder, keys: ["commit"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .opaqueRouteCommit(try container.decode(OpaqueRouteCommitResponseV2.self, forKey: relayWireKey("commit")))
+        case (.rendezvousTransport, .sync):
+            try relayRequireExactObject(decoder, keys: ["batch"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .rendezvousSync(try container.decode(RendezvousRelaySyncBatchV2.self, forKey: relayWireKey("batch")))
+        case (.blobs, .upload), (.blobs, .fetch):
+            try relayRequireExactObject(decoder, keys: ["chunk"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .attachment(try container.decode(AttachmentChunk.self, forKey: relayWireKey("chunk")))
+        case (.federation, .register), (.federation, .list):
+            try relayRequireExactObject(decoder, keys: ["nodes", "snapshot"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .federationNodes(FederationNodesResponseBody(
+                nodes: try container.decode([FederationNodeRecord].self, forKey: relayWireKey("nodes")),
+                snapshot: try container.decodeIfPresent(FederationDirectorySnapshot.self, forKey: relayWireKey("snapshot"))
+            ))
+        case (.federation, .listDHT):
+            try relayRequireExactObject(decoder, keys: ["records"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .dhtRecords(try container.decode([OpenFederationDHTRecord].self, forKey: relayWireKey("records")))
+        default:
+            throw relayWireError(decoder, "Relay operation does not define a success body")
+        }
+    }
+
+    fileprivate func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: RelayWireCodingKey.self)
+        switch self {
+        case .empty:
+            break
+        case .relayInfo(let value):
+            try container.encode(value, forKey: relayWireKey("relayInfo"))
+        case .opaqueRoute(let value):
+            try container.encode(value, forKey: relayWireKey("route"))
+        case .opaqueRouteAppend(let value):
+            try container.encode(value, forKey: relayWireKey("receipt"))
+        case .opaqueRouteSync(let value):
+            try container.encode(value, forKey: relayWireKey("batch"))
+        case .opaqueRouteCommit(let value):
+            try container.encode(value, forKey: relayWireKey("commit"))
+        case .rendezvousSync(let value):
+            try container.encode(value, forKey: relayWireKey("batch"))
+        case .attachment(let value):
+            try container.encode(value, forKey: relayWireKey("chunk"))
+        case .federationNodes(let value):
+            try container.encode(value.nodes, forKey: relayWireKey("nodes"))
+            try relayEncodeOptional(value.snapshot, key: "snapshot", into: &container)
+        case .dhtRecords(let value):
+            try container.encode(value, forKey: relayWireKey("records"))
+        }
     }
 }
 
 public struct RelayResponse: Codable, Equatable {
-    public let type: RelayResponseType
-    public let delivered: DeliverResponse?
-    public let inboxRegistration: InboxRegistrationReceiptV3?
-    public let messages: [ProtocolEnvelopeV1]?
-    public let mailboxSync: MailboxSyncBatch?
-    public let mailboxConsumer: MailboxConsumerRegistration?
-    public let rendezvousSyncV2: RendezvousRelaySyncBatchV2?
-    public let attachment: AttachmentChunk?
-    public let federationNodes: [FederationNodeRecord]?
-    public let federationSnapshot: FederationDirectorySnapshot?
-    public let relayInfo: RelayInfo?
-    public let openFederationDHTRecords: [OpenFederationDHTRecord]?
-    public let error: String?
+    public let requestID: UUID
+    public let module: RelayModuleID
+    public let version: Int
+    public let method: RelayMethodID
+    public let status: RelayResponseStatus
+    public let successBody: RelaySuccessBody?
+    public let error: RelayErrorBody?
 
-    public init(
-        type: RelayResponseType,
-        delivered: DeliverResponse? = nil,
-        inboxRegistration: InboxRegistrationReceiptV3? = nil,
-        messages: [ProtocolEnvelopeV1]? = nil,
-        mailboxSync: MailboxSyncBatch? = nil,
-        mailboxConsumer: MailboxConsumerRegistration? = nil,
-        rendezvousSyncV2: RendezvousRelaySyncBatchV2? = nil,
-        attachment: AttachmentChunk? = nil,
-        federationNodes: [FederationNodeRecord]? = nil,
-        federationSnapshot: FederationDirectorySnapshot? = nil,
-        relayInfo: RelayInfo? = nil,
-        openFederationDHTRecords: [OpenFederationDHTRecord]? = nil,
-        error: String? = nil
+    public var binding: RelayOperationBinding {
+        RelayOperationBinding(module: module, version: version, method: method)
+    }
+
+    private init(
+        request: RelayRequest,
+        status: RelayResponseStatus,
+        successBody: RelaySuccessBody?,
+        error: RelayErrorBody?
     ) {
-        self.type = type
-        self.delivered = delivered
-        self.inboxRegistration = inboxRegistration
-        self.messages = messages
-        self.mailboxSync = mailboxSync
-        self.mailboxConsumer = mailboxConsumer
-        self.rendezvousSyncV2 = rendezvousSyncV2
-        self.attachment = attachment
-        self.federationNodes = federationNodes
-        self.federationSnapshot = federationSnapshot
-        self.relayInfo = relayInfo
-        self.openFederationDHTRecords = openFederationDHTRecords
+        requestID = request.requestID
+        module = request.module
+        version = request.version
+        method = request.method
+        self.status = status
+        self.successBody = successBody
         self.error = error
     }
 
-    public static func ok(
-        inboxRegistration: InboxRegistrationReceiptV3? = nil
+    public static func success(_ body: RelaySuccessBody, respondingTo request: RelayRequest) -> RelayResponse {
+        precondition(body.supports(request.binding), "Success body does not match relay request binding")
+        return RelayResponse(request: request, status: .success, successBody: body, error: nil)
+    }
+
+    public static func error(
+        _ message: String,
+        code: RelayErrorCode = .invalidRequest,
+        retryable: Bool = false,
+        respondingTo request: RelayRequest
     ) -> RelayResponse {
-        RelayResponse(type: .ok, inboxRegistration: inboxRegistration)
+        RelayResponse(
+            request: request,
+            status: .error,
+            successBody: nil,
+            error: RelayErrorBody(code: code, message: message, retryable: retryable)
+        )
     }
 
-    public static func delivered(count: Int) -> RelayResponse {
-        RelayResponse(type: .delivered, delivered: DeliverResponse(storedCount: count))
+    public func isResponse(to request: RelayRequest) -> Bool {
+        requestID == request.requestID && binding == request.binding
     }
 
-    public static func messages(_ envelopes: [ProtocolEnvelopeV1]) -> RelayResponse {
-        RelayResponse(type: .messages, messages: envelopes)
+    public init(from decoder: Decoder) throws {
+        try relayRequireExactObject(
+            decoder,
+            keys: ["requestID", "module", "version", "method", "status", "body", "error"]
+        )
+        let container = try decoder.container(keyedBy: RelayResponseCodingKeys.self)
+        requestID = try container.decode(UUID.self, forKey: .requestID)
+        module = try container.decode(RelayModuleID.self, forKey: .module)
+        version = try container.decode(Int.self, forKey: .version)
+        method = try container.decode(RelayMethodID.self, forKey: .method)
+        status = try container.decode(RelayResponseStatus.self, forKey: .status)
+        let binding = RelayOperationBinding(module: module, version: version, method: method)
+        guard binding.isCurrent else {
+            throw relayWireError(decoder, "Relay response uses an unsupported module, version, or method")
+        }
+        switch status {
+        case .success:
+            guard try container.decodeNil(forKey: .error) else {
+                throw relayWireError(decoder, "Successful relay response must contain a null error")
+            }
+            successBody = try RelaySuccessBody.decode(
+                for: binding,
+                from: container.superDecoder(forKey: .body)
+            )
+            error = nil
+        case .error:
+            guard try container.decodeNil(forKey: .body) else {
+                throw relayWireError(decoder, "Error relay response must contain a null body")
+            }
+            successBody = nil
+            error = try container.decode(RelayErrorBody.self, forKey: .error)
+        }
     }
 
-    public static func mailboxSync(_ batch: MailboxSyncBatch) -> RelayResponse {
-        RelayResponse(type: .mailboxSync, mailboxSync: batch)
+    public func encode(to encoder: Encoder) throws {
+        guard binding.isCurrent else {
+            throw relayWireError(encoder, "Cannot encode a non-current relay response")
+        }
+        var container = encoder.container(keyedBy: RelayResponseCodingKeys.self)
+        try container.encode(requestID, forKey: .requestID)
+        try container.encode(module, forKey: .module)
+        try container.encode(version, forKey: .version)
+        try container.encode(method, forKey: .method)
+        try container.encode(status, forKey: .status)
+        switch status {
+        case .success:
+            guard let successBody, error == nil, successBody.supports(binding) else {
+                throw relayWireError(encoder, "Invalid success response state")
+            }
+            try successBody.encode(to: container.superEncoder(forKey: .body))
+            try container.encodeNil(forKey: .error)
+        case .error:
+            guard successBody == nil, let error else {
+                throw relayWireError(encoder, "Invalid error response state")
+            }
+            try container.encodeNil(forKey: .body)
+            try container.encode(error, forKey: .error)
+        }
     }
 
-    public static func mailboxConsumer(_ consumer: MailboxConsumerRegistration) -> RelayResponse {
-        RelayResponse(type: .mailboxConsumer, mailboxConsumer: consumer)
+    private enum RelayResponseCodingKeys: String, CodingKey {
+        case requestID
+        case module
+        case version
+        case method
+        case status
+        case body
+        case error
+    }
+}
+
+private func requestBodyBinding(_ body: RelayRequestBody) -> RelayOperationBinding {
+    body.binding
+}
+
+private struct RelayWireCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
     }
 
-    public static func rendezvousSyncV2(_ batch: RendezvousRelaySyncBatchV2) -> RelayResponse {
-        RelayResponse(type: .rendezvousSyncV2, rendezvousSyncV2: batch)
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
     }
+}
 
-    public static func attachment(_ chunk: AttachmentChunk) -> RelayResponse {
-        RelayResponse(type: .attachment, attachment: chunk)
-    }
+private func relayWireKey(_ value: String) -> RelayWireCodingKey {
+    RelayWireCodingKey(stringValue: value)!
+}
 
-    public static func federationNodes(
-        _ nodes: [FederationNodeRecord],
-        snapshot: FederationDirectorySnapshot? = nil
-    ) -> RelayResponse {
-        RelayResponse(type: .federationNodes, federationNodes: nodes, federationSnapshot: snapshot)
+private func relayRequireExactObject(_ decoder: Decoder, keys: Set<String>) throws {
+    let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+    guard Set(container.allKeys.map(\.stringValue)) == keys else {
+        throw relayWireError(decoder, "Relay object fields do not match the current protocol exactly")
     }
+}
 
-    public static func info(_ info: RelayInfo) -> RelayResponse {
-        RelayResponse(type: .info, relayInfo: info)
-    }
+private func relayDecodeExact<T: Decodable>(
+    _ type: T.Type,
+    from decoder: Decoder,
+    keys: Set<String>
+) throws -> T {
+    try relayRequireExactObject(decoder, keys: keys)
+    return try T(from: decoder)
+}
 
-    public static func openFederationDHTRecords(_ records: [OpenFederationDHTRecord]) -> RelayResponse {
-        RelayResponse(type: .openFederationDHTRecords, openFederationDHTRecords: records)
+private func relayEncodeOptional<T: Encodable>(
+    _ value: T?,
+    key: String,
+    into container: inout KeyedEncodingContainer<RelayWireCodingKey>
+) throws {
+    if let value {
+        try container.encode(value, forKey: relayWireKey(key))
+    } else {
+        try container.encodeNil(forKey: relayWireKey(key))
     }
+}
 
-    public static func error(_ message: String) -> RelayResponse {
-        RelayResponse(type: .error, error: message)
+private func relayBoundedErrorMessage(_ message: String) -> String {
+    let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, trimmed.utf8.count <= RelayErrorBody.maximumMessageBytes else {
+        return "Relay request failed"
     }
+    return trimmed
+}
+
+private func relayWireError(_ decoder: Decoder, _ description: String) -> DecodingError {
+    DecodingError.dataCorrupted(
+        DecodingError.Context(codingPath: decoder.codingPath, debugDescription: description)
+    )
+}
+
+private func relayWireError(_ encoder: Encoder, _ description: String) -> EncodingError {
+    EncodingError.invalidValue(
+        description,
+        EncodingError.Context(codingPath: encoder.codingPath, debugDescription: description)
+    )
 }
 
 public struct AttachmentChunk: Codable, Equatable {

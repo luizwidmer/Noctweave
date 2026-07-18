@@ -4,12 +4,11 @@ import Foundation
 public enum ProtocolIntentKindV2: String, Codable, Equatable, CaseIterable {
     case sendEvent
     case uploadBlob
-    case admitEndpoint
-    case removeEndpoint
-    case rotateRoute
-    case rotatePrekeys
-    case addGroupClient
-    case removeGroupClient
+    case rolloverRoute
+    case renewRelationshipPrekey
+    case addGroupMember
+    case removeGroupMember
+    case replaceGroupCredential
     case changeGroupPolicy
     case publishContinuity
 }

@@ -4,65 +4,35 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ArchitectureV2GroupBoundaryTests: XCTestCase {
-    func testPrivacyProjectionDoesNotCommitEndpointEvidence() throws {
+    func testAdmissionProjectionCommitsOnlyGroupScopedMaterial() throws {
         let fixture = try makeGenesis()
-        let localGenerationId = UUID()
-        let localEndpoint = try LocalEndpointState.generate(
-            identityGenerationId: localGenerationId,
-            createdAt: fixture.state.signedAt.addingTimeInterval(-20)
-        )
-        let localIdentity = try Identity.generate(displayName: "Local admission evidence")
-        let privateModuleName = "nw.local-only.\(UUID().uuidString.lowercased())"
-        let localCapabilities = ProtocolCapabilityManifest(
-            modules: ProtocolCapabilityManifest.defaultActiveEndpointModules + [
-                ProtocolModuleCapability(
-                    module: privateModuleName,
-                    versions: [1],
-                    status: .experimental
-                )
-            ]
-        )
-        let localManifest = try EndpointSetManifest.create(
-            identityGenerationId: localGenerationId,
-            epoch: 0,
-            endpoints: [localEndpoint.publicRecord(
-                addedEpoch: 0,
-                capabilities: localCapabilities
-            )],
-            identity: localIdentity,
-            issuedAt: fixture.state.signedAt.addingTimeInterval(-10)
-        )
-        XCTAssertTrue(localManifest.verify(
-            identityPublicKey: localIdentity.signingKey.publicKeyData
-        ))
-
-        let newUser = GroupUser(
-            id: UUID(),
+        let newMember = GroupMemberV2(
+            id: .generate(),
             role: .member,
             addedEpoch: fixture.state.epoch + 1
         )
         let newClientKey = try SigningKeyPair.generate()
-        let projection = try GroupClientAdmissionProjectionV2.create(
+        let projection = try GroupCredentialAdmissionV2.create(
             groupId: fixture.state.groupId,
-            groupUserId: newUser.id,
+            memberHandle: newMember.id,
             groupSigningKey: newClientKey,
             groupAgreementKey: try AgreementKeyPair.generate(),
             issuedAt: fixture.state.signedAt,
             expiresAt: fixture.state.signedAt.addingTimeInterval(3_600)
         )
-        let newLeaf = try GroupClientLeafV2.fromVerifiedProjection(
+        let newLeaf = try GroupMemberCredentialV2.fromVerifiedProjection(
             projection,
             addedEpoch: fixture.state.epoch + 1
         )
         let commit = try SignedGroupCommitV2.create(
-            operation: .addUser,
+            operation: .addMember,
             currentState: fixture.state,
-            proposedUsers: fixture.state.users + [newUser],
-            proposedClientLeaves: fixture.state.clientLeaves + [newLeaf],
+            proposedMembers: fixture.state.members + [newMember],
+            proposedCredentials: fixture.state.memberCredentials + [newLeaf],
             admissionProjection: projection,
             proposedPermissions: fixture.state.permissions,
             proposedMetadataDigest: fixture.state.metadataDigest,
-            authorClientHandle: fixture.ownerLeaf.clientHandle,
+            authorCredentialHandle: fixture.ownerLeaf.credentialHandle,
             providerCommitDigest: bytes(0x31),
             idempotencyKey: bytes(0x32),
             signingKey: fixture.ownerKey,
@@ -72,16 +42,12 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
         let encoded = try NoctweaveCoder.encode(commit, sortedKeys: true)
         let serialized = try XCTUnwrap(String(data: encoded, encoding: .utf8)).lowercased()
         XCTAssertNotNil(commit.admissionProjection)
-        XCTAssertFalse(serialized.contains("\"addedkeypackage\""))
-        XCTAssertFalse(serialized.contains("identitygenerationid"))
-        XCTAssertFalse(serialized.contains("endpointid"))
-        XCTAssertFalse(serialized.contains("manifestdigest"))
-        XCTAssertFalse(serialized.contains(localGenerationId.uuidString.lowercased()))
-        XCTAssertFalse(serialized.contains(localEndpoint.id.uuidString.lowercased()))
-        XCTAssertFalse(serialized.contains(
-            localEndpoint.signingKey.publicKeyData.base64EncodedString().lowercased()
-        ))
-        XCTAssertFalse(serialized.contains(privateModuleName))
+        XCTAssertFalse(serialized.contains("identity"))
+        XCTAssertFalse(serialized.contains("endpoint"))
+        XCTAssertFalse(serialized.contains("manifest"))
+        XCTAssertFalse(serialized.contains("relationship"))
+        XCTAssertFalse(serialized.contains("inbox"))
+        XCTAssertFalse(serialized.contains("route"))
         XCTAssertFalse(serialized.contains("\"capabilities\""))
     }
 
@@ -90,7 +56,7 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
         let fixture = try makeGenesis()
         let tombstone = try SignedGroupDeletionTombstoneV2.create(
             currentState: fixture.state,
-            authorClientHandle: fixture.ownerLeaf.clientHandle,
+            authorCredentialHandle: fixture.ownerLeaf.credentialHandle,
             reasonDigest: bytes(0x41),
             idempotencyKey: bytes(0x42),
             signingKey: fixture.ownerKey,
@@ -109,11 +75,11 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
         let ordinaryCommit = try SignedGroupCommitV2.create(
             operation: .updateMetadata,
             currentState: fixture.state,
-            proposedUsers: fixture.state.users,
-            proposedClientLeaves: fixture.state.clientLeaves,
+            proposedMembers: fixture.state.members,
+            proposedCredentials: fixture.state.memberCredentials,
             proposedPermissions: fixture.state.permissions,
             proposedMetadataDigest: bytes(0x43),
-            authorClientHandle: fixture.ownerLeaf.clientHandle,
+            authorCredentialHandle: fixture.ownerLeaf.credentialHandle,
             providerCommitDigest: bytes(0x44),
             idempotencyKey: bytes(0x45),
             signingKey: fixture.ownerKey,
@@ -167,35 +133,35 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
         }
     }
 
-    func testAddingSiblingClientRequiresExistingSiblingConsent() throws {
+    func testMemberHasOneCredentialAndReplacementMustBeSelfSignedCommit() throws {
         let fixture = try makeGenesis()
-        let memberUser = GroupUser(
-            id: UUID(),
+        let member = GroupMemberV2(
+            id: .generate(),
             role: .member,
             addedEpoch: fixture.state.epoch + 1
         )
         let memberKey = try SigningKeyPair.generate()
-        let memberProjection = try GroupClientAdmissionProjectionV2.create(
+        let memberProjection = try GroupCredentialAdmissionV2.create(
             groupId: fixture.state.groupId,
-            groupUserId: memberUser.id,
+            memberHandle: member.id,
             groupSigningKey: memberKey,
             groupAgreementKey: try AgreementKeyPair.generate(),
             issuedAt: fixture.state.signedAt,
             expiresAt: fixture.state.signedAt.addingTimeInterval(3_600)
         )
-        let memberLeaf = try GroupClientLeafV2.fromVerifiedProjection(
+        let memberLeaf = try GroupMemberCredentialV2.fromVerifiedProjection(
             memberProjection,
             addedEpoch: fixture.state.epoch + 1
         )
         let addMember = try SignedGroupCommitV2.create(
-            operation: .addUser,
+            operation: .addMember,
             currentState: fixture.state,
-            proposedUsers: fixture.state.users + [memberUser],
-            proposedClientLeaves: fixture.state.clientLeaves + [memberLeaf],
+            proposedMembers: fixture.state.members + [member],
+            proposedCredentials: fixture.state.memberCredentials + [memberLeaf],
             admissionProjection: memberProjection,
             proposedPermissions: fixture.state.permissions,
             proposedMetadataDigest: fixture.state.metadataDigest,
-            authorClientHandle: fixture.ownerLeaf.clientHandle,
+            authorCredentialHandle: fixture.ownerLeaf.credentialHandle,
             providerCommitDigest: bytes(0x51),
             idempotencyKey: bytes(0x52),
             signingKey: fixture.ownerKey,
@@ -207,116 +173,102 @@ final class ArchitectureV2GroupBoundaryTests: XCTestCase {
             signingKey: fixture.ownerKey
         )
 
-        let siblingKey = try SigningKeyPair.generate()
-        let siblingProjection = try GroupClientAdmissionProjectionV2.create(
+        let replacementKey = try SigningKeyPair.generate()
+        let replacementProjection = try GroupCredentialAdmissionV2.create(
             groupId: stateWithMember.groupId,
-            groupUserId: memberUser.id,
-            groupSigningKey: siblingKey,
+            memberHandle: member.id,
+            groupSigningKey: replacementKey,
             groupAgreementKey: try AgreementKeyPair.generate(),
             issuedAt: stateWithMember.signedAt,
             expiresAt: stateWithMember.signedAt.addingTimeInterval(3_600)
         )
-        let siblingLeaf = try GroupClientLeafV2.fromVerifiedProjection(
-            siblingProjection,
+        let replacementLeaf = try GroupMemberCredentialV2.fromVerifiedProjection(
+            replacementProjection,
             addedEpoch: stateWithMember.epoch + 1
         )
-        let proposedLeaves = stateWithMember.clientLeaves + [siblingLeaf]
+        let parallelLeaves = stateWithMember.memberCredentials + [replacementLeaf]
 
         XCTAssertThrowsError(try SignedGroupCommitV2.create(
-            operation: .addClient,
+            operation: .replaceCredential,
             currentState: stateWithMember,
-            proposedUsers: stateWithMember.users,
-            proposedClientLeaves: proposedLeaves,
-            admissionProjection: siblingProjection,
+            proposedMembers: stateWithMember.members,
+            proposedCredentials: parallelLeaves,
+            admissionProjection: replacementProjection,
             proposedPermissions: stateWithMember.permissions,
             proposedMetadataDigest: stateWithMember.metadataDigest,
-            authorClientHandle: fixture.ownerLeaf.clientHandle,
+            authorCredentialHandle: fixture.ownerLeaf.credentialHandle,
             providerCommitDigest: bytes(0x53),
             idempotencyKey: bytes(0x54),
             signingKey: fixture.ownerKey,
             createdAt: stateWithMember.signedAt.addingTimeInterval(1)
         )) { error in
-            XCTAssertEqual(error as? SignedGroupV2Error, .unauthorized)
+            XCTAssertEqual(error as? SignedGroupV2Error, .invalidStructure)
         }
 
-        let consent = try GroupSiblingClientConsentV2.create(
-            projection: siblingProjection,
-            currentState: stateWithMember,
-            consentingClientHandle: memberLeaf.clientHandle,
-            signingKey: memberKey,
-            signedAt: stateWithMember.signedAt.addingTimeInterval(1)
+        let retiredMemberCredential = GroupMemberCredentialV2(
+            memberHandle: memberLeaf.memberHandle,
+            credentialHandle: memberLeaf.credentialHandle,
+            admissionDigest: memberLeaf.admissionDigest,
+            signingPublicKey: memberLeaf.signingPublicKey,
+            agreementPublicKey: memberLeaf.agreementPublicKey,
+            addedEpoch: memberLeaf.addedEpoch,
+            removedEpoch: stateWithMember.epoch + 1
         )
-        let addSibling = try SignedGroupCommitV2.create(
-            operation: .addClient,
+        var replacementLeaves = stateWithMember.memberCredentials
+        replacementLeaves[try XCTUnwrap(replacementLeaves.firstIndex {
+            $0.credentialHandle == memberLeaf.credentialHandle
+        })] = retiredMemberCredential
+        replacementLeaves.append(replacementLeaf)
+        let replaceCredential = try SignedGroupCommitV2.create(
+            operation: .replaceCredential,
             currentState: stateWithMember,
-            proposedUsers: stateWithMember.users,
-            proposedClientLeaves: proposedLeaves,
-            admissionProjection: siblingProjection,
-            siblingClientConsent: consent,
+            proposedMembers: stateWithMember.members,
+            proposedCredentials: replacementLeaves,
+            admissionProjection: replacementProjection,
             proposedPermissions: stateWithMember.permissions,
             proposedMetadataDigest: stateWithMember.metadataDigest,
-            authorClientHandle: fixture.ownerLeaf.clientHandle,
+            authorCredentialHandle: memberLeaf.credentialHandle,
             providerCommitDigest: bytes(0x55),
             idempotencyKey: bytes(0x56),
-            signingKey: fixture.ownerKey,
+            signingKey: memberKey,
             createdAt: stateWithMember.signedAt.addingTimeInterval(1)
         )
         let next = try SignedGroupStateV2.applying(
-            addSibling,
+            replaceCredential,
             to: stateWithMember,
-            signingKey: fixture.ownerKey
+            signingKey: memberKey
         )
-        XCTAssertEqual(next.activeClientLeaves.filter { $0.userId == memberUser.id }.count, 2)
+        XCTAssertEqual(next.activeCredentials.filter { $0.memberHandle == member.id }, [replacementLeaf])
+        XCTAssertFalse(try XCTUnwrap(next.memberCredentials.first {
+            $0.credentialHandle == memberLeaf.credentialHandle
+        }).isActive(at: next.epoch))
     }
 }
 
 private extension ArchitectureV2GroupBoundaryTests {
     struct GenesisFixture {
         let state: SignedGroupStateV2
-        let ownerLeaf: GroupClientLeafV2
+        let ownerLeaf: GroupMemberCredentialV2
         let ownerKey: SigningKeyPair
     }
 
     func makeGenesis() throws -> GenesisFixture {
         let groupId = UUID()
         let signedAt = Date(timeIntervalSince1970: 10_000)
-        let owner = GroupUser(id: UUID(), role: .owner, addedEpoch: 1)
-        let identityGenerationId = UUID()
-        let identity = try Identity.generate(displayName: "Ephemeral group creator")
-        let endpoint = try LocalEndpointState.generate(
-            identityGenerationId: identityGenerationId,
-            createdAt: signedAt.addingTimeInterval(-20)
-        )
-        let manifest = try EndpointSetManifest.create(
-            identityGenerationId: identityGenerationId,
-            epoch: 0,
-            endpoints: [endpoint.publicRecord(addedEpoch: 0)],
-            identity: identity,
-            issuedAt: signedAt.addingTimeInterval(-10)
-        )
+        let owner = GroupMemberV2(id: .generate(), role: .owner, addedEpoch: 1)
         let ownerKey = try SigningKeyPair.generate()
-        let package = try GroupClientKeyPackageV2.create(
+        let admission = try GroupCredentialAdmissionV2.create(
             groupId: groupId,
-            groupUserId: owner.id,
-            clientHandle: .generate(),
-            identity: identity,
-            endpoint: endpoint,
-            manifest: manifest,
+            memberHandle: owner.id,
             groupSigningKey: ownerKey,
             groupAgreementKey: try AgreementKeyPair.generate(),
             issuedAt: signedAt,
             expiresAt: signedAt.addingTimeInterval(3_600)
         )
-        let trust = GroupGenesisTrustV2(
-            creatorUserId: owner.id,
-            identityPublicKey: identity.signingKey.publicKeyData,
-            currentManifest: manifest,
-            creatorKeyPackage: package
-        )
         let state = try SignedGroupStateV2.initial(
             groupId: groupId,
             creator: owner,
-            creatorTrust: trust,
+            creatorAdmission: admission,
             metadataDigest: bytes(0x21),
             providerGenesisDigest: bytes(0x22),
             signingKey: ownerKey,
@@ -324,7 +276,7 @@ private extension ArchitectureV2GroupBoundaryTests {
         )
         return GenesisFixture(
             state: state,
-            ownerLeaf: try XCTUnwrap(state.clientLeaves.first),
+            ownerLeaf: try XCTUnwrap(state.memberCredentials.first),
             ownerKey: ownerKey
         )
     }

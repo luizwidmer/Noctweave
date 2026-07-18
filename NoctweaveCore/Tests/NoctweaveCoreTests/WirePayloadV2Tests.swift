@@ -1,769 +1,307 @@
-import Foundation
+import CryptoKit
 import XCTest
 @testable import NoctweaveCore
 
 final class WirePayloadV2Tests: XCTestCase {
-    func testDirectV4TypedApplicationRoundTripBindsDistinctIdentifiersAndFormat() throws {
-        let pair = try makeWirePair()
-        var outbound = pair.outbound.conversation
-        var inbound = try pair.inboundConversation()
-        let eventId = UUID()
-        let transactionId = UUID()
-        let sentAt = Date(timeIntervalSince1970: 20_000)
-        let event = ConversationEvent(
-            id: eventId,
-            clientTransactionId: transactionId,
-            conversationId: outbound.id,
-            authorEndpointHandle: pair.aliceBob.localEndpointHandle,
-            createdAt: sentAt,
-            kind: .application,
-            content: try XCTUnwrap(EncodedContent.text("typed direct-v4"))
-        )
-        let envelope = try MessageEngine.encryptDirectV4(
-            wirePayload: .application(event),
-            eventId: eventId,
-            senderSigningKey: pair.alice.localEndpoint.signingKey,
-            senderEndpoint: pair.alice.endpoint,
-            recipientEndpoint: pair.bob.endpoint,
-            pairwiseBinding: pair.aliceBob,
-            conversation: &outbound,
-            bootstrap: .signedPrekey(
-                kemCiphertext: pair.outbound.kemCiphertext,
-                prekey: pair.outbound.prekey
-            ),
-            sentAt: sentAt
+    private let relationshipID = UUID(uuidString: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee")!
+    private let eventID = UUID(uuidString: "11111111-2222-4333-8444-555555555555")!
+    private let transactionID = UUID(uuidString: "99999999-8888-4777-8666-555555555555")!
+    private let timestamp = Date(timeIntervalSince1970: 1_800_000_000)
+
+    func testApplicationPayloadRoundTripsOnlyImmutableTypedEvent() throws {
+        let handle = endpointHandle(marker: 0x11)
+        let payload = try WirePayloadV2.projectingMessageBody(
+            .text("pairwise message"),
+            eventId: eventID,
+            clientTransactionId: transactionID,
+            conversationId: relationshipID.uuidString.lowercased(),
+            authorEndpointHandle: handle,
+            createdAt: timestamp
         )
 
-        XCTAssertNotEqual(event.id, event.clientTransactionId)
-        XCTAssertEqual(envelope.payloadFormat, NoctweaveWirePayloadV2.directV4Format)
-        let decrypted = try MessageEngine.decryptDirectV4Payload(
-            envelope: envelope,
-            contact: pair.bobContact,
-            localIdentity: pair.bob.identity,
-            localEndpoint: pair.bob.localEndpoint,
-            localManifest: pair.bob.manifest,
-            localCertificate: pair.bob.endpoint,
-            pairwiseBinding: pair.bobAlice,
-            conversation: &inbound
+        XCTAssertEqual(payload.kind, .application)
+        XCTAssertNil(payload.control)
+        XCTAssertEqual(payload.application?.id, eventID)
+        XCTAssertNotEqual(payload.application?.id, payload.application?.clientTransactionId)
+        XCTAssertEqual(try payload.applicationProjection(), .text("pairwise message"))
+        try payload.validateDirectV4(
+            eventId: eventID,
+            senderEndpointHandle: handle,
+            conversationId: relationshipID.uuidString.lowercased(),
+            sentAt: timestamp
         )
-        guard case .application(let decodedEvent, let projection) = decrypted.disposition else {
-            return XCTFail("Expected typed application payload")
-        }
-        XCTAssertEqual(decodedEvent, event)
-        XCTAssertEqual(projection.body, .text("typed direct-v4"))
-        XCTAssertEqual(inbound.receiveChain.counter, 1)
+
+        let encoded = try NoctweaveCoder.encode(payload, sortedKeys: true)
+        XCTAssertEqual(try NoctweaveCoder.decode(WirePayloadV2.self, from: encoded), payload)
+        var object = try jsonObject(encoded)
+        object["identityRotation"] = true
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            WirePayloadV2.self,
+            from: try JSONSerialization.data(withJSONObject: object)
+        ))
     }
 
-    func testKnownTextProfileMatchesJavaScriptDecoderExactly() throws {
-        let handle = RelationshipEndpointHandle(
-            rawValue: Data(repeating: 0x4f, count: 32).base64EncodedString()
+    func testMessageBodyIsOnlyLocalTextOrAttachmentProjection() throws {
+        let descriptor = AttachmentDescriptor(
+            fileName: nil,
+            mimeType: "application/octet-stream",
+            byteCount: 3,
+            sha256: Data(SHA256.hash(data: Data([1, 2, 3]))),
+            chunkCount: 1,
+            chunkSize: 3
         )
-        let makeEvent: (EncodedContent, EventRelation?) -> ConversationEvent = { content, relation in
-            ConversationEvent(
-                conversationId: "conversation",
-                authorEndpointHandle: handle,
-                kind: .application,
-                content: content,
-                relation: relation
-            )
+        for body in [MessageBody.text("hello"), .attachment(descriptor)] {
+            let encoded = try NoctweaveCoder.encode(body, sortedKeys: true)
+            XCTAssertEqual(try NoctweaveCoder.decode(MessageBody.self, from: encoded), body)
         }
-        let text = Data("canonical text".utf8)
-        let valid = EncodedContent(
-            type: .text,
-            payload: text,
-            fallbackText: "canonical text",
-            disposition: .visible
-        )
-        XCTAssertEqual(
-            try WirePayloadV2.application(makeEvent(valid, nil)).applicationProjection().body,
-            .text("canonical text")
-        )
 
-        let invalidContents = [
-            EncodedContent(
-                type: .text,
-                parameters: ["language": "en"],
-                payload: text,
-                fallbackText: "canonical text",
-                disposition: .visible
-            ),
-            EncodedContent(
-                type: .text,
-                payload: text,
-                fallbackText: "different",
-                disposition: .visible
-            ),
-            EncodedContent(
-                type: .text,
-                payload: text,
-                fallbackText: "canonical text",
-                disposition: .silent
-            )
-        ]
-        for content in invalidContents {
-            XCTAssertThrowsError(
-                try WirePayloadV2.application(makeEvent(content, nil)).applicationProjection()
-            )
-        }
-        XCTAssertEqual(
-            try WirePayloadV2.application(
-                makeEvent(valid, EventRelation(kind: .reply, targetEventId: UUID()))
-            ).applicationProjection().body,
-            .text("canonical text")
-        )
-        XCTAssertThrowsError(
-            try WirePayloadV2.application(
-                makeEvent(valid, EventRelation(kind: .reaction, targetEventId: UUID()))
-            ).applicationProjection()
-        )
+        var foreign = try jsonObject(NoctweaveCoder.encode(MessageBody.text("hello")))
+        foreign["identityReset"] = true
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            MessageBody.self,
+            from: try JSONSerialization.data(withJSONObject: foreign)
+        ))
     }
 
-    func testKnownAttachmentFallbackMatchesJavaScriptDecoderExactly() throws {
-        let handle = RelationshipEndpointHandle(
-            rawValue: Data(repeating: 0x50, count: 32).base64EncodedString()
+    func testRelationshipControlHasIndependentSignatureAndCannotCrossRelationships() throws {
+        let signingKey = try SigningKeyPair.generate()
+        let sender = endpointHandle(marker: 0x22)
+        let control = try AuthenticatedRelationshipControlV2.create(
+            kind: .sessionReset,
+            payload: SessionReset(initiatedAt: timestamp),
+            relationshipID: relationshipID,
+            eventID: eventID,
+            senderEndpointHandle: sender,
+            issuedAt: timestamp,
+            signingKey: signingKey,
+            nonce: transactionID
         )
-        let expectedFallbacks = [
-            "image/png": "Image",
-            "audio/ogg": "Voice message",
-            "application/pdf": "Attachment"
-        ]
+        XCTAssertTrue(control.verify(
+            relationshipID: relationshipID,
+            senderEndpointHandle: sender,
+            eventID: eventID,
+            signingPublicKey: signingKey.publicKeyData
+        ))
+        XCTAssertFalse(control.verify(
+            relationshipID: UUID(),
+            senderEndpointHandle: sender,
+            eventID: eventID,
+            signingPublicKey: signingKey.publicKeyData
+        ))
+        XCTAssertFalse(control.verify(
+            relationshipID: relationshipID,
+            senderEndpointHandle: endpointHandle(marker: 0x23),
+            eventID: eventID,
+            signingPublicKey: signingKey.publicKeyData
+        ))
 
-        for (mimeType, expectedFallback) in expectedFallbacks {
-            let descriptor = AttachmentDescriptor(
-                fileName: nil,
-                mimeType: mimeType,
-                byteCount: 1,
-                sha256: Data(repeating: 0x42, count: 32),
-                chunkCount: 1,
-                chunkSize: 1
-            )
-            let wire = try WirePayloadV2.projectingMessageBody(
-                .attachment(descriptor),
-                eventId: UUID(),
-                clientTransactionId: UUID(),
-                conversationId: "conversation",
-                authorEndpointHandle: handle,
-                createdAt: Date(timeIntervalSince1970: 20_001)
-            )
-
-            XCTAssertEqual(wire.application?.content.fallbackText, expectedFallback)
-            XCTAssertEqual(try wire.applicationProjection().body, .attachment(descriptor))
-            let reply = ConversationEvent(
-                conversationId: "conversation",
-                authorEndpointHandle: handle,
-                createdAt: Date(timeIntervalSince1970: 20_001),
-                kind: .application,
-                content: try XCTUnwrap(wire.application?.content),
-                relation: EventRelation(kind: .reply, targetEventId: UUID())
-            )
-            XCTAssertEqual(
-                try WirePayloadV2.application(reply).applicationProjection().body,
-                .attachment(descriptor)
-            )
+        let payload = try WirePayloadV2.control(control)
+        try payload.validateDirectV4(
+            eventId: eventID,
+            senderEndpointHandle: sender,
+            conversationId: relationshipID.uuidString.lowercased(),
+            sentAt: timestamp,
+            signingPublicKey: signingKey.publicKeyData
+        )
+        guard case .control(.sessionReset(let reset), let audit) = try payload.controlDisposition(
+            conversationId: relationshipID.uuidString.lowercased(),
+            eventId: eventID,
+            senderEndpointHandle: sender,
+            receivedAt: timestamp,
+            signingPublicKey: signingKey.publicKeyData
+        ) else {
+            return XCTFail("Expected authenticated relationship reset")
         }
+        XCTAssertEqual(reset.initiatedAt, timestamp)
+        XCTAssertEqual(audit.kind, .control)
+        XCTAssertEqual(audit.id, eventID)
     }
 
-    func testStandardRelationsReceiptsAndTombstonesMatchJavaScriptCanonicalPayloads() throws {
-        let handle = RelationshipEndpointHandle(
-            rawValue: Data(repeating: 0x52, count: 32).base64EncodedString()
+    func testContinuityOfferIsExplicitlyScopedToOneRelationship() throws {
+        let invitation = try ContactPairingHandshakeV2.makeOffer(
+            createdAt: timestamp,
+            expiresAt: timestamp.addingTimeInterval(300)
+        ).invitation
+        let signingKey = try SigningKeyPair.generate()
+        let sender = endpointHandle(marker: 0x31)
+        let scoped = RelationshipContinuityOfferV2(
+            relationshipID: relationshipID,
+            invitation: invitation,
+            expiresAt: invitation.offer.expiresAt
         )
-        let target = try XCTUnwrap(UUID(uuidString: "11111111-2222-4333-8444-555555555555"))
+        let control = try AuthenticatedRelationshipControlV2.create(
+            kind: .continuityOffer,
+            payload: scoped,
+            relationshipID: relationshipID,
+            eventID: eventID,
+            senderEndpointHandle: sender,
+            issuedAt: timestamp,
+            signingKey: signingKey
+        )
+        XCTAssertEqual(try control.decodeKnown(), .continuityOffer(scoped))
 
-        let relationKinds: [EventRelationKind] = [.reply, .replacement, .reference]
-        for kind in relationKinds {
-            let event = ConversationEvent(
-                conversationId: "conversation",
-                authorEndpointHandle: handle,
-                createdAt: Date(timeIntervalSince1970: 21_100),
-                kind: .application,
-                content: try XCTUnwrap(EncodedContent.text("revised text")),
-                relation: EventRelation(kind: kind, targetEventId: target)
-            )
-            XCTAssertEqual(
-                try WirePayloadV2.application(event).applicationProjection().body,
-                .text("revised text")
-            )
-            XCTAssertNotEqual(event.id, target)
-        }
-
-        let reactionContent = try XCTUnwrap(EncodedContent.reaction("👍"))
-        XCTAssertEqual(String(data: reactionContent.payload, encoding: .utf8), #"{"value":"👍"}"#)
-        XCTAssertEqual(reactionContent.fallbackText, "Reacted 👍 to a message")
-        let reactionEvent = ConversationEvent(
-            conversationId: "conversation",
-            authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 21_101),
-            kind: .application,
-            content: reactionContent,
-            relation: EventRelation(kind: .reaction, targetEventId: target)
+        let wrongScope = RelationshipContinuityOfferV2(
+            relationshipID: UUID(),
+            invitation: invitation,
+            expiresAt: invitation.offer.expiresAt
         )
-        XCTAssertEqual(
-            try WirePayloadV2.application(reactionEvent).applicationProjection(),
-            .reaction(ReactionContentV1(value: "👍"), targetEventId: target)
+        let rejected = try AuthenticatedRelationshipControlV2.create(
+            kind: .continuityOffer,
+            payload: wrongScope,
+            relationshipID: relationshipID,
+            eventID: UUID(),
+            senderEndpointHandle: sender,
+            issuedAt: timestamp,
+            signingKey: signingKey
         )
-
-        let retractionContent = try XCTUnwrap(EncodedContent.retraction(reason: "duplicate"))
-        XCTAssertEqual(
-            String(data: retractionContent.payload, encoding: .utf8),
-            #"{"reason":"duplicate","scope":"received-copies-may-remain"}"#
-        )
-        XCTAssertEqual(retractionContent.fallbackText, RetractionContentV1.fallbackText)
-        let retractionEvent = ConversationEvent(
-            conversationId: "conversation",
-            authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 21_102),
-            kind: .application,
-            content: retractionContent,
-            relation: EventRelation(kind: .retraction, targetEventId: target)
-        )
-        XCTAssertEqual(
-            try WirePayloadV2.application(retractionEvent).applicationProjection(),
-            .retraction(RetractionContentV1(reason: "duplicate"), targetEventId: target)
-        )
-        XCTAssertEqual(
-            try WirePayloadV2.application(retractionEvent).applicationProjection().body,
-            .text("Message retracted; received copies may remain")
-        )
-
-        for (content, isRead) in [
-            (try XCTUnwrap(EncodedContent.deliveryReceipt(targetEventId: target)), false),
-            (try XCTUnwrap(EncodedContent.readReceipt(targetEventId: target)), true)
-        ] {
-            XCTAssertEqual(
-                String(data: content.payload, encoding: .utf8),
-                #"{"targetEventId":"11111111-2222-4333-8444-555555555555"}"#
-            )
-            let receiptEvent = ConversationEvent(
-                conversationId: "conversation",
-                authorEndpointHandle: handle,
-                createdAt: Date(timeIntervalSince1970: 21_103),
-                kind: .receipt,
-                content: content
-            )
-            let projection = try WirePayloadV2.application(receiptEvent).applicationProjection()
-            XCTAssertNil(projection.body)
-            if isRead {
-                XCTAssertEqual(projection, .readReceipt(EventReceiptContentV1(targetEventId: target)))
-            } else {
-                XCTAssertEqual(projection, .deliveryReceipt(EventReceiptContentV1(targetEventId: target)))
-            }
-        }
-    }
-
-    func testKnownRelationsAndReceiptsFailClosedForNoncanonicalOrCrossFamilyContent() throws {
-        let handle = RelationshipEndpointHandle(
-            rawValue: Data(repeating: 0x53, count: 32).base64EncodedString()
-        )
-        let target = UUID()
-        let malformedReaction = EncodedContent(
-            type: .reaction,
-            payload: Data(#"{ "value": "👍" }"#.utf8),
-            fallbackText: "Reacted 👍 to a message"
-        )
-        let reactionEvent = ConversationEvent(
-            conversationId: "conversation",
-            authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 21_200),
-            kind: .application,
-            content: malformedReaction,
-            relation: EventRelation(kind: .reaction, targetEventId: target)
-        )
-        XCTAssertThrowsError(
-            try WirePayloadV2.application(reactionEvent).applicationProjection()
-        ) { error in
-            XCTAssertEqual(error as? WirePayloadV2Error, .invalidKnownApplicationContent)
-        }
-
-        let validReaction = try XCTUnwrap(EncodedContent.reaction("👍"))
-        for relation in [
-            Optional<EventRelation>.none,
-            EventRelation(kind: .reply, targetEventId: target)
-        ] {
-            let mismatched = ConversationEvent(
-                conversationId: "conversation",
-                authorEndpointHandle: handle,
-                createdAt: Date(timeIntervalSince1970: 21_200),
-                kind: .application,
-                content: validReaction,
-                relation: relation
-            )
-            XCTAssertThrowsError(try WirePayloadV2.application(mismatched))
-        }
-        let spoofedReactionRelation = ConversationEvent(
-            conversationId: "conversation",
-            authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 21_200),
-            kind: .application,
-            content: try XCTUnwrap(EncodedContent.text("not a reaction")),
-            relation: EventRelation(kind: .reaction, targetEventId: target)
-        )
-        XCTAssertThrowsError(try WirePayloadV2.application(spoofedReactionRelation))
-
-        let validRetraction = try XCTUnwrap(EncodedContent.retraction())
-        for relation in [
-            Optional<EventRelation>.none,
-            EventRelation(kind: .reference, targetEventId: target)
-        ] {
-            let mismatched = ConversationEvent(
-                conversationId: "conversation",
-                authorEndpointHandle: handle,
-                createdAt: Date(timeIntervalSince1970: 21_200),
-                kind: .application,
-                content: validRetraction,
-                relation: relation
-            )
-            XCTAssertThrowsError(try WirePayloadV2.application(mismatched))
-        }
-        let spoofedRetractionRelation = ConversationEvent(
-            conversationId: "conversation",
-            authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 21_200),
-            kind: .application,
-            content: try XCTUnwrap(EncodedContent.text("not a retraction")),
-            relation: EventRelation(kind: .retraction, targetEventId: target)
-        )
-        XCTAssertThrowsError(try WirePayloadV2.application(spoofedRetractionRelation))
-
-        let selfTargeting = ConversationEvent(
-            id: target,
-            conversationId: "conversation",
-            authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 21_201),
-            kind: .application,
-            content: try XCTUnwrap(EncodedContent.text("invalid self edit")),
-            relation: EventRelation(kind: .replacement, targetEventId: target)
-        )
-        XCTAssertThrowsError(try WirePayloadV2.application(selfTargeting))
-
-        let visibleReceipt = EncodedContent(
-            type: .readReceipt,
-            payload: try NoctweaveCoder.encode(EventReceiptContentV1(targetEventId: target)),
-            fallbackText: "Read",
-            disposition: .visible
-        )
-        let invalidReceipt = ConversationEvent(
-            conversationId: "conversation",
-            authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 21_202),
-            kind: .receipt,
-            content: visibleReceipt
-        )
-        XCTAssertThrowsError(try WirePayloadV2.application(invalidReceipt))
-
-        XCTAssertNil(EncodedContent.reaction("bad\u{0000}reaction"))
-        XCTAssertNil(EncodedContent.retraction(reason: "bad\u{0000}reason"))
-        let outOfRange = ConversationEvent(
-            conversationId: "conversation",
-            authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 4_102_444_801),
-            kind: .application,
-            content: try XCTUnwrap(EncodedContent.text("future"))
-        )
-        XCTAssertThrowsError(try WirePayloadV2.application(outOfRange))
-    }
-
-    func testUnknownApplicationContentIsPreservedWithVisibleOrSilentProjection() throws {
-        XCTAssertFalse(
-            ContentTypeId(authority: "example/app", name: "poll", major: 1)
-                .isStructurallyValid
-        )
-        XCTAssertFalse(
-            ContentTypeId(authority: "example.app", name: "poll:spoof", major: 1)
-                .isStructurallyValid
-        )
-        let handle = RelationshipEndpointHandle(
-            rawValue: Data(repeating: 0x51, count: 32).base64EncodedString()
-        )
-        let unknownType = ContentTypeId(
-            authority: "example.app",
-            name: "poll",
-            major: 7,
-            minor: 2
-        )
-        let visibleEvent = ConversationEvent(
-            conversationId: "conversation",
-            authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 21_000),
-            kind: .application,
-            content: EncodedContent(
-                type: unknownType,
-                payload: Data("opaque-poll".utf8),
-                fallbackText: "Unsupported poll",
-                disposition: .visible
-            )
-        )
-        let visibleWire = try WirePayloadV2.application(visibleEvent)
-        let encoded = try PaddedMessagePlaintext.encodeWirePayloadV2(visibleWire)
-        let decoded = try PaddedMessagePlaintext.decodeWirePayloadV2(encoded)
-        let visibleProjection = try decoded.applicationProjection()
-
-        XCTAssertEqual(decoded.application, visibleEvent)
-        XCTAssertTrue(visibleProjection.isUnsupported)
-        XCTAssertEqual(visibleProjection.body, .text("Unsupported poll"))
-
-        let silentEvent = ConversationEvent(
-            conversationId: "conversation",
-            authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 21_001),
-            kind: .application,
-            content: EncodedContent(
-                type: unknownType,
-                payload: Data("opaque-receipt".utf8),
-                fallbackText: "must not display",
-                disposition: .silent
-            )
-        )
-        let silentProjection = try WirePayloadV2.application(silentEvent).applicationProjection()
-        XCTAssertTrue(silentProjection.isUnsupported)
-        XCTAssertNil(silentProjection.body)
-    }
-
-    func testUnknownControlIsQuarantinedAndMalformedKnownControlFailsTransactionally() throws {
-        let pair = try makeWirePair()
-        var outbound = pair.outbound.conversation
-        var inbound = try pair.inboundConversation()
-        let sentAt = Date(timeIntervalSince1970: 22_000)
-        let unknownEventId = UUID()
-        let unknown = AuthenticatedControlPayloadV2(
-            type: ContentTypeId(
-                authority: "org.noctweave.control",
-                name: "future-policy",
-                major: 1,
-                minor: 0
-            ),
-            encodedPayload: Data("opaque-future-control".utf8)
-        )
-        let unknownEnvelope = try MessageEngine.encryptDirectV4(
-            wirePayload: .control(unknown),
-            eventId: unknownEventId,
-            senderSigningKey: pair.alice.localEndpoint.signingKey,
-            senderEndpoint: pair.alice.endpoint,
-            recipientEndpoint: pair.bob.endpoint,
-            pairwiseBinding: pair.aliceBob,
-            conversation: &outbound,
-            bootstrap: .signedPrekey(
-                kemCiphertext: pair.outbound.kemCiphertext,
-                prekey: pair.outbound.prekey
-            ),
-            sentAt: sentAt
-        )
-        let unknownResult = try MessageEngine.decryptDirectV4Payload(
-            envelope: unknownEnvelope,
-            contact: pair.bobContact,
-            localIdentity: pair.bob.identity,
-            localEndpoint: pair.bob.localEndpoint,
-            localManifest: pair.bob.manifest,
-            localCertificate: pair.bob.endpoint,
-            pairwiseBinding: pair.bobAlice,
-            conversation: &inbound
-        )
-        guard case .quarantinedControl(let quarantined) = unknownResult.disposition else {
-            return XCTFail("Expected unknown control quarantine")
-        }
-        XCTAssertNil(unknownResult.disposition.body)
-        XCTAssertEqual(quarantined.event.id, unknownEventId)
-        XCTAssertEqual(quarantined.event.kind, .control)
-        XCTAssertEqual(quarantined.event.content.payload, unknown.encodedPayload)
-        XCTAssertEqual(inbound.receiveChain.counter, 1)
-
-        let malformedEventId = UUID()
-        let malformed = AuthenticatedControlPayloadV2(
-            type: AuthenticatedControlKindV2.identityRotation.contentType,
-            encodedPayload: Data("not-a-rotation".utf8)
-        )
-        let malformedEnvelope = try MessageEngine.encryptDirectV4(
-            wirePayload: .control(malformed),
-            eventId: malformedEventId,
-            senderSigningKey: pair.alice.localEndpoint.signingKey,
-            senderEndpoint: pair.alice.endpoint,
-            recipientEndpoint: pair.bob.endpoint,
-            pairwiseBinding: pair.aliceBob,
-            conversation: &outbound,
-            sentAt: sentAt.addingTimeInterval(1)
-        )
-        let counterBefore = inbound.receiveChain.counter
-        XCTAssertThrowsError(
-            try MessageEngine.decryptDirectV4Payload(
-                envelope: malformedEnvelope,
-                contact: pair.bobContact,
-                localIdentity: pair.bob.identity,
-                localEndpoint: pair.bob.localEndpoint,
-                localManifest: pair.bob.manifest,
-                localCertificate: pair.bob.endpoint,
-                pairwiseBinding: pair.bobAlice,
-                conversation: &inbound
-            )
-        ) { error in
+        XCTAssertThrowsError(try rejected.decodeKnown()) { error in
             XCTAssertEqual(error as? WirePayloadV2Error, .invalidKnownControl)
         }
-        XCTAssertEqual(inbound.receiveChain.counter, counterBefore)
     }
 
-    func testGroupAndDirectPaddingFramesAreMutuallyIsolated() throws {
-        let group = try PaddedMessagePlaintext.encodeGroupMessageBody(.text("group"))
-        let handle = RelationshipEndpointHandle(
-            rawValue: Data(repeating: 0x61, count: 32).base64EncodedString()
+    func testRouteProbeAndPrekeyUpdateStayRelationshipScoped() throws {
+        let signingKey = try SigningKeyPair.generate()
+        let sender = endpointHandle(marker: 0x35)
+        let routeMaterial = try OpaqueRouteClientCapabilityMaterialV2()
+        let probe = RelationshipRouteProbeV2(
+            relationshipID: relationshipID,
+            routeID: routeMaterial.routeID,
+            routeSetRevision: 1,
+            nonce: transactionID
         )
-        let event = ConversationEvent(
-            conversationId: "conversation",
+        let probeControl = try AuthenticatedRelationshipControlV2.create(
+            kind: .routeProbe,
+            payload: probe,
+            relationshipID: relationshipID,
+            eventID: eventID,
+            senderEndpointHandle: sender,
+            issuedAt: timestamp,
+            signingKey: signingKey
+        )
+        XCTAssertEqual(try probeControl.decodeKnown(), .routeProbe(probe))
+
+        let local = try LocalPairwiseIdentityV2.generate(
+            relationshipPseudonym: "one relationship",
+            createdAt: timestamp
+        )
+        let prekey = RelationshipEndpointPrekeyUpdateV2(
+            relationshipID: relationshipID,
+            endpointBinding: local.endpointBinding
+        )
+        let prekeyControl = try AuthenticatedRelationshipControlV2.create(
+            kind: .endpointPrekeyUpdate,
+            payload: prekey,
+            relationshipID: relationshipID,
+            eventID: UUID(),
+            senderEndpointHandle: sender,
+            issuedAt: timestamp,
+            signingKey: signingKey
+        )
+        XCTAssertEqual(
+            try prekeyControl.decodeKnown(),
+            .endpointPrekeyUpdate(prekey)
+        )
+
+        let wrongScope = RelationshipRouteProbeV2(
+            relationshipID: UUID(),
+            routeID: routeMaterial.routeID,
+            routeSetRevision: 1
+        )
+        let rejected = try AuthenticatedRelationshipControlV2.create(
+            kind: .routeProbe,
+            payload: wrongScope,
+            relationshipID: relationshipID,
+            eventID: UUID(),
+            senderEndpointHandle: sender,
+            issuedAt: timestamp,
+            signingKey: signingKey
+        )
+        XCTAssertThrowsError(try rejected.decodeKnown())
+    }
+
+    func testUnknownApplicationContentIsPreservedWithoutProtocolAuthority() throws {
+        let handle = endpointHandle(marker: 0x41)
+        let visible = ConversationEvent(
+            id: eventID,
+            clientTransactionId: transactionID,
+            conversationId: relationshipID.uuidString.lowercased(),
             authorEndpointHandle: handle,
-            createdAt: Date(timeIntervalSince1970: 23_000),
-            kind: .application,
-            content: try XCTUnwrap(EncodedContent.text("typed"))
-        )
-        let typed = try PaddedMessagePlaintext.encodeWirePayloadV2(.application(event))
-
-        XCTAssertThrowsError(try PaddedMessagePlaintext.decodeWirePayloadV2(group))
-        XCTAssertThrowsError(try PaddedMessagePlaintext.decodeGroupMessageBody(typed))
-        XCTAssertEqual(try PaddedMessagePlaintext.decodeGroupMessageBody(group), .text("group"))
-        XCTAssertEqual(try PaddedMessagePlaintext.decodeWirePayloadV2(typed).application, event)
-    }
-
-    func testHeadlessPersistsUnknownApplicationAndQuarantinesUnknownControlWithoutBubble() async throws {
-        let relayStore = RelayStore()
-        let server = RelayServer(store: relayStore)
-        let started = expectation(description: "typed payload relay started")
-        var boundPort: UInt16?
-        server.onEvent = { event in
-            if case .started(let port) = event {
-                boundPort = port
-                started.fulfill()
-            }
-        }
-        try server.start(host: "127.0.0.1", port: 0)
-        await fulfillment(of: [started], timeout: 2)
-        let relay = RelayEndpoint(host: "127.0.0.1", port: try XCTUnwrap(boundPort))
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer {
-            server.stop()
-            try? FileManager.default.removeItem(at: directory)
-        }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let alice = HeadlessMessagingClient(
-            stateURL: directory.appendingPathComponent("alice.json"),
-            useEncryptedStore: false
-        )
-        let bob = HeadlessMessagingClient(
-            stateURL: directory.appendingPathComponent("bob.json"),
-            useEncryptedStore: false
-        )
-        _ = try await alice.createState(displayName: "Alice", relay: relay)
-        _ = try await bob.createState(displayName: "Bob", relay: relay)
-        try await alice.registerInbox()
-        try await bob.registerInbox()
-        let aliceCode = try await alice.exportContactCode()
-        let bobCode = try await bob.exportContactCode()
-        _ = try await alice.importContactCode(bobCode)
-        _ = try await bob.importContactCode(aliceCode)
-
-        let maybeAliceState = try await alice.store.load()
-        let maybeBobState = try await bob.store.load()
-        let aliceState = try XCTUnwrap(maybeAliceState)
-        let bobState = try XCTUnwrap(maybeBobState)
-        let aliceLocalEndpoint = try XCTUnwrap(aliceState.localEndpoint)
-        let aliceGeneration = try XCTUnwrap(aliceState.identityGenerationId)
-        let aliceEndpoint = try XCTUnwrap(aliceState.issuedContactEndpointsV2.last)
-        let bobContact = try XCTUnwrap(aliceState.contacts.first)
-        let bobEndpoint = try bobContact.certifiedGenerationEndpoint()
-        let bobGeneration = try XCTUnwrap(bobContact.identityGenerationId)
-        let aliceBob = try PairwiseEndpointBindingV4.derive(
-            localIdentityGenerationId: aliceGeneration,
-            localIdentitySigningPublicKey: aliceState.identity.signingKey.publicKeyData,
-            localEndpoint: aliceEndpoint,
-            peerIdentityGenerationId: bobGeneration,
-            peerIdentitySigningPublicKey: bobContact.signingPublicKey,
-            peerEndpoint: bobEndpoint
-        )
-        let outboundSession = try MessageEngine.createOutboundEndpointSession(
-            localEndpoint: aliceLocalEndpoint,
-            localCertificate: aliceEndpoint,
-            pairwiseBinding: aliceBob,
-            contact: bobContact
-        )
-        var outbound = outboundSession.conversation
-
-        let unknownControlId = UUID()
-        let controlEnvelope = try MessageEngine.encryptDirectV4(
-            wirePayload: .control(
-                AuthenticatedControlPayloadV2(
-                    type: ContentTypeId(
-                        authority: "org.noctweave.control",
-                        name: "future-policy",
-                        major: 1
-                    ),
-                    encodedPayload: Data("future-control".utf8)
-                )
-            ),
-            eventId: unknownControlId,
-            senderSigningKey: aliceLocalEndpoint.signingKey,
-            senderEndpoint: aliceEndpoint,
-            recipientEndpoint: bobEndpoint,
-            pairwiseBinding: aliceBob,
-            conversation: &outbound,
-            bootstrap: .signedPrekey(
-                kemCiphertext: outboundSession.kemCiphertext,
-                prekey: outboundSession.prekey
-            ),
-            sentAt: Date()
-        )
-        _ = try await relayStore.deliver(.directV4(controlEnvelope), to: bobState.inboxId)
-        let controlMessages = try await bob.receive(maxCount: 10)
-        XCTAssertTrue(controlMessages.isEmpty)
-        let maybeQuarantinedState = try await bob.store.load()
-        let quarantinedState = try XCTUnwrap(maybeQuarantinedState)
-        XCTAssertEqual(quarantinedState.quarantinedControlEvents.map(\.id), [unknownControlId])
-        XCTAssertTrue(quarantinedState.conversations.flatMap(\.messages).isEmpty)
-
-        let unknownEventId = UUID()
-        let unknownTransactionId = UUID()
-        let eventAt = Date()
-        let unknownEvent = ConversationEvent(
-            id: unknownEventId,
-            clientTransactionId: unknownTransactionId,
-            conversationId: outbound.id,
-            authorEndpointHandle: aliceBob.localEndpointHandle,
-            createdAt: eventAt,
+            createdAt: timestamp,
             kind: .application,
             content: EncodedContent(
-                type: ContentTypeId(authority: "example.app", name: "poll", major: 1),
-                payload: Data("opaque-poll".utf8),
+                type: ContentTypeId(
+                    authority: "example.private",
+                    name: "poll",
+                    major: 1
+                ),
+                payload: Data([0x01]),
                 fallbackText: "Unsupported poll",
                 disposition: .visible
             )
         )
-        let applicationEnvelope = try MessageEngine.encryptDirectV4(
-            wirePayload: .application(unknownEvent),
-            eventId: unknownEventId,
-            senderSigningKey: aliceLocalEndpoint.signingKey,
-            senderEndpoint: aliceEndpoint,
-            recipientEndpoint: bobEndpoint,
-            pairwiseBinding: aliceBob,
-            conversation: &outbound,
-            sentAt: eventAt
-        )
-        _ = try await relayStore.deliver(.directV4(applicationEnvelope), to: bobState.inboxId)
-        let received = try await bob.receive(maxCount: 10)
-        XCTAssertEqual(received.map(\.body), [.text("Unsupported poll")])
-        let maybePersisted = try await bob.store.load()
-        let persisted = try XCTUnwrap(maybePersisted)
-        let canonicalUnknownEvent = try NoctweaveCoder.decode(
-            ConversationEvent.self,
-            from: NoctweaveCoder.encode(unknownEvent, sortedKeys: true)
-        )
-        XCTAssertEqual(
-            persisted.relationshipsV2.flatMap(\.events).first { $0.id == unknownEventId },
-            canonicalUnknownEvent
-        )
-        XCTAssertEqual(persisted.quarantinedControlEvents.map(\.id), [unknownControlId])
-    }
+        guard case .unsupported(let unsupported) = try WirePayloadV2
+            .application(visible)
+            .applicationProjection() else {
+            return XCTFail("Expected unsupported application projection")
+        }
+        XCTAssertEqual(unsupported.eventId, eventID)
+        XCTAssertEqual(unsupported.fallbackText, "Unsupported poll")
+        XCTAssertEqual(ApplicationContentProjectionV2.unsupported(unsupported).body, .text("Unsupported poll"))
 
-}
-
-private struct WireEndpointFixture {
-    let identity: Identity
-    let generationId: UUID
-    let localEndpoint: LocalEndpointState
-    let manifest: EndpointSetManifest
-    let endpoint: CertifiedGenerationEndpoint
-    let relay: RelayEndpoint
-}
-
-private struct WirePairFixture {
-    let alice: WireEndpointFixture
-    let bob: WireEndpointFixture
-    let aliceContact: Contact
-    let bobContact: Contact
-    let aliceBob: PairwiseEndpointBindingV4
-    let bobAlice: PairwiseEndpointBindingV4
-    let outbound: (conversation: Conversation, kemCiphertext: Data, prekey: PrekeyReference)
-
-    func inboundConversation() throws -> Conversation {
-        try MessageEngine.createInboundEndpointSession(
-            localEndpoint: bob.localEndpoint,
-            localCertificate: bob.endpoint,
-            senderEndpoint: alice.endpoint,
-            pairwiseBinding: bobAlice,
-            contact: bobContact,
-            bootstrap: .signedPrekey(
-                kemCiphertext: outbound.kemCiphertext,
-                prekey: outbound.prekey
+        let silent = ConversationEvent(
+            id: UUID(),
+            clientTransactionId: UUID(),
+            conversationId: relationshipID.uuidString.lowercased(),
+            authorEndpointHandle: handle,
+            createdAt: timestamp,
+            kind: .application,
+            content: EncodedContent(
+                type: ContentTypeId(
+                    authority: "example.private",
+                    name: "typing",
+                    major: 1
+                ),
+                payload: Data([0x02]),
+                disposition: .silent
             )
         )
+        guard case .unsupported(let silentUnsupported) = try WirePayloadV2
+            .application(silent)
+            .applicationProjection() else {
+            return XCTFail("Expected silent unsupported application projection")
+        }
+        XCTAssertNil(ApplicationContentProjectionV2.unsupported(silentUnsupported).body)
     }
-}
 
-private func makeWirePair() throws -> WirePairFixture {
-    let alice = try makeWireEndpoint("Alice")
-    let bob = try makeWireEndpoint("Bob")
-    let aliceContact = try MessageEngine.contact(from: makeWireOffer(bob))
-    let bobContact = try MessageEngine.contact(from: makeWireOffer(alice))
-    let aliceBob = try makeWireBinding(local: alice, peer: bob)
-    let bobAlice = try makeWireBinding(local: bob, peer: alice)
-    let outbound = try MessageEngine.createOutboundEndpointSession(
-        localEndpoint: alice.localEndpoint,
-        localCertificate: alice.endpoint,
-        pairwiseBinding: aliceBob,
-        contact: aliceContact
-    )
-    return WirePairFixture(
-        alice: alice,
-        bob: bob,
-        aliceContact: aliceContact,
-        bobContact: bobContact,
-        aliceBob: aliceBob,
-        bobAlice: bobAlice,
-        outbound: outbound
-    )
-}
+    func testDirectValidationRequiresRelationshipUUIDAsConversationID() throws {
+        let handle = endpointHandle(marker: 0x51)
+        let event = ConversationEvent(
+            id: eventID,
+            clientTransactionId: transactionID,
+            conversationId: "global-profile-conversation",
+            authorEndpointHandle: handle,
+            createdAt: timestamp,
+            kind: .application,
+            content: try XCTUnwrap(EncodedContent.text("rejected"))
+        )
+        let payload = try WirePayloadV2.application(event)
+        XCTAssertThrowsError(try payload.validateDirectV4(
+            eventId: eventID,
+            senderEndpointHandle: handle,
+            conversationId: event.conversationId,
+            sentAt: timestamp
+        )) { error in
+            XCTAssertEqual(error as? WirePayloadV2Error, .invalidPayload)
+        }
+    }
 
-private func makeWireEndpoint(_ name: String) throws -> WireEndpointFixture {
-    let identity = try Identity.generate(displayName: name)
-    let generationId = UUID()
-    let localEndpoint = try LocalEndpointState.generate(identityGenerationId: generationId)
-    let manifest = try EndpointSetManifest.create(
-        identityGenerationId: generationId,
-        epoch: 0,
-        endpoints: [localEndpoint.publicRecord(addedEpoch: 0)],
-        identity: identity,
-        issuedAt: localEndpoint.createdAt
-    )
-    return WireEndpointFixture(
-        identity: identity,
-        generationId: generationId,
-        localEndpoint: localEndpoint,
-        manifest: manifest,
-        endpoint: try CertifiedGenerationEndpoint.create(
-            identity: identity,
-            endpoint: localEndpoint,
-            manifest: manifest,
-            issuedAt: localEndpoint.createdAt
-        ),
-        relay: RelayEndpoint(host: "127.0.0.1", port: 9340)
-    )
-}
+    private func endpointHandle(marker: UInt8) -> RelationshipEndpointHandle {
+        RelationshipEndpointHandle(
+            rawValue: Data(repeating: marker, count: 32).base64EncodedString()
+        )
+    }
 
-private func makeWireOffer(_ fixture: WireEndpointFixture) throws -> ContactOffer {
-    try ContactOffer.createCertified(
-        displayName: fixture.identity.displayName,
-        inboxId: "wire-test-\(fixture.identity.fingerprint.prefix(12))",
-        relay: fixture.relay,
-        identity: fixture.identity,
-        identityGenerationId: fixture.generationId,
-        endpointSetManifest: fixture.manifest,
-        preferredGenerationEndpoint: fixture.endpoint
-    )
-}
-
-private func makeWireBinding(
-    local: WireEndpointFixture,
-    peer: WireEndpointFixture
-) throws -> PairwiseEndpointBindingV4 {
-    try PairwiseEndpointBindingV4.derive(
-        localIdentityGenerationId: local.generationId,
-        localIdentitySigningPublicKey: local.identity.signingKey.publicKeyData,
-        localEndpoint: local.endpoint,
-        peerIdentityGenerationId: peer.generationId,
-        peerIdentitySigningPublicKey: peer.identity.signingKey.publicKeyData,
-        peerEndpoint: peer.endpoint
-    )
+    private func jsonObject(_ data: Data) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
 }

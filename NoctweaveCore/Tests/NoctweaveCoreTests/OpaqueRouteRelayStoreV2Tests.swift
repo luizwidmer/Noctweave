@@ -51,6 +51,20 @@ final class OpaqueRouteRelayStoreV2Tests: XCTestCase {
         )
         XCTAssertEqual(firstPage.packets.map(\.packet), [first])
         XCTAssertEqual(firstPage.packets.map(\.routeRevision), [0])
+        XCTAssertEqual(firstPage.packets.map(\.sequence), [1])
+        XCTAssertEqual(firstPage.startsAfterSequence, 0)
+        XCTAssertEqual(firstPage.nextSequence, 1)
+        XCTAssertEqual(firstPage.highWatermarkSequence, 2)
+        XCTAssertEqual(firstPage.retentionFloorSequence, 0)
+        XCTAssertEqual(
+            firstPage.packets.first?.previousRecordDigest,
+            firstPage.startsAfterRecordDigest
+        )
+        XCTAssertEqual(
+            firstPage.packets.last?.recordDigest,
+            firstPage.nextRecordDigest
+        )
+        XCTAssertTrue(firstPage.isStructurallyValid)
         XCTAssertTrue(firstPage.hasMore)
 
         let expiredProofRetry = try await fixture.store.sync(
@@ -111,6 +125,14 @@ final class OpaqueRouteRelayStoreV2Tests: XCTestCase {
         )
         XCTAssertEqual(secondPage.packets.map(\.packet), [second])
         XCTAssertEqual(secondPage.packets.map(\.routeRevision), [0])
+        XCTAssertEqual(secondPage.packets.map(\.sequence), [2])
+        XCTAssertEqual(secondPage.startsAfterSequence, 1)
+        XCTAssertEqual(secondPage.nextSequence, 2)
+        XCTAssertEqual(
+            secondPage.packets.first?.previousRecordDigest,
+            firstPage.nextRecordDigest
+        )
+        XCTAssertTrue(secondPage.isStructurallyValid)
         XCTAssertFalse(secondPage.hasMore)
 
         let finish = try fixture.material.makeCommitRequest(
@@ -407,12 +429,20 @@ final class OpaqueRouteRelayStoreV2Tests: XCTestCase {
 
     func testQuotaAndPaddingPolicyAreEnforcedWithoutConsumingFailedProof() async throws {
         let fixture = try await makeFixture()
+        let wrongPolicy = OpaqueRoutePolicyV2(
+            paddingBucket: .bytes16384,
+            retentionBucket: fixture.route.lease.policy.retentionBucket,
+            quotaBucket: fixture.route.lease.policy.quotaBucket
+        )
+        let wrongSendRoute = try makeSendRoute(
+            material: fixture.material,
+            payloadKey: fixture.payloadKey,
+            route: fixture.route,
+            policy: wrongPolicy
+        )
         let wrongBucket = try XCTUnwrap(OpaqueRouteSealedBundleV2.seal(
             Data("wrong-bucket".utf8),
-            routeRevision: 0,
-            paddingBucket: .bytes16384,
-            payloadKey: fixture.payloadKey,
-            routeCapabilities: fixture.material,
+            to: wrongSendRoute,
             authorizedAt: origin.addingTimeInterval(5)
         ).packets.first)
         await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.append(
@@ -567,12 +597,14 @@ final class OpaqueRouteRelayStoreV2Tests: XCTestCase {
             receivedAt: origin
         )
         let key = OpaqueRoutePayloadKeyV2.generate()
+        let sendRoute = try makeSendRoute(
+            material: material,
+            payloadKey: key,
+            route: route
+        )
         let packet = try XCTUnwrap(OpaqueRouteSealedBundleV2.seal(
             Data("transport".utf8),
-            routeRevision: 0,
-            paddingBucket: .bytes4096,
-            payloadKey: key,
-            routeCapabilities: material,
+            to: sendRoute,
             authorizedAt: origin.addingTimeInterval(10)
         ).packets.first)
         await XCTAssertOpaqueRouteStoreThrows(try await store.append(
@@ -689,14 +721,43 @@ final class OpaqueRouteRelayStoreV2Tests: XCTestCase {
         authorizedAt: Date,
         routeRevision: UInt64 = 0
     ) throws -> OpaqueRoutePacketV2 {
-        try XCTUnwrap(OpaqueRouteSealedBundleV2.seal(
-            payload,
-            routeRevision: routeRevision,
-            paddingBucket: .bytes4096,
+        let sendRoute = try makeSendRoute(
+            material: fixture.material,
             payloadKey: fixture.payloadKey,
-            routeCapabilities: fixture.material,
+            route: fixture.route,
+            routeRevision: routeRevision
+        )
+        return try XCTUnwrap(OpaqueRouteSealedBundleV2.seal(
+            payload,
+            to: sendRoute,
             authorizedAt: authorizedAt
         ).packets.first)
+    }
+
+    private func makeSendRoute(
+        material: OpaqueRouteClientCapabilityMaterialV2,
+        payloadKey: OpaqueRoutePayloadKeyV2,
+        route: OpaqueReceiveRouteV2,
+        routeRevision: UInt64? = nil,
+        policy: OpaqueRoutePolicyV2? = nil
+    ) throws -> OpaqueSendRouteV2 {
+        try OpaqueSendRouteV2(
+            routeID: material.routeID,
+            relay: RelayEndpoint(
+                host: "relay.example",
+                port: 443,
+                useTLS: true,
+                transport: .websocket
+            ),
+            sendCapability: material.sendCapability,
+            payloadKey: payloadKey,
+            routeRevision: routeRevision ?? route.lease.renewalSequence,
+            policy: policy ?? route.lease.policy,
+            validFrom: route.lease.issuedAt,
+            expiresAt: route.lease.expiresAt,
+            state: .active,
+            testedAt: route.lease.issuedAt
+        )
     }
 }
 

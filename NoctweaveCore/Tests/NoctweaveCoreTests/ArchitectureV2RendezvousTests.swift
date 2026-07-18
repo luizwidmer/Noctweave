@@ -3,7 +3,7 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ArchitectureV2RendezvousTests: XCTestCase {
-    func testPublicOfferIsPrivacyBoundedAndOnlyContactPairingIsEnabled() throws {
+    func testPublicOfferIsPrivacyBoundedAndContactPairingOnly() throws {
         let createdAt = Date(timeIntervalSince1970: 10_000)
         let capability = try RendezvousTransportCapabilityV2.generate(
             expiresAt: createdAt.addingTimeInterval(300)
@@ -21,13 +21,6 @@ final class ArchitectureV2RendezvousTests: XCTestCase {
                 for: .contactPairing
             )
         )
-        XCTAssertFalse(
-            pending.offer.isUsable(
-                at: createdAt.addingTimeInterval(299),
-                for: .endpointAdmission
-            )
-        )
-
         let encoded = try NoctweaveCoder.encode(pending.offer, sortedKeys: true)
         let object = try XCTUnwrap(
             JSONSerialization.jsonObject(with: encoded) as? [String: Any]
@@ -52,23 +45,6 @@ final class ArchitectureV2RendezvousTests: XCTestCase {
             try XCTUnwrap(String(data: encoded, encoding: .utf8))
                 .contains(secret.oneTimeToken.base64EncodedString())
         )
-
-        for disabledPurpose in [
-            RendezvousPurposeV2.endpointAdmission,
-            .routeRollover,
-            .groupInvitation,
-            .historyTransfer
-        ] {
-            XCTAssertThrowsError(
-                try PendingRendezvousOfferV2.create(
-                    purpose: disabledPurpose,
-                    transportCapability: capability,
-                    createdAt: createdAt
-                )
-            ) { error in
-                XCTAssertEqual(error as? RendezvousV2Error, .purposeDisabled)
-            }
-        }
     }
 
     func testRealMLKEMHandshakeDerivesMatchingTranscriptBoundSessions() throws {
@@ -122,21 +98,10 @@ final class ArchitectureV2RendezvousTests: XCTestCase {
         )
     }
 
-    func testWrongPurposeAndOfferTranscriptTamperFailClosed() throws {
+    func testOfferTranscriptTamperFailsClosed() throws {
         let createdAt = Date(timeIntervalSince1970: 30_000)
         var pending = try makePending(createdAt: createdAt)
         let secret = try pending.redemptionSecret()
-
-        XCTAssertThrowsError(
-            try RendezvousResponderV2.createOpen(
-                for: pending.offer,
-                redemptionSecret: secret,
-                expectedPurpose: .endpointAdmission,
-                at: createdAt.addingTimeInterval(1)
-            )
-        ) { error in
-            XCTAssertEqual(error as? RendezvousV2Error, .wrongPurpose)
-        }
 
         let tamperedLimits = try RendezvousLimitsV2(
             maximumFrames: pending.offer.limits.maximumFrames - 1,
@@ -392,6 +357,197 @@ final class ArchitectureV2RendezvousTests: XCTestCase {
         }
     }
 
+    func testCurrentRendezvousCodecsRequireExactFieldSets() throws {
+        let fixture = try makeCodecFixture()
+
+        try assertStrictObject(
+            fixture.capability,
+            fields: ["opaqueValue", "expiresAt"]
+        )
+        try assertStrictObject(
+            fixture.pending.offer.limits,
+            fields: ["maximumFrames", "maximumFramePlaintextBytes"]
+        )
+        try assertStrictObject(
+            fixture.pending.offer,
+            fields: [
+                "version",
+                "purpose",
+                "transportCapability",
+                "oneTimeTokenDigest",
+                "ephemeralAgreementPublicKey",
+                "createdAt",
+                "expiresAt",
+                "limits"
+            ]
+        )
+        try assertStrictObject(
+            fixture.secret,
+            fields: ["oneTimeToken"]
+        )
+        try assertStrictObject(
+            fixture.pending,
+            fields: ["offer", "ephemeralAgreementKey", "oneTimeToken", "redeemedAt"]
+        )
+        try assertStrictObject(
+            fixture.open,
+            fields: [
+                "version",
+                "purpose",
+                "offerDigest",
+                "kemCiphertext",
+                "tokenProof",
+                "openedAt"
+            ]
+        )
+        try assertStrictObject(fixture.ledger, fields: ["records"])
+        try assertStrictObject(fixture.frame.sessionId, fields: ["rawValue"])
+        try assertStrictObject(
+            fixture.frame,
+            fields: [
+                "version",
+                "sessionId",
+                "purpose",
+                "senderRole",
+                "sequence",
+                "messageKind",
+                "payload"
+            ]
+        )
+    }
+
+    func testPendingOfferUsesExplicitNullAndRequiresItOnDecode() throws {
+        let pending = try makeCodecFixture().pending
+        let encoded = try NoctweaveCoder.encode(pending, sortedKeys: true)
+        let object = try jsonObject(encoded)
+
+        XCTAssertTrue(object.keys.contains("redeemedAt"))
+        XCTAssertTrue(object["redeemedAt"] is NSNull)
+
+        var missingNull = object
+        missingNull.removeValue(forKey: "redeemedAt")
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(
+                PendingRendezvousOfferV2.self,
+                from: try jsonData(missingNull)
+            )
+        )
+    }
+
+    func testLedgerRecordsAreExactAndStructurallyValidated() throws {
+        let ledger = try makeCodecFixture().ledger
+        let encoded = try NoctweaveCoder.encode(ledger, sortedKeys: true)
+        let object = try jsonObject(encoded)
+        var records = try XCTUnwrap(object["records"] as? [[String: Any]])
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(
+            Set(records[0].keys),
+            Set(["offerDigest", "openDigest", "redeemedAt", "expiresAt"])
+        )
+
+        var unknownRecord = records[0]
+        unknownRecord["legacy"] = true
+        var unknownLedger = object
+        unknownLedger["records"] = [unknownRecord]
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(
+                RendezvousRedemptionLedgerV2.self,
+                from: try jsonData(unknownLedger)
+            )
+        )
+
+        var incompleteRecord = records[0]
+        incompleteRecord.removeValue(forKey: "openDigest")
+        var incompleteLedger = object
+        incompleteLedger["records"] = [incompleteRecord]
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(
+                RendezvousRedemptionLedgerV2.self,
+                from: try jsonData(incompleteLedger)
+            )
+        )
+
+        records.append(records[0])
+        var duplicateLedger = object
+        duplicateLedger["records"] = records
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(
+                RendezvousRedemptionLedgerV2.self,
+                from: try jsonData(duplicateLedger)
+            )
+        )
+    }
+
+    func testRendezvousCodecsRejectInvalidStateOnDecodeAndEncode() throws {
+        let fixture = try makeCodecFixture()
+
+        try assertDecodeRejectsMutation(
+            fixture.capability,
+            as: RendezvousTransportCapabilityV2.self,
+            key: "opaqueValue",
+            value: Data([1]).base64EncodedString()
+        )
+        try assertDecodeRejectsMutation(
+            fixture.pending.offer.limits,
+            as: RendezvousLimitsV2.self,
+            key: "maximumFrames",
+            value: 0
+        )
+        try assertDecodeRejectsMutation(
+            fixture.pending.offer,
+            as: RendezvousOfferV2.self,
+            key: "version",
+            value: 1
+        )
+        try assertDecodeRejectsMutation(
+            fixture.secret,
+            as: RendezvousRedemptionSecretV2.self,
+            key: "oneTimeToken",
+            value: Data([1]).base64EncodedString()
+        )
+        try assertDecodeRejectsMutation(
+            fixture.open,
+            as: RendezvousOpenV2.self,
+            key: "offerDigest",
+            value: Data([1]).base64EncodedString()
+        )
+        try assertDecodeRejectsMutation(
+            fixture.frame.sessionId,
+            as: RendezvousSessionIDV2.self,
+            key: "rawValue",
+            value: Data([1]).base64EncodedString()
+        )
+        try assertDecodeRejectsMutation(
+            fixture.frame,
+            as: RendezvousFrameV2.self,
+            key: "sequence",
+            value: 0
+        )
+
+        let invalidOpen = RendezvousOpenV2(
+            version: 1,
+            purpose: fixture.open.purpose,
+            offerDigest: fixture.open.offerDigest,
+            kemCiphertext: fixture.open.kemCiphertext,
+            tokenProof: fixture.open.tokenProof,
+            openedAt: fixture.open.openedAt
+        )
+        XCTAssertThrowsError(try NoctweaveCoder.encode(invalidOpen))
+
+        let invalidSessionId = RendezvousSessionIDV2(rawValue: Data([1]))
+        XCTAssertThrowsError(try NoctweaveCoder.encode(invalidSessionId))
+
+        let invalidFrame = RendezvousFrameV2(
+            sessionId: fixture.frame.sessionId,
+            purpose: fixture.frame.purpose,
+            senderRole: fixture.frame.senderRole,
+            sequence: 0,
+            messageKind: fixture.frame.messageKind,
+            payload: fixture.frame.payload
+        )
+        XCTAssertThrowsError(try NoctweaveCoder.encode(invalidFrame))
+    }
+
     private func makePending(
         createdAt: Date,
         lifetime: TimeInterval = 300,
@@ -405,5 +561,100 @@ final class ArchitectureV2RendezvousTests: XCTestCase {
             createdAt: createdAt,
             limits: limits
         )
+    }
+
+    private func makeCodecFixture() throws -> (
+        capability: RendezvousTransportCapabilityV2,
+        pending: PendingRendezvousOfferV2,
+        secret: RendezvousRedemptionSecretV2,
+        open: RendezvousOpenV2,
+        ledger: RendezvousRedemptionLedgerV2,
+        frame: RendezvousFrameV2
+    ) {
+        let createdAt = Date(timeIntervalSince1970: 80_000)
+        let capability = try RendezvousTransportCapabilityV2.generate(
+            expiresAt: createdAt.addingTimeInterval(300)
+        )
+        let pending = try PendingRendezvousOfferV2.create(
+            transportCapability: capability,
+            createdAt: createdAt
+        )
+        let secret = try pending.redemptionSecret()
+        let responder = try RendezvousResponderV2.createOpen(
+            for: pending.offer,
+            redemptionSecret: secret,
+            at: createdAt.addingTimeInterval(1)
+        )
+        var acceptedPending = pending
+        var ledger = RendezvousRedemptionLedgerV2()
+        _ = try acceptedPending.accept(
+            responder.request,
+            ledger: &ledger,
+            at: createdAt.addingTimeInterval(1)
+        )
+        var session = responder.session
+        let frame = try session.seal(
+            Data("strict codec".utf8),
+            kind: .contactOffer,
+            at: createdAt.addingTimeInterval(2)
+        )
+        return (capability, pending, secret, responder.request, ledger, frame)
+    }
+
+    private func assertStrictObject<Value: Codable>(
+        _ value: Value,
+        fields: Set<String>,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let encoded = try NoctweaveCoder.encode(value, sortedKeys: true)
+        let object = try jsonObject(encoded)
+        XCTAssertEqual(Set(object.keys), fields, file: file, line: line)
+        XCTAssertNoThrow(
+            try NoctweaveCoder.decode(Value.self, from: encoded),
+            file: file,
+            line: line
+        )
+
+        var unknown = object
+        unknown["legacy"] = true
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(Value.self, from: jsonData(unknown)),
+            file: file,
+            line: line
+        )
+
+        var incomplete = object
+        incomplete.removeValue(forKey: try XCTUnwrap(fields.first))
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(Value.self, from: jsonData(incomplete)),
+            file: file,
+            line: line
+        )
+    }
+
+    private func assertDecodeRejectsMutation<Value: Codable>(
+        _ value: Value,
+        as type: Value.Type,
+        key: String,
+        value replacement: Any,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        var object = try jsonObject(NoctweaveCoder.encode(value, sortedKeys: true))
+        object[key] = replacement
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(type, from: jsonData(object)),
+            file: file,
+            line: line
+        )
+    }
+
+    private func jsonObject(_ data: Data) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func jsonData(_ object: [String: Any]) throws -> Data {
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
 }

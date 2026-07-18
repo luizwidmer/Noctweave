@@ -4,36 +4,141 @@ import XCTest
 @testable import NoctweaveCore
 
 final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
-    func testClientStatePersistsOnlyCurrentGroupRuntimeRecords() throws {
+    func testRuntimePersistsExactApplicationOutboxAndIdempotentInboundReplay() async throws {
         let fixture = try makeSignedFixture()
-        var state = try makeCurrentClientState(
-            identity: try Identity.generate(displayName: "Runtime profile"),
-            relay: RelayEndpoint(host: "localhost", port: 9339)
+        let senderStore = TestGroupRuntimeStore(record: fixture.record)
+        let receiverStore = TestGroupRuntimeStore(record: fixture.record)
+        let sender = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: senderStore
         )
-        try state.upsert(groupRuntime: fixture.record)
+        let receiver = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: receiverStore
+        )
+        let event = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("group-scoped hello"))
+        )
 
-        XCTAssertEqual(state.groupRuntimes, [fixture.record])
-        XCTAssertEqual(state.groupRuntime(for: fixture.record.groupId), fixture.record)
-        XCTAssertTrue(state.isCurrentBaselineValid)
+        let envelope = try await sender.prepareApplicationEvent(event, at: fixture.now)
+        let exactRetry = try await sender.prepareApplicationEvent(event, at: fixture.now)
+        XCTAssertEqual(exactRetry, envelope)
+        var senderSnapshot = await sender.snapshot()
+        XCTAssertEqual(senderSnapshot.events, [event])
+        XCTAssertEqual(senderSnapshot.pendingApplicationPublications.count, 1)
+        let pendingPublications = await sender.pendingApplicationPublications()
+        XCTAssertEqual(
+            pendingPublications.first?.envelope,
+            envelope
+        )
 
-        let decoded = try NoctweaveCoder.decode(
-            ClientState.self,
-            from: NoctweaveCoder.encode(state, sortedKeys: true)
+        let receivedEvent = try await receiver.processApplicationEnvelope(
+            envelope,
+            at: fixture.now
         )
-        XCTAssertEqual(decoded.groupRuntimes, [fixture.record])
+        XCTAssertEqual(receivedEvent, event)
+        let replaySnapshot = await receiver.snapshot()
+        let replayedEvent = try await receiver.processApplicationEnvelope(
+            envelope,
+            at: fixture.now
+        )
+        XCTAssertEqual(replayedEvent, event)
+        let replayedSnapshot = await receiver.snapshot()
+        XCTAssertEqual(replayedSnapshot, replaySnapshot)
 
-        let profileData = try NoctweaveCoder.encode(state.identityProfiles[0], sortedKeys: true)
-        var profileObject = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: profileData) as? [String: Any]
+        var mutatedCiphertext = envelope.payload.ciphertext
+        mutatedCiphertext[mutatedCiphertext.startIndex] ^= 0x01
+        let conflicting = GroupApplicationEnvelopeV2(
+            profile: envelope.profile,
+            cipherSuite: envelope.cipherSuite,
+            groupId: envelope.groupId,
+            epoch: envelope.epoch,
+            transcriptHash: envelope.transcriptHash,
+            senderCredentialHandle: envelope.senderCredentialHandle,
+            eventId: envelope.eventId,
+            messageCounter: envelope.messageCounter,
+            sentAt: envelope.sentAt,
+            payload: EncryptedPayload(
+                nonce: envelope.payload.nonce,
+                ciphertext: mutatedCiphertext,
+                tag: envelope.payload.tag
+            ),
+            signature: envelope.signature
         )
-        profileObject.removeValue(forKey: "groupRuntimes")
-        let missingCurrentField = try JSONSerialization.data(
-            withJSONObject: profileObject,
-            options: [.sortedKeys]
+        XCTAssertTrue(conflicting.isStructurallyValid)
+        do {
+            _ = try await receiver.processApplicationEnvelope(conflicting, at: fixture.now)
+            XCTFail("Expected conflicting group envelope rejection")
+        } catch {
+            XCTAssertEqual(error as? GroupRuntimeError, .conflictingApplicationEnvelope)
+        }
+
+        try await sender.markApplicationPublished(eventID: event.id)
+        senderSnapshot = await sender.snapshot()
+        XCTAssertTrue(senderSnapshot.pendingApplicationPublications.isEmpty)
+        XCTAssertEqual(senderSnapshot.events, [event])
+        try assertExactRoundTrip(
+            try XCTUnwrap(replaySnapshot.processedApplicationEnvelopes.first),
+            as: ProcessedGroupApplicationEnvelopeV2.self
         )
-        XCTAssertThrowsError(
-            try NoctweaveCoder.decode(IdentityProfile.self, from: missingCurrentField)
+    }
+
+    func testGroupEnvelopeFanoutCreatesPersistableExactOpaqueRoutePackets() throws {
+        let fixture = try makeSignedFixture()
+        let event = GroupConversationEventV2(
+            groupID: fixture.record.groupId,
+            createdAt: fixture.now,
+            kind: .application,
+            content: try XCTUnwrap(.text("opaque group fanout"))
         )
+        let sealed = try fixture.provider.encryptApplicationEvent(
+            try NoctweaveCoder.encode(event, sortedKeys: true),
+            state: fixture.cryptoState,
+            signedState: fixture.state,
+            localCredential: fixture.credential,
+            eventId: event.id,
+            sentAt: fixture.now
+        )
+        let firstRoute = try makeGroupSendRoute(marker: 0x31, now: fixture.now)
+        let secondRoute = try makeGroupSendRoute(marker: 0x32, now: fixture.now)
+        let destination = GroupScopedCredentialHandleV2.generate()
+        let plan = try GroupOpaqueRouteFanoutPlanV2.create(
+            envelope: .groupApplicationV2(sealed.envelope),
+            groupID: fixture.record.groupId,
+            destinations: [
+                GroupOpaqueRouteDestinationV2(
+                    credentialHandle: destination,
+                    routes: [firstRoute, secondRoute]
+                )
+            ],
+            at: fixture.now
+        )
+
+        XCTAssertTrue(plan.isStructurallyValid)
+        XCTAssertEqual(plan.publications.count, 2)
+        XCTAssertEqual(Set(plan.publications.map(\.destinationCredentialHandle)), [destination])
+        try assertExactRoundTrip(plan, as: GroupOpaqueRouteFanoutPlanV2.self)
+        let encodedEnvelope = try NoctweaveCoder.encode(
+            ProtocolEnvelopeV1.groupApplicationV2(sealed.envelope),
+            sortedKeys: true
+        )
+        for publication in plan.publications {
+            let route = publication.destinationRouteID == firstRoute.routeID
+                ? firstRoute
+                : secondRoute
+            var reassembler = OpaqueRoutePacketReassemblerV2()
+            var reconstructed: OpaqueRouteReassembledBundleV2?
+            for packet in publication.packets {
+                reconstructed = try reassembler.accept(packet.open(
+                    payloadKey: route.payloadKey,
+                    routeRevision: route.routeRevision
+                )) ?? reconstructed
+            }
+            XCTAssertEqual(reconstructed?.payload, encodedEnvelope)
+        }
     }
 
     func testProvisionalStateIsNominalAndApplicationRatchetsRejectReplayAndGaps() throws {
@@ -91,27 +196,26 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         }
     }
 
-    func testWelcomeRequiresExactCredentialAndRemovalDoesNotRemoveSibling() throws {
+    func testWelcomeRequiresExactCredentialAndReplacementIsAtomic() throws {
         let provider = NoctweavePQGroupExperimentalProviderV2()
         let groupId = UUID()
-        let ownerUserId = UUID()
-        let siblingUserId = UUID()
-        let owner = try makeCredential(groupId: groupId, userId: ownerUserId, marker: 1)
-        let removed = try makeCredential(groupId: groupId, userId: siblingUserId, marker: 2)
-        let retained = try makeCredential(groupId: groupId, userId: siblingUserId, marker: 3)
-        let users = [
-            GroupUser(id: ownerUserId, role: .owner, addedEpoch: 1),
-            GroupUser(id: siblingUserId, role: .member, addedEpoch: 1)
+        let ownerMemberId = GroupScopedMemberHandleV2.generate()
+        let memberId = GroupScopedMemberHandleV2.generate()
+        let owner = try makeCredential(groupId: groupId, memberHandle: ownerMemberId, marker: 1)
+        let previous = try makeCredential(groupId: groupId, memberHandle: memberId, marker: 2)
+        let replacement = try makeCredential(groupId: groupId, memberHandle: memberId, marker: 3)
+        let members = [
+            GroupMemberV2(id: ownerMemberId, role: .owner, addedEpoch: 1),
+            GroupMemberV2(id: memberId, role: .member, addedEpoch: 1)
         ]
         let leaves = [
             leaf(for: owner, addedEpoch: 1),
-            leaf(for: removed, addedEpoch: 1),
-            leaf(for: retained, addedEpoch: 1)
+            leaf(for: previous, addedEpoch: 1)
         ]
         let epochOne = try provider.membership(
             groupId: groupId,
             epoch: 1,
-            users: users,
+            members: members,
             leaves: leaves
         )
         let genesis = try provider.prepareGenesis(
@@ -127,28 +231,18 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
             genesis,
             acceptance: genesisAcceptance
         )
-        let removedWelcome = try XCTUnwrap(genesis.welcomes.first {
-            $0.destination == removed.clientHandle
+        let previousWelcome = try XCTUnwrap(genesis.welcomes.first {
+            $0.destination == previous.credentialHandle
         })
-        let retainedWelcome = try XCTUnwrap(genesis.welcomes.first {
-            $0.destination == retained.clientHandle
-        })
-        let removedState = try provider.processWelcome(
-            removedWelcome,
+        let previousState = try provider.processWelcome(
+            previousWelcome,
             membership: epochOne,
             acceptance: genesisAcceptance,
             commitBytes: genesis.commitBytes,
-            localCredential: removed
-        )
-        let retainedState = try provider.processWelcome(
-            retainedWelcome,
-            membership: epochOne,
-            acceptance: genesisAcceptance,
-            commitBytes: genesis.commitBytes,
-            localCredential: retained
+            localCredential: previous
         )
         XCTAssertThrowsError(try provider.processWelcome(
-            retainedWelcome,
+            previousWelcome,
             membership: epochOne,
             acceptance: genesisAcceptance,
             commitBytes: genesis.commitBytes,
@@ -162,21 +256,13 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
 
         let nextLeaves = [
             leaves[0],
-            GroupClientLeafV2(
-                userId: removed.groupUserId,
-                clientHandle: removed.clientHandle,
-                keyPackageDigest: removed.keyPackageDigest,
-                signingPublicKey: removed.signingKey.publicKeyData,
-                agreementPublicKey: removed.agreementKey.publicKeyData,
-                addedEpoch: 1,
-                removedEpoch: 2
-            ),
-            leaves[2]
+            leaf(for: previous, addedEpoch: 1, removedEpoch: 2),
+            leaf(for: replacement, addedEpoch: 2)
         ]
         let epochTwo = try provider.membership(
             groupId: groupId,
             epoch: 2,
-            users: users,
+            members: members,
             leaves: nextLeaves
         )
         let prepared = try provider.prepareCommit(
@@ -190,31 +276,41 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
             signedCommitDigest: bytes(0x51),
             transcriptHash: bytes(0x52)
         )
-        let retainedPackage = try XCTUnwrap(prepared.welcomes.first {
-            $0.destination == retained.clientHandle
+        let ownerPackage = try XCTUnwrap(prepared.welcomes.first {
+            $0.destination == owner.credentialHandle
         })
         XCTAssertNoThrow(try provider.processCommit(
-            state: retainedState,
+            state: ownerState,
             currentMembership: epochOne,
             proposedMembership: epochTwo,
             acceptance: acceptance,
             commitBytes: prepared.commitBytes,
-            localPackage: retainedPackage,
-            localCredential: retained
+            localPackage: ownerPackage,
+            localCredential: owner
         ))
-        XCTAssertNil(prepared.welcomes.first { $0.destination == removed.clientHandle })
+        XCTAssertNil(prepared.welcomes.first { $0.destination == previous.credentialHandle })
+        let replacementPackage = try XCTUnwrap(prepared.welcomes.first {
+            $0.destination == replacement.credentialHandle
+        })
+        XCTAssertNoThrow(try provider.processWelcome(
+            replacementPackage,
+            membership: epochTwo,
+            acceptance: acceptance,
+            commitBytes: prepared.commitBytes,
+            localCredential: replacement
+        ))
         XCTAssertThrowsError(try provider.processCommit(
-            state: removedState,
+            state: previousState,
             currentMembership: epochOne,
             proposedMembership: epochTwo,
             acceptance: acceptance,
             commitBytes: prepared.commitBytes,
-            localPackage: retainedPackage,
-            localCredential: removed
+            localPackage: replacementPackage,
+            localCredential: previous
         )) { error in
             XCTAssertEqual(
                 error as? NoctweavePQGroupExperimentalErrorV2,
-                .localClientRemoved
+                .localCredentialRemoved
             )
         }
     }
@@ -222,20 +318,30 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
     func testExperimentalProviderRejectsMoreThan128ActiveLeaves() throws {
         let provider = NoctweavePQGroupExperimentalProviderV2()
         let groupId = UUID()
-        let userId = UUID()
-        let credential = try makeCredential(groupId: groupId, userId: userId, marker: 9)
-        var leaves: [GroupClientLeafV2] = []
-        for index in 0...NoctweaveGroupArchitectureV2.maximumActiveExperimentalClientLeaves {
+        let credential = try makeCredential(
+            groupId: groupId,
+            memberHandle: .generate(),
+            marker: 9
+        )
+        var members: [GroupMemberV2] = []
+        var leaves: [GroupMemberCredentialV2] = []
+        for index in 0...NoctweaveGroupArchitectureV2.maximumActiveExperimentalCredentials {
+            let memberHandle = GroupScopedMemberHandleV2.generate()
             var signingKey = credential.signingKey.publicKeyData
             var agreementKey = credential.agreementKey.publicKeyData
             signingKey[signingKey.count - 2] = UInt8((index >> 8) & 0xff)
             signingKey[signingKey.count - 1] = UInt8(index & 0xff)
             agreementKey[agreementKey.count - 2] = UInt8((index >> 8) & 0xff)
             agreementKey[agreementKey.count - 1] = UInt8(index & 0xff)
-            leaves.append(GroupClientLeafV2(
-                userId: userId,
-                clientHandle: .generate(),
-                keyPackageDigest: Data(SHA256.hash(data: Data("leaf-\(index)".utf8))),
+            members.append(GroupMemberV2(
+                id: memberHandle,
+                role: index == 0 ? .owner : .member,
+                addedEpoch: 1
+            ))
+            leaves.append(GroupMemberCredentialV2(
+                memberHandle: memberHandle,
+                credentialHandle: .generate(),
+                admissionDigest: Data(SHA256.hash(data: Data("leaf-\(index)".utf8))),
                 signingPublicKey: signingKey,
                 agreementPublicKey: agreementKey,
                 addedEpoch: 1
@@ -245,7 +351,7 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         XCTAssertThrowsError(try provider.membership(
             groupId: groupId,
             epoch: 1,
-            users: [GroupUser(id: userId, role: .owner, addedEpoch: 1)],
+            members: members,
             leaves: leaves
         )) { error in
             XCTAssertEqual(
@@ -266,8 +372,8 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         do {
             _ = try await runtime.prepareEpoch(
                 operation: .updateMetadata,
-                proposedUsers: fixture.state.users,
-                proposedClientLeaves: fixture.state.clientLeaves,
+                proposedMembers: fixture.state.members,
+                proposedCredentials: fixture.state.memberCredentials,
                 proposedPermissions: fixture.state.permissions,
                 proposedMetadataDigest: bytes(0x62),
                 idempotencyKey: key,
@@ -307,8 +413,8 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         let key = bytes(0x71)
         let publication = try await runtime.prepareEpoch(
             operation: .updateMetadata,
-            proposedUsers: fixture.state.users,
-            proposedClientLeaves: fixture.state.clientLeaves,
+            proposedMembers: fixture.state.members,
+            proposedCredentials: fixture.state.memberCredentials,
             proposedPermissions: fixture.state.permissions,
             proposedMetadataDigest: bytes(0x72),
             idempotencyKey: key,
@@ -316,8 +422,8 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         )
         let duplicate = try await runtime.prepareEpoch(
             operation: .updateMetadata,
-            proposedUsers: [],
-            proposedClientLeaves: [],
+            proposedMembers: [],
+            proposedCredentials: [],
             proposedPermissions: fixture.state.permissions,
             proposedMetadataDigest: nil,
             idempotencyKey: key,
@@ -332,7 +438,7 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
 
         try await runtime.markFanoutStored(
             intentId: publication.intentId,
-            destinationClientHandle: fixture.credential.clientHandle,
+            destinationCredentialHandle: fixture.credential.credentialHandle,
             at: fixture.now.addingTimeInterval(4)
         )
         let fanoutSnapshot = await runtime.snapshot()
@@ -347,11 +453,11 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         let conflicting = try SignedGroupCommitV2.create(
             operation: .updateMetadata,
             currentState: fixture.state,
-            proposedUsers: fixture.state.users,
-            proposedClientLeaves: fixture.state.clientLeaves,
+            proposedMembers: fixture.state.members,
+            proposedCredentials: fixture.state.memberCredentials,
             proposedPermissions: fixture.state.permissions,
             proposedMetadataDigest: bytes(0x73),
-            authorClientHandle: fixture.credential.clientHandle,
+            authorCredentialHandle: fixture.credential.credentialHandle,
             providerCommitDigest: bytes(0x74),
             idempotencyKey: bytes(0x75),
             signingKey: fixture.credential.signingKey,
@@ -371,12 +477,192 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
             conflicting.digest
         )
     }
+
+    func testRuntimeCredentialReplacementSurvivesAtomicStateCommit() async throws {
+        let fixture = try makeSignedFixture()
+        let replacementSigningKey = try SigningKeyPair.generate()
+        let replacementAgreementKey = try AgreementKeyPair.generate()
+        let admission = try GroupCredentialAdmissionV2.create(
+            groupId: fixture.state.groupId,
+            memberHandle: fixture.credential.memberHandle,
+            groupSigningKey: replacementSigningKey,
+            groupAgreementKey: replacementAgreementKey,
+            issuedAt: fixture.now,
+            expiresAt: fixture.now.addingTimeInterval(3_600)
+        )
+        let replacementLeaf = try GroupMemberCredentialV2.fromVerifiedProjection(
+            admission,
+            addedEpoch: fixture.state.epoch + 1
+        )
+        let previous = try XCTUnwrap(fixture.state.activeCredentials.first)
+        let retired = GroupMemberCredentialV2(
+            memberHandle: previous.memberHandle,
+            credentialHandle: previous.credentialHandle,
+            admissionDigest: previous.admissionDigest,
+            signingPublicKey: previous.signingPublicKey,
+            agreementPublicKey: previous.agreementPublicKey,
+            addedEpoch: previous.addedEpoch,
+            removedEpoch: fixture.state.epoch + 1
+        )
+        let replacementCredential = LocalGroupCredentialV2(
+            groupId: fixture.state.groupId,
+            memberHandle: fixture.credential.memberHandle,
+            credentialHandle: replacementLeaf.credentialHandle,
+            admissionDigest: replacementLeaf.admissionDigest,
+            signingKey: replacementSigningKey,
+            agreementKey: replacementAgreementKey
+        )
+        let store = TestGroupRuntimeStore(record: fixture.record)
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: store
+        )
+        let publication = try await runtime.prepareEpoch(
+            operation: .replaceCredential,
+            proposedMembers: fixture.state.members,
+            proposedCredentials: [retired, replacementLeaf],
+            admissionProjection: admission,
+            replacementLocalCredential: replacementCredential,
+            proposedPermissions: fixture.state.permissions,
+            proposedMetadataDigest: fixture.state.metadataDigest,
+            idempotencyKey: bytes(0x81),
+            createdAt: fixture.now.addingTimeInterval(1)
+        )
+        let snapshot = await runtime.snapshot()
+        XCTAssertEqual(snapshot.localCredential, replacementCredential)
+        XCTAssertEqual(snapshot.signedState.epoch, 2)
+        XCTAssertEqual(snapshot.signedState.activeCredentials, [replacementLeaf])
+        XCTAssertEqual(
+            publication.signedCommit.operation,
+            .replaceCredential
+        )
+        XCTAssertNoThrow(try fixture.provider.validateActiveState(
+            snapshot.cryptoState,
+            signedState: snapshot.signedState,
+            localCredential: replacementCredential
+        ))
+    }
+
+    func testGroupEpochIntentCompactionPreservesUnfinishedRecoveryState() async throws {
+        let fixture = try makeSignedFixture()
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: TestGroupRuntimeStore(record: fixture.record)
+        )
+        let publication = try await runtime.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: fixture.state.members,
+            proposedCredentials: fixture.state.memberCredentials,
+            proposedPermissions: fixture.state.permissions,
+            proposedMetadataDigest: bytes(0xa1),
+            idempotencyKey: bytes(0xa2),
+            createdAt: fixture.now.addingTimeInterval(1)
+        )
+        try await runtime.finalizeEpoch(
+            intentId: publication.intentId,
+            at: fixture.now.addingTimeInterval(2)
+        )
+        let snapshot = await runtime.snapshot()
+        let template = try XCTUnwrap(snapshot.epochIntents.first)
+        XCTAssertEqual(template.phase, .finalized)
+
+        var intents: [GroupEpochIntent] = []
+        intents.reserveCapacity(NoctweaveArchitectureV2.maximumGroupEpochIntents)
+        for index in 0..<NoctweaveArchitectureV2.maximumGroupEpochIntents {
+            let date = fixture.now.addingTimeInterval(TimeInterval(100 + index))
+            intents.append(GroupEpochIntent(
+                id: UUID(),
+                idempotencyKey: Data(SHA256.hash(data: Data("group-intent-\(index)".utf8))),
+                groupId: template.groupId,
+                baseEpoch: template.baseEpoch,
+                nextEpoch: template.nextEpoch,
+                signedCommitDigest: template.signedCommitDigest,
+                phase: index == 0 ? .stateCommitted : .finalized,
+                signedCommit: template.signedCommit,
+                nextSignedState: template.nextSignedState,
+                nextCryptoState: template.nextCryptoState,
+                localCredentialAfterCommit: template.localCredentialAfterCommit,
+                providerCommitBytes: template.providerCommitBytes,
+                signedWelcomes: template.signedWelcomes,
+                createdAt: date,
+                updatedAt: date
+            ))
+        }
+        let unfinishedID = intents[0].id
+        let discardedOldFinalizedID = intents[1].id
+        let newestFinalizedID = try XCTUnwrap(intents.last?.id)
+        let full = GroupRuntimeRecord(
+            groupId: snapshot.groupId,
+            localCredential: snapshot.localCredential,
+            signedState: snapshot.signedState,
+            cryptoState: snapshot.cryptoState,
+            epochIntents: intents,
+            quarantinedForks: snapshot.quarantinedForks
+        )
+        XCTAssertTrue(full.isStructurallyValid)
+
+        let compacted = try full.compactedDurableState()
+
+        XCTAssertTrue(compacted.isStructurallyValid)
+        XCTAssertEqual(
+            compacted.epochIntents.count,
+            NoctweaveArchitectureV2.groupEpochIntentRecentWindow + 1
+        )
+        XCTAssertTrue(compacted.epochIntents.contains { $0.id == unfinishedID })
+        XCTAssertFalse(compacted.epochIntents.contains { $0.id == discardedOldFinalizedID })
+        XCTAssertTrue(compacted.epochIntents.contains { $0.id == newestFinalizedID })
+    }
+
+    func testPersistedRuntimeTypesRejectUnknownFields() async throws {
+        let fixture = try makeSignedFixture()
+        let runtime = try NoctweavePQGroupRuntimeV2(
+            record: fixture.record,
+            persistence: TestGroupRuntimeStore(record: fixture.record)
+        )
+        let publication = try await runtime.prepareEpoch(
+            operation: .updateMetadata,
+            proposedMembers: fixture.state.members,
+            proposedCredentials: fixture.state.memberCredentials,
+            proposedPermissions: fixture.state.permissions,
+            proposedMetadataDigest: bytes(0x91),
+            idempotencyKey: bytes(0x92),
+            createdAt: fixture.now.addingTimeInterval(1)
+        )
+        let snapshot = await runtime.snapshot()
+        let intent = try XCTUnwrap(snapshot.epochIntents.first)
+        try assertExactRoundTrip(intent, as: GroupEpochIntent.self)
+
+        let conflicting = try SignedGroupCommitV2.create(
+            operation: .updateMetadata,
+            currentState: fixture.state,
+            proposedMembers: fixture.state.members,
+            proposedCredentials: fixture.state.memberCredentials,
+            proposedPermissions: fixture.state.permissions,
+            proposedMetadataDigest: bytes(0x93),
+            authorCredentialHandle: fixture.credential.credentialHandle,
+            providerCommitDigest: bytes(0x94),
+            idempotencyKey: bytes(0x95),
+            signingKey: fixture.credential.signingKey,
+            createdAt: fixture.now.addingTimeInterval(2)
+        )
+        let quarantine = GroupEpochForkQuarantine(
+            groupId: fixture.state.groupId,
+            baseEpoch: fixture.state.epoch,
+            acceptedCommitDigest: try XCTUnwrap(publication.signedCommit.digest),
+            conflictingCommitDigest: try XCTUnwrap(conflicting.digest),
+            conflictingCommit: conflicting,
+            quarantinedAt: fixture.now.addingTimeInterval(3)
+        )
+        XCTAssertTrue(quarantine.isStructurallyValid)
+        try assertExactRoundTrip(quarantine, as: GroupEpochForkQuarantine.self)
+        try assertExactRoundTrip(snapshot, as: GroupRuntimeRecord.self)
+    }
 }
 
 private struct SignedGroupRuntimeFixture {
     let now: Date
     let provider: NoctweavePQGroupExperimentalProviderV2
-    let credential: LocalGroupClientCredential
+    let credential: LocalGroupCredentialV2
     let membership: GroupProviderMembershipV2
     let prepared: GroupCryptoPreparedEpochV2
     let state: SignedGroupStateV2
@@ -387,49 +673,33 @@ private struct SignedGroupRuntimeFixture {
 private func makeSignedFixture() throws -> SignedGroupRuntimeFixture {
     let now = Date(timeIntervalSince1970: 1_789_000_000)
     let groupId = UUID()
-    let userId = UUID()
-    let identityGenerationId = UUID()
-    let identity = try Identity.generate(displayName: "Group fixture")
-    let local = try LocalEndpointState.generate(
-        identityGenerationId: identityGenerationId,
-        createdAt: now.addingTimeInterval(-20)
-    )
-    let manifest = try EndpointSetManifest.create(
-        identityGenerationId: identityGenerationId,
-        epoch: 0,
-        endpoints: [local.publicRecord(addedEpoch: 0)],
-        identity: identity,
-        issuedAt: now.addingTimeInterval(-10)
-    )
+    let memberHandle = GroupScopedMemberHandleV2.generate()
     let signingKey = try SigningKeyPair.generate()
     let agreementKey = try AgreementKeyPair.generate()
-    let package = try GroupClientKeyPackageV2.create(
+    let admission = try GroupCredentialAdmissionV2.create(
         groupId: groupId,
-        groupUserId: userId,
-        clientHandle: .generate(),
-        identity: identity,
-        endpoint: local,
-        manifest: manifest,
+        memberHandle: memberHandle,
+        credentialHandle: .generate(),
         groupSigningKey: signingKey,
         groupAgreementKey: agreementKey,
         issuedAt: now,
         expiresAt: now.addingTimeInterval(3_600)
     )
-    let leaf = try GroupClientLeafV2.fromVerifiedPackage(package, addedEpoch: 1)
-    let credential = LocalGroupClientCredential(
+    let leaf = try GroupMemberCredentialV2.fromVerifiedProjection(admission, addedEpoch: 1)
+    let credential = LocalGroupCredentialV2(
         groupId: groupId,
-        groupUserId: userId,
-        clientHandle: leaf.clientHandle,
-        keyPackageDigest: leaf.keyPackageDigest,
+        memberHandle: memberHandle,
+        credentialHandle: leaf.credentialHandle,
+        admissionDigest: leaf.admissionDigest,
         signingKey: signingKey,
         agreementKey: agreementKey
     )
-    let creator = GroupUser(id: userId, role: .owner, addedEpoch: 1)
+    let creator = GroupMemberV2(id: memberHandle, role: .owner, addedEpoch: 1)
     let provider = NoctweavePQGroupExperimentalProviderV2()
     let membership = try provider.membership(
         groupId: groupId,
         epoch: 1,
-        users: [creator],
+        members: [creator],
         leaves: [leaf]
     )
     let prepared = try provider.prepareGenesis(
@@ -437,16 +707,10 @@ private func makeSignedFixture() throws -> SignedGroupRuntimeFixture {
         localCredential: credential
     )
     let providerDigest = try XCTUnwrap(prepared.providerCommitDigest)
-    let trust = GroupGenesisTrustV2(
-        creatorUserId: userId,
-        identityPublicKey: identity.signingKey.publicKeyData,
-        currentManifest: manifest,
-        creatorKeyPackage: package
-    )
     let state = try SignedGroupStateV2.initial(
         groupId: groupId,
         creator: creator,
-        creatorTrust: trust,
+        creatorAdmission: admission,
         providerGenesisDigest: providerDigest,
         signingKey: signingKey,
         signedAt: now
@@ -482,32 +746,53 @@ private func makeSignedFixture() throws -> SignedGroupRuntimeFixture {
 
 private func makeCredential(
     groupId: UUID,
-    userId: UUID,
+    memberHandle: GroupScopedMemberHandleV2,
     marker: UInt8
-) throws -> LocalGroupClientCredential {
-    LocalGroupClientCredential(
+) throws -> LocalGroupCredentialV2 {
+    LocalGroupCredentialV2(
         groupId: groupId,
-        groupUserId: userId,
-        clientHandle: .generate(),
-        keyPackageDigest: Data(SHA256.hash(data: Data([marker]))),
+        memberHandle: memberHandle,
+        credentialHandle: .generate(),
+        admissionDigest: Data(SHA256.hash(data: Data([marker]))),
         signingKey: try SigningKeyPair.generate(),
         agreementKey: try AgreementKeyPair.generate()
     )
 }
 
 private func leaf(
-    for credential: LocalGroupClientCredential,
+    for credential: LocalGroupCredentialV2,
     addedEpoch: UInt64,
     removedEpoch: UInt64? = nil
-) -> GroupClientLeafV2 {
-    GroupClientLeafV2(
-        userId: credential.groupUserId,
-        clientHandle: credential.clientHandle,
-        keyPackageDigest: credential.keyPackageDigest,
+) -> GroupMemberCredentialV2 {
+    GroupMemberCredentialV2(
+        memberHandle: credential.memberHandle,
+        credentialHandle: credential.credentialHandle,
+        admissionDigest: credential.admissionDigest,
         signingPublicKey: credential.signingKey.publicKeyData,
         agreementPublicKey: credential.agreementKey.publicKeyData,
         addedEpoch: addedEpoch,
         removedEpoch: removedEpoch
+    )
+}
+
+private func makeGroupSendRoute(marker: UInt8, now: Date) throws -> OpaqueSendRouteV2 {
+    try OpaqueSendRouteV2(
+        routeID: OpaqueReceiveRouteIDV2(
+            rawValue: Data(repeating: marker, count: 32)
+        ),
+        relay: RelayEndpoint(host: "127.0.0.1", port: 9_340),
+        sendCapability: .generate(),
+        payloadKey: .generate(),
+        routeRevision: 0,
+        policy: OpaqueRoutePolicyV2(
+            paddingBucket: .bytes4096,
+            retentionBucket: .sixHours,
+            quotaBucket: .packets256
+        ),
+        validFrom: now,
+        expiresAt: now.addingTimeInterval(3_600),
+        state: .active,
+        testedAt: now
     )
 }
 
@@ -526,6 +811,33 @@ private func accepted(
 
 private func bytes(_ value: UInt8) -> Data {
     Data(repeating: value, count: 32)
+}
+
+private func assertExactRoundTrip<T: Codable & Equatable>(
+    _ value: T,
+    as type: T.Type,
+    file: StaticString = #filePath,
+    line: UInt = #line
+) throws {
+    let encoded = try NoctweaveCoder.encode(value, sortedKeys: true)
+    XCTAssertEqual(
+        try NoctweaveCoder.decode(type, from: encoded),
+        value,
+        file: file,
+        line: line
+    )
+    var object = try XCTUnwrap(
+        JSONSerialization.jsonObject(with: encoded) as? [String: Any],
+        file: file,
+        line: line
+    )
+    object["unknownState"] = true
+    let unknown = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    XCTAssertThrowsError(
+        try NoctweaveCoder.decode(type, from: unknown),
+        file: file,
+        line: line
+    )
 }
 
 private actor TestGroupRuntimeStore: GroupRuntimeRecordPersistence {

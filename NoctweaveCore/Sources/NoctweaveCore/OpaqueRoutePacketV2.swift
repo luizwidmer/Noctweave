@@ -395,10 +395,7 @@ public struct OpaqueRouteSealedBundleV2: Equatable {
 
     public static func seal(
         _ payload: Data,
-        routeRevision: UInt64,
-        paddingBucket: OpaqueRoutePaddingBucketV2,
-        payloadKey: OpaqueRoutePayloadKeyV2,
-        routeCapabilities: OpaqueRouteClientCapabilityMaterialV2,
+        to sendRoute: OpaqueSendRouteV2,
         authorizedAt: Date = Date(),
         bundleID: OpaqueRouteBundleIDV2 = .generate()
     ) throws -> OpaqueRouteSealedBundleV2 {
@@ -406,12 +403,14 @@ public struct OpaqueRouteSealedBundleV2: Equatable {
         guard payload.count <= NoctweaveOpaqueRoutePacketsV2.maximumBundleBytes else {
             throw OpaqueRoutePacketV2Error.payloadTooLarge
         }
-        guard payloadKey.isStructurallyValid,
-              routeCapabilities.isStructurallyValid,
+        guard sendRoute.isUsable(at: authorizedAt),
               bundleID.isStructurallyValid,
               authorizedAt.timeIntervalSince1970.isFinite else {
             throw OpaqueRoutePacketV2Error.invalidBundle
         }
+        let routeRevision = sendRoute.routeRevision
+        let paddingBucket = sendRoute.policy.paddingBucket
+        let payloadKey = sendRoute.payloadKey
         let fragmentCapacity = NoctweaveOpaqueRoutePacketsV2.maximumFragmentPayloadBytes(
             for: paddingBucket
         )
@@ -446,7 +445,7 @@ public struct OpaqueRouteSealedBundleV2: Equatable {
                 bucket: paddingBucket
             )
             let authenticatedData = opaquePacketAuthenticatedData(
-                routeID: routeCapabilities.routeID,
+                routeID: sendRoute.routeID,
                 packetID: packetID,
                 routeRevision: routeRevision,
                 bucket: paddingBucket
@@ -465,16 +464,17 @@ public struct OpaqueRouteSealedBundleV2: Equatable {
             }
 
             let operationDigest = OpaqueRoutePacketV2.operationDigest(
-                routeID: routeCapabilities.routeID,
+                routeID: sendRoute.routeID,
                 packetID: packetID,
                 sealedFrame: sealedFrame
             )
-            let proof = try routeCapabilities.makeSendAuthorization(
+            let proof = try sendRoute.sendCapability.makeAuthorization(
+                routeID: sendRoute.routeID,
                 operationDigest: operationDigest,
                 authorizedAt: authorizedAt
             )
             let packet = OpaqueRoutePacketV2(
-                routeID: routeCapabilities.routeID,
+                routeID: sendRoute.routeID,
                 packetID: packetID,
                 sealedFrame: sealedFrame,
                 authorization: proof

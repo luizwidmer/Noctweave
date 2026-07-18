@@ -3,6 +3,125 @@ import XCTest
 @testable import NoctweaveCore
 
 final class RendezvousRelayTransportTests: XCTestCase {
+    func testInvitationCapabilityDerivesEncryptedDirectionalRelayTransport() throws {
+        let now = canonical(2_000_000_000)
+        let expiresAt = now.addingTimeInterval(300)
+        let transportCapability = try RendezvousTransportCapabilityV2.generate(
+            expiresAt: expiresAt
+        )
+        var pending = try PendingRendezvousOfferV2.create(
+            transportCapability: transportCapability,
+            createdAt: now
+        )
+        let opened = try RendezvousResponderV2.createOpen(
+            for: pending.offer,
+            redemptionSecret: pending.redemptionSecret(),
+            at: now
+        )
+        var responderSession = opened.session
+        var ledger = RendezvousRedemptionLedgerV2()
+        var offererSession = try pending.accept(opened.request, ledger: &ledger, at: now)
+
+        let offererAdapter = try RendezvousRelayAdapterV2(offer: pending.offer)
+        let responderAdapter = try RendezvousRelayAdapterV2(offer: pending.offer)
+        XCTAssertEqual(offererAdapter, responderAdapter)
+        XCTAssertTrue(offererAdapter.registrationRequest.isStructurallyValid(at: now))
+        XCTAssertEqual(
+            offererAdapter.syncRequest(receivingAs: .offerer).laneId,
+            responderAdapter.responderToOfferer.registration.laneId
+        )
+
+        let sealedOpen = try responderAdapter.sealOpen(opened.request)
+        XCTAssertEqual(sealedOpen.frame.sequence, 1)
+        XCTAssertEqual(sealedOpen.frame.ciphertext.count, 4_096)
+        guard case .open(let decodedOpen) = try offererAdapter.open(
+            sealedOpen.frame,
+            direction: .responderToOfferer
+        ) else {
+            return XCTFail("Expected rendezvous open")
+        }
+        XCTAssertEqual(decodedOpen, opened.request)
+
+        let acceptance = try responderSession.seal(
+            Data("relationship-scoped introduction".utf8),
+            kind: .contactAcceptance,
+            at: now
+        )
+        let sealedAcceptance = try responderAdapter.sealSessionFrame(
+            acceptance,
+            transportSequence: 2
+        )
+        guard case .sessionFrame(let decodedFrame) = try offererAdapter.open(
+            sealedAcceptance.frame,
+            direction: .responderToOfferer
+        ) else {
+            return XCTFail("Expected encrypted rendezvous session frame")
+        }
+        XCTAssertEqual(
+            try offererSession.open(decodedFrame, at: now),
+            Data("relationship-scoped introduction".utf8)
+        )
+
+        let offer = try offererSession.seal(
+            Data("independent relationship introduction".utf8),
+            kind: .contactOffer,
+            at: now
+        )
+        let sealedOffer = try offererAdapter.sealSessionFrame(
+            offer,
+            transportSequence: 1
+        )
+        guard case .sessionFrame(let decodedOffer) = try responderAdapter.open(
+            sealedOffer.frame,
+            direction: .offererToResponder
+        ) else {
+            return XCTFail("Expected offerer rendezvous session frame")
+        }
+        XCTAssertEqual(
+            try responderSession.open(decodedOffer, at: now),
+            Data("independent relationship introduction".utf8)
+        )
+    }
+
+    func testOuterTransportHasRoomForLargestInnerRendezvousBucket() throws {
+        let now = canonical(2_000_000_000)
+        let expiresAt = now.addingTimeInterval(300)
+        var pending = try PendingRendezvousOfferV2.create(
+            transportCapability: .generate(expiresAt: expiresAt),
+            createdAt: now
+        )
+        let opened = try RendezvousResponderV2.createOpen(
+            for: pending.offer,
+            redemptionSecret: pending.redemptionSecret(),
+            at: now
+        )
+        var ledger = RendezvousRedemptionLedgerV2()
+        _ = try pending.accept(opened.request, ledger: &ledger, at: now)
+        var responderSession = opened.session
+        let inner = try responderSession.seal(
+            Data(repeating: 0x5a, count: 60 * 1_024),
+            kind: .contactAcceptance,
+            at: now
+        )
+        XCTAssertEqual(inner.payload.ciphertext.count, 65_536)
+        let adapter = try RendezvousRelayAdapterV2(offer: pending.offer)
+        let outer = try adapter.sealSessionFrame(inner, transportSequence: 2)
+        XCTAssertEqual(outer.frame.ciphertext.count, 131_072)
+
+        var tampered = outer.frame.ciphertext
+        tampered[tampered.startIndex] ^= 0x01
+        XCTAssertThrowsError(try adapter.open(
+            RendezvousRelayCiphertextFrameV2(
+                frameId: outer.frame.frameId,
+                sequence: outer.frame.sequence,
+                ciphertext: tampered
+            ),
+            direction: .responderToOfferer
+        )) { error in
+            XCTAssertEqual(error as? RendezvousRelayAdapterV2Error, .decryptionFailed)
+        }
+    }
+
     func testHandlerIsDefaultOffAndAllowsExplicitLoopbackDevelopment() async throws {
         let now = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))
         let fixture = makeFixture(now: now)
@@ -19,7 +138,8 @@ final class RendezvousRelayTransportTests: XCTestCase {
         let disabledResponse = try await RelayClient(
             endpoint: RelayEndpoint(host: "127.0.0.1", port: disabledPort)
         ).send(.registerRendezvousTransportV2(fixture.registration))
-        XCTAssertEqual(disabledResponse.error, "Rendezvous transport is disabled")
+        XCTAssertEqual(disabledResponse.status, .error)
+        XCTAssertEqual(disabledResponse.error?.message, "Rendezvous transport is disabled")
 
         let enabledStore = RelayStore()
         let enabledServer = RelayServer(
@@ -40,7 +160,10 @@ final class RendezvousRelayTransportTests: XCTestCase {
         let enabledResponse = try await RelayClient(
             endpoint: RelayEndpoint(host: "127.0.0.1", port: enabledPort)
         ).send(.registerRendezvousTransportV2(fixture.registration))
-        XCTAssertEqual(enabledResponse.type, .ok)
+        XCTAssertEqual(enabledResponse.status, .success)
+        guard case .empty? = enabledResponse.successBody else {
+            return XCTFail("Expected empty rendezvous registration success")
+        }
     }
 
     func testWireShapeIsIdentityBlindBoundedAndDefaultOff() throws {

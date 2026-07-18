@@ -86,13 +86,55 @@ final class PairwiseRouteSetV2Tests: XCTestCase {
         XCTAssertFalse(tampered.verify(ownerSigningPublicKey: signingKey.publicKeyData))
     }
 
+    func testTargetedProbePromotesInOneVerifiableSuccessor() throws {
+        let signingKey = try SigningKeyPair.generate()
+        let relationshipID = UUID()
+        let handle = RelationshipEndpointHandle(
+            rawValue: Data(repeating: 0x44, count: 32).base64EncodedString()
+        )
+        let current = try route(marker: 0x41, state: .active, validFrom: origin)
+        let initial = try PairwiseRouteSetV2.create(
+            relationshipID: relationshipID,
+            ownerEndpointHandle: handle,
+            activeRoutes: [current],
+            issuedAt: origin,
+            signingKey: signingKey
+        )
+        let candidateAt = origin.addingTimeInterval(30)
+        let candidate = try route(marker: 0x42, state: .testing, validFrom: candidateAt)
+        let testing = try initial.addingTestingRoute(
+            candidate,
+            signingKey: signingKey,
+            issuedAt: candidateAt
+        )
+        let probedAt = candidateAt.addingTimeInterval(1)
+        let promoted = try testing.promotingProbedRoute(
+            candidate.routeID,
+            replacing: [current.routeID],
+            testedAt: probedAt,
+            overlapUntil: probedAt.addingTimeInterval(300),
+            signingKey: signingKey,
+            issuedAt: probedAt
+        )
+
+        XCTAssertTrue(promoted.isValidSuccessor(
+            of: testing,
+            ownerSigningPublicKey: signingKey.publicKeyData
+        ))
+        XCTAssertEqual(promoted.revision, testing.revision + 1)
+        XCTAssertEqual(
+            Set(promoted.usableRoutes(at: probedAt).map(\.routeID)),
+            Set([current.routeID, candidate.routeID])
+        )
+    }
+
     private func route(
         marker: UInt8,
         state: RelationshipRouteStateV2,
         validFrom: Date
-    ) throws -> PairwiseSendRouteV2 {
+    ) throws -> OpaqueSendRouteV2 {
         let material = try OpaqueRouteClientCapabilityMaterialV2()
-        return try PairwiseSendRouteV2(
+        return try OpaqueSendRouteV2(
             routeID: material.routeID,
             relay: RelayEndpoint(
                 host: "relay-\(marker).example",

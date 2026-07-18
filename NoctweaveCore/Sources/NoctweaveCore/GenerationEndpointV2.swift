@@ -1,18 +1,16 @@
 import CryptoKit
 import Foundation
 
-public enum CertifiedGenerationEndpointError: Error, Equatable {
+public enum RelationshipEndpointBindingError: Error, Equatable {
     case invalidStructure
-    case invalidManifest
-    case endpointNotAuthorized
+    case endpointMismatch
     case invalidAuthoritySignature
-    case invalidPossessionSignature
     case invalidPrekeyPackageSignature
 }
 
 /// Exact cryptographic profile implemented by direct-v4. This identifier is
 /// authenticated as a constant; it is never selected from peer-controlled
-/// free-form input and there is no legacy fallback.
+/// free-form input and there is no fallback profile.
 public enum DirectV4CipherSuite {
     public static let identifier =
         "nw.direct-v4.ml-kem-768.ml-dsa-65.hkdf-sha256.hmac-sha256.aes-256-gcm"
@@ -23,6 +21,7 @@ public enum DirectV4CapabilityNegotiationError: Error, Equatable {
     case missingRequiredModule(String)
     case noSharedVersion(String)
     case invalidNegotiatedLimit(String)
+    case missingRequiredContentType(String)
     case transcriptMismatch
 }
 
@@ -31,16 +30,64 @@ public struct DirectV4NegotiatedModule: Codable, Equatable {
     public let version: UInt16
     public let limits: [String: UInt64]
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case module
+        case version
+        case limits
+    }
+
     public init(module: String, version: UInt16, limits: [String: UInt64]) {
         self.module = module
         self.version = version
         self.limits = limits
     }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactFields(decoder, CodingKeys.self, context: "direct capability module")
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            module: try container.decode(String.self, forKey: .module),
+            version: try container.decode(UInt16.self, forKey: .version),
+            limits: try container.decode([String: UInt64].self, forKey: .limits)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .module,
+                in: container,
+                debugDescription: "Invalid direct capability module"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Invalid direct capability module"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(module, forKey: .module)
+        try container.encode(version, forKey: .version)
+        try container.encode(limits, forKey: .limits)
+    }
+
+    private var isStructurallyValid: Bool {
+        !module.isEmpty
+            && module.hasPrefix("nw.")
+            && module.utf8.count <= NoctweaveArchitectureV2.maximumModuleNameBytes
+            && version > 0
+            && limits.count <= 32
+            && limits.keys.allSatisfy { !$0.isEmpty && $0.utf8.count <= 96 }
+    }
 }
 
-/// Canonical, endpoint-to-endpoint result used as direct-v4 transcript input.
-/// Only direct-message semantics are included; optional modules and extension
-/// status labels cannot create asymmetric results or leak endpoint graphs.
+/// Canonical result authenticated by every direct-v4 session and envelope.
+/// The required surface is intentionally only `nw.core` plus `nw.direct`;
+/// internal implementation pieces are not independently negotiable modules.
 public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
     public static let version = 1
 
@@ -48,17 +95,77 @@ public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
     public let architectureVersion: Int
     public let cipherSuite: String
     public let modules: [DirectV4NegotiatedModule]
+    public let contentTypes: [ContentTypeCapabilityV2]
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case architectureVersion
+        case cipherSuite
+        case modules
+        case contentTypes
+    }
 
     public init(
         version: Int = DirectV4NegotiatedCapabilityManifest.version,
         architectureVersion: Int = NoctweaveArchitectureV2.version,
         cipherSuite: String = DirectV4CipherSuite.identifier,
-        modules: [DirectV4NegotiatedModule]
+        modules: [DirectV4NegotiatedModule],
+        contentTypes: [ContentTypeCapabilityV2]
     ) {
         self.version = version
         self.architectureVersion = architectureVersion
         self.cipherSuite = cipherSuite
         self.modules = modules.sorted { $0.module < $1.module }
+        self.contentTypes = contentTypes.sorted {
+            ($0.authority, $0.name) < ($1.authority, $1.name)
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactFields(decoder, CodingKeys.self, context: "direct capability manifest")
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedModules = try container.decode(
+            [DirectV4NegotiatedModule].self,
+            forKey: .modules
+        )
+        let decodedContentTypes = try container.decode(
+            [ContentTypeCapabilityV2].self,
+            forKey: .contentTypes
+        )
+        self.init(
+            version: try container.decode(Int.self, forKey: .version),
+            architectureVersion: try container.decode(Int.self, forKey: .architectureVersion),
+            cipherSuite: try container.decode(String.self, forKey: .cipherSuite),
+            modules: decodedModules,
+            contentTypes: decodedContentTypes
+        )
+        guard modules == decodedModules,
+              contentTypes == decodedContentTypes,
+              isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .modules,
+                in: container,
+                debugDescription: "Invalid direct capability manifest"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Invalid direct capability manifest"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(architectureVersion, forKey: .architectureVersion)
+        try container.encode(cipherSuite, forKey: .cipherSuite)
+        try container.encode(modules, forKey: .modules)
+        try container.encode(contentTypes, forKey: .contentTypes)
     }
 
     public static func negotiate(
@@ -81,9 +188,7 @@ public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
                 .intersection(peerModule.versions)
                 .intersection(requirement.supportedVersions)
             guard let version = sharedVersions.max() else {
-                throw DirectV4CapabilityNegotiationError.noSharedVersion(
-                    requirement.module
-                )
+                throw DirectV4CapabilityNegotiationError.noSharedVersion(requirement.module)
             }
             var limits: [String: UInt64] = [:]
             for (name, profileCeiling) in requirement.limitCeilings {
@@ -108,7 +213,41 @@ public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
                 limits: limits
             )
         }
-        return DirectV4NegotiatedCapabilityManifest(modules: modules)
+        let peerContentTypes = Dictionary(
+            uniqueKeysWithValues: peer.contentTypes.map {
+                ("\($0.authority)\u{0}\($0.name)", $0)
+            }
+        )
+        let contentTypes = local.contentTypes.compactMap {
+            localType -> ContentTypeCapabilityV2? in
+            let key = "\(localType.authority)\u{0}\(localType.name)"
+            guard let peerType = peerContentTypes[key],
+                  let major = Set(localType.majorVersions)
+                    .intersection(peerType.majorVersions).max() else {
+                return nil
+            }
+            return ContentTypeCapabilityV2(
+                authority: localType.authority,
+                name: localType.name,
+                majorVersions: [major]
+            )
+        }
+        guard contentTypes.contains(where: {
+            $0.authority == ContentTypeId.text.authority
+                && $0.name == ContentTypeId.text.name
+        }) else {
+            throw DirectV4CapabilityNegotiationError.missingRequiredContentType(
+                ContentTypeId.text.canonicalName
+            )
+        }
+        let result = DirectV4NegotiatedCapabilityManifest(
+            modules: modules,
+            contentTypes: contentTypes
+        )
+        guard result.isStructurallyValid else {
+            throw DirectV4CapabilityNegotiationError.invalidManifest
+        }
+        return result
     }
 
     public func limit(module: String, name: String) -> UInt64? {
@@ -116,13 +255,36 @@ public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
     }
 
     public func digest() throws -> Data {
-        guard version == Self.version,
-              architectureVersion == NoctweaveArchitectureV2.version,
-              cipherSuite == DirectV4CipherSuite.identifier,
-              modules.map(\.module) == Self.requirements.map(\.module) else {
+        guard isStructurallyValid else {
             throw DirectV4CapabilityNegotiationError.invalidManifest
         }
         return Data(SHA256.hash(data: try NoctweaveCoder.encode(self, sortedKeys: true)))
+    }
+
+    private var isStructurallyValid: Bool {
+        version == Self.version
+            && architectureVersion == NoctweaveArchitectureV2.version
+            && cipherSuite == DirectV4CipherSuite.identifier
+            && modules.count == Self.requirements.count
+            && !contentTypes.isEmpty
+            && contentTypes.count
+                <= NoctweaveArchitectureV2.maximumContentTypeCapabilities
+            && Set(contentTypes.map { "\($0.authority)\u{0}\($0.name)" }).count
+                == contentTypes.count
+            && contentTypes.allSatisfy(\.isStructurallyValid)
+            && contentTypes.contains {
+                $0.authority == ContentTypeId.text.authority
+                    && $0.name == ContentTypeId.text.name
+            }
+            && zip(modules, Self.requirements).allSatisfy { module, requirement in
+                module.module == requirement.module
+                    && requirement.supportedVersions.contains(module.version)
+                    && Set(module.limits.keys) == Set(requirement.limitCeilings.keys)
+                    && module.limits.allSatisfy { name, value in
+                        value <= (requirement.limitCeilings[name] ?? 0)
+                            && value >= (requirement.minimumLimits[name] ?? 0)
+                    }
+            }
     }
 
     private struct Requirement {
@@ -137,25 +299,6 @@ public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
             module: "nw.core",
             supportedVersions: [2],
             limitCeilings: [
-                "maxCiphertextBytes": UInt64(PaddedMessagePlaintext.maximumPaddedBytes)
-            ],
-            minimumLimits: [
-                "maxCiphertextBytes": UInt64(PaddedMessagePlaintext.minimumPaddedBytes)
-            ]
-        ),
-        Requirement(
-            module: "nw.endpoints",
-            supportedVersions: [2],
-            // Direct-v4 currently sends to one certified preferred endpoint.
-            // The 16-entry endpoint-manifest bound is only a structural
-            // storage ceiling, not negotiated multi-endpoint delivery support.
-            limitCeilings: ["maxActiveEndpoints": 1],
-            minimumLimits: ["maxActiveEndpoints": 1]
-        ),
-        Requirement(
-            module: "nw.events",
-            supportedVersions: [2],
-            limitCeilings: [
                 "maxContentParameterBytes": UInt64(
                     NoctweaveArchitectureV2.maximumContentParameterBytes
                 ),
@@ -165,9 +308,7 @@ public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
                 "maxContentPayloadBytes": UInt64(
                     NoctweaveArchitectureV2.maximumContentPayloadBytes
                 ),
-                "maxFallbackBytes": UInt64(
-                    NoctweaveArchitectureV2.maximumFallbackBytes
-                )
+                "maxFallbackBytes": UInt64(NoctweaveArchitectureV2.maximumFallbackBytes)
             ],
             minimumLimits: [
                 "maxContentParameterBytes": 1,
@@ -176,255 +317,28 @@ public struct DirectV4NegotiatedCapabilityManifest: Codable, Equatable {
             ]
         ),
         Requirement(
-            module: "nw.prekeys",
-            supportedVersions: [2],
+            module: "nw.direct",
+            supportedVersions: [4],
             limitCeilings: [
+                "maxCiphertextBytes": UInt64(PaddedMessagePlaintext.maximumPaddedBytes),
                 "maxPrekeyAgeSeconds": UInt64(PrekeyBundle.maximumAge)
             ],
-            minimumLimits: ["maxPrekeyAgeSeconds": 1]
+            minimumLimits: [
+                "maxCiphertextBytes": UInt64(PaddedMessagePlaintext.minimumPaddedBytes),
+                "maxPrekeyAgeSeconds": 1
+            ]
         )
     ]
 }
 
-public struct EndpointSetCheckpointV4: Codable, Equatable {
-    public let version: Int
-    public let identityGenerationId: UUID
-    public let identityFingerprint: String
-    public let epoch: UInt64
-    public let manifestDigest: Data
-    public let issuedAt: Date
-    public let signature: Data
-
-    public static func create(
-        manifest: EndpointSetManifest,
-        identity: Identity
-    ) throws -> EndpointSetCheckpointV4 {
-        guard manifest.verify(identityPublicKey: identity.signingKey.publicKeyData),
-              let digest = manifest.digest else {
-            throw CertifiedGenerationEndpointError.invalidManifest
-        }
-        let payload = EndpointSetCheckpointPayloadV4(
-            version: CertifiedGenerationEndpoint.version,
-            identityGenerationId: manifest.identityGenerationId,
-            identityFingerprint: identity.fingerprint,
-            epoch: manifest.epoch,
-            manifestDigest: digest,
-            issuedAt: manifest.issuedAt
-        )
-        return EndpointSetCheckpointV4(
-            version: payload.version,
-            identityGenerationId: payload.identityGenerationId,
-            identityFingerprint: payload.identityFingerprint,
-            epoch: payload.epoch,
-            manifestDigest: payload.manifestDigest,
-            issuedAt: payload.issuedAt,
-            signature: try identity.signingKey.sign(payload.signableData())
-        )
-    }
-
-    public func verify(identityPublicKey: Data) -> Bool {
-        guard version == CertifiedGenerationEndpoint.version,
-              identityFingerprint == CryptoBox.fingerprint(for: identityPublicKey),
-              manifestDigest.count == 32,
-              issuedAt.timeIntervalSince1970.isFinite,
-              signature.count == 3_309,
-              let data = try? payload.signableData() else {
-            return false
-        }
-        return SigningKeyPair.verify(
-            signature: signature,
-            data: data,
-            publicKeyData: identityPublicKey
-        )
-    }
-
-    private var payload: EndpointSetCheckpointPayloadV4 {
-        EndpointSetCheckpointPayloadV4(
-            version: version,
-            identityGenerationId: identityGenerationId,
-            identityFingerprint: identityFingerprint,
-            epoch: epoch,
-            manifestDigest: manifestDigest,
-            issuedAt: issuedAt
-        )
-    }
-}
-
-/// Compact encrypted-control payload used to invalidate a previously learned
-/// preferred endpoint without publishing the full endpoint-set graph. This is
-/// a peer invalidation record, not proof that local route, self-sync, group,
-/// and retained-key teardown obligations have completed.
-public struct EndpointRemovalProofV4: Codable, Equatable {
-    public let identityGenerationId: UUID
-    public let endpointId: UUID
-    public let certificateDigest: Data
-    public let manifestEpoch: UInt64
-    public let manifestDigest: Data
-    public let issuedAt: Date
-    public let signature: Data
-
-    public static func create(
-        endpoint: CertifiedGenerationEndpoint,
-        revokedManifest: EndpointSetManifest,
-        identity: Identity
-    ) throws -> EndpointRemovalProofV4 {
-        guard revokedManifest.verify(identityPublicKey: identity.signingKey.publicKeyData),
-              revokedManifest.identityGenerationId == endpoint.identityGenerationId,
-              revokedManifest.epoch > endpoint.manifestEpoch,
-              let record = revokedManifest.endpoints.first(where: {
-                  $0.id == endpoint.endpointId
-              }),
-              record.revokedEpoch != nil,
-              let certificateDigest = endpoint.authorizationDigest,
-              let manifestDigest = revokedManifest.digest else {
-            throw CertifiedGenerationEndpointError.invalidManifest
-        }
-        let payload = EndpointRemovalProofPayloadV4(
-            identityGenerationId: endpoint.identityGenerationId,
-            endpointId: endpoint.endpointId,
-            certificateDigest: certificateDigest,
-            manifestEpoch: revokedManifest.epoch,
-            manifestDigest: manifestDigest,
-            issuedAt: revokedManifest.issuedAt
-        )
-        return EndpointRemovalProofV4(
-            identityGenerationId: payload.identityGenerationId,
-            endpointId: payload.endpointId,
-            certificateDigest: payload.certificateDigest,
-            manifestEpoch: payload.manifestEpoch,
-            manifestDigest: payload.manifestDigest,
-            issuedAt: payload.issuedAt,
-            signature: try identity.signingKey.sign(payload.signableData())
-        )
-    }
-
-    public func verify(
-        endpoint: CertifiedGenerationEndpoint,
-        identityPublicKey: Data
-    ) -> Bool {
-        guard endpoint.identityGenerationId == identityGenerationId,
-              endpoint.endpointId == endpointId,
-              endpoint.authorizationDigest == certificateDigest,
-              manifestEpoch > endpoint.manifestEpoch,
-              manifestDigest.count == 32,
-              issuedAt >= endpoint.issuedAt,
-              signature.count == 3_309,
-              let data = try? payload.signableData() else {
-            return false
-        }
-        return SigningKeyPair.verify(
-            signature: signature,
-            data: data,
-            publicKeyData: identityPublicKey
-        )
-    }
-
-    private var payload: EndpointRemovalProofPayloadV4 {
-        EndpointRemovalProofPayloadV4(
-            identityGenerationId: identityGenerationId,
-            endpointId: endpointId,
-            certificateDigest: certificateDigest,
-            manifestEpoch: manifestEpoch,
-            manifestDigest: manifestDigest,
-            issuedAt: issuedAt
-        )
-    }
-}
-
-/// The short-lived, endpoint-authorized part of a certified endpoint. It is
-/// bound to the stable generation-scoped authorization digest but can be
-/// replaced by the endpoint without changing manifest membership or invoking
-/// any recovery/account authority.
-public struct EndpointSignedPrekeyPackageV4: Codable, Equatable {
-    public let endpointAuthorizationDigest: Data
-    public let bundle: PrekeyBundle
-    public let signature: Data
-
-    public init(
-        endpointAuthorizationDigest: Data,
-        bundle: PrekeyBundle,
-        signature: Data
-    ) {
-        self.endpointAuthorizationDigest = endpointAuthorizationDigest
-        self.bundle = bundle
-        self.signature = signature
-    }
-
-    public static func create(
-        endpointAuthorizationDigest: Data,
-        bundle: PrekeyBundle,
-        endpointSigningKey: SigningKeyPair
-    ) throws -> EndpointSignedPrekeyPackageV4 {
-        guard endpointAuthorizationDigest.count == 32,
-              bundle.isStructurallyValid(now: bundle.createdAt),
-              bundle.identityFingerprint == CryptoBox.fingerprint(
-                  for: endpointSigningKey.publicKeyData
-              ),
-              bundle.signedPrekey.verify(using: endpointSigningKey.publicKeyData),
-              bundle.oneTimePrekeys.allSatisfy({
-                  $0.verify(using: endpointSigningKey.publicKeyData)
-              }) else {
-            throw CertifiedGenerationEndpointError.invalidStructure
-        }
-        let unsigned = EndpointSignedPrekeyPackagePayloadV4(
-            endpointAuthorizationDigest: endpointAuthorizationDigest,
-            bundle: bundle
-        )
-        return EndpointSignedPrekeyPackageV4(
-            endpointAuthorizationDigest: endpointAuthorizationDigest,
-            bundle: bundle,
-            signature: try endpointSigningKey.sign(unsigned.signableData())
-        )
-    }
-
-    public func verify(
-        endpointSigningPublicKey: Data,
-        expectedAuthorizationDigest: Data,
-        now: Date = Date()
-    ) -> Bool {
-        guard endpointAuthorizationDigest == expectedAuthorizationDigest,
-              endpointAuthorizationDigest.count == 32,
-              bundle.isStructurallyValid(now: now),
-              bundle.identityFingerprint == CryptoBox.fingerprint(
-                  for: endpointSigningPublicKey
-              ),
-              bundle.signedPrekey.verify(using: endpointSigningPublicKey),
-              bundle.oneTimePrekeys.allSatisfy({
-                  $0.verify(using: endpointSigningPublicKey)
-              }),
-              signature.count == 3_309,
-              let data = try? payload.signableData() else {
-            return false
-        }
-        return SigningKeyPair.verify(
-            signature: signature,
-            data: data,
-            publicKeyData: endpointSigningPublicKey
-        )
-    }
-
-    private var payload: EndpointSignedPrekeyPackagePayloadV4 {
-        EndpointSignedPrekeyPackagePayloadV4(
-            endpointAuthorizationDigest: endpointAuthorizationDigest,
-            bundle: bundle
-        )
-    }
-}
-
-/// Generation-scoped endpoint authorization projected into pairwise handles
-/// and relationship-blinded references before direct use. The
-/// disposable identity-generation key authorizes one endpoint and that
-/// endpoint's local key proves possession; neither is a durable device,
-/// account, recovery authority, or global endpoint registry. Contact offers
-/// carry a compact signed generation checkpoint.
-public struct CertifiedGenerationEndpoint: Codable, Equatable {
+/// The only public endpoint object in a pairwise relationship. A fresh
+/// relationship authority binds exactly one fresh endpoint. The endpoint then
+/// signs its renewable prekey package. There is no endpoint set, device list,
+/// admission, revocation, generation checkpoint, or account-wide authority.
+public struct RelationshipEndpointBindingV4: Codable, Equatable {
     public static let version = 4
 
-    public let identityGenerationId: UUID
-    public let identityAuthorityPublicKey: Data
-    public let manifestEpoch: UInt64
-    public let manifestDigest: Data
-    public let endpointId: UUID
+    public let version: Int
     public let signingPublicKey: Data
     public let agreementPublicKey: Data
     public let capabilities: ProtocolCapabilityManifest
@@ -432,28 +346,29 @@ public struct CertifiedGenerationEndpoint: Codable, Equatable {
     public let prekeyPackageSignature: Data
     public let issuedAt: Date
     public let authoritySignature: Data
-    public let possessionSignature: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case signingPublicKey
+        case agreementPublicKey
+        case capabilities
+        case prekeyBundle
+        case prekeyPackageSignature
+        case issuedAt
+        case authoritySignature
+    }
 
     public init(
-        identityGenerationId: UUID,
-        identityAuthorityPublicKey: Data,
-        manifestEpoch: UInt64,
-        manifestDigest: Data,
-        endpointId: UUID,
+        version: Int = Self.version,
         signingPublicKey: Data,
         agreementPublicKey: Data,
         capabilities: ProtocolCapabilityManifest,
         prekeyBundle: PrekeyBundle,
-        prekeyPackageSignature: Data = Data(),
+        prekeyPackageSignature: Data,
         issuedAt: Date,
-        authoritySignature: Data,
-        possessionSignature: Data
+        authoritySignature: Data
     ) {
-        self.identityGenerationId = identityGenerationId
-        self.identityAuthorityPublicKey = identityAuthorityPublicKey
-        self.manifestEpoch = manifestEpoch
-        self.manifestDigest = manifestDigest
-        self.endpointId = endpointId
+        self.version = version
         self.signingPublicKey = signingPublicKey
         self.agreementPublicKey = agreementPublicKey
         self.capabilities = capabilities
@@ -461,300 +376,207 @@ public struct CertifiedGenerationEndpoint: Codable, Equatable {
         self.prekeyPackageSignature = prekeyPackageSignature
         self.issuedAt = issuedAt
         self.authoritySignature = authoritySignature
-        self.possessionSignature = possessionSignature
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactFields(decoder, CodingKeys.self, context: "relationship endpoint binding")
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            version: try container.decode(Int.self, forKey: .version),
+            signingPublicKey: try container.decode(Data.self, forKey: .signingPublicKey),
+            agreementPublicKey: try container.decode(Data.self, forKey: .agreementPublicKey),
+            capabilities: try container.decode(ProtocolCapabilityManifest.self, forKey: .capabilities),
+            prekeyBundle: try container.decode(PrekeyBundle.self, forKey: .prekeyBundle),
+            prekeyPackageSignature: try container.decode(Data.self, forKey: .prekeyPackageSignature),
+            issuedAt: try container.decode(Date.self, forKey: .issuedAt),
+            authoritySignature: try container.decode(Data.self, forKey: .authoritySignature)
+        )
+        guard hasValidStaticStructure else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .authoritySignature,
+                in: container,
+                debugDescription: "Invalid relationship endpoint binding"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard hasValidStaticStructure else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Invalid relationship endpoint binding"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(signingPublicKey, forKey: .signingPublicKey)
+        try container.encode(agreementPublicKey, forKey: .agreementPublicKey)
+        try container.encode(capabilities, forKey: .capabilities)
+        try container.encode(prekeyBundle, forKey: .prekeyBundle)
+        try container.encode(prekeyPackageSignature, forKey: .prekeyPackageSignature)
+        try container.encode(issuedAt, forKey: .issuedAt)
+        try container.encode(authoritySignature, forKey: .authoritySignature)
     }
 
     public static func create(
-        identity: Identity,
-        endpoint: LocalEndpointState,
-        manifest: EndpointSetManifest,
+        authority: RelationshipAuthorityV2,
+        endpoint: LocalRelationshipEndpointV2,
+        capabilities: ProtocolCapabilityManifest = ProtocolCapabilityManifest(),
         issuedAt: Date = Date()
-    ) throws -> CertifiedGenerationEndpoint {
-        guard let manifestDigest = manifest.digest,
-              manifest.verify(identityPublicKey: identity.signingKey.publicKeyData),
-              manifest.identityGenerationId == endpoint.identityGenerationId,
-              let record = manifest.activeEndpoints.first(where: { $0.id == endpoint.id }),
-              record.signingPublicKey == endpoint.signingKey.publicKeyData,
-              record.agreementPublicKey == endpoint.agreementKey.publicKeyData else {
-            throw CertifiedGenerationEndpointError.endpointNotAuthorized
+    ) throws -> RelationshipEndpointBindingV4 {
+        guard capabilities.isStructurallyValid,
+              issuedAt.timeIntervalSince1970.isFinite else {
+            throw RelationshipEndpointBindingError.invalidStructure
         }
-        let endpointIdentity = try Identity(
-            displayName: "Noctweave endpoint",
-            signingKey: endpoint.signingKey,
-            agreementKey: endpoint.agreementKey,
-            createdAt: endpoint.createdAt
-        )
-        let completeBundle = try endpoint.prekeys.bundle(identity: endpointIdentity)
-        // Reusable contact offers advertise only the rotation-friendly signed
-        // prekey. One-time prekeys require an atomic relay claim API and must
-        // not be copied into a shareable code where multiple peers can race.
-        let prekeyBundle = PrekeyBundle(
-            identityFingerprint: completeBundle.identityFingerprint,
-            signedPrekey: completeBundle.signedPrekey,
-            oneTimePrekeys: [],
-            createdAt: completeBundle.createdAt
-        )
-        let payload = CertifiedGenerationEndpointPayload(
-            version: version,
-            identityGenerationId: endpoint.identityGenerationId,
-            identityAuthorityPublicKey: identity.signingKey.publicKeyData,
-            manifestEpoch: manifest.epoch,
-            manifestDigest: manifestDigest,
-            endpointId: endpoint.id,
+        let payload = RelationshipEndpointAuthorityPayloadV4(
+            version: Self.version,
             signingPublicKey: endpoint.signingKey.publicKeyData,
             agreementPublicKey: endpoint.agreementKey.publicKeyData,
-            capabilities: record.capabilities,
+            capabilities: capabilities,
             issuedAt: issuedAt
         )
-        let authoritySignature = try identity.signingKey.sign(payload.signableData())
-        let possessionPayload = CertifiedGenerationEndpointPossessionPayload(
-            endpoint: payload,
+        let authoritySignature = try authority.signingKey.sign(payload.signableData())
+        let authorizationDigest = try authorizationDigest(
+            payload: payload,
             authoritySignature: authoritySignature
         )
-        let possessionSignature = try endpoint.signingKey.sign(
-            possessionPayload.signableData()
+        let bundle = try publicPrekeyBundle(endpoint: endpoint, createdAt: issuedAt)
+        let packageSignature = try endpoint.signingKey.sign(
+            RelationshipEndpointPrekeyPayloadV4(
+                endpointAuthorizationDigest: authorizationDigest,
+                bundle: bundle
+            ).signableData()
         )
-        guard let authorizationDigest = authorizationDigest(
-            payload: payload,
-            authoritySignature: authoritySignature,
-            possessionSignature: possessionSignature
-        ) else {
-            throw CertifiedGenerationEndpointError.invalidStructure
+        let result = RelationshipEndpointBindingV4(
+            signingPublicKey: payload.signingPublicKey,
+            agreementPublicKey: payload.agreementPublicKey,
+            capabilities: payload.capabilities,
+            prekeyBundle: bundle,
+            prekeyPackageSignature: packageSignature,
+            issuedAt: payload.issuedAt,
+            authoritySignature: authoritySignature
+        )
+        guard result.hasValidStaticStructure else {
+            throw RelationshipEndpointBindingError.invalidStructure
         }
-        let signedPackage = try EndpointSignedPrekeyPackageV4.create(
-            endpointAuthorizationDigest: authorizationDigest,
-            bundle: prekeyBundle,
-            endpointSigningKey: endpoint.signingKey
-        )
-        return CertifiedGenerationEndpoint(
-            identityGenerationId: endpoint.identityGenerationId,
-            identityAuthorityPublicKey: identity.signingKey.publicKeyData,
-            manifestEpoch: manifest.epoch,
-            manifestDigest: manifestDigest,
-            endpointId: endpoint.id,
-            signingPublicKey: endpoint.signingKey.publicKeyData,
-            agreementPublicKey: endpoint.agreementKey.publicKeyData,
-            capabilities: record.capabilities,
-            prekeyBundle: prekeyBundle,
-            prekeyPackageSignature: signedPackage.signature,
-            issuedAt: issuedAt,
-            authoritySignature: authoritySignature,
-            possessionSignature: possessionSignature
-        )
+        return result
     }
 
-    public var digest: Data? {
-        guard let encoded = try? NoctweaveCoder.encode(self, sortedKeys: true) else { return nil }
-        return Data(SHA256.hash(data: encoded))
-    }
-
-    /// Stable for the lifetime of one manifest-authorized endpoint. Prekey
-    /// renewal does not change this digest, pairwise handles, or established
-    /// session identity.
+    /// Stable while this one relationship endpoint remains in use. Renewing
+    /// the short-lived signed prekey does not change this authorization digest.
     public var authorizationDigest: Data? {
-        Self.authorizationDigest(
-            payload: payload,
-            authoritySignature: authoritySignature,
-            possessionSignature: possessionSignature
-        )
-    }
-
-    public var endpointSignedPrekeyPackage: EndpointSignedPrekeyPackageV4? {
-        guard let authorizationDigest else { return nil }
-        return EndpointSignedPrekeyPackageV4(
-            endpointAuthorizationDigest: authorizationDigest,
-            bundle: prekeyBundle,
-            signature: prekeyPackageSignature
-        )
-    }
-
-    public func hasValidAuthorizationSignatures(identityPublicKey: Data) -> Bool {
-        guard identityAuthorityPublicKey == identityPublicKey,
-              let authorityData = try? payload.signableData(),
-              SigningKeyPair.verify(
-                  signature: authoritySignature,
-                  data: authorityData,
-                  publicKeyData: identityPublicKey
-              ) else {
-            return false
-        }
-        let possession = CertifiedGenerationEndpointPossessionPayload(
-            endpoint: payload,
+        try? Self.authorizationDigest(
+            payload: authorityPayload,
             authoritySignature: authoritySignature
         )
-        guard let possessionData = try? possession.signableData() else { return false }
-        return SigningKeyPair.verify(
-            signature: possessionSignature,
-            data: possessionData,
-            publicKeyData: signingPublicKey
-        )
     }
 
-    /// Replaces only the endpoint-signed prekey package. Stable generation
-    /// authorization and endpoint-possession proofs are preserved verbatim.
-    public func refreshingPrekeyPackage(
-        using endpoint: LocalEndpointState,
-        at date: Date = Date()
-    ) throws -> CertifiedGenerationEndpoint {
-        guard endpoint.id == endpointId,
-              endpoint.identityGenerationId == identityGenerationId,
-              endpoint.signingKey.publicKeyData == signingPublicKey,
-              endpoint.agreementKey.publicKeyData == agreementPublicKey,
-              let authorizationDigest else {
-            throw CertifiedGenerationEndpointError.endpointNotAuthorized
+    public func referenceDigest(for relationshipID: UUID) throws -> Data {
+        guard let authorizationDigest else {
+            throw RelationshipEndpointBindingError.invalidStructure
         }
-        let endpointIdentity = try Identity(
-            displayName: "Noctweave endpoint",
-            signingKey: endpoint.signingKey,
-            agreementKey: endpoint.agreementKey,
-            createdAt: endpoint.createdAt
+        var material = Data("Noctweave/relationship-endpoint-binding-reference/v4".utf8)
+        material.append(0)
+        material.append(Data(relationshipID.uuidString.lowercased().utf8))
+        material.append(0)
+        material.append(authorizationDigest)
+        return Data(SHA256.hash(data: material))
+    }
+
+    public func refreshingPrekeyPackage(
+        using endpoint: LocalRelationshipEndpointV2,
+        at date: Date = Date()
+    ) throws -> RelationshipEndpointBindingV4 {
+        guard endpoint.signingKey.publicKeyData == signingPublicKey,
+              endpoint.agreementKey.publicKeyData == agreementPublicKey,
+              date.timeIntervalSince1970.isFinite,
+              date >= issuedAt,
+              let authorizationDigest else {
+            throw RelationshipEndpointBindingError.endpointMismatch
+        }
+        let bundle = try Self.publicPrekeyBundle(endpoint: endpoint, createdAt: date)
+        let packageSignature = try endpoint.signingKey.sign(
+            RelationshipEndpointPrekeyPayloadV4(
+                endpointAuthorizationDigest: authorizationDigest,
+                bundle: bundle
+            ).signableData()
         )
-        let completeBundle = try endpoint.prekeys.bundle(
-            identity: endpointIdentity,
-            createdAt: date
-        )
-        let bundle = PrekeyBundle(
-            identityFingerprint: completeBundle.identityFingerprint,
-            signedPrekey: completeBundle.signedPrekey,
-            oneTimePrekeys: [],
-            createdAt: completeBundle.createdAt
-        )
-        let package = try EndpointSignedPrekeyPackageV4.create(
-            endpointAuthorizationDigest: authorizationDigest,
-            bundle: bundle,
-            endpointSigningKey: endpoint.signingKey
-        )
-        return CertifiedGenerationEndpoint(
-            identityGenerationId: identityGenerationId,
-            identityAuthorityPublicKey: identityAuthorityPublicKey,
-            manifestEpoch: manifestEpoch,
-            manifestDigest: manifestDigest,
-            endpointId: endpointId,
+        let result = RelationshipEndpointBindingV4(
             signingPublicKey: signingPublicKey,
             agreementPublicKey: agreementPublicKey,
             capabilities: capabilities,
             prekeyBundle: bundle,
-            prekeyPackageSignature: package.signature,
+            prekeyPackageSignature: packageSignature,
             issuedAt: issuedAt,
-            authoritySignature: authoritySignature,
-            possessionSignature: possessionSignature
+            authoritySignature: authoritySignature
         )
+        guard result.hasValidStaticStructure else {
+            throw RelationshipEndpointBindingError.invalidStructure
+        }
+        return result
     }
 
-    public var signingFingerprint: String {
-        CryptoBox.fingerprint(for: signingPublicKey)
-    }
-
+    @discardableResult
     public func verified(
-        identityPublicKey: Data,
-        manifest: EndpointSetManifest,
+        authoritySigningPublicKey: Data,
         now: Date = Date()
-    ) throws -> CertifiedGenerationEndpoint {
+    ) throws -> RelationshipEndpointBindingV4 {
         guard isStructurallyValid(now: now) else {
-            throw CertifiedGenerationEndpointError.invalidStructure
+            throw RelationshipEndpointBindingError.invalidStructure
         }
-        guard manifest.verify(identityPublicKey: identityPublicKey),
-              identityAuthorityPublicKey == identityPublicKey,
-              manifest.identityGenerationId == identityGenerationId,
-              manifest.epoch == manifestEpoch,
-              manifest.digest == manifestDigest else {
-            throw CertifiedGenerationEndpointError.invalidManifest
-        }
-        guard let record = manifest.activeEndpoints.first(where: { $0.id == endpointId }),
-              record.signingPublicKey == signingPublicKey,
-              record.agreementPublicKey == agreementPublicKey,
-              record.capabilities == capabilities else {
-            throw CertifiedGenerationEndpointError.endpointNotAuthorized
-        }
-        guard let authorityData = try? payload.signableData(),
+        guard let authorityData = try? authorityPayload.signableData(),
               SigningKeyPair.verify(
                   signature: authoritySignature,
                   data: authorityData,
-                  publicKeyData: identityPublicKey
+                  publicKeyData: authoritySigningPublicKey
               ) else {
-            throw CertifiedGenerationEndpointError.invalidAuthoritySignature
+            throw RelationshipEndpointBindingError.invalidAuthoritySignature
         }
-        let possession = CertifiedGenerationEndpointPossessionPayload(
-            endpoint: payload,
-            authoritySignature: authoritySignature
-        )
-        guard let possessionData = try? possession.signableData(),
+        guard let authorizationDigest,
+              let prekeyData = try? RelationshipEndpointPrekeyPayloadV4(
+                  endpointAuthorizationDigest: authorizationDigest,
+                  bundle: prekeyBundle
+              ).signableData(),
               SigningKeyPair.verify(
-                  signature: possessionSignature,
-                  data: possessionData,
+                  signature: prekeyPackageSignature,
+                  data: prekeyData,
                   publicKeyData: signingPublicKey
               ) else {
-            throw CertifiedGenerationEndpointError.invalidPossessionSignature
-        }
-        return self
-    }
-
-    public func verified(
-        identityPublicKey: Data,
-        checkpoint: EndpointSetCheckpointV4,
-        now: Date = Date()
-    ) throws -> CertifiedGenerationEndpoint {
-        guard isStructurallyValid(now: now) else {
-            throw CertifiedGenerationEndpointError.invalidStructure
-        }
-        guard identityAuthorityPublicKey == identityPublicKey,
-              checkpoint.verify(identityPublicKey: identityPublicKey),
-              checkpoint.identityGenerationId == identityGenerationId,
-              checkpoint.epoch == manifestEpoch,
-              checkpoint.manifestDigest == manifestDigest else {
-            throw CertifiedGenerationEndpointError.invalidManifest
-        }
-        guard let authorityData = try? payload.signableData(),
-              SigningKeyPair.verify(
-                  signature: authoritySignature,
-                  data: authorityData,
-                  publicKeyData: identityPublicKey
-              ) else {
-            throw CertifiedGenerationEndpointError.invalidAuthoritySignature
-        }
-        let possession = CertifiedGenerationEndpointPossessionPayload(
-            endpoint: payload,
-            authoritySignature: authoritySignature
-        )
-        guard let possessionData = try? possession.signableData(),
-              SigningKeyPair.verify(
-                  signature: possessionSignature,
-                  data: possessionData,
-                  publicKeyData: signingPublicKey
-              ) else {
-            throw CertifiedGenerationEndpointError.invalidPossessionSignature
+            throw RelationshipEndpointBindingError.invalidPrekeyPackageSignature
         }
         return self
     }
 
     public func isStructurallyValid(now: Date = Date()) -> Bool {
-        guard let authorizationDigest,
-              manifestDigest.count == 32,
-              SigningKeyPair.isValidPublicKey(identityAuthorityPublicKey),
-              SigningKeyPair.isValidPublicKey(signingPublicKey),
-              AgreementKeyPair.isValidPublicKey(agreementPublicKey),
-              capabilities.isStructurallyValid,
-              endpointSignedPrekeyPackage?.verify(
-                  endpointSigningPublicKey: signingPublicKey,
-                  expectedAuthorizationDigest: authorizationDigest,
-                  now: now
-              ) == true,
-              issuedAt.timeIntervalSince1970.isFinite,
-              authoritySignature.count == 3_309,
-              possessionSignature.count == 3_309 else {
-            return false
-        }
-        return true
+        hasValidStaticStructure
+            && prekeyBundle.isStructurallyValid(now: now)
+            && prekeyBundle.signedPrekey.verify(using: signingPublicKey)
+            && prekeyBundle.oneTimePrekeys.isEmpty
     }
 
-    private var payload: CertifiedGenerationEndpointPayload {
-        CertifiedGenerationEndpointPayload(
-            version: Self.version,
-            identityGenerationId: identityGenerationId,
-            identityAuthorityPublicKey: identityAuthorityPublicKey,
-            manifestEpoch: manifestEpoch,
-            manifestDigest: manifestDigest,
-            endpointId: endpointId,
+    private var hasValidStaticStructure: Bool {
+        version == Self.version
+            && SigningKeyPair.isValidPublicKey(signingPublicKey)
+            && AgreementKeyPair.isValidPublicKey(agreementPublicKey)
+            && capabilities.isStructurallyValid
+            && prekeyBundle.relationshipSigningKeyDigest
+                == CryptoBox.fingerprint(for: signingPublicKey)
+            && prekeyBundle.oneTimePrekeys.isEmpty
+            && prekeyBundle.signedPrekey.verify(using: signingPublicKey)
+            && prekeyBundle.createdAt.timeIntervalSince1970.isFinite
+            && issuedAt.timeIntervalSince1970.isFinite
+            && prekeyBundle.createdAt >= issuedAt
+            && prekeyPackageSignature.count == 3_309
+            && authoritySignature.count == 3_309
+            && authorizationDigest?.count == 32
+    }
+
+    private var authorityPayload: RelationshipEndpointAuthorityPayloadV4 {
+        RelationshipEndpointAuthorityPayloadV4(
+            version: version,
             signingPublicKey: signingPublicKey,
             agreementPublicKey: agreementPublicKey,
             capabilities: capabilities,
@@ -763,222 +585,254 @@ public struct CertifiedGenerationEndpoint: Codable, Equatable {
     }
 
     private static func authorizationDigest(
-        payload: CertifiedGenerationEndpointPayload,
-        authoritySignature: Data,
-        possessionSignature: Data
-    ) -> Data? {
-        let reference = CertifiedGenerationEndpointAuthorizationReference(
-            endpoint: payload,
-            authoritySignature: authoritySignature,
-            possessionSignature: possessionSignature
+        payload: RelationshipEndpointAuthorityPayloadV4,
+        authoritySignature: Data
+    ) throws -> Data {
+        Data(SHA256.hash(data: try NoctweaveCoder.encode(
+            RelationshipEndpointAuthorizationReferenceV4(
+                endpoint: payload,
+                authoritySignature: authoritySignature
+            ),
+            sortedKeys: true
+        )))
+    }
+
+    private static func publicPrekeyBundle(
+        endpoint: LocalRelationshipEndpointV2,
+        createdAt: Date
+    ) throws -> PrekeyBundle {
+        let endpointAuthority = try RelationshipAuthorityV2(
+            relationshipPseudonym: "Noctweave relationship endpoint",
+            signingKey: endpoint.signingKey,
+            agreementKey: endpoint.agreementKey,
+            createdAt: endpoint.createdAt
         )
-        guard let encoded = try? NoctweaveCoder.encode(reference, sortedKeys: true) else {
-            return nil
-        }
-        return Data(SHA256.hash(data: encoded))
+        let complete = try endpoint.prekeys.bundle(
+            authority: endpointAuthority,
+            createdAt: createdAt
+        )
+        return PrekeyBundle(
+            relationshipSigningKeyDigest: complete.relationshipSigningKeyDigest,
+            signedPrekey: complete.signedPrekey,
+            oneTimePrekeys: [],
+            createdAt: complete.createdAt
+        )
     }
 }
 
 public struct DirectEndpointSessionIdentity: Codable, Equatable, Hashable {
-    public let contactId: UUID
-    public let localEndpointId: UUID
+    public let relationshipID: UUID
     public let localEndpointHandle: RelationshipEndpointHandle
-    public let localCertificateReferenceDigest: Data
-    public let localManifestEpoch: UInt64
-    public let peerEndpointId: UUID
+    public let localBindingReferenceDigest: Data
     public let peerEndpointHandle: RelationshipEndpointHandle
-    public let peerCertificateReferenceDigest: Data
-    public let peerManifestEpoch: UInt64
+    public let peerBindingReferenceDigest: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case relationshipID
+        case localEndpointHandle
+        case localBindingReferenceDigest
+        case peerEndpointHandle
+        case peerBindingReferenceDigest
+    }
 
     public init(
-        contactId: UUID,
-        localEndpointId: UUID,
+        relationshipID: UUID,
         localEndpointHandle: RelationshipEndpointHandle,
-        localCertificateReferenceDigest: Data,
-        localManifestEpoch: UInt64,
-        peerEndpointId: UUID,
+        localBindingReferenceDigest: Data,
         peerEndpointHandle: RelationshipEndpointHandle,
-        peerCertificateReferenceDigest: Data,
-        peerManifestEpoch: UInt64
+        peerBindingReferenceDigest: Data
     ) {
-        self.contactId = contactId
-        self.localEndpointId = localEndpointId
+        self.relationshipID = relationshipID
         self.localEndpointHandle = localEndpointHandle
-        self.localCertificateReferenceDigest = localCertificateReferenceDigest
-        self.localManifestEpoch = localManifestEpoch
-        self.peerEndpointId = peerEndpointId
+        self.localBindingReferenceDigest = localBindingReferenceDigest
         self.peerEndpointHandle = peerEndpointHandle
-        self.peerCertificateReferenceDigest = peerCertificateReferenceDigest
-        self.peerManifestEpoch = peerManifestEpoch
+        self.peerBindingReferenceDigest = peerBindingReferenceDigest
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactFields(decoder, CodingKeys.self, context: "direct endpoint session")
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            relationshipID: try container.decode(UUID.self, forKey: .relationshipID),
+            localEndpointHandle: try container.decode(RelationshipEndpointHandle.self, forKey: .localEndpointHandle),
+            localBindingReferenceDigest: try container.decode(Data.self, forKey: .localBindingReferenceDigest),
+            peerEndpointHandle: try container.decode(RelationshipEndpointHandle.self, forKey: .peerEndpointHandle),
+            peerBindingReferenceDigest: try container.decode(Data.self, forKey: .peerBindingReferenceDigest)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .localBindingReferenceDigest,
+                in: container,
+                debugDescription: "Invalid direct endpoint session"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Invalid direct endpoint session"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(relationshipID, forKey: .relationshipID)
+        try container.encode(localEndpointHandle, forKey: .localEndpointHandle)
+        try container.encode(localBindingReferenceDigest, forKey: .localBindingReferenceDigest)
+        try container.encode(peerEndpointHandle, forKey: .peerEndpointHandle)
+        try container.encode(peerBindingReferenceDigest, forKey: .peerBindingReferenceDigest)
     }
 
     public var isStructurallyValid: Bool {
         localEndpointHandle.isStructurallyValid
             && peerEndpointHandle.isStructurallyValid
-            && localCertificateReferenceDigest.count == 32
-            && peerCertificateReferenceDigest.count == 32
+            && localEndpointHandle != peerEndpointHandle
+            && localBindingReferenceDigest.count == 32
+            && peerBindingReferenceDigest.count == 32
+            && localBindingReferenceDigest != peerBindingReferenceDigest
     }
 }
 
-/// Deterministic pairwise projection of two identity generations. The full
-/// endpoint certificate never appears on the relay-visible direct wire;
-/// its stable authorization digest is domain-separated by this relationship
-/// before use as a certificate reference. Short-lived prekey renewal does not
-/// change that reference. One bounded generation gets stable sessions, while
-/// the same endpoint has unlinkable handles per contact and burn changes all
-/// generation-derived values.
+/// Relationship-local transcript binding for the two fresh endpoints. Binding
+/// references are blinded by the relationship ID before appearing on a direct
+/// envelope, so even identical bytes cannot become a cross-contact identifier.
 public struct PairwiseEndpointBindingV4: Codable, Equatable {
     public let relationshipId: UUID
     public let localEndpointHandle: RelationshipEndpointHandle
     public let peerEndpointHandle: RelationshipEndpointHandle
-    public let localCertificateReferenceDigest: Data
-    public let peerCertificateReferenceDigest: Data
+    public let localBindingReferenceDigest: Data
+    public let peerBindingReferenceDigest: Data
     public let cipherSuite: String
     public let negotiatedCapabilitiesDigest: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case relationshipId
+        case localEndpointHandle
+        case peerEndpointHandle
+        case localBindingReferenceDigest
+        case peerBindingReferenceDigest
+        case cipherSuite
+        case negotiatedCapabilitiesDigest
+    }
 
     public init(
         relationshipId: UUID,
         localEndpointHandle: RelationshipEndpointHandle,
         peerEndpointHandle: RelationshipEndpointHandle,
-        localCertificateReferenceDigest: Data,
-        peerCertificateReferenceDigest: Data,
+        localBindingReferenceDigest: Data,
+        peerBindingReferenceDigest: Data,
         cipherSuite: String,
         negotiatedCapabilitiesDigest: Data
     ) {
         self.relationshipId = relationshipId
         self.localEndpointHandle = localEndpointHandle
         self.peerEndpointHandle = peerEndpointHandle
-        self.localCertificateReferenceDigest = localCertificateReferenceDigest
-        self.peerCertificateReferenceDigest = peerCertificateReferenceDigest
+        self.localBindingReferenceDigest = localBindingReferenceDigest
+        self.peerBindingReferenceDigest = peerBindingReferenceDigest
         self.cipherSuite = cipherSuite
         self.negotiatedCapabilitiesDigest = negotiatedCapabilitiesDigest
     }
 
-    public static func derive(
-        localIdentityGenerationId: UUID,
-        localIdentitySigningPublicKey: Data,
-        localEndpoint: CertifiedGenerationEndpoint,
-        peerIdentityGenerationId: UUID,
-        peerIdentitySigningPublicKey: Data,
-        peerEndpoint: CertifiedGenerationEndpoint
-    ) throws -> PairwiseEndpointBindingV4 {
-        guard localEndpoint.identityGenerationId == localIdentityGenerationId,
-              peerEndpoint.identityGenerationId == peerIdentityGenerationId,
-              SigningKeyPair.isValidPublicKey(localIdentitySigningPublicKey),
-              SigningKeyPair.isValidPublicKey(peerIdentitySigningPublicKey),
-              let localDigest = localEndpoint.authorizationDigest,
-              let peerDigest = peerEndpoint.authorizationDigest else {
-            throw CryptoError.invalidPayload
+    public init(from decoder: Decoder) throws {
+        try requireExactFields(decoder, CodingKeys.self, context: "pairwise endpoint transcript")
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            relationshipId: try container.decode(UUID.self, forKey: .relationshipId),
+            localEndpointHandle: try container.decode(RelationshipEndpointHandle.self, forKey: .localEndpointHandle),
+            peerEndpointHandle: try container.decode(RelationshipEndpointHandle.self, forKey: .peerEndpointHandle),
+            localBindingReferenceDigest: try container.decode(Data.self, forKey: .localBindingReferenceDigest),
+            peerBindingReferenceDigest: try container.decode(Data.self, forKey: .peerBindingReferenceDigest),
+            cipherSuite: try container.decode(String.self, forKey: .cipherSuite),
+            negotiatedCapabilitiesDigest: try container.decode(Data.self, forKey: .negotiatedCapabilitiesDigest)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .localBindingReferenceDigest,
+                in: container,
+                debugDescription: "Invalid pairwise endpoint transcript"
+            )
         }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Invalid pairwise endpoint transcript"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(relationshipId, forKey: .relationshipId)
+        try container.encode(localEndpointHandle, forKey: .localEndpointHandle)
+        try container.encode(peerEndpointHandle, forKey: .peerEndpointHandle)
+        try container.encode(localBindingReferenceDigest, forKey: .localBindingReferenceDigest)
+        try container.encode(peerBindingReferenceDigest, forKey: .peerBindingReferenceDigest)
+        try container.encode(cipherSuite, forKey: .cipherSuite)
+        try container.encode(negotiatedCapabilitiesDigest, forKey: .negotiatedCapabilitiesDigest)
+    }
+
+    public static func create(
+        relationshipId: UUID,
+        localEndpointHandle: RelationshipEndpointHandle,
+        peerEndpointHandle: RelationshipEndpointHandle,
+        localEndpoint: RelationshipEndpointBindingV4,
+        peerEndpoint: RelationshipEndpointBindingV4
+    ) throws -> PairwiseEndpointBindingV4 {
         let negotiation = try DirectV4NegotiatedCapabilityManifest.negotiate(
             local: localEndpoint.capabilities,
             peer: peerEndpoint.capabilities
         )
-        let negotiationDigest = try negotiation.digest()
-        let localIdentity = identityDescriptor(
-            generationId: localIdentityGenerationId
-        )
-        let peerIdentity = identityDescriptor(
-            generationId: peerIdentityGenerationId
-        )
-        let ordered = [localIdentity, peerIdentity].sorted { $0.lexicographicallyPrecedes($1) }
-        var relationshipMaterial = Data("Noctweave/pairwise-relationship/v4".utf8)
-        relationshipMaterial.append(ordered[0])
-        relationshipMaterial.append(ordered[1])
-        let relationshipDigest = Array(SHA256.hash(data: relationshipMaterial))
-        let relationshipId = UUID(uuid: (
-            relationshipDigest[0], relationshipDigest[1], relationshipDigest[2], relationshipDigest[3],
-            relationshipDigest[4], relationshipDigest[5], relationshipDigest[6], relationshipDigest[7],
-            relationshipDigest[8], relationshipDigest[9], relationshipDigest[10], relationshipDigest[11],
-            relationshipDigest[12], relationshipDigest[13], relationshipDigest[14], relationshipDigest[15]
-        ))
         return PairwiseEndpointBindingV4(
             relationshipId: relationshipId,
-            localEndpointHandle: endpointHandle(
-                relationshipId: relationshipId,
-                generationId: localIdentityGenerationId,
-                endpoint: localEndpoint
-            ),
-            peerEndpointHandle: endpointHandle(
-                relationshipId: relationshipId,
-                generationId: peerIdentityGenerationId,
-                endpoint: peerEndpoint
-            ),
-            localCertificateReferenceDigest: certificateReference(
-                relationshipId: relationshipId,
-                certificateDigest: localDigest
-            ),
-            peerCertificateReferenceDigest: certificateReference(
-                relationshipId: relationshipId,
-                certificateDigest: peerDigest
-            ),
+            localEndpointHandle: localEndpointHandle,
+            peerEndpointHandle: peerEndpointHandle,
+            localBindingReferenceDigest: try localEndpoint.referenceDigest(for: relationshipId),
+            peerBindingReferenceDigest: try peerEndpoint.referenceDigest(for: relationshipId),
             cipherSuite: negotiation.cipherSuite,
-            negotiatedCapabilitiesDigest: negotiationDigest
+            negotiatedCapabilitiesDigest: try negotiation.digest()
         )
     }
 
     public var isStructurallyValid: Bool {
         localEndpointHandle.isStructurallyValid
             && peerEndpointHandle.isStructurallyValid
-            && localCertificateReferenceDigest.count == 32
-            && peerCertificateReferenceDigest.count == 32
+            && localEndpointHandle != peerEndpointHandle
+            && localBindingReferenceDigest.count == 32
+            && peerBindingReferenceDigest.count == 32
+            && localBindingReferenceDigest != peerBindingReferenceDigest
             && cipherSuite == DirectV4CipherSuite.identifier
             && negotiatedCapabilitiesDigest.count == 32
     }
 
     public func validatedNegotiation(
-        localEndpoint: CertifiedGenerationEndpoint,
-        peerEndpoint: CertifiedGenerationEndpoint
+        localEndpoint: RelationshipEndpointBindingV4,
+        peerEndpoint: RelationshipEndpointBindingV4
     ) throws -> DirectV4NegotiatedCapabilityManifest {
         let negotiation = try DirectV4NegotiatedCapabilityManifest.negotiate(
             local: localEndpoint.capabilities,
             peer: peerEndpoint.capabilities
         )
-        let digest = try negotiation.digest()
-        guard cipherSuite == negotiation.cipherSuite,
-              negotiatedCapabilitiesDigest == digest else {
+        let localReference = try localEndpoint.referenceDigest(for: relationshipId)
+        let peerReference = try peerEndpoint.referenceDigest(for: relationshipId)
+        let negotiationDigest = try negotiation.digest()
+        guard localBindingReferenceDigest == localReference,
+              peerBindingReferenceDigest == peerReference,
+              cipherSuite == negotiation.cipherSuite,
+              negotiatedCapabilitiesDigest == negotiationDigest else {
             throw DirectV4CapabilityNegotiationError.transcriptMismatch
         }
         return negotiation
     }
-
-    private static func identityDescriptor(generationId: UUID) -> Data {
-        Data(generationId.uuidString.lowercased().utf8)
-    }
-
-    private static func endpointHandle(
-        relationshipId: UUID,
-        generationId: UUID,
-        endpoint: CertifiedGenerationEndpoint
-    ) -> RelationshipEndpointHandle {
-        var material = Data("Noctweave/pairwise-endpoint-handle/v4".utf8)
-        material.append(Data(relationshipId.uuidString.lowercased().utf8))
-        material.append(Data(generationId.uuidString.lowercased().utf8))
-        material.append(Data(endpoint.endpointId.uuidString.lowercased().utf8))
-        material.append(endpoint.signingPublicKey)
-        return RelationshipEndpointHandle(
-            rawValue: Data(SHA256.hash(data: material)).base64EncodedString()
-        )
-    }
-
-    private static func certificateReference(
-        relationshipId: UUID,
-        certificateDigest: Data
-    ) -> Data {
-        var material = Data("Noctweave/pairwise-certificate-reference/v4".utf8)
-        material.append(Data(relationshipId.uuidString.lowercased().utf8))
-        material.append(certificateDigest)
-        return Data(SHA256.hash(data: material))
-    }
 }
 
-private struct CertifiedGenerationEndpointPayload: Codable {
+private struct RelationshipEndpointAuthorityPayloadV4: Codable {
     let version: Int
-    let identityGenerationId: UUID
-    let identityAuthorityPublicKey: Data
-    let manifestEpoch: UInt64
-    let manifestDigest: Data
-    let endpointId: UUID
     let signingPublicKey: Data
     let agreementPublicKey: Data
     let capabilities: ProtocolCapabilityManifest
@@ -989,14 +843,13 @@ private struct CertifiedGenerationEndpointPayload: Codable {
     }
 }
 
-private struct CertifiedGenerationEndpointAuthorizationReference: Codable {
-    let endpoint: CertifiedGenerationEndpointPayload
+private struct RelationshipEndpointAuthorizationReferenceV4: Codable {
+    let endpoint: RelationshipEndpointAuthorityPayloadV4
     let authoritySignature: Data
-    let possessionSignature: Data
 }
 
-private struct EndpointSignedPrekeyPackagePayloadV4: Encodable {
-    let purpose = "Noctweave/endpoint-signed-prekey-package/v4"
+private struct RelationshipEndpointPrekeyPayloadV4: Codable {
+    let purpose = "Noctweave/relationship-endpoint-prekey-package/v4"
     let endpointAuthorizationDigest: Data
     let bundle: PrekeyBundle
 
@@ -1005,38 +858,34 @@ private struct EndpointSignedPrekeyPackagePayloadV4: Encodable {
     }
 }
 
-private struct EndpointSetCheckpointPayloadV4: Codable {
-    let version: Int
-    let identityGenerationId: UUID
-    let identityFingerprint: String
-    let epoch: UInt64
-    let manifestDigest: Data
-    let issuedAt: Date
+private struct RelationshipEndpointCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
 
-    func signableData() throws -> Data {
-        try NoctweaveCoder.encode(self, sortedKeys: true)
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
     }
 }
 
-private struct EndpointRemovalProofPayloadV4: Codable {
-    let identityGenerationId: UUID
-    let endpointId: UUID
-    let certificateDigest: Data
-    let manifestEpoch: UInt64
-    let manifestDigest: Data
-    let issuedAt: Date
-
-    func signableData() throws -> Data {
-        try NoctweaveCoder.encode(self, sortedKeys: true)
-    }
-}
-
-private struct CertifiedGenerationEndpointPossessionPayload: Encodable {
-    let purpose = "Noctweave/certified-generation-endpoint-possession/v4"
-    let endpoint: CertifiedGenerationEndpointPayload
-    let authoritySignature: Data
-
-    func signableData() throws -> Data {
-        try NoctweaveCoder.encode(self, sortedKeys: true)
+private func requireExactFields<Keys: CodingKey & CaseIterable>(
+    _ decoder: Decoder,
+    _: Keys.Type,
+    context: String
+) throws where Keys.AllCases: Collection {
+    let strict = try decoder.container(keyedBy: RelationshipEndpointCodingKey.self)
+    let expected = Set(Keys.allCases.map(\.stringValue))
+    guard Set(strict.allKeys.map(\.stringValue)) == expected else {
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "Fields must match the current \(context) schema exactly"
+            )
+        )
     }
 }

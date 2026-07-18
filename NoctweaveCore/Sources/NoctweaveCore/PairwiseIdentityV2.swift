@@ -8,7 +8,7 @@ public enum PairwiseIdentityV2Error: Error, Equatable {
 
 public enum PairwiseRelationshipIDV2 {
     /// Both rendezvous participants derive the same relationship identifier
-    /// without publishing it or carrying any profile identifier into it.
+    /// without publishing it or carrying any persona identifier into it.
     public static func derive(from rendezvousTranscriptDigest: Data) throws -> UUID {
         guard rendezvousTranscriptDigest.count == SHA256.byteCount else {
             throw PairwiseIdentityV2Error.invalidState
@@ -28,51 +28,42 @@ public enum PairwiseRelationshipIDV2 {
     }
 }
 
-/// Secret local identity material minted independently for exactly one
-/// relationship. It is never certified by a profile-wide key, so two contacts
-/// cannot correlate one another by comparing Noctweave identity or endpoint
-/// keys. The containing persona is a local UI concept only.
-public struct LocalPairwiseIdentityV2: Codable, Identifiable,
+/// Secret authority and endpoint material minted independently for exactly one
+/// relationship. No account, persona, generation, or device identifier is
+/// disclosed in the pairwise introduction or direct wire.
+public struct LocalPairwiseIdentityV2: Codable, Equatable, Identifiable,
     CustomStringConvertible, CustomDebugStringConvertible, CustomReflectable {
     public static let version = 2
 
     public let version: Int
     public let id: UUID
-    public let generationID: UUID
-    public var relationshipIdentity: Identity
-    public var localEndpoint: LocalEndpointState
-    public var endpointSetManifest: EndpointSetManifest
-    public var certifiedEndpoint: CertifiedGenerationEndpoint
+    public var relationshipAuthority: RelationshipAuthorityV2
+    public var localEndpoint: LocalRelationshipEndpointV2
+    public var endpointBinding: RelationshipEndpointBindingV4
     public let createdAt: Date
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case version
         case id
-        case generationID
-        case relationshipIdentity
+        case relationshipAuthority
         case localEndpoint
-        case endpointSetManifest
-        case certifiedEndpoint
+        case endpointBinding
         case createdAt
     }
 
     private init(
         version: Int = Self.version,
         id: UUID,
-        generationID: UUID,
-        relationshipIdentity: Identity,
-        localEndpoint: LocalEndpointState,
-        endpointSetManifest: EndpointSetManifest,
-        certifiedEndpoint: CertifiedGenerationEndpoint,
+        relationshipAuthority: RelationshipAuthorityV2,
+        localEndpoint: LocalRelationshipEndpointV2,
+        endpointBinding: RelationshipEndpointBindingV4,
         createdAt: Date
     ) {
         self.version = version
         self.id = id
-        self.generationID = generationID
-        self.relationshipIdentity = relationshipIdentity
+        self.relationshipAuthority = relationshipAuthority
         self.localEndpoint = localEndpoint
-        self.endpointSetManifest = endpointSetManifest
-        self.certifiedEndpoint = certifiedEndpoint
+        self.endpointBinding = endpointBinding
         self.createdAt = createdAt
     }
 
@@ -91,16 +82,17 @@ public struct LocalPairwiseIdentityV2: Codable, Identifiable,
         self.init(
             version: try container.decode(Int.self, forKey: .version),
             id: try container.decode(UUID.self, forKey: .id),
-            generationID: try container.decode(UUID.self, forKey: .generationID),
-            relationshipIdentity: try container.decode(Identity.self, forKey: .relationshipIdentity),
-            localEndpoint: try container.decode(LocalEndpointState.self, forKey: .localEndpoint),
-            endpointSetManifest: try container.decode(EndpointSetManifest.self, forKey: .endpointSetManifest),
-            certifiedEndpoint: try container.decode(CertifiedGenerationEndpoint.self, forKey: .certifiedEndpoint),
+            relationshipAuthority: try container.decode(
+                RelationshipAuthorityV2.self,
+                forKey: .relationshipAuthority
+            ),
+            localEndpoint: try container.decode(LocalRelationshipEndpointV2.self, forKey: .localEndpoint),
+            endpointBinding: try container.decode(RelationshipEndpointBindingV4.self, forKey: .endpointBinding),
             createdAt: try container.decode(Date.self, forKey: .createdAt)
         )
         guard isStructurallyValid else {
             throw DecodingError.dataCorruptedError(
-                forKey: .relationshipIdentity,
+                forKey: .relationshipAuthority,
                 in: container,
                 debugDescription: "Local pairwise identity is structurally invalid"
             )
@@ -120,81 +112,85 @@ public struct LocalPairwiseIdentityV2: Codable, Identifiable,
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(version, forKey: .version)
         try container.encode(id, forKey: .id)
-        try container.encode(generationID, forKey: .generationID)
-        try container.encode(relationshipIdentity, forKey: .relationshipIdentity)
+        try container.encode(relationshipAuthority, forKey: .relationshipAuthority)
         try container.encode(localEndpoint, forKey: .localEndpoint)
-        try container.encode(endpointSetManifest, forKey: .endpointSetManifest)
-        try container.encode(certifiedEndpoint, forKey: .certifiedEndpoint)
+        try container.encode(endpointBinding, forKey: .endpointBinding)
         try container.encode(createdAt, forKey: .createdAt)
     }
 
     public static func generate(
-        displayName: String,
+        relationshipPseudonym: String,
         id: UUID = UUID(),
-        generationID: UUID = UUID(),
         createdAt: Date = Date()
     ) throws -> LocalPairwiseIdentityV2 {
-        let relationshipIdentity = try Identity(
-            displayName: displayName,
+        let pseudonym = relationshipPseudonym.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard pseudonym == relationshipPseudonym,
+              !pseudonym.isEmpty,
+              pseudonym.utf8.count <= 512 else {
+            throw PairwiseIdentityV2Error.invalidState
+        }
+        let authority = try RelationshipAuthorityV2(
+            relationshipPseudonym: pseudonym,
             signingKey: SigningKeyPair.generate(),
             agreementKey: AgreementKeyPair.generate(),
             createdAt: createdAt
         )
-        let endpoint = try LocalEndpointState.generate(
-            identityGenerationId: generationID,
-            createdAt: createdAt
-        )
-        let manifest = try EndpointSetManifest.create(
-            identityGenerationId: generationID,
-            epoch: 0,
-            endpoints: [endpoint.publicRecord(addedEpoch: 0)],
-            identity: relationshipIdentity,
-            issuedAt: createdAt
-        )
-        let certificate = try CertifiedGenerationEndpoint.create(
-            identity: relationshipIdentity,
+        let endpoint = try LocalRelationshipEndpointV2.generate(createdAt: createdAt)
+        let binding = try RelationshipEndpointBindingV4.create(
+            authority: authority,
             endpoint: endpoint,
-            manifest: manifest,
             issuedAt: createdAt
         )
         let result = LocalPairwiseIdentityV2(
             id: id,
-            generationID: generationID,
-            relationshipIdentity: relationshipIdentity,
+            relationshipAuthority: authority,
             localEndpoint: endpoint,
-            endpointSetManifest: manifest,
-            certifiedEndpoint: certificate,
+            endpointBinding: binding,
             createdAt: createdAt
         )
         guard result.isStructurallyValid else { throw PairwiseIdentityV2Error.invalidState }
         return result
     }
 
+    public var relationshipPseudonym: String {
+        relationshipAuthority.relationshipPseudonym
+    }
+
     public var isStructurallyValid: Bool {
         version == Self.version
-            && !relationshipIdentity.displayName.isEmpty
-            && relationshipIdentity.displayName.utf8.count <= 512
-            && relationshipIdentity.createdAt == createdAt
-            && localEndpoint.identityGenerationId == generationID
+            && !relationshipPseudonym.isEmpty
+            && relationshipPseudonym.utf8.count <= 512
+            && relationshipAuthority.createdAt == createdAt
             && localEndpoint.createdAt == createdAt
-            && endpointSetManifest.identityGenerationId == generationID
-            && endpointSetManifest.endpoints.contains(where: { $0.id == localEndpoint.id })
-            && endpointSetManifest.verify(
-                identityPublicKey: relationshipIdentity.signingKey.publicKeyData
-            )
-            && certifiedEndpoint.identityGenerationId == generationID
-            && certifiedEndpoint.endpointId == localEndpoint.id
-            && (try? certifiedEndpoint.verified(
-                identityPublicKey: relationshipIdentity.signingKey.publicKeyData,
-                manifest: endpointSetManifest
+            && endpointBinding.signingPublicKey == localEndpoint.signingKey.publicKeyData
+            && endpointBinding.agreementPublicKey == localEndpoint.agreementKey.publicKeyData
+            && (try? endpointBinding.verified(
+                authoritySigningPublicKey: relationshipAuthority.signingKey.publicKeyData,
+                now: endpointBinding.prekeyBundle.createdAt
             )) != nil
             && createdAt.timeIntervalSince1970.isFinite
+    }
+
+    /// Atomically renews the one relationship endpoint's advertised prekey.
+    /// The stable authority binding and established direct sessions do not
+    /// change, and a failure cannot leave local key state ahead of disclosure.
+    @discardableResult
+    public mutating func renewEndpointPrekeyIfNeeded(at date: Date = Date()) throws -> Bool {
+        var endpoint = localEndpoint
+        guard try endpoint.renewSignedPrekeyIfNeeded(at: date) else { return false }
+        let binding = try endpointBinding.refreshingPrekeyPackage(
+            using: endpoint,
+            at: date
+        )
+        localEndpoint = endpoint
+        endpointBinding = binding
+        return true
     }
 
     public func makeInitialRouteSet(
         relationshipID: UUID,
         ownerEndpointHandle: RelationshipEndpointHandle,
-        receiveRoute: PairwiseSendRouteV2,
+        receiveRoute: OpaqueSendRouteV2,
         issuedAt: Date
     ) throws -> PairwiseRouteSetV2 {
         try PairwiseRouteSetV2.create(
@@ -213,10 +209,9 @@ public struct LocalPairwiseIdentityV2: Codable, Identifiable,
         expiresAt: Date
     ) throws -> ContactIntroductionV2 {
         try ContactIntroductionV2.create(
-            relationshipIdentity: relationshipIdentity,
-            relationshipGenerationID: generationID,
-            endpointSetManifest: endpointSetManifest,
-            preferredEndpoint: certifiedEndpoint,
+            relationshipPseudonym: relationshipPseudonym,
+            relationshipAuthority: relationshipAuthority,
+            endpointBinding: endpointBinding,
             receiveRoutes: receiveRoutes,
             rendezvousTranscriptDigest: rendezvousTranscriptDigest,
             issuedAt: issuedAt,
@@ -227,39 +222,52 @@ public struct LocalPairwiseIdentityV2: Codable, Identifiable,
     public var description: String { "LocalPairwiseIdentityV2(<redacted>)" }
     public var debugDescription: String { description }
     public var customMirror: Mirror { Mirror(self, children: [:], displayStyle: .struct) }
+
+    public static func == (
+        lhs: LocalPairwiseIdentityV2,
+        rhs: LocalPairwiseIdentityV2
+    ) -> Bool {
+        lhs.version == rhs.version
+            && lhs.id == rhs.id
+            && lhs.relationshipAuthority.relationshipPseudonym
+                == rhs.relationshipAuthority.relationshipPseudonym
+            && lhs.relationshipAuthority.signingKey.privateKeyData
+                == rhs.relationshipAuthority.signingKey.privateKeyData
+            && lhs.relationshipAuthority.agreementKey.privateKeyData
+                == rhs.relationshipAuthority.agreementKey.privateKeyData
+            && lhs.relationshipAuthority.createdAt == rhs.relationshipAuthority.createdAt
+            && lhs.localEndpoint == rhs.localEndpoint
+            && lhs.endpointBinding == rhs.endpointBinding
+            && lhs.createdAt == rhs.createdAt
+    }
 }
 
-/// Public relationship state learned from one verified rendezvous
-/// introduction. The identifier is local-only; no field can be used to locate
-/// a profile, account, or another relationship.
+/// Public state learned from one verified rendezvous introduction. It contains
+/// one relationship pseudonym, one disposable authority, one endpoint binding,
+/// and its pairwise routes. Continuity preference is local relationship policy,
+/// not peer identity state.
 public struct PeerPairwiseIdentityV2: Codable, Equatable, Identifiable {
     public static let version = 2
 
     public let version: Int
     public let id: UUID
     public let relationshipID: UUID
-    public var displayName: String
-    public var generationID: UUID
+    public var relationshipPseudonym: String
     public var signingPublicKey: Data
     public var agreementPublicKey: Data
-    public var endpointSetCheckpoint: EndpointSetCheckpointV4
-    public var preferredEndpoint: CertifiedGenerationEndpoint
+    public var endpointBinding: RelationshipEndpointBindingV4
     public var sendRoutes: PairwiseRouteSetV2
-    public var allowContinuity: Bool
     public let createdAt: Date
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case version
         case id
         case relationshipID
-        case displayName
-        case generationID
+        case relationshipPseudonym
         case signingPublicKey
         case agreementPublicKey
-        case endpointSetCheckpoint
-        case preferredEndpoint
+        case endpointBinding
         case sendRoutes
-        case allowContinuity
         case createdAt
     }
 
@@ -267,32 +275,26 @@ public struct PeerPairwiseIdentityV2: Codable, Equatable, Identifiable {
         id: UUID = UUID(),
         introduction: ContactIntroductionV2,
         rendezvousTranscriptDigest: Data,
-        allowContinuity: Bool = false,
         acceptedAt: Date
     ) throws {
         let verified = try introduction.verified(
             for: rendezvousTranscriptDigest,
             at: acceptedAt
         )
-        self.version = Self.version
+        version = Self.version
         self.id = id
-        self.relationshipID = try PairwiseRelationshipIDV2.derive(
-            from: rendezvousTranscriptDigest
-        )
-        self.displayName = verified.displayName
-        self.generationID = verified.relationshipGenerationID
-        self.signingPublicKey = verified.relationshipSigningPublicKey
-        self.agreementPublicKey = verified.relationshipAgreementPublicKey
-        self.endpointSetCheckpoint = verified.endpointSetCheckpoint
-        self.preferredEndpoint = verified.preferredEndpoint
+        relationshipID = try PairwiseRelationshipIDV2.derive(from: rendezvousTranscriptDigest)
+        relationshipPseudonym = verified.relationshipPseudonym
+        signingPublicKey = verified.relationshipSigningPublicKey
+        agreementPublicKey = verified.relationshipAgreementPublicKey
+        endpointBinding = verified.endpointBinding
         guard verified.receiveRoutes.verify(
-            ownerSigningPublicKey: verified.preferredEndpoint.signingPublicKey
+            ownerSigningPublicKey: verified.endpointBinding.signingPublicKey
         ), verified.receiveRoutes.relationshipID == relationshipID else {
             throw PairwiseIdentityV2Error.wrongIntroduction
         }
-        self.sendRoutes = verified.receiveRoutes
-        self.allowContinuity = allowContinuity
-        self.createdAt = acceptedAt
+        sendRoutes = verified.receiveRoutes
+        createdAt = acceptedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -310,20 +312,14 @@ public struct PeerPairwiseIdentityV2: Codable, Equatable, Identifiable {
         version = try container.decode(Int.self, forKey: .version)
         id = try container.decode(UUID.self, forKey: .id)
         relationshipID = try container.decode(UUID.self, forKey: .relationshipID)
-        displayName = try container.decode(String.self, forKey: .displayName)
-        generationID = try container.decode(UUID.self, forKey: .generationID)
+        relationshipPseudonym = try container.decode(String.self, forKey: .relationshipPseudonym)
         signingPublicKey = try container.decode(Data.self, forKey: .signingPublicKey)
         agreementPublicKey = try container.decode(Data.self, forKey: .agreementPublicKey)
-        endpointSetCheckpoint = try container.decode(
-            EndpointSetCheckpointV4.self,
-            forKey: .endpointSetCheckpoint
-        )
-        preferredEndpoint = try container.decode(
-            CertifiedGenerationEndpoint.self,
-            forKey: .preferredEndpoint
+        endpointBinding = try container.decode(
+            RelationshipEndpointBindingV4.self,
+            forKey: .endpointBinding
         )
         sendRoutes = try container.decode(PairwiseRouteSetV2.self, forKey: .sendRoutes)
-        allowContinuity = try container.decode(Bool.self, forKey: .allowContinuity)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         guard isStructurallyValid else {
             throw DecodingError.dataCorruptedError(
@@ -348,33 +344,29 @@ public struct PeerPairwiseIdentityV2: Codable, Equatable, Identifiable {
         try container.encode(version, forKey: .version)
         try container.encode(id, forKey: .id)
         try container.encode(relationshipID, forKey: .relationshipID)
-        try container.encode(displayName, forKey: .displayName)
-        try container.encode(generationID, forKey: .generationID)
+        try container.encode(relationshipPseudonym, forKey: .relationshipPseudonym)
         try container.encode(signingPublicKey, forKey: .signingPublicKey)
         try container.encode(agreementPublicKey, forKey: .agreementPublicKey)
-        try container.encode(endpointSetCheckpoint, forKey: .endpointSetCheckpoint)
-        try container.encode(preferredEndpoint, forKey: .preferredEndpoint)
+        try container.encode(endpointBinding, forKey: .endpointBinding)
         try container.encode(sendRoutes, forKey: .sendRoutes)
-        try container.encode(allowContinuity, forKey: .allowContinuity)
         try container.encode(createdAt, forKey: .createdAt)
     }
 
     public var isStructurallyValid: Bool {
-        version == Self.version
-            && !displayName.isEmpty
-            && displayName.utf8.count <= 512
+        let pseudonym = relationshipPseudonym.trimmingCharacters(in: .whitespacesAndNewlines)
+        return version == Self.version
+            && pseudonym == relationshipPseudonym
+            && !pseudonym.isEmpty
+            && pseudonym.utf8.count <= 512
             && SigningKeyPair.isValidPublicKey(signingPublicKey)
             && AgreementKeyPair.isValidPublicKey(agreementPublicKey)
             && sendRoutes.relationshipID == relationshipID
-            && endpointSetCheckpoint.identityGenerationId == generationID
-            && preferredEndpoint.identityGenerationId == generationID
-            && (try? preferredEndpoint.verified(
-                identityPublicKey: signingPublicKey,
-                checkpoint: endpointSetCheckpoint,
-                now: preferredEndpoint.prekeyBundle.createdAt
+            && (try? endpointBinding.verified(
+                authoritySigningPublicKey: signingPublicKey,
+                now: endpointBinding.prekeyBundle.createdAt
             )) != nil
             && sendRoutes.isStructurallyValid
-            && sendRoutes.verify(ownerSigningPublicKey: preferredEndpoint.signingPublicKey)
+            && sendRoutes.verify(ownerSigningPublicKey: endpointBinding.signingPublicKey)
             && createdAt.timeIntervalSince1970.isFinite
     }
 }

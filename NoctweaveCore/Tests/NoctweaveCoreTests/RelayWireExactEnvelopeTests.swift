@@ -1,0 +1,127 @@
+import Foundation
+import XCTest
+@testable import NoctweaveCore
+
+final class RelayWireExactEnvelopeTests: XCTestCase {
+    func testCoreHealthRequestUsesExactBoundEnvelope() throws {
+        let requestID = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+        let request = RelayRequest.health(requestID: requestID)
+        let data = try NoctweaveCoder.encode(request)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(Set(object.keys), ["requestID", "module", "version", "method", "body", "authToken"])
+        XCTAssertEqual(object["requestID"] as? String, requestID.uuidString)
+        XCTAssertEqual(object["module"] as? String, "nw.core")
+        XCTAssertEqual(object["version"] as? Int, 2)
+        XCTAssertEqual(object["method"] as? String, "health")
+        XCTAssertEqual((object["body"] as? [String: Any])?.count, 0)
+        XCTAssertTrue(object["authToken"] is NSNull)
+        XCTAssertEqual(try NoctweaveCoder.decode(RelayRequest.self, from: data), request)
+    }
+
+    func testRequestRejectsUnknownMissingAndMismatchedFields() throws {
+        let encoded = try NoctweaveCoder.encode(RelayRequest.health())
+        let base = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+
+        var extraTopLevel = base
+        extraTopLevel["type"] = "health"
+        XCTAssertThrowsError(try decodeRequest(extraTopLevel))
+
+        var missingAuth = base
+        missingAuth.removeValue(forKey: "authToken")
+        XCTAssertThrowsError(try decodeRequest(missingAuth))
+
+        var extraBody = base
+        extraBody["body"] = ["legacy": true]
+        XCTAssertThrowsError(try decodeRequest(extraBody))
+
+        var wrongVersion = base
+        wrongVersion["version"] = 1
+        XCTAssertThrowsError(try decodeRequest(wrongVersion))
+
+        var wrongMethod = base
+        wrongMethod["method"] = "append"
+        XCTAssertThrowsError(try decodeRequest(wrongMethod))
+
+        var wrongModule = base
+        wrongModule["module"] = "nw.blobs"
+        XCTAssertThrowsError(try decodeRequest(wrongModule))
+    }
+
+    func testOptionalRequestFieldsAreExplicitNulls() throws {
+        let request = RelayRequest.listFederationNodes(ListFederationNodesRequest())
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: NoctweaveCoder.encode(request)) as? [String: Any]
+        )
+        let body = try XCTUnwrap(object["body"] as? [String: Any])
+        XCTAssertEqual(
+            Set(body.keys),
+            ["mode", "federationName", "onlyHealthy", "maxStalenessSeconds", "requireSignedSnapshot"]
+        )
+        XCTAssertTrue(body.values.allSatisfy { $0 is NSNull })
+    }
+
+    func testResponseIsExactAndBoundToItsRequest() throws {
+        let request = RelayRequest.health()
+        let response = RelayResponse.success(.empty, respondingTo: request)
+        let data = try NoctweaveCoder.encode(response)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(Set(object.keys), ["requestID", "module", "version", "method", "status", "body", "error"])
+        XCTAssertEqual(object["requestID"] as? String, request.requestID.uuidString)
+        XCTAssertEqual(object["status"] as? String, "success")
+        XCTAssertEqual((object["body"] as? [String: Any])?.count, 0)
+        XCTAssertTrue(object["error"] is NSNull)
+
+        let decoded = try NoctweaveCoder.decode(RelayResponse.self, from: data)
+        XCTAssertTrue(decoded.isResponse(to: request))
+        XCTAssertFalse(decoded.isResponse(to: .health()))
+
+        var extraBody = object
+        extraBody["body"] = ["ok": true]
+        XCTAssertThrowsError(try decodeResponse(extraBody))
+
+        var bothBranches = object
+        bothBranches["error"] = ["code": "invalid-request", "message": "bad", "retryable": false]
+        XCTAssertThrowsError(try decodeResponse(bothBranches))
+    }
+
+    func testErrorResponseIsBoundedAndMutuallyExclusive() throws {
+        let request = RelayRequest.info()
+        let response = RelayResponse.error(
+            String(repeating: "x", count: RelayErrorBody.maximumMessageBytes + 1),
+            code: .internalFailure,
+            retryable: true,
+            respondingTo: request
+        )
+        XCTAssertEqual(response.error?.message, "Relay request failed")
+
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: NoctweaveCoder.encode(response)) as? [String: Any]
+        )
+        XCTAssertEqual(object["status"] as? String, "error")
+        XCTAssertTrue(object["body"] is NSNull)
+        let error = try XCTUnwrap(object["error"] as? [String: Any])
+        XCTAssertEqual(Set(error.keys), ["code", "message", "retryable"])
+
+        var unknownErrorField = object
+        var malformedError = error
+        malformedError["details"] = "not allowed"
+        unknownErrorField["error"] = malformedError
+        XCTAssertThrowsError(try decodeResponse(unknownErrorField))
+    }
+
+    private func decodeRequest(_ object: [String: Any]) throws -> RelayRequest {
+        try NoctweaveCoder.decode(
+            RelayRequest.self,
+            from: JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        )
+    }
+
+    private func decodeResponse(_ object: [String: Any]) throws -> RelayResponse {
+        try NoctweaveCoder.decode(
+            RelayResponse.self,
+            from: JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        )
+    }
+}

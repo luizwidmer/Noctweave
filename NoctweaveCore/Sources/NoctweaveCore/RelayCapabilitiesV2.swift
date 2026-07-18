@@ -82,19 +82,15 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         var modules = [
             RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .provisional),
             RelayModuleCapabilityV2(
-                module: "nw.mailbox",
+                module: "nw.opaque-route",
                 versions: [2],
-                status: .provisional,
+                status: .stable,
                 limits: [
-                    "maxConsumers": UInt64(NoctweaveArchitectureV2.maximumEndpoints),
-                    "maxCursorBytes": UInt64(NoctweaveArchitectureV2.maximumCursorBytes),
-                    "maxPage": 256
+                    "maxCursorBytes": UInt64(NoctweaveOpaqueRouteRelayStoreV2.cursorBytes),
+                    "maxPage": UInt64(NoctweaveOpaqueRouteRelayStoreV2.maximumSyncPage),
+                    "maxRoutes": UInt64(NoctweaveOpaqueRouteRelayStoreV2.maximumRoutes)
                 ]
             ),
-            // `nw.routes` remains an implemented experimental foundation but
-            // is deliberately not advertised until confidential transport,
-            // bounded route epochs, and relationship-scale metadata policy
-            // are part of the active client protocol.
             RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .provisional)
         ]
         if attachmentsEnabled {

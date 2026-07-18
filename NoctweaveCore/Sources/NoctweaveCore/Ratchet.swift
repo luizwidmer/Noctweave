@@ -16,17 +16,30 @@ public struct ChainKeyState: Codable, Equatable {
         self.skippedMessageKeys = skippedMessageKeys
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case keyData
         case counter
         case skippedMessageKeys
     }
 
     public init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: RatchetCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Ratchet chain fields must match the current protocol exactly"
+                )
+            )
+        }
         let container = try decoder.container(keyedBy: CodingKeys.self)
         keyData = try container.decode(Data.self, forKey: .keyData)
-        counter = try container.decodeIfPresent(UInt64.self, forKey: .counter) ?? 0
-        skippedMessageKeys = try container.decodeIfPresent([UInt64: Data].self, forKey: .skippedMessageKeys) ?? [:]
+        counter = try container.decode(UInt64.self, forKey: .counter)
+        skippedMessageKeys = try container.decode(
+            [UInt64: Data].self,
+            forKey: .skippedMessageKeys
+        )
         guard isStructurallyValid else {
             throw DecodingError.dataCorruptedError(
                 forKey: .keyData,
@@ -40,9 +53,7 @@ public struct ChainKeyState: Codable, Equatable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(keyData, forKey: .keyData)
         try container.encode(counter, forKey: .counter)
-        if !skippedMessageKeys.isEmpty {
-            try container.encode(skippedMessageKeys, forKey: .skippedMessageKeys)
-        }
+        try container.encode(skippedMessageKeys, forKey: .skippedMessageKeys)
     }
 
     public mutating func nextMessageKey() throws -> (counter: UInt64, key: SymmetricKey) {
@@ -134,5 +145,20 @@ public struct ChainKeyState: Codable, Equatable {
                 removed?.secureWipe()
             }
         }
+    }
+}
+
+private struct RatchetCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
     }
 }

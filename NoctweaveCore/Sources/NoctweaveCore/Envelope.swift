@@ -101,11 +101,9 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
     public let sessionId: String
     public let eventId: UUID
     public let senderEndpointHandle: RelationshipEndpointHandle
-    public let senderCertificateDigest: Data
-    public let senderEndpointSetEpoch: UInt64
+    public let senderBindingDigest: Data
     public let recipientEndpointHandle: RelationshipEndpointHandle
-    public let recipientCertificateDigest: Data
-    public let recipientEndpointSetEpoch: UInt64
+    public let recipientBindingDigest: Data
     public let cipherSuite: String
     public let negotiatedCapabilitiesDigest: Data
     public let bootstrap: DirectBootstrapV4
@@ -122,11 +120,9 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
         case sessionId
         case eventId
         case senderEndpointHandle
-        case senderCertificateDigest
-        case senderEndpointSetEpoch
+        case senderBindingDigest
         case recipientEndpointHandle
-        case recipientCertificateDigest
-        case recipientEndpointSetEpoch
+        case recipientBindingDigest
         case cipherSuite
         case negotiatedCapabilitiesDigest
         case bootstrap
@@ -144,11 +140,9 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
         sessionId: String,
         eventId: UUID,
         senderEndpointHandle: RelationshipEndpointHandle,
-        senderCertificateDigest: Data,
-        senderEndpointSetEpoch: UInt64,
+        senderBindingDigest: Data,
         recipientEndpointHandle: RelationshipEndpointHandle,
-        recipientCertificateDigest: Data,
-        recipientEndpointSetEpoch: UInt64,
+        recipientBindingDigest: Data,
         cipherSuite: String,
         negotiatedCapabilitiesDigest: Data,
         bootstrap: DirectBootstrapV4,
@@ -164,11 +158,9 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
         self.sessionId = sessionId
         self.eventId = eventId
         self.senderEndpointHandle = senderEndpointHandle
-        self.senderCertificateDigest = senderCertificateDigest
-        self.senderEndpointSetEpoch = senderEndpointSetEpoch
+        self.senderBindingDigest = senderBindingDigest
         self.recipientEndpointHandle = recipientEndpointHandle
-        self.recipientCertificateDigest = recipientCertificateDigest
-        self.recipientEndpointSetEpoch = recipientEndpointSetEpoch
+        self.recipientBindingDigest = recipientBindingDigest
         self.cipherSuite = cipherSuite
         self.negotiatedCapabilitiesDigest = negotiatedCapabilitiesDigest
         self.bootstrap = bootstrap
@@ -200,19 +192,14 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
             RelationshipEndpointHandle.self,
             forKey: .senderEndpointHandle
         )
-        senderCertificateDigest = try container.decode(Data.self, forKey: .senderCertificateDigest)
-        senderEndpointSetEpoch = try container.decode(UInt64.self, forKey: .senderEndpointSetEpoch)
+        senderBindingDigest = try container.decode(Data.self, forKey: .senderBindingDigest)
         recipientEndpointHandle = try container.decode(
             RelationshipEndpointHandle.self,
             forKey: .recipientEndpointHandle
         )
-        recipientCertificateDigest = try container.decode(
+        recipientBindingDigest = try container.decode(
             Data.self,
-            forKey: .recipientCertificateDigest
-        )
-        recipientEndpointSetEpoch = try container.decode(
-            UInt64.self,
-            forKey: .recipientEndpointSetEpoch
+            forKey: .recipientBindingDigest
         )
         cipherSuite = try container.decode(String.self, forKey: .cipherSuite)
         negotiatedCapabilitiesDigest = try container.decode(
@@ -243,9 +230,9 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
             && !sessionId.isEmpty
             && sessionId.utf8.count <= 128
             && senderEndpointHandle.isStructurallyValid
-            && senderCertificateDigest.count == 32
+            && senderBindingDigest.count == 32
             && recipientEndpointHandle.isStructurallyValid
-            && recipientCertificateDigest.count == 32
+            && recipientBindingDigest.count == 32
             && cipherSuite == DirectV4CipherSuite.identifier
             && negotiatedCapabilitiesDigest.count == 32
             && bootstrap.isStructurallyValid
@@ -267,11 +254,9 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
             sessionId: sessionId,
             eventId: eventId,
             senderEndpointHandle: senderEndpointHandle,
-            senderCertificateDigest: senderCertificateDigest,
-            senderEndpointSetEpoch: senderEndpointSetEpoch,
+            senderBindingDigest: senderBindingDigest,
             recipientEndpointHandle: recipientEndpointHandle,
-            recipientCertificateDigest: recipientCertificateDigest,
-            recipientEndpointSetEpoch: recipientEndpointSetEpoch,
+            recipientBindingDigest: recipientBindingDigest,
             cipherSuite: cipherSuite,
             negotiatedCapabilitiesDigest: negotiatedCapabilitiesDigest,
             bootstrap: bootstrap,
@@ -287,11 +272,9 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
         sessionId: String,
         eventId: UUID,
         senderEndpointHandle: RelationshipEndpointHandle,
-        senderCertificateDigest: Data,
-        senderEndpointSetEpoch: UInt64,
+        senderBindingDigest: Data,
         recipientEndpointHandle: RelationshipEndpointHandle,
-        recipientCertificateDigest: Data,
-        recipientEndpointSetEpoch: UInt64,
+        recipientBindingDigest: Data,
         cipherSuite: String,
         negotiatedCapabilitiesDigest: Data,
         bootstrap: DirectBootstrapV4,
@@ -307,11 +290,9 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
                 sessionId: sessionId,
                 eventId: eventId,
                 senderEndpointHandle: senderEndpointHandle,
-                senderCertificateDigest: senderCertificateDigest,
-                senderEndpointSetEpoch: senderEndpointSetEpoch,
+                senderBindingDigest: senderBindingDigest,
                 recipientEndpointHandle: recipientEndpointHandle,
-                recipientCertificateDigest: recipientCertificateDigest,
-                recipientEndpointSetEpoch: recipientEndpointSetEpoch,
+                recipientBindingDigest: recipientBindingDigest,
                 cipherSuite: cipherSuite,
                 negotiatedCapabilitiesDigest: negotiatedCapabilitiesDigest,
                 bootstrap: bootstrap,
@@ -332,11 +313,9 @@ public struct DirectEnvelopeV4: Codable, Identifiable, Equatable {
                 sessionId: sessionId,
                 eventId: eventId,
                 senderEndpointHandle: senderEndpointHandle,
-                senderCertificateDigest: senderCertificateDigest,
-                senderEndpointSetEpoch: senderEndpointSetEpoch,
+                senderBindingDigest: senderBindingDigest,
                 recipientEndpointHandle: recipientEndpointHandle,
-                recipientCertificateDigest: recipientCertificateDigest,
-                recipientEndpointSetEpoch: recipientEndpointSetEpoch,
+                recipientBindingDigest: recipientBindingDigest,
                 cipherSuite: cipherSuite,
                 negotiatedCapabilitiesDigest: negotiatedCapabilitiesDigest,
                 bootstrap: bootstrap,
@@ -374,7 +353,7 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
     public let groupId: UUID
     public let epoch: UInt64
     public let transcriptHash: Data
-    public let senderClientHandle: GroupScopedClientHandleV2
+    public let senderCredentialHandle: GroupScopedCredentialHandleV2
     public let eventId: UUID
     public let messageCounter: UInt64
     public let sentAt: Date
@@ -388,7 +367,7 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
         case groupId
         case epoch
         case transcriptHash
-        case senderClientHandle
+        case senderCredentialHandle
         case eventId
         case messageCounter
         case sentAt
@@ -403,7 +382,7 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
         groupId: UUID,
         epoch: UInt64,
         transcriptHash: Data,
-        senderClientHandle: GroupScopedClientHandleV2,
+        senderCredentialHandle: GroupScopedCredentialHandleV2,
         eventId: UUID,
         messageCounter: UInt64,
         sentAt: Date,
@@ -416,7 +395,7 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
         self.groupId = groupId
         self.epoch = epoch
         self.transcriptHash = transcriptHash
-        self.senderClientHandle = senderClientHandle
+        self.senderCredentialHandle = senderCredentialHandle
         self.eventId = eventId
         self.messageCounter = messageCounter
         self.sentAt = sentAt
@@ -442,9 +421,9 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
         groupId = try container.decode(UUID.self, forKey: .groupId)
         epoch = try container.decode(UInt64.self, forKey: .epoch)
         transcriptHash = try container.decode(Data.self, forKey: .transcriptHash)
-        senderClientHandle = try container.decode(
-            GroupScopedClientHandleV2.self,
-            forKey: .senderClientHandle
+        senderCredentialHandle = try container.decode(
+            GroupScopedCredentialHandleV2.self,
+            forKey: .senderCredentialHandle
         )
         eventId = try container.decode(UUID.self, forKey: .eventId)
         messageCounter = try container.decode(UInt64.self, forKey: .messageCounter)
@@ -465,7 +444,7 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
         groupId: UUID,
         epoch: UInt64,
         transcriptHash: Data,
-        senderClientHandle: GroupScopedClientHandleV2,
+        senderCredentialHandle: GroupScopedCredentialHandleV2,
         eventId: UUID = UUID(),
         messageCounter: UInt64,
         sentAt: Date = Date(),
@@ -483,7 +462,7 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
             groupId: groupId,
             epoch: epoch,
             transcriptHash: transcriptHash,
-            senderClientHandle: senderClientHandle,
+            senderCredentialHandle: senderCredentialHandle,
             eventId: eventId,
             messageCounter: messageCounter,
             sentAt: bucketedSentAt,
@@ -497,7 +476,7 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
             groupId: envelope.groupId,
             epoch: envelope.epoch,
             transcriptHash: envelope.transcriptHash,
-            senderClientHandle: envelope.senderClientHandle,
+            senderCredentialHandle: envelope.senderCredentialHandle,
             eventId: envelope.eventId,
             messageCounter: envelope.messageCounter,
             sentAt: envelope.sentAt,
@@ -515,7 +494,7 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
             && cipherSuite == NoctweaveSignedGroupV2.experimentalCipherSuite
             && epoch > 0
             && transcriptHash.count == 32
-            && senderClientHandle.isStructurallyValid
+            && senderCredentialHandle.isStructurallyValid
             && timestamp.isFinite
             && timestamp.truncatingRemainder(dividingBy: Self.timestampBucketSeconds) == 0
             && payload.nonce.count == 12
@@ -534,7 +513,7 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
                 groupId: groupId,
                 epoch: epoch,
                 transcriptHash: transcriptHash,
-                senderClientHandle: senderClientHandle,
+                senderCredentialHandle: senderCredentialHandle,
                 eventId: eventId,
                 messageCounter: messageCounter,
                 sentAt: sentAt,
@@ -544,16 +523,16 @@ public struct GroupApplicationEnvelopeV2: Codable, Identifiable, Equatable {
         )
     }
 
-    public func verifySignature(groupClientSigningPublicKey: Data) -> Bool {
+    public func verifySignature(groupCredentialSigningPublicKey: Data) -> Bool {
         guard isStructurallyValid,
-              SigningKeyPair.isValidPublicKey(groupClientSigningPublicKey),
+              SigningKeyPair.isValidPublicKey(groupCredentialSigningPublicKey),
               let signable = try? signableData() else {
             return false
         }
         return SigningKeyPair.verify(
             signature: signature,
             data: signable,
-            publicKeyData: groupClientSigningPublicKey
+            publicKeyData: groupCredentialSigningPublicKey
         )
     }
 }
@@ -713,11 +692,9 @@ private struct DirectEnvelopeAuthenticatedDataV4: Codable {
     let sessionId: String
     let eventId: UUID
     let senderEndpointHandle: RelationshipEndpointHandle
-    let senderCertificateDigest: Data
-    let senderEndpointSetEpoch: UInt64
+    let senderBindingDigest: Data
     let recipientEndpointHandle: RelationshipEndpointHandle
-    let recipientCertificateDigest: Data
-    let recipientEndpointSetEpoch: UInt64
+    let recipientBindingDigest: Data
     let cipherSuite: String
     let negotiatedCapabilitiesDigest: Data
     let bootstrap: DirectBootstrapV4
@@ -733,11 +710,9 @@ private struct DirectEnvelopeSignaturePayloadV4: Codable {
     let sessionId: String
     let eventId: UUID
     let senderEndpointHandle: RelationshipEndpointHandle
-    let senderCertificateDigest: Data
-    let senderEndpointSetEpoch: UInt64
+    let senderBindingDigest: Data
     let recipientEndpointHandle: RelationshipEndpointHandle
-    let recipientCertificateDigest: Data
-    let recipientEndpointSetEpoch: UInt64
+    let recipientBindingDigest: Data
     let cipherSuite: String
     let negotiatedCapabilitiesDigest: Data
     let bootstrap: DirectBootstrapV4
@@ -753,7 +728,7 @@ private struct GroupApplicationSignaturePayloadV2: Codable {
     let groupId: UUID
     let epoch: UInt64
     let transcriptHash: Data
-    let senderClientHandle: GroupScopedClientHandleV2
+    let senderCredentialHandle: GroupScopedCredentialHandleV2
     let eventId: UUID
     let messageCounter: UInt64
     let sentAt: Date
