@@ -8,12 +8,12 @@ source "$ROOT_DIR/scripts/liboqs-runtime.sh"
 echo "Verifying clean 1.0 relationship, opaque-route, event, group, wake, and relay alignment..."
 swift test \
   --package-path "$ROOT_DIR/NoctweaveCore" \
-  --filter '(CodingPreflightTests|ContactPairingV2Tests|PersonaScopeFreshnessTests|MessageProjectionStrictTests|PairwiseOpaqueRouteV2Tests|OpaqueRoutePacketV2Tests|OpaqueRouteRelayStoreV2Tests|HeadlessCurrentArchitectureTests|ConversationEventStrictTests|WirePayloadV2Tests|NoctweavePQGroupRuntimeV2Tests|GroupPolicyTests|DecentralizedWakeRouteTests|RelayWireExactEnvelopeTests|StrictCryptographicStateTests)'
+  --filter '(CodingPreflightTests|ContactPairingV2Tests|PersonaScopeFreshnessTests|MessageProjectionStrictTests|PairwiseOpaqueRouteV2Tests|OpaqueRoutePacketV2Tests|OpaqueRouteRelayStoreV2Tests|HeadlessCurrentArchitectureTests|ConversationEventStrictTests|WirePayloadV2Tests|NoctweavePQGroupRuntimeV2Tests|GroupPolicyTests|GroupScopedHandleStrictTests|DecentralizedWakeRouteTests|RelayWireExactEnvelopeTests|RelaySuccessObjectExactnessTests|StableRequestWireBoundaryTests|StrictCryptographicStateTests)'
 
 echo "Verifying Linux relay modular-wire and opaque-route parity coverage..."
 swift test \
   --package-path "$ROOT_DIR/NoctweaveRelayServer" \
-  --filter '(OpaqueRouteRuntimeV2Tests|OpaqueRouteRelayIntegrationTests|RelayWireExactEnvelopeTests|RendezvousRelayTransportTests|RelayCapabilitiesV2Tests|RelayStoreCurrentTests)'
+  --filter '(OpaqueRouteRuntimeV2Tests|OpaqueRouteRelayIntegrationTests|RelayWireExactEnvelopeTests|RelayWireStructuralBoundaryTests|RendezvousRelayTransportTests|RelayCapabilitiesV2Tests|StableResponseExactModelsTests|StableModelBoundsTests|RelayStoreCurrentTests|AttachmentBlobStoreExactJSONTests)'
 
 echo "Verifying public repository boundary..."
 if git -C "$ROOT_DIR" ls-files | grep -E '^(Noctyra Messaging Client|Noctyra Relay|Noctweave\.xcworkspace)/'; then
