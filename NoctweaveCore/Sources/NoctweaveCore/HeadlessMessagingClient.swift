@@ -2605,7 +2605,7 @@ public actor HeadlessMessagingClient {
                     .invalidRelayResponse, .noUsableRoute, .incompleteBundle,
                     .continuityNotAllowed, .routeGapDetected,
                     .relationshipConsentRequired, .relationshipBlocked,
-                    .receiptDisabled:
+                    .receiptDisabled, .staleGroupRuntime:
                 return nil
             }
         }

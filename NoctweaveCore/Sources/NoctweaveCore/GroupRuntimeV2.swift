@@ -796,10 +796,11 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               Set(pendingLocalCredentials.map(\.credentialHandle)).count
                 == pendingLocalCredentials.count,
               try pendingLocalCredentials.allSatisfy({
-                  $0.groupId == groupId
+                  let structurallyValid = try $0.isStructurallyValidThrowing
+                  return $0.groupId == groupId
                       && $0.memberHandle == localCredential.memberHandle
                       && $0.credentialHandle != localCredential.credentialHandle
-                      && (try $0.isStructurallyValidThrowing)
+                      && structurallyValid
               }),
               events.count <= NoctweaveArchitectureV2.maximumGroupEvents,
               Set(events.map(\.id)).count == events.count,

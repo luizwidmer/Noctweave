@@ -123,15 +123,17 @@ public struct LocalGroupCredentialV2: Codable, Equatable {
     /// Throwing protocol preflight. Local ML-DSA/ML-KEM runtime failures are
     /// preserved; the nonthrowing wrapper remains available for diagnostics.
     public var isStructurallyValidThrowing: Bool {
-        guard memberHandle.isStructurallyValid,
-              credentialHandle.isStructurallyValid,
-              admissionDigest.count == 32 else {
-            return false
+        get throws {
+            guard memberHandle.isStructurallyValid,
+                  credentialHandle.isStructurallyValid,
+                  admissionDigest.count == 32 else {
+                return false
+            }
+            guard try SigningKeyPair.isValidPublicKeyThrowing(signingKey.publicKeyData) else {
+                return false
+            }
+            return try AgreementKeyPair.isValidPublicKeyThrowing(agreementKey.publicKeyData)
         }
-        guard try SigningKeyPair.isValidPublicKeyThrowing(signingKey.publicKeyData) else {
-            return false
-        }
-        return try AgreementKeyPair.isValidPublicKeyThrowing(agreementKey.publicKeyData)
     }
 
     public var isStructurallyValid: Bool {
