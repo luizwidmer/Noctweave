@@ -2758,7 +2758,7 @@ final class NoctweaveCoreTests: XCTestCase {
             fileName: nil,
             mimeType: "image/jpeg",
             byteCount: 123,
-            sha256: Data([0x01, 0x02]),
+            sha256: Data(repeating: 0x42, count: 32),
             chunkCount: 1,
             chunkSize: 123
         )
@@ -2811,24 +2811,6 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertFalse(injectedMIME.isStructurallyValid())
     }
 
-
-    func testMessageDecodingAllowsMissingOptionalSenderDisplayName() throws {
-        let json = """
-        {
-          "id": "E5C22757-5D8E-4F67-A2C1-73092E5B5E8E",
-          "direction": "received",
-          "body": "hello",
-          "timestamp": "2026-02-16T00:00:00Z",
-          "counter": 1,
-          "isMismatch": false
-        }
-        """
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let message = try decoder.decode(Message.self, from: Data(json.utf8))
-        XCTAssertNil(message.senderDisplayName)
-        XCTAssertEqual(message.body, "hello")
-    }
 
     func testOnionTransportPeelsThreeHopsInOrder() throws {
         let hop1 = AgreementKeyPair()

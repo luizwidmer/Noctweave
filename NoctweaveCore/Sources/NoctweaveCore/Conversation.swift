@@ -131,6 +131,9 @@ public struct Conversation: Codable, Identifiable, Equatable {
             && !sessionId.isEmpty
             && sessionId.utf8.count <= 256
             && rootKey.count == 32
+            && messages.count <= NoctweaveArchitectureV2.maximumRelationshipEvents
+            && Set(messages.map(\.id)).count == messages.count
+            && messages.allSatisfy(\.isStructurallyValid)
             && unreadCount >= 0
             && unreadCount <= messages.count
     }
