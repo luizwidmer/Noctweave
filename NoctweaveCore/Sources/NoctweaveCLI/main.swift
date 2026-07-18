@@ -54,11 +54,11 @@ private struct CommandRunner {
             try await burnPersona(options)
         case "endpoint":
             try writeJSON(try endpoint(options))
-        case "health", "relay-health":
+        case "health":
             try await sendRelay(.health(), options: options)
-        case "info", "relay-info":
+        case "info":
             try await sendRelay(.info(), options: options)
-        case "raw", "send-raw":
+        case "raw":
             try await sendRelay(try relayRequest(options), options: options)
         default:
             throw CLIError("Unknown command: \(command). Run `NoctweaveCLI help`.")
