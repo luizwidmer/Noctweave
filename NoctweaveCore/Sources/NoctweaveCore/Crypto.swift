@@ -46,14 +46,6 @@ public struct SigningKeyPair: Codable {
         case publicKeyData
     }
 
-    public init() {
-        do {
-            self = try Self.generate()
-        } catch {
-            fatalError("Noctweave could not generate an ML-DSA-65 signing key: \(error)")
-        }
-    }
-
     public static func generate() throws -> SigningKeyPair {
         let sig = try PQCLibrary.signature()
         defer { OQS_SIG_free(sig) }
@@ -256,14 +248,6 @@ public struct AgreementKeyPair: Codable {
     private enum CodingKeys: String, CodingKey {
         case privateKeyData
         case publicKeyData
-    }
-
-    public init() {
-        do {
-            self = try Self.generate()
-        } catch {
-            fatalError("Noctweave could not generate an ML-KEM-768 agreement key: \(error)")
-        }
     }
 
     public static func generate() throws -> AgreementKeyPair {

@@ -1159,7 +1159,7 @@ final class NoctweaveCoreTests: XCTestCase {
     }
 
     func testOpenFederationDHTRecordValidatesSignedRelayAdvertisement() throws {
-        let signingKey = SigningKeyPair()
+        let signingKey = try SigningKeyPair.generate()
         let endpoint = RelayEndpoint(
             host: "relay.example.org",
             port: 443,
@@ -1186,7 +1186,7 @@ final class NoctweaveCoreTests: XCTestCase {
     }
 
     func testOpenFederationDHTRecordRejectsTamperedEndpoint() throws {
-        let signingKey = SigningKeyPair()
+        let signingKey = try SigningKeyPair.generate()
         let record = try OpenFederationDHTRecord.signed(
             endpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket),
             federationName: "poison-test",
@@ -1247,7 +1247,7 @@ final class NoctweaveCoreTests: XCTestCase {
         let record = try OpenFederationDHTRecord.signed(
             endpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket),
             federationName: "one-open-net",
-            signingKey: SigningKeyPair()
+            signingKey: try SigningKeyPair.generate()
         )
 
         XCTAssertThrowsError(
@@ -1258,7 +1258,7 @@ final class NoctweaveCoreTests: XCTestCase {
     }
 
     func testOpenFederationDHTRecordRejectsExpiredAndOverlongRecords() throws {
-        let signingKey = SigningKeyPair()
+        let signingKey = try SigningKeyPair.generate()
         let endpoint = RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket)
         let expired = try OpenFederationDHTRecord.signed(
             endpoint: endpoint,
@@ -1313,7 +1313,7 @@ final class NoctweaveCoreTests: XCTestCase {
         let record = try OpenFederationDHTRecord.signed(
             endpoint: RelayEndpoint(host: "relay.example.org", port: 9339, useTLS: false, transport: .tcp),
             federationName: "secure-only",
-            signingKey: SigningKeyPair()
+            signingKey: try SigningKeyPair.generate()
         )
 
         XCTAssertThrowsError(
@@ -1428,7 +1428,7 @@ final class NoctweaveCoreTests: XCTestCase {
 
     func testOpenFederationDHTDiscoveryAppliesHostCapToRelayIdentityHostMoves() throws {
         let now = Date(timeIntervalSince1970: 1_000)
-        let movingKey = SigningKeyPair()
+        let movingKey = try SigningKeyPair.generate()
         let original = try makeDHTRecord(
             host: "original.example.org",
             federationName: "open-net",
@@ -1498,7 +1498,7 @@ final class NoctweaveCoreTests: XCTestCase {
 
     func testOpenFederationDHTDiscoveryHandlesChurnAndStaleRecords() throws {
         let now = Date(timeIntervalSince1970: 1_000)
-        let signingKey = SigningKeyPair()
+        let signingKey = try SigningKeyPair.generate()
         let older = try makeDHTRecord(
             host: "relay.example.org",
             federationName: "open-net",
@@ -1537,7 +1537,7 @@ final class NoctweaveCoreTests: XCTestCase {
         let federationName = "open-net"
         let namespace = OpenFederationDHTRecord.namespace(federationName: federationName)
         let localEndpoint = RelayEndpoint(host: "local-relay.example.org", port: 443, useTLS: true, transport: .websocket)
-        let localKey = SigningKeyPair()
+        let localKey = try SigningKeyPair.generate()
         let remoteRecord = try makeDHTRecord(host: "remote-relay.example.org", federationName: federationName, issuedAt: now)
         let transport = MockOpenFederationDHTTransport(recordsByNamespace: [namespace: [remoteRecord]])
         var engine = OpenFederationDHTDiscoveryEngine(
@@ -1679,7 +1679,7 @@ final class NoctweaveCoreTests: XCTestCase {
             _ = try await engine.refresh(
                 transport: transport,
                 localEndpoint: RelayEndpoint(host: "relay.example.org", port: 443, useTLS: true, transport: .websocket),
-                signingKey: SigningKeyPair(),
+                signingKey: try SigningKeyPair.generate(),
                 now: Date(timeIntervalSince1970: 1_000)
             )
             XCTFail("Expected disabled DHT discovery to throw before transport access")
@@ -1707,7 +1707,7 @@ final class NoctweaveCoreTests: XCTestCase {
             _ = try await engine.refresh(
                 transport: transport,
                 localEndpoint: RelayEndpoint(host: "127.0.0.1", port: 443, useTLS: true, transport: .websocket),
-                signingKey: SigningKeyPair(),
+                signingKey: try SigningKeyPair.generate(),
                 now: Date(timeIntervalSince1970: 1_000)
             )
             XCTFail("Expected non-public local advertisement to be rejected")
@@ -2080,7 +2080,7 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let substituted = OneTimePrekey(
             id: original.id,
-            publicKey: AgreementKeyPair().publicKeyData,
+            publicKey: try AgreementKeyPair.generate().publicKeyData,
             signature: original.signature
         )
         XCTAssertFalse(substituted.verify(using: authority.signingKey.publicKeyData))
@@ -2094,7 +2094,7 @@ final class NoctweaveCoreTests: XCTestCase {
 
         let unsigned = UnsignedOneTimePrekey(
             id: UUID(),
-            publicKey: AgreementKeyPair().publicKeyData
+            publicKey: try AgreementKeyPair.generate().publicKeyData
         )
         let data = try NoctweaveCoder.encode(unsigned)
 
@@ -2140,7 +2140,7 @@ final class NoctweaveCoreTests: XCTestCase {
             try AgreementKeyPair.encapsulate(to: Data([0x01]))
         )
 
-        let validAgreementKey = AgreementKeyPair()
+        let validAgreementKey = try AgreementKeyPair.generate()
         XCTAssertThrowsError(
             try validAgreementKey.decapsulate(ciphertext: Data([0x01]))
         )
@@ -2883,9 +2883,9 @@ final class NoctweaveCoreTests: XCTestCase {
 
 
     func testOnionTransportPeelsThreeHopsInOrder() throws {
-        let hop1 = AgreementKeyPair()
-        let hop2 = AgreementKeyPair()
-        let hop3 = AgreementKeyPair()
+        let hop1 = try AgreementKeyPair.generate()
+        let hop2 = try AgreementKeyPair.generate()
+        let hop3 = try AgreementKeyPair.generate()
         let finalPayload = Data("fixed-size-message-frame".utf8)
         let packet = try OnionTransport.seal(
             finalPayload: finalPayload,
@@ -2932,8 +2932,8 @@ final class NoctweaveCoreTests: XCTestCase {
     }
 
     func testOnionTransportRejectsWrongHopKey() throws {
-        let intendedHop = AgreementKeyPair()
-        let wrongHop = AgreementKeyPair()
+        let intendedHop = try AgreementKeyPair.generate()
+        let wrongHop = try AgreementKeyPair.generate()
         let packet = try OnionTransport.seal(
             finalPayload: Data("payload".utf8),
             hops: [
@@ -2949,7 +2949,7 @@ final class NoctweaveCoreTests: XCTestCase {
     }
 
     func testOnionTransportRejectsTamperedLayer() throws {
-        let hop = AgreementKeyPair()
+        let hop = try AgreementKeyPair.generate()
         let packet = try OnionTransport.seal(
             finalPayload: Data("payload".utf8),
             hops: [
@@ -3551,14 +3551,14 @@ final class NoctweaveCoreTests: XCTestCase {
     private func makeDHTRecord(
         host: String,
         federationName: String?,
-        signingKey: SigningKeyPair = SigningKeyPair(),
+        signingKey: SigningKeyPair? = nil,
         issuedAt: Date,
         lifetimeSeconds: TimeInterval = 300
     ) throws -> OpenFederationDHTRecord {
         try makeDHTRecord(
             endpoint: RelayEndpoint(host: host, port: 443, useTLS: true, transport: .websocket),
             federationName: federationName,
-            signingKey: signingKey,
+            signingKey: try signingKey ?? SigningKeyPair.generate(),
             issuedAt: issuedAt,
             lifetimeSeconds: lifetimeSeconds
         )
@@ -3567,14 +3567,14 @@ final class NoctweaveCoreTests: XCTestCase {
     private func makeDHTRecord(
         endpoint: RelayEndpoint,
         federationName: String?,
-        signingKey: SigningKeyPair = SigningKeyPair(),
+        signingKey: SigningKeyPair? = nil,
         issuedAt: Date,
         lifetimeSeconds: TimeInterval = 300
     ) throws -> OpenFederationDHTRecord {
         try OpenFederationDHTRecord.signed(
             endpoint: endpoint,
             federationName: federationName,
-            signingKey: signingKey,
+            signingKey: try signingKey ?? SigningKeyPair.generate(),
             issuedAt: issuedAt,
             lifetimeSeconds: lifetimeSeconds
         )
