@@ -1,12 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" role="img" aria-labelledby="title desc">
-  <title id="title">Noctweave</title>
-  <desc id="desc">The Noctweave Offset Veil mark and geometric wordmark on warm ivory.</desc>
-  <rect x="2" y="2" width="1196" height="276" rx="34" fill="#FAF3EA" stroke="#D9C8BC" stroke-width="4"/>
-  <g transform="translate(40 12)">
-    <path d="M96 32H224V176L140 134V110L96 88Z" fill="#922D35"/>
-    <path d="M32 80L116 122V146L160 168V224H32Z" fill="#C96A61"/>
-  </g>
-  <g transform="translate(360 96)" fill="#1B1217">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 734 88" role="img" aria-labelledby="title desc">
+  <title id="title">Noctweave wordmark</title>
+  <desc id="desc">The uppercase Noctweave geometric wordmark.</desc>
+  <g fill="#1B1217">
     <path d="M0 88V0h14l36 62V0h14v88H50L14 26v62Z"/>
     <path fill-rule="evenodd" d="M98 0h32c10 0 16 6 16 16v56c0 10-6 16-16 16H98c-10 0-16-6-16-16V16c0-10 6-16 16-16Zm1 13c-2 0-3 1-3 4v54c0 3 1 4 3 4h30c2 0 3-1 3-4V17c0-3-1-4-3-4Z"/>
     <path d="M180 0h48v13h-47c-2 0-3 1-3 4v54c0 3 1 4 3 4h47v13h-48c-10 0-16-6-16-16V16c0-10 6-16 16-16Z"/>

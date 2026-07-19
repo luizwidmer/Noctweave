@@ -3,54 +3,58 @@
   <desc id="desc">Five steps show one-use encrypted pairing, a fresh post-quantum relationship session, durable local event sealing, opaque-route delivery, and recipient verification and decryption.</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0a0d19"/>
-      <stop offset="1" stop-color="#0c252c"/>
+      <stop offset="0" stop-color="#1B1217"/>
+      <stop offset="1" stop-color="#2A1B21"/>
     </linearGradient>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
-      <path d="M1 1 9 5 1 9Z" fill="#64748b"/>
+      <path d="M1 1 9 5 1 9Z" fill="#D9C8BC"/>
     </marker>
   </defs>
   <rect width="1200" height="430" rx="30" fill="url(#background)"/>
+  <g transform="translate(1090 10) scale(.24)" aria-hidden="true">
+    <path d="M96 32H224V176L140 134V110L96 88Z" fill="#FAF3EA"/>
+    <path d="M32 80L116 122V146L160 168V224H32Z" fill="#C96A61"/>
+  </g>
   <g font-family="Geist, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
-    <text x="60" y="62" fill="#F3F5FA" font-size="28" font-weight="750">From one-use pairing to decrypted event</text>
-    <text x="60" y="94" fill="#A8ADBD" font-size="16">Private relationship material stays client-side throughout the flow.</text>
+    <text x="60" y="62" fill="#FAF3EA" font-size="28" font-weight="750">From one-use pairing to decrypted event</text>
+    <text x="60" y="94" fill="#BDA9AA" font-size="16">Private relationship material stays client-side throughout the flow.</text>
 
-    <g fill="none" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)">
+    <g fill="none" stroke="#D9C8BC" stroke-width="2" marker-end="url(#arrow)">
       <path d="M250 232H274"/><path d="M470 232H494"/><path d="M690 232H714"/><path d="M910 232H934"/>
     </g>
 
     <g>
-      <rect x="54" y="145" width="196" height="175" rx="20" fill="#181d36" stroke="#7B61FF"/>
-      <circle cx="84" cy="177" r="16" fill="#7B61FF"/><text x="84" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">1</text>
+      <rect x="54" y="145" width="196" height="175" rx="20" fill="#2A1B21" stroke="#922D35"/>
+      <circle cx="84" cy="177" r="16" fill="#922D35"/><text x="84" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">1</text>
       <text x="78" y="220" fill="#fff" font-size="19" font-weight="700">Pair</text>
-      <text x="78" y="251" fill="#A8ADBD" font-size="14">Redeem a one-use</text>
-      <text x="78" y="273" fill="#A8ADBD" font-size="14">encrypted rendezvous.</text>
+      <text x="78" y="251" fill="#BDA9AA" font-size="14">Redeem a one-use</text>
+      <text x="78" y="273" fill="#BDA9AA" font-size="14">encrypted rendezvous.</text>
 
-      <rect x="274" y="145" width="196" height="175" rx="20" fill="#181d36" stroke="#7B61FF"/>
-      <circle cx="304" cy="177" r="16" fill="#7B61FF"/><text x="304" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">2</text>
+      <rect x="274" y="145" width="196" height="175" rx="20" fill="#2A1B21" stroke="#922D35"/>
+      <circle cx="304" cy="177" r="16" fill="#922D35"/><text x="304" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">2</text>
       <text x="298" y="220" fill="#fff" font-size="19" font-weight="700">Establish</text>
-      <text x="298" y="251" fill="#A8ADBD" font-size="14">Verify fresh authorities</text>
-      <text x="298" y="273" fill="#A8ADBD" font-size="14">and consume PQ prekeys.</text>
+      <text x="298" y="251" fill="#BDA9AA" font-size="14">Verify fresh authorities</text>
+      <text x="298" y="273" fill="#BDA9AA" font-size="14">and consume PQ prekeys.</text>
 
-      <rect x="494" y="145" width="196" height="175" rx="20" fill="#181d36" stroke="#7B61FF"/>
-      <circle cx="524" cy="177" r="16" fill="#7B61FF"/><text x="524" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">3</text>
+      <rect x="494" y="145" width="196" height="175" rx="20" fill="#2A1B21" stroke="#922D35"/>
+      <circle cx="524" cy="177" r="16" fill="#922D35"/><text x="524" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">3</text>
       <text x="518" y="220" fill="#fff" font-size="19" font-weight="700">Seal</text>
-      <text x="518" y="251" fill="#A8ADBD" font-size="14">Persist, pad, ratchet,</text>
-      <text x="518" y="273" fill="#A8ADBD" font-size="14">and encrypt the event.</text>
+      <text x="518" y="251" fill="#BDA9AA" font-size="14">Persist, pad, ratchet,</text>
+      <text x="518" y="273" fill="#BDA9AA" font-size="14">and encrypt the event.</text>
 
-      <rect x="714" y="145" width="196" height="175" rx="20" fill="#12313b" stroke="#3DD5C5"/>
-      <circle cx="744" cy="177" r="16" fill="#299EAA"/><text x="744" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">4</text>
+      <rect x="714" y="145" width="196" height="175" rx="20" fill="#3D2326" stroke="#C96A61"/>
+      <circle cx="744" cy="177" r="16" fill="#C96A61"/><text x="744" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">4</text>
       <text x="738" y="220" fill="#fff" font-size="19" font-weight="700">Route</text>
-      <text x="738" y="251" fill="#A8ADBD" font-size="14">Relay orders fixed opaque</text>
-      <text x="738" y="273" fill="#A8ADBD" font-size="14">packets by route.</text>
+      <text x="738" y="251" fill="#BDA9AA" font-size="14">Relay orders fixed opaque</text>
+      <text x="738" y="273" fill="#BDA9AA" font-size="14">packets by route.</text>
 
-      <rect x="934" y="145" width="212" height="175" rx="20" fill="#181d36" stroke="#7B61FF"/>
-      <circle cx="964" cy="177" r="16" fill="#7B61FF"/><text x="964" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">5</text>
+      <rect x="934" y="145" width="212" height="175" rx="20" fill="#2A1B21" stroke="#922D35"/>
+      <circle cx="964" cy="177" r="16" fill="#922D35"/><text x="964" y="183" fill="#fff" font-size="15" font-weight="700" text-anchor="middle">5</text>
       <text x="958" y="220" fill="#fff" font-size="19" font-weight="700">Open</text>
-      <text x="958" y="251" fill="#A8ADBD" font-size="14">Sync, verify, decrypt,</text>
-      <text x="958" y="273" fill="#A8ADBD" font-size="14">persist, commit route cursor.</text>
+      <text x="958" y="251" fill="#BDA9AA" font-size="14">Sync, verify, decrypt,</text>
+      <text x="958" y="273" fill="#BDA9AA" font-size="14">persist, commit route cursor.</text>
     </g>
 
-    <text x="600" y="377" fill="#A8ADBD" font-size="15" text-anchor="middle">Exact retry bytes, ordered cursors, replay rejection, and bounded recovery protect the relationship as events advance.</text>
+    <text x="600" y="377" fill="#BDA9AA" font-size="15" text-anchor="middle">Exact retry bytes, ordered cursors, replay rejection, and bounded recovery protect the relationship as events advance.</text>
   </g>
 </svg>

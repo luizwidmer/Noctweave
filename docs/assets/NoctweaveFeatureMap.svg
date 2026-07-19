@@ -3,63 +3,67 @@
   <desc id="desc">The required Noctweave foundation includes fresh relationship authority, post-quantum sessions, encrypted events, and opaque-route delivery. Optional capabilities add groups, attachment offload, federation discovery, and metadata research.</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0b1020"/>
-      <stop offset="1" stop-color="#09242a"/>
+      <stop offset="0" stop-color="#1B1217"/>
+      <stop offset="1" stop-color="#2A1B21"/>
     </linearGradient>
     <linearGradient id="required" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#44358F"/>
-      <stop offset="1" stop-color="#155e75"/>
+      <stop offset="0" stop-color="#922D35"/>
+      <stop offset="1" stop-color="#C96A61"/>
     </linearGradient>
   </defs>
   <rect width="1200" height="650" rx="30" fill="url(#background)"/>
+  <g transform="translate(1090 10) scale(.24)" aria-hidden="true">
+    <path d="M96 32H224V176L140 134V110L96 88Z" fill="#FAF3EA"/>
+    <path d="M32 80L116 122V146L160 168V224H32Z" fill="#C96A61"/>
+  </g>
 
   <g font-family="Geist, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
-    <text x="60" y="65" fill="#F3F5FA" font-size="30" font-weight="750">One secure foundation, optional operational layers</text>
-    <text x="60" y="98" fill="#A8ADBD" font-size="17">The required path is interoperable. Optional capabilities are advertised only when enabled and usable.</text>
+    <text x="60" y="65" fill="#FAF3EA" font-size="30" font-weight="750">One secure foundation, optional operational layers</text>
+    <text x="60" y="98" fill="#BDA9AA" font-size="17">The required path is interoperable. Optional capabilities are advertised only when enabled and usable.</text>
 
-    <text x="60" y="153" fill="#D5D0FF" font-size="14" font-weight="700" letter-spacing="1.5">REQUIRED PROTOCOL FOUNDATION</text>
+    <text x="60" y="153" fill="#EBC7AF" font-size="14" font-weight="700" letter-spacing="1.5">REQUIRED PROTOCOL FOUNDATION</text>
     <g>
-      <rect x="60" y="175" width="1080" height="86" rx="20" fill="url(#required)" stroke="#72E5DA" stroke-opacity="0.55"/>
-      <line x1="330" y1="190" x2="330" y2="246" stroke="#B7F4EE" stroke-opacity="0.25"/>
-      <line x1="600" y1="190" x2="600" y2="246" stroke="#B7F4EE" stroke-opacity="0.25"/>
-      <line x1="870" y1="190" x2="870" y2="246" stroke="#B7F4EE" stroke-opacity="0.25"/>
+      <rect x="60" y="175" width="1080" height="86" rx="20" fill="url(#required)" stroke="#EBC7AF" stroke-opacity="0.55"/>
+      <line x1="330" y1="190" x2="330" y2="246" stroke="#EBC7AF" stroke-opacity="0.25"/>
+      <line x1="600" y1="190" x2="600" y2="246" stroke="#EBC7AF" stroke-opacity="0.25"/>
+      <line x1="870" y1="190" x2="870" y2="246" stroke="#EBC7AF" stroke-opacity="0.25"/>
 
       <text x="195" y="211" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">Relationship authority</text>
-      <text x="195" y="237" fill="#D1D5E0" font-size="14" text-anchor="middle">fresh ML-DSA-65 keys</text>
+      <text x="195" y="237" fill="#D9C8BC" font-size="14" text-anchor="middle">fresh ML-DSA-65 keys</text>
       <text x="465" y="211" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">Session establishment</text>
-      <text x="465" y="237" fill="#D1D5E0" font-size="14" text-anchor="middle">ML-KEM-768 prekeys</text>
+      <text x="465" y="237" fill="#D9C8BC" font-size="14" text-anchor="middle">ML-KEM-768 prekeys</text>
       <text x="735" y="211" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">Message protection</text>
-      <text x="735" y="237" fill="#D1D5E0" font-size="14" text-anchor="middle">AES-256-GCM + ratchets</text>
+      <text x="735" y="237" fill="#D9C8BC" font-size="14" text-anchor="middle">AES-256-GCM + ratchets</text>
       <text x="1005" y="211" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">Relay delivery</text>
-      <text x="1005" y="237" fill="#D1D5E0" font-size="14" text-anchor="middle">opaque routes + cursors</text>
+      <text x="1005" y="237" fill="#D9C8BC" font-size="14" text-anchor="middle">opaque routes + cursors</text>
     </g>
 
-    <text x="60" y="315" fill="#B7F4EE" font-size="14" font-weight="700" letter-spacing="1.5">OPTIONAL CAPABILITIES</text>
+    <text x="60" y="315" fill="#EBC7AF" font-size="14" font-weight="700" letter-spacing="1.5">OPTIONAL CAPABILITIES</text>
     <g>
-      <rect x="60" y="338" width="250" height="105" rx="18" fill="#151d31" stroke="#3b4b68"/>
-      <text x="82" y="373" fill="#F3F5FA" font-size="18" font-weight="700">Experimental groups</text>
-      <text x="82" y="402" fill="#A8ADBD" font-size="14">group-scoped credentials</text>
-      <text x="82" y="424" fill="#A8ADBD" font-size="14">epochs + durable fanout</text>
+      <rect x="60" y="338" width="250" height="105" rx="18" fill="#2A1B21" stroke="#56313A"/>
+      <text x="82" y="373" fill="#FAF3EA" font-size="18" font-weight="700">Experimental groups</text>
+      <text x="82" y="402" fill="#BDA9AA" font-size="14">group-scoped credentials</text>
+      <text x="82" y="424" fill="#BDA9AA" font-size="14">epochs + durable fanout</text>
 
-      <rect x="337" y="338" width="250" height="105" rx="18" fill="#151d31" stroke="#3b4b68"/>
-      <text x="359" y="373" fill="#F3F5FA" font-size="18" font-weight="700">Attachments</text>
-      <text x="359" y="402" fill="#A8ADBD" font-size="14">encrypted bounded chunks</text>
-      <text x="359" y="424" fill="#A8ADBD" font-size="14">TTL + optional IPFS offload</text>
+      <rect x="337" y="338" width="250" height="105" rx="18" fill="#2A1B21" stroke="#56313A"/>
+      <text x="359" y="373" fill="#FAF3EA" font-size="18" font-weight="700">Attachments</text>
+      <text x="359" y="402" fill="#BDA9AA" font-size="14">encrypted bounded chunks</text>
+      <text x="359" y="424" fill="#BDA9AA" font-size="14">TTL + optional IPFS offload</text>
 
-      <rect x="614" y="338" width="250" height="105" rx="18" fill="#151d31" stroke="#3b4b68"/>
-      <text x="636" y="373" fill="#F3F5FA" font-size="18" font-weight="700">Federation</text>
-      <text x="636" y="402" fill="#A8ADBD" font-size="14">operator discovery + policy</text>
-      <text x="636" y="424" fill="#A8ADBD" font-size="14">clients submit to peer routes</text>
+      <rect x="614" y="338" width="250" height="105" rx="18" fill="#2A1B21" stroke="#56313A"/>
+      <text x="636" y="373" fill="#FAF3EA" font-size="18" font-weight="700">Federation</text>
+      <text x="636" y="402" fill="#BDA9AA" font-size="14">operator discovery + policy</text>
+      <text x="636" y="424" fill="#BDA9AA" font-size="14">clients submit to peer routes</text>
 
-      <rect x="891" y="338" width="250" height="105" rx="18" fill="#151d31" stroke="#3b4b68"/>
-      <text x="913" y="373" fill="#F3F5FA" font-size="18" font-weight="700">Metadata research</text>
-      <text x="913" y="402" fill="#A8ADBD" font-size="14">temporal buckets + PIR tools</text>
-      <text x="913" y="424" fill="#A8ADBD" font-size="14">onion and mixnet primitives</text>
+      <rect x="891" y="338" width="250" height="105" rx="18" fill="#2A1B21" stroke="#56313A"/>
+      <text x="913" y="373" fill="#FAF3EA" font-size="18" font-weight="700">Metadata research</text>
+      <text x="913" y="402" fill="#BDA9AA" font-size="14">temporal buckets + PIR tools</text>
+      <text x="913" y="424" fill="#BDA9AA" font-size="14">onion and mixnet primitives</text>
     </g>
 
-    <rect x="60" y="492" width="1080" height="104" rx="20" fill="#0f172a" stroke="#334155"/>
-    <text x="88" y="530" fill="#F3F5FA" font-size="17" font-weight="700">Security claim boundary</text>
-    <text x="88" y="561" fill="#A8ADBD" font-size="15">Noctweave reduces relay trust and supports metadata-reduction mechanisms. It does not claim global anonymity, hostile-OS resistance,</text>
-    <text x="88" y="584" fill="#A8ADBD" font-size="15">formal MLS equivalence, or guaranteed closed-app delivery on platforms that suspend clients.</text>
+    <rect x="60" y="492" width="1080" height="104" rx="20" fill="#24171D" stroke="#56313A"/>
+    <text x="88" y="530" fill="#FAF3EA" font-size="17" font-weight="700">Security claim boundary</text>
+    <text x="88" y="561" fill="#BDA9AA" font-size="15">Noctweave reduces relay trust and supports metadata-reduction mechanisms. It does not claim global anonymity, hostile-OS resistance,</text>
+    <text x="88" y="584" fill="#BDA9AA" font-size="15">formal MLS equivalence, or guaranteed closed-app delivery on platforms that suspend clients.</text>
   </g>
 </svg>

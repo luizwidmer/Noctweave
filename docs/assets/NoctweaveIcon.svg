@@ -1,21 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
-  <title id="title">Noctweave icon</title>
-  <desc id="desc">The violet, blue, and teal Noctweave N on a dark rounded square.</desc>
+  <title id="title">Noctweave app icon</title>
+  <desc id="desc">The Offset Veil mark on a plum-black rounded square.</desc>
   <defs>
-    <linearGradient id="icon-bg" x1="22" y1="14" x2="234" y2="242" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#171B31"/>
-      <stop offset="1" stop-color="#080B16"/>
+    <linearGradient id="surface" x1="28" y1="20" x2="228" y2="238" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2D1C23"/>
+      <stop offset="1" stop-color="#1B1217"/>
     </linearGradient>
-    <linearGradient id="nw-gradient" x1="48" y1="52" x2="208" y2="204" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#7B61FF"/>
-      <stop offset="0.5" stop-color="#5B9CFA"/>
-      <stop offset="1" stop-color="#3DD5C5"/>
-    </linearGradient>
-    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
-      <feGaussianBlur stdDeviation="7" result="blur"/>
-      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-    </filter>
   </defs>
-  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#icon-bg)" stroke="#343950" stroke-width="3"/>
-  <path d="M57 191V65L199 191V65" fill="none" stroke="url(#nw-gradient)" stroke-width="29" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+  <rect x="8" y="8" width="240" height="240" rx="58" fill="url(#surface)" stroke="#56313A" stroke-width="3"/>
+  <g transform="translate(32 32) scale(.75)">
+    <path d="M96 32H224V176L140 134V110L96 88Z" fill="#FAF3EA"/>
+    <path d="M32 80L116 122V146L160 168V224H32Z" fill="#C96A61"/>
+  </g>
 </svg>
