@@ -4,6 +4,36 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ArchitectureV2SharedVectorConformanceTests: XCTestCase {
+    func testDirectV4RootSessionMatchesSharedCanonicalVector() throws {
+        let vector = try loadDirectV4RootSessionVector()
+        let relationshipID = try XCTUnwrap(UUID(uuidString: vector.relationshipId))
+        let derivation = MessageEngine.directV4RootSessionDerivation(
+            sharedSecret: try Data(hex: vector.sharedSecretHex),
+            relationshipID: relationshipID,
+            cipherSuite: vector.cipherSuite,
+            negotiatedCapabilitiesDigest: try Data(
+                hex: vector.negotiatedCapabilitiesDigestHex
+            )
+        )
+
+        XCTAssertEqual(derivation.rootInfo.count, vector.expectedRootInfoBytes)
+        XCTAssertEqual(derivation.rootInfo.hexString, vector.expectedRootInfoHex)
+        XCTAssertEqual(derivation.rootKey.hexString, vector.expectedRootKeyHex)
+        XCTAssertEqual(
+            derivation.sessionTranscript.count,
+            vector.expectedSessionTranscriptBytes
+        )
+        XCTAssertEqual(
+            derivation.sessionTranscript.hexString,
+            vector.expectedSessionTranscriptHex
+        )
+        XCTAssertEqual(
+            derivation.sessionDigest.hexString,
+            vector.expectedSessionDigestHex
+        )
+        XCTAssertEqual(derivation.sessionID, vector.expectedSessionIdBase64)
+    }
+
     func testRendezvousOfferMatchesSharedCanonicalVector() throws {
         let vector = try loadVectors().rendezvousOffer
         let createdAt = try parseDate(vector.createdAt)
@@ -99,6 +129,21 @@ final class ArchitectureV2SharedVectorConformanceTests: XCTestCase {
         )
     }
 
+    private func loadDirectV4RootSessionVector() throws -> DirectV4RootSessionVector {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let vectorURL = repositoryRoot.appendingPathComponent(
+            "NoctweaveDocumentation/test_vectors/direct_v4_root_session_v1.json"
+        )
+        return try JSONDecoder().decode(
+            DirectV4RootSessionVector.self,
+            from: Data(contentsOf: vectorURL)
+        )
+    }
+
     private func parseDate(_ value: String) throws -> Date {
         try XCTUnwrap(ISO8601DateFormatter().date(from: value))
     }
@@ -154,6 +199,20 @@ final class ArchitectureV2SharedVectorConformanceTests: XCTestCase {
         data.append(UInt8((value >> 8) & 0xff))
         data.append(UInt8(value & 0xff))
     }
+}
+
+private struct DirectV4RootSessionVector: Decodable {
+    let sharedSecretHex: String
+    let relationshipId: String
+    let cipherSuite: String
+    let negotiatedCapabilitiesDigestHex: String
+    let expectedRootInfoBytes: Int
+    let expectedRootInfoHex: String
+    let expectedRootKeyHex: String
+    let expectedSessionTranscriptBytes: Int
+    let expectedSessionTranscriptHex: String
+    let expectedSessionDigestHex: String
+    let expectedSessionIdBase64: String
 }
 
 private struct SharedVectors: Decodable {

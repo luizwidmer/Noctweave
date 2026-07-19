@@ -349,11 +349,13 @@ public enum MessageEngine {
     ) -> Conversation {
         let local = relationship.localIdentity.endpointBinding
         let peer = relationship.peerIdentity.endpointBinding
-        let rootKey = deriveRootKey(
+        let derivation = directV4RootSessionDerivation(
             sharedSecret: sharedSecret,
             relationshipID: relationship.id,
-            binding: binding
+            cipherSuite: binding.cipherSuite,
+            negotiatedCapabilitiesDigest: binding.negotiatedCapabilitiesDigest
         )
+        let rootKey = derivation.rootKey
         let labels = labelsForAgreement(
             ourKey: local.agreementPublicKey,
             theirKey: peer.agreementPublicKey
@@ -374,7 +376,7 @@ public enum MessageEngine {
             id: relationship.conversationID,
             relationshipID: relationship.id,
             endpointSession: session,
-            sessionId: directV4SessionID(rootKey: rootKey, binding: binding),
+            sessionId: derivation.sessionID,
             rootKey: rootKey,
             sendChain: ChainKeyState(keyData: chains.0),
             receiveChain: ChainKeyState(keyData: chains.1)
@@ -480,19 +482,51 @@ public enum MessageEngine {
         }
     }
 
-    private static func deriveRootKey(
+    static func directV4RootSessionDerivation(
         sharedSecret: Data,
         relationshipID: UUID,
-        binding: PairwiseEndpointBindingV4
+        cipherSuite: String,
+        negotiatedCapabilitiesDigest: Data
+    ) -> (
+        rootInfo: Data,
+        rootKey: Data,
+        sessionTranscript: Data,
+        sessionDigest: Data,
+        sessionID: String
+    ) {
+        let rootInfo = directV4RootInfo(
+            relationshipID: relationshipID,
+            negotiatedCapabilitiesDigest: negotiatedCapabilitiesDigest
+        )
+        let rootKey = CryptoBox.deriveChainKey(
+            sharedSecret: sharedSecret,
+            salt: Data("NOCTWEAVE-ROOT".utf8),
+            info: rootInfo
+        )
+        let sessionTranscript = directV4SessionTranscript(
+            rootKey: rootKey,
+            relationshipID: relationshipID,
+            cipherSuite: cipherSuite,
+            negotiatedCapabilitiesDigest: negotiatedCapabilitiesDigest
+        )
+        let sessionDigest = Data(SHA256.hash(data: sessionTranscript))
+        return (
+            rootInfo: rootInfo,
+            rootKey: rootKey,
+            sessionTranscript: sessionTranscript,
+            sessionDigest: sessionDigest,
+            sessionID: sessionDigest.base64EncodedString()
+        )
+    }
+
+    private static func directV4RootInfo(
+        relationshipID: UUID,
+        negotiatedCapabilitiesDigest: Data
     ) -> Data {
         var info = Data("Noctweave/direct-v4/root".utf8)
         info.append(Data(relationshipID.uuidString.lowercased().utf8))
-        info.append(binding.negotiatedCapabilitiesDigest)
-        return CryptoBox.deriveChainKey(
-            sharedSecret: sharedSecret,
-            salt: Data("NOCTWEAVE-ROOT".utf8),
-            info: info
-        )
+        info.append(negotiatedCapabilitiesDigest)
+        return info
     }
 
     private static func deriveChains(
@@ -519,12 +553,27 @@ public enum MessageEngine {
         rootKey: Data,
         binding: PairwiseEndpointBindingV4
     ) -> String {
-        var material = Data("NOCTWEAVE-SESSION".utf8)
-        material.append(Data(binding.relationshipId.uuidString.lowercased().utf8))
-        material.append(Data(binding.cipherSuite.utf8))
-        material.append(binding.negotiatedCapabilitiesDigest)
-        material.append(rootKey)
+        let material = directV4SessionTranscript(
+            rootKey: rootKey,
+            relationshipID: binding.relationshipId,
+            cipherSuite: binding.cipherSuite,
+            negotiatedCapabilitiesDigest: binding.negotiatedCapabilitiesDigest
+        )
         return Data(SHA256.hash(data: material)).base64EncodedString()
+    }
+
+    private static func directV4SessionTranscript(
+        rootKey: Data,
+        relationshipID: UUID,
+        cipherSuite: String,
+        negotiatedCapabilitiesDigest: Data
+    ) -> Data {
+        var material = Data("NOCTWEAVE-SESSION".utf8)
+        material.append(Data(relationshipID.uuidString.lowercased().utf8))
+        material.append(Data(cipherSuite.utf8))
+        material.append(negotiatedCapabilitiesDigest)
+        material.append(rootKey)
+        return material
     }
 
     private static func labelsForAgreement(
