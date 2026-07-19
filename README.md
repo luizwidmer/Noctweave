@@ -7,7 +7,7 @@
 <p align="center">
   <a href="#install-and-try-it">Install</a> ·
   <a href="#use-the-tools">Use</a> ·
-  <a href="#desktop-apps">Desktop apps</a> ·
+  <a href="#optional-electrobun-launchers">Desktop apps</a> ·
   <a href="#security-status">Security</a> ·
   <a href="#documentation">Documentation</a>
 </p>
@@ -16,7 +16,7 @@
   <img alt="Multi-license" src="https://img.shields.io/badge/license-multi--license-5B9CFA">
   <img alt="Swift 5.9" src="https://img.shields.io/badge/Swift-5.9-F05138">
   <img alt="Node 20 or newer" src="https://img.shields.io/badge/Node-%3E%3D20-3DD5C5">
-  <img alt="Pre-1.0" src="https://img.shields.io/badge/status-pre--1.0-F2B84B">
+  <img alt="Unreleased 1.0 candidate" src="https://img.shields.io/badge/status-1.0%20candidate-F2B84B">
   <img alt="Unaudited" src="https://img.shields.io/badge/security-unaudited-E05D6F">
 </p>
 
@@ -24,15 +24,46 @@
 
 Noctweave is a self-hosted toolkit for adding encrypted messaging to an
 application. It includes a Swift protocol core, a Linux/Docker relay, a working
-JavaScript client, and a headless CLI. Relays route and store encrypted
-envelopes; message plaintext and private identity keys stay with clients.
+JavaScript protocol client and browser integration shell, and a headless CLI.
+Relays route and store encrypted packets; message plaintext and relationship or
+group keys stay with clients.
 
 There are no hosted accounts, developer-operated relays, or required central
 notification services. You choose where every component runs.
 
+The supported public integration surface is `NoctweaveCore` (including
+`NoctweaveCLI`), `NoctweaveRelayServer`, `NoctweaveJS`, and the published
+protocol/API documentation. The proprietary Noctyra Apple client and macOS GUI
+relay are separate products and are not integration dependencies.
+
+## Noctweave 1.0 Architecture
+
+This revision establishes the clean protocol origin for 1.0. It does not
+preserve pre-release identities, storage schemas, relay requests, or migration
+adapters.
+
+A persona is only a local UI container. Every pairwise relationship creates a
+fresh unlinkable ML-DSA/ML-KEM authority, one singular relationship endpoint,
+renewable prekeys, and private opaque routes. Pairing uses a short-lived
+one-use encrypted rendezvous. Relays see capability-authorized opaque packets,
+ordered route positions, and bounded retention—not accounts, global user IDs,
+contact graphs, or plaintext.
+
+The architecture also includes immutable typed events, exact-ciphertext retry
+intents, non-destructive cursor synchronization, make-before-break route sets,
+selective relationship-only continuity, explicit group roles and policy, and a
+strict modular relay envelope. There is deliberately no device/installation
+registry, recovery authority, shared self-sync identity, or portable live-key
+history model. See the
+[normative 1.0 architecture](NoctweaveDocumentation/noctweave_architecture_revision_v2.md).
+The implementation and verification history is summarized in the
+[architecture revision report](NoctweaveDocumentation/architecture_revision_status_report_2026-07-18.md).
+
 ## Install And Try It
 
-The quickest path uses Docker for the relay and a browser for two local clients.
+The quickest complete public smoke path uses Docker for the relay and the Node
+client to exercise health, capability discovery, and the full opaque-route
+lifecycle.
 
 ### 1. Get the source
 
@@ -41,8 +72,10 @@ git clone https://github.com/luizwidmer/Noctweave.git
 cd Noctweave
 ```
 
-You need [Docker](https://www.docker.com/) and Node.js 20 or newer. Swift and
-Bun are only required for the native packages and desktop launchers.
+You need [Docker](https://www.docker.com/) and Node.js 20 or newer for this
+smoke path. Swift builds `NoctweaveCore`, `NoctweaveCLI`, and
+`NoctweaveRelayServer`; Bun is only required for the optional Electrobun
+launchers.
 
 ### 2. Start a relay
 
@@ -61,6 +94,7 @@ docker run --rm --name noctweave-relay \
   --port 9339 \
   --http-port 9340 \
   --admin-port 9090 \
+  --rendezvous-transport true \
   --data-dir /data
 ```
 
@@ -68,23 +102,33 @@ The messaging endpoint is `http://127.0.0.1:9340`. Open the authenticated
 operator console at [http://127.0.0.1:9090/admin/](http://127.0.0.1:9090/admin/)
 and enter the generated token.
 
-### 3. Open two clients
+### 3. Exercise the public relay/client boundary
 
 ```sh
 cd NoctweaveJS
 npm install
-npm run dev:client
+npm run smoke:relay -- --relay http://127.0.0.1:9340
 ```
 
-Open two independent profiles:
+The smoke command creates an opaque route, sends fixed-policy encrypted packet
+records, synchronizes and commits its ordered cursor, then tears the route down.
+For complete pairwise rendezvous and messaging, use the
+[CLI workflow](NoctweaveDocumentation/noctweave_cli_usage.md) or embed the
+JavaScript shell with the required rollback-protected host state authority.
 
-- [Alice](http://127.0.0.1:5173/client/?profile=alice)
-- [Bob](http://127.0.0.1:5173/client/?profile=bob)
+The browser shell drives either side of a rendezvous independently and renders
+the one-use encoded invitation for transfer. Treat that invitation as sensitive
+short-lived bearer material. It never exposes raw route capabilities or pairing
+identifiers separately. A plain browser tab deliberately refuses to create or
+unlock persistent live authority; Web Storage is not accepted as rollback
+protection. With a conforming host, the JavaScript service provides local-first
+text send, exact outbox retry, ordered receive sync, optional receipts, local
+block and burn, and make-before-break route maintenance. High-level attachment
+publication remains fail-closed until it has the same durable
+prepare/publish/retry journal; the lower-level encrypted `nw.blobs` transport is
+available to integrations that supply that boundary.
 
-Set the relay to `http://127.0.0.1:9340`, create both identities, exchange
-contact codes, and send a message.
-
-![NoctweaveJS encrypted browser client](docs/assets/NoctweaveJSClient.png)
+![NoctweaveJS browser integration shell](docs/assets/NoctweaveJSClient.png)
 
 ## Use The Tools
 
@@ -93,8 +137,10 @@ contact codes, and send a message.
 | Run a relay | [`NoctweaveRelayServer/`](NoctweaveRelayServer/) |
 | Build a browser or Node client | [`NoctweaveJS/`](NoctweaveJS/) |
 | Integrate from Swift | [`NoctweaveCore/`](NoctweaveCore/) |
-| Script identities and messages | [`NoctweaveCLI`](NoctweaveDocumentation/noctweave_cli_usage.md) |
-| Review the wire protocol | [`Protocol specification`](NoctweaveDocumentation/noctweave_protocol_spec_v1.md) |
+| Script personas, relationships, and messages | [`NoctweaveCLI`](NoctweaveDocumentation/noctweave_cli_usage.md) |
+| Automate relay and messaging integration | [`noctweave-messaging-relay` skill](AgentSkills/noctweave-messaging-relay/SKILL.md) |
+| Review the 1.0 architecture | [`Noctweave 1.0 architecture`](NoctweaveDocumentation/noctweave_architecture_revision_v2.md) |
+| Review the protocol | [`Protocol specification`](NoctweaveDocumentation/noctweave_protocol_spec_v1.md) |
 
 ### Relay
 
@@ -103,8 +149,9 @@ contact codes, and send a message.
 </p>
 
 The relay supports raw TCP, HTTP/HTTPS, WebSocket/WSS, SQLite persistence,
-attachments, groups, federation, optional IPFS offload, and an authenticated
-operator console. A solo relay works without federation.
+opaque routes, one-use rendezvous transport, encrypted attachment blobs,
+federation, optional IPFS offload, and an authenticated operator console. A
+solo relay works without federation.
 
 ![Noctweave Relay operator console](docs/assets/NoctweaveRelayConsole.png)
 
@@ -114,7 +161,7 @@ use the [relay guide](NoctweaveRelayServer/README.md) and
 
 ### NoctweaveJS
 
-Run the working browser client:
+Run the browser integration shell:
 
 ```sh
 cd NoctweaveJS
@@ -151,15 +198,16 @@ swift run --package-path NoctweaveCore NoctweaveCLI help
 swift run --package-path NoctweaveCore NoctweaveCLI health \
   --relay http://127.0.0.1:9340
 swift run --package-path NoctweaveCore NoctweaveCLI init \
-  --display-name Alice \
-  --relay http://127.0.0.1:9340
+  --display-name "local mask"
 ```
 
-The CLI supports relay diagnostics, encrypted local identities, contact import
-and export, direct and group messaging, attachments, continuity events, and
-identity rotation. See the [CLI usage guide](NoctweaveDocumentation/noctweave_cli_usage.md).
+The CLI supports exact relay diagnostics, encrypted local persona state,
+pairing primitives, direct event send/sync, durable experimental group
+creation/admission/send/sync/maintenance/deletion, and destructive local
+persona burn. It does not publish reusable contact identities. See the
+[CLI usage guide](NoctweaveDocumentation/noctweave_cli_usage.md).
 
-## Desktop Apps
+## Optional Electrobun Launchers
 
 Noctweave includes source-built [Electrobun](https://electrobun.dev/) launchers.
 Electrobun uses the operating system WebView instead of bundling Chromium.
@@ -182,8 +230,13 @@ bun install --frozen-lockfile
 bun run desktop:dev
 ```
 
-These launchers are convenience tools for local use and evaluation. No official
-prebuilt desktop binaries are published yet.
+These public JavaScript launchers are convenience wrappers for local use and
+evaluation, not the proprietary native applications. No official prebuilt
+desktop binaries are published yet. The macOS client supplies the
+rollback-protected aggregate and per-relationship state authority required for
+durable messaging; other hosts fail closed until they implement the same
+boundary. See the [NoctweaveJS guide](NoctweaveJS/README.md) for its exact
+Keychain, journal, metadata, and full-host-rollback limitations.
 
 ## What Is Included
 
@@ -193,12 +246,14 @@ prebuilt desktop binaries are published yet.
   relay primitives, federation logic, and tests.
 - **NoctweaveRelayServer** — Linux/Docker relay, SQLite storage, operator Web
   UI, federation, and optional IPFS attachment storage.
-- **NoctweaveJS** — browser/Node transports, encrypted stores, a working
-  messaging client, and post-quantum WASM bindings.
-- **NoctweaveCLI** — headless identity, relay, messaging, group, and attachment
-  workflows.
-- **AgentGuides and AgentSkills** — bounded guidance for integrating clients and
-  operating relays through automation.
+- **NoctweaveJS** — browser/Node protocol transports, encrypted stores, a
+  browser integration shell, and post-quantum WASM bindings.
+- **NoctweaveCLI** — headless persona, pairwise relationship, relay, and
+  messaging workflows.
+- **[AgentGuides](AgentGuides/AGENTS.md.example) and
+  [AgentSkills](AgentSkills/noctweave-messaging-relay/SKILL.md)** — bounded
+  guidance for integrating clients and operating pairwise/group workflows
+  through automation.
 
 ![Noctweave message lifecycle](docs/assets/NoctweaveMessageFlow.svg)
 
@@ -222,18 +277,20 @@ Exact versions, hashes, and supply-chain requirements are recorded in the
 
 ## Security Status
 
-Noctweave is pre-1.0 and has not received an independent external audit.
+Noctweave defines a normative 1.0 candidate. Implemented core modules remain
+provisional, the group profile remains experimental, and the project has not
+received an independent external audit.
 
 | Implemented | Not claimed |
 | --- | --- |
 | ML-KEM/ML-DSA protocol profile | Protection from a compromised operating system |
 | End-to-end encrypted payloads and attachments | Global anonymity |
-| Signed identity continuity and replay rejection | Formal MLS proof |
+| Pairwise-scoped optional continuity and replay rejection | Formal group-protocol proof or RFC 9420 interoperability |
 | Bounded parsers, stores, and discovery inputs | Single-server cryptographic PIR |
 | Relay ciphertext-only payload storage | Guaranteed closed-app delivery |
 
 Review the [security requirements](NoctweaveDocumentation/security_requirements.md),
-[internal audit](NoctweaveDocumentation/security_audit_2026-07-10.md), and
+[architecture revision report](NoctweaveDocumentation/architecture_revision_status_report_2026-07-18.md), and
 [roadmap](NoctweaveDocumentation/noctweave_roadmap.md) before production use.
 
 ## Build And Test
@@ -244,20 +301,27 @@ swift test --package-path NoctweaveCore
 swift build --package-path NoctweaveRelayServer
 swift test --package-path NoctweaveRelayServer
 (cd NoctweaveJS && npm test)
+(cd NoctweaveJS && npm run typecheck:desktop)
 ```
 
-Run the combined public checks with `scripts/run-tests.sh`. Run release, SBOM,
+Run the combined public checks with `scripts/run-tests.sh` and the normative
+boundary gate with `scripts/verify-whitepaper-alignment.sh`. Run release, SBOM,
 dependency, Docker, and optional container-scan checks with
 `scripts/verify-release.sh`.
 
 ## Documentation
 
+- [Identity philosophy and external-feature filter](NoctweaveDocumentation/noctweave_identity_philosophy.md)
+
 Technical detail lives in focused documents:
 
+- [Normative Noctweave 1.0 architecture](NoctweaveDocumentation/noctweave_architecture_revision_v2.md)
+- [Extension proposal and promotion process](NoctweaveDocumentation/noctweave_extension_process.md)
 - [Protocol specification](NoctweaveDocumentation/noctweave_protocol_spec_v1.md)
 - [Relay OpenAPI schema](NoctweaveDocumentation/noctweave_relay_openapi.yaml)
 - [Wire format and test vectors](NoctweaveDocumentation/wire_format_and_test_vectors.md)
 - [Core public API](NoctweaveDocumentation/noctweave_core_public_api.md)
+- [Experimental PQ group design](NoctweaveDocumentation/group_protocol_design.md)
 - [Federation protocol and operations](NoctweaveDocumentation/federation_protocol_and_operations.md)
 - [Relay hardening](NoctweaveDocumentation/relay_ops_hardening_guide.md)
 - [Whitepaper](NoctweaveDocumentation/noctweave_whitepaper.md)
@@ -276,7 +340,7 @@ Noctweave is a multi-license repository. The nearest license file governs:
 
 | Path | License |
 | --- | --- |
-| `NoctweaveCore/`, `NoctweaveCLI`, `NoctweaveRelayServer/` | `AGPL-3.0-or-later` |
+| `NoctweaveCore/`, `NoctweaveRelayServer/` | `AGPL-3.0-or-later` |
 | `NoctweaveCore/COMMERCIAL-LICENSE.md` | Optional commercial terms for NoctweaveCore |
 | `NoctweaveJS/` | `Apache-2.0` |
 | `NoctweaveJS/examples/` | `MIT` |

@@ -1,208 +1,317 @@
-# NoctweaveCLI / Headless Client
+# NoctweaveCLI
 
-`NoctweaveCLI` is a lightweight command-line client for relay operators, test scripts, power users, and headless direct messaging. It uses the public `NoctweaveCore` relay protocol and storage models.
-
-## Build
-
-```sh
-swift build --package-path NoctweaveCore --product NoctweaveCLI
-```
-
-Run without installing:
+`NoctweaveCLI` is the native diagnostic and headless-client surface for the
+Noctweave 1.0 architecture.
 
 ```sh
 swift run --package-path NoctweaveCore NoctweaveCLI help
 ```
 
-## Relay Endpoints
-
-The CLI accepts bare TCP addresses and URL-style endpoints:
+## Local state
 
 ```sh
-NoctweaveCLI endpoint --relay 127.0.0.1:9339
-NoctweaveCLI endpoint --relay https://relay.example
-NoctweaveCLI endpoint --relay wss://relay.example
-NoctweaveCLI endpoint --relay tls://relay.example:9339
+swift run --package-path NoctweaveCore NoctweaveCLI init \
+  --display-name "local mask"
+
+swift run --package-path NoctweaveCore NoctweaveCLI status
+swift run --package-path NoctweaveCore NoctweaveCLI relationships
 ```
 
-`https` and `wss` default to port `443`, `http` and `ws` default to port `80`, and bare hosts default to TCP port `9339`.
+The display name is a local persona label. It is never used as a relationship
+pseudonym or transmitted automatically.
 
-## Health And Info
+State is encrypted by default. Without `--state`, the database lives at the
+platform's user Application Support location under
+`NoctweaveCLI/client-state.json`, not in the current working directory.
+`--plaintext true` is for disposable test fixtures only. `--state path`
+selects another state file; its parent must be owned by the current user and
+must not be group/other writable. The CLI creates a missing final state
+directory with mode `0700` but does not change an existing caller-owned
+directory's permissions.
+
+Each command rejects options outside its own strict allowlist before loading
+state or performing network/file side effects. Sensitive inputs are read once
+through a held descriptor, must be bounded regular files, and cannot be final
+component symlinks, FIFOs, or growing files. Sensitive outputs are created with
+mode `0600`, flushed with their parent directory, and installed without
+replacement. An exact existing artifact is accepted as an idempotent retry;
+different existing bytes are never clobbered. Output paths may not overlap the
+state file, its pending/lock files, or the command's input artifacts.
+
+## Prepare pairwise material
+
+Create a relationship-local endpoint, prekey, and registered opaque receive
+route:
 
 ```sh
-NoctweaveCLI health --relay http://127.0.0.1:9339
-NoctweaveCLI info --relay https://relay.example --auth-file ./relay-token
+swift run --package-path NoctweaveCore NoctweaveCLI prepare-participant \
+  --relay https://relay.example \
+  --relationship-pseudonym "night orchid" \
+  --out ./participant.private.json
 ```
 
-Both commands print JSON `RelayResponse` values, which makes them suitable for shell scripts and monitoring probes.
+The output contains private relationship and route authority. It is written
+atomically with mode `0600`; do not publish it as a contact code.
 
-## Headless Messaging
-
-The CLI can maintain a local headless client state file, register its inbox, exchange contact offers, send encrypted direct text messages and attachments, and fetch/decrypt received messages.
-
-Initialize an identity and register its inbox:
+Create a one-use contact-pairing rendezvous invitation:
 
 ```sh
-NoctweaveCLI init --display-name Alice --relay https://relay.example
+swift run --package-path NoctweaveCore NoctweaveCLI pairing-invitation \
+  --offer-out ./pairing-offer.private.json \
+  --invitation-out ./pairing-invitation.share \
+  --lifetime 600
 ```
 
-By default, state is stored at `~/.noctweave/headless-state.json` and encrypted.
-Apple platforms keep the wrapping key in Keychain. Linux stores a separate key
-file with mode `0600`; override its location with `--state-key-file` or
-`NOCTWEAVE_CLI_STATE_KEY_FILE`. Override the state path with `--state` or
-`NOCTWEAVE_CLI_STATE`. `--encrypted-state false` is an explicit development-only
-opt-out and must not be used for real identities.
+The command writes the offerer's pending state and shareable invitation to
+separate mode-`0600` files. The invitation is a short-lived bearer rendezvous
+capability, but contains no relationship identity or relay route.
 
-Inspect local status:
+Each participant independently prepares its relationship-local material. The
+responder receives only the invitation file:
 
 ```sh
-NoctweaveCLI status
+# responder
+swift run --package-path NoctweaveCore NoctweaveCLI pair-accept \
+  --invitation-file ./pairing-invitation.share \
+  --participant-file ./responder.private.json \
+  --relay https://relay.example
+
+# offerer, run concurrently
+swift run --package-path NoctweaveCore NoctweaveCLI pair-offer \
+  --offer-file ./pairing-offer.private.json \
+  --participant-file ./offerer.private.json \
+  --relay https://relay.example
 ```
 
-Export a contact code:
+These are live rendezvous pumps. Their process-local session keys are
+deliberately non-serializable. If either command is interrupted, let the
+short-lived lanes expire and create a fresh invitation; do not export live
+session state. Successful pairing stores only each side's local projection of
+the fresh relationship.
+
+## Send and synchronize
 
 ```sh
-NoctweaveCLI export-contact
+swift run --package-path NoctweaveCore NoctweaveCLI send \
+  --relationship 00000000-0000-0000-0000-000000000000 \
+  --text-file ./message.private.txt
+
+swift run --package-path NoctweaveCore NoctweaveCLI sync \
+  --relationship 00000000-0000-0000-0000-000000000000 \
+  --max 128
 ```
 
-Export a password-protected contact package:
+Sending persists one logical event and exact encrypted route packets before
+publication. Message text is read from a file so plaintext does not appear in
+the process argument list. Sync commits a route cursor only after durable local
+processing.
+
+Retry and route maintenance are explicit headless workflows:
 
 ```sh
-NoctweaveCLI export-contact --password-file ./contact-password --out alice.noctweave
+swift run --package-path NoctweaveCore NoctweaveCLI retry-deliveries \
+  --relationship 00000000-0000-0000-0000-000000000000
+
+swift run --package-path NoctweaveCore NoctweaveCLI maintain --all true
+
+swift run --package-path NoctweaveCore NoctweaveCLI resume-rollovers \
+  --relationship 00000000-0000-0000-0000-000000000000
+
+swift run --package-path NoctweaveCore NoctweaveCLI finalize-routes \
+  --relationship 00000000-0000-0000-0000-000000000000
 ```
 
-Import a contact:
+`maintain` renews relationship prekeys and performs make-before-break receive
+route replacement before expiry. Permanent delivery or rollover failures stay
+visible until the operator uses the corresponding `discard-*` command.
+
+## Experimental groups
+
+Create a fresh group-scoped credential and opaque receive route, then send,
+sync, and maintain the group runtime:
 
 ```sh
-NoctweaveCLI import-contact --code "$CONTACT_CODE"
-NoctweaveCLI import-contact --file bob.noctweave --password-file ./contact-password
+swift run --package-path NoctweaveCore NoctweaveCLI group-create \
+  --group 00000000-0000-0000-0000-000000000000 \
+  --relay https://relay.example
+
+swift run --package-path NoctweaveCore NoctweaveCLI group-send \
+  --group 00000000-0000-0000-0000-000000000000 \
+  --text-file ./group-message.private.txt
+
+swift run --package-path NoctweaveCore NoctweaveCLI group-sync \
+  --group 00000000-0000-0000-0000-000000000000 \
+  --max 128 --pages 8
+
+swift run --package-path NoctweaveCore NoctweaveCLI group-maintain --all true
 ```
 
-Contact-package passphrases must contain at least 12 UTF-8 bytes. Prefer the
-file or environment forms because literal `--password` and `--auth` values can
-appear in shell history and process listings. Secret files should be regular,
-small, and readable only by the invoking account.
+`group-create` requires an explicit UUID, so an interrupted creation still has
+a known target for `group-status`, maintenance, or exact-operation resume. Do
+not rerun creation after the group has been installed locally; resume the
+reported operation instead. The CLI never silently substitutes a second group
+identity. Group transport commands print their structured result even when
+publication is incomplete, then exit nonzero so automation cannot mistake
+partial progress for completion:
 
-List contacts:
+- exit `75`: exact work remains pending for retry;
+- exit `77`: local authorization recovery is required;
+- exit `69`: the relay rejected the operation;
+- exit `76`: the relay response was invalid.
+
+Use `group-resume --group <uuid> --operation <uuid>` or the relevant admission
+resume command after correcting the reported condition. These outcomes retain
+the exact prepared group artifacts; retry does not create a replacement
+transition, Welcome, ciphertext, or deletion tombstone.
+
+For exit `77`, first inspect `group-status` and the saved operation. Repair the
+affected local receive route with `group-maintain` when the route can be
+renewed, then resume the exact operation. If the bearer capability itself is no
+longer available, recovery requires an explicit operator decision; the CLI has
+no implicit credential or authority fallback.
+
+Member admission is deliberately a four-step exchange. Every generated file
+must travel through an independently authenticated and encrypted channel; the
+CLI does not infer a contact, upload invitations, or create an account/device
+service.
 
 ```sh
-NoctweaveCLI contacts
+# Existing authorized member creates the one-use request.
+swift run --package-path NoctweaveCore NoctweaveCLI group-invite-request \
+  --group 00000000-0000-0000-0000-000000000000 \
+  --out ./group-invitation.private.json
+
+# Prospective member creates a fresh group-only credential and receive route.
+swift run --package-path NoctweaveCore NoctweaveCLI group-admission-prepare \
+  --invitation-file ./group-invitation.private.json \
+  --relay https://relay.example \
+  --response-out ./group-admission.private.json
+
+# Preserve the admissionID printed in the command's JSON result.
+
+# Existing member commits the admission and exports the exact join package.
+swift run --package-path NoctweaveCore NoctweaveCLI group-add-member \
+  --group 00000000-0000-0000-0000-000000000000 \
+  --invitation-file ./group-invitation.private.json \
+  --response-file ./group-admission.private.json \
+  --join-out ./group-join.private.json \
+  --role member
+
+# Prospective member consumes its saved one-use admission.
+swift run --package-path NoctweaveCore NoctweaveCLI group-join-accept \
+  --admission 00000000-0000-0000-0000-000000000000 \
+  --join-file ./group-join.private.json
 ```
 
-Inspect the active identity continuity audit:
+The printed `admissionID` is the durable identifier used by
+`group-join-accept` and admission resume commands. If the output was not
+retained, `group-admissions` lists the locally saved admission; do not prepare
+a replacement.
+
+`group-admission-resume`, `group-admissions`, and `group-resume` recover exact
+saved work after relay or process failure. Group deletion requires a
+target-bound confirmation token:
+
+```text
+DELETE-GROUP:<lowercase-group-uuid>:<first-16-hex-SHA256-of-canonical-current-group-state>
+```
+
+Run `group-delete --group <uuid>` without a valid `--confirm` value to have the
+CLI print the exact expected token, inspect the target, then repeat the command
+with that token. The command creates and durably publishes the signed terminal
+tombstone; a partial publication uses the nonzero outcomes above. The
+implemented `nw.pq-group.experimental-2` provider remains unaudited and is not
+RFC 9420 MLS.
+
+## Relationship-local trust and policy
 
 ```sh
-NoctweaveCLI continuity-audit
+swift run --package-path NoctweaveCore NoctweaveCLI safety-number \
+  --relationship 00000000-0000-0000-0000-000000000000
+
+swift run --package-path NoctweaveCore NoctweaveCLI relationship-policy \
+  --relationship 00000000-0000-0000-0000-000000000000 \
+  --consent accepted \
+  --read-receipts false
+
+swift run --package-path NoctweaveCore NoctweaveCLI block \
+  --relationship 00000000-0000-0000-0000-000000000000
 ```
 
-Purge the active identity continuity audit:
+The safety number compares only the disposable authorities for this one
+relationship. Consent, mute, receipt, and block state remain local. Blocking
+clears live relationship work before best-effort route teardown and never
+publishes a global block identity.
+
+Selective continuity is off by default. To disclose a fresh invitation only
+inside one accepted relationship, opt in locally, create an ordinary pairing
+invitation, and send its share file as a signed relationship control:
 
 ```sh
-NoctweaveCLI purge-continuity-audit --confirm PURGE
+swift run --package-path NoctweaveCore NoctweaveCLI continuity-policy \
+  --relationship 00000000-0000-0000-0000-000000000000 \
+  --mode sendOnly
+
+swift run --package-path NoctweaveCore NoctweaveCLI continuity-offer \
+  --relationship 00000000-0000-0000-0000-000000000000 \
+  --invitation-file ./pairing-invitation.share
 ```
 
-Send a direct text message:
+The receiving peer must separately enable `receiveOnly` or `bidirectional`,
+sync the control event, and export that event's invitation with
+`continuity-invitation --event <uuid> --out <share-file>`. The subsequent
+pairing creates another independent relationship; it does not rotate a global
+identity or prove persona-wide continuity.
+
+## Burn
 
 ```sh
-NoctweaveCLI send --to "Bob" --text "hello from headless"
+swift run --package-path NoctweaveCore NoctweaveCLI burn-persona \
+  --confirm BURN \
+  --replacement-name "fresh local mask"
 ```
 
-Send an encrypted direct attachment:
+Burn removes the old persona record from local state and creates an unrelated
+empty container. It does not publish continuity or preserve recoverable live
+authority.
+
+To intentionally erase the entire encrypted local database, including all
+personas and group state, use the distinct destructive command:
 
 ```sh
-NoctweaveCLI send-attachment --to "Bob" --file ./photo.jpg --mime image/jpeg --ttl 3600
+swift run --package-path NoctweaveCore NoctweaveCLI erase-local-state \
+  --confirm ERASE:<first-16-hex-SHA256-of-canonical-absolute-state-path>
 ```
 
-Send a voice message through the same encrypted attachment pipeline:
+Encrypted mode advances an identity-free local rollback tombstone before the
+database is considered erased. Missing files are never interpreted as a fresh
+state automatically. The confirmation is bound to the canonical state path so
+a token copied from one database cannot authorize another. Invoke the command
+without a valid token to print the exact expected value, verify the path, then
+repeat it deliberately.
+
+## Relay diagnostics
 
 ```sh
-NoctweaveCLI send-voice --to "Bob" --file ./note.m4a
+swift run --package-path NoctweaveCore NoctweaveCLI endpoint \
+  --relay wss://relay.example/relay
+
+swift run --package-path NoctweaveCore NoctweaveCLI health \
+  --relay https://relay.example
+
+swift run --package-path NoctweaveCore NoctweaveCLI info \
+  --relay https://relay.example
 ```
 
-Fetch, decrypt, and acknowledge messages:
+Use `--auth-file path` for an operator-supplied bearer token and `--timeout
+seconds` to change the request timeout.
+
+An exact modular relay request can be sent for protocol diagnostics:
 
 ```sh
-NoctweaveCLI receive --max 25
-NoctweaveCLI receive --long-poll 20
+swift run --package-path NoctweaveCore NoctweaveCLI raw \
+  --relay https://relay.example \
+  --request @request.json
 ```
 
-Use `--no-ack true` when testing if you want fetched ciphertexts to remain queued on the relay.
-
-Download an attachment after receiving its descriptor:
-
-```sh
-NoctweaveCLI download-attachment --id <attachment-uuid> --out ./downloads/
-```
-
-Attachment downloads require local recovery metadata saved when the message is sent or received. Protect the state file because it includes the per-message attachment keys needed for later recovery.
-
-## Headless Groups
-
-Create a relay-backed encrypted group from existing contacts:
-
-```sh
-NoctweaveCLI group-create --title "Ops" --members "Bob,Carol"
-```
-
-List local groups and refresh relay descriptors:
-
-```sh
-NoctweaveCLI groups
-NoctweaveCLI groups --refresh false
-```
-
-Send a group text message:
-
-```sh
-NoctweaveCLI group-send --group "Ops" --text "status check"
-```
-
-Send a group attachment or group voice message:
-
-```sh
-NoctweaveCLI group-send-attachment --group "Ops" --file ./briefing.pdf --mime application/pdf
-NoctweaveCLI group-send-voice --group "Ops" --file ./note.m4a
-```
-
-Fetch, decrypt, and acknowledge group messages:
-
-```sh
-NoctweaveCLI group-receive --group "Ops" --max 25
-NoctweaveCLI group-receive --long-poll 20
-```
-
-Group creation currently uses contacts already imported into the headless state and creates the group on the active identity relay. The CLI returns sanitized group summaries rather than serialized ratchet keys.
-
-## Identity Lifecycle
-
-Allow a contact to receive a new identity if you later burn your current identity:
-
-```sh
-NoctweaveCLI allow-identity-reset --contact "Bob" --allow true
-```
-
-Rotate the active identity keys and notify contacts with an authenticated continuity message:
-
-```sh
-NoctweaveCLI rotate-identity --confirm ROTATE
-```
-
-Burn the active identity, create a new inbox identity, register the new inbox, purge local conversations and groups, and notify only contacts marked with `allow-identity-reset`:
-
-```sh
-NoctweaveCLI burn-identity --confirm BURN
-```
-
-The confirmation strings are intentionally exact. Use them only when the state change is intentional, because peers that are not opted in before a burn are removed from the local headless state and are not told the new identity.
-
-## Raw Relay Requests
-
-Use `raw` to send any encoded `RelayRequest` supported by the relay API.
-
-```sh
-NoctweaveCLI raw --relay http://127.0.0.1:9339 --request '{"type":"health"}'
-NoctweaveCLI raw --relay http://127.0.0.1:9339 --request @request.json
-cat request.json | NoctweaveCLI raw --relay http://127.0.0.1:9339 --request -
-```
-
-This is intended for development and diagnostics. Do not paste private client state or identity keys into shell history.
+The JSON must match the current module/version/method/body schema exactly.

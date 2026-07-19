@@ -25,6 +25,8 @@ describe("relay launcher validation", () => {
     expect(args).toContain("127.0.0.1:9340:9340");
     expect(args).toContain("127.0.0.1:9090:9090");
     expect(args).toContain(relayImage);
+    expect(args.slice(args.indexOf("--rendezvous-transport"), args.indexOf("--rendezvous-transport") + 2))
+      .toEqual(["--rendezvous-transport", "true"]);
     expect(args.slice(-2)).toEqual(["--relay-name", "Community Relay"]);
   });
 

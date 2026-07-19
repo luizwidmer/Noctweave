@@ -1,10 +1,18 @@
 import Foundation
 
+public enum ClientStateError: Error, Equatable {
+    case invalidState
+    case personaNotFound
+    case personaCapacityReached
+}
+
 public enum RelayCertificatePinOrigin: String, Codable, Equatable {
     case automaticFirstUse
     case manual
 }
 
+/// A local transport-security preference. A certificate pin is never a persona,
+/// relationship, route, or protocol identity.
 public struct RelayCertificatePinRecord: Codable, Equatable, Identifiable {
     public var host: String
     public var port: UInt16
@@ -14,8 +22,18 @@ public struct RelayCertificatePinRecord: Codable, Equatable, Identifiable {
     public var pinnedAt: Date
     public var origin: RelayCertificatePinOrigin
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case host
+        case port
+        case useTLS
+        case transport
+        case fingerprintSHA256
+        case pinnedAt
+        case origin
+    }
+
     public var id: String {
-        "\(transport.rawValue):\(useTLS ? "tls" : "plain"):\(host.lowercased()):\(port)"
+        "\(transport.rawValue):tls:\(host.lowercased()):\(port)"
     }
 
     public init(
@@ -35,14 +53,280 @@ public struct RelayCertificatePinRecord: Codable, Equatable, Identifiable {
         self.pinnedAt = pinnedAt
         self.origin = origin
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictClientStateContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Relay certificate pin"
+        )
+        self.init(
+            host: try container.decode(String.self, forKey: .host),
+            port: try container.decode(UInt16.self, forKey: .port),
+            useTLS: try container.decode(Bool.self, forKey: .useTLS),
+            transport: try container.decode(RelayEndpointTransport.self, forKey: .transport),
+            fingerprintSHA256: try container.decode(Data.self, forKey: .fingerprintSHA256),
+            pinnedAt: try container.decode(Date.self, forKey: .pinnedAt),
+            origin: try container.decode(RelayCertificatePinOrigin.self, forKey: .origin)
+        )
+        try requireValidClientStateDecoding(
+            isStructurallyValid,
+            key: .fingerprintSHA256,
+            container: container,
+            description: "Invalid relay certificate pin"
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidClientStateEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid relay certificate pin"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(host, forKey: .host)
+        try container.encode(port, forKey: .port)
+        try container.encode(useTLS, forKey: .useTLS)
+        try container.encode(transport, forKey: .transport)
+        try container.encode(fingerprintSHA256, forKey: .fingerprintSHA256)
+        try container.encode(pinnedAt, forKey: .pinnedAt)
+        try container.encode(origin, forKey: .origin)
+    }
+
+    public var isStructurallyValid: Bool {
+        let normalizedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedHost == host
+            && !host.isEmpty
+            && host.utf8.count <= 512
+            && port > 0
+            && useTLS
+            && fingerprintSHA256.count == 32
+            && pinnedAt.timeIntervalSince1970.isFinite
+    }
 }
 
-public struct ClientState: Codable {
-    public var identityProfiles: [IdentityProfile]
-    public var activeIdentityId: UUID
-    public var relayServers: [RelayServerRecord]
-    public var masterServerSources: [MasterServerSource]
-    public var insecurePairing: InsecurePairingSettings
+public enum RelayPreferenceOrigin: String, Codable, Equatable {
+    case manual
+    case relaySource
+}
+
+/// Local relay selection metadata. It is neither advertised nor bound to a
+/// persona, and it grants no protocol authority by itself.
+public struct LocalRelayPreference: Codable, Equatable, Identifiable {
+    public let id: UUID
+    public var name: String
+    public var endpoint: RelayEndpoint
+    public var note: String?
+    public var accessPassword: String?
+    public var region: String?
+    public var tags: [String]
+    public var website: String?
+    public var origin: RelayPreferenceOrigin
+    public var sourceID: UUID?
+    public var addedAt: Date
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id
+        case name
+        case endpoint
+        case note
+        case accessPassword
+        case region
+        case tags
+        case website
+        case origin
+        case sourceID
+        case addedAt
+    }
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        endpoint: RelayEndpoint,
+        note: String? = nil,
+        accessPassword: String? = nil,
+        region: String? = nil,
+        tags: [String] = [],
+        website: String? = nil,
+        origin: RelayPreferenceOrigin = .manual,
+        sourceID: UUID? = nil,
+        addedAt: Date = Date()
+    ) {
+        self.id = id
+        self.name = name
+        self.endpoint = endpoint
+        self.note = note
+        self.accessPassword = accessPassword
+        self.region = region
+        self.tags = tags
+        self.website = website
+        self.origin = origin
+        self.sourceID = sourceID
+        self.addedAt = addedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictClientStateContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Local relay preference"
+        )
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            name: try container.decode(String.self, forKey: .name),
+            endpoint: try container.decode(RelayEndpoint.self, forKey: .endpoint),
+            note: try container.decodeIfPresent(String.self, forKey: .note),
+            accessPassword: try container.decodeIfPresent(String.self, forKey: .accessPassword),
+            region: try container.decodeIfPresent(String.self, forKey: .region),
+            tags: try container.decode([String].self, forKey: .tags),
+            website: try container.decodeIfPresent(String.self, forKey: .website),
+            origin: try container.decode(RelayPreferenceOrigin.self, forKey: .origin),
+            sourceID: try container.decodeIfPresent(UUID.self, forKey: .sourceID),
+            addedAt: try container.decode(Date.self, forKey: .addedAt)
+        )
+        try requireValidClientStateDecoding(
+            isStructurallyValid,
+            key: .endpoint,
+            container: container,
+            description: "Invalid local relay preference"
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidClientStateEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid local relay preference"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(endpoint, forKey: .endpoint)
+        try container.encode(note, forKey: .note)
+        try container.encode(accessPassword, forKey: .accessPassword)
+        try container.encode(region, forKey: .region)
+        try container.encode(tags, forKey: .tags)
+        try container.encode(website, forKey: .website)
+        try container.encode(origin, forKey: .origin)
+        try container.encode(sourceID, forKey: .sourceID)
+        try container.encode(addedAt, forKey: .addedAt)
+    }
+
+    public var isStructurallyValid: Bool {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedHost = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceMatchesOrigin = (origin == .manual && sourceID == nil)
+            || (origin == .relaySource && sourceID != nil)
+        return normalizedName == name
+            && !name.isEmpty
+            && name.utf8.count <= 512
+            && normalizedHost == endpoint.host
+            && !endpoint.host.isEmpty
+            && endpoint.host.utf8.count <= 512
+            && endpoint.port > 0
+            && (endpoint.tlsCertificateFingerprintSHA256.map { $0.count == 32 } ?? true)
+            && (endpoint.directorySigningPublicKey.map { !$0.isEmpty } ?? true)
+            && optionalLocalStringIsValid(note, maximumBytes: 4_096)
+            && optionalOpaqueLocalStringIsValid(accessPassword, maximumBytes: 4_096)
+            && optionalLocalStringIsValid(region, maximumBytes: 512)
+            && tags.count <= 64
+            && Set(tags).count == tags.count
+            && tags.allSatisfy { localStringIsCanonical($0, maximumBytes: 256) }
+            && optionalLocalStringIsValid(website, maximumBytes: 4_096)
+            && sourceMatchesOrigin
+            && addedAt.timeIntervalSince1970.isFinite
+    }
+}
+
+public struct LocalRelaySourcePreference: Codable, Equatable, Identifiable {
+    public let id: UUID
+    public var name: String
+    public var url: String
+    public var isEnabled: Bool
+    public var lastFetchedAt: Date?
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id
+        case name
+        case url
+        case isEnabled
+        case lastFetchedAt
+    }
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        url: String,
+        isEnabled: Bool = true,
+        lastFetchedAt: Date? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.url = url
+        self.isEnabled = isEnabled
+        self.lastFetchedAt = lastFetchedAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictClientStateContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Local relay-source preference"
+        )
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            name: try container.decode(String.self, forKey: .name),
+            url: try container.decode(String.self, forKey: .url),
+            isEnabled: try container.decode(Bool.self, forKey: .isEnabled),
+            lastFetchedAt: try container.decodeIfPresent(Date.self, forKey: .lastFetchedAt)
+        )
+        try requireValidClientStateDecoding(
+            isStructurallyValid,
+            key: .url,
+            container: container,
+            description: "Invalid local relay-source preference"
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidClientStateEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid local relay-source preference"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(url, forKey: .url)
+        try container.encode(isEnabled, forKey: .isEnabled)
+        try container.encode(lastFetchedAt, forKey: .lastFetchedAt)
+    }
+
+    public var isStructurallyValid: Bool {
+        localStringIsCanonical(name, maximumBytes: 512)
+            && localStringIsCanonical(url, maximumBytes: 4_096)
+            && lastFetchedAt?.timeIntervalSince1970.isFinite != false
+    }
+}
+
+/// The only current persisted application-state schema. A persona is local
+/// presentation/storage organization; protocol keys live only inside its
+/// independently scoped relationships and groups.
+public struct ClientState: Codable, Equatable {
+    public static let version = 1
+    public static let maximumPersonas = 64
+    public static let maximumRelayPreferences = 2_048
+    public static let maximumRelaySources = 256
+    public static let maximumCertificatePins = 2_048
+
+    public let version: Int
+    public internal(set) var personas: [PersonaProfileV1]
+    public internal(set) var activePersonaID: UUID
+    public var relayPreferences: [LocalRelayPreference]
+    public var relaySourcePreferences: [LocalRelaySourcePreference]
     public var appearance: AppearanceSettings
     public var privacy: PrivacySettings
     public var appLock: AppLockSettings
@@ -51,67 +335,13 @@ public struct ClientState: Codable {
     public var hasCompletedOnboarding: Bool
     public var hasAcceptedPrivacyPolicy: Bool
     public var hasAcceptedTermsOfUse: Bool
-    public var prekeys: PrekeyState {
-        get { activeProfile.prekeys }
-        set { updateActiveProfile { $0.prekeys = newValue } }
-    }
 
-    public var identity: Identity {
-        get { activeProfile.identity }
-        set { updateActiveProfile { $0.identity = newValue } }
-    }
-
-    public var relay: RelayEndpoint {
-        get { activeProfile.relay }
-        set { updateActiveProfile { $0.relay = newValue } }
-    }
-
-    public var inboxId: String {
-        get { activeProfile.inboxId }
-        set { updateActiveProfile { $0.inboxId = newValue } }
-    }
-
-    public var inboxAccessKey: SigningKeyPair? {
-        get { activeProfile.inboxAccessKey }
-        set { updateActiveProfile { $0.inboxAccessKey = newValue } }
-    }
-
-    public var contacts: [Contact] {
-        get { activeProfile.contacts }
-        set { updateActiveProfile { $0.contacts = newValue } }
-    }
-
-    public var conversations: [Conversation] {
-        get { activeProfile.conversations }
-        set { updateActiveProfile { $0.conversations = newValue } }
-    }
-
-    public var groups: [GroupConversation] {
-        get { activeProfile.groups }
-        set { updateActiveProfile { $0.groups = newValue } }
-    }
-
-    public var pendingDirectDeliveries: [PendingDirectDelivery] {
-        get { activeProfile.pendingDirectDeliveries }
-        set { updateActiveProfile { $0.pendingDirectDeliveries = newValue } }
-    }
-
-    public var federationPolicy: FederationDescriptor? {
-        get { activeProfile.federationPolicy }
-        set { updateActiveProfile { $0.federationPolicy = newValue } }
-    }
-
-    public var selectedRelayId: UUID? {
-        get { activeProfile.selectedRelayId }
-        set { updateActiveProfile { $0.selectedRelayId = newValue } }
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case identityProfiles
-        case activeIdentityId
-        case relayServers
-        case masterServerSources
-        case insecurePairing
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case personas
+        case activePersonaID
+        case relayPreferences
+        case relaySourcePreferences
         case appearance
         case privacy
         case appLock
@@ -123,16 +353,9 @@ public struct ClientState: Codable {
     }
 
     public init(
-        identity: Identity,
-        relay: RelayEndpoint,
-        inboxId: String,
-        contacts: [Contact] = [],
-        conversations: [Conversation] = [],
-        groups: [GroupConversation] = [],
-        relayServers: [RelayServerRecord] = [],
-        selectedRelayId: UUID? = nil,
-        masterServerSources: [MasterServerSource] = [],
-        insecurePairing: InsecurePairingSettings = InsecurePairingSettings(),
+        displayName: String,
+        relayPreferences: [LocalRelayPreference] = [],
+        relaySourcePreferences: [LocalRelaySourcePreference] = [],
         appearance: AppearanceSettings = AppearanceSettings(),
         privacy: PrivacySettings = PrivacySettings(),
         appLock: AppLockSettings = AppLockSettings(),
@@ -141,82 +364,74 @@ public struct ClientState: Codable {
         hasCompletedOnboarding: Bool = true,
         hasAcceptedPrivacyPolicy: Bool = true,
         hasAcceptedTermsOfUse: Bool = true,
-        prekeys: PrekeyState? = nil,
-        identityProfiles: [IdentityProfile]? = nil,
-        activeIdentityId: UUID? = nil
-    ) {
-        self.relayServers = relayServers
-        self.masterServerSources = masterServerSources
-        self.insecurePairing = insecurePairing
+        createdAt: Date = Date()
+    ) throws {
+        let persona = try PersonaProfileV1(displayName: displayName, createdAt: createdAt)
+        version = Self.version
+        personas = [persona]
+        activePersonaID = persona.id
+        self.relayPreferences = relayPreferences
+        self.relaySourcePreferences = relaySourcePreferences
         self.appearance = appearance
         self.privacy = privacy
         self.appLock = appLock
         self.chatList = chatList
-        self.relayCertificatePins = Self.sanitizedRelayCertificatePins(relayCertificatePins)
+        self.relayCertificatePins = relayCertificatePins
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.hasAcceptedPrivacyPolicy = hasAcceptedPrivacyPolicy
         self.hasAcceptedTermsOfUse = hasAcceptedTermsOfUse
-        if let identityProfiles, !identityProfiles.isEmpty {
-            self.identityProfiles = identityProfiles
-            self.activeIdentityId = activeIdentityId ?? identityProfiles[0].id
-        } else {
-            let resolvedPrekeys = prekeys ?? (try? PrekeyState.generate(identity: identity)) ?? PrekeyState(
-                signedPrekeyId: UUID(),
-                signedPrekeyPublicKey: Data(),
-                signedPrekeyPrivateKey: Data(),
-                signedPrekeySignature: Data(),
-                signedPrekeyIssuedAt: Date(),
-                oneTimePrekeys: []
-            )
-            let profile = IdentityProfile(
-                identity: identity,
-                inboxId: inboxId,
-                relay: relay,
-                contacts: contacts,
-                conversations: conversations,
-                groups: groups,
-                selectedRelayId: selectedRelayId,
-                prekeys: resolvedPrekeys
-            )
-            self.identityProfiles = [profile]
-            self.activeIdentityId = profile.id
-        }
+        guard try isStructurallyValidThrowing else { throw ClientStateError.invalidState }
     }
 
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        relayServers = try container.decodeIfPresent([RelayServerRecord].self, forKey: .relayServers) ?? []
-        masterServerSources = try container.decodeIfPresent([MasterServerSource].self, forKey: .masterServerSources) ?? []
-        insecurePairing = try container.decodeIfPresent(InsecurePairingSettings.self, forKey: .insecurePairing) ?? InsecurePairingSettings()
-        appearance = try container.decodeIfPresent(AppearanceSettings.self, forKey: .appearance) ?? AppearanceSettings()
-        privacy = try container.decodeIfPresent(PrivacySettings.self, forKey: .privacy) ?? PrivacySettings()
-        appLock = try container.decodeIfPresent(AppLockSettings.self, forKey: .appLock) ?? AppLockSettings()
-        chatList = try container.decodeIfPresent(ChatListSettings.self, forKey: .chatList) ?? ChatListSettings()
-        relayCertificatePins = Self.sanitizedRelayCertificatePins(
-            try container.decodeIfPresent([RelayCertificatePinRecord].self, forKey: .relayCertificatePins) ?? []
+        let container = try strictClientStateContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Client state"
+        )
+        version = try container.decode(Int.self, forKey: .version)
+        personas = try container.decode([PersonaProfileV1].self, forKey: .personas)
+        activePersonaID = try container.decode(UUID.self, forKey: .activePersonaID)
+        relayPreferences = try container.decode(
+            [LocalRelayPreference].self,
+            forKey: .relayPreferences
+        )
+        relaySourcePreferences = try container.decode(
+            [LocalRelaySourcePreference].self,
+            forKey: .relaySourcePreferences
+        )
+        appearance = try container.decode(AppearanceSettings.self, forKey: .appearance)
+        privacy = try container.decode(PrivacySettings.self, forKey: .privacy)
+        appLock = try container.decode(AppLockSettings.self, forKey: .appLock)
+        chatList = try container.decode(ChatListSettings.self, forKey: .chatList)
+        relayCertificatePins = try container.decode(
+            [RelayCertificatePinRecord].self,
+            forKey: .relayCertificatePins
         )
         hasCompletedOnboarding = try container.decode(Bool.self, forKey: .hasCompletedOnboarding)
         hasAcceptedPrivacyPolicy = try container.decode(Bool.self, forKey: .hasAcceptedPrivacyPolicy)
         hasAcceptedTermsOfUse = try container.decode(Bool.self, forKey: .hasAcceptedTermsOfUse)
-        let profiles = try container.decode([IdentityProfile].self, forKey: .identityProfiles)
-        guard !profiles.isEmpty else {
-            throw DecodingError.dataCorruptedError(
-                forKey: .identityProfiles,
-                in: container,
-                debugDescription: "Client state must contain at least one identity profile."
-            )
-        }
-        identityProfiles = profiles
-        activeIdentityId = try container.decodeIfPresent(UUID.self, forKey: .activeIdentityId) ?? profiles[0].id
+        try requireValidClientStateDecoding(
+            try isStructurallyValidThrowing,
+            key: .personas,
+            container: container,
+            description: "Invalid client state"
+        )
     }
 
     public func encode(to encoder: Encoder) throws {
+        try requireValidClientStateEncoding(
+            try isStructurallyValidThrowing,
+            value: self,
+            encoder: encoder,
+            description: "Invalid client state"
+        )
         var container = encoder.container(keyedBy: CodingKeys.self)
-        try container.encode(identityProfiles, forKey: .identityProfiles)
-        try container.encode(activeIdentityId, forKey: .activeIdentityId)
-        try container.encode(relayServers, forKey: .relayServers)
-        try container.encode(masterServerSources, forKey: .masterServerSources)
-        try container.encode(insecurePairing, forKey: .insecurePairing)
+        try container.encode(version, forKey: .version)
+        try container.encode(personas, forKey: .personas)
+        try container.encode(activePersonaID, forKey: .activePersonaID)
+        try container.encode(relayPreferences, forKey: .relayPreferences)
+        try container.encode(relaySourcePreferences, forKey: .relaySourcePreferences)
         try container.encode(appearance, forKey: .appearance)
         try container.encode(privacy, forKey: .privacy)
         try container.encode(appLock, forKey: .appLock)
@@ -227,423 +442,163 @@ public struct ClientState: Codable {
         try container.encode(hasAcceptedTermsOfUse, forKey: .hasAcceptedTermsOfUse)
     }
 
-    private static func sanitizedRelayCertificatePins(
-        _ records: [RelayCertificatePinRecord]
-    ) -> [RelayCertificatePinRecord] {
-        var byID: [String: RelayCertificatePinRecord] = [:]
-        for record in records.prefix(256) where
-            record.useTLS
-                && record.port > 0
-                && !record.host.isEmpty
-                && record.host.utf8.count <= 253
-                && record.fingerprintSHA256.count == 32
-                && record.pinnedAt.timeIntervalSince1970.isFinite {
-            byID[record.id] = record
-        }
-        return byID.values.sorted { $0.id < $1.id }
-    }
-
-    public mutating func upsert(contact: Contact) {
-        let mergedAddressKey = contactAddressKey(relay: contact.relay, inboxId: contact.inboxId)
-        let primaryIndex: Int?
-        if let index = contacts.firstIndex(where: { $0.id == contact.id }) {
-            primaryIndex = index
-        } else if let index = contacts.firstIndex(where: { $0.fingerprint == contact.fingerprint }) {
-            primaryIndex = index
-        } else if let mergedAddressKey,
-                  let index = contacts.firstIndex(where: { existing in
-                      contactAddressKey(relay: existing.relay, inboxId: existing.inboxId) == mergedAddressKey
-                  }) {
-            primaryIndex = index
-        } else {
-            primaryIndex = nil
-        }
-
-        guard let primaryIndex else {
-            contacts.append(contact)
-            return
-        }
-
-        let merged = mergeContact(existing: contacts[primaryIndex], incoming: contact)
-        contacts[primaryIndex] = merged
-
-        var duplicateIndices: [Int] = []
-        var duplicateIds: [UUID] = []
-        for (index, existing) in contacts.enumerated() where index != primaryIndex {
-            let sameFingerprint = existing.fingerprint == merged.fingerprint
-            let sameAddress = {
-                guard let canonicalAddress = contactAddressKey(relay: merged.relay, inboxId: merged.inboxId) else {
-                    return false
-                }
-                return contactAddressKey(relay: existing.relay, inboxId: existing.inboxId) == canonicalAddress
-            }()
-            if sameFingerprint || sameAddress {
-                duplicateIndices.append(index)
-                duplicateIds.append(existing.id)
-            }
-        }
-
-        if !duplicateIndices.isEmpty {
-            for index in duplicateIndices.sorted(by: >) {
-                contacts.remove(at: index)
-            }
-            remapContactReferences(from: duplicateIds, to: merged.id)
-        }
-    }
-
-    public mutating func upsert(conversation: Conversation) {
-        if let index = conversations.firstIndex(where: { $0.contactId == conversation.contactId }) {
-            conversations[index] = conversation
-        } else {
-            conversations.append(conversation)
-        }
-    }
-
-    public mutating func upsert(group: GroupConversation) {
-        if let index = groups.firstIndex(where: { $0.id == group.id }) {
-            groups[index] = group
-        } else {
-            groups.append(group)
-        }
-    }
-
-    public mutating func mergeUpsert(conversation incoming: Conversation) {
-        if let index = conversations.firstIndex(where: { $0.contactId == incoming.contactId }) {
-            var merged = incoming
-            merged.messages = mergedMessages(conversations[index].messages, incoming.messages)
-            merged.unreadCount = max(conversations[index].unreadCount, incoming.unreadCount)
-            conversations[index] = merged
-        } else {
-            conversations.append(incoming)
-        }
-    }
-
-    public mutating func mergeUpsert(group incoming: GroupConversation) {
-        if let index = groups.firstIndex(where: { $0.id == incoming.id }) {
-            var merged = incoming
-            merged.messages = mergedMessages(groups[index].messages, incoming.messages)
-            merged.unreadCount = max(groups[index].unreadCount, incoming.unreadCount)
-            groups[index] = merged
-        } else {
-            groups.append(incoming)
-        }
-    }
-
-    public func contact(for fingerprint: String) -> Contact? {
-        contacts.first { $0.fingerprint == fingerprint }
-    }
-
-    public func conversation(for contactId: UUID) -> Conversation? {
-        let matches = conversations.filter { $0.contactId == contactId }
-        if matches.count <= 1 {
-            return matches.first
-        }
-        return matches.max(by: { lhs, rhs in
-            let leftDate = lhs.messages.last?.timestamp ?? Date.distantPast
-            let rightDate = rhs.messages.last?.timestamp ?? Date.distantPast
-            if leftDate != rightDate {
-                return leftDate < rightDate
-            }
-            return lhs.receiveChain.counter < rhs.receiveChain.counter
-        })
-    }
-
-    public func group(for groupId: UUID) -> GroupConversation? {
-        groups.first(where: { $0.id == groupId })
-    }
-
-    public mutating func updateConversation(_ conversation: Conversation) {
-        if let index = conversations.firstIndex(where: { $0.contactId == conversation.contactId }) {
-            conversations[index] = conversation
-        }
-    }
-
-    public mutating func updateGroup(_ group: GroupConversation) {
-        if let index = groups.firstIndex(where: { $0.id == group.id }) {
-            groups[index] = group
-        }
-    }
-
-    public mutating func updateContact(_ contact: Contact) {
-        upsert(contact: contact)
-    }
-
-    public func identityProfile(id: UUID) -> IdentityProfile? {
-        identityProfiles.first { $0.id == id }
-    }
-
-    public mutating func updateIdentityProfile(_ profile: IdentityProfile) {
-        if let index = identityProfiles.firstIndex(where: { $0.id == profile.id }) {
-            identityProfiles[index] = profile
-        }
-    }
-
-    public mutating func appendContinuityEvent(_ event: ContinuityEvent, profileId: UUID? = nil) {
-        let targetId = profileId ?? activeIdentityId
-        guard let index = identityProfiles.firstIndex(where: { $0.id == targetId }) else {
-            return
-        }
-        identityProfiles[index].continuityEvents.append(event)
-    }
-
-    public mutating func purgeContinuityEvents(profileId: UUID? = nil) {
-        let targetId = profileId ?? activeIdentityId
-        guard let index = identityProfiles.firstIndex(where: { $0.id == targetId }) else {
-            return
-        }
-        identityProfiles[index].continuityEvents.removeAll()
-    }
-}
-
-fileprivate extension ClientState {
-    func activeProfileIndex() -> Int {
-        identityProfiles.firstIndex(where: { $0.id == activeIdentityId }) ?? 0
-    }
-
-    var activeProfile: IdentityProfile {
+    public internal(set) var activePersona: PersonaProfileV1 {
         get {
-            identityProfiles[activeProfileIndex()]
+            guard let persona = personas.first(where: { $0.id == activePersonaID }) else {
+                preconditionFailure("Validated client state lost its active persona")
+            }
+            return persona
         }
         set {
-            var profiles = identityProfiles
-            let index = activeProfileIndex()
-            if profiles.indices.contains(index) {
-                profiles[index] = newValue
-                identityProfiles = profiles
-                activeIdentityId = newValue.id
+            guard let index = personas.firstIndex(where: { $0.id == newValue.id }) else {
+                preconditionFailure("Cannot replace an unknown persona")
             }
+            var updated = personas
+            updated[index] = newValue
+            precondition(
+                newValue.isStructurallyValid
+                    && protocolScopesAreUnique(
+                        relationships: updated.flatMap(\.relationships),
+                        groupRuntimes: updated.flatMap(\.groupRuntimes),
+                        pendingGroupAdmissions: updated.flatMap(\.pendingGroupAdmissions)
+                    ),
+                "Cannot install a persona that reuses relationship- or group-scoped authority"
+            )
+            personas = updated
         }
     }
 
-    mutating func updateActiveProfile(_ update: (inout IdentityProfile) -> Void) {
-        let index = activeProfileIndex()
-        guard identityProfiles.indices.contains(index) else {
-            return
-        }
-        var profile = identityProfiles[index]
-        update(&profile)
-        identityProfiles[index] = profile
-        activeIdentityId = profile.id
-    }
-
-    func contactAddressKey(relay: RelayEndpoint, inboxId: String) -> String? {
-        let normalizedInbox = inboxId
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard !normalizedInbox.isEmpty else {
-            return nil
-        }
-        let normalizedHost = relay.host
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-            .lowercased()
-        return "\(normalizedHost):\(relay.port):\(relay.useTLS ? 1 : 0):\(relay.transport.rawValue):\(normalizedInbox)"
-    }
-
-    func mergeContact(existing: Contact, incoming: Contact) -> Contact {
-        let trimmedName = incoming.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedName = trimmedName.isEmpty ? existing.displayName : trimmedName
-        let keysChanged = incoming.signingPublicKey != existing.signingPublicKey
-            || incoming.agreementPublicKey != existing.agreementPublicKey
-        let mergedCounter = keysChanged
-            ? incoming.rotationCounter
-            : max(existing.rotationCounter, incoming.rotationCounter)
-
-        var trustById: [UUID: ContactTrustAssertion] = [:]
-        for assertion in existing.trustAssertions {
-            trustById[assertion.id] = assertion
-        }
-        for assertion in incoming.trustAssertions {
-            trustById[assertion.id] = assertion
-        }
-        let mergedTrust = trustById.values.sorted { lhs, rhs in
-            if lhs.timestamp != rhs.timestamp {
-                return lhs.timestamp < rhs.timestamp
+    public var isStructurallyValidThrowing: Bool {
+        get throws {
+            for persona in personas {
+                guard try persona.isStructurallyValidThrowing else { return false }
             }
-            return lhs.id.uuidString < rhs.id.uuidString
-        }
-
-        return Contact(
-            id: existing.id,
-            displayName: resolvedName,
-            inboxId: incoming.inboxId,
-            relay: incoming.relay,
-            signingPublicKey: incoming.signingPublicKey,
-            agreementPublicKey: incoming.agreementPublicKey,
-            rotationCounter: mergedCounter,
-            allowIdentityReset: existing.allowIdentityReset || incoming.allowIdentityReset,
-            trustAssertions: mergedTrust
-        )
-    }
-
-    mutating func remapContactReferences(from oldIds: [UUID], to newId: UUID) {
-        let staleIds = Set(oldIds.filter { $0 != newId })
-        guard !staleIds.isEmpty else {
-            return
-        }
-
-        var rebuiltConversations: [Conversation] = []
-        for conversation in conversations {
-            let resolvedContactId = staleIds.contains(conversation.contactId) ? newId : conversation.contactId
-            let adjusted = conversation.withContactId(resolvedContactId)
-            if let index = rebuiltConversations.firstIndex(where: { $0.contactId == resolvedContactId }) {
-                rebuiltConversations[index] = preferredConversation(
-                    existing: rebuiltConversations[index],
-                    candidate: adjusted
-                )
-            } else {
-                rebuiltConversations.append(adjusted)
-            }
-        }
-        conversations = rebuiltConversations
-
-        for index in groups.indices {
-            let remapped = groups[index].memberContactIds.map { staleIds.contains($0) ? newId : $0 }
-            var seen: Set<UUID> = []
-            groups[index].memberContactIds = remapped.filter { seen.insert($0).inserted }
+            return hasValidAggregateStructureAfterPersonaPreflight
         }
     }
 
-    func preferredConversation(existing: Conversation, candidate: Conversation) -> Conversation {
-        let existingDate = existing.messages.last?.timestamp ?? Date.distantPast
-        let candidateDate = candidate.messages.last?.timestamp ?? Date.distantPast
-        if existingDate != candidateDate {
-            return candidateDate > existingDate ? candidate : existing
-        }
-        if existing.receiveChain.counter != candidate.receiveChain.counter {
-            return candidate.receiveChain.counter > existing.receiveChain.counter ? candidate : existing
-        }
-        return existing.id <= candidate.id ? existing : candidate
+    private var hasValidAggregateStructureAfterPersonaPreflight: Bool {
+        version == Self.version
+            && !personas.isEmpty
+            && personas.count <= Self.maximumPersonas
+            && Set(personas.map(\.id)).count == personas.count
+            && protocolScopesAreUnique(
+                relationships: personas.flatMap(\.relationships),
+                groupRuntimes: personas.flatMap(\.groupRuntimes),
+                pendingGroupAdmissions: personas.flatMap(\.pendingGroupAdmissions)
+            )
+            && personas.contains(where: { $0.id == activePersonaID })
+            && relayPreferences.count <= Self.maximumRelayPreferences
+            && Set(relayPreferences.map(\.id)).count == relayPreferences.count
+            && relayPreferences.allSatisfy(\.isStructurallyValid)
+            && relaySourcePreferences.count <= Self.maximumRelaySources
+            && Set(relaySourcePreferences.map(\.id)).count == relaySourcePreferences.count
+            && relaySourcePreferences.allSatisfy(\.isStructurallyValid)
+            && relayCertificatePins.count <= Self.maximumCertificatePins
+            && Set(relayCertificatePins.map(\.id)).count == relayCertificatePins.count
+            && relayCertificatePins.allSatisfy(\.isStructurallyValid)
+            && appearance.isStructurallyValid
+            && privacy.isStructurallyValid
+            && appLock.isStructurallyValid
+            && chatList.isStructurallyValid
     }
 
-    func mergedMessages(_ messageSets: [Message]...) -> [Message] {
-        var byId: [UUID: Message] = [:]
-        for messages in messageSets {
-            for message in messages {
-                byId[message.id] = message
-            }
-        }
-        return byId.values.sorted { lhs, rhs in
-            if lhs.timestamp != rhs.timestamp {
-                return lhs.timestamp < rhs.timestamp
-            }
-            if lhs.counter != rhs.counter {
-                return lhs.counter < rhs.counter
-            }
-            return lhs.id.uuidString < rhs.id.uuidString
-        }
+    public var isStructurallyValid: Bool {
+        (try? isStructurallyValidThrowing) == true
     }
+
+    public mutating func addPersona(
+        displayName: String,
+        createdAt: Date = Date()
+    ) throws -> PersonaProfileV1 {
+        guard personas.count < Self.maximumPersonas else {
+            throw ClientStateError.personaCapacityReached
+        }
+        let persona = try PersonaProfileV1(displayName: displayName, createdAt: createdAt)
+        personas.append(persona)
+        activePersonaID = persona.id
+        return persona
+    }
+
+    public mutating func selectPersona(_ id: UUID) throws {
+        guard personas.contains(where: { $0.id == id }) else {
+            throw ClientStateError.personaNotFound
+        }
+        activePersonaID = id
+    }
+
+    public mutating func updateActivePersona(
+        _ body: (inout PersonaProfileV1) throws -> Void
+    ) throws {
+        guard let index = personas.firstIndex(where: { $0.id == activePersonaID }) else {
+            throw ClientStateError.personaNotFound
+        }
+        var persona = personas[index]
+        try body(&persona)
+        guard try persona.isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
+        var candidate = self
+        candidate.personas[index] = persona
+        guard try candidate.isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
+        self = candidate
+    }
+
 }
 
-private extension Conversation {
-    func withContactId(_ contactId: UUID) -> Conversation {
-        guard self.contactId != contactId else {
-            return self
-        }
-        return Conversation(
-            id: id,
-            contactId: contactId,
-            sessionId: sessionId,
-            rootKey: rootKey,
-            rootCounter: rootCounter,
-            sendChain: sendChain,
-            receiveChain: receiveChain,
-            messages: messages,
-            unreadCount: unreadCount,
-            ratchetState: ratchetState
-        )
-    }
-}
-
-public enum ThemePaletteFamily: Codable, Equatable {
-    case glacier
-    case sunset
-    case forest
-    case citrus
-    case slate
-    case aurora
-    case ember
-    case cobalt
-    case orchid
-    case dune
-    case noir
-    case prism
-    case weave
-    case abyss
-    case pearl
+public enum ThemePaletteFamily: String, Codable, Equatable {
+    case glacier, sunset, forest, citrus, slate, aurora, ember, cobalt, orchid
+    case dune, noir, prism, weave, abyss, pearl
 }
 
 public enum ThemePalette: String, Codable, CaseIterable, Identifiable {
-    case glacier
-    case glacierDark
-    case sunset
-    case sunsetDark
-    case forest
-    case forestDark
-    case citrus
-    case citrusDark
-    case slate
-    case slateDark
-    case aurora
-    case auroraDark
-    case ember
-    case emberDark
-    case cobalt
-    case cobaltDark
-    case orchid
-    case orchidDark
-    case dune
-    case duneDark
-    case noir
-    case noirBright
-    case prism
-    case prismDark
-    case weave
-    case weaveDark
-    case abyss
-    case abyssDark
-    case pearl
-    case pearlDark
+    case glacier, glacierDark, sunset, sunsetDark, forest, forestDark
+    case citrus, citrusDark, slate, slateDark, aurora, auroraDark
+    case ember, emberDark, cobalt, cobaltDark, orchid, orchidDark
+    case dune, duneDark, noir, noirBright, prism, prismDark
+    case weave, weaveDark, abyss, abyssDark, pearl, pearlDark
 
     public var id: String { rawValue }
 
     public var family: ThemePaletteFamily {
         switch self {
-        case .glacier, .glacierDark: return .glacier
-        case .sunset, .sunsetDark: return .sunset
-        case .forest, .forestDark: return .forest
-        case .citrus, .citrusDark: return .citrus
-        case .slate, .slateDark: return .slate
-        case .aurora, .auroraDark: return .aurora
-        case .ember, .emberDark: return .ember
-        case .cobalt, .cobaltDark: return .cobalt
-        case .orchid, .orchidDark: return .orchid
-        case .dune, .duneDark: return .dune
-        case .noir, .noirBright: return .noir
-        case .prism, .prismDark: return .prism
-        case .weave, .weaveDark: return .weave
-        case .abyss, .abyssDark: return .abyss
-        case .pearl, .pearlDark: return .pearl
+        case .glacier, .glacierDark: .glacier
+        case .sunset, .sunsetDark: .sunset
+        case .forest, .forestDark: .forest
+        case .citrus, .citrusDark: .citrus
+        case .slate, .slateDark: .slate
+        case .aurora, .auroraDark: .aurora
+        case .ember, .emberDark: .ember
+        case .cobalt, .cobaltDark: .cobalt
+        case .orchid, .orchidDark: .orchid
+        case .dune, .duneDark: .dune
+        case .noir, .noirBright: .noir
+        case .prism, .prismDark: .prism
+        case .weave, .weaveDark: .weave
+        case .abyss, .abyssDark: .abyss
+        case .pearl, .pearlDark: .pearl
         }
     }
 
     public var basePalette: ThemePalette {
         switch self {
-        case .glacier, .glacierDark: return .glacier
-        case .sunset, .sunsetDark: return .sunset
-        case .forest, .forestDark: return .forest
-        case .citrus, .citrusDark: return .citrus
-        case .slate, .slateDark: return .slate
-        case .aurora, .auroraDark: return .aurora
-        case .ember, .emberDark: return .ember
-        case .cobalt, .cobaltDark: return .cobalt
-        case .orchid, .orchidDark: return .orchid
-        case .dune, .duneDark: return .dune
-        case .noir, .noirBright: return .noir
-        case .prism, .prismDark: return .prism
-        case .weave, .weaveDark: return .weave
-        case .abyss, .abyssDark: return .abyss
-        case .pearl, .pearlDark: return .pearl
+        case .glacier, .glacierDark: .glacier
+        case .sunset, .sunsetDark: .sunset
+        case .forest, .forestDark: .forest
+        case .citrus, .citrusDark: .citrus
+        case .slate, .slateDark: .slate
+        case .aurora, .auroraDark: .aurora
+        case .ember, .emberDark: .ember
+        case .cobalt, .cobaltDark: .cobalt
+        case .orchid, .orchidDark: .orchid
+        case .dune, .duneDark: .dune
+        case .noir, .noirBright: .noir
+        case .prism, .prismDark: .prism
+        case .weave, .weaveDark: .weave
+        case .abyss, .abyssDark: .abyss
+        case .pearl, .pearlDark: .pearl
         }
     }
 
@@ -652,102 +607,116 @@ public enum ThemePalette: String, Codable, CaseIterable, Identifiable {
         case .glacierDark, .sunsetDark, .forestDark, .citrusDark, .slateDark,
              .auroraDark, .emberDark, .cobaltDark, .orchidDark, .duneDark,
              .noir, .prismDark, .weaveDark, .abyssDark, .pearlDark:
-            return true
-        case .glacier, .sunset, .forest, .citrus, .slate, .aurora, .ember,
-             .cobalt, .orchid, .dune, .noirBright, .prism, .weave, .abyss, .pearl:
-            return false
+            true
+        default:
+            false
         }
     }
 
     public var displayName: String {
-        switch self {
-        case .glacier:
-            return "Glacier Bright"
-        case .glacierDark:
-            return "Glacier Dark"
-        case .sunset:
-            return "Sunset Bright"
-        case .sunsetDark:
-            return "Sunset Dark"
-        case .forest:
-            return "Forest Bright"
-        case .forestDark:
-            return "Forest Dark"
-        case .citrus:
-            return "Citrus Bright"
-        case .citrusDark:
-            return "Citrus Dark"
-        case .slate:
-            return "Slate Bright"
-        case .slateDark:
-            return "Slate Dark"
-        case .aurora:
-            return "Aurora Bright"
-        case .auroraDark:
-            return "Aurora Dark"
-        case .ember:
-            return "Ember Bright"
-        case .emberDark:
-            return "Ember Dark"
-        case .cobalt:
-            return "Cobalt Bright"
-        case .cobaltDark:
-            return "Cobalt Dark"
-        case .orchid:
-            return "Orchid Bright"
-        case .orchidDark:
-            return "Orchid Dark"
-        case .dune:
-            return "Dune Bright"
-        case .duneDark:
-            return "Dune Dark"
-        case .noir:
-            return "Noir"
-        case .noirBright:
-            return "Noir Bright"
-        case .prism:
-            return "Prism Bright"
-        case .prismDark:
-            return "Prism Dark"
-        case .weave:
-            return "Weave Bright"
-        case .weaveDark:
-            return "Weave Dark"
-        case .abyss:
-            return "Abyss Bright"
-        case .abyssDark:
-            return "Abyss Dark"
-        case .pearl:
-            return "Pearl Bright"
-        case .pearlDark:
-            return "Pearl Dark"
-        }
+        let spaced = rawValue
+            .replacingOccurrences(of: "Dark", with: " Dark")
+            .replacingOccurrences(of: "Bright", with: " Bright")
+        return spaced.prefix(1).uppercased() + String(spaced.dropFirst())
     }
 }
 
 public struct AppearanceSettings: Codable, Equatable {
     public var theme: ThemePalette
 
-    // Default to Noir for a more subdued, privacy-forward look.
-    public init(theme: ThemePalette = .noir) {
-        self.theme = theme
+    private enum CodingKeys: String, CodingKey, CaseIterable { case theme }
+
+    public init(theme: ThemePalette = .noir) { self.theme = theme }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictClientStateContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Appearance settings"
+        )
+        theme = try container.decode(ThemePalette.self, forKey: .theme)
     }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(theme, forKey: .theme)
+    }
+
+    public var isStructurallyValid: Bool { true }
+}
+
+public enum ChatListSortMode: String, Codable, CaseIterable, Equatable {
+    case unread
+    case recent
+    case alphabetical
 }
 
 public struct ChatListSettings: Codable, Equatable {
-    public var sortModeRaw: String
-    public var pinnedContactIds: [UUID]
-    public var pinnedGroupIds: [UUID]
+    public var sortMode: ChatListSortMode
+    public var pinnedRelationshipIDs: [UUID]
+    public var pinnedGroupIDs: [UUID]
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case sortMode
+        case pinnedRelationshipIDs
+        case pinnedGroupIDs
+    }
 
     public init(
-        sortModeRaw: String = "unread",
-        pinnedContactIds: [UUID] = [],
-        pinnedGroupIds: [UUID] = []
+        sortMode: ChatListSortMode = .unread,
+        pinnedRelationshipIDs: [UUID] = [],
+        pinnedGroupIDs: [UUID] = []
     ) {
-        self.sortModeRaw = sortModeRaw
-        self.pinnedContactIds = pinnedContactIds
-        self.pinnedGroupIds = pinnedGroupIds
+        self.sortMode = sortMode
+        self.pinnedRelationshipIDs = pinnedRelationshipIDs
+        self.pinnedGroupIDs = pinnedGroupIDs
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictClientStateContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Chat-list settings"
+        )
+        sortMode = try container.decode(ChatListSortMode.self, forKey: .sortMode)
+        pinnedRelationshipIDs = try container.decode([UUID].self, forKey: .pinnedRelationshipIDs)
+        pinnedGroupIDs = try container.decode([UUID].self, forKey: .pinnedGroupIDs)
+        try requireValidClientStateDecoding(
+            isStructurallyValid,
+            key: .pinnedRelationshipIDs,
+            container: container,
+            description: "Invalid chat-list settings"
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidClientStateEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid chat-list settings"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sortMode, forKey: .sortMode)
+        try container.encode(pinnedRelationshipIDs, forKey: .pinnedRelationshipIDs)
+        try container.encode(pinnedGroupIDs, forKey: .pinnedGroupIDs)
+    }
+
+    public var isStructurallyValid: Bool {
+        pinnedRelationshipIDs.count <= PersonaProfileV1.maximumRelationships
+            && Set(pinnedRelationshipIDs).count == pinnedRelationshipIDs.count
+            && pinnedGroupIDs.count <= PersonaProfileV1.maximumGroupRuntimes
+            && Set(pinnedGroupIDs).count == pinnedGroupIDs.count
+    }
+}
+
+public enum SecureTypingKeyboard: String, Codable, CaseIterable, Identifiable, Equatable {
+    case noctweave
+    case apple
+
+    public var id: String { rawValue }
+    public var displayName: String { self == .noctweave ? "Noctweave keyboard" : "Apple keyboard" }
+    public var shortName: String { self == .noctweave ? "Noctweave" : "Apple" }
 }
 
 public struct PrivacySettings: Codable, Equatable {
@@ -755,13 +724,21 @@ public struct PrivacySettings: Codable, Equatable {
     public var secureTypingKeyboard: SecureTypingKeyboard
     public var useSecureCameraCapture: Bool
     public var autoDownloadAttachments: Bool
-    // macOS-only behaviors (safe to store cross-platform; ignored on iOS).
     public var hideSensitiveWhenUnfocused: Bool
     public var macBlockWindowCapture: Bool
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case secureTypingEnabled
+        case secureTypingKeyboard
+        case useSecureCameraCapture
+        case autoDownloadAttachments
+        case hideSensitiveWhenUnfocused
+        case macBlockWindowCapture
+    }
+
     public init(
         secureTypingEnabled: Bool = true,
-        secureTypingKeyboard: SecureTypingKeyboard = .noctyra,
+        secureTypingKeyboard: SecureTypingKeyboard = .noctweave,
         useSecureCameraCapture: Bool = true,
         autoDownloadAttachments: Bool = true,
         hideSensitiveWhenUnfocused: Bool = true,
@@ -775,23 +752,18 @@ public struct PrivacySettings: Codable, Equatable {
         self.macBlockWindowCapture = macBlockWindowCapture
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case secureTypingEnabled
-        case secureTypingKeyboard
-        case useSecureCameraCapture
-        case autoDownloadAttachments
-        case hideSensitiveWhenUnfocused
-        case macBlockWindowCapture
-    }
-
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        secureTypingEnabled = try container.decodeIfPresent(Bool.self, forKey: .secureTypingEnabled) ?? true
-        secureTypingKeyboard = try container.decodeIfPresent(SecureTypingKeyboard.self, forKey: .secureTypingKeyboard) ?? .noctyra
-        useSecureCameraCapture = try container.decodeIfPresent(Bool.self, forKey: .useSecureCameraCapture) ?? true
-        autoDownloadAttachments = try container.decodeIfPresent(Bool.self, forKey: .autoDownloadAttachments) ?? true
-        hideSensitiveWhenUnfocused = try container.decodeIfPresent(Bool.self, forKey: .hideSensitiveWhenUnfocused) ?? true
-        macBlockWindowCapture = try container.decodeIfPresent(Bool.self, forKey: .macBlockWindowCapture) ?? true
+        let container = try strictClientStateContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "Privacy settings"
+        )
+        secureTypingEnabled = try container.decode(Bool.self, forKey: .secureTypingEnabled)
+        secureTypingKeyboard = try container.decode(SecureTypingKeyboard.self, forKey: .secureTypingKeyboard)
+        useSecureCameraCapture = try container.decode(Bool.self, forKey: .useSecureCameraCapture)
+        autoDownloadAttachments = try container.decode(Bool.self, forKey: .autoDownloadAttachments)
+        hideSensitiveWhenUnfocused = try container.decode(Bool.self, forKey: .hideSensitiveWhenUnfocused)
+        macBlockWindowCapture = try container.decode(Bool.self, forKey: .macBlockWindowCapture)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -803,34 +775,11 @@ public struct PrivacySettings: Codable, Equatable {
         try container.encode(hideSensitiveWhenUnfocused, forKey: .hideSensitiveWhenUnfocused)
         try container.encode(macBlockWindowCapture, forKey: .macBlockWindowCapture)
     }
+
+    public var isStructurallyValid: Bool { true }
 }
 
-public enum SecureTypingKeyboard: String, Codable, CaseIterable, Identifiable, Equatable {
-    case noctyra
-    case apple
-
-    public var id: String { rawValue }
-
-    public var displayName: String {
-        switch self {
-        case .noctyra:
-            "Noctyra keyboard"
-        case .apple:
-            "Apple keyboard"
-        }
-    }
-
-    public var shortName: String {
-        switch self {
-        case .noctyra:
-            "Noctyra"
-        case .apple:
-            "Apple"
-        }
-    }
-}
-
-public enum AppLockMode: String, Codable, CaseIterable, Identifiable {
+public enum AppLockMode: String, Codable, CaseIterable, Identifiable, Equatable {
     case off
     case biometrics
     case pinOnly
@@ -840,43 +789,31 @@ public enum AppLockMode: String, Codable, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
-        case .off:
-            return "Off"
-        case .biometrics:
-            return "Biometrics"
-        case .pinOnly:
-            return "PIN Only"
-        case .biometricsAndPin:
-            return "Biometrics + PIN"
+        case .off: "Off"
+        case .biometrics: "Biometrics"
+        case .pinOnly: "PIN Only"
+        case .biometricsAndPin: "Biometrics + PIN"
         }
     }
 }
 
-public enum AppLockPinAction: String, Codable, CaseIterable, Identifiable {
-    case burnIdentity
+public enum AppLockPinAction: String, Codable, CaseIterable, Identifiable, Equatable {
+    case burnPersona
     case clearChats
 
     public var id: String { rawValue }
-
-    public var displayName: String {
-        switch self {
-        case .burnIdentity:
-            return "Burn Identity"
-        case .clearChats:
-            return "Clear Chats"
-        }
-    }
+    public var displayName: String { self == .burnPersona ? "Burn Persona" : "Clear Chats" }
 }
 
-public enum AppLockActionKind: String, Codable, CaseIterable, Identifiable {
+public enum AppLockActionKind: String, Codable, CaseIterable, Identifiable, Equatable {
     case appReset
-    case burnIdentities
+    case burnPersonas
     case deleteGroups
-    case deleteIdentities
+    case deletePersonas
     case appCorruption
     case throwAround
     case deleteChats
-    case deleteContacts
+    case deleteRelationships
     case wipePhotos
     case wipeDocuments
 
@@ -884,43 +821,31 @@ public enum AppLockActionKind: String, Codable, CaseIterable, Identifiable {
 
     public var displayName: String {
         switch self {
-        case .appReset:
-            return "App Reset"
-        case .burnIdentities:
-            return "Burn Identities"
-        case .deleteGroups:
-            return "Delete Groups"
-        case .deleteIdentities:
-            return "Delete Identities"
-        case .appCorruption:
-            return "App Corruption"
-        case .throwAround:
-            return "Throw Around"
-        case .deleteChats:
-            return "Delete Chats"
-        case .deleteContacts:
-            return "Delete Contacts"
-        case .wipePhotos:
-            return "Wipe Photos"
-        case .wipeDocuments:
-            return "Wipe Documents"
+        case .appReset: "App Reset"
+        case .burnPersonas: "Burn Personas"
+        case .deleteGroups: "Delete Groups"
+        case .deletePersonas: "Delete Personas"
+        case .appCorruption: "App Corruption"
+        case .throwAround: "Throw Around"
+        case .deleteChats: "Delete Chats"
+        case .deleteRelationships: "Delete Relationships"
+        case .wipePhotos: "Wipe Photos"
+        case .wipeDocuments: "Wipe Documents"
         }
     }
 
     public var targetHint: String {
         switch self {
-        case .burnIdentities:
-            return "Select identities."
+        case .burnPersonas, .deletePersonas:
+            "Select personas."
         case .deleteGroups:
-            return "Select groups."
-        case .deleteIdentities:
-            return "Select identities."
+            "Select groups."
+        case .deleteRelationships:
+            "Select relationships."
         case .deleteChats:
-            return "Select direct chats and/or groups."
-        case .deleteContacts:
-            return "Select contacts."
+            "Select relationships and/or groups."
         default:
-            return "No target list required."
+            "No target list required."
         }
     }
 }
@@ -928,25 +853,102 @@ public enum AppLockActionKind: String, Codable, CaseIterable, Identifiable {
 public struct AppLockActionOperation: Codable, Equatable, Identifiable {
     public var id: UUID
     public var kind: AppLockActionKind
-    public var identityIds: [UUID]
-    public var groupIds: [UUID]
-    public var contactIds: [UUID]
-    public var chatContactIds: [UUID]
+    public var personaIDs: [UUID]
+    public var groupIDs: [UUID]
+    public var relationshipIDs: [UUID]
+    public var chatRelationshipIDs: [UUID]
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id
+        case kind
+        case personaIDs
+        case groupIDs
+        case relationshipIDs
+        case chatRelationshipIDs
+    }
 
     public init(
         id: UUID = UUID(),
         kind: AppLockActionKind,
-        identityIds: [UUID] = [],
-        groupIds: [UUID] = [],
-        contactIds: [UUID] = [],
-        chatContactIds: [UUID] = []
+        personaIDs: [UUID] = [],
+        groupIDs: [UUID] = [],
+        relationshipIDs: [UUID] = [],
+        chatRelationshipIDs: [UUID] = []
     ) {
         self.id = id
         self.kind = kind
-        self.identityIds = identityIds
-        self.groupIds = groupIds
-        self.contactIds = contactIds
-        self.chatContactIds = chatContactIds
+        self.personaIDs = personaIDs
+        self.groupIDs = groupIDs
+        self.relationshipIDs = relationshipIDs
+        self.chatRelationshipIDs = chatRelationshipIDs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictClientStateContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "App-lock operation"
+        )
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            kind: try container.decode(AppLockActionKind.self, forKey: .kind),
+            personaIDs: try container.decode([UUID].self, forKey: .personaIDs),
+            groupIDs: try container.decode([UUID].self, forKey: .groupIDs),
+            relationshipIDs: try container.decode([UUID].self, forKey: .relationshipIDs),
+            chatRelationshipIDs: try container.decode([UUID].self, forKey: .chatRelationshipIDs)
+        )
+        try requireValidClientStateDecoding(
+            isStructurallyValid,
+            key: .kind,
+            container: container,
+            description: "Invalid app-lock operation"
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidClientStateEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid app-lock operation"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(personaIDs, forKey: .personaIDs)
+        try container.encode(groupIDs, forKey: .groupIDs)
+        try container.encode(relationshipIDs, forKey: .relationshipIDs)
+        try container.encode(chatRelationshipIDs, forKey: .chatRelationshipIDs)
+    }
+
+    public var isStructurallyValid: Bool {
+        let lists = [personaIDs, groupIDs, relationshipIDs, chatRelationshipIDs]
+        guard lists.allSatisfy({ $0.count <= 4_096 && Set($0).count == $0.count }) else {
+            return false
+        }
+        switch kind {
+        case .burnPersonas, .deletePersonas:
+            return !personaIDs.isEmpty
+                && groupIDs.isEmpty
+                && relationshipIDs.isEmpty
+                && chatRelationshipIDs.isEmpty
+        case .deleteGroups:
+            return personaIDs.isEmpty
+                && !groupIDs.isEmpty
+                && relationshipIDs.isEmpty
+                && chatRelationshipIDs.isEmpty
+        case .deleteRelationships:
+            return personaIDs.isEmpty
+                && groupIDs.isEmpty
+                && !relationshipIDs.isEmpty
+                && chatRelationshipIDs.isEmpty
+        case .deleteChats:
+            return personaIDs.isEmpty
+                && relationshipIDs.isEmpty
+                && (!groupIDs.isEmpty || !chatRelationshipIDs.isEmpty)
+        case .appReset, .appCorruption, .throwAround, .wipePhotos, .wipeDocuments:
+            return lists.allSatisfy(\.isEmpty)
+        }
     }
 }
 
@@ -957,6 +959,15 @@ public struct AppLockActionPlan: Codable, Equatable, Identifiable {
     public var pinHash: Data
     public var operations: [AppLockActionOperation]
     public var createdAt: Date
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id
+        case label
+        case pinSalt
+        case pinHash
+        case operations
+        case createdAt
+    }
 
     public init(
         id: UUID = UUID(),
@@ -973,6 +984,57 @@ public struct AppLockActionPlan: Codable, Equatable, Identifiable {
         self.operations = operations
         self.createdAt = createdAt
     }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictClientStateContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "App-lock action plan"
+        )
+        self.init(
+            id: try container.decode(UUID.self, forKey: .id),
+            label: try container.decode(String.self, forKey: .label),
+            pinSalt: try container.decode(Data.self, forKey: .pinSalt),
+            pinHash: try container.decode(Data.self, forKey: .pinHash),
+            operations: try container.decode([AppLockActionOperation].self, forKey: .operations),
+            createdAt: try container.decode(Date.self, forKey: .createdAt)
+        )
+        try requireValidClientStateDecoding(
+            isStructurallyValid,
+            key: .operations,
+            container: container,
+            description: "Invalid app-lock action plan"
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidClientStateEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid app-lock action plan"
+        )
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(label, forKey: .label)
+        try container.encode(pinSalt, forKey: .pinSalt)
+        try container.encode(pinHash, forKey: .pinHash)
+        try container.encode(operations, forKey: .operations)
+        try container.encode(createdAt, forKey: .createdAt)
+    }
+
+    public var isStructurallyValid: Bool {
+        let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalizedLabel == label
+            && !label.isEmpty
+            && label.utf8.count <= 512
+            && (16...128).contains(pinSalt.count)
+            && (16...128).contains(pinHash.count)
+            && operations.count <= 64
+            && Set(operations.map(\.id)).count == operations.count
+            && operations.allSatisfy(\.isStructurallyValid)
+            && createdAt.timeIntervalSince1970.isFinite
+    }
 }
 
 public struct AppLockSettings: Codable, Equatable {
@@ -982,6 +1044,15 @@ public struct AppLockSettings: Codable, Equatable {
     public var pinSalt: Data?
     public var pinHash: Data?
     public var actionPlans: [AppLockActionPlan]
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case mode
+        case sessionTimeoutMinutes
+        case lockScreenMessage
+        case pinSalt
+        case pinHash
+        case actionPlans
+    }
 
     public init(
         mode: AppLockMode = .off,
@@ -999,36 +1070,145 @@ public struct AppLockSettings: Codable, Equatable {
         self.actionPlans = actionPlans
     }
 
-    public var isPinConfigured: Bool {
-        pinSalt != nil && pinHash != nil
-    }
-
-    private enum CodingKeys: String, CodingKey {
-        case mode
-        case sessionTimeoutMinutes
-        case lockScreenMessage
-        case pinSalt
-        case pinHash
-        case actionPlans
-    }
-
     public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        mode = try container.decodeIfPresent(AppLockMode.self, forKey: .mode) ?? .off
-        sessionTimeoutMinutes = try container.decodeIfPresent(Int.self, forKey: .sessionTimeoutMinutes) ?? 5
-        lockScreenMessage = try container.decodeIfPresent(String.self, forKey: .lockScreenMessage) ?? ""
+        let container = try strictClientStateContainer(
+            decoder,
+            keyedBy: CodingKeys.self,
+            description: "App-lock settings"
+        )
+        mode = try container.decode(AppLockMode.self, forKey: .mode)
+        sessionTimeoutMinutes = try container.decode(Int.self, forKey: .sessionTimeoutMinutes)
+        lockScreenMessage = try container.decode(String.self, forKey: .lockScreenMessage)
         pinSalt = try container.decodeIfPresent(Data.self, forKey: .pinSalt)
         pinHash = try container.decodeIfPresent(Data.self, forKey: .pinHash)
-        actionPlans = try container.decodeIfPresent([AppLockActionPlan].self, forKey: .actionPlans) ?? []
+        actionPlans = try container.decode([AppLockActionPlan].self, forKey: .actionPlans)
+        try requireValidClientStateDecoding(
+            isStructurallyValid,
+            key: .mode,
+            container: container,
+            description: "Invalid app-lock settings"
+        )
     }
 
     public func encode(to encoder: Encoder) throws {
+        try requireValidClientStateEncoding(
+            isStructurallyValid,
+            value: self,
+            encoder: encoder,
+            description: "Invalid app-lock settings"
+        )
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(mode, forKey: .mode)
         try container.encode(sessionTimeoutMinutes, forKey: .sessionTimeoutMinutes)
         try container.encode(lockScreenMessage, forKey: .lockScreenMessage)
-        try container.encodeIfPresent(pinSalt, forKey: .pinSalt)
-        try container.encodeIfPresent(pinHash, forKey: .pinHash)
+        try container.encode(pinSalt, forKey: .pinSalt)
+        try container.encode(pinHash, forKey: .pinHash)
         try container.encode(actionPlans, forKey: .actionPlans)
     }
+
+    public var isPinConfigured: Bool { pinSalt != nil && pinHash != nil }
+
+    public var isStructurallyValid: Bool {
+        let pinPairIsValid: Bool
+        switch (pinSalt, pinHash) {
+        case (nil, nil):
+            pinPairIsValid = true
+        case (.some(let salt), .some(let hash)):
+            pinPairIsValid = (16...128).contains(salt.count) && (16...128).contains(hash.count)
+        default:
+            pinPairIsValid = false
+        }
+        let modeHasRequiredPIN = switch mode {
+        case .pinOnly, .biometricsAndPin:
+            isPinConfigured
+        case .off, .biometrics:
+            true
+        }
+        return (0...10_080).contains(sessionTimeoutMinutes)
+            && lockScreenMessage.utf8.count <= 4_096
+            && pinPairIsValid
+            && modeHasRequiredPIN
+            && actionPlans.count <= 64
+            && Set(actionPlans.map(\.id)).count == actionPlans.count
+            && actionPlans.allSatisfy(\.isStructurallyValid)
+    }
+}
+
+private struct StrictClientStateCodingKey: CodingKey, Hashable {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func strictClientStateContainer<Key>(
+    _ decoder: Decoder,
+    keyedBy keyType: Key.Type,
+    description: String
+) throws -> KeyedDecodingContainer<Key>
+where Key: CodingKey & CaseIterable, Key.AllCases.Element == Key {
+    let strict = try decoder.container(keyedBy: StrictClientStateCodingKey.self)
+    let actual = Set(strict.allKeys.map(\.stringValue))
+    let expected = Set(Key.allCases.map(\.stringValue))
+    guard actual == expected else {
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "\(description) fields must match the current schema exactly"
+            )
+        )
+    }
+    return try decoder.container(keyedBy: keyType)
+}
+
+private func requireValidClientStateDecoding<Key>(
+    _ isValid: Bool,
+    key: Key,
+    container: KeyedDecodingContainer<Key>,
+    description: String
+) throws where Key: CodingKey {
+    guard isValid else {
+        throw DecodingError.dataCorruptedError(
+            forKey: key,
+            in: container,
+            debugDescription: description
+        )
+    }
+}
+
+private func requireValidClientStateEncoding<Value>(
+    _ isValid: Bool,
+    value: Value,
+    encoder: Encoder,
+    description: String
+) throws {
+    guard isValid else {
+        throw EncodingError.invalidValue(
+            value,
+            EncodingError.Context(codingPath: encoder.codingPath, debugDescription: description)
+        )
+    }
+}
+
+private func localStringIsCanonical(_ value: String, maximumBytes: Int) -> Bool {
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return normalized == value && !value.isEmpty && value.utf8.count <= maximumBytes
+}
+
+private func optionalLocalStringIsValid(_ value: String?, maximumBytes: Int) -> Bool {
+    guard let value else { return true }
+    return localStringIsCanonical(value, maximumBytes: maximumBytes)
+}
+
+private func optionalOpaqueLocalStringIsValid(_ value: String?, maximumBytes: Int) -> Bool {
+    guard let value else { return true }
+    return !value.isEmpty && value.utf8.count <= maximumBytes
 }

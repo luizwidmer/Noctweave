@@ -9,8 +9,7 @@ let package = Package(
     ],
     products: [
         .library(name: "NoctweaveCore", targets: ["NoctweaveCore"]),
-        .executable(name: "NoctweaveCLI", targets: ["NoctweaveCLI"]),
-        .executable(name: "NoctweaveCoreTestHarness", targets: ["NoctweaveCoreTestHarness"])
+        .executable(name: "NoctweaveCLI", targets: ["NoctweaveCLI"])
     ],
     targets: [
         .binaryTarget(name: "liboqs", path: "Vendor/liboqs.xcframework"),
@@ -20,7 +19,6 @@ let package = Package(
             dependencies: ["NoctweaveCore"],
             exclude: ["LICENSE"]
         ),
-        .executableTarget(name: "NoctweaveCoreTestHarness", dependencies: ["NoctweaveCore"]),
         .testTarget(name: "NoctweaveCoreTests", dependencies: ["NoctweaveCore"])
     ]
 )

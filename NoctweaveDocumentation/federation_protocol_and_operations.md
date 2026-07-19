@@ -1,367 +1,101 @@
-# Noctweave Federation Protocol And Operations
+# Noctweave Federation Protocol and Operations
 
-This document defines the deployed Noctweave federation model and the operator procedures for configuring it. Federation is relay-to-relay routing only: relays route sealed envelopes, group registry mutations, prekey state, pairing requests, and capability metadata, but they never receive plaintext message bodies or attachment plaintext.
+Federation is optional relay discovery and operator coordination. It does not
+create user accounts, route messages by identity, inspect ciphertext, or change
+end-to-end relationship authentication.
 
-## Design Goals
+## Trust domains
 
-Federation has three practical goals:
+Every relay selects exactly one mode:
 
-- Let users on different relays exchange direct and group messages without moving identities to the same relay.
-- Let operators choose their trust domain: standalone, manual mesh, curated network, or open network.
-- Fail closed when a relay cannot prove that a destination belongs to the same federation mode and namespace.
+| Mode | Meaning |
+| --- | --- |
+| `solo` | No federation. A complete valid deployment. |
+| `manual` | Operator-configured peers only. |
+| `curated` | Peers admitted by explicit allow-list/coordinator policy. |
+| `open` | Bounded signed relay discovery records and public-endpoint policy. |
 
-Noctweave deliberately does not bridge curated and open networks. A curated universe is an operator-reviewed allow-listed network. An open universe is a public discovery network. Mixing them would weaken both models.
+Relays must not silently bridge modes. A name or coordinator used in one trust
+domain does not authorize another.
 
-## Federation Modes
+## Client routing
 
-| Mode | Use Case | Discovery | Forwarding Gate |
-| --- | --- | --- | --- |
-| `solo` | One private relay | None | Reject every request with `destinationRelay` |
-| `manual` | Small private mesh | Local peer list | Destination must be explicitly listed, `manual`, same federation name, and `standard` kind |
-| `curated` | Reviewed multi-operator network | Allow-list plus coordinators | Destination must pass allow-list, coordinator quorum, health freshness, optional signed directory, and same federation name |
-| `open` | Public open relay network | Coordinators, relay-native DHT, and PEX hints | Destination must report `open`, same federation name, public secure endpoint unless test mode permits private addresses |
+Pairwise route sets contain the relay endpoint for each opaque send route. A
+sender submits ciphertext directly to that route's relay using the route append
+capability. No global directory resolves a persona or relationship, and relay
+federation does not receive a contact graph.
 
-Use `manual` for the simplest real deployment. Use `curated` when membership needs governance. Use `open` only when the operator accepts public federation semantics and public endpoint requirements.
+Changing relays is a relationship route rollover: the receiver registers a new
+route, sends an encrypted signed route-set update that marks it `testing`,
+accepts a targeted probe there, then promotes it while the old route drains
+through a bounded overlap.
 
-## Endpoint Syntax
+## Relay module
 
-Relays and clients normalize endpoint strings before use:
+Provisional 1.0-candidate operator coordination uses the exact
+`nw.federation` version 1 relay module:
 
-- `relay.example.org:9339`: raw TCP, explicit port
-- `tcp://relay.example.org:9339`: raw TCP
-- `tls://relay.example.org:9339`: TLS-wrapped raw TCP
-- `http://relay.example.org`: HTTP relay bridge, default port `80`
-- `https://relay.example.org`: HTTPS relay bridge, default port `443`
-- `ws://relay.example.org`: WebSocket relay bridge, default port `80`
-- `wss://relay.example.org`: secure WebSocket relay bridge, default port `443`
+| Method | Purpose |
+| --- | --- |
+| `register` | Register a bounded relay-node record under the selected policy. |
+| `list` | List policy-visible relay nodes within configured limits. |
 
-For reverse-proxy deployments, prefer `https://relay.example.org` or `wss://relay.example.org` as the advertised endpoint. The relay can listen on an internal HTTP port while nginx, Caddy, Nginx Proxy Manager, or Cloudflare terminates TLS.
+The open trust domain additionally exposes the experimental
+`nw.open-discovery` version 1 module only when open discovery is enabled:
 
-## Advertisement And Capability Discovery
+| Method | Purpose |
+| --- | --- |
+| `publish-dht` | Publish a signed short-lived open-discovery record. |
+| `list-dht` | Return bounded validated open-discovery records. |
 
-Every relay should answer:
+Requests and responses are correlated by request ID, module, version, and
+method. Federation calls never carry message plaintext or relationship keys.
 
-```json
-{ "type": "info" }
-```
+## Manual mode
 
-The response advertises:
+Manual peers are operator configuration. The relay accepts no discovery record
+that expands the set. Use this mode for small known meshes and environments
+where configuration review matters more than automatic discovery.
 
-- relay identity: `relayName`, `kind`, `softwareVersion`, and `operatorNote`
-- federation: `federation.mode`, `federation.name`, `federation.description`
-- transports: `transport`, `tlsEnabled`, and advertised endpoint-derived TLS posture
-- timing policy: `temporalBucketSeconds` or `temporalBucketScheduleSeconds`
-- attachment policy: enabled state, TTLs, and storage backend
-- group policy: group creation and advertised group security model
-- coordinator state: configured coordinator endpoints and reported relay count
-- open discovery: DHT node state, PEX limit, endpoint policy, and cache limits
-
-Clients should display this data before a user selects a relay. Relays should set `--advertised-endpoint` whenever the public URL differs from the local listen socket.
+## Curated mode
 
-## Forwarding Protocol
+Curated mode restricts visible and accepted nodes to the configured federation
+name, coordinator/allow-list policy, relay kind, endpoint policy, and signature
+requirements. Coordinator availability must not silently fall back to open
+admission.
 
-Forwarding is triggered by a request that contains `destinationRelay`.
+## Open mode
 
-```json
-{
-  "type": "deliver",
-  "deliver": {
-    "inboxId": "recipient-routing-token",
-    "routingToken": "recipient-routing-token",
-    "destinationRelay": {
-      "host": "relay-b.example.org",
-      "port": 443,
-      "useTLS": true,
-      "transport": "http"
-    },
-    "envelope": { "ciphertext": "..." }
-  }
-}
-```
-
-The same routing rule is used by `deliverGroupMessage`. The first relay evaluates local federation policy, probes or uses directory state for the destination, then forwards the original sealed payload to the destination relay. Client relay passwords are never forwarded. If `federationForwardingAuthToken` is configured, relay-to-relay forwarding uses that dedicated token.
-
-Forwarding fails closed when:
-
-- the local mode is `solo`
-- the destination endpoint is malformed
-- the destination mode differs from the local federation mode
-- the federation names do not match when a name is configured
-- the destination kind is not acceptable for the mode
-- manual allow-list, curated allow-list, coordinator quorum, signed snapshot, or open public-endpoint checks fail
-
-## Runtime Configuration
-
-Relay operators can add or remove manual federation peers while the relay is running. The core relay server supports locked runtime updates for federation allow-lists, coordinator endpoints, curated policy, open DHT settings, private endpoint policy, and PEX limits.
-
-Runtime updates are applied to future requests. In-flight requests keep their already-captured routing decision. This avoids half-mutated forwarding behavior while still allowing operators to change peer lists without restarting the relay.
-
-## Manual Federation
-
-Manual federation is an explicit node list. It does not use coordinators, signed directories, DHT records, or PEX.
-
-Relay A:
-
-```bash
-NoctweaveRelayServer \
-  --host 0.0.0.0 \
-  --port 9339 \
-  --http-port 9340 \
-  --relay-kind standard \
-  --transport http \
-  --advertised-endpoint https://relay-a.example.org \
-  --federation-mode manual \
-  --federation-name private-mesh \
-  --federation-allow https://relay-b.example.org
-```
-
-Relay B:
-
-```bash
-NoctweaveRelayServer \
-  --host 0.0.0.0 \
-  --port 9339 \
-  --http-port 9340 \
-  --relay-kind standard \
-  --transport http \
-  --advertised-endpoint https://relay-b.example.org \
-  --federation-mode manual \
-  --federation-name private-mesh \
-  --federation-allow https://relay-a.example.org
-```
-
-Operational rules:
-
-- Add the public advertised endpoint, not the internal LAN address behind a proxy.
-- Keep the same `federation-name` on every node.
-- Use `standard` relay kind for message-carrying peers.
-- Start with an empty list if needed; forwarding will fail closed until peers are added.
-
-## Curated Federation
-
-Curated federation is a governed network. It combines static membership with coordinator health state.
-
-Coordinator:
-
-```bash
-NoctweaveRelayServer \
-  --host 0.0.0.0 \
-  --port 9339 \
-  --http-port 9340 \
-  --relay-kind coordinator \
-  --transport http \
-  --advertised-endpoint https://coord.example.org \
-  --federation-mode curated \
-  --federation-name trusted-net \
-  --coordinator-registration-token "$REGISTRATION_TOKEN" \
-  --data-dir /var/lib/noctweave-coordinator
-```
-
-Standard relay:
-
-```bash
-NoctweaveRelayServer \
-  --host 0.0.0.0 \
-  --port 9339 \
-  --http-port 9340 \
-  --relay-kind standard \
-  --transport http \
-  --advertised-endpoint https://relay-a.example.org \
-  --federation-mode curated \
-  --federation-name trusted-net \
-  --federation-allow https://relay-b.example.org \
-  --federation-coordinator https://coord.example.org \
-  --coordinator-registration-token "$REGISTRATION_TOKEN" \
-  --curated-strict-policy true \
-  --curated-coordinator-quorum 1 \
-  --curated-require-signed-directory true
-```
-
-Strict policy requires:
-
-1. Destination endpoint is in the allow-list.
-2. Enough coordinators report the destination as healthy.
-3. Directory data is not older than `coordinatorDirectoryMaxStalenessSeconds`.
-4. Signed directory snapshots verify when signing is required.
-5. Destination relay reports `curated`, matching federation name, and compatible relay kind.
-
-Coordinator nodes organize relay membership and health. They do not need to carry user messages.
-
-## Federation Source Files
-
-The proprietary macOS relay control plane can fetch federation configuration
-from bounded HTTPS JSON. The public Linux relay does not fetch this file; Linux
-operators express the same values through flags, environment variables, or
-deployment configuration. Source files are useful when an operator wants a
-reviewable artifact for the macOS control plane.
-
-```json
-{
-  "mode": "curated",
-  "name": "trusted-net",
-  "description": "Operator-selected relays",
-  "allowlist": [
-    "https://relay-a.example.org",
-    "https://relay-b.example.org"
-  ],
-  "coordinatorEntries": [
-    {
-      "endpoint": "https://coord.example.org",
-      "directorySigningPublicKey": "base64-ml-dsa-public-key"
-    }
-  ],
-  "coordinatorHeartbeatSeconds": 45,
-  "coordinatorDirectoryMaxStalenessSeconds": 300,
-  "curatedStrictPolicyEnabled": true,
-  "curatedCoordinatorQuorum": 1,
-  "curatedRequireSignedDirectory": true
-}
-```
-
-Use HTTPS. Keep signing keys and registration tokens out of public source files. Put secrets in app settings, environment variables, a secrets manager, or deployment orchestration.
-
-## Open Federation
-
-Open federation is public discovery. It has no allow-list. DHT and PEX are valid only in `open` mode.
-
-Recommended open relay:
-
-```bash
-NoctweaveRelayServer \
-  --host 0.0.0.0 \
-  --port 9339 \
-  --http-port 9340 \
-  --relay-kind standard \
-  --transport http \
-  --advertised-endpoint https://relay.example.org \
-  --federation-mode open \
-  --federation-name public-open-net \
-  --open-federation-dht-node true \
-  --relay-peer-exchange-limit 12
-```
-
-Open discovery uses short-lived ML-DSA-signed relay advertisements. Records are accepted only when namespace, federation name, relay identity digest, signature, lifetime, endpoint transport, public endpoint policy, and cache limits all validate.
-
-For local test networks only:
-
-```bash
---allow-private-federation-endpoints true
-```
-
-Do not enable private endpoints on public open relays. It can turn open federation traffic into a probe against localhost or private networks.
-
-## Open DHT And PEX
-
-Relay-native DHT routes:
-
-```json
-{
-  "type": "publishOpenFederationDHTRecord",
-  "publishOpenFederationDHTRecord": {
-    "namespace": "noctweave-open-v1:<sha256-federation-name>",
-    "record": { "..." : "signed OpenFederationDHTRecord" }
-  }
-}
-```
-
-```json
-{
-  "type": "listOpenFederationDHTRecords",
-  "listOpenFederationDHTRecords": {
-    "namespace": "noctweave-open-v1:<sha256-federation-name>",
-    "limit": 50
-  }
-}
-```
-
-PEX is a bounded list of known open peers returned through `info`. PEX is a hint, not authority. Clients and relays must still validate the destination relay's `info` response before forwarding.
-
-## Coordinator Requests
-
-Relays register with coordinators using:
-
-```json
-{
-  "type": "registerFederationNode",
-  "authToken": "registration-token-if-required",
-  "registerFederationNode": {
-    "endpoint": { "host": "relay-a.example.org", "port": 443, "useTLS": true, "transport": "http" },
-    "ttlSeconds": 120,
-    "relayInfo": { "..." : "relayInfo from info" }
-  }
-}
-```
-
-Clients or relays query coordinator directories with:
-
-```json
-{
-  "type": "listFederationNodes",
-  "listFederationNodes": {
-    "mode": "curated",
-    "federationName": "trusted-net",
-    "onlyHealthy": true,
-    "maxStalenessSeconds": 300,
-    "requireSignedSnapshot": true
-  }
-}
-```
-
-Responses include `federationNodes` and may include `federationSnapshot`. Signed snapshots use ML-DSA-65. Consumers should reject a required snapshot when the signature key is absent or verification fails.
-
-## Client Behavior
-
-A client should:
-
-- fetch `info` before adding a relay
-- show relay name, TLS state, transport, mode, federation name, bucket policy, and attachment policy
-- reject or warn about non-TLS public endpoints
-- preserve the user-selected relay per identity
-- use `destinationRelay` only when the contact or group is homed on another relay
-- retry normal network failures, but not policy failures
-
-For setup UX, manual and curated federation should be presented as operator-managed networks. Open federation should be presented as public discovery with metadata and trust tradeoffs.
-
-## Troubleshooting
-
-Use these checks before debugging client crypto:
-
-1. Health:
-
-```bash
-curl -s https://relay.example.org/health
-```
-
-2. Relay info:
-
-```bash
-curl -s https://relay.example.org/relay \
-  -H 'content-type: application/json' \
-  -d '{"type":"info"}'
-```
-
-3. Verify both relays advertise the same `federation.mode` and `federation.name`.
-4. In manual mode, verify each relay lists the other's public advertised endpoint.
-5. In curated mode, verify coordinator directory freshness and quorum.
-6. In open mode, verify DHT/PEX is enabled only on open relays and endpoints are public TLS endpoints.
-7. Confirm the relay behind a reverse proxy advertises the external URL, not `127.0.0.1` or a Docker bridge address.
-
-Common failures:
-
-- `Solo federation disabled`: local relay is `solo`.
-- `destination relay is not in the node list`: manual peer is missing.
-- `coordinator quorum`: curated coordinator did not report enough healthy nodes.
-- `signed directory`: coordinator snapshot key is missing or invalid.
-- `non-public endpoint`: open federation endpoint is loopback, LAN, or otherwise private.
-- `mode mismatch`: one side is manual/curated/open and the other reports a different mode.
-
-## Security Rules
-
-- Do not forward client passwords to another relay.
-- Use a dedicated inter-relay forwarding token when relay authentication is required.
-- Keep coordinator registration tokens secret.
-- Keep coordinator signing keys stable and backed up.
-- Do not publish private endpoints in open federation.
-- Use TLS or a trusted reverse proxy for public endpoints.
-- Prefer short coordinator heartbeat intervals for active networks and stricter staleness windows for curated networks.
-- Treat DHT and PEX records as discovery hints only; always validate the destination relay before forwarding.
+Open discovery records are signed, short-lived, bounded, and describe relay
+endpoints only. They must not contain:
+
+- persona, relationship, group, or route identifiers;
+- contact invitations or public keys belonging to chat participants;
+- message counts, topics, content hints, or attachment references;
+- authorization for opaque routes.
+
+Public endpoint validation rejects loopback, private, link-local, multicast,
+unspecified, documentation-only, and malformed destinations according to the
+configured open-federation policy. Record count, size, TTL, peer-exchange fanout,
+and cache retention are bounded.
+
+## Discovery is not message trust
+
+A discovered relay record says where a relay claims to operate. It does not
+authenticate a contact, authorize a route, prove honest storage, or grant
+federation-wide delivery. Pairwise cryptographic verification and opaque route
+capabilities remain mandatory.
+
+## Operator requirements
+
+- publish the exact externally reachable endpoint and TLS posture;
+- use dedicated operator/federation credentials, never user route authority;
+- protect coordinator and allow-list configuration as security state;
+- rate-limit registration, listing, and open-discovery methods independently;
+- retain bounded audit metadata without logging ciphertext bodies or tokens;
+- monitor rejected records, cache pressure, signature failures, and peer churn;
+- document the metadata visible to every configured peer and coordinator.
+
+See `relay_ops_hardening_guide.md` for deployment controls and
+`open_federation_discovery_research.md` for the explicitly experimental open
+discovery threat analysis.

@@ -120,6 +120,17 @@ private struct RelayBridgeTimeoutError: LocalizedError {
     var errorDescription: String? { "Relay bridge request timed out." }
 }
 
+private func encodedRelayError(
+    for request: RelayRequest,
+    message: String,
+    code: RelayErrorCode,
+    retryable: Bool
+) -> Data {
+    (try? RelayCodec.encoder().encode(
+        RelayResponse.error(message, code: code, retryable: retryable, respondingTo: request)
+    )) ?? Data()
+}
+
 private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
@@ -151,7 +162,7 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
                 isRejected = true
                 sendHTTPResponse(
                     status: declaredLengths.count > 1 ? .badRequest : .payloadTooLarge,
-                    body: Data(#"{"type":"error","error":"Invalid or oversized payload"}"#.utf8),
+                    body: Data(#"{"error":"Invalid or oversized payload"}"#.utf8),
                     context: context
                 )
             }
@@ -162,7 +173,7 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
                 isRejected = true
                 sendHTTPResponse(
                     status: .payloadTooLarge,
-                    body: Data(#"{"type":"error","error":"Payload too large"}"#.utf8),
+                    body: Data(#"{"error":"Payload too large"}"#.utf8),
                     context: context
                 )
             }
@@ -177,34 +188,58 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
     }
 
     private func handleRequest(head: HTTPRequestHead, context: ChannelHandlerContext) {
-        let sourceKey = relayHTTPSourceKey(address: context.channel.remoteAddress, headers: head.headers)
-        guard store.allowRelayRequest(sourceKey: sourceKey) else {
-            sendHTTPResponse(
-                status: .tooManyRequests,
-                body: Data(#"{"type":"error","error":"Rate limit exceeded"}"#.utf8),
-                context: context
-            )
-            return
-        }
         let path = head.uri.split(separator: "?", maxSplits: 1).first.map(String.init) ?? head.uri
-        if head.method == .GET, path == "/health" {
-            sendHTTPResponse(status: .ok, body: Data(#"{"status":"ok"}"#.utf8), context: context)
-            return
-        }
         guard head.method == .POST, path == "/relay" else {
             sendHTTPResponse(status: .notFound, body: Data(#"{"error":"Not found"}"#.utf8), context: context)
             return
         }
 
         let payload = requestBody.readData(length: requestBody.readableBytes) ?? Data()
+        let request: RelayRequest
+        do {
+            request = try RelayCodec.decodeWire(RelayRequest.self, from: payload)
+        } catch is RetryableRelayLocalError {
+            sendHTTPResponse(
+                status: .serviceUnavailable,
+                body: Data(#"{"error":"Relay temporarily unavailable","retryable":true}"#.utf8),
+                context: context
+            )
+            return
+        } catch {
+            sendHTTPResponse(
+                status: .badRequest,
+                body: Data(#"{"error":"Malformed relay request"}"#.utf8),
+                context: context
+            )
+            return
+        }
+        let sourceKey = relayHTTPSourceKey(address: context.channel.remoteAddress, headers: head.headers)
+        guard store.allowRelayRequest(sourceKey: sourceKey) else {
+            sendHTTPResponse(
+                status: .ok,
+                body: encodedRelayError(
+                    for: request,
+                    message: "Rate limit exceeded",
+                    code: .rateLimited,
+                    retryable: true
+                ),
+                context: context
+            )
+            return
+        }
         let responseContext = NIOContextBox(context)
         forwarder.forward(payload, on: context.eventLoop).whenComplete { result in
             switch result {
             case .success(let responseData):
                 self.sendHTTPResponse(status: .ok, body: responseData, context: responseContext.context)
             case .failure:
-                let body = Data(#"{"type":"error","error":"Bridge forward failed"}"#.utf8)
-                self.sendHTTPResponse(status: .badGateway, body: body, context: responseContext.context)
+                let body = encodedRelayError(
+                    for: request,
+                    message: "Relay forwarding unavailable",
+                    code: .unavailable,
+                    retryable: true
+                )
+                self.sendHTTPResponse(status: .ok, body: body, context: responseContext.context)
                 print("[relay] http bridge forward failure")
             }
         }
@@ -278,24 +313,8 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
             let pong = WebSocketFrame(fin: true, opcode: .pong, data: pongData)
             context.writeAndFlush(wrapOutboundOut(pong), promise: nil)
         case .text, .binary:
-            guard store.allowRelayRequest(sourceKey: sourceKey) else {
-                send(
-                    frameType: .text,
-                    payload: Data(#"{"type":"error","error":"Rate limit exceeded"}"#.utf8),
-                    context: context
-                )
-                return
-            }
             guard frame.fin else {
                 context.close(promise: nil)
-                return
-            }
-            guard !isForwarding else {
-                send(
-                    frameType: .text,
-                    payload: Data(#"{"type":"error","error":"Request already in progress"}"#.utf8),
-                    context: context
-                )
                 return
             }
             var payloadBuffer = frame.unmaskedData
@@ -304,7 +323,44 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
                 return
             }
             if payload.count > maxMessageBytes {
-                send(frameType: .text, payload: Data(#"{"type":"error","error":"Payload too large"}"#.utf8), context: context)
+                context.close(promise: nil)
+                return
+            }
+            let request: RelayRequest
+            do {
+                request = try RelayCodec.decodeWire(RelayRequest.self, from: payload)
+            } catch is RetryableRelayLocalError {
+                print("[relay] local cryptography unavailable while decoding WebSocket request")
+                context.close(promise: nil)
+                return
+            } catch {
+                context.close(promise: nil)
+                return
+            }
+            guard store.allowRelayRequest(sourceKey: sourceKey) else {
+                send(
+                    frameType: frame.opcode,
+                    payload: encodedRelayError(
+                        for: request,
+                        message: "Rate limit exceeded",
+                        code: .rateLimited,
+                        retryable: true
+                    ),
+                    context: context
+                )
+                return
+            }
+            guard !isForwarding else {
+                send(
+                    frameType: frame.opcode,
+                    payload: encodedRelayError(
+                        for: request,
+                        message: "Request already in progress",
+                        code: .conflict,
+                        retryable: true
+                    ),
+                    context: context
+                )
                 return
             }
             isForwarding = true
@@ -315,8 +371,13 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
                 case .success(let responseData):
                     self.send(frameType: frame.opcode, payload: responseData, context: responseContext.context)
                 case .failure:
-                    let response = Data(#"{"type":"error","error":"Bridge forward failed"}"#.utf8)
-                    self.send(frameType: .text, payload: response, context: responseContext.context)
+                    let response = encodedRelayError(
+                        for: request,
+                        message: "Relay forwarding unavailable",
+                        code: .unavailable,
+                        retryable: true
+                    )
+                    self.send(frameType: frame.opcode, payload: response, context: responseContext.context)
                     print("[relay] websocket bridge forward failure")
                 }
             }

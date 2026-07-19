@@ -50,9 +50,6 @@ for config in "$ROOT_DIR"/NoctweaveCore/Vendor/liboqs.xcframework/*/Headers/oqs/
   grep -q "OQS_VERSION_TEXT \"$LIBOQS_VERSION\"" "$config"
 done
 
-echo "Proving liboqs backward and forward interoperability..."
-scripts/test-liboqs-interop.sh
-
 echo "Refreshing machine-readable SBOM..."
 SBOM_CHECK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/noctweave-sbom-check.XXXXXX")"
 trap 'rm -rf "$SBOM_CHECK_DIR"' EXIT

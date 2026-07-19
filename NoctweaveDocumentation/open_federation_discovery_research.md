@@ -40,17 +40,19 @@ References:
 
 ## Feasibility: Reusing Torrent Infrastructure
 
-Public BitTorrent DHT infrastructure is attractive because it already provides a large UDP Kademlia network, bootstrapping conventions, and peer-location semantics. It is not suitable as a direct trust substrate for Noctyra relays.
+Public BitTorrent DHT infrastructure is attractive because it already provides a large UDP Kademlia network, bootstrapping conventions, and peer-location semantics. It is not suitable as a direct trust substrate for Noctweave relays.
 
 Main issues:
-- **DHT records are discovery hints, not authority.** BEP 5 token checks limit spoofed announces by source IP, but they do not authenticate that an announced endpoint is a valid Noctyra relay.
+- **DHT records are discovery hints, not authority.** BEP 5 token checks limit spoofed announces by source IP, but they do not authenticate that an announced endpoint is a valid Noctweave relay.
 - **Metadata is public by design.** Relays advertising into a public torrent-style DHT expose endpoints, timing, and federation interest to observers crawling that namespace.
 - **Poisoning and Sybil resistance are weak.** A popular namespace can be flooded with bogus endpoints unless every discovered record is independently signed, freshness-limited, and reachability-probed.
 - **Curated federation cannot use it as authority.** Curated universes require operator-selected trust roots, signed directories, and quorum rules. A public DHT can only be a bootstrap hint, not an allow-list replacement.
 
 Feasible uses:
 1. **Open federation bootstrap hints:** derive an infohash-like namespace from `noctweave-open-v1 || federationName`, query peers, then accept only ML-DSA-signed Noctweave relay records after HTTPS/WSS reachability checks.
-2. **Operator-only discovery:** relays may query DHT; ordinary clients should prefer signed coordinator snapshots or trusted relay-provided directories to reduce client-side metadata exposure.
+2. **Operator-only discovery:** relays and operator tooling may query the DHT.
+   Ordinary messaging clients do not consume federation directories; they learn
+   destination relays only from relationship-encrypted peer route sets.
 3. **PEX-style acceleration:** once a relay is connected to known healthy open peers, it can exchange a capped list of live peers, using BitTorrent PEX constraints as a model.
 
 Not recommended:
@@ -59,20 +61,21 @@ Not recommended:
 - Mixing curated and open federation records.
 - Making mobile clients depend on UDP DHT reachability.
 
-## Recommended Noctyra Open-Federation Design
+## Recommended Experimental Open-Federation Design
 
-## Final Discovery Stance
+## Final Experimental Discovery Stance
 
-Noctyra should ship open-federation discovery as a layered relay-operator system, not as client-side public-DHT participation.
+Noctweave may expose the experimental open-federation discovery profile as a
+layered relay-operator system, never as client-side public-DHT participation.
 
-The selected release stance is:
+The selected experimental boundary is:
 
 1. **Default authority:** signed coordinator snapshots with freshness windows.
 2. **Acceleration path:** bounded relay-protocol peer exchange through `knownOpenPeers`.
 3. **Experimental operator bridge:** HTTP gateway/sidecar integration for operators who want to connect BEP5, libp2p, or another discovery process.
 4. **Not release scope:** built-in autonomous BEP5/libp2p participation inside the relay binary.
 
-Autonomous public-DHT participation is deferred because the operational cost and metadata exposure are high relative to the benefit. A public BEP5/libp2p adapter would expose relay membership timing to crawlers, require UDP/NAT traversal and routing-table maintenance, introduce additional Sybil/churn surfaces, and need a dedicated live-network simulation suite. The current gateway boundary gives operators a way to experiment with torrent/libp2p infrastructure without letting raw public-network results bypass Noctyra's signed-record validator, endpoint policy, host caps, total caps, and TTL checks.
+Autonomous public-DHT participation is deferred because the operational cost and metadata exposure are high relative to the benefit. A public BEP5/libp2p adapter would expose relay membership timing to crawlers, require UDP/NAT traversal and routing-table maintenance, introduce additional Sybil/churn surfaces, and need a dedicated live-network simulation suite. The current gateway boundary gives operators a way to experiment with torrent/libp2p infrastructure without letting raw public-network results bypass Noctweave's signed-record validator, endpoint policy, host caps, total caps, and TTL checks.
 
 This means open federation can still benefit from torrent-style ideas: Kademlia informs lookup design, BEP 11 informs bounded peer exchange, and libp2p informs layered discovery. Those ideas are applied through coordinator snapshots, relay peer exchange, and the sidecar seam rather than embedding a public-DHT router in the release relay.
 
@@ -83,7 +86,8 @@ This means open federation can still benefit from torrent-style ideas: Kademlia 
    - relay kind + federation mode/name
    - TLS capability
    - heartbeat freshness (`observedAt`, `expiresAt`)
-3. Relays and clients cache snapshots with explicit TTL and fail over to stale-cache mode if coordinators are unreachable.
+3. Relays and operator tooling cache snapshots with explicit TTL and fail over
+   to stale-cache mode if coordinators are unreachable.
 
 ### Phase 2: relay peer exchange (R-PEX)
 1. Add a low-rate “known peers” field to relay info/list responses.
@@ -115,7 +119,7 @@ This means open federation can still benefit from torrent-style ideas: Kademlia 
 
 ## DHT Record Sketch
 
-Status: the signed-record primitive is implemented as `OpenFederationDHTRecord` in `NoctweaveCore` and the Linux relay package. A feature-gated `OpenFederationDHTCandidateCache` models the relay-operator acceptance layer: it ingests only validated short-lived records, deduplicates by relay identity, caps records per host and overall, evicts stale entries, and exposes normal federation node records for relay integration. Host caps also apply when a newer relay-identity record moves to a different host, so replacement churn cannot bypass per-host flood limits. `OpenFederationDHTTransport` and `OpenFederationDHTDiscoveryEngine` define the publish/query seam and testable refresh cycle. `OpenFederationDHTHTTPGatewayTransport` provides a concrete HTTP gateway/sidecar adapter so an operator can connect Noctyra to a separately managed BEP5/libp2p/custom discovery process without letting raw network results bypass Noctyra validation. The Linux relay also exposes native relay-protocol DHT publish/list routes and `OpenFederationDHTNativeOverlayTransport`, which walks bounded `knownOpenPeers` hints in a PEX-style overlay without a gateway sidecar. The gateway and native-overlay paths are covered by tests that push poisoned and host-flooded records through the adapter before cache acceptance. The project still does not ship autonomous BEP5/libp2p public-DHT participation. This is intentional: the signed record schema, candidate cache, gateway boundary, and native relay-protocol overlay exist first so any later public-network adapter has a hard acceptance boundary.
+Status: the signed-record primitive is implemented as `OpenFederationDHTRecord` in `NoctweaveCore` and the Linux relay package. A feature-gated `OpenFederationDHTCandidateCache` models the relay-operator acceptance layer: it ingests only validated short-lived records, deduplicates by relay identity, caps records per host and overall, evicts stale entries, and exposes normal federation node records for relay integration. Host caps also apply when a newer relay-identity record moves to a different host, so replacement churn cannot bypass per-host flood limits. `OpenFederationDHTTransport` and `OpenFederationDHTDiscoveryEngine` define the publish/query seam and testable refresh cycle. `OpenFederationDHTHTTPGatewayTransport` provides a concrete HTTP gateway/sidecar adapter so an operator can connect Noctweave to a separately managed BEP5/libp2p/custom discovery process without letting raw network results bypass Noctweave validation. The Linux relay also exposes native relay-protocol DHT publish/list routes and `OpenFederationDHTNativeOverlayTransport`, which walks bounded `knownOpenPeers` hints in a PEX-style overlay without a gateway sidecar. The gateway and native-overlay paths are covered by tests that push poisoned and host-flooded records through the adapter before cache acceptance. The project still does not ship autonomous BEP5/libp2p public-DHT participation. This is intentional: the signed record schema, candidate cache, gateway boundary, and native relay-protocol overlay exist first so any later public-network adapter has a hard acceptance boundary.
 
 ```json
 {
@@ -146,7 +150,7 @@ The record is deliberately small and short-lived. Relays republish periodically;
 
 ## Suggested Implementation Order
 1. Signed coordinator snapshots + freshness semantics.
-2. Client/relay cache policy with stale-read fallback.
+2. Relay/operator-tool cache policy with stale-read fallback.
 3. R-PEX with strict caps and health validation.
 4. Open-mode UI re-enable behind a feature flag.
 5. Use the HTTP gateway adapter for operator-run discovery sidecars.
@@ -158,7 +162,7 @@ The record is deliberately small and short-lived. Relays republish periodically;
 The relay already has coordinator registration and node listing APIs. This plan extends existing coordinator logic first, then adds peer-exchange acceleration, and defers full DHT complexity until operational telemetry justifies it.
 
 ## Source Notes
-- BitTorrent BEP 5 defines a UDP Kademlia-like DHT and token-protected announces, which is useful as a discovery pattern but insufficient as Noctyra relay authority.
-- BitTorrent BEP 11 constrains PEX to verified live peers, one update per minute, and capped update sizes. Noctyra R-PEX should follow those principles.
+- BitTorrent BEP 5 defines a UDP Kademlia-like DHT and token-protected announces, which is useful as a discovery pattern but insufficient as Noctweave relay authority.
+- BitTorrent BEP 11 constrains PEX to verified live peers, one update per minute, and capped update sizes. Noctweave R-PEX should follow those principles.
 - Tor directory consensus demonstrates the operational value of signed directory documents, freshness windows, and multiple authorities.
 - IPFS/libp2p DHT design demonstrates separating peer records/provider records and tuning Kademlia parameters for churn.

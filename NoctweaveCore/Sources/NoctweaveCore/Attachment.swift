@@ -34,7 +34,7 @@ public struct AttachmentDescriptor: Codable, Equatable, Identifiable {
         self.relayTTLSeconds = relayTTLSeconds
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, CaseIterable {
         case id
         case fileName
         case mimeType
@@ -46,6 +46,11 @@ public struct AttachmentDescriptor: Codable, Equatable, Identifiable {
     }
 
     public init(from decoder: Decoder) throws {
+        try requireExactAttachmentFields(
+            decoder,
+            CodingKeys.self,
+            context: "attachment descriptor"
+        )
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         fileName = try container.decodeIfPresent(String.self, forKey: .fileName)
@@ -55,6 +60,42 @@ public struct AttachmentDescriptor: Codable, Equatable, Identifiable {
         chunkCount = try container.decode(Int.self, forKey: .chunkCount)
         chunkSize = try container.decode(Int.self, forKey: .chunkSize)
         relayTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .relayTTLSeconds)
+        guard isStructurallyValid() else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .id,
+                in: container,
+                debugDescription: "Attachment descriptor is structurally invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid() else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Attachment descriptor is structurally invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        if let fileName {
+            try container.encode(fileName, forKey: .fileName)
+        } else {
+            try container.encodeNil(forKey: .fileName)
+        }
+        try container.encode(mimeType, forKey: .mimeType)
+        try container.encode(byteCount, forKey: .byteCount)
+        try container.encode(sha256, forKey: .sha256)
+        try container.encode(chunkCount, forKey: .chunkCount)
+        try container.encode(chunkSize, forKey: .chunkSize)
+        if let relayTTLSeconds {
+            try container.encode(relayTTLSeconds, forKey: .relayTTLSeconds)
+        } else {
+            try container.encodeNil(forKey: .relayTTLSeconds)
+        }
     }
 
     public func isStructurallyValid(
@@ -94,6 +135,14 @@ public struct AttachmentInfo: Codable, Equatable {
     public var cryptoContext: AttachmentCryptoContext?
     public var messageKeyData: Data?
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case descriptor
+        case localFileName
+        case relay
+        case cryptoContext
+        case messageKeyData
+    }
+
     public init(
         descriptor: AttachmentDescriptor,
         localFileName: String? = nil,
@@ -107,6 +156,84 @@ public struct AttachmentInfo: Codable, Equatable {
         self.cryptoContext = cryptoContext
         self.messageKeyData = messageKeyData
     }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactAttachmentFields(
+            decoder,
+            CodingKeys.self,
+            context: "attachment information"
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        descriptor = try container.decode(AttachmentDescriptor.self, forKey: .descriptor)
+        localFileName = try container.decodeIfPresent(String.self, forKey: .localFileName)
+        relay = try container.decodeIfPresent(RelayEndpoint.self, forKey: .relay)
+        cryptoContext = try container.decodeIfPresent(
+            AttachmentCryptoContext.self,
+            forKey: .cryptoContext
+        )
+        messageKeyData = try container.decodeIfPresent(Data.self, forKey: .messageKeyData)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .descriptor,
+                in: container,
+                debugDescription: "Attachment information is structurally invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Attachment information is structurally invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(descriptor, forKey: .descriptor)
+        if let localFileName {
+            try container.encode(localFileName, forKey: .localFileName)
+        } else {
+            try container.encodeNil(forKey: .localFileName)
+        }
+        if let relay {
+            try container.encode(relay, forKey: .relay)
+        } else {
+            try container.encodeNil(forKey: .relay)
+        }
+        if let cryptoContext {
+            try container.encode(cryptoContext, forKey: .cryptoContext)
+        } else {
+            try container.encodeNil(forKey: .cryptoContext)
+        }
+        if let messageKeyData {
+            try container.encode(messageKeyData, forKey: .messageKeyData)
+        } else {
+            try container.encodeNil(forKey: .messageKeyData)
+        }
+    }
+
+    public var isStructurallyValid: Bool {
+        descriptor.isStructurallyValid()
+            && (localFileName.map(Self.isValidLocalFileName) ?? true)
+            && relay?.isStructurallyValidRelationshipRouteEndpointV2 != false
+            && cryptoContext?.isStructurallyValid != false
+            && (messageKeyData.map({ $0.count == 32 }) ?? true)
+    }
+
+    private static func isValidLocalFileName(_ value: String) -> Bool {
+        !value.isEmpty
+            && value.utf8.count <= 255
+            && value != "."
+            && value != ".."
+            && !value.contains("/")
+            && !value.contains("\\")
+            && value.unicodeScalars.allSatisfy {
+                !CharacterSet.controlCharacters.contains($0)
+            }
+    }
 }
 
 public struct AttachmentCryptoContext: Codable, Equatable {
@@ -114,10 +241,64 @@ public struct AttachmentCryptoContext: Codable, Equatable {
     public let sessionId: String
     public let messageCounter: UInt64
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case conversationId
+        case sessionId
+        case messageCounter
+    }
+
     public init(conversationId: String, sessionId: String, messageCounter: UInt64) {
         self.conversationId = conversationId
         self.sessionId = sessionId
         self.messageCounter = messageCounter
+    }
+
+    public init(from decoder: Decoder) throws {
+        try requireExactAttachmentFields(
+            decoder,
+            CodingKeys.self,
+            context: "attachment cryptographic context"
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        conversationId = try container.decode(String.self, forKey: .conversationId)
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        messageCounter = try container.decode(UInt64.self, forKey: .messageCounter)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .conversationId,
+                in: container,
+                debugDescription: "Attachment cryptographic context is structurally invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Attachment cryptographic context is structurally invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(conversationId, forKey: .conversationId)
+        try container.encode(sessionId, forKey: .sessionId)
+        try container.encode(messageCounter, forKey: .messageCounter)
+    }
+
+    public var isStructurallyValid: Bool {
+        Self.isValidIdentifier(conversationId) && Self.isValidIdentifier(sessionId)
+    }
+
+    private static func isValidIdentifier(_ value: String) -> Bool {
+        !value.isEmpty
+            && value == value.trimmingCharacters(in: .whitespacesAndNewlines)
+            && value.utf8.count <= 256
+            && value.unicodeScalars.allSatisfy {
+                !CharacterSet.controlCharacters.contains($0)
+            }
     }
 }
 
@@ -181,5 +362,37 @@ public enum AttachmentCrypto {
     ) throws -> Data {
         let key = deriveKey(messageKey: messageKey, attachmentId: attachmentId, chunkIndex: chunkIndex)
         return try CryptoBox.decrypt(payload, key: key, authenticatedData: authenticatedData)
+    }
+}
+
+private struct AttachmentCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+private func requireExactAttachmentFields<Keys: CodingKey & CaseIterable>(
+    _ decoder: Decoder,
+    _: Keys.Type,
+    context: String
+) throws where Keys.AllCases: Collection {
+    let strict = try decoder.container(keyedBy: AttachmentCodingKey.self)
+    let expected = Set(Keys.allCases.map(\.stringValue))
+    guard Set(strict.allKeys.map(\.stringValue)) == expected else {
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: decoder.codingPath,
+                debugDescription: "Fields must match the current \(context) schema exactly"
+            )
+        )
     }
 }

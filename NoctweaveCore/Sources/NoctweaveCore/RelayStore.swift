@@ -1,50 +1,31 @@
+import CryptoKit
 import Foundation
 import SQLite3
 
+private enum RelayAttachmentRetentionLimits {
+    static let defaultSeconds: TimeInterval = 3_600
+    static let minimumSeconds: TimeInterval = 60
+    static let maximumSeconds: TimeInterval = 2_592_000
+}
+
 public actor RelayStore {
-    private var mailboxes: [String: [StoredEnvelope]] = [:]
-    private var inboxRegistrations: [String: InboxRegistrationRecord] = [:]
-    private var announcements: [String: PairingAnnouncement] = [:]
-    private var pairRequests: [String: [PairingRequest]] = [:]
+    /// Keyed by a domain-separated route-capability digest. Values contain
+    /// only digests of lane authorities; raw bearer material is never stored.
+    private var rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:]
     private var attachments: [String: [AttachmentRecord]] = [:]
-    private var prekeyBundles: [String: PrekeyBundleRecord] = [:]
     private var federationNodes: [String: FederationNodeRecord] = [:]
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
-    private var groups: [UUID: RelayGroupDescriptor] = [:]
-    private var groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:]
-    private var groupInvitations: [String: [RelayGroupInvitation]] = [:]
     private var openFederationDHTCache = OpenFederationDHTCandidateCache(
         configuration: OpenFederationDHTDiscoveryConfiguration(isEnabled: false)
     )
-    private var actorProofReplayCache: [String: Date] = [:]
     private var federationRegistrationAttemptsBySource: [String: [Date]] = [:]
     private var federationListAttemptsBySource: [String: [Date]] = [:]
     private var lastFederationRegistrationByEndpoint: [String: Date] = [:]
-    private let announcementTTL: TimeInterval = 300
-    private let minimumAnnouncementTTL: TimeInterval = 30
-    private let maximumAnnouncementTTL: TimeInterval = 900
-    private let maxAnnouncements = 2_048
-    private let maxPairRequests = 100
-    private let maxPairRequestTargets = 2_048
-    private let attachmentTTL: TimeInterval = 3600
-    private let minimumAttachmentTTL: TimeInterval = 60
-    private let maximumAttachmentTTL: TimeInterval = 6 * 3600
+    private var lastDurableSnapshot = RelayStoreSnapshot.empty
+    private var persistenceFailuresRemainingForTesting = 0
     private let maxAttachmentChunks = 512
     private let maxAttachmentChunkPayloadBytes = 128 * 1024
-    private let maxEnvelopePayloadBytes = 96 * 1024
     private let maxAttachmentIds = 4_096
-    private let prekeyTTL: TimeInterval = 86400
-    private let minimumPrekeyTTL: TimeInterval = 300
-    private let maximumPrekeyTTL: TimeInterval = 7 * 86400
-    private let maxPrekeyBundles = 10_000
-    private let maxOneTimePrekeysPerBundle = 64
-    private let maxGroupJoinRequests = 256
-    private let maxGroupInvitationsPerIdentity = 256
-    private let maxGroups = 10_000
-    private let maxGroupsPerCreator = 100
-    private let maxGroupMembers = 256
-    private let maxGroupTitleCharacters = 128
-    private let maxGroupEpochHistory = 64
     private let coordinatorDefaultNodeTTL: TimeInterval = 180
     private let coordinatorMaximumNodeTTL: TimeInterval = 900
     private let maxFederationNodes = 10_000
@@ -55,22 +36,17 @@ public actor RelayStore {
     private let storeURL: URL?
     private let temporalBuckets: [TimeInterval]
     private let attachmentBlobStore: AttachmentBlobStore?
-    private let maxInboxMessages: Int
-    private let maxMailboxes = 10_000
-    private let maxStoredMessages = 100_000
-    private let maxInboxRegistrations = 10_000
-    private let maxActorProofReplayEntries = 20_000
+    private let maxActiveRendezvousRoutesV2 = 2_048
+    private let maxLifetimeRendezvousRoutesV2 = 100_000
 
     public init(
         storeURL: URL? = nil,
         temporalBucketSeconds: Int = 300,
         temporalBucketScheduleSeconds: [Int]? = nil,
-        attachmentBlobStore: AttachmentBlobStore? = nil,
-        maxInboxMessages: Int = 1_000
+        attachmentBlobStore: AttachmentBlobStore? = nil
     ) {
         self.storeURL = storeURL
         self.attachmentBlobStore = attachmentBlobStore
-        self.maxInboxMessages = max(1, maxInboxMessages)
         self.temporalBuckets = RelayStore.normalizeBuckets(
             primarySeconds: temporalBucketSeconds,
             scheduleSeconds: temporalBucketScheduleSeconds
@@ -83,7 +59,9 @@ public actor RelayStore {
         }
         let sqliteURL = sqliteStoreURL(for: storeURL)
         if let snapshot = try SQLiteRelayStateStore.loadState(at: sqliteURL) {
+            try validateCurrentSnapshot(snapshot)
             applySnapshot(snapshot)
+            lastDurableSnapshot = currentSnapshot()
         }
     }
 
@@ -91,19 +69,37 @@ public actor RelayStore {
         guard let storeURL else {
             return
         }
-        pruneAttachments(now: Date())
-        prunePrekeys(now: Date())
-        pruneFederationNodes(now: Date())
-        try SQLiteRelayStateStore.saveState(currentSnapshot(), at: sqliteStoreURL(for: storeURL))
+        do {
+            if persistenceFailuresRemainingForTesting > 0 {
+                persistenceFailuresRemainingForTesting -= 1
+                throw RelayStorePersistenceError.injectedFailure
+            }
+            pruneAttachments(now: Date())
+            pruneFederationNodes(now: Date())
+            let snapshot = currentSnapshot()
+            try validateCurrentSnapshot(snapshot)
+            try SQLiteRelayStateStore.saveState(snapshot, at: sqliteStoreURL(for: storeURL))
+            lastDurableSnapshot = snapshot
+        } catch {
+            restoreSnapshot(lastDurableSnapshot)
+            throw error
+        }
+    }
+
+    /// Deterministic persistence fault injection used by `@testable` regression
+    /// tests. The counter is deliberately outside the durable snapshot so one
+    /// failed attempt is consumed before an exact retry.
+    func failNextPersistenceForTesting(_ count: Int = 1) {
+        persistenceFailuresRemainingForTesting = max(0, count)
     }
 
     public func ingestOpenFederationDHTRecords(
         _ records: [OpenFederationDHTRecord],
         configuration: OpenFederationDHTDiscoveryConfiguration,
         now: Date = Date()
-    ) -> OpenFederationDHTDiscoveryIngestResult {
+    ) throws -> OpenFederationDHTDiscoveryIngestResult {
         openFederationDHTCache.configuration = configuration
-        return openFederationDHTCache.ingest(records, now: now)
+        return try openFederationDHTCache.ingest(records, now: now)
     }
 
     public func listOpenFederationDHTRecords(
@@ -120,216 +116,235 @@ public actor RelayStore {
         return Array(openFederationDHTCache.records(now: now).prefix(boundedLimit))
     }
 
-    public func consumeActorProofNonce(
-        fingerprint: String,
-        nonce: UUID,
-        now: Date = Date(),
-        maxAgeSeconds: TimeInterval = 300
-    ) -> Bool {
-        let normalizedFingerprint = fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedFingerprint.isEmpty else {
-            return false
+    /// Atomically creates two opaque directional lanes. The raw route and lane
+    /// bearers are authenticated at this boundary and immediately reduced to
+    /// domain-separated digests before durable state is assembled.
+    func registerRendezvousTransportV2(
+        _ request: RegisterRendezvousTransportV2Request,
+        now: Date = Date()
+    ) throws {
+        guard request.isStructurallyValid(at: now) else {
+            throw RelayStoreError.invalidRendezvousRoute
         }
-        let retentionWindow = max(30, maxAgeSeconds)
-        let expirationCutoff = now.addingTimeInterval(-retentionWindow)
-        actorProofReplayCache = actorProofReplayCache.filter { $0.value > expirationCutoff }
-        let key = "\(normalizedFingerprint):\(nonce.uuidString.lowercased())"
-        guard actorProofReplayCache[key] == nil else {
-            return false
+        if retireExpiredRendezvousRoutesV2(now: now) {
+            try saveToDisk()
         }
-        if actorProofReplayCache.count >= maxActorProofReplayEntries,
-           let oldest = actorProofReplayCache.min(by: { $0.value < $1.value })?.key {
-            actorProofReplayCache.removeValue(forKey: oldest)
-        }
-        actorProofReplayCache[key] = now
-        return true
-    }
-
-    @discardableResult
-    public func deliver(_ envelope: Envelope, to inboxId: String) throws -> Int {
-        guard envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
-            throw RelayStoreError.invalidEnvelopePayload
-        }
-        if mailboxes[inboxId] == nil, mailboxes.count >= maxMailboxes {
-            throw RelayStoreError.relayCapacityExceeded
-        }
-        var inbox = mailboxes[inboxId, default: []]
-        if let existing = inbox.first(where: { $0.envelope.id == envelope.id }) {
-            guard existing.envelope == envelope else {
-                throw RelayStoreError.invalidEnvelopePayload
+        let routeKey = rendezvousRouteKeyV2(request.routeCapability)
+        let registrationDigest = rendezvousRegistrationDigestV2(request)
+        if let existing = rendezvousRoutesV2[routeKey] {
+            guard existing.retiredAt == nil else {
+                throw RelayStoreError.rendezvousRouteUnavailable
             }
-            return inbox.count
-        }
-        let totalMessages = mailboxes.values.reduce(into: 0) { $0 += $1.count }
-        guard totalMessages < maxStoredMessages else {
-            throw RelayStoreError.relayCapacityExceeded
-        }
-        guard inbox.count < maxInboxMessages else {
-            throw RelayStoreError.inboxFull
-        }
-        let discriminator = "\(inboxId):\(envelope.id.uuidString)"
-        inbox.append(StoredEnvelope(envelope: envelope, storedAt: bucketed(Date(), discriminator: discriminator)))
-        mailboxes[inboxId] = inbox
-        try saveToDisk()
-        return inbox.count
-    }
-
-    @discardableResult
-    public func deliverGroupEnvelope(
-        _ envelope: Envelope,
-        to inboxId: String,
-        recipientFingerprints: [String]
-    ) throws -> Int {
-        guard envelopePayloadBytes(envelope) <= maxEnvelopePayloadBytes else {
-            throw RelayStoreError.invalidEnvelopePayload
-        }
-        let recipients = Set(recipientFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty })
-        guard !recipients.isEmpty else {
-            return mailboxes[inboxId, default: []].count
-        }
-        if mailboxes[inboxId] == nil, mailboxes.count >= maxMailboxes {
-            throw RelayStoreError.relayCapacityExceeded
-        }
-        let totalMessages = mailboxes.values.reduce(into: 0) { $0 += $1.count }
-        guard totalMessages < maxStoredMessages else {
-            throw RelayStoreError.relayCapacityExceeded
-        }
-        var inbox = mailboxes[inboxId, default: []]
-        guard inbox.count < maxInboxMessages else {
-            throw RelayStoreError.inboxFull
-        }
-        let discriminator = "\(inboxId):\(envelope.id.uuidString)"
-        inbox.append(
-            StoredEnvelope(
-                envelope: envelope,
-                storedAt: bucketed(Date(), discriminator: discriminator),
-                pendingGroupRecipientFingerprints: recipients
-            )
-        )
-        mailboxes[inboxId] = inbox
-        try saveToDisk()
-        return inbox.count
-    }
-
-    public func fetch(inboxId: String, maxCount: Int? = nil) throws -> [Envelope] {
-        let inbox = mailboxes[inboxId, default: []]
-        let count = max(0, maxCount ?? inbox.count)
-        return Array(inbox.prefix(count)).map { $0.envelope }
-    }
-
-    public func fetchGroupEnvelopes(
-        inboxId: String,
-        recipientFingerprint: String,
-        maxCount: Int? = nil
-    ) throws -> [Envelope] {
-        let recipient = recipientFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !recipient.isEmpty else {
-            return []
-        }
-        let inbox = mailboxes[inboxId, default: []].filter { record in
-            record.pendingGroupRecipientFingerprints?.contains(recipient) ?? false
-        }
-        let count = max(0, maxCount ?? inbox.count)
-        return Array(inbox.prefix(count)).map { $0.envelope }
-    }
-
-    public func registerInbox(inboxId: String, accessPublicKey: Data) throws {
-        guard InboxAddress.isValid(inboxId), !accessPublicKey.isEmpty else {
-            throw RelayStoreError.invalidInboxRegistration
-        }
-        if let existing = inboxRegistrations[inboxId] {
-            guard existing.accessPublicKey == accessPublicKey else {
-                throw RelayStoreError.inboxAlreadyRegistered
+            guard rendezvousDigestEqualV2(existing.registrationDigest, registrationDigest) else {
+                throw RelayStoreError.rendezvousRegistrationConflict
             }
             return
         }
-        guard inboxRegistrations.count < maxInboxRegistrations else {
-            throw RelayStoreError.relayCapacityExceeded
+        guard rendezvousRoutesV2.count < maxLifetimeRendezvousRoutesV2,
+              rendezvousRoutesV2.values.lazy.filter({ $0.retiredAt == nil }).count
+                < maxActiveRendezvousRoutesV2 else {
+            throw RelayStoreError.rendezvousCapacityReached
         }
-        inboxRegistrations[inboxId] = InboxRegistrationRecord(
-            accessPublicKey: accessPublicKey,
-            registeredAt: Date()
+        let registeredAt = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970))
+        var lanes: [String: RendezvousRelayLaneRecordV2] = [:]
+        for lane in request.lanes {
+            lanes[rendezvousLaneKeyV2(lane.laneId)] = RendezvousRelayLaneRecordV2(
+                publishCapabilityDigest: rendezvousBearerDigestV2(
+                    lane.publishCapability.rawValue,
+                    authority: "publish"
+                ),
+                readCapabilityDigest: rendezvousBearerDigestV2(
+                    lane.readCapability.rawValue,
+                    authority: "read"
+                ),
+                deleteCapabilityDigest: rendezvousBearerDigestV2(
+                    lane.deleteCapability.rawValue,
+                    authority: "delete"
+                ),
+                deletedAt: nil,
+                frames: []
+            )
+        }
+        let record = RendezvousRelayRouteRecordV2(
+            registrationDigest: registrationDigest,
+            registeredAt: registeredAt,
+            expiresAt: request.expiresAt,
+            retiredAt: nil,
+            lanes: lanes
         )
+        guard record.isStructurallyValid else {
+            throw RelayStoreError.invalidRendezvousRoute
+        }
+        rendezvousRoutesV2[routeKey] = record
         try saveToDisk()
     }
 
-    public func inboxAccessPublicKey(for inboxId: String) -> Data? {
-        inboxRegistrations[inboxId]?.accessPublicKey
-    }
-
+    /// Appends exactly one fixed-size ciphertext at the next lane sequence.
+    /// An exact frame-ID/digest retry is idempotent; every conflicting replay
+    /// and every sequence gap fails closed.
     @discardableResult
-    public func acknowledge(inboxId: String, messageIds: [UUID]) throws -> Int {
-        let ids = Set(messageIds.prefix(1_000))
-        guard !ids.isEmpty else {
-            return 0
+    func appendRendezvousTransportV2(
+        _ request: AppendRendezvousTransportV2Request,
+        now: Date = Date()
+    ) throws -> UInt64 {
+        guard request.isStructurallyValid else {
+            throw RelayStoreError.invalidRendezvousRoute
         }
-        let inbox = mailboxes[inboxId, default: []]
-        let remaining = inbox.filter { !ids.contains($0.envelope.id) }
-        let removed = inbox.count - remaining.count
-        if remaining.isEmpty {
-            mailboxes.removeValue(forKey: inboxId)
-        } else {
-            mailboxes[inboxId] = remaining
-        }
-        if removed > 0 {
+        if retireExpiredRendezvousRoutesV2(now: now) {
             try saveToDisk()
         }
-        return removed
+        let routeKey = rendezvousRouteKeyV2(request.routeCapability)
+        guard var route = rendezvousRoutesV2[routeKey],
+              route.retiredAt == nil,
+              route.expiresAt > now else {
+            throw RelayStoreError.rendezvousRouteUnavailable
+        }
+        let laneKey = rendezvousLaneKeyV2(request.laneId)
+        guard var lane = route.lanes[laneKey],
+              lane.deletedAt == nil,
+              rendezvousDigestEqualV2(
+                lane.publishCapabilityDigest,
+                rendezvousBearerDigestV2(
+                    request.publishCapability.rawValue,
+                    authority: "publish"
+                )
+              ) else {
+            throw RelayStoreError.rendezvousRouteUnavailable
+        }
+
+        let frameDigest = request.frame.ciphertextDigest
+        if let existing = lane.frames.first(where: { $0.frame.frameId == request.frame.frameId }) {
+            guard existing.frame.sequence == request.frame.sequence,
+                  rendezvousDigestEqualV2(existing.ciphertextDigest, frameDigest) else {
+                throw RelayStoreError.rendezvousFrameConflict
+            }
+            return existing.frame.sequence
+        }
+        let expectedSequence = UInt64(lane.frames.count) + 1
+        guard request.frame.sequence == expectedSequence else {
+            if request.frame.sequence < expectedSequence {
+                throw RelayStoreError.rendezvousFrameConflict
+            }
+            throw RelayStoreError.rendezvousSequenceGap
+        }
+        guard lane.frames.count < Int(RendezvousRelayTransportV2.maximumFramesPerLane),
+              lane.frames.reduce(0, { $0 + $1.frame.ciphertext.count })
+                + request.frame.ciphertext.count
+                <= RendezvousRelayTransportV2.maximumCiphertextBytesPerLane else {
+            throw RelayStoreError.rendezvousQuotaReached
+        }
+        lane.frames.append(
+            RendezvousRelayStoredFrameV2(
+                frame: request.frame,
+                ciphertextDigest: frameDigest
+            )
+        )
+        route.lanes[laneKey] = lane
+        rendezvousRoutesV2[routeKey] = route
+        try saveToDisk()
+        return request.frame.sequence
     }
 
-    @discardableResult
-    public func acknowledgeGroupEnvelopes(
-        inboxId: String,
-        messageIds: [UUID],
-        recipientFingerprint: String
-    ) throws -> Int {
-        let ids = Set(messageIds.prefix(1_000))
-        let recipient = recipientFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !ids.isEmpty, !recipient.isEmpty else {
-            return 0
+    func syncRendezvousTransportV2(
+        _ request: SyncRendezvousTransportV2Request,
+        now: Date = Date()
+    ) throws -> RendezvousRelaySyncBatchV2 {
+        guard request.isStructurallyValid else {
+            throw RelayStoreError.invalidRendezvousRoute
         }
-        var removedForRecipient = 0
-        var updated = false
-        var remaining: [StoredEnvelope] = []
-        for var record in mailboxes[inboxId, default: []] {
-            guard ids.contains(record.envelope.id),
-                  var pending = record.pendingGroupRecipientFingerprints else {
-                remaining.append(record)
-                continue
-            }
-            if pending.remove(recipient) != nil {
-                removedForRecipient += 1
-                updated = true
-            }
-            if !pending.isEmpty {
-                record.pendingGroupRecipientFingerprints = pending
-                remaining.append(record)
-            } else {
-                updated = true
-            }
-        }
-        if updated {
-            if remaining.isEmpty {
-                mailboxes.removeValue(forKey: inboxId)
-            } else {
-                mailboxes[inboxId] = remaining
-            }
+        if retireExpiredRendezvousRoutesV2(now: now) {
             try saveToDisk()
         }
-        return removedForRecipient
+        let routeKey = rendezvousRouteKeyV2(request.routeCapability)
+        guard let route = rendezvousRoutesV2[routeKey],
+              route.retiredAt == nil,
+              route.expiresAt > now,
+              let lane = route.lanes[rendezvousLaneKeyV2(request.laneId)],
+              lane.deletedAt == nil,
+              rendezvousDigestEqualV2(
+                lane.readCapabilityDigest,
+                rendezvousBearerDigestV2(
+                    request.readCapability.rawValue,
+                    authority: "read"
+                )
+              ) else {
+            throw RelayStoreError.rendezvousRouteUnavailable
+        }
+        let highWatermark = lane.frames.last?.frame.sequence ?? 0
+        guard request.afterSequence <= highWatermark else {
+            throw RelayStoreError.invalidRendezvousRoute
+        }
+        let limit = request.maxCount ?? RendezvousRelayTransportV2.maximumSyncFrames
+        let frames = lane.frames.lazy
+            .map(\.frame)
+            .filter { $0.sequence > request.afterSequence }
+        let selected = Array(frames.prefix(limit))
+        let nextSequence = selected.last?.sequence ?? request.afterSequence
+        return RendezvousRelaySyncBatchV2(
+            frames: selected,
+            highWatermark: highWatermark,
+            nextSequence: nextSequence,
+            hasMore: nextSequence < highWatermark
+        )
     }
 
-    private func envelopePayloadBytes(_ envelope: Envelope) -> Int {
-        envelope.payload.nonce.count + envelope.payload.ciphertext.count + envelope.payload.tag.count
+    /// Erases one lane using its independent deletion authority. Once both
+    /// lanes are deleted the route becomes a permanent non-resurrection
+    /// tombstone. Exact deletion retries remain idempotent.
+    func deleteRendezvousTransportV2(
+        _ request: DeleteRendezvousTransportV2Request,
+        now: Date = Date()
+    ) throws {
+        guard request.isStructurallyValid,
+              now.timeIntervalSince1970.isFinite else {
+            throw RelayStoreError.invalidRendezvousRoute
+        }
+        if retireExpiredRendezvousRoutesV2(now: now) {
+            try saveToDisk()
+        }
+        let routeKey = rendezvousRouteKeyV2(request.routeCapability)
+        guard var route = rendezvousRoutesV2[routeKey],
+              let laneKey = route.lanes.keys.first(where: {
+                $0 == rendezvousLaneKeyV2(request.laneId)
+              }),
+              var lane = route.lanes[laneKey],
+              rendezvousDigestEqualV2(
+                lane.deleteCapabilityDigest,
+                rendezvousBearerDigestV2(
+                    request.deleteCapability.rawValue,
+                    authority: "delete"
+                )
+              ) else {
+            throw RelayStoreError.rendezvousRouteUnavailable
+        }
+        if lane.deletedAt != nil {
+            return
+        }
+        guard route.retiredAt == nil, route.expiresAt > now else {
+            throw RelayStoreError.rendezvousRouteUnavailable
+        }
+        let deletedAt = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970))
+        lane.deletedAt = deletedAt
+        lane.frames = []
+        route.lanes[laneKey] = lane
+        if route.lanes.values.allSatisfy({ $0.deletedAt != nil }) {
+            route.retiredAt = deletedAt
+        }
+        rendezvousRoutesV2[routeKey] = route
+        try saveToDisk()
+    }
+
+    func rendezvousRouteRecordCountV2() -> Int {
+        rendezvousRoutesV2.count
     }
 
     public func storeAttachment(
         attachmentId: UUID,
         chunkIndex: Int,
         payload: EncryptedPayload,
-        ttlSeconds: Int?
+        ttlSeconds: Int?,
+        idempotencyKey: Data,
+        effectiveTTLSeconds: Int? = nil
     ) throws -> AttachmentChunk {
         guard chunkIndex >= 0, chunkIndex < maxAttachmentChunks else {
             throw RelayStoreError.invalidChunkIndex
@@ -341,22 +356,43 @@ public actor RelayStore {
               payloadBytes <= maxAttachmentChunkPayloadBytes else {
             throw RelayStoreError.invalidAttachmentPayload
         }
+        guard idempotencyKey.count == UploadAttachmentRequest.idempotencyKeyBytes else {
+            throw RelayStoreError.invalidAttachmentIdempotency
+        }
         pruneAttachments(now: Date())
-        let ttl = boundedAttachmentTTL(ttlSeconds)
+        let bodyDigest = attachmentUploadBodyDigest(
+            attachmentId: attachmentId,
+            chunkIndex: chunkIndex,
+            payload: payload,
+            ttlSeconds: ttlSeconds
+        )
+        let ttl = boundedAttachmentTTL(effectiveTTLSeconds ?? ttlSeconds)
         let now = Date()
         let bucketKey = "attachment:\(attachmentId.uuidString):\(chunkIndex)"
         let expiresAt = bucketedCeil(now.addingTimeInterval(ttl), discriminator: bucketKey)
         let key = attachmentId.uuidString
+        var deferredExternalDeletions: [AttachmentExternalRecord] = []
+        var newlyStoredExternal: AttachmentExternalRecord?
+        var attachmentKeyToEvict: String?
         if attachments[key] == nil, attachments.count >= maxAttachmentIds {
-            if let oldestKey = attachments.min(by: { lhs, rhs in
+            attachmentKeyToEvict = attachments.min(by: { lhs, rhs in
                 let lhsDate = lhs.value.map(\.storedAt).min() ?? .distantFuture
                 let rhsDate = rhs.value.map(\.storedAt).min() ?? .distantFuture
                 return lhsDate < rhsDate
-            })?.key {
-                attachments.removeValue(forKey: oldestKey)
-            }
+            })?.key
         }
         var records = attachments[key, default: []]
+        if let existing = records.first(where: { $0.chunkIndex == chunkIndex }) {
+            guard existing.idempotencyKey == idempotencyKey,
+                  existing.bodyDigest == bodyDigest else {
+                throw RelayStoreError.attachmentConflict
+            }
+            return AttachmentChunk(
+                attachmentId: attachmentId,
+                chunkIndex: chunkIndex,
+                payload: payload
+            )
+        }
         let storedAt = bucketed(now, discriminator: bucketKey)
         let record: AttachmentRecord
         if let attachmentBlobStore {
@@ -367,12 +403,15 @@ public actor RelayStore {
                 chunkIndex: chunkIndex,
                 expiresAt: expiresAt
             )
+            newlyStoredExternal = external
             record = AttachmentRecord(
                 chunkIndex: chunkIndex,
                 payload: nil,
                 external: external,
                 storedAt: storedAt,
-                expiresAt: expiresAt
+                expiresAt: expiresAt,
+                idempotencyKey: idempotencyKey,
+                bodyDigest: bodyDigest
             )
         } else {
             record = AttachmentRecord(
@@ -380,29 +419,37 @@ public actor RelayStore {
                 payload: payload,
                 external: nil,
                 storedAt: storedAt,
-                expiresAt: expiresAt
+                expiresAt: expiresAt,
+                idempotencyKey: idempotencyKey,
+                bodyDigest: bodyDigest
             )
         }
-        if let existing = records.first(where: { $0.chunkIndex == chunkIndex }),
-           let external = existing.external {
-            attachmentBlobStore?.delete(external)
+        if let attachmentKeyToEvict,
+           let evicted = attachments.removeValue(forKey: attachmentKeyToEvict) {
+            deferredExternalDeletions.append(contentsOf: evicted.compactMap(\.external))
         }
-        if let index = records.firstIndex(where: { $0.chunkIndex == chunkIndex }) {
-            records[index] = record
-        } else {
-            records.append(record)
-        }
+        records.append(record)
         if records.count > maxAttachmentChunks {
             records.sort { $0.storedAt < $1.storedAt }
             for removed in records.dropLast(maxAttachmentChunks) {
                 if let external = removed.external {
-                    attachmentBlobStore?.delete(external)
+                    deferredExternalDeletions.append(external)
                 }
             }
             records = Array(records.suffix(maxAttachmentChunks))
         }
         attachments[key] = records
-        try saveToDisk()
+        do {
+            try saveToDisk()
+        } catch {
+            if let newlyStoredExternal {
+                deleteExternalAttachmentIfUnreferenced(newlyStoredExternal)
+            }
+            throw error
+        }
+        for external in deferredExternalDeletions {
+            deleteExternalAttachmentIfUnreferenced(external)
+        }
         return AttachmentChunk(attachmentId: attachmentId, chunkIndex: chunkIndex, payload: payload)
     }
 
@@ -418,123 +465,6 @@ public actor RelayStore {
         }
         let payload = try payload(for: record)
         return AttachmentChunk(attachmentId: attachmentId, chunkIndex: chunkIndex, payload: payload)
-    }
-
-    public func stats() -> (mailboxes: Int, messages: Int) {
-        let messageCount = mailboxes.values.reduce(0) { $0 + $1.count }
-        return (mailboxes.count, messageCount)
-    }
-
-    public func announce(_ offer: ContactOffer, ttlSeconds: Int? = nil, now: Date = Date()) -> PairingAnnouncement {
-        pruneAnnouncements(now: now)
-        let requestedTTL = TimeInterval(ttlSeconds ?? Int(announcementTTL))
-        let ttl = min(maximumAnnouncementTTL, max(minimumAnnouncementTTL, requestedTTL))
-        let visibleNow = bucketed(now, discriminator: "announce:\(offer.fingerprint)")
-        let announcement = PairingAnnouncement(
-            offer: offer,
-            announcedAt: visibleNow,
-            expiresAt: visibleNow.addingTimeInterval(ttl)
-        )
-        announcements[offer.fingerprint] = announcement
-        if announcements.count > maxAnnouncements,
-           let oldest = announcements.min(by: { $0.value.announcedAt < $1.value.announcedAt })?.key {
-            announcements.removeValue(forKey: oldest)
-        }
-        return announcement
-    }
-
-    public func listAnnouncements(limit: Int? = nil) -> [PairingAnnouncement] {
-        pruneAnnouncements(now: Date())
-        let list = announcements.values.sorted { $0.announcedAt > $1.announcedAt }
-        let boundedLimit = min(500, max(0, limit ?? 500))
-        return Array(list.prefix(boundedLimit))
-    }
-
-    public func sendPairRequest(targetFingerprint: String, offer: ContactOffer, now: Date = Date()) -> Int {
-        if pairRequests[targetFingerprint] == nil,
-           pairRequests.count >= maxPairRequestTargets,
-           let oldestTarget = pairRequests.min(by: {
-               ($0.value.first?.sentAt ?? .distantFuture) < ($1.value.first?.sentAt ?? .distantFuture)
-           })?.key {
-            pairRequests.removeValue(forKey: oldestTarget)
-        }
-        var requests = pairRequests[targetFingerprint, default: []]
-        requests.append(PairingRequest(
-            from: offer,
-            sentAt: bucketed(now, discriminator: "pair:\(targetFingerprint):\(offer.fingerprint)")
-        ))
-        if requests.count > maxPairRequests {
-            requests = Array(requests.suffix(maxPairRequests))
-        }
-        pairRequests[targetFingerprint] = requests
-        return requests.count
-    }
-
-    public func fetchPairRequests(targetFingerprint: String, maxCount: Int? = nil) -> [PairingRequest] {
-        let requests = pairRequests[targetFingerprint, default: []]
-        let count = max(0, maxCount ?? requests.count)
-        return Array(requests.prefix(count))
-    }
-
-    public func uploadPrekeyBundle(
-        fingerprint: String,
-        bundle: PrekeyBundle,
-        ttlSeconds: Int?
-    ) throws {
-        guard !fingerprint.isEmpty,
-              fingerprint == bundle.identityFingerprint,
-              bundle.oneTimePrekeys.count <= maxOneTimePrekeysPerBundle,
-              bundle.isStructurallyValid() else {
-            throw RelayStoreError.invalidPrekeyBundle
-        }
-        let requestedTTL = TimeInterval(ttlSeconds ?? Int(prekeyTTL))
-        let ttl = min(maximumPrekeyTTL, max(minimumPrekeyTTL, requestedTTL))
-        let now = Date()
-        prunePrekeys(now: now)
-        if prekeyBundles[fingerprint] == nil,
-           prekeyBundles.count >= maxPrekeyBundles,
-           let oldest = prekeyBundles.min(by: { $0.value.expiresAt < $1.value.expiresAt })?.key {
-            prekeyBundles.removeValue(forKey: oldest)
-        }
-        prekeyBundles[fingerprint] = PrekeyBundleRecord(
-            bundle: bundle,
-            expiresAt: now.addingTimeInterval(ttl)
-        )
-        try saveToDisk()
-    }
-
-    public func fetchPrekeyBundle(fingerprint: String) throws -> PrekeyBundle? {
-        prunePrekeys(now: Date())
-        guard var record = prekeyBundles[fingerprint] else {
-            return nil
-        }
-        guard record.bundle.isStructurallyValid() else {
-            prekeyBundles.removeValue(forKey: fingerprint)
-            try saveToDisk()
-            throw RelayStoreError.invalidPrekeyBundle
-        }
-        var bundle = record.bundle
-        if !bundle.oneTimePrekeys.isEmpty {
-            let prekey = bundle.oneTimePrekeys[0]
-            bundle = PrekeyBundle(
-                version: bundle.version,
-                identityFingerprint: bundle.identityFingerprint,
-                signedPrekey: bundle.signedPrekey,
-                oneTimePrekeys: [prekey],
-                createdAt: bundle.createdAt
-            )
-            record.bundle = PrekeyBundle(
-                version: record.bundle.version,
-                identityFingerprint: record.bundle.identityFingerprint,
-                signedPrekey: record.bundle.signedPrekey,
-                oneTimePrekeys: Array(record.bundle.oneTimePrekeys.dropFirst()),
-                createdAt: record.bundle.createdAt
-            )
-            prekeyBundles[fingerprint] = record
-            try saveToDisk()
-            return bundle
-        }
-        return bundle
     }
 
     public func registerFederationNode(_ request: FederationNodeRegistrationRequest) throws -> FederationNodeRecord {
@@ -633,806 +563,6 @@ public actor RelayStore {
         try saveToDisk()
     }
 
-    public func createGroup(
-        groupId: UUID? = nil,
-        title: String,
-        creatorFingerprint: String,
-        memberFingerprints: [String],
-        creatorProfile: RelayGroupMemberProfile? = nil,
-        memberProfiles: [RelayGroupMemberProfile]? = nil,
-        invitedFingerprints: [String] = [],
-        initialRatchetSecretDistribution: GroupRatchetEpochSecretDistribution? = nil
-    ) throws -> RelayGroupDescriptor {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTitle.isEmpty, trimmedTitle.count <= maxGroupTitleCharacters else {
-            throw RelayStoreError.invalidGroupTitle
-        }
-        let creator = creatorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !creator.isEmpty else {
-            throw RelayStoreError.invalidFingerprint
-        }
-        var profileByFingerprint: [String: RelayGroupMemberProfile] = [:]
-        if let normalizedCreatorProfile = normalizedMemberProfile(creatorProfile),
-           normalizedCreatorProfile.fingerprint == creator {
-            profileByFingerprint[creator] = normalizedCreatorProfile
-        }
-        for profile in memberProfiles ?? [] {
-            guard let normalized = normalizedMemberProfile(profile) else { continue }
-            profileByFingerprint[normalized.fingerprint] = normalized
-        }
-
-        var normalizedMembers = Set(memberFingerprints.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty })
-        normalizedMembers.formUnion(profileByFingerprint.keys)
-        normalizedMembers.insert(creator)
-        let normalizedInvitedFingerprints = Set(invitedFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty && $0 != creator && !normalizedMembers.contains($0) })
-        guard normalizedMembers.count >= 2 || !normalizedInvitedFingerprints.isEmpty else {
-            throw RelayStoreError.notEnoughGroupMembers
-        }
-        guard normalizedMembers.count <= maxGroupMembers else {
-            throw RelayStoreError.groupCapacityExceeded
-        }
-        guard groups.count < maxGroups,
-              groups.values.filter({ $0.createdByFingerprint == creator }).count < maxGroupsPerCreator else {
-            throw RelayStoreError.groupCapacityExceeded
-        }
-
-        let now = Date()
-        let descriptorId = groupId ?? UUID()
-        guard groups[descriptorId] == nil else {
-            throw RelayStoreError.groupCapacityExceeded
-        }
-        let descriptorInboxId = InboxAddress.generate()
-        let members = normalizedMembers.sorted().map { fingerprint in
-            makeGroupMember(
-                fingerprint: fingerprint,
-                existing: nil,
-                profile: profileByFingerprint[fingerprint],
-                joinedAt: now
-            )
-        }
-        try validateRatchetSecretDistribution(
-            initialRatchetSecretDistribution,
-            groupId: descriptorId,
-            epoch: 0,
-            operation: .create,
-            memberFingerprints: members.map(\.fingerprint)
-        )
-        let group = RelayGroupDescriptor(
-            id: descriptorId,
-            title: trimmedTitle,
-            inboxId: descriptorInboxId,
-            createdByFingerprint: creator,
-            members: members,
-            mlsEpochState: MLSGroupEpochState.initial(
-                groupId: descriptorId,
-                title: trimmedTitle,
-                inboxId: descriptorInboxId,
-                createdByFingerprint: creator,
-                members: members,
-                createdAt: now,
-                ratchetSecretDistribution: initialRatchetSecretDistribution
-            ),
-            createdAt: now,
-            updatedAt: now
-        )
-        groups[group.id] = group
-        for fingerprint in normalizedInvitedFingerprints.sorted() {
-            var invitations = groupInvitations[fingerprint, default: []]
-            invitations.removeAll { $0.groupId == group.id }
-            invitations.insert(
-                RelayGroupInvitation(
-                    groupId: group.id,
-                    title: group.title,
-                    createdByFingerprint: group.createdByFingerprint,
-                    invitedFingerprint: fingerprint,
-                    inboxId: group.inboxId,
-                    epoch: group.epoch,
-                    createdAt: group.createdAt,
-                    updatedAt: group.updatedAt,
-                    invitedAt: now
-                ),
-                at: 0
-            )
-            groupInvitations[fingerprint] = Array(invitations.prefix(maxGroupInvitationsPerIdentity))
-        }
-        try saveToDisk()
-        return group
-    }
-
-    public func fetchGroup(groupId: UUID) -> RelayGroupDescriptor? {
-        groups[groupId]
-    }
-
-    public func listGroups(memberFingerprint: String, limit: Int? = nil) -> [RelayGroupDescriptor] {
-        let fingerprint = memberFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fingerprint.isEmpty else {
-            return []
-        }
-        var list = groups.values.filter { group in
-            group.members.contains { $0.fingerprint == fingerprint }
-        }
-        list.sort { lhs, rhs in
-            if lhs.updatedAt != rhs.updatedAt {
-                return lhs.updatedAt > rhs.updatedAt
-            }
-            return lhs.createdAt > rhs.createdAt
-        }
-        return Array(list.prefix(min(500, max(0, limit ?? 500))))
-    }
-
-    public func listGroupInvitations(_ request: ListGroupInvitationsRequest) -> [RelayGroupInvitation] {
-        let fingerprint = request.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fingerprint.isEmpty else {
-            return []
-        }
-        var invitations = groupInvitations[fingerprint, default: []].filter { invitation in
-            groups[invitation.groupId] != nil
-        }
-        invitations.sort { lhs, rhs in
-            if lhs.invitedAt != rhs.invitedAt {
-                return lhs.invitedAt > rhs.invitedAt
-            }
-            return lhs.updatedAt > rhs.updatedAt
-        }
-        return Array(invitations.prefix(min(500, max(0, request.limit ?? 500))))
-    }
-
-    public func hasGroupInvitation(groupId: UUID, invitedFingerprint: String) -> Bool {
-        let fingerprint = invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fingerprint.isEmpty else {
-            return false
-        }
-        return groupInvitations[fingerprint, default: []].contains { invitation in
-            invitation.groupId == groupId && groups[groupId] != nil
-        }
-    }
-
-    public func inviteGroupMembers(_ request: InviteGroupMembersRequest) throws -> RelayGroupDescriptor {
-        guard var group = groups[request.groupId] else {
-            throw RelayStoreError.groupNotFound
-        }
-        let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !actor.isEmpty else {
-            throw RelayStoreError.invalidFingerprint
-        }
-        guard actor == group.createdByFingerprint else {
-            throw RelayStoreError.unauthorizedGroupMutation
-        }
-
-        let currentMembers = Set(group.members.map(\.fingerprint))
-        let invitees = request.normalizedInvitedFingerprints.filter { fingerprint in
-            fingerprint != group.createdByFingerprint && !currentMembers.contains(fingerprint)
-        }
-        guard !invitees.isEmpty else {
-            return group
-        }
-        guard currentMembers.count + invitees.count <= maxGroupMembers else {
-            throw RelayStoreError.groupCapacityExceeded
-        }
-
-        let now = Date()
-        group.updatedAt = now
-        groups[group.id] = group
-        for fingerprint in invitees {
-            var invitations = groupInvitations[fingerprint, default: []]
-            invitations.removeAll { $0.groupId == group.id }
-            invitations.insert(
-                RelayGroupInvitation(
-                    groupId: group.id,
-                    title: group.title,
-                    createdByFingerprint: group.createdByFingerprint,
-                    invitedFingerprint: fingerprint,
-                    inboxId: group.inboxId,
-                    epoch: group.epoch,
-                    createdAt: group.createdAt,
-                    updatedAt: group.updatedAt,
-                    invitedAt: now
-                ),
-                at: 0
-            )
-            groupInvitations[fingerprint] = Array(invitations.prefix(maxGroupInvitationsPerIdentity))
-        }
-        try saveToDisk()
-        return group
-    }
-
-    public func updateGroup(_ request: UpdateGroupRequest) throws -> RelayGroupDescriptor {
-        guard var group = groups[request.groupId] else {
-            throw RelayStoreError.groupNotFound
-        }
-        let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !actor.isEmpty else {
-            throw RelayStoreError.invalidFingerprint
-        }
-        let isCreator = actor == group.createdByFingerprint
-        let isMember = group.members.contains { $0.fingerprint == actor }
-        guard isCreator || isMember else {
-            throw RelayStoreError.unauthorizedGroupMutation
-        }
-        let operation = expectedGroupCommitOperation(
-            request: request,
-            actorFingerprint: actor,
-            isCreator: isCreator
-        )
-        try validateGroupCommit(
-            request: request,
-            group: group,
-            actorFingerprint: actor,
-            operation: operation
-        )
-
-        if !isCreator {
-            let hasTitleChange = !(request.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-            let hasMemberAdds = request.addMemberFingerprints.contains {
-                !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            } || (request.addMemberProfiles?.contains { normalizedMemberProfile($0) != nil } ?? false)
-            let removeSet = Set(request.removeMemberFingerprints.map {
-                $0.trimmingCharacters(in: .whitespacesAndNewlines)
-            }.filter { !$0.isEmpty })
-            let isSelfRemovalOnly = !removeSet.isEmpty && removeSet.isSubset(of: [actor])
-            guard !hasTitleChange, !hasMemberAdds, isSelfRemovalOnly else {
-                throw RelayStoreError.unauthorizedGroupMutation
-            }
-        }
-
-        var changed = false
-        if let title = request.title?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !title.isEmpty,
-           title != group.title {
-            guard title.count <= maxGroupTitleCharacters else {
-                throw RelayStoreError.invalidGroupTitle
-            }
-            group.title = title
-            changed = true
-        }
-
-        var memberMap = Dictionary(uniqueKeysWithValues: group.members.map { ($0.fingerprint, $0) })
-        for fingerprint in request.addMemberFingerprints {
-            let normalized = fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalized.isEmpty else { continue }
-            if memberMap[normalized] == nil {
-                memberMap[normalized] = makeGroupMember(
-                    fingerprint: normalized,
-                    existing: nil,
-                    profile: nil,
-                    joinedAt: Date()
-                )
-                changed = true
-            }
-        }
-        for profile in request.addMemberProfiles ?? [] {
-            guard let normalized = normalizedMemberProfile(profile) else { continue }
-            let existing = memberMap[normalized.fingerprint]
-            let merged = makeGroupMember(
-                fingerprint: normalized.fingerprint,
-                existing: existing,
-                profile: normalized,
-                joinedAt: Date()
-            )
-            if existing != merged {
-                memberMap[normalized.fingerprint] = merged
-                changed = true
-            }
-        }
-        for fingerprint in request.removeMemberFingerprints {
-            let normalized = fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !normalized.isEmpty else { continue }
-            guard normalized != group.createdByFingerprint else { continue }
-            if memberMap.removeValue(forKey: normalized) != nil {
-                changed = true
-            }
-        }
-        guard memberMap.count <= maxGroupMembers else {
-            throw RelayStoreError.groupCapacityExceeded
-        }
-
-        guard memberMap.count >= 2 || operation == .selfLeave else {
-            throw RelayStoreError.notEnoughGroupMembers
-        }
-
-        if changed {
-            let now = Date()
-            guard group.epoch < UInt64.max else {
-                throw RelayStoreError.invalidGroupCommit
-            }
-            let nextEpochState = try group.mlsEpochState.advancing(
-                title: group.title,
-                inboxId: group.inboxId,
-                actorFingerprint: actor,
-                members: memberMap.values.sorted { $0.fingerprint < $1.fingerprint },
-                operation: operation,
-                committedAt: now,
-                ratchetSecretDistribution: request.groupCommit?.ratchetSecretDistribution
-            )
-            group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
-            group.epoch = nextEpochState.epoch
-            group.updatedAt = now
-            group.mlsEpochState = nextEpochState
-            group.mlsEpochHistory = boundedGroupEpochHistory(
-                group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
-            )
-            groups[group.id] = group
-            if var pending = groupJoinRequests[group.id] {
-                pending.removeAll { pendingRequest in
-                    group.members.contains { $0.fingerprint == pendingRequest.requester.fingerprint }
-                }
-                if pending.isEmpty {
-                    groupJoinRequests.removeValue(forKey: group.id)
-                } else {
-                    groupJoinRequests[group.id] = pending
-                }
-            }
-            try saveToDisk()
-        }
-        return group
-    }
-
-    private func expectedGroupCommitOperation(
-        request: UpdateGroupRequest,
-        actorFingerprint: String,
-        isCreator: Bool
-    ) -> MLSGroupCommitOperation {
-        if request.groupCommit?.operation == .joinApprove,
-           isCreator,
-           request.normalizedTitle == nil,
-           !request.normalizedAddMemberFingerprints.isEmpty,
-           request.normalizedRemoveMemberFingerprints.isEmpty {
-            return .joinApprove
-        }
-        return groupCommitOperation(
-            request: request,
-            actorFingerprint: actorFingerprint,
-            isCreator: isCreator
-        )
-    }
-
-    private func validateGroupCommit(
-        request: UpdateGroupRequest,
-        group: RelayGroupDescriptor,
-        actorFingerprint: String,
-        operation: MLSGroupCommitOperation
-    ) throws {
-        guard let commit = request.groupCommit else {
-            throw RelayStoreError.invalidGroupCommit
-        }
-        guard commit.operation == operation,
-              commit.groupId == request.groupId,
-              commit.actorFingerprint == actorFingerprint,
-              commit.baseEpoch == group.epoch,
-              commit.previousTranscriptHash == group.mlsEpochState.confirmedTranscriptHash,
-              commit.title == request.normalizedTitle,
-              Set(commit.addMemberFingerprints) == Set(request.normalizedAddMemberFingerprints),
-              (commit.addMemberProfiles ?? []).sorted(by: { $0.fingerprint < $1.fingerprint }) == request.normalizedAddMemberProfiles,
-              Set(commit.removeMemberFingerprints) == Set(request.normalizedRemoveMemberFingerprints) else {
-            throw RelayStoreError.invalidGroupCommit
-        }
-        guard group.epoch < UInt64.max else {
-            throw RelayStoreError.invalidGroupCommit
-        }
-        try validateRatchetSecretDistribution(
-            commit.ratchetSecretDistribution,
-            groupId: group.id,
-            epoch: group.epoch + 1,
-            operation: operation,
-            memberFingerprints: projectedMemberFingerprints(for: request, group: group)
-        )
-    }
-
-    private func validateRatchetSecretDistribution(
-        _ distribution: GroupRatchetEpochSecretDistribution?,
-        groupId: UUID,
-        epoch: UInt64,
-        operation: MLSGroupCommitOperation,
-        memberFingerprints: [String]
-    ) throws {
-        guard let distribution else {
-            return
-        }
-        let members = Set(memberFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty })
-        guard distribution.groupId == groupId,
-              distribution.epoch == epoch,
-              distribution.operation == operation,
-              distribution.isStructurallyValid,
-              Set(distribution.memberFingerprints) == members,
-              Set(distribution.shares.map(\.recipientFingerprint)) == members,
-              distribution.shares.count == members.count else {
-            throw RelayStoreError.invalidGroupCommit
-        }
-    }
-
-    private func boundedGroupEpochHistory(_ history: [MLSGroupCommitSummary]) -> [MLSGroupCommitSummary] {
-        Array(history.sorted { $0.epoch < $1.epoch }.suffix(maxGroupEpochHistory))
-    }
-
-    private func projectedMemberFingerprints(
-        for request: UpdateGroupRequest,
-        group: RelayGroupDescriptor
-    ) -> [String] {
-        var members = Set(group.members.map(\.fingerprint))
-        members.formUnion(request.normalizedAddMemberFingerprints)
-        members.formUnion(request.normalizedAddMemberProfiles.map(\.fingerprint))
-        members.subtract(request.normalizedRemoveMemberFingerprints)
-        members.insert(group.createdByFingerprint)
-        return members.sorted()
-    }
-
-    private func groupCommitOperation(
-        request: UpdateGroupRequest,
-        actorFingerprint: String,
-        isCreator: Bool
-    ) -> MLSGroupCommitOperation {
-        let hasTitleChange = !(request.title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-        let addFingerprints = request.addMemberFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty }
-        let hasProfileAdds = request.addMemberProfiles?.contains { normalizedMemberProfile($0) != nil } ?? false
-        let removeFingerprints = request.removeMemberFingerprints.map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }.filter { !$0.isEmpty }
-
-        if !isCreator && !removeFingerprints.isEmpty && Set(removeFingerprints).isSubset(of: [actorFingerprint]) {
-            return .selfLeave
-        }
-        if !addFingerprints.isEmpty || hasProfileAdds {
-            return removeFingerprints.isEmpty && !hasTitleChange ? .addMembers : .update
-        }
-        if !removeFingerprints.isEmpty {
-            return hasTitleChange ? .update : .removeMembers
-        }
-        return .update
-    }
-
-    public func deleteGroup(_ request: DeleteGroupRequest) throws {
-        guard let group = groups[request.groupId] else {
-            throw RelayStoreError.groupNotFound
-        }
-        let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !actor.isEmpty else {
-            throw RelayStoreError.invalidFingerprint
-        }
-        guard actor == group.createdByFingerprint else {
-            throw RelayStoreError.unauthorizedGroupMutation
-        }
-        groups.removeValue(forKey: request.groupId)
-        groupJoinRequests.removeValue(forKey: request.groupId)
-        removeGroupInvitations(groupId: request.groupId)
-        try saveToDisk()
-    }
-
-    public func requestGroupJoin(_ request: RequestGroupJoinRequest) throws -> RelayGroupJoinRequest {
-        guard let group = groups[request.groupId] else {
-            throw RelayStoreError.groupNotFound
-        }
-        guard let requester = normalizedMemberProfile(request.requesterProfile) else {
-            throw RelayStoreError.invalidFingerprint
-        }
-        let invitedFingerprint = request.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let invitedFingerprint, !invitedFingerprint.isEmpty {
-            guard groupInvitations[invitedFingerprint, default: []].contains(where: { $0.groupId == group.id }) else {
-                throw RelayStoreError.unauthorizedGroupMutation
-            }
-        }
-        if group.members.contains(where: { $0.fingerprint == requester.fingerprint }) {
-            throw RelayStoreError.alreadyGroupMember
-        }
-
-        var pending = groupJoinRequests[group.id, default: []]
-        let now = Date()
-        if let existingIndex = pending.firstIndex(where: { $0.requester.fingerprint == requester.fingerprint }) {
-            let existing = pending[existingIndex]
-            let refreshed = RelayGroupJoinRequest(
-                id: existing.id,
-                groupId: group.id,
-                requester: requester,
-                invitedFingerprint: invitedFingerprint?.isEmpty == false ? invitedFingerprint : existing.invitedFingerprint,
-                requestedAt: now
-            )
-            pending[existingIndex] = refreshed
-            pending.sort { lhs, rhs in lhs.requestedAt > rhs.requestedAt }
-            groupJoinRequests[group.id] = pending
-            try saveToDisk()
-            return refreshed
-        }
-
-        let joinRequest = RelayGroupJoinRequest(
-            groupId: group.id,
-            requester: requester,
-            invitedFingerprint: invitedFingerprint?.isEmpty == false ? invitedFingerprint : nil,
-            requestedAt: now
-        )
-        pending.insert(joinRequest, at: 0)
-        if pending.count > maxGroupJoinRequests {
-            pending = Array(pending.prefix(maxGroupJoinRequests))
-        }
-        groupJoinRequests[group.id] = pending
-        try saveToDisk()
-        return joinRequest
-    }
-
-    public func acceptGroupInvitation(_ request: RequestGroupJoinRequest) throws -> RelayGroupDescriptor {
-        guard var group = groups[request.groupId] else {
-            throw RelayStoreError.groupNotFound
-        }
-        guard let requester = normalizedMemberProfile(request.requesterProfile) else {
-            throw RelayStoreError.invalidFingerprint
-        }
-        let invitedFingerprint = request.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !invitedFingerprint.isEmpty,
-              groupInvitations[invitedFingerprint, default: []].contains(where: { $0.groupId == group.id }) else {
-            throw RelayStoreError.unauthorizedGroupMutation
-        }
-        if group.members.contains(where: { $0.fingerprint == requester.fingerprint }) {
-            removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
-            try saveToDisk()
-            return group
-        }
-        guard let commit = request.groupCommit,
-              commit.operation == .joinApprove,
-              commit.groupId == group.id,
-              commit.actorFingerprint == requester.fingerprint,
-              commit.baseEpoch == group.epoch,
-              commit.previousTranscriptHash == group.mlsEpochState.confirmedTranscriptHash,
-              commit.title == nil,
-              Set(commit.addMemberFingerprints) == Set([requester.fingerprint]),
-              commit.addMemberProfiles == [requester],
-              commit.removeMemberFingerprints.isEmpty else {
-            throw RelayStoreError.invalidGroupCommit
-        }
-
-        let memberProfiles = projectedGroupMemberProfiles(
-            currentMembers: group.members,
-            addProfiles: [requester]
-        )
-        guard group.epoch < UInt64.max else {
-            throw RelayStoreError.invalidGroupCommit
-        }
-        try validateRatchetSecretDistribution(
-            commit.ratchetSecretDistribution,
-            groupId: group.id,
-            epoch: group.epoch + 1,
-            operation: .joinApprove,
-            memberFingerprints: memberProfiles.map(\.fingerprint)
-        )
-
-        var memberMap = Dictionary(uniqueKeysWithValues: group.members.map { ($0.fingerprint, $0) })
-        memberMap[requester.fingerprint] = makeGroupMember(
-            fingerprint: requester.fingerprint,
-            existing: nil,
-            profile: requester,
-            joinedAt: Date()
-        )
-        guard memberMap.count <= maxGroupMembers else {
-            throw RelayStoreError.groupCapacityExceeded
-        }
-
-        let now = Date()
-        let nextEpochState = try group.mlsEpochState.advancing(
-            title: group.title,
-            inboxId: group.inboxId,
-            actorFingerprint: requester.fingerprint,
-            members: memberMap.values.sorted { $0.fingerprint < $1.fingerprint },
-            operation: .joinApprove,
-            committedAt: now,
-            ratchetSecretDistribution: commit.ratchetSecretDistribution
-        )
-        group.members = memberMap.values.sorted { $0.fingerprint < $1.fingerprint }
-        group.epoch = nextEpochState.epoch
-        group.updatedAt = now
-        group.mlsEpochState = nextEpochState
-        group.mlsEpochHistory = boundedGroupEpochHistory(
-            group.mlsEpochHistory + [group.mlsEpochState.lastCommit]
-        )
-        groups[group.id] = group
-        removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
-        if var pending = groupJoinRequests[group.id] {
-            pending.removeAll { $0.requester.fingerprint == requester.fingerprint }
-            if pending.isEmpty {
-                groupJoinRequests.removeValue(forKey: group.id)
-            } else {
-                groupJoinRequests[group.id] = pending
-            }
-        }
-        try saveToDisk()
-        return group
-    }
-
-    public func listGroupJoinRequests(_ request: ListGroupJoinRequestsRequest) throws -> [RelayGroupJoinRequest] {
-        guard let group = groups[request.groupId] else {
-            throw RelayStoreError.groupNotFound
-        }
-        let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !actor.isEmpty else {
-            throw RelayStoreError.invalidFingerprint
-        }
-        guard actor == group.createdByFingerprint else {
-            throw RelayStoreError.unauthorizedGroupMutation
-        }
-        var pending = groupJoinRequests[group.id, default: []]
-        pending.sort { lhs, rhs in lhs.requestedAt > rhs.requestedAt }
-        if let limit = request.limit {
-            return Array(pending.prefix(max(0, limit)))
-        }
-        return pending
-    }
-
-    public func approveGroupJoin(_ request: ApproveGroupJoinRequest) throws -> RelayGroupDescriptor {
-        guard let group = groups[request.groupId] else {
-            throw RelayStoreError.groupNotFound
-        }
-        let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !actor.isEmpty else {
-            throw RelayStoreError.invalidFingerprint
-        }
-        guard actor == group.createdByFingerprint else {
-            throw RelayStoreError.unauthorizedGroupMutation
-        }
-
-        let pending = groupJoinRequests[group.id, default: []]
-        guard pending.contains(where: { $0.id == request.joinRequestId }) else {
-            throw RelayStoreError.groupJoinRequestNotFound
-        }
-        guard let joinRequest = pending.first(where: { $0.id == request.joinRequestId }) else {
-            throw RelayStoreError.groupJoinRequestNotFound
-        }
-
-        let updated = try updateGroup(
-            UpdateGroupRequest(
-                groupId: group.id,
-                actorFingerprint: actor,
-                addMemberFingerprints: [joinRequest.requester.fingerprint],
-                addMemberProfiles: [joinRequest.requester],
-                groupCommit: request.groupCommit
-            )
-        )
-
-        var refreshedPending = groupJoinRequests[group.id, default: []]
-        refreshedPending.removeAll { $0.id == request.joinRequestId }
-        if refreshedPending.isEmpty {
-            groupJoinRequests.removeValue(forKey: group.id)
-        } else {
-            groupJoinRequests[group.id] = refreshedPending
-        }
-        if updated.members.contains(where: { $0.fingerprint == joinRequest.requester.fingerprint }) {
-            if let invitedFingerprint = joinRequest.invitedFingerprint {
-                removeGroupInvitation(groupId: group.id, invitedFingerprint: invitedFingerprint)
-            }
-            try saveToDisk()
-            return updated
-        }
-
-        throw RelayStoreError.invalidGroupCommit
-    }
-
-    public func rejectGroupJoin(_ request: RejectGroupJoinRequest) throws {
-        guard let group = groups[request.groupId] else {
-            throw RelayStoreError.groupNotFound
-        }
-        let actor = request.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !actor.isEmpty else {
-            throw RelayStoreError.invalidFingerprint
-        }
-        guard actor == group.createdByFingerprint else {
-            throw RelayStoreError.unauthorizedGroupMutation
-        }
-
-        var pending = groupJoinRequests[group.id, default: []]
-        guard let index = pending.firstIndex(where: { $0.id == request.joinRequestId }) else {
-            throw RelayStoreError.groupJoinRequestNotFound
-        }
-        pending.remove(at: index)
-        if pending.isEmpty {
-            groupJoinRequests.removeValue(forKey: group.id)
-        } else {
-            groupJoinRequests[group.id] = pending
-        }
-        try saveToDisk()
-    }
-
-    private func removeGroupInvitation(groupId: UUID, invitedFingerprint: String) {
-        let fingerprint = invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fingerprint.isEmpty, var invitations = groupInvitations[fingerprint] else {
-            return
-        }
-        invitations.removeAll { $0.groupId == groupId }
-        if invitations.isEmpty {
-            groupInvitations.removeValue(forKey: fingerprint)
-        } else {
-            groupInvitations[fingerprint] = invitations
-        }
-    }
-
-    private func removeGroupInvitations(groupId: UUID) {
-        for fingerprint in Array(groupInvitations.keys) {
-            removeGroupInvitation(groupId: groupId, invitedFingerprint: fingerprint)
-        }
-    }
-
-    private func normalizedMemberProfile(_ profile: RelayGroupMemberProfile?) -> RelayGroupMemberProfile? {
-        guard let profile else { return nil }
-        let fingerprint = profile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !fingerprint.isEmpty else { return nil }
-        let trimmedDisplayName: String?
-        if let displayName = profile.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !displayName.isEmpty {
-            trimmedDisplayName = displayName
-        } else {
-            trimmedDisplayName = nil
-        }
-        let trimmedInboxId: String?
-        if let inboxId = profile.inboxId?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !inboxId.isEmpty {
-            trimmedInboxId = inboxId
-        } else {
-            trimmedInboxId = nil
-        }
-        return RelayGroupMemberProfile(
-            fingerprint: fingerprint,
-            displayName: trimmedDisplayName,
-            inboxId: trimmedInboxId,
-            relay: profile.relay,
-            signingPublicKey: profile.signingPublicKey,
-            agreementPublicKey: profile.agreementPublicKey
-        )
-    }
-
-    private func makeGroupMember(
-        fingerprint: String,
-        existing: RelayGroupMember?,
-        profile: RelayGroupMemberProfile?,
-        joinedAt: Date
-    ) -> RelayGroupMember {
-        RelayGroupMember(
-            fingerprint: fingerprint,
-            joinedAt: existing?.joinedAt ?? joinedAt,
-            displayName: profile?.displayName ?? existing?.displayName,
-            inboxId: profile?.inboxId ?? existing?.inboxId,
-            relay: profile?.relay ?? existing?.relay,
-            signingPublicKey: profile?.signingPublicKey ?? existing?.signingPublicKey,
-            agreementPublicKey: profile?.agreementPublicKey ?? existing?.agreementPublicKey
-        )
-    }
-
-    private func projectedGroupMemberProfiles(
-        currentMembers: [RelayGroupMember],
-        addProfiles: [RelayGroupMemberProfile]
-    ) -> [RelayGroupMemberProfile] {
-        var profiles = Dictionary(uniqueKeysWithValues: currentMembers.map { member in
-            (
-                member.fingerprint,
-                RelayGroupMemberProfile(
-                    fingerprint: member.fingerprint,
-                    displayName: member.displayName,
-                    inboxId: member.inboxId,
-                    relay: member.relay,
-                    signingPublicKey: member.signingPublicKey,
-                    agreementPublicKey: member.agreementPublicKey
-                )
-            )
-        })
-        for profile in addProfiles {
-            let fingerprint = profile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !fingerprint.isEmpty else { continue }
-            profiles[fingerprint] = RelayGroupMemberProfile(
-                fingerprint: fingerprint,
-                displayName: profile.displayName,
-                inboxId: profile.inboxId,
-                relay: profile.relay,
-                signingPublicKey: profile.signingPublicKey,
-                agreementPublicKey: profile.agreementPublicKey
-            )
-        }
-        return profiles.values.sorted { $0.fingerprint < $1.fingerprint }
-    }
-
-    private func pruneAnnouncements(now: Date) {
-        announcements = announcements.filter { $0.value.expiresAt > now }
-    }
-
     private func pruneAttachments(now: Date) {
         attachments = attachments.compactMapValues { records in
             var filtered: [AttachmentRecord] = []
@@ -1448,8 +578,13 @@ public actor RelayStore {
     }
 
     private func boundedAttachmentTTL(_ ttlSeconds: Int?) -> TimeInterval {
-        let requested = TimeInterval(ttlSeconds ?? Int(attachmentTTL))
-        return min(maximumAttachmentTTL, max(minimumAttachmentTTL, requested))
+        let requested = TimeInterval(
+            ttlSeconds ?? Int(RelayAttachmentRetentionLimits.defaultSeconds)
+        )
+        return min(
+            RelayAttachmentRetentionLimits.maximumSeconds,
+            max(RelayAttachmentRetentionLimits.minimumSeconds, requested)
+        )
     }
 
     private func payload(for record: AttachmentRecord) throws -> EncryptedPayload {
@@ -1465,8 +600,13 @@ public actor RelayStore {
         return try NoctweaveCoder.decode(EncryptedPayload.self, from: data)
     }
 
-    private func prunePrekeys(now: Date) {
-        prekeyBundles = prekeyBundles.filter { $0.value.expiresAt > now }
+    private func deleteExternalAttachmentIfUnreferenced(_ external: AttachmentExternalRecord) {
+        let isReferenced = attachments.values.contains { records in
+            records.contains { $0.external == external }
+        }
+        if !isReferenced {
+            attachmentBlobStore?.delete(external)
+        }
     }
 
     private func pruneFederationNodes(now: Date) {
@@ -1558,31 +698,28 @@ public actor RelayStore {
     }
 
     private func applySnapshot(_ snapshot: RelayStoreSnapshot) {
-        mailboxes = snapshot.mailboxes
-        inboxRegistrations = snapshot.inboxRegistrations
+        rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
         attachments = snapshot.attachments
-        prekeyBundles = snapshot.prekeyBundles
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
-        groups = snapshot.groups
-        groupJoinRequests = snapshot.groupJoinRequests
-        groupInvitations = snapshot.groupInvitations
         pruneAttachments(now: Date())
-        prunePrekeys(now: Date())
         pruneFederationNodes(now: Date())
+        normalizeRendezvousRoutesV2AfterLoad()
+    }
+
+    private func restoreSnapshot(_ snapshot: RelayStoreSnapshot) {
+        rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
+        attachments = snapshot.attachments
+        federationNodes = snapshot.federationNodes
+        coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
     }
 
     private func currentSnapshot() -> RelayStoreSnapshot {
         RelayStoreSnapshot(
-            mailboxes: mailboxes,
-            inboxRegistrations: inboxRegistrations,
+            rendezvousRoutesV2: rendezvousRoutesV2,
             attachments: attachments,
-            prekeyBundles: prekeyBundles,
             federationNodes: federationNodes,
-            coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys,
-            groups: groups,
-            groupJoinRequests: groupJoinRequests,
-            groupInvitations: groupInvitations
+            coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys
         )
     }
 
@@ -1595,87 +732,199 @@ public actor RelayStore {
         return base.appendingPathExtension("sqlite")
     }
 
+    private func validateCurrentSnapshot(_ snapshot: RelayStoreSnapshot) throws {
+        guard snapshot.rendezvousRoutesV2.count <= maxLifetimeRendezvousRoutesV2,
+              snapshot.rendezvousRoutesV2.allSatisfy({ key, record in
+                  Data(base64Encoded: key)?.count == SHA256.byteCount
+                      && record.isStructurallyValid
+              }),
+              snapshot.attachments.count <= maxAttachmentIds,
+              snapshot.attachments.allSatisfy({ attachmentId, records in
+                  UUID(uuidString: attachmentId) != nil
+                      && records.count <= maxAttachmentChunks
+                      && Set(records.map(\.chunkIndex)).count == records.count
+                      && records.allSatisfy({ record in
+                          record.isStructurallyValid
+                      })
+              }),
+              snapshot.federationNodes.count <= maxFederationNodes,
+              snapshot.federationNodes.values.allSatisfy({ record in
+                  record.lastHeartbeatAt.timeIntervalSince1970.isFinite
+                      && record.expiresAt.timeIntervalSince1970.isFinite
+                      && record.expiresAt >= record.lastHeartbeatAt
+              }),
+              snapshot.coordinatorPinnedPublicKeys.values.allSatisfy(
+                  SigningKeyPair.isValidPublicKey
+              ) else {
+            throw RelayStorePersistenceError.invalidCurrentState
+        }
+    }
+
+    private func rendezvousRouteKeyV2(
+        _ capability: RendezvousRelayRouteCapabilityV2
+    ) -> String {
+        rendezvousBearerDigestV2(capability.rawValue, authority: "route")
+            .base64EncodedString()
+    }
+
+    private func rendezvousLaneKeyV2(_ laneId: RendezvousRelayLaneIDV2) -> String {
+        laneId.rawValue.base64EncodedString()
+    }
+
+    private func rendezvousBearerDigestV2(_ value: Data, authority: String) -> Data {
+        var input = Data("org.noctweave.relay.rendezvous-transport-v2/\(authority)".utf8)
+        input.append(0)
+        input.append(value)
+        return Data(SHA256.hash(data: input))
+    }
+
+    private func rendezvousRegistrationDigestV2(
+        _ request: RegisterRendezvousTransportV2Request
+    ) -> Data {
+        var input = Data("org.noctweave.relay.rendezvous-transport-v2/registration".utf8)
+        input.append(0)
+        var version = UInt64(request.version).bigEndian
+        withUnsafeBytes(of: &version) { input.append(contentsOf: $0) }
+        var expiry = UInt64(request.expiresAt.timeIntervalSince1970).bigEndian
+        withUnsafeBytes(of: &expiry) { input.append(contentsOf: $0) }
+        input.append(request.routeCapability.rawValue)
+        for lane in request.lanes.sorted(by: {
+            $0.laneId.rawValue.lexicographicallyPrecedes($1.laneId.rawValue)
+        }) {
+            input.append(lane.laneId.rawValue)
+            input.append(lane.publishCapability.rawValue)
+            input.append(lane.readCapability.rawValue)
+            input.append(lane.deleteCapability.rawValue)
+        }
+        return Data(SHA256.hash(data: input))
+    }
+
+    private func rendezvousDigestEqualV2(_ lhs: Data, _ rhs: Data) -> Bool {
+        var difference = lhs.count ^ rhs.count
+        for index in 0..<max(lhs.count, rhs.count) {
+            let left = index < lhs.count ? lhs[index] : 0
+            let right = index < rhs.count ? rhs[index] : 0
+            difference |= Int(left ^ right)
+        }
+        return difference == 0
+    }
+
+    @discardableResult
+    private func retireExpiredRendezvousRoutesV2(now: Date) -> Bool {
+        guard now.timeIntervalSince1970.isFinite else { return false }
+        let retiredAt = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970))
+        var changed = false
+        for key in Array(rendezvousRoutesV2.keys) {
+            guard var record = rendezvousRoutesV2[key],
+                  record.retiredAt == nil,
+                  record.expiresAt <= now else {
+                continue
+            }
+            record.retiredAt = retiredAt
+            record.lanes = [:]
+            rendezvousRoutesV2[key] = record
+            changed = true
+        }
+        return changed
+    }
+
+    private func normalizeRendezvousRoutesV2AfterLoad(now: Date = Date()) {
+        rendezvousRoutesV2 = rendezvousRoutesV2.filter { key, record in
+            guard let digest = Data(base64Encoded: key),
+                  digest.count == SHA256.byteCount,
+                  record.isStructurallyValid else {
+                return false
+            }
+            return true
+        }
+        _ = retireExpiredRendezvousRoutesV2(now: now)
+    }
+
+}
+
+private struct RendezvousRelayStoredFrameV2: Codable {
+    let frame: RendezvousRelayCiphertextFrameV2
+    let ciphertextDigest: Data
+
+    var isStructurallyValid: Bool {
+        frame.isStructurallyValid
+            && ciphertextDigest.count == SHA256.byteCount
+            && ciphertextDigest == frame.ciphertextDigest
+    }
+}
+
+private struct RendezvousRelayLaneRecordV2: Codable {
+    let publishCapabilityDigest: Data
+    let readCapabilityDigest: Data
+    let deleteCapabilityDigest: Data
+    var deletedAt: Date?
+    var frames: [RendezvousRelayStoredFrameV2]
+
+    var isStructurallyValid: Bool {
+        let digests = [
+            publishCapabilityDigest,
+            readCapabilityDigest,
+            deleteCapabilityDigest
+        ]
+        guard digests.allSatisfy({ $0.count == SHA256.byteCount }),
+              Set(digests).count == digests.count,
+              frames.count <= Int(RendezvousRelayTransportV2.maximumFramesPerLane),
+              frames.reduce(0, { $0 + $1.frame.ciphertext.count })
+                <= RendezvousRelayTransportV2.maximumCiphertextBytesPerLane,
+              frames.allSatisfy(\.isStructurallyValid),
+              Set(frames.map(\.frame.frameId)).count == frames.count,
+              frames.enumerated().allSatisfy({ index, record in
+                record.frame.sequence == UInt64(index + 1)
+              }) else {
+            return false
+        }
+        if let deletedAt {
+            return RendezvousRelayTransportV2.isCanonicalTimestamp(deletedAt)
+                && frames.isEmpty
+        }
+        return true
+    }
+}
+
+private struct RendezvousRelayRouteRecordV2: Codable {
+    let registrationDigest: Data
+    let registeredAt: Date
+    let expiresAt: Date
+    var retiredAt: Date?
+    var lanes: [String: RendezvousRelayLaneRecordV2]
+
+    var isStructurallyValid: Bool {
+        let lifetime = expiresAt.timeIntervalSince(registeredAt)
+        guard registrationDigest.count == SHA256.byteCount,
+              RendezvousRelayTransportV2.isCanonicalTimestamp(registeredAt),
+              RendezvousRelayTransportV2.isCanonicalTimestamp(expiresAt),
+              lifetime > 0,
+              lifetime <= RendezvousRelayTransportV2.maximumLifetimeSeconds,
+              retiredAt.map(RendezvousRelayTransportV2.isCanonicalTimestamp) ?? true,
+              retiredAt.map({ $0 >= registeredAt }) ?? true,
+              lanes.count <= RendezvousRelayTransportV2.laneCount,
+              lanes.allSatisfy({ key, lane in
+                Data(base64Encoded: key)?.count == RendezvousRelayTransportV2.laneIDBytes
+                    && lane.isStructurallyValid
+              }) else {
+            return false
+        }
+        return retiredAt != nil || lanes.count == RendezvousRelayTransportV2.laneCount
+    }
 }
 
 private struct RelayStoreSnapshot: Codable {
-    let mailboxes: [String: [StoredEnvelope]]
-    let inboxRegistrations: [String: InboxRegistrationRecord]
+    let rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2]
     let attachments: [String: [AttachmentRecord]]
-    let prekeyBundles: [String: PrekeyBundleRecord]
     let federationNodes: [String: FederationNodeRecord]
     let coordinatorPinnedPublicKeys: [String: Data]
-    let groups: [UUID: RelayGroupDescriptor]
-    let groupJoinRequests: [UUID: [RelayGroupJoinRequest]]
-    let groupInvitations: [String: [RelayGroupInvitation]]
 
-    init(
-        mailboxes: [String: [StoredEnvelope]],
-        inboxRegistrations: [String: InboxRegistrationRecord] = [:],
-        attachments: [String: [AttachmentRecord]],
-        prekeyBundles: [String: PrekeyBundleRecord] = [:],
-        federationNodes: [String: FederationNodeRecord] = [:],
-        coordinatorPinnedPublicKeys: [String: Data] = [:],
-        groups: [UUID: RelayGroupDescriptor] = [:],
-        groupJoinRequests: [UUID: [RelayGroupJoinRequest]] = [:],
-        groupInvitations: [String: [RelayGroupInvitation]] = [:]
-    ) {
-        self.mailboxes = mailboxes
-        self.inboxRegistrations = inboxRegistrations
-        self.attachments = attachments
-        self.prekeyBundles = prekeyBundles
-        self.federationNodes = federationNodes
-        self.coordinatorPinnedPublicKeys = coordinatorPinnedPublicKeys
-        self.groups = groups
-        self.groupJoinRequests = groupJoinRequests
-        self.groupInvitations = groupInvitations
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        mailboxes = try container.decodeIfPresent([String: [StoredEnvelope]].self, forKey: .mailboxes) ?? [:]
-        inboxRegistrations = try container.decodeIfPresent([String: InboxRegistrationRecord].self, forKey: .inboxRegistrations) ?? [:]
-        attachments = try container.decodeIfPresent([String: [AttachmentRecord]].self, forKey: .attachments) ?? [:]
-        prekeyBundles = try container.decodeIfPresent([String: PrekeyBundleRecord].self, forKey: .prekeyBundles) ?? [:]
-        federationNodes = try container.decodeIfPresent([String: FederationNodeRecord].self, forKey: .federationNodes) ?? [:]
-        coordinatorPinnedPublicKeys = try container.decodeIfPresent([String: Data].self, forKey: .coordinatorPinnedPublicKeys) ?? [:]
-        groups = try container.decodeIfPresent([UUID: RelayGroupDescriptor].self, forKey: .groups) ?? [:]
-        groupJoinRequests = try container.decodeIfPresent([UUID: [RelayGroupJoinRequest]].self, forKey: .groupJoinRequests) ?? [:]
-        groupInvitations = try container.decodeIfPresent(
-            [String: [RelayGroupInvitation]].self,
-            forKey: .groupInvitations
-        ) ?? [:]
-    }
-}
-
-private struct InboxRegistrationRecord: Codable {
-    let accessPublicKey: Data
-    let registeredAt: Date
-}
-
-private struct StoredEnvelope: Codable {
-    let envelope: Envelope
-    let storedAt: Date
-    var pendingGroupRecipientFingerprints: Set<String>?
-
-    init(
-        envelope: Envelope,
-        storedAt: Date,
-        pendingGroupRecipientFingerprints: Set<String>? = nil
-    ) {
-        self.envelope = envelope
-        self.storedAt = storedAt
-        self.pendingGroupRecipientFingerprints = pendingGroupRecipientFingerprints
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        envelope = try container.decode(Envelope.self, forKey: .envelope)
-        storedAt = try container.decode(Date.self, forKey: .storedAt)
-        pendingGroupRecipientFingerprints = try container.decodeIfPresent(
-            Set<String>.self,
-            forKey: .pendingGroupRecipientFingerprints
-        )
-    }
+    static let empty = RelayStoreSnapshot(
+        rendezvousRoutesV2: [:],
+        attachments: [:],
+        federationNodes: [:],
+        coordinatorPinnedPublicKeys: [:]
+    )
 }
 
 private struct AttachmentRecord: Codable {
@@ -1684,11 +933,144 @@ private struct AttachmentRecord: Codable {
     let external: AttachmentExternalRecord?
     let storedAt: Date
     let expiresAt: Date
+    let idempotencyKey: Data
+    let bodyDigest: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case chunkIndex
+        case payload
+        case external
+        case storedAt
+        case expiresAt
+        case idempotencyKey
+        case bodyDigest
+    }
+
+    init(
+        chunkIndex: Int,
+        payload: EncryptedPayload?,
+        external: AttachmentExternalRecord?,
+        storedAt: Date,
+        expiresAt: Date,
+        idempotencyKey: Data,
+        bodyDigest: Data
+    ) {
+        self.chunkIndex = chunkIndex
+        self.payload = payload
+        self.external = external
+        self.storedAt = storedAt
+        self.expiresAt = expiresAt
+        self.idempotencyKey = idempotencyKey
+        self.bodyDigest = bodyDigest
+    }
+
+    init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: AttachmentRecordCodingKey.self)
+        let expected = Set(CodingKeys.allCases.map(\.rawValue))
+        guard Set(strict.allKeys.map(\.stringValue)) == expected else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Stored attachment fields are not exact"
+                )
+            )
+        }
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            chunkIndex: try values.decode(Int.self, forKey: .chunkIndex),
+            payload: try values.decodeIfPresent(EncryptedPayload.self, forKey: .payload),
+            external: try values.decodeIfPresent(AttachmentExternalRecord.self, forKey: .external),
+            storedAt: try values.decode(Date.self, forKey: .storedAt),
+            expiresAt: try values.decode(Date.self, forKey: .expiresAt),
+            idempotencyKey: try values.decode(Data.self, forKey: .idempotencyKey),
+            bodyDigest: try values.decode(Data.self, forKey: .bodyDigest)
+        )
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .chunkIndex,
+                in: values,
+                debugDescription: "Stored attachment is structurally invalid"
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                .init(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Stored attachment is structurally invalid"
+                )
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(chunkIndex, forKey: .chunkIndex)
+        try values.encode(payload, forKey: .payload)
+        try values.encode(external, forKey: .external)
+        try values.encode(storedAt, forKey: .storedAt)
+        try values.encode(expiresAt, forKey: .expiresAt)
+        try values.encode(idempotencyKey, forKey: .idempotencyKey)
+        try values.encode(bodyDigest, forKey: .bodyDigest)
+    }
+
+    var isStructurallyValid: Bool {
+        (0..<AttachmentChunk.maximumChunkCount).contains(chunkIndex)
+            && payload?.isStructurallyValid != false
+            && (payload != nil) != (external != nil)
+            && storedAt.timeIntervalSince1970.isFinite
+            && expiresAt.timeIntervalSince1970.isFinite
+            && expiresAt >= storedAt
+            && idempotencyKey.count == UploadAttachmentRequest.idempotencyKeyBytes
+            && bodyDigest.count == SHA256.byteCount
+    }
 }
 
-private struct PrekeyBundleRecord: Codable {
-    var bundle: PrekeyBundle
-    let expiresAt: Date
+private struct AttachmentRecordCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        self.intValue = nil
+    }
+
+    init?(intValue: Int) {
+        self.stringValue = String(intValue)
+        self.intValue = intValue
+    }
+}
+
+func attachmentUploadBodyDigest(
+    attachmentId: UUID,
+    chunkIndex: Int,
+    payload: EncryptedPayload,
+    ttlSeconds: Int?
+) -> Data {
+    var material = Data("org.noctweave.blobs.upload-v1".utf8)
+    appendAttachmentDigestField(Data(attachmentId.uuidString.lowercased().utf8), to: &material)
+    appendAttachmentDigestInteger(UInt64(chunkIndex), to: &material)
+    appendAttachmentDigestField(payload.nonce, to: &material)
+    appendAttachmentDigestField(payload.ciphertext, to: &material)
+    appendAttachmentDigestField(payload.tag, to: &material)
+    if let ttlSeconds {
+        material.append(1)
+        appendAttachmentDigestInteger(UInt64(bitPattern: Int64(ttlSeconds)), to: &material)
+    } else {
+        material.append(0)
+    }
+    return Data(SHA256.hash(data: material))
+}
+
+private func appendAttachmentDigestField(_ value: Data, to material: inout Data) {
+    appendAttachmentDigestInteger(UInt64(value.count), to: &material)
+    material.append(value)
+}
+
+private func appendAttachmentDigestInteger(_ value: UInt64, to material: inout Data) {
+    for shift in stride(from: 56, through: 0, by: -8) {
+        material.append(UInt8(truncatingIfNeeded: value >> UInt64(shift)))
+    }
 }
 
 private enum SQLiteRelayStateStoreError: Error, CustomStringConvertible {
@@ -1719,29 +1101,28 @@ private enum SQLiteRelayStateStoreError: Error, CustomStringConvertible {
 
 private enum SQLiteRelayStateStore {
     private static let metaTableName = "relay_state_meta"
-    private static let normalizedSchemaKey = "normalized_schema_v1"
+    private static let currentSchemaKey = "noctweave_1_0_clean_relay_schema"
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     static func loadState(at url: URL) throws -> RelayStoreSnapshot? {
+        let existedBeforeOpen = FileManager.default.fileExists(atPath: url.path)
         var db: OpaquePointer?
         try openDatabase(at: url, handle: &db)
         defer { sqlite3_close(db) }
         guard let db else { return nil }
 
         try ensureSchema(in: db)
-        guard try hasNormalizedState(in: db) else {
+        guard try hasCurrentState(in: db) else {
+            if existedBeforeOpen {
+                throw RelayStorePersistenceError.invalidCurrentState
+            }
             return nil
         }
         return RelayStoreSnapshot(
-            mailboxes: try loadMailboxes(in: db),
-            inboxRegistrations: try loadInboxRegistrations(in: db),
+            rendezvousRoutesV2: try loadRendezvousRoutesV2(in: db),
             attachments: try loadAttachments(in: db),
-            prekeyBundles: try loadPrekeyBundles(in: db),
             federationNodes: try loadFederationNodes(in: db),
-            coordinatorPinnedPublicKeys: try loadCoordinatorPinnedPublicKeys(in: db),
-            groups: try loadGroups(in: db),
-            groupJoinRequests: try loadGroupJoinRequests(in: db),
-            groupInvitations: try loadGroupInvitations(in: db)
+            coordinatorPinnedPublicKeys: try loadCoordinatorPinnedPublicKeys(in: db)
         )
     }
 
@@ -1755,21 +1136,17 @@ private enum SQLiteRelayStateStore {
         try execute("BEGIN IMMEDIATE TRANSACTION;", in: db)
         do {
             try clearNormalizedTables(in: db)
-            for (inboxId, records) in snapshot.mailboxes {
-                for (position, record) in records.enumerated() {
-                    try insertMailboxRecord(inboxId: inboxId, position: position, record: record, in: db)
-                }
-            }
-            for (inboxId, record) in snapshot.inboxRegistrations {
-                try insertInboxRegistration(inboxId: inboxId, record: record, in: db)
+            for (routeDigest, record) in snapshot.rendezvousRoutesV2 {
+                try insertRendezvousRouteV2(
+                    routeDigest: routeDigest,
+                    record: record,
+                    in: db
+                )
             }
             for (attachmentId, records) in snapshot.attachments {
                 for record in records {
                     try insertAttachmentRecord(attachmentId: attachmentId, record: record, in: db)
                 }
-            }
-            for (fingerprint, record) in snapshot.prekeyBundles {
-                try insertPrekeyBundle(fingerprint: fingerprint, record: record, in: db)
             }
             for (nodeKey, record) in snapshot.federationNodes {
                 try insertFederationNode(nodeKey: nodeKey, record: record, in: db)
@@ -1777,25 +1154,7 @@ private enum SQLiteRelayStateStore {
             for (coordinatorKey, publicKey) in snapshot.coordinatorPinnedPublicKeys {
                 try insertCoordinatorPinnedPublicKey(coordinatorKey: coordinatorKey, publicKey: publicKey, in: db)
             }
-            for (groupId, group) in snapshot.groups {
-                try insertGroup(groupId: groupId, group: group, in: db)
-            }
-            for (groupId, requests) in snapshot.groupJoinRequests {
-                for (position, request) in requests.enumerated() {
-                    try insertGroupJoinRequest(groupId: groupId, position: position, request: request, in: db)
-                }
-            }
-            for (fingerprint, invitations) in snapshot.groupInvitations {
-                for (position, invitation) in invitations.enumerated() {
-                    try insertGroupInvitation(
-                        invitedFingerprint: fingerprint,
-                        position: position,
-                        invitation: invitation,
-                        in: db
-                    )
-                }
-            }
-            try insertMeta(key: normalizedSchemaKey, value: Data("1".utf8), in: db)
+            try insertMeta(key: currentSchemaKey, value: Data("1".utf8), in: db)
             try execute("COMMIT;", in: db)
         } catch {
             _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
@@ -1803,23 +1162,24 @@ private enum SQLiteRelayStateStore {
         }
     }
 
-    private static func loadMailboxes(in db: OpaquePointer) throws -> [String: [StoredEnvelope]] {
-        var mailboxes: [String: [StoredEnvelope]] = [:]
-        try queryRows("SELECT inbox_id, value FROM relay_mailbox_envelopes ORDER BY inbox_id, position;", in: db) { statement in
-            let inboxId = try readText(statement, column: 0, in: db)
-            let record = try decode(StoredEnvelope.self, from: readBlob(statement, column: 1))
-            mailboxes[inboxId, default: []].append(record)
+    private static func loadRendezvousRoutesV2(
+        in db: OpaquePointer
+    ) throws -> [String: RendezvousRelayRouteRecordV2] {
+        var records: [String: RendezvousRelayRouteRecordV2] = [:]
+        try queryRows(
+            "SELECT route_digest, value FROM relay_rendezvous_routes_v2;",
+            in: db
+        ) { statement in
+            let digest = try readText(statement, column: 0, in: db)
+            records[digest] = try decode(
+                RendezvousRelayRouteRecordV2.self,
+                from: readBlob(statement, column: 1)
+            )
         }
-        return mailboxes
-    }
-
-    private static func loadInboxRegistrations(in db: OpaquePointer) throws -> [String: InboxRegistrationRecord] {
-        var registrations: [String: InboxRegistrationRecord] = [:]
-        try queryRows("SELECT inbox_id, value FROM relay_inbox_registrations;", in: db) { statement in
-            let inboxId = try readText(statement, column: 0, in: db)
-            registrations[inboxId] = try decode(InboxRegistrationRecord.self, from: readBlob(statement, column: 1))
+        guard records.count <= 100_000 else {
+            throw SQLiteRelayStateStoreError.corrupt("too many rendezvous route records")
         }
-        return registrations
+        return records
     }
 
     private static func loadAttachments(in db: OpaquePointer) throws -> [String: [AttachmentRecord]] {
@@ -1830,15 +1190,6 @@ private enum SQLiteRelayStateStore {
             attachments[attachmentId, default: []].append(record)
         }
         return attachments
-    }
-
-    private static func loadPrekeyBundles(in db: OpaquePointer) throws -> [String: PrekeyBundleRecord] {
-        var bundles: [String: PrekeyBundleRecord] = [:]
-        try queryRows("SELECT fingerprint, value FROM relay_prekey_bundles;", in: db) { statement in
-            let fingerprint = try readText(statement, column: 0, in: db)
-            bundles[fingerprint] = try decode(PrekeyBundleRecord.self, from: readBlob(statement, column: 1))
-        }
-        return bundles
     }
 
     private static func loadFederationNodes(in db: OpaquePointer) throws -> [String: FederationNodeRecord] {
@@ -1855,7 +1206,7 @@ private enum SQLiteRelayStateStore {
         try queryRows("SELECT coordinator_key, public_key FROM relay_coordinator_pinned_keys;", in: db) { statement in
             let coordinatorKey = try readText(statement, column: 0, in: db)
             let publicKey = try readBlob(statement, column: 1)
-            guard SigningKeyPair.isValidPublicKey(publicKey) else {
+            guard try SigningKeyPair.isValidPublicKeyThrowing(publicKey) else {
                 throw SQLiteRelayStateStoreError.corrupt("invalid pinned coordinator public key")
             }
             keys[coordinatorKey] = publicKey
@@ -1863,64 +1214,24 @@ private enum SQLiteRelayStateStore {
         return keys
     }
 
-    private static func loadGroups(in db: OpaquePointer) throws -> [UUID: RelayGroupDescriptor] {
-        var groups: [UUID: RelayGroupDescriptor] = [:]
-        try queryRows("SELECT group_id, value FROM relay_groups;", in: db) { statement in
-            guard let groupId = try UUID(uuidString: readText(statement, column: 0, in: db)) else {
-                throw SQLiteRelayStateStoreError.corrupt("invalid group identifier")
-            }
-            let group = try decode(RelayGroupDescriptor.self, from: readBlob(statement, column: 1))
-            groups[groupId] = group
-        }
-        return groups
-    }
-
-    private static func loadGroupJoinRequests(in db: OpaquePointer) throws -> [UUID: [RelayGroupJoinRequest]] {
-        var requests: [UUID: [RelayGroupJoinRequest]] = [:]
-        try queryRows("SELECT group_id, value FROM relay_group_join_requests ORDER BY group_id, position;", in: db) { statement in
-            guard let groupId = try UUID(uuidString: readText(statement, column: 0, in: db)) else {
-                throw SQLiteRelayStateStoreError.corrupt("invalid group join-request identifier")
-            }
-            let request = try decode(RelayGroupJoinRequest.self, from: readBlob(statement, column: 1))
-            requests[groupId, default: []].append(request)
-        }
-        return requests
-    }
-
-    private static func loadGroupInvitations(in db: OpaquePointer) throws -> [String: [RelayGroupInvitation]] {
-        var invitations: [String: [RelayGroupInvitation]] = [:]
-        try queryRows(
-            "SELECT invited_fingerprint, value FROM relay_group_invitations ORDER BY invited_fingerprint, position;",
-            in: db
-        ) { statement in
-            let fingerprint = try readText(statement, column: 0, in: db)
-            let invitation = try decode(RelayGroupInvitation.self, from: readBlob(statement, column: 1))
-            invitations[fingerprint, default: []].append(invitation)
-        }
-        return invitations
-    }
-
-    private static func insertMailboxRecord(inboxId: String, position: Int, record: StoredEnvelope, in db: OpaquePointer) throws {
+    private static func insertRendezvousRouteV2(
+        routeDigest: String,
+        record: RendezvousRelayRouteRecordV2,
+        in db: OpaquePointer
+    ) throws {
         try executePrepared(
-            "INSERT INTO relay_mailbox_envelopes (inbox_id, position, envelope_id, stored_at, value) VALUES (?1, ?2, ?3, ?4, ?5);",
+            "INSERT INTO relay_rendezvous_routes_v2 (route_digest, expires_at, retired_at, value) VALUES (?1, ?2, ?3, ?4);",
             in: db
         ) { statement in
-            try bindText(inboxId, to: 1, in: statement, db: db)
-            try bindInt(position, to: 2, in: statement, db: db)
-            try bindText(record.envelope.id.uuidString, to: 3, in: statement, db: db)
-            try bindDouble(record.storedAt.timeIntervalSince1970, to: 4, in: statement, db: db)
-            try bindBlob(encode(record), to: 5, in: statement, db: db)
-        }
-    }
-
-    private static func insertInboxRegistration(inboxId: String, record: InboxRegistrationRecord, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_inbox_registrations (inbox_id, registered_at, access_public_key, value) VALUES (?1, ?2, ?3, ?4);",
-            in: db
-        ) { statement in
-            try bindText(inboxId, to: 1, in: statement, db: db)
-            try bindDouble(record.registeredAt.timeIntervalSince1970, to: 2, in: statement, db: db)
-            try bindBlob(record.accessPublicKey, to: 3, in: statement, db: db)
+            try bindText(routeDigest, to: 1, in: statement, db: db)
+            try bindDouble(record.expiresAt.timeIntervalSince1970, to: 2, in: statement, db: db)
+            if let retiredAt = record.retiredAt {
+                try bindDouble(retiredAt.timeIntervalSince1970, to: 3, in: statement, db: db)
+            } else {
+                guard sqlite3_bind_null(statement, 3) == SQLITE_OK else {
+                    throw SQLiteRelayStateStoreError.bind(lastError(in: db))
+                }
+            }
             try bindBlob(encode(record), to: 4, in: statement, db: db)
         }
     }
@@ -1935,17 +1246,6 @@ private enum SQLiteRelayStateStore {
             try bindDouble(record.storedAt.timeIntervalSince1970, to: 3, in: statement, db: db)
             try bindDouble(record.expiresAt.timeIntervalSince1970, to: 4, in: statement, db: db)
             try bindBlob(encode(record), to: 5, in: statement, db: db)
-        }
-    }
-
-    private static func insertPrekeyBundle(fingerprint: String, record: PrekeyBundleRecord, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_prekey_bundles (fingerprint, expires_at, value) VALUES (?1, ?2, ?3);",
-            in: db
-        ) { statement in
-            try bindText(fingerprint, to: 1, in: statement, db: db)
-            try bindDouble(record.expiresAt.timeIntervalSince1970, to: 2, in: statement, db: db)
-            try bindBlob(encode(record), to: 3, in: statement, db: db)
         }
     }
 
@@ -1970,46 +1270,6 @@ private enum SQLiteRelayStateStore {
         }
     }
 
-    private static func insertGroup(groupId: UUID, group: RelayGroupDescriptor, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_groups (group_id, value) VALUES (?1, ?2);",
-            in: db
-        ) { statement in
-            try bindText(groupId.uuidString, to: 1, in: statement, db: db)
-            try bindBlob(encode(group), to: 2, in: statement, db: db)
-        }
-    }
-
-    private static func insertGroupJoinRequest(groupId: UUID, position: Int, request: RelayGroupJoinRequest, in db: OpaquePointer) throws {
-        try executePrepared(
-            "INSERT INTO relay_group_join_requests (group_id, position, request_id, value) VALUES (?1, ?2, ?3, ?4);",
-            in: db
-        ) { statement in
-            try bindText(groupId.uuidString, to: 1, in: statement, db: db)
-            try bindInt(position, to: 2, in: statement, db: db)
-            try bindText(request.id.uuidString, to: 3, in: statement, db: db)
-            try bindBlob(encode(request), to: 4, in: statement, db: db)
-        }
-    }
-
-    private static func insertGroupInvitation(
-        invitedFingerprint: String,
-        position: Int,
-        invitation: RelayGroupInvitation,
-        in db: OpaquePointer
-    ) throws {
-        try executePrepared(
-            "INSERT INTO relay_group_invitations (invited_fingerprint, position, invitation_id, group_id, value) VALUES (?1, ?2, ?3, ?4, ?5);",
-            in: db
-        ) { statement in
-            try bindText(invitedFingerprint, to: 1, in: statement, db: db)
-            try bindInt(position, to: 2, in: statement, db: db)
-            try bindText(invitation.id.uuidString, to: 3, in: statement, db: db)
-            try bindText(invitation.groupId.uuidString, to: 4, in: statement, db: db)
-            try bindBlob(encode(invitation), to: 5, in: statement, db: db)
-        }
-    }
-
     private static func insertMeta(key: String, value: Data, in db: OpaquePointer) throws {
         try executePrepared(
             "INSERT INTO \(metaTableName) (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
@@ -2020,18 +1280,18 @@ private enum SQLiteRelayStateStore {
         }
     }
 
-    private static func hasNormalizedState(in db: OpaquePointer) throws -> Bool {
+    private static func hasCurrentState(in db: OpaquePointer) throws -> Bool {
         var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, "SELECT 1 FROM \(metaTableName) WHERE key = ?1 LIMIT 1;", -1, &statement, nil) == SQLITE_OK else {
+        guard sqlite3_prepare_v2(db, "SELECT value FROM \(metaTableName) WHERE key = ?1 LIMIT 1;", -1, &statement, nil) == SQLITE_OK else {
             throw SQLiteRelayStateStoreError.prepare(lastError(in: db))
         }
         defer { sqlite3_finalize(statement) }
         guard let statement else { return false }
 
-        try bindText(normalizedSchemaKey, to: 1, in: statement, db: db)
+        try bindText(currentSchemaKey, to: 1, in: statement, db: db)
         let step = sqlite3_step(statement)
         if step == SQLITE_ROW {
-            return true
+            return try readBlob(statement, column: 0) == Data("1".utf8)
         }
         if step == SQLITE_DONE {
             return false
@@ -2041,15 +1301,10 @@ private enum SQLiteRelayStateStore {
 
     private static func clearNormalizedTables(in db: OpaquePointer) throws {
         for table in [
-            "relay_mailbox_envelopes",
-            "relay_inbox_registrations",
+            "relay_rendezvous_routes_v2",
             "relay_attachment_chunks",
-            "relay_prekey_bundles",
             "relay_federation_nodes",
-            "relay_coordinator_pinned_keys",
-            "relay_groups",
-            "relay_group_join_requests",
-            "relay_group_invitations"
+            "relay_coordinator_pinned_keys"
         ] {
             try execute("DELETE FROM \(table);", in: db)
         }
@@ -2076,21 +1331,13 @@ private enum SQLiteRelayStateStore {
             key TEXT PRIMARY KEY,
             value BLOB NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS relay_mailbox_envelopes (
-            inbox_id TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            envelope_id TEXT NOT NULL,
-            stored_at REAL NOT NULL,
-            value BLOB NOT NULL,
-            PRIMARY KEY (inbox_id, position)
-        );
-        CREATE INDEX IF NOT EXISTS relay_mailbox_envelopes_inbox_idx ON relay_mailbox_envelopes(inbox_id);
-        CREATE TABLE IF NOT EXISTS relay_inbox_registrations (
-            inbox_id TEXT PRIMARY KEY,
-            registered_at REAL NOT NULL,
-            access_public_key BLOB NOT NULL,
+        CREATE TABLE IF NOT EXISTS relay_rendezvous_routes_v2 (
+            route_digest TEXT PRIMARY KEY,
+            expires_at REAL NOT NULL,
+            retired_at REAL,
             value BLOB NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS relay_rendezvous_routes_v2_expiry_idx ON relay_rendezvous_routes_v2(expires_at);
         CREATE TABLE IF NOT EXISTS relay_attachment_chunks (
             attachment_id TEXT NOT NULL,
             chunk_index INTEGER NOT NULL,
@@ -2100,11 +1347,6 @@ private enum SQLiteRelayStateStore {
             PRIMARY KEY (attachment_id, chunk_index)
         );
         CREATE INDEX IF NOT EXISTS relay_attachment_chunks_expiry_idx ON relay_attachment_chunks(expires_at);
-        CREATE TABLE IF NOT EXISTS relay_prekey_bundles (
-            fingerprint TEXT PRIMARY KEY,
-            expires_at REAL NOT NULL,
-            value BLOB NOT NULL
-        );
         CREATE TABLE IF NOT EXISTS relay_federation_nodes (
             node_key TEXT PRIMARY KEY,
             expires_at REAL NOT NULL,
@@ -2114,28 +1356,6 @@ private enum SQLiteRelayStateStore {
             coordinator_key TEXT PRIMARY KEY,
             public_key BLOB NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS relay_groups (
-            group_id TEXT PRIMARY KEY,
-            value BLOB NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS relay_group_join_requests (
-            group_id TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            request_id TEXT NOT NULL,
-            value BLOB NOT NULL,
-            PRIMARY KEY (group_id, position)
-        );
-        CREATE INDEX IF NOT EXISTS relay_group_join_requests_group_idx ON relay_group_join_requests(group_id);
-        CREATE TABLE IF NOT EXISTS relay_group_invitations (
-            invited_fingerprint TEXT NOT NULL,
-            position INTEGER NOT NULL,
-            invitation_id TEXT NOT NULL,
-            group_id TEXT NOT NULL,
-            value BLOB NOT NULL,
-            PRIMARY KEY (invited_fingerprint, position)
-        );
-        CREATE INDEX IF NOT EXISTS relay_group_invitations_invited_idx ON relay_group_invitations(invited_fingerprint);
-        CREATE INDEX IF NOT EXISTS relay_group_invitations_group_idx ON relay_group_invitations(group_id);
         """
         guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else {
             throw SQLiteRelayStateStoreError.execute(lastError(in: db))
@@ -2250,22 +1470,22 @@ private enum SQLiteRelayStateStore {
     }
 }
 
-enum RelayStoreError: Error {
-    case inboxFull
-    case invalidInboxRegistration
-    case inboxAlreadyRegistered
+enum RelayStoreError: Error, Equatable {
+    case invalidRendezvousRoute
+    case rendezvousRouteUnavailable
+    case rendezvousRegistrationConflict
+    case rendezvousCapacityReached
+    case rendezvousFrameConflict
+    case rendezvousSequenceGap
+    case rendezvousQuotaReached
     case relayCapacityExceeded
-    case invalidEnvelopePayload
     case invalidChunkIndex
     case invalidAttachmentPayload
-    case invalidPrekeyBundle
-    case groupCapacityExceeded
-    case invalidGroupTitle
-    case invalidFingerprint
-    case invalidGroupCommit
-    case notEnoughGroupMembers
-    case groupNotFound
-    case unauthorizedGroupMutation
-    case groupJoinRequestNotFound
-    case alreadyGroupMember
+    case invalidAttachmentIdempotency
+    case attachmentConflict
+}
+
+enum RelayStorePersistenceError: Error {
+    case injectedFailure
+    case invalidCurrentState
 }

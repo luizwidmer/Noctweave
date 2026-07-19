@@ -21,6 +21,7 @@ enum OperatorConfigurationError: LocalizedError, Equatable {
 struct OperatorEditableConfiguration: Codable, Equatable {
     static let maximumTextBytes = 1_024
     static let maximumEndpointCount = 256
+    static let maximumAttachmentTTLSeconds = 2_592_000
 
     var relayName: String
     var operatorNote: String
@@ -39,8 +40,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var ipfsAPIEndpoint: String?
     var ipfsGatewayEndpoint: String?
     var ipfsTimeoutSeconds: Int?
-    var groupCreationMode: String
-    var groupSecurityModel: String?
     var hiddenRetrievalEnabled: Bool?
     var hiddenRetrievalMode: String?
     var hiddenRetrievalCoverSize: Int?
@@ -65,11 +64,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var curatedCoordinatorQuorum: Int?
     var curatedRequireSignedDirectory: Bool?
     var allowPrivateFederationEndpoints: Bool?
-    var wakeMode: String
-    var wakeMinPollSeconds: Int
-    var wakeMaxPollSeconds: Int
-    var wakeJitterPermille: Int
-    var wakeLongPollTimeoutSeconds: Int
+    var opaqueRouteRuntimeEnabled: Bool
 
     init(configuration: RelayConfiguration, serverConfiguration: ServerConfig? = nil) {
         relayName = configuration.relayName ?? ""
@@ -91,8 +86,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         ipfsAPIEndpoint = serverConfiguration?.ipfsAPIEndpoint?.absoluteString ?? "http://127.0.0.1:5001"
         ipfsGatewayEndpoint = serverConfiguration?.ipfsGatewayEndpoint?.absoluteString ?? ""
         ipfsTimeoutSeconds = serverConfiguration?.ipfsTimeoutSeconds ?? 10
-        groupCreationMode = configuration.groupCreationMode.rawValue
-        groupSecurityModel = configuration.groupSecurityModel.rawValue
         hiddenRetrievalEnabled = configuration.hiddenRetrieval != nil
         hiddenRetrievalMode = configuration.hiddenRetrieval?.mode.rawValue ?? HiddenRetrievalMode.coverQuery.rawValue
         hiddenRetrievalCoverSize = configuration.hiddenRetrieval?.defaultCoverSetSize ?? 8
@@ -122,11 +115,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         curatedCoordinatorQuorum = configuration.curatedCoordinatorQuorum
         curatedRequireSignedDirectory = configuration.curatedRequireSignedDirectory
         allowPrivateFederationEndpoints = configuration.allowPrivateFederationEndpoints
-        wakeMode = configuration.wakeSupport?.mode.rawValue ?? "disabled"
-        wakeMinPollSeconds = configuration.wakeSupport?.minPollIntervalSeconds ?? 60
-        wakeMaxPollSeconds = configuration.wakeSupport?.maxPollIntervalSeconds ?? 300
-        wakeJitterPermille = configuration.wakeSupport?.jitterPermille ?? 250
-        wakeLongPollTimeoutSeconds = configuration.wakeSupport?.longPollTimeoutSeconds ?? 30
+        opaqueRouteRuntimeEnabled = configuration.isOpaqueRouteRuntimeEnabled
     }
 
     func validatedConfiguration(from current: RelayConfiguration) throws -> RelayConfiguration {
@@ -140,12 +129,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         )
         guard let mode = FederationMode(rawValue: federationMode) else {
             throw OperatorConfigurationError.invalidField("federationMode")
-        }
-        guard let groupMode = GroupCreationMode(rawValue: groupCreationMode) else {
-            throw OperatorConfigurationError.invalidField("groupCreationMode")
-        }
-        guard let groupSecurity = GroupSecurityModel(rawValue: groupSecurityModel ?? current.groupSecurityModel.rawValue) else {
-            throw OperatorConfigurationError.invalidField("groupSecurityModel")
         }
         if mode == .manual, current.kind != .standard {
             throw OperatorConfigurationError.unsupportedTransition(
@@ -186,9 +169,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
               bucketSchedule.count <= 16 else {
             throw OperatorConfigurationError.invalidField("temporalBucketScheduleSeconds")
         }
-        let maximumAttachmentTTL = 6 * 60 * 60
-        guard (60...maximumAttachmentTTL).contains(attachmentDefaultTTLSeconds),
-              (attachmentDefaultTTLSeconds...maximumAttachmentTTL).contains(attachmentMaxTTLSeconds) else {
+        guard (60...Self.maximumAttachmentTTLSeconds).contains(attachmentDefaultTTLSeconds),
+              (attachmentDefaultTTLSeconds...Self.maximumAttachmentTTLSeconds).contains(attachmentMaxTTLSeconds) else {
             throw OperatorConfigurationError.invalidField("attachment retention")
         }
         guard (0...128).contains(relayPeerExchangeLimit) else {
@@ -221,26 +203,6 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         }
         try validateRestartControlledSettings()
 
-        let wakeSupport: DecentralizedWakeSupport?
-        if wakeMode == "disabled" {
-            wakeSupport = nil
-        } else {
-            guard let parsedWakeMode = DecentralizedWakeMode(rawValue: wakeMode),
-                  (5...86_400).contains(wakeMinPollSeconds),
-                  (wakeMinPollSeconds...86_400).contains(wakeMaxPollSeconds),
-                  (0...1_000).contains(wakeJitterPermille),
-                  (5...300).contains(wakeLongPollTimeoutSeconds) else {
-                throw OperatorConfigurationError.invalidField("wake policy")
-            }
-            wakeSupport = DecentralizedWakeSupport(
-                mode: parsedWakeMode,
-                minPollIntervalSeconds: wakeMinPollSeconds,
-                maxPollIntervalSeconds: wakeMaxPollSeconds,
-                jitterPermille: wakeJitterPermille,
-                longPollTimeoutSeconds: parsedWakeMode == .longPoll ? wakeLongPollTimeoutSeconds : nil
-            )
-        }
-
         return RelayConfiguration(
             kind: current.kind,
             federation: FederationDescriptor(
@@ -259,15 +221,11 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             hiddenRetrieval: hiddenRetrieval,
             onionTransport: onionTransport,
             mixnetTransport: mixnetTransport,
-            wakeSupport: wakeSupport,
             relayName: normalizedName.nilIfEmpty,
             operatorNote: normalizedNote.nilIfEmpty,
             softwareVersion: current.softwareVersion,
-            groupCreationMode: groupMode,
-            groupSecurityModel: groupSecurity,
             accessPassword: current.accessPassword,
             coordinatorRegistrationToken: current.coordinatorRegistrationToken,
-            federationForwardingAuthToken: current.federationForwardingAuthToken,
             federationCoordinatorEndpoints: coordinators,
             coordinatorHeartbeatSeconds: heartbeat,
             coordinatorDirectoryMaxStalenessSeconds: staleness,
@@ -283,7 +241,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             advertisedEndpoint: endpoint,
             federationAllowList: mode == .solo ? [] : allowList,
             allowPrivateFederationEndpoints: allowPrivateFederationEndpoints ?? current.allowPrivateFederationEndpoints,
-            requireInboxAccessControl: current.requireInboxAccessControl ?? true
+            opaqueRouteRuntimeEnabled: opaqueRouteRuntimeEnabled,
+            rendezvousTransportEnabled: current.isRendezvousTransportEnabled
         )
     }
 
@@ -306,15 +265,11 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             hiddenRetrieval: config.hiddenRetrieval,
             onionTransport: config.onionTransport,
             mixnetTransport: config.mixnetTransport,
-            wakeSupport: config.wakeSupport,
             relayName: config.relayName,
             operatorNote: config.operatorNote,
             softwareVersion: ServerConfig.advertisedSoftwareVersion,
-            groupCreationMode: config.groupCreationMode,
-            groupSecurityModel: config.groupSecurityModel,
             accessPassword: config.accessPassword,
             coordinatorRegistrationToken: config.coordinatorRegistrationToken,
-            federationForwardingAuthToken: config.federationForwardingAuthToken,
             federationCoordinatorEndpoints: config.federationCoordinatorEndpoints,
             coordinatorHeartbeatSeconds: config.coordinatorHeartbeatSeconds,
             coordinatorDirectoryMaxStalenessSeconds: config.coordinatorDirectoryMaxStalenessSeconds,
@@ -329,7 +284,9 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             curatedRequireSignedDirectory: config.curatedRequireSignedDirectory,
             advertisedEndpoint: config.advertisedEndpoint,
             federationAllowList: config.federationAllowList,
-            allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints
+            allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints,
+            opaqueRouteRuntimeEnabled: config.opaqueRouteRuntimeEnabled,
+            rendezvousTransportEnabled: config.rendezvousTransportEnabled
         )
         let updated = try validatedConfiguration(from: current)
         config.federationMode = updated.federation.mode
@@ -348,11 +305,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.hiddenRetrieval = updated.hiddenRetrieval
         config.onionTransport = updated.onionTransport
         config.mixnetTransport = updated.mixnetTransport
-        config.wakeSupport = updated.wakeSupport
         config.relayName = updated.relayName
         config.operatorNote = updated.operatorNote
-        config.groupCreationMode = updated.groupCreationMode
-        config.groupSecurityModel = updated.groupSecurityModel
         config.federationCoordinatorEndpoints = updated.federationCoordinatorEndpoints ?? []
         config.coordinatorHeartbeatSeconds = updated.coordinatorHeartbeatSeconds ?? config.coordinatorHeartbeatSeconds
         config.coordinatorDirectoryMaxStalenessSeconds = updated.coordinatorDirectoryMaxStalenessSeconds ?? config.coordinatorDirectoryMaxStalenessSeconds
@@ -367,6 +321,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.advertisedEndpoint = updated.advertisedEndpoint
         config.federationAllowList = updated.federationAllowList
         config.allowPrivateFederationEndpoints = updated.allowPrivateFederationEndpoints
+        config.opaqueRouteRuntimeEnabled = updated.isOpaqueRouteRuntimeEnabled
+        config.rendezvousTransportEnabled = updated.isRendezvousTransportEnabled
     }
 
     var restartControlledSignature: String {
@@ -530,7 +486,7 @@ struct OperatorConfigurationPersistence {
             throw OperatorConfigurationError.invalidField("persisted operator configuration")
         }
         let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
-        return try operatorJSONDecoder().decode(OperatorEditableConfiguration.self, from: data)
+        return try decodeOperatorJSON(OperatorEditableConfiguration.self, from: data)
     }
 
     func save(_ configuration: OperatorEditableConfiguration) throws {
@@ -621,6 +577,11 @@ private func operatorJSONEncoder() -> JSONEncoder {
 func operatorJSONDecoder() -> JSONDecoder {
     let decoder = JSONDecoder()
     return decoder
+}
+
+func decodeOperatorJSON<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    try RelayCodec.preflightJSON(data)
+    return try operatorJSONDecoder().decode(type, from: data)
 }
 
 private extension String {

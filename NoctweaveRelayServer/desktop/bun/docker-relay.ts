@@ -77,6 +77,7 @@ export function dockerRunArguments(
     "--http-port", "9340",
     "--admin-port", "9090",
     "--data-dir", "/data",
+    "--rendezvous-transport", "true",
     "--relay-name", settings.relayName
   ];
 }
@@ -159,7 +160,7 @@ export class DockerRelayManager {
       ? "missing"
       : inspected.stdout.trim() === "true" ? "running" : "stopped";
     const healthy = containerState === "running"
-      ? await this.healthProbe(`http://127.0.0.1:${settings.httpPort}/health`)
+      ? await this.healthProbe(`http://127.0.0.1:${settings.httpPort}/relay`)
       : false;
     const detail = healthy
       ? "Relay is accepting local health checks."
@@ -212,12 +213,29 @@ function ensureSuccess(result: CommandResult, message: string): void {
 
 async function probeHealth(url: string): Promise<boolean> {
   try {
+    const requestID = crypto.randomUUID();
     const response = await fetch(url, {
-      method: "GET",
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        requestID,
+        module: "nw.core",
+        version: 2,
+        method: "health",
+        body: {},
+        authToken: null
+      }),
       redirect: "error",
       signal: AbortSignal.timeout(2_500)
     });
-    return response.ok;
+    if (!response.ok) return false;
+    const payload = await response.json() as Record<string, unknown>;
+    return payload.requestID === requestID
+      && payload.module === "nw.core"
+      && payload.version === 2
+      && payload.method === "health"
+      && payload.status === "success"
+      && payload.error === null;
   } catch {
     return false;
   }

@@ -1,5 +1,4 @@
 import Foundation
-import Crypto
 @preconcurrency import NIOCore
 @preconcurrency import NIOFoundationCompat
 @preconcurrency import NIOPosix
@@ -15,6 +14,7 @@ private enum FederationDirectoryValidationError: Error {
 private enum RelayForwardHTTPError: Error {
     case invalidURL
     case badStatus(Int)
+    case invalidResponseBinding
 }
 
 private enum RelayForwardTransportError: Error {
@@ -57,321 +57,286 @@ final class RelayHandler: ChannelInboundHandler {
         self.localEndpoint = localEndpoint
         self.relayConfiguration = relayConfiguration
         self.forwardingRequestTimeoutSeconds = max(1, forwardingRequestTimeoutSeconds)
+        let coordinatorKeyMaterial: (privateKey: Data, publicKey: Data)?
         if relayConfiguration.kind == .coordinator {
-            let keyData = FederationDirectorySignature.privateKeyData(
-                from: relayConfiguration.coordinatorDirectorySigningPrivateKey
-            )
-            self.coordinatorDirectorySigningPrivateKey = keyData
-            self.coordinatorDirectoryPublicKey = FederationDirectorySignature.publicKeyData(from: keyData)
+            do {
+                let keyData = try FederationDirectorySignature.privateKeyDataThrowing(
+                    from: relayConfiguration.coordinatorDirectorySigningPrivateKey
+                )
+                coordinatorKeyMaterial = (
+                    keyData,
+                    try FederationDirectorySignature.publicKeyDataThrowing(from: keyData)
+                )
+            } catch {
+                coordinatorKeyMaterial = nil
+            }
         } else {
-            self.coordinatorDirectorySigningPrivateKey = nil
-            self.coordinatorDirectoryPublicKey = nil
+            coordinatorKeyMaterial = nil
         }
+        self.coordinatorDirectorySigningPrivateKey = coordinatorKeyMaterial?.privateKey
+        self.coordinatorDirectoryPublicKey = coordinatorKeyMaterial?.publicKey
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         var buffer = unwrapInboundIn(data)
         guard let payload = buffer.readData(length: buffer.readableBytes) else {
-            respond(.error("Invalid payload"), context: context)
+            context.close(promise: nil)
             return
         }
         if payload.count > maxMessageBytes {
-            respond(.error("Payload too large"), context: context)
+            context.close(promise: nil)
             return
         }
         do {
-            let request = try RelayCodec.decoder().decode(RelayRequest.self, from: payload)
+            let request = try RelayCodec.decodeWire(RelayRequest.self, from: payload)
             let responseContext = NIOContextBox(context)
             handle(request, context: context).whenComplete { result in
                 switch result {
                 case .success(let response):
                     self.respond(response, context: responseContext.context)
                 case .failure:
-                    self.respond(.error("Handler error"), context: responseContext.context)
+                    self.respond(
+                        .error(
+                            "Handler error",
+                            code: .internalFailure,
+                            retryable: true,
+                            respondingTo: request
+                        ),
+                        context: responseContext.context
+                    )
                 }
             }
+        } catch is RetryableRelayLocalError {
+            print("[relay] local cryptography unavailable while decoding request")
+            context.close(promise: nil)
         } catch {
-            respond(.error("Decode failed"), context: context)
+            context.close(promise: nil)
         }
     }
 
     private func handle(_ request: RelayRequest, context: ChannelHandlerContext) -> EventLoopFuture<RelayResponse> {
         scheduleCoordinatorHeartbeatIfNeeded(on: context.eventLoop)
+        func success(_ body: RelaySuccessBody) -> EventLoopFuture<RelayResponse> {
+            context.eventLoop.makeSucceededFuture(.success(body, respondingTo: request))
+        }
+        func failure(
+            _ message: String,
+            code: RelayErrorCode = .invalidRequest,
+            retryable: Bool = false
+        ) -> EventLoopFuture<RelayResponse> {
+            context.eventLoop.makeSucceededFuture(
+                .error(message, code: code, retryable: retryable, respondingTo: request)
+            )
+        }
         let requestSourceKey = sourceKey(for: context.channel.remoteAddress)
         if !isLoopbackRequestSource(requestSourceKey) {
             guard store.allowRelayRequest(sourceKey: requestSourceKey) else {
-                return context.eventLoop.makeSucceededFuture(.error("Rate limit exceeded"))
+                return failure("Rate limit exceeded", code: .rateLimited, retryable: true)
             }
         }
-        if requiresAuthentication(for: request.type),
+        if requiresAuthentication(for: request.binding),
            let authFailure = validateAuthentication(token: request.authToken) {
-            return context.eventLoop.makeSucceededFuture(authFailure)
+            return failure(authFailure, code: .authenticationRequired)
         }
         if relayConfiguration.kind == .coordinator,
-           !isCoordinatorDirectoryRequestType(request.type) {
-            return context.eventLoop.makeSucceededFuture(
-                .error("Coordinator relays are directory-only and do not carry user traffic.")
-            )
+           !isCoordinatorDirectoryRequest(request.binding) {
+            return failure("Coordinator relays are directory-only and do not carry user traffic.", code: .unavailable)
         }
-        switch request.type {
-        case .deliver:
-            guard let deliver = request.deliver else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing deliver payload"))
+        switch request.body {
+        case .createOpaqueRoute(let submission):
+            guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
+                return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            let routingToken = deliver.routingToken ?? deliver.inboxId
-            guard InboxAddress.isValid(routingToken) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid routing token"))
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return failure("Opaque route runtime requires confidential transport")
             }
-            if let destination = deliver.destinationRelay,
-               destination != localEndpoint {
-                let eventLoop = context.eventLoop
-                return federationGate(forwardingTo: destination, on: eventLoop).flatMap { response in
-                    if let response {
-                        return eventLoop.makeSucceededFuture(response)
-                    }
-                    let forward = DeliverRequest(
-                        inboxId: deliver.inboxId,
-                        routingToken: routingToken,
-                        envelope: deliver.envelope,
-                        destinationRelay: nil
-                    )
-                    return self.forwardDeliver(
-                        forward,
-                        to: destination,
-                        on: eventLoop
-                    ).recover { _ in
-                        .error("Forwarding failed")
-                    }
-                }.recover { _ in
-                    .error("Forwarding failed")
-                }
+            guard submission.isStructurallyValid else {
+                return failure("Invalid opaque route request")
             }
             do {
-                let count = try store.deliver(deliver.envelope, to: routingToken)
-                return context.eventLoop.makeSucceededFuture(.delivered(count: count))
-            } catch RelayStoreError.inboxFull {
-                return context.eventLoop.makeSucceededFuture(.error("Inbox full"))
-            } catch RelayStoreError.relayCapacityExceeded {
-                return context.eventLoop.makeSucceededFuture(.error("Relay storage capacity reached"))
+                return success(.opaqueRoute(try store.createOpaqueRouteV2(
+                    submission,
+                    confidentialTransport: confidentialTransport
+                )))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Store error"))
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error, respondingTo: request))
             }
-        case .registerInbox:
-            guard let registration = request.registerInbox else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing inbox registration payload"))
+        case .renewOpaqueRoute(let submission):
+            guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
+                return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            guard InboxAddress.isValid(registration.inboxId),
-                  !registration.accessPublicKey.isEmpty,
-                  InboxAddress.isBound(registration.inboxId, to: registration.accessPublicKey) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid inbox registration"))
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return failure("Opaque route runtime requires confidential transport")
             }
-            guard let offer = registration.contactOffer,
-                  offer.verifySignature(),
-                  offer.inboxId == registration.inboxId,
-                  offer.inboxAccessPublicKey == registration.accessPublicKey else {
-                return context.eventLoop.makeSucceededFuture(
-                    .error("Inbox registration is not bound to a valid identity offer")
-                )
-            }
-            let accessFingerprint = Data(SHA256.hash(data: registration.accessPublicKey)).base64EncodedString()
-            if let proofFailure = validateActorProof(
-                registration.accessProof,
-                expectedFingerprint: accessFingerprint,
-                expectedSigningKey: registration.accessPublicKey,
-                signableDataBuilder: { proof in try registration.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
+            guard submission.isStructurallyValid else {
+                return failure("Invalid opaque route request")
             }
             do {
-                try store.registerInbox(
-                    inboxId: registration.inboxId,
-                    accessPublicKey: registration.accessPublicKey
-                )
-                return context.eventLoop.makeSucceededFuture(.ok())
-            } catch RelayStoreError.inboxAlreadyRegistered {
-                return context.eventLoop.makeSucceededFuture(
-                    .error("Inbox is already registered to another access key")
-                )
-            } catch RelayStoreError.relayCapacityExceeded {
-                return context.eventLoop.makeSucceededFuture(.error("Relay storage capacity reached"))
+                return success(.opaqueRoute(try store.renewOpaqueRouteV2(
+                    submission,
+                    confidentialTransport: confidentialTransport
+                )))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid inbox registration"))
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error, respondingTo: request))
             }
-        case .fetch:
-            guard let fetch = request.fetch else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing fetch payload"))
+        case .teardownOpaqueRoute(let submission):
+            guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
+                return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            let routingToken = fetch.routingToken ?? fetch.inboxId
-            guard InboxAddress.isValid(routingToken) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid routing token"))
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return failure("Opaque route runtime requires confidential transport")
             }
-            if relayConfiguration.requireInboxAccessControl != false {
-                guard let accessPublicKey = store.inboxAccessPublicKey(for: routingToken) else {
-                    return context.eventLoop.makeSucceededFuture(.error("Inbox is not registered"))
-                }
-                let accessFingerprint = Data(SHA256.hash(data: accessPublicKey)).base64EncodedString()
-                if let proofFailure = validateActorProof(
-                    fetch.accessProof,
-                    expectedFingerprint: accessFingerprint,
-                    expectedSigningKey: accessPublicKey,
-                    signableDataBuilder: { proof in try fetch.signableData(for: proof) }
-                ) {
-                    return context.eventLoop.makeSucceededFuture(proofFailure)
-                }
-            }
-            return fetchWithOptionalLongPoll(fetch, routingToken: routingToken, on: context.eventLoop)
-                .map { RelayResponse.messages($0) }
-        case .acknowledgeMessages:
-            guard let acknowledgement = request.acknowledgeMessages else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing acknowledgement payload"))
-            }
-            guard InboxAddress.isValid(acknowledgement.inboxId),
-                  !acknowledgement.messageIds.isEmpty,
-                  acknowledgement.messageIds.count <= 1_000 else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid acknowledgement"))
-            }
-            guard let accessPublicKey = store.inboxAccessPublicKey(for: acknowledgement.inboxId) else {
-                return context.eventLoop.makeSucceededFuture(.error("Inbox is not registered"))
-            }
-            let accessFingerprint = Data(SHA256.hash(data: accessPublicKey)).base64EncodedString()
-            if let proofFailure = validateActorProof(
-                acknowledgement.accessProof,
-                expectedFingerprint: accessFingerprint,
-                expectedSigningKey: accessPublicKey,
-                signableDataBuilder: { proof in try acknowledgement.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
+            guard submission.isStructurallyValid else {
+                return failure("Invalid opaque route request")
             }
             do {
-                _ = try store.acknowledge(
-                    inboxId: acknowledgement.inboxId,
-                    messageIds: acknowledgement.messageIds
-                )
+                return success(.opaqueRoute(try store.teardownOpaqueRouteV2(
+                    submission,
+                    confidentialTransport: confidentialTransport
+                )))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Relay storage is unavailable"))
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error, respondingTo: request))
             }
-            return context.eventLoop.makeSucceededFuture(.ok())
-        case .deliverGroupMessage:
-            guard let deliver = request.deliverGroupMessage else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing group message delivery payload"))
+        case .appendOpaqueRoute(let submission):
+            guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
+                return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            guard InboxAddress.isValid(deliver.groupInboxId),
-                  deliver.envelope.groupId == deliver.groupId else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid group message delivery"))
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return failure("Opaque route runtime requires confidential transport")
             }
-            if let destination = deliver.destinationRelay,
-               destination != localEndpoint {
-                let eventLoop = context.eventLoop
-                return federationGate(forwardingTo: destination, on: eventLoop).flatMap { response in
-                    if let response {
-                        return eventLoop.makeSucceededFuture(response)
-                    }
-                    let forward = DeliverGroupMessageRequest(
-                        groupId: deliver.groupId,
-                        groupInboxId: deliver.groupInboxId,
-                        envelope: deliver.envelope,
-                        destinationRelay: nil
-                    )
-                    return self.forwardGroupDeliver(
-                        forward,
-                        to: destination,
-                        on: eventLoop
-                    ).recover { _ in
-                        .error("Forwarding failed")
-                    }
-                }.recover { _ in
-                    .error("Forwarding failed")
-                }
-            }
-            guard let group = store.fetchGroup(groupId: deliver.groupId),
-                  group.inboxId == deliver.groupInboxId else {
-                return context.eventLoop.makeSucceededFuture(.error("Group not found"))
-            }
-            guard let senderKey = registeredSigningKey(
-                for: deliver.envelope.senderFingerprint,
-                in: group
-            ),
-                  deliver.envelope.verifySignature(publicSigningKey: senderKey) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid group message signature"))
+            guard submission.isStructurallyValid else {
+                return failure("Invalid opaque route request")
             }
             do {
-                let recipientFingerprints = group.members
-                    .map(\.fingerprint)
-                    .filter { $0 != deliver.envelope.senderFingerprint }
-                let count = try store.deliverGroupEnvelope(
-                    carrierEnvelope(for: deliver.envelope),
-                    to: deliver.groupInboxId,
-                    recipientFingerprints: recipientFingerprints
-                )
-                return context.eventLoop.makeSucceededFuture(.delivered(count: count))
-            } catch RelayStoreError.inboxFull {
-                return context.eventLoop.makeSucceededFuture(.error("Inbox full"))
-            } catch RelayStoreError.relayCapacityExceeded {
-                return context.eventLoop.makeSucceededFuture(.error("Relay storage capacity reached"))
+                return success(.opaqueRouteAppend(try store.appendOpaqueRouteV2(
+                    submission,
+                    confidentialTransport: confidentialTransport
+                )))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Store error"))
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error, respondingTo: request))
             }
-        case .fetchGroupMessages:
-            guard let fetch = request.fetchGroupMessages else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing group message fetch payload"))
+        case .syncOpaqueRoute(let submission):
+            guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
+                return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            guard InboxAddress.isValid(fetch.groupInboxId) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid group inbox"))
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return failure("Opaque route runtime requires confidential transport")
             }
-            guard let group = store.fetchGroup(groupId: fetch.groupId),
-                  group.inboxId == fetch.groupInboxId else {
-                return context.eventLoop.makeSucceededFuture(.error("Group not found"))
-            }
-            guard let signingKey = registeredSigningKey(for: fetch.actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Actor is not a group member"))
-            }
-            if let proofFailure = validateActorProof(
-                fetch.actorProof,
-                expectedFingerprint: fetch.actorFingerprint,
-                expectedSigningKey: signingKey,
-                signableDataBuilder: { proof in try fetch.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            return fetchGroupMessagesWithOptionalLongPoll(fetch, on: context.eventLoop)
-                .map { RelayResponse.groupMessages($0) }
-        case .acknowledgeGroupMessages:
-            guard let acknowledgement = request.acknowledgeGroupMessages else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing group acknowledgement payload"))
-            }
-            guard InboxAddress.isValid(acknowledgement.groupInboxId),
-                  !acknowledgement.messageIds.isEmpty,
-                  acknowledgement.messageIds.count <= 1_000 else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid group acknowledgement"))
-            }
-            guard let group = store.fetchGroup(groupId: acknowledgement.groupId),
-                  group.inboxId == acknowledgement.groupInboxId else {
-                return context.eventLoop.makeSucceededFuture(.error("Group not found"))
-            }
-            guard let signingKey = registeredSigningKey(for: acknowledgement.actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Actor is not a group member"))
-            }
-            if let proofFailure = validateActorProof(
-                acknowledgement.actorProof,
-                expectedFingerprint: acknowledgement.actorFingerprint,
-                expectedSigningKey: signingKey,
-                signableDataBuilder: { proof in try acknowledgement.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
+            guard submission.isStructurallyValid else {
+                return failure("Invalid opaque route request")
             }
             do {
-                _ = try store.acknowledgeGroupEnvelopes(
-                    inboxId: acknowledgement.groupInboxId,
-                    messageIds: acknowledgement.messageIds,
-                    recipientFingerprint: acknowledgement.actorFingerprint
-                )
+                return success(.opaqueRouteSync(try store.syncOpaqueRouteV2(
+                    submission,
+                    confidentialTransport: confidentialTransport
+                )))
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Relay storage is unavailable"))
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error, respondingTo: request))
             }
-            return context.eventLoop.makeSucceededFuture(.ok())
-        case .health:
-            return context.eventLoop.makeSucceededFuture(.ok())
-        case .info:
+        case .commitOpaqueRoute(let submission):
+            guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
+                return failure("Opaque route runtime is disabled", code: .unavailable)
+            }
+            let confidentialTransport = relayConfiguration.tlsEnabled == true
+                || isLoopbackRequestSource(requestSourceKey)
+            guard confidentialTransport else {
+                return failure("Opaque route runtime requires confidential transport")
+            }
+            guard submission.isStructurallyValid else {
+                return failure("Invalid opaque route request")
+            }
+            do {
+                return success(.opaqueRouteCommit(try store.commitOpaqueRouteV2(
+                    submission,
+                    confidentialTransport: confidentialTransport
+                )))
+            } catch {
+                return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error, respondingTo: request))
+            }
+        case .registerRendezvous(let registration):
+            guard relayConfiguration.isRendezvousTransportEnabled else {
+                return failure("Rendezvous transport is disabled", code: .unavailable)
+            }
+            guard relayConfiguration.tlsEnabled == true
+                    || isLoopbackRequestSource(requestSourceKey) else {
+                return failure("Rendezvous transport requires confidential transport")
+            }
+            guard registration.isStructurallyValid() else {
+                return failure("Invalid rendezvous transport request")
+            }
+            do {
+                try store.registerRendezvousTransportV2(registration)
+                return success(.empty)
+            } catch {
+                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error, respondingTo: request))
+            }
+        case .appendRendezvous(let append):
+            guard relayConfiguration.isRendezvousTransportEnabled else {
+                return failure("Rendezvous transport is disabled", code: .unavailable)
+            }
+            guard relayConfiguration.tlsEnabled == true
+                    || isLoopbackRequestSource(requestSourceKey) else {
+                return failure("Rendezvous transport requires confidential transport")
+            }
+            guard append.isStructurallyValid else {
+                return failure("Invalid rendezvous transport request")
+            }
+            do {
+                _ = try store.appendRendezvousTransportV2(append)
+                return success(.empty)
+            } catch {
+                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error, respondingTo: request))
+            }
+        case .syncRendezvous(let sync):
+            guard relayConfiguration.isRendezvousTransportEnabled else {
+                return failure("Rendezvous transport is disabled", code: .unavailable)
+            }
+            guard relayConfiguration.tlsEnabled == true
+                    || isLoopbackRequestSource(requestSourceKey) else {
+                return failure("Rendezvous transport requires confidential transport")
+            }
+            guard sync.isStructurallyValid else {
+                return failure("Invalid rendezvous transport request")
+            }
+            do {
+                return success(.rendezvousSync(try store.syncRendezvousTransportV2(sync)))
+            } catch {
+                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error, respondingTo: request))
+            }
+        case .deleteRendezvous(let deletion):
+            guard relayConfiguration.isRendezvousTransportEnabled else {
+                return failure("Rendezvous transport is disabled", code: .unavailable)
+            }
+            guard relayConfiguration.tlsEnabled == true
+                    || isLoopbackRequestSource(requestSourceKey) else {
+                return failure("Rendezvous transport requires confidential transport")
+            }
+            guard deletion.isStructurallyValid else {
+                return failure("Invalid rendezvous transport request")
+            }
+            do {
+                try store.deleteRendezvousTransportV2(deletion)
+                return success(.empty)
+            } catch {
+                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error, respondingTo: request))
+            }
+        case .empty:
+            if request.method == .health {
+                return success(.empty)
+            }
+            guard request.method == .info else {
+                return failure("Invalid empty relay request")
+            }
             var info = relayConfiguration.makeInfo(now: Date())
             if relayConfiguration.kind == .coordinator {
                 info = RelayInfo(
@@ -386,12 +351,13 @@ final class RelayHandler: ChannelInboundHandler {
                     attachmentsEnabled: info.attachmentsEnabled,
                     attachmentStorageBackend: info.attachmentStorageBackend,
                     hiddenRetrieval: info.hiddenRetrieval,
+                    onionTransport: info.onionTransport,
+                    mixnetTransport: info.mixnetTransport,
                     wakeSupport: info.wakeSupport,
                     relayName: info.relayName,
                     operatorNote: info.operatorNote,
                     softwareVersion: info.softwareVersion,
-                    groupCreationMode: info.groupCreationMode,
-                    groupSecurityModel: info.groupSecurityModel,
+                    protocolCapabilities: info.protocolCapabilities,
                     requiresPassword: info.requiresPassword,
                     federationCoordinatorEndpoints: info.federationCoordinatorEndpoints,
                     coordinatorReportedRelayCount: store.listFederationNodes(
@@ -426,8 +392,7 @@ final class RelayHandler: ChannelInboundHandler {
                         relayName: info.relayName,
                         operatorNote: info.operatorNote,
                         softwareVersion: info.softwareVersion,
-                        groupCreationMode: info.groupCreationMode,
-                        groupSecurityModel: info.groupSecurityModel,
+                        protocolCapabilities: info.protocolCapabilities,
                         requiresPassword: info.requiresPassword,
                         federationCoordinatorEndpoints: info.federationCoordinatorEndpoints,
                         coordinatorReportedRelayCount: info.coordinatorReportedRelayCount,
@@ -441,70 +406,10 @@ final class RelayHandler: ChannelInboundHandler {
                     )
                 }
             }
-            return context.eventLoop.makeSucceededFuture(.info(info))
-        case .announce:
-            guard let announce = request.announce else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing announce payload"))
-            }
-            guard OQSSignatureVerifier.shared.isAvailable,
-                  announce.offer.verifySignature() else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid contact offer."))
-            }
-            let announcement = store.announce(announce.offer, ttlSeconds: announce.ttlSeconds)
-            return context.eventLoop.makeSucceededFuture(.announcements([announcement]))
-        case .listAnnouncements:
-            guard let list = request.listAnnouncements else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing list payload"))
-            }
-            let announcements = store.listAnnouncements(limit: list.limit)
-            return context.eventLoop.makeSucceededFuture(.announcements(announcements))
-        case .sendPairRequest:
-            guard let request = request.sendPairRequest else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing pair request payload"))
-            }
-            guard isValidIdentityFingerprint(request.targetFingerprint) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid target fingerprint."))
-            }
-            guard OQSSignatureVerifier.shared.isAvailable,
-                  request.offer.verifySignature() else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid contact offer."))
-            }
-            if let proofFailure = validateActorProof(
-                request.actorProof,
-                expectedFingerprint: request.offer.fingerprint,
-                expectedSigningKey: request.offer.signingPublicKey,
-                signableDataBuilder: { proof in try request.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            _ = store.sendPairRequest(targetFingerprint: request.targetFingerprint, offer: request.offer)
-            return context.eventLoop.makeSucceededFuture(.ok())
-        case .fetchPairRequests:
-            guard let fetch = request.fetchPairRequests else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing fetch pair payload"))
-            }
-            let expectedFingerprint = fetch.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard isValidIdentityFingerprint(expectedFingerprint) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint."))
-            }
-            if let proofFailure = validateActorProof(
-                fetch.actorProof,
-                expectedFingerprint: expectedFingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try fetch.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            let requests = store.fetchPairRequests(targetFingerprint: fetch.fingerprint, maxCount: fetch.maxCount)
-            return context.eventLoop.makeSucceededFuture(.pairRequests(requests))
-        case .uploadAttachment:
+            return success(.relayInfo(info))
+        case .uploadAttachment(let upload):
             guard relayConfiguration.attachmentsEnabled != false else {
-                return context.eventLoop.makeSucceededFuture(
-                    .error("Attachments are disabled on this relay")
-                )
-            }
-            guard let upload = request.uploadAttachment else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing upload attachment payload"))
+                return failure("Attachments are disabled on this relay", code: .unavailable)
             }
             let boundedTTL = boundedAttachmentTTL(requested: upload.ttlSeconds)
             do {
@@ -512,465 +417,233 @@ final class RelayHandler: ChannelInboundHandler {
                     attachmentId: upload.attachmentId,
                     chunkIndex: upload.chunkIndex,
                     payload: upload.payload,
-                    ttlSeconds: boundedTTL
+                    ttlSeconds: upload.ttlSeconds,
+                    idempotencyKey: upload.idempotencyKey,
+                    effectiveTTLSeconds: boundedTTL
                 )
-                return context.eventLoop.makeSucceededFuture(.attachment(chunk))
+                return success(.attachment(chunk))
             } catch RelayStoreError.invalidChunkIndex {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid chunk index"))
+                return failure("Invalid chunk index")
             } catch RelayStoreError.invalidAttachmentPayload {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid attachment payload"))
-            } catch RelayStoreError.attachmentBlobUnavailable {
-                return context.eventLoop.makeSucceededFuture(.error("Attachment blob backend unavailable"))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Attachment store error"))
-            }
-        case .fetchAttachment:
-            guard relayConfiguration.attachmentsEnabled != false else {
-                return context.eventLoop.makeSucceededFuture(
-                    .error("Attachments are disabled on this relay")
+                return failure("Invalid attachment payload")
+            } catch RelayStoreError.invalidAttachmentIdempotency {
+                return failure("Invalid attachment idempotency key")
+            } catch RelayStoreError.attachmentConflict {
+                return failure(
+                    "Attachment coordinate conflicts with stored state",
+                    code: .conflict
                 )
+            } catch RelayStoreError.attachmentBlobUnavailable {
+                return failure("Attachment blob backend unavailable", code: .unavailable, retryable: true)
+            } catch {
+                return failure("Attachment store error", code: .unavailable, retryable: true)
             }
-            guard let fetch = request.fetchAttachment else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing fetch attachment payload"))
+        case .fetchAttachment(let fetch):
+            guard relayConfiguration.attachmentsEnabled != false else {
+                return failure("Attachments are disabled on this relay", code: .unavailable)
             }
             do {
                 if let chunk = try store.fetchAttachment(
                     attachmentId: fetch.attachmentId,
                     chunkIndex: fetch.chunkIndex
                 ) {
-                    return context.eventLoop.makeSucceededFuture(.attachment(chunk))
+                    return success(.attachment(chunk))
                 }
-                return context.eventLoop.makeSucceededFuture(.error("Attachment not found"))
+                return failure("Attachment not found", code: .notFound)
             } catch RelayStoreError.invalidChunkIndex {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid chunk index"))
+                return failure("Invalid chunk index")
             } catch RelayStoreError.attachmentBlobUnavailable {
-                return context.eventLoop.makeSucceededFuture(.error("Attachment blob backend unavailable"))
+                return failure("Attachment blob backend unavailable", code: .unavailable, retryable: true)
             } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Attachment store error"))
+                return failure("Attachment store error", code: .unavailable, retryable: true)
             }
-        case .uploadPrekeys:
-            guard let upload = request.uploadPrekeys else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing prekey bundle payload"))
-            }
-            let fingerprint = upload.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard fingerprint == upload.bundle.identityFingerprint else {
-                return context.eventLoop.makeSucceededFuture(.error("Prekey bundle fingerprint mismatch."))
-            }
-            if let proofFailure = validateActorProof(
-                upload.actorProof,
-                expectedFingerprint: fingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try upload.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            guard let publicSigningKey = upload.actorProof?.publicSigningKey,
-                  upload.bundle.isStructurallyValid(),
-                  verifySignedPrekey(upload.bundle.signedPrekey, using: publicSigningKey),
-                  upload.bundle.oneTimePrekeys.allSatisfy({
-                      verifyOneTimePrekey($0, using: publicSigningKey)
-                  }) else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid authenticated prekey bundle."))
-            }
-            do {
-                try store.uploadPrekeyBundle(
-                    fingerprint: fingerprint,
-                    bundle: upload.bundle,
-                    ttlSeconds: upload.ttlSeconds
-                )
-                return context.eventLoop.makeSucceededFuture(.ok())
-            } catch RelayStoreError.invalidPrekeyBundle {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid prekey bundle."))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Prekey store error"))
-            }
-        case .fetchPrekeyBundle:
-            guard let fetch = request.fetchPrekeyBundle else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing fetch prekey payload"))
-            }
-            do {
-                let bundle = try store.fetchPrekeyBundle(fingerprint: fetch.fingerprint)
-                return context.eventLoop.makeSucceededFuture(.prekeyBundle(bundle))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(.error("Prekey fetch error"))
-            }
-        case .createGroup:
-            guard let create = request.createGroup else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing create group payload"))
-            }
-            guard relayConfiguration.groupCreationMode != .disabled else {
-                return context.eventLoop.makeSucceededFuture(.error("Group creation is disabled on this relay."))
-            }
-            let creatorFingerprint = create.creatorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !creatorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let creatorProfile = create.creatorProfile,
-                  let creatorSigningKey = creatorProfile.signingPublicKey,
-                  !creatorSigningKey.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Creator profile must include a signing key."))
-            }
-            guard creatorProfile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines) == creatorFingerprint else {
-                return context.eventLoop.makeSucceededFuture(.error("Creator profile fingerprint mismatch."))
-            }
-            if let proofFailure = validateActorProof(
-                create.creatorProof,
-                expectedFingerprint: creatorFingerprint,
-                expectedSigningKey: creatorSigningKey,
-                signableDataBuilder: { proof in try create.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                let group = try store.createGroup(
-                    groupId: create.groupId,
-                    title: create.title,
-                    creatorFingerprint: create.creatorFingerprint,
-                    memberFingerprints: create.memberFingerprints,
-                    creatorProfile: create.creatorProfile,
-                    memberProfiles: create.memberProfiles,
-                    initialRatchetSecretDistribution: create.initialRatchetSecretDistribution
-                )
-                return context.eventLoop.makeSucceededFuture(.group(group))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .getGroup:
-            guard let get = request.getGroup else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing get group payload"))
-            }
-            guard let group = store.fetchGroup(groupId: get.groupId) else {
-                return context.eventLoop.makeSucceededFuture(.group(nil))
-            }
-            let memberFingerprint = get.memberFingerprint?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !memberFingerprint.isEmpty,
-                  let memberKey = registeredSigningKey(for: memberFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group membership is required"))
-            }
-            if let proofFailure = validateActorProof(
-                get.memberProof,
-                expectedFingerprint: memberFingerprint,
-                expectedSigningKey: memberKey,
-                signableDataBuilder: { proof in try get.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            return context.eventLoop.makeSucceededFuture(.group(group))
-        case .listGroups:
-            guard let list = request.listGroups else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing list groups payload"))
-            }
-            let memberFingerprint = list.memberFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !memberFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            if let proofFailure = validateActorProof(
-                list.memberProof,
-                expectedFingerprint: memberFingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try list.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            let groups = store.listGroups(memberFingerprint: list.memberFingerprint, limit: list.limit)
-            return context.eventLoop.makeSucceededFuture(.groups(groups))
-        case .updateGroup:
-            guard let update = request.updateGroup else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing update group payload"))
-            }
-            guard let group = store.fetchGroup(groupId: update.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = update.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
-            }
-            guard let groupCommit = update.groupCommit else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing signed group commit"))
-            }
-            if let proofFailure = validateActorProof(
-                groupCommit.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try groupCommit.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                let group = try store.updateGroup(update)
-                return context.eventLoop.makeSucceededFuture(.group(group))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .deleteGroup:
-            guard let delete = request.deleteGroup else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing delete group payload"))
-            }
-            guard let group = store.fetchGroup(groupId: delete.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = delete.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
-            }
-            if let proofFailure = validateActorProof(
-                delete.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try delete.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                try store.deleteGroup(delete)
-                return context.eventLoop.makeSucceededFuture(.ok())
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .requestGroupJoin:
-            guard let join = request.requestGroupJoin else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing request join payload"))
-            }
-            let requesterFingerprint = join.requesterProfile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !requesterFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let requesterSigningKey = join.requesterProfile.signingPublicKey,
-                  !requesterSigningKey.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Requester profile must include a signing key."))
-            }
-            if let proofFailure = validateActorProof(
-                join.requesterProof,
-                expectedFingerprint: requesterFingerprint,
-                expectedSigningKey: requesterSigningKey,
-                signableDataBuilder: { proof in try join.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                let created = try store.requestGroupJoin(join)
-                return context.eventLoop.makeSucceededFuture(.groupJoinRequests([created]))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .listGroupJoinRequests:
-            guard let list = request.listGroupJoinRequests else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing list join payload"))
-            }
-            guard let group = store.fetchGroup(groupId: list.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = list.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
-            }
-            if let proofFailure = validateActorProof(
-                list.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try list.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                let pending = try store.listGroupJoinRequests(list)
-                return context.eventLoop.makeSucceededFuture(.groupJoinRequests(pending))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .approveGroupJoin:
-            guard let approve = request.approveGroupJoin else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing approve join payload"))
-            }
-            guard let group = store.fetchGroup(groupId: approve.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = approve.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
-            }
-            if let proofFailure = validateActorProof(
-                approve.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try approve.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            if let proofFailure = validateActorProof(
-                approve.groupCommit.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try approve.groupCommit.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                let group = try store.approveGroupJoin(approve)
-                return context.eventLoop.makeSucceededFuture(.group(group))
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .rejectGroupJoin:
-            guard let reject = request.rejectGroupJoin else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing reject join payload"))
-            }
-            guard let group = store.fetchGroup(groupId: reject.groupId) else {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(RelayStoreError.groupNotFound))
-            }
-            let actorFingerprint = reject.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return context.eventLoop.makeSucceededFuture(.error("Invalid fingerprint"))
-            }
-            guard let actorSigningKey = registeredSigningKey(for: actorFingerprint, in: group) else {
-                return context.eventLoop.makeSucceededFuture(.error("Group member signing key is missing. Re-pair and re-join the group."))
-            }
-            if let proofFailure = validateActorProof(
-                reject.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try reject.signableData(for: proof) }
-            ) {
-                return context.eventLoop.makeSucceededFuture(proofFailure)
-            }
-            do {
-                try store.rejectGroupJoin(reject)
-                return context.eventLoop.makeSucceededFuture(.ok())
-            } catch {
-                return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error))
-            }
-        case .registerFederationNode:
+        case .registerFederationNode(let registration):
             guard relayConfiguration.kind == .coordinator else {
-                return context.eventLoop.makeSucceededFuture(.error("This relay is not a coordinator node."))
+                return failure("This relay is not a coordinator node.", code: .unavailable)
             }
             if let authFailure = validateCoordinatorRegistrationAuthentication(token: request.authToken) {
-                return context.eventLoop.makeSucceededFuture(authFailure)
-            }
-            guard let registration = request.registerFederationNode else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing federation registration payload"))
+                return failure(authFailure, code: .authenticationRequired)
             }
             let sourceKey = sourceKey(for: context.channel.remoteAddress)
             let allowed = store.allowFederationRegistration(sourceKey: sourceKey, endpoint: registration.endpoint)
             guard allowed else {
-                return context.eventLoop.makeSucceededFuture(.error("Coordinator registration throttled. Retry later."))
+                return failure("Coordinator registration throttled. Retry later.", code: .rateLimited, retryable: true)
             }
             let eventLoop = context.eventLoop
             return validateFederationRegistrationReachability(registration, on: eventLoop).flatMap { failure in
                 if let failure {
-                    return eventLoop.makeSucceededFuture(failure)
+                    return eventLoop.makeSucceededFuture(
+                        .error(failure, respondingTo: request)
+                    )
                 }
                 do {
                     let node = try self.store.registerFederationNode(registration)
-                    return eventLoop.makeSucceededFuture(.federationNodes([node]))
+                    return eventLoop.makeSucceededFuture(
+                        .success(.federationNodes(.init(nodes: [node])), respondingTo: request)
+                    )
                 } catch {
-                    return eventLoop.makeSucceededFuture(.error("Coordinator registration failed"))
+                    return eventLoop.makeSucceededFuture(
+                        .error("Coordinator registration failed", code: .unavailable, retryable: true, respondingTo: request)
+                    )
                 }
             }
-        case .listFederationNodes:
-            let listRequest = request.listFederationNodes ?? ListFederationNodesRequest()
+        case .listFederationNodes(let listRequest):
             if relayConfiguration.kind == .coordinator {
                 let sourceKey = sourceKey(for: context.channel.remoteAddress)
                 let allowed = store.allowFederationDirectoryList(sourceKey: sourceKey)
                 guard allowed else {
-                    return context.eventLoop.makeSucceededFuture(.error("Coordinator directory listing throttled. Retry later."))
+                    return failure("Coordinator directory listing throttled. Retry later.", code: .rateLimited, retryable: true)
                 }
                 let nodes = store.listFederationNodes(listRequest)
-                let snapshot = makeCoordinatorDirectorySnapshot(nodes: nodes, request: listRequest)
-                if listRequest.requireSignedSnapshot == true, snapshot == nil {
-                    return context.eventLoop.makeSucceededFuture(.error("Coordinator snapshot signing is not available."))
+                let snapshot: FederationDirectorySnapshot?
+                do {
+                    snapshot = try makeCoordinatorDirectorySnapshot(
+                        nodes: nodes,
+                        request: listRequest
+                    )
+                } catch {
+                    return failure(
+                        "Coordinator snapshot signing is temporarily unavailable.",
+                        code: .unavailable,
+                        retryable: true
+                    )
                 }
-                return context.eventLoop.makeSucceededFuture(.federationNodes(nodes, snapshot: snapshot))
+                if listRequest.requireSignedSnapshot == true, snapshot == nil {
+                    return failure(
+                        "Coordinator snapshot signing is not available.",
+                        code: .unavailable,
+                        retryable: true
+                    )
+                }
+                return success(.federationNodes(.init(nodes: nodes, snapshot: snapshot)))
             }
             return fetchCoordinatorNodeDirectory(request: listRequest, on: context.eventLoop)
-                .map { .federationNodes($0) }
-        case .publishOpenFederationDHTRecord:
+                .map { .success(.federationNodes(.init(nodes: $0)), respondingTo: request) }
+        case .publishDHTRecord(let publish):
             guard let dhtConfiguration = openFederationDHTConfiguration() else {
-                return context.eventLoop.makeSucceededFuture(.error("Open-federation DHT is available only on open non-coordinator relays."))
-            }
-            guard let publish = request.publishOpenFederationDHTRecord else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing open-federation DHT record payload"))
+                return failure("Open-federation DHT is available only on open non-coordinator relays.", code: .unavailable)
             }
             let expectedNamespace = OpenFederationDHTRecord.namespace(federationName: dhtConfiguration.federationName)
             guard publish.namespace == expectedNamespace else {
-                return context.eventLoop.makeSucceededFuture(.error("Open-federation DHT namespace mismatch."))
+                return failure("Open-federation DHT namespace mismatch.")
             }
-            let result = store.ingestOpenFederationDHTRecords(
-                [publish.record],
-                configuration: dhtConfiguration
-            )
+            let result: OpenFederationDHTDiscoveryIngestResult
+            do {
+                result = try store.ingestOpenFederationDHTRecords(
+                    [publish.record],
+                    configuration: dhtConfiguration
+                )
+            } catch is RetryableRelayLocalError {
+                return failure(
+                    "Relay cryptography is temporarily unavailable.",
+                    code: .unavailable,
+                    retryable: true
+                )
+            } catch {
+                return failure(
+                    "Open-federation DHT processing failed.",
+                    code: .internalFailure,
+                    retryable: true
+                )
+            }
             guard !result.accepted.isEmpty else {
                 let reason = result.rejected.first.map { "\($0.reason)" } ?? "record rejected"
-                return context.eventLoop.makeSucceededFuture(.error("Open-federation DHT record rejected: \(reason)"))
+                return failure("Open-federation DHT record rejected: \(reason)")
             }
-            return context.eventLoop.makeSucceededFuture(.ok())
-        case .listOpenFederationDHTRecords:
+            return success(.empty)
+        case .listDHTRecords(let list):
             guard let dhtConfiguration = openFederationDHTConfiguration() else {
-                return context.eventLoop.makeSucceededFuture(.error("Open-federation DHT is available only on open non-coordinator relays."))
-            }
-            guard let list = request.listOpenFederationDHTRecords else {
-                return context.eventLoop.makeSucceededFuture(.error("Missing open-federation DHT list payload"))
+                return failure("Open-federation DHT is available only on open non-coordinator relays.", code: .unavailable)
             }
             let expectedNamespace = OpenFederationDHTRecord.namespace(federationName: dhtConfiguration.federationName)
             guard list.namespace == expectedNamespace else {
-                return context.eventLoop.makeSucceededFuture(.error("Open-federation DHT namespace mismatch."))
+                return failure("Open-federation DHT namespace mismatch.")
             }
             let records = store.listOpenFederationDHTRecords(
                 configuration: dhtConfiguration,
                 limit: list.limit
             )
-            return context.eventLoop.makeSucceededFuture(.openFederationDHTRecords(records))
+            return success(.dhtRecords(records))
         }
     }
 
-    private func relayStoreErrorResponse(_ error: Error) -> RelayResponse {
+    private func relayStoreErrorResponse(_ error: Error, respondingTo request: RelayRequest) -> RelayResponse {
         switch error {
-        case RelayStoreError.inboxFull:
-            return .error("Inbox full")
         case RelayStoreError.relayCapacityExceeded:
-            return .error("Relay storage capacity reached")
-        case RelayStoreError.invalidEnvelopePayload:
-            return .error("Invalid envelope payload")
+            return .error("Relay storage capacity reached", code: .capacity, respondingTo: request)
+        case RelayStoreError.invalidRendezvousRoute:
+            return .error("Invalid rendezvous transport request", respondingTo: request)
+        case RelayStoreError.rendezvousRouteUnavailable:
+            return .error("Rendezvous route is unavailable", code: .notFound, respondingTo: request)
+        case RelayStoreError.rendezvousRegistrationConflict:
+            return .error("Rendezvous route registration conflicts with stored state", code: .conflict, respondingTo: request)
+        case RelayStoreError.rendezvousCapacityReached:
+            return .error("Rendezvous transport capacity reached", code: .capacity, respondingTo: request)
+        case RelayStoreError.rendezvousFrameConflict:
+            return .error("Rendezvous frame conflicts with stored state", code: .conflict, respondingTo: request)
+        case RelayStoreError.rendezvousSequenceGap:
+            return .error("Rendezvous lane sequence is not contiguous", code: .conflict, respondingTo: request)
+        case RelayStoreError.rendezvousQuotaReached:
+            return .error("Rendezvous lane quota reached", code: .capacity, respondingTo: request)
         case RelayStoreError.invalidChunkIndex:
-            return .error("Invalid chunk index")
+            return .error("Invalid chunk index", respondingTo: request)
         case RelayStoreError.invalidAttachmentPayload:
-            return .error("Invalid attachment payload")
+            return .error("Invalid attachment payload", respondingTo: request)
+        case RelayStoreError.invalidAttachmentIdempotency:
+            return .error("Invalid attachment idempotency key", respondingTo: request)
+        case RelayStoreError.attachmentConflict:
+            return .error(
+                "Attachment coordinate conflicts with stored state",
+                code: .conflict,
+                respondingTo: request
+            )
         case RelayStoreError.attachmentBlobUnavailable:
-            return .error("Attachment blob backend unavailable")
-        case RelayStoreError.invalidPrekeyBundle:
-            return .error("Invalid prekey bundle")
-        case RelayStoreError.groupCapacityExceeded:
-            return .error("Group capacity reached")
-        case RelayStoreError.invalidGroupTitle:
-            return .error("Invalid group title")
-        case RelayStoreError.invalidFingerprint:
-            return .error("Invalid fingerprint")
-        case RelayStoreError.invalidGroupCommit:
-            return .error("Invalid group commit")
-        case RelayStoreError.notEnoughGroupMembers:
-            return .error("A group requires at least 2 members")
-        case RelayStoreError.groupNotFound:
-            return .error("Group not found")
-        case RelayStoreError.unauthorizedGroupMutation:
-            return .error("Unauthorized group update")
-        case RelayStoreError.groupJoinRequestNotFound:
-            return .error("Group join request not found")
-        case RelayStoreError.alreadyGroupMember:
-            return .error("Requester is already a group member")
+            return .error("Attachment blob backend unavailable", code: .unavailable, retryable: true, respondingTo: request)
         default:
-            return .error("Store error")
+            return .error("Store error", code: .internalFailure, retryable: true, respondingTo: request)
+        }
+    }
+
+    private func opaqueRouteErrorResponse(_ error: Error, respondingTo request: RelayRequest) -> RelayResponse {
+        switch error {
+        case OpaqueRouteRelayStoreV2Error.routeNotFound:
+            return .error("Opaque route not found", code: .notFound, respondingTo: request)
+        case OpaqueRouteRelayStoreV2Error.invalidCursor:
+            return .error("Invalid opaque route cursor", respondingTo: request)
+        case OpaqueRouteRelayStoreV2Error.cursorExpired:
+            return .error("Opaque route cursor expired", code: .conflict, respondingTo: request)
+        case OpaqueRouteRelayStoreV2Error.cursorAheadOfRoute:
+            return .error("Opaque route cursor is ahead of the route", code: .conflict, respondingTo: request)
+        case OpaqueRouteRelayStoreV2Error.packetIdentifierConflict:
+            return .error("Opaque route packet identifier conflict", code: .conflict, respondingTo: request)
+        case OpaqueRouteRelayStoreV2Error.requestIdentifierConflict:
+            return .error("Opaque route request identifier conflict", code: .conflict, respondingTo: request)
+        case OpaqueRouteRelayStoreV2Error.routeQuotaExceeded:
+            return .error("Opaque route quota exceeded", code: .capacity, respondingTo: request)
+        case OpaqueRouteRelayStoreV2Error.packetIdentifierLedgerExhausted,
+             OpaqueRouteRelayStoreV2Error.requestReceiptLedgerExhausted,
+             OpaqueRouteRelayStoreV2Error.sequenceExhausted,
+             OpaqueRouteRelayStoreV2Error.routeCapacityExceeded:
+            return .error("Opaque route capacity reached", code: .capacity, respondingTo: request)
+        case OpaqueRouteV2Error.confidentialTransportRequired:
+            return .error("Opaque route runtime requires confidential transport", respondingTo: request)
+        case OpaqueRouteV2Error.invalidAuthorization,
+             OpaqueRouteV2Error.authorizationExpired,
+             OpaqueRouteV2Error.authorizationReplay:
+            return .error("Opaque route authorization rejected", code: .authenticationRequired, respondingTo: request)
+        case OpaqueRouteV2Error.routeExpired:
+            return .error("Opaque route expired", code: .notFound, respondingTo: request)
+        case OpaqueRouteV2Error.routeTornDown:
+            return .error("Opaque route is torn down", code: .notFound, respondingTo: request)
+        case OpaqueRouteV2Error.idempotencyConflict,
+             OpaqueRouteV2Error.routeAlreadyExists,
+             OpaqueRouteV2Error.transitionFork:
+            return .error("Opaque route state conflict", code: .conflict, respondingTo: request)
+        case OpaqueRouteV2Error.staleTransition,
+             OpaqueRouteV2Error.transitionOutOfOrder:
+            return .error("Opaque route transition order rejected", code: .conflict, respondingTo: request)
+        default:
+            return .error("Invalid opaque route request", respondingTo: request)
         }
     }
 
@@ -980,6 +653,9 @@ final class RelayHandler: ChannelInboundHandler {
             var buffer = context.channel.allocator.buffer(capacity: data.count + 1)
             LineEncoder.wrap(data, into: &buffer)
             context.writeAndFlush(wrapOutboundOut(buffer), promise: nil)
+        } catch is RetryableRelayLocalError {
+            print("[relay] local cryptography unavailable while encoding response")
+            context.close(promise: nil)
         } catch {
             context.close(promise: nil)
         }
@@ -989,149 +665,12 @@ final class RelayHandler: ChannelInboundHandler {
         context.close(promise: nil)
     }
 
-    private func forwardDeliver(
-        _ deliver: DeliverRequest,
-        to endpoint: RelayEndpoint,
-        on eventLoop: EventLoop
-    ) -> EventLoopFuture<RelayResponse> {
-        sendRequest(
-            .deliver(deliver).withAuthToken(relayConfiguration.federationForwardingAuthToken),
-            to: endpoint,
-            on: eventLoop
-        )
-    }
-
-    private func forwardGroupDeliver(
-        _ deliver: DeliverGroupMessageRequest,
-        to endpoint: RelayEndpoint,
-        on eventLoop: EventLoop
-    ) -> EventLoopFuture<RelayResponse> {
-        sendRequest(
-            .deliverGroupMessage(deliver).withAuthToken(relayConfiguration.federationForwardingAuthToken),
-            to: endpoint,
-            on: eventLoop
-        )
-    }
-
-    private func federationGate(forwardingTo destination: RelayEndpoint, on eventLoop: EventLoop) -> EventLoopFuture<RelayResponse?> {
-        switch relayConfiguration.federation.mode {
-        case .solo:
-            return eventLoop.makeSucceededFuture(.error("Relay is not configured for federation forwarding."))
-        case .manual:
-            guard relayConfiguration.federationAllowList.contains(destination) else {
-                return eventLoop.makeSucceededFuture(.error("Manual federation: destination relay is not in the node list."))
-            }
-            return fetchRelayInfo(from: destination, on: eventLoop).map { info in
-                guard let info else {
-                    return .error("Federation check failed: destination relay did not report its configuration.")
-                }
-                guard info.federation.mode == .manual else {
-                    return .error("Federation mismatch: destination relay is not manual.")
-                }
-                guard info.kind == .standard else {
-                    return .error("Manual federation requires destination relay kind standard.")
-                }
-                if let name = self.relayConfiguration.federation.name,
-                   !name.isEmpty,
-                   info.federation.name != name {
-                    return .error("Federation mismatch: destination relay name differs.")
-                }
-                return nil
-            }
-        case .open:
-            if !relayConfiguration.federationAllowList.isEmpty {
-                return eventLoop.makeSucceededFuture(.error("Open federation cannot use an allow list."))
-            }
-            guard relayConfiguration.allowPrivateFederationEndpoints
-                    || (destination.useTLS && PublicRelayEndpointPolicy.permits(destination)) else {
-                return eventLoop.makeSucceededFuture(
-                    .error("Open federation destination must use TLS and be publicly routable.")
-                )
-            }
-            return fetchRelayInfo(from: destination, on: eventLoop).map { info in
-                guard let info else {
-                    return .error("Federation check failed: destination relay did not report its configuration.")
-                }
-                guard info.federation.mode == .open else {
-                    return .error("Federation mismatch: destination relay is not open.")
-                }
-                if let name = self.relayConfiguration.federation.name,
-                   !name.isEmpty,
-                   info.federation.name != name {
-                    return .error("Federation mismatch: destination relay name differs.")
-                }
-                return nil
-            }
-        case .curated:
-            let isInStaticAllowList = relayConfiguration.federationAllowList.contains(destination)
-            if relayConfiguration.curatedStrictPolicyEnabled {
-                guard !relayConfiguration.federationAllowList.isEmpty else {
-                    return eventLoop.makeSucceededFuture(.error("Curated strict policy requires a non-empty allow list."))
-                }
-                guard isInStaticAllowList else {
-                    return eventLoop.makeSucceededFuture(.error("Curated strict policy: destination relay is not in the allow list."))
-                }
-                guard !coordinatorEndpoints().isEmpty else {
-                    return eventLoop.makeSucceededFuture(.error("Curated strict policy requires coordinator endpoints."))
-                }
-                let quorum = max(1, relayConfiguration.curatedCoordinatorQuorum)
-                let request = ListFederationNodesRequest(
-                    mode: .curated,
-                    federationName: relayConfiguration.federation.name,
-                    onlyHealthy: true,
-                    maxStalenessSeconds: relayConfiguration.coordinatorDirectoryMaxStalenessSeconds,
-                    requireSignedSnapshot: relayConfiguration.curatedRequireSignedDirectory
-                )
-                return destinationSeenByCoordinatorCount(destination, request: request, on: eventLoop).flatMap { seenBy in
-                    guard seenBy >= quorum else {
-                        return eventLoop.makeSucceededFuture(
-                            .error("Curated strict policy: destination relay quorum not met (\(seenBy)/\(quorum)).")
-                        )
-                    }
-                    return self.fetchRelayInfo(from: destination, on: eventLoop).map { info in
-                        guard let info else {
-                            return .error("Federation check failed: destination relay did not report its configuration.")
-                        }
-                        guard info.federation.mode == .curated else {
-                            return .error("Federation mismatch: destination relay is not curated.")
-                        }
-                        if let name = self.relayConfiguration.federation.name,
-                           !name.isEmpty,
-                           info.federation.name != name {
-                            return .error("Federation mismatch: destination relay name differs.")
-                        }
-                        return nil
-                    }
-                }
-            }
-            return isDestinationAllowedByCoordinator(destination, on: eventLoop).flatMap { allowed in
-                guard isInStaticAllowList || allowed else {
-                    return eventLoop.makeSucceededFuture(.error("Destination relay is not in the federation allow list."))
-                }
-                return self.fetchRelayInfo(from: destination, on: eventLoop).map { info in
-                    guard let info else {
-                        return .error("Federation check failed: destination relay did not report its configuration.")
-                    }
-                    guard info.federation.mode == .curated else {
-                        return .error("Federation mismatch: destination relay is not curated.")
-                    }
-                    if let name = self.relayConfiguration.federation.name,
-                       !name.isEmpty,
-                       info.federation.name != name {
-                        return .error("Federation mismatch: destination relay name differs.")
-                    }
-                    return nil
-                }
-            }
-        }
-    }
-
     private func fetchRelayInfo(from endpoint: RelayEndpoint, on eventLoop: EventLoop) -> EventLoopFuture<RelayInfo?> {
         sendRequest(.info(), to: endpoint, on: eventLoop).map { response in
-            guard response.type == .info else {
+            guard case .relayInfo(let info)? = response.successBody else {
                 return nil
             }
-            return response.relayInfo
+            return info
         }
     }
 
@@ -1154,42 +693,42 @@ final class RelayHandler: ChannelInboundHandler {
     private func validateFederationRegistrationReachability(
         _ registration: FederationNodeRegistrationRequest,
         on eventLoop: EventLoop
-    ) -> EventLoopFuture<RelayResponse?> {
+    ) -> EventLoopFuture<String?> {
         guard registration.relayInfo.federation.mode == relayConfiguration.federation.mode else {
             return eventLoop.makeSucceededFuture(
-                .error("Coordinator registration rejected: node federation mode differs from coordinator policy.")
+                "Coordinator registration rejected: node federation mode differs from coordinator policy."
             )
         }
         if let coordinatorName = relayConfiguration.federation.name?.trimmingCharacters(in: .whitespacesAndNewlines),
            !coordinatorName.isEmpty,
            registration.relayInfo.federation.name != coordinatorName {
             return eventLoop.makeSucceededFuture(
-                .error("Coordinator registration rejected: node federation name differs from coordinator policy.")
+                "Coordinator registration rejected: node federation name differs from coordinator policy."
             )
         }
         if relayConfiguration.federation.mode == .open,
            !relayConfiguration.allowPrivateFederationEndpoints,
            (!registration.endpoint.useTLS || !PublicRelayEndpointPolicy.permits(registration.endpoint)) {
             return eventLoop.makeSucceededFuture(
-                .error("Coordinator registration rejected: open-federation endpoint must use TLS and be publicly routable.")
+                "Coordinator registration rejected: open-federation endpoint must use TLS and be publicly routable."
             )
         }
-        return fetchRelayInfo(from: registration.endpoint, on: eventLoop).map { info -> RelayResponse? in
+        return fetchRelayInfo(from: registration.endpoint, on: eventLoop).map { info -> String? in
             guard let info else {
-                return RelayResponse.error("Coordinator registration rejected: endpoint is unreachable or did not return relay info.")
+                return "Coordinator registration rejected: endpoint is unreachable or did not return relay info."
             }
             guard info.federation.mode == registration.relayInfo.federation.mode else {
-                return RelayResponse.error("Coordinator registration rejected: federation mode mismatch.")
+                return "Coordinator registration rejected: federation mode mismatch."
             }
             if let expectedName = registration.relayInfo.federation.name?.trimmingCharacters(in: .whitespacesAndNewlines),
                !expectedName.isEmpty,
                info.federation.name != expectedName {
-                return RelayResponse.error("Coordinator registration rejected: federation name mismatch.")
+                return "Coordinator registration rejected: federation name mismatch."
             }
             return nil
         }.flatMapError { _ in
             eventLoop.makeSucceededFuture(
-                RelayResponse?.some(.error("Coordinator registration rejected: endpoint reachability check failed."))
+                String?.some("Coordinator registration rejected: endpoint reachability check failed.")
             )
         }
     }
@@ -1315,10 +854,10 @@ final class RelayHandler: ChannelInboundHandler {
         on eventLoop: EventLoop
     ) -> EventLoopFuture<[FederationNodeRecord]> {
         sendRequest(.info(), to: coordinator, on: eventLoop).flatMap { infoResponse -> EventLoopFuture<[FederationNodeRecord]> in
-            guard infoResponse.type == .info else {
+            guard case .relayInfo(let relayInfo)? = infoResponse.successBody else {
                 return eventLoop.makeSucceededFuture([])
             }
-            let advertisedPublicKey = infoResponse.relayInfo?.federationDirectoryPublicKey
+            let advertisedPublicKey = relayInfo.federationDirectoryPublicKey
             let pinnedPublicKey = self.store.pinnedCoordinatorPublicKey(for: coordinator)
             if let advertisedPublicKey {
                 if let pinnedPublicKey, pinnedPublicKey != advertisedPublicKey {
@@ -1334,14 +873,14 @@ final class RelayHandler: ChannelInboundHandler {
             }
             let trustedPublicKey = pinnedPublicKey ?? advertisedPublicKey
             return self.sendRequest(.listFederationNodes(request), to: coordinator, on: eventLoop).flatMapThrowing { response in
-                guard response.type == .federationNodes else {
+                guard case .federationNodes(let directory)? = response.successBody else {
                     return []
                 }
                 if request.requireSignedSnapshot == true, trustedPublicKey == nil {
                     throw FederationDirectoryValidationError.invalidSnapshot
                 }
                 return try self.validatedCoordinatorNodes(
-                    response: response,
+                    directory: directory,
                     request: request,
                     trustedPublicKey: trustedPublicKey
                 )
@@ -1352,7 +891,7 @@ final class RelayHandler: ChannelInboundHandler {
     private func makeCoordinatorDirectorySnapshot(
         nodes: [FederationNodeRecord],
         request: ListFederationNodesRequest
-    ) -> FederationDirectorySnapshot? {
+    ) throws -> FederationDirectorySnapshot? {
         guard relayConfiguration.kind == .coordinator,
               let privateKey = coordinatorDirectorySigningPrivateKey else {
             return nil
@@ -1368,15 +907,18 @@ final class RelayHandler: ChannelInboundHandler {
             maxStalenessSeconds: maxStaleness,
             nodes: nodes
         )
-        return try? FederationDirectorySignature.signedSnapshot(from: unsigned, privateKeyData: privateKey)
+        return try FederationDirectorySignature.signedSnapshot(
+            from: unsigned,
+            privateKeyData: privateKey
+        )
     }
 
     private func validatedCoordinatorNodes(
-        response: RelayResponse,
+        directory: FederationNodesResponseBody,
         request: ListFederationNodesRequest,
         trustedPublicKey: Data?
     ) throws -> [FederationNodeRecord] {
-        if let snapshot = response.federationSnapshot {
+        if let snapshot = directory.snapshot {
             if let mode = request.mode, snapshot.mode != mode {
                 throw FederationDirectoryValidationError.invalidSnapshot
             }
@@ -1390,11 +932,17 @@ final class RelayHandler: ChannelInboundHandler {
             }
             if request.requireSignedSnapshot == true {
                 guard let trustedPublicKey,
-                      FederationDirectorySignature.verify(snapshot: snapshot, trustedPublicKey: trustedPublicKey) else {
+                      try FederationDirectorySignature.verifyThrowing(
+                          snapshot: snapshot,
+                          trustedPublicKey: trustedPublicKey
+                      ) else {
                     throw FederationDirectoryValidationError.invalidSnapshot
                 }
             } else if let trustedPublicKey, snapshot.signature != nil {
-                guard FederationDirectorySignature.verify(snapshot: snapshot, trustedPublicKey: trustedPublicKey) else {
+                guard try FederationDirectorySignature.verifyThrowing(
+                    snapshot: snapshot,
+                    trustedPublicKey: trustedPublicKey
+                ) else {
                     throw FederationDirectoryValidationError.invalidSnapshot
                 }
             }
@@ -1403,7 +951,7 @@ final class RelayHandler: ChannelInboundHandler {
         if request.requireSignedSnapshot == true {
             throw FederationDirectoryValidationError.invalidSnapshot
         }
-        return applyFreshnessPolicy(nodes: response.federationNodes ?? [], request: request)
+        return applyFreshnessPolicy(nodes: directory.nodes, request: request)
     }
 
     private func applyFreshnessPolicy(
@@ -1545,7 +1093,12 @@ final class RelayHandler: ChannelInboundHandler {
                 .connectTimeout(.seconds(Int64(forwardingRequestTimeoutSeconds)))
                 .channelInitializer { channel in
                     channel.pipeline.addHandler(LineFrameHandler(maxLength: self.maxLineBytes)).flatMap {
-                        channel.pipeline.addHandler(ForwardingHandler(requestData: data, promise: promise, completion: completion))
+                        channel.pipeline.addHandler(ForwardingHandler(
+                            requestData: data,
+                            expectedRequest: request,
+                            promise: promise,
+                            completion: completion
+                        ))
                     }
                 }
             bootstrap.connect(host: endpoint.host, port: Int(endpoint.port)).whenComplete { result in
@@ -1595,7 +1148,10 @@ final class RelayHandler: ChannelInboundHandler {
                     let status = (response as? HTTPURLResponse)?.statusCode ?? -1
                     throw RelayForwardHTTPError.badStatus(status)
                 }
-                let decoded = try RelayCodec.decoder().decode(RelayResponse.self, from: data)
+                let decoded = try RelayCodec.decodeWire(RelayResponse.self, from: data)
+                guard decoded.isResponse(to: request) else {
+                    throw RelayForwardHTTPError.invalidResponseBinding
+                }
                 eventLoop.execute { completion.resolve(promise, .success(decoded)) }
             } catch {
                 eventLoop.execute { completion.resolve(promise, .failure(error)) }
@@ -1611,267 +1167,12 @@ final class RelayHandler: ChannelInboundHandler {
         return promise.futureResult
     }
 
-    private func registeredSigningKey(
-        for actorFingerprint: String,
-        in group: RelayGroupDescriptor
-    ) -> Data? {
-        guard let key = group.members.first(where: { member in
-            member.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines) == actorFingerprint
-        })?.signingPublicKey,
-            !key.isEmpty else {
-            return nil
-        }
-        return key
+    private func requiresAuthentication(for binding: RelayOperationBinding) -> Bool {
+        binding.module != .core
+            && !(binding.module == .federation && [.register, .list].contains(binding.method))
     }
 
-    private func validateActorProof(
-        _ proof: RelayActorProof?,
-        expectedFingerprint: String,
-        expectedSigningKey: Data?,
-        signableDataBuilder: (RelayActorProof) throws -> Data
-    ) -> RelayResponse? {
-        guard let proof else {
-            return .error("Missing actor proof.")
-        }
-        guard proof.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines) == expectedFingerprint else {
-            return .error("Actor proof fingerprint mismatch.")
-        }
-        guard proof.isConsistentFingerprint() else {
-            return .error("Actor proof key does not match fingerprint.")
-        }
-        if let expectedSigningKey, proof.publicSigningKey != expectedSigningKey {
-            return .error("Actor proof signing key mismatch.")
-        }
-        let maxAgeSeconds: TimeInterval = 300
-        guard abs(proof.signedAt.timeIntervalSinceNow) <= maxAgeSeconds else {
-            return .error("Actor proof expired.")
-        }
-        guard !proof.signature.isEmpty else {
-            return .error("Actor proof signature is missing.")
-        }
-        let signableData: Data
-        do {
-            signableData = try signableDataBuilder(proof)
-        } catch {
-            return .error("Invalid actor proof payload.")
-        }
-        if OQSSignatureVerifier.shared.isAvailable {
-            guard proof.verify(signableData: signableData) else {
-                return .error("Invalid actor proof signature.")
-            }
-        } else {
-            return .error("Actor proof signature verification is unavailable on this relay build.")
-        }
-        let consumed: Bool
-        do {
-            consumed = try store.consumeActorProofNonce(
-                fingerprint: proof.fingerprint,
-                nonce: proof.nonce,
-                now: Date(),
-                maxAgeSeconds: maxAgeSeconds
-            )
-        } catch {
-            return .error("Relay storage is unavailable.")
-        }
-        guard consumed else {
-            return .error("Actor proof replay detected.")
-        }
-        return nil
-    }
-
-    private func verifySignedPrekey(_ prekey: SignedPrekey, using publicSigningKey: Data) -> Bool {
-        guard OQSSignatureVerifier.shared.isAvailable,
-              let signableData = try? RelayCodec.encoder(sortedKeys: true).encode(
-                SignedPrekeyVerificationPayload(
-                    id: prekey.id,
-                    publicKey: prekey.publicKey,
-                    issuedAt: prekey.issuedAt
-                )
-              ) else {
-            return false
-        }
-        return OQSSignatureVerifier.shared.verify(
-            signature: prekey.signature,
-            data: signableData,
-            publicKey: publicSigningKey
-        )
-    }
-
-    private func verifyOneTimePrekey(_ prekey: OneTimePrekey, using publicSigningKey: Data) -> Bool {
-        guard OQSSignatureVerifier.shared.isAvailable,
-              let signableData = try? RelayCodec.encoder(sortedKeys: true).encode(
-                OneTimePrekeyVerificationPayload(
-                    id: prekey.id,
-                    publicKey: prekey.publicKey
-                )
-              ) else {
-            return false
-        }
-        return OQSSignatureVerifier.shared.verify(
-            signature: prekey.signature,
-            data: signableData,
-            publicKey: publicSigningKey
-        )
-    }
-
-    private func fetchWithOptionalLongPoll(
-        _ fetch: FetchRequest,
-        routingToken: String,
-        on eventLoop: EventLoop
-    ) -> EventLoopFuture<[Envelope]> {
-        let messages = store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
-        guard messages.isEmpty,
-              let timeout = boundedLongPollTimeoutSeconds(for: fetch) else {
-            return eventLoop.makeSucceededFuture(messages)
-        }
-        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
-        return fetchWithLongPollRetry(
-            fetch,
-            routingToken: routingToken,
-            deadline: deadline,
-            on: eventLoop
-        )
-    }
-
-    private func fetchWithLongPollRetry(
-        _ fetch: FetchRequest,
-        routingToken: String,
-        deadline: Date,
-        on eventLoop: EventLoop
-    ) -> EventLoopFuture<[Envelope]> {
-        let remaining = deadline.timeIntervalSinceNow
-        guard remaining > 0 else {
-            return eventLoop.makeSucceededFuture(
-                store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
-            )
-        }
-        let delayMilliseconds = Int64(max(1, min(250, remaining * 1_000)))
-        return eventLoop.scheduleTask(in: .milliseconds(delayMilliseconds)) {
-            let messages = self.store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
-            if !messages.isEmpty || Date() >= deadline {
-                return eventLoop.makeSucceededFuture(messages)
-            }
-            return self.fetchWithLongPollRetry(
-                fetch,
-                routingToken: routingToken,
-                deadline: deadline,
-                on: eventLoop
-            )
-        }.futureResult.flatMap { $0 }
-    }
-
-    private func boundedLongPollTimeoutSeconds(for fetch: FetchRequest) -> Int? {
-        boundedLongPollTimeoutSeconds(requested: fetch.longPollTimeoutSeconds)
-    }
-
-    private func fetchGroupMessagesWithOptionalLongPoll(
-        _ fetch: FetchGroupMessagesRequest,
-        on eventLoop: EventLoop
-    ) -> EventLoopFuture<[GroupRatchetEnvelope]> {
-        let messages = store.fetchGroupEnvelopes(
-            inboxId: fetch.groupInboxId,
-            recipientFingerprint: fetch.actorFingerprint,
-            maxCount: fetch.maxCount
-        )
-            .compactMap { groupRatchetEnvelope(from: $0, groupId: fetch.groupId) }
-        guard messages.isEmpty,
-              let timeout = boundedLongPollTimeoutSeconds(requested: fetch.longPollTimeoutSeconds) else {
-            return eventLoop.makeSucceededFuture(messages)
-        }
-        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
-        return fetchGroupMessagesWithLongPollRetry(fetch, deadline: deadline, on: eventLoop)
-    }
-
-    private func fetchGroupMessagesWithLongPollRetry(
-        _ fetch: FetchGroupMessagesRequest,
-        deadline: Date,
-        on eventLoop: EventLoop
-    ) -> EventLoopFuture<[GroupRatchetEnvelope]> {
-        let remaining = deadline.timeIntervalSinceNow
-        guard remaining > 0 else {
-            return eventLoop.makeSucceededFuture(
-                store.fetchGroupEnvelopes(
-                    inboxId: fetch.groupInboxId,
-                    recipientFingerprint: fetch.actorFingerprint,
-                    maxCount: fetch.maxCount
-                )
-                    .compactMap { groupRatchetEnvelope(from: $0, groupId: fetch.groupId) }
-            )
-        }
-        let delayMilliseconds = Int64(max(1, min(250, remaining * 1_000)))
-        return eventLoop.scheduleTask(in: .milliseconds(delayMilliseconds)) {
-            let messages = self.store.fetchGroupEnvelopes(
-                inboxId: fetch.groupInboxId,
-                recipientFingerprint: fetch.actorFingerprint,
-                maxCount: fetch.maxCount
-            )
-                .compactMap { self.groupRatchetEnvelope(from: $0, groupId: fetch.groupId) }
-            if !messages.isEmpty || Date() >= deadline {
-                return eventLoop.makeSucceededFuture(messages)
-            }
-            return self.fetchGroupMessagesWithLongPollRetry(fetch, deadline: deadline, on: eventLoop)
-        }.futureResult.flatMap { $0 }
-    }
-
-    private func boundedLongPollTimeoutSeconds(requested: Int?) -> Int? {
-        guard let requested,
-              requested > 0,
-              relayConfiguration.wakeSupport?.mode == .longPoll else {
-            return nil
-        }
-        let advertised = relayConfiguration.wakeSupport?.longPollTimeoutSeconds
-            ?? relayConfiguration.wakeSupport?.minPollIntervalSeconds
-            ?? 0
-        guard advertised > 0 else {
-            return nil
-        }
-        return min(max(1, requested), advertised)
-    }
-
-    private func carrierEnvelope(for envelope: GroupRatchetEnvelope) -> Envelope {
-        Envelope(
-            id: envelope.id,
-            conversationId: "group:\(envelope.groupId.uuidString)",
-            sessionId: String(envelope.epoch),
-            senderFingerprint: envelope.senderFingerprint,
-            sentAt: envelope.sentAt,
-            messageCounter: envelope.messageCounter,
-            kemCiphertext: envelope.transcriptHash,
-            payload: envelope.payload,
-            signature: envelope.signature
-        )
-    }
-
-    private func groupRatchetEnvelope(from carrier: Envelope, groupId: UUID) -> GroupRatchetEnvelope? {
-        guard carrier.conversationId == "group:\(groupId.uuidString)",
-              let epochText = carrier.sessionId,
-              let epoch = UInt64(epochText),
-              let transcriptHash = carrier.kemCiphertext else {
-            return nil
-        }
-        return GroupRatchetEnvelope(
-            id: carrier.id,
-            groupId: groupId,
-            epoch: epoch,
-            transcriptHash: transcriptHash,
-            senderFingerprint: carrier.senderFingerprint,
-            sentAt: carrier.sentAt,
-            messageCounter: carrier.messageCounter,
-            payload: carrier.payload,
-            signature: carrier.signature
-        )
-    }
-
-    private func requiresAuthentication(for type: RelayRequestType) -> Bool {
-        switch type {
-        case .health, .info, .registerFederationNode, .listFederationNodes:
-            return false
-        default:
-            return true
-        }
-    }
-
-    private func validateAuthentication(token: String?) -> RelayResponse? {
+    private func validateAuthentication(token: String?) -> String? {
         let expected = relayConfiguration.accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !expected.isEmpty else {
             return nil
@@ -1879,19 +1180,19 @@ final class RelayHandler: ChannelInboundHandler {
         guard expected.utf8.count <= 4_096,
               let token,
               token.utf8.count <= 4_096 else {
-            return .error("Unauthorized: relay password is required.")
+            return "Unauthorized: relay password is required."
         }
         let provided = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard secureCompare(provided, expected) else {
-            return .error("Unauthorized: relay password is required.")
+            return "Unauthorized: relay password is required."
         }
         return nil
     }
 
-    private func validateCoordinatorRegistrationAuthentication(token: String?) -> RelayResponse? {
+    private func validateCoordinatorRegistrationAuthentication(token: String?) -> String? {
         let expected = relayConfiguration.coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if expected.isEmpty, relayConfiguration.federation.mode == .curated {
-            return .error("Coordinator configuration error: curated registration requires a token.")
+            return "Coordinator configuration error: curated registration requires a token."
         }
         guard !expected.isEmpty else {
             return nil
@@ -1899,11 +1200,11 @@ final class RelayHandler: ChannelInboundHandler {
         guard expected.utf8.count <= 4_096,
               let token,
               token.utf8.count <= 4_096 else {
-            return .error("Unauthorized: coordinator registration token is required.")
+            return "Unauthorized: coordinator registration token is required."
         }
         let provided = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard secureCompare(provided, expected) else {
-            return .error("Unauthorized: coordinator registration token is required.")
+            return "Unauthorized: coordinator registration token is required."
         }
         return nil
     }
@@ -1937,32 +1238,10 @@ final class RelayHandler: ChannelInboundHandler {
         return difference == 0
     }
 
-    private func isValidIdentityFingerprint(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed == value
-            && trimmed.count <= 64
-            && Data(base64Encoded: trimmed)?.count == 32
+    private func isCoordinatorDirectoryRequest(_ binding: RelayOperationBinding) -> Bool {
+        binding.module == .core
+            || (binding.module == .federation && [.register, .list].contains(binding.method))
     }
-
-    private func isCoordinatorDirectoryRequestType(_ type: RelayRequestType) -> Bool {
-        switch type {
-        case .health, .info, .registerFederationNode, .listFederationNodes:
-            return true
-        default:
-            return false
-        }
-    }
-}
-
-private struct SignedPrekeyVerificationPayload: Codable {
-    let id: UUID
-    let publicKey: Data
-    let issuedAt: Date
-}
-
-private struct OneTimePrekeyVerificationPayload: Codable {
-    let id: UUID
-    let publicKey: Data
 }
 
 private final class ForwardingHandler: ChannelInboundHandler {
@@ -1970,11 +1249,18 @@ private final class ForwardingHandler: ChannelInboundHandler {
     typealias OutboundOut = ByteBuffer
 
     private let requestData: Data
+    private let expectedRequest: RelayRequest
     private let promise: EventLoopPromise<RelayResponse>
     private let completion: ForwardingCompletion
 
-    init(requestData: Data, promise: EventLoopPromise<RelayResponse>, completion: ForwardingCompletion) {
+    init(
+        requestData: Data,
+        expectedRequest: RelayRequest,
+        promise: EventLoopPromise<RelayResponse>,
+        completion: ForwardingCompletion
+    ) {
         self.requestData = requestData
+        self.expectedRequest = expectedRequest
         self.promise = promise
         self.completion = completion
     }
@@ -1993,7 +1279,10 @@ private final class ForwardingHandler: ChannelInboundHandler {
             return
         }
         do {
-            let response = try RelayCodec.decoder().decode(RelayResponse.self, from: payload)
+            let response = try RelayCodec.decodeWire(RelayResponse.self, from: payload)
+            guard response.isResponse(to: expectedRequest) else {
+                throw RelayForwardHTTPError.invalidResponseBinding
+            }
             completion.resolve(promise, .success(response))
         } catch {
             completion.resolve(promise, .failure(error))

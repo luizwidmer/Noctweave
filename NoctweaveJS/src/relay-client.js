@@ -1,9 +1,35 @@
 import { normalizeRelayEndpoint, relayEndpointURL } from "./endpoint.js";
-import { relayRequests } from "./requests.js";
+import {
+  relayRequests,
+  validateRelayRequestEnvelopeV2,
+  validateRelayResponseEnvelopeV2
+} from "./requests.js";
+import {
+  validateOpaqueRouteCommitResponseV2,
+  validateOpaqueRouteCommitSubmissionV2,
+  validateOpaqueRouteCreateSubmissionV2,
+  validateOpaqueRouteEnqueueResponseV2,
+  validateOpaqueRouteEnqueueSubmissionV2,
+  validateOpaqueRouteRenewSubmissionV2,
+  validateOpaqueRouteStateResponseV2,
+  validateOpaqueRouteSyncResponseV2,
+  validateOpaqueRouteSyncSubmissionV2,
+  validateOpaqueRouteTeardownSubmissionV2
+} from "./opaque-route-relay-v2.js";
+import {
+  validateAppendRendezvousTransportV2Request,
+  validateDeleteRendezvousTransportV2Request,
+  validateRegisterRendezvousTransportV2Request,
+  validateRendezvousRelaySyncBatchV2,
+  validateSyncRendezvousTransportV2Request
+} from "./rendezvous-relay-v2.js";
+import { canonicalJson } from "./crypto/swift-canonical.js";
+import { parseExactJSON } from "./strict-json.js";
 
 const DEFAULT_TIMEOUT_MS = 8000;
 const MAX_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
+// Covers one maximally populated rendezvous lane after base64/JSON expansion.
+const DEFAULT_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const DEFAULT_MAX_REQUEST_BYTES = 512 * 1024;
 const ABSOLUTE_MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const ABSOLUTE_MAX_REQUEST_BYTES = 8 * 1024 * 1024;
@@ -53,6 +79,7 @@ export class NoctweaveRelayClient {
     }
     this.fetch = options.fetch ?? globalThis.fetch?.bind(globalThis);
     this.WebSocket = options.WebSocket ?? globalThis.WebSocket;
+    this.protocolCrypto = options.crypto ?? null;
     this.timeoutMs = normalizedTimeout(options.timeoutMs ?? this.policy.timeoutMs);
 
     if (!this.fetch) {
@@ -68,8 +95,122 @@ export class NoctweaveRelayClient {
     return this.send(relayRequests.info(), options);
   }
 
+  async createOpaqueRoute(request, options = {}) {
+    const crypto = this.validationCrypto(options);
+    const submission = await validateOpaqueRouteCreateSubmissionV2({
+      crypto,
+      submission: request
+    });
+    const response = requireOpaqueRouteResponse(
+      await this.send(relayRequests.createOpaqueRoute(submission), options), "route"
+    );
+    return validateOpaqueRouteStateResponseV2(response, submission.request);
+  }
+
+  async renewOpaqueRoute(request, options = {}) {
+    const crypto = this.validationCrypto(options);
+    const submission = await validateOpaqueRouteRenewSubmissionV2({
+      crypto,
+      submission: request
+    });
+    const response = requireOpaqueRouteResponse(
+      await this.send(relayRequests.renewOpaqueRoute(submission), options), "route"
+    );
+    return validateOpaqueRouteStateResponseV2(response, submission.request);
+  }
+
+  async teardownOpaqueRoute(request, options = {}) {
+    const crypto = this.validationCrypto(options);
+    const submission = await validateOpaqueRouteTeardownSubmissionV2({
+      crypto,
+      submission: request
+    });
+    const response = requireOpaqueRouteResponse(
+      await this.send(relayRequests.teardownOpaqueRoute(submission), options), "route"
+    );
+    return validateOpaqueRouteStateResponseV2(response, submission.request);
+  }
+
+  async enqueueOpaqueRoute(request, options = {}) {
+    const crypto = this.validationCrypto(options);
+    const submission = await validateOpaqueRouteEnqueueSubmissionV2({
+      crypto,
+      submission: request
+    });
+    const response = requireOpaqueRouteResponse(
+      await this.send(relayRequests.enqueueOpaqueRoute(submission), options), "receipt"
+    );
+    return validateOpaqueRouteEnqueueResponseV2(response, submission.packet);
+  }
+
+  async syncOpaqueRoute(request, options = {}) {
+    const crypto = this.validationCrypto(options);
+    const submission = await validateOpaqueRouteSyncSubmissionV2({
+      crypto,
+      submission: request
+    });
+    const response = requireOpaqueRouteResponse(
+      await this.send(relayRequests.syncOpaqueRoute(submission), options), "batch"
+    );
+    return validateOpaqueRouteSyncResponseV2({
+      crypto,
+      response,
+      request: submission.request
+    });
+  }
+
+  async commitOpaqueRoute(request, options = {}) {
+    const crypto = this.validationCrypto(options);
+    const submission = await validateOpaqueRouteCommitSubmissionV2({
+      crypto,
+      submission: request
+    });
+    const response = requireOpaqueRouteResponse(
+      await this.send(relayRequests.commitOpaqueRoute(submission), options), "commit"
+    );
+    return validateOpaqueRouteCommitResponseV2(response, submission.request);
+  }
+
+  async registerRendezvousTransportV2(request, options = {}) {
+    const registration = validateRegisterRendezvousTransportV2Request(request, { at: new Date() });
+    await this.send(relayRequests.registerRendezvousTransportV2(registration), options);
+  }
+
+  async appendRendezvousTransportV2(request, options = {}) {
+    const append = validateAppendRendezvousTransportV2Request(request);
+    await this.send(relayRequests.appendRendezvousTransportV2(append), options);
+  }
+
+  async syncRendezvousTransportV2(request, options = {}) {
+    const sync = validateSyncRendezvousTransportV2Request(request);
+    const response = await this.send(relayRequests.syncRendezvousTransportV2(sync), options);
+    return validateRendezvousRelaySyncBatchV2(
+      requireRendezvousSyncResponse(response),
+      { request: sync }
+    );
+  }
+
+  async deleteRendezvousTransportV2(request, options = {}) {
+    const deletion = validateDeleteRendezvousTransportV2Request(request);
+    await this.send(relayRequests.deleteRendezvousTransportV2(deletion), options);
+  }
+
+  async registerFederationNode(request, options = {}) {
+    const relayRequest = relayRequests.registerFederationNode(request);
+    const response = await this.send(relayRequest, options);
+    if (response.nodes.length !== 1 ||
+        canonicalJson(response.nodes[0].endpoint) !== canonicalJson(relayRequest.body.endpoint)) {
+      throw new TypeError("Federation registration response does not match the registered endpoint.");
+    }
+    return response;
+  }
+
+  async listFederationNodes(request = {}, options = {}) {
+    return this.send(relayRequests.listFederationNodes(request), options);
+  }
+
   async send(request, options = {}) {
-    const authenticated = this.withAuthToken(request);
+    const authenticated = validateRelayRequestEnvelopeV2(this.withAuthToken(request));
     const timeoutMs = normalizedTimeout(options.timeoutMs ?? this.timeoutMs);
 
     if (this.endpoint.transport === "websocket") {
@@ -103,35 +244,7 @@ export class NoctweaveRelayClient {
       if (!response.ok) {
         throw new Error(redactedHTTPError("Relay returned", response.status, text));
       }
-      return decodeRelayResponse(text, request.type);
-    } catch (error) {
-      if (request.type === "health") {
-        return this.sendHTTPHealthProbe(timeoutMs);
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  async sendHTTPHealthProbe(timeoutMs) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await this.fetch(relayEndpointURL(this.endpoint, "/health"), {
-        method: "GET",
-        headers: { "accept": "application/json, text/plain;q=0.9" },
-        redirect: "error",
-        credentials: "omit",
-        referrerPolicy: "no-referrer",
-        cache: "no-store",
-        signal: controller.signal
-      });
-      const text = await boundedResponseText(response, this.policy.maxResponseBytes);
-      if (!response.ok) {
-        throw new Error(redactedHTTPError("Relay health probe returned", response.status, text));
-      }
-      return decodeRelayResponse(text, "health");
+      return decodeRelayResponse(text, request);
     } finally {
       clearTimeout(timeout);
     }
@@ -177,7 +290,7 @@ export class NoctweaveRelayClient {
           if (new TextEncoder().encode(text).byteLength > this.policy.maxResponseBytes) {
             throw new Error("Relay response exceeds client size limit.");
           }
-          finish(resolve, decodeRelayResponse(text, request.type));
+          finish(resolve, decodeRelayResponse(text, request));
         } catch (error) {
           finish(reject, error);
         }
@@ -186,27 +299,45 @@ export class NoctweaveRelayClient {
   }
 
   withAuthToken(request) {
-    if (request.authToken || !this.authToken) {
+    if (request.authToken !== null || !this.authToken) {
       return request;
     }
     return { ...request, authToken: this.authToken };
   }
+
+  validationCrypto(options) {
+    const crypto = options.crypto ?? this.protocolCrypto;
+    if (typeof crypto?.sha256 !== "function" || typeof crypto?.hmacSha256 !== "function") {
+      throw new TypeError("Opaque route operations require SHA-256 and HMAC-SHA-256 primitives.");
+    }
+    return crypto;
+  }
 }
 
-function decodeRelayResponse(text, requestType) {
-  const trimmed = text.trim();
-  if (trimmed === "" && requestType === "health") {
-    return { type: "ok" };
+function requireOpaqueRouteResponse(response, key) {
+  if (!response || typeof response !== "object" || Array.isArray(response) ||
+      Object.keys(response).length !== 1 || !Object.hasOwn(response, key)) {
+    throw new Error(`Relay returned an invalid opaque route ${key} response.`);
   }
+  return response[key];
+}
+
+function requireRendezvousSyncResponse(response) {
+  if (!response || typeof response !== "object" || Array.isArray(response) ||
+      Object.keys(response).length !== 1 || !Object.hasOwn(response, "batch")) {
+    throw new Error("Relay returned an invalid rendezvous sync response.");
+  }
+  return response.batch;
+}
+
+function decodeRelayResponse(text, request) {
+  let value;
   try {
-    return JSON.parse(trimmed);
+    value = parseExactJSON(text);
   } catch {
-    const lowered = trimmed.toLowerCase();
-    if (requestType === "health" && ["ok", "healthy", "up", "\"ok\""].includes(lowered)) {
-      return { type: "ok" };
-    }
-    throw new Error(`Relay returned invalid JSON: ${responseClassification(trimmed)}`);
+    throw new Error(`Relay returned invalid JSON: ${responseClassification(text)}`);
   }
+  return validateRelayResponseEnvelopeV2(value, request);
 }
 
 async function boundedResponseText(response, maximumBytes) {
@@ -218,7 +349,7 @@ async function boundedResponseText(response, maximumBytes) {
     throw new Error("Fetch implementation must expose a streaming response body for bounded relay reads.");
   }
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   let text = "";
   let byteCount = 0;
   try {
@@ -311,13 +442,13 @@ async function blobLikeToText(data, maximumBytes = DEFAULT_MAX_RESPONSE_BYTES) {
     if (data.byteLength > maximumBytes) {
       throw new Error("Relay response exceeds client size limit.");
     }
-    return new TextDecoder().decode(data);
+    return new TextDecoder("utf-8", { fatal: true }).decode(data);
   }
   if (ArrayBuffer.isView(data)) {
     if (data.byteLength > maximumBytes) {
       throw new Error("Relay response exceeds client size limit.");
     }
-    return new TextDecoder().decode(data);
+    return new TextDecoder("utf-8", { fatal: true }).decode(data);
   }
   return String(data);
 }

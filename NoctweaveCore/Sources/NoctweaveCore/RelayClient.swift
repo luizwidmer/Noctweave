@@ -188,7 +188,7 @@ public struct RelayClient {
             try await connection.awaitReady()
             try await connection.sendLine(encodedRequest)
             let responseData = try await connection.receiveLine(maxLength: policy.maximumResponseBytes)
-            return try NoctweaveCoder.decode(RelayResponse.self, from: responseData)
+            return try Self.decodeRelayResponse(responseData, for: request)
         }
     }
 
@@ -219,29 +219,19 @@ public struct RelayClient {
         let httpRequest = mutableRequest
 
         return try await withTimeout(seconds: timeout) {
-            do {
-                let (data, response) = try await BoundedURLSessionLoader.load(
-                    httpRequest,
-                    maximumBytes: policy.maximumResponseBytes,
-                    expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256,
-                    observedLeafCertificateSHA256: observedLeafCertificateSHA256
-                )
-                guard let httpResponse = response as? HTTPURLResponse else {
-                    throw RelayClientResponseError.invalidHTTPResponse
-                }
-                guard (200...299).contains(httpResponse.statusCode) else {
-                    throw Self.makeHTTPStatusError(response: httpResponse, data: data)
-                }
-                return try Self.decodeRelayResponse(data, for: request.type)
-            } catch {
-                // Compatibility path for HTTP reverse-proxied relays exposing only GET /health.
-                if request.type == .health {
-                    return try await sendHTTPHealthProbe(
-                        observedLeafCertificateSHA256: observedLeafCertificateSHA256
-                    )
-                }
-                throw error
+            let (data, response) = try await BoundedURLSessionLoader.load(
+                httpRequest,
+                maximumBytes: policy.maximumResponseBytes,
+                expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256,
+                observedLeafCertificateSHA256: observedLeafCertificateSHA256
+            )
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw RelayClientResponseError.invalidHTTPResponse
             }
+            guard (200...299).contains(httpResponse.statusCode) else {
+                throw Self.makeHTTPStatusError(response: httpResponse, data: data)
+            }
+            return try Self.decodeRelayResponse(data, for: request)
         }
     }
 
@@ -286,76 +276,27 @@ public struct RelayClient {
             guard responseData.count <= policy.maximumResponseBytes else {
                 throw RelayNetworkError.invalidResponse
             }
-            return try Self.decodeRelayResponse(responseData, for: request.type)
+            return try Self.decodeRelayResponse(responseData, for: request)
         }
     }
 
-    private func sendHTTPHealthProbe(
-        observedLeafCertificateSHA256: (@Sendable (Data) -> Void)?
-    ) async throws -> RelayResponse {
-        guard var components = URLComponents(string: "/") else {
-            throw RelayNetworkError.invalidResponse
+    private static func decodeRelayResponse(_ data: Data, for request: RelayRequest) throws -> RelayResponse {
+        let decoded: RelayResponse
+        do {
+            decoded = try NoctweaveCoder.decode(RelayResponse.self, from: data)
+        } catch let error as CryptoError {
+            throw error
+        } catch {
+            throw RelayClientResponseError.invalidPayload(
+                details: "Relay returned an invalid current-protocol response (\(data.count) bytes)."
+            )
         }
-        components.scheme = endpoint.useTLS ? "https" : "http"
-        components.host = endpoint.host
-        let defaultPort: UInt16 = endpoint.useTLS ? 443 : 80
-        components.port = endpoint.port == defaultPort ? nil : Int(endpoint.port)
-        components.path = "/health"
-        guard let url = components.url else {
-            throw RelayNetworkError.invalidResponse
+        guard decoded.isResponse(to: request) else {
+            throw RelayClientResponseError.invalidPayload(
+                details: "Relay response binding does not match the submitted request."
+            )
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json, text/plain;q=0.9", forHTTPHeaderField: "Accept")
-        let (data, response) = try await BoundedURLSessionLoader.load(
-            request,
-            maximumBytes: policy.maximumResponseBytes,
-            expectedLeafCertificateSHA256: endpoint.tlsCertificateFingerprintSHA256,
-            observedLeafCertificateSHA256: observedLeafCertificateSHA256
-        )
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw RelayClientResponseError.invalidHTTPResponse
-        }
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw Self.makeHTTPStatusError(response: httpResponse, data: data)
-        }
-        return try Self.decodeRelayResponse(data, for: .health)
-    }
-
-    private static func decodeRelayResponse(_ data: Data, for type: RelayRequestType) throws -> RelayResponse {
-        if let decoded = try? NoctweaveCoder.decode(RelayResponse.self, from: data) {
-            return decoded
-        }
-        if type == .health, isHealthyPayload(data) {
-            return .ok()
-        }
-        throw RelayClientResponseError.invalidPayload(
-            details: "Relay returned an unexpected response payload (\(data.count) bytes)."
-        )
-    }
-
-    private static func isHealthyPayload(_ data: Data) -> Bool {
-        let text = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased() ?? ""
-        if text == "ok" || text == "healthy" || text == "up" || text == "\"ok\"" {
-            return true
-        }
-        struct BasicHealthPayload: Decodable {
-            let ok: Bool?
-            let healthy: Bool?
-            let status: String?
-        }
-        if let payload = try? JSONDecoder().decode(BasicHealthPayload.self, from: data) {
-            if payload.ok == true || payload.healthy == true {
-                return true
-            }
-            if let status = payload.status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-               status == "ok" || status == "healthy" || status == "up" {
-                return true
-            }
-        }
-        return false
+        return decoded
     }
 
     static func responseSummary(_ data: Data) -> String {
@@ -380,7 +321,7 @@ public struct RelayClient {
         let isCloudflare = serverHeader.contains("cloudflare") || summary.contains("Cloudflare")
         if isCloudflare && response.statusCode == 403 {
             return .cloudflareBlocked(
-                details: "Cloudflare blocked relay traffic (HTTP 403 / code 1010). Disable WAF/challenge/bot protections for /relay, /health, and /info on this relay domain."
+                details: "Cloudflare blocked relay traffic (HTTP 403 / code 1010). Disable WAF/challenge/bot protections for the relay's single /relay protocol endpoint."
             )
         }
         return .badHTTPStatus(code: response.statusCode, bodySummary: summary)

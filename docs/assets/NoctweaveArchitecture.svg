@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
   <title id="title">Noctweave encrypted messaging trust boundary</title>
-  <desc id="desc">A sender encrypts locally, one or two relays route ciphertext, and the recipient verifies and decrypts locally. Relays never receive message plaintext or private identity keys.</desc>
+  <desc id="desc">A sender encrypts locally, selects the recipient relay from a relationship-encrypted peer route set, and submits an opaque packet directly. The recipient synchronizes and decrypts locally. Federation only helps relay operators discover and coordinate with other relays.</desc>
   <defs>
     <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#080b16"/>
@@ -30,7 +30,7 @@
 
   <g font-family="Geist, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
     <text x="60" y="65" fill="#F3F5FA" font-size="30" font-weight="750">Encrypted end to end. Routed without plaintext trust.</text>
-    <text x="60" y="98" fill="#A8ADBD" font-size="17">Federation changes the route—not the cryptographic boundary.</text>
+    <text x="60" y="98" fill="#A8ADBD" font-size="17">Clients submit directly to peer routes; federation is operator discovery and coordination.</text>
 
     <g fill="none" stroke="#72E5DA" stroke-width="3" marker-end="url(#arrow)">
       <path d="M274 280H350"/>
@@ -39,7 +39,7 @@
     </g>
     <g filter="url(#softGlow)">
       <rect x="55" y="165" width="220" height="230" rx="24" fill="url(#client)" stroke="#9B8CFF" stroke-opacity="0.7"/>
-      <rect x="350" y="165" width="220" height="230" rx="24" fill="url(#relay)" stroke="#3DD5C5" stroke-opacity="0.6"/>
+      <rect x="350" y="165" width="220" height="230" rx="24" fill="url(#client)" stroke="#9B8CFF" stroke-opacity="0.7"/>
       <rect x="630" y="165" width="220" height="230" rx="24" fill="url(#relay)" stroke="#3DD5C5" stroke-opacity="0.6"/>
       <rect x="925" y="165" width="220" height="230" rx="24" fill="url(#client)" stroke="#9B8CFF" stroke-opacity="0.7"/>
     </g>
@@ -47,41 +47,43 @@
     <rect x="280" y="242" width="64" height="24" rx="12" fill="#0c1828"/>
     <text x="312" y="259" fill="#B7F4EE" font-size="12" font-weight="700" text-anchor="middle">SEALED</text>
     <rect x="575" y="242" width="50" height="24" rx="12" fill="#0c1828"/>
-    <text x="600" y="259" fill="#B7F4EE" font-size="12" font-weight="700" text-anchor="middle">FED</text>
+    <text x="600" y="259" fill="#B7F4EE" font-size="12" font-weight="700" text-anchor="middle">SUBMIT</text>
     <rect x="861" y="242" width="54" height="24" rx="12" fill="#0c1828"/>
-    <text x="888" y="259" fill="#B7F4EE" font-size="12" font-weight="700" text-anchor="middle">FETCH</text>
+    <text x="888" y="259" fill="#B7F4EE" font-size="12" font-weight="700" text-anchor="middle">SYNC</text>
 
     <g text-anchor="middle">
       <text x="165" y="215" fill="#D5D0FF" font-size="14" font-weight="700" letter-spacing="1.4">SENDER</text>
       <text x="165" y="253" fill="#fff" font-size="25" font-weight="750">Alice</text>
-      <text x="165" y="292" fill="#D1D5E0" font-size="16">signs identity context</text>
+      <text x="165" y="292" fill="#D1D5E0" font-size="16">binds relationship context</text>
       <text x="165" y="321" fill="#D1D5E0" font-size="16">establishes PQ session</text>
       <text x="165" y="350" fill="#D1D5E0" font-size="16">encrypts locally</text>
 
-      <text x="460" y="215" fill="#B7F4EE" font-size="14" font-weight="700" letter-spacing="1.4">HOME RELAY</text>
-      <text x="460" y="253" fill="#fff" font-size="25" font-weight="750">Relay A</text>
-      <text x="460" y="292" fill="#D1D5E0" font-size="16">validates routing proofs</text>
-      <text x="460" y="321" fill="#D1D5E0" font-size="16">stores ciphertext</text>
-      <text x="460" y="350" fill="#D1D5E0" font-size="16">forwards when permitted</text>
+      <text x="460" y="215" fill="#D5D0FF" font-size="14" font-weight="700" letter-spacing="1.4">CLIENT ROUTING</text>
+      <text x="460" y="253" fill="#fff" font-size="25" font-weight="750">Peer Route Set</text>
+      <text x="460" y="292" fill="#D1D5E0" font-size="16">relationship encrypted</text>
+      <text x="460" y="321" fill="#D1D5E0" font-size="16">lists opaque endpoints</text>
+      <text x="460" y="350" fill="#D1D5E0" font-size="16">selects destination locally</text>
 
       <text x="740" y="215" fill="#B7F4EE" font-size="14" font-weight="700" letter-spacing="1.4">DESTINATION RELAY</text>
       <text x="740" y="253" fill="#fff" font-size="25" font-weight="750">Relay B</text>
-      <text x="740" y="292" fill="#D1D5E0" font-size="16">enforces federation policy</text>
-      <text x="740" y="321" fill="#D1D5E0" font-size="16">queues sealed envelopes</text>
+      <text x="740" y="292" fill="#D1D5E0" font-size="16">accepts direct client submit</text>
+      <text x="740" y="321" fill="#D1D5E0" font-size="16">stores ordered opaque packets</text>
       <text x="740" y="350" fill="#D1D5E0" font-size="16">never decrypts payloads</text>
 
       <text x="1035" y="215" fill="#D5D0FF" font-size="14" font-weight="700" letter-spacing="1.4">RECIPIENT</text>
       <text x="1035" y="253" fill="#fff" font-size="25" font-weight="750">Bob</text>
-      <text x="1035" y="292" fill="#D1D5E0" font-size="16">fetches from mailbox</text>
-      <text x="1035" y="321" fill="#D1D5E0" font-size="16">verifies sender</text>
+      <text x="1035" y="292" fill="#D1D5E0" font-size="16">syncs an opaque route</text>
+      <text x="1035" y="321" fill="#D1D5E0" font-size="16">verifies relationship event</text>
       <text x="1035" y="350" fill="#D1D5E0" font-size="16">decrypts locally</text>
     </g>
 
+    <text x="600" y="425" fill="#B7F4EE" font-size="15" text-anchor="middle">Federation control plane: relay discovery + coordinator evidence · never relay-to-relay message forwarding</text>
+
     <rect x="55" y="450" width="1090" height="110" rx="20" fill="#0f172a" stroke="#334155"/>
     <text x="85" y="489" fill="#F3F5FA" font-size="17" font-weight="700">Relay-visible</text>
-    <text x="245" y="489" fill="#A8ADBD" font-size="16">routing identifiers · bounded ciphertext · timing and transport metadata</text>
+    <text x="245" y="489" fill="#A8ADBD" font-size="16">opaque route IDs · bounded ciphertext · timing and transport metadata</text>
     <line x1="85" y1="511" x2="1115" y2="511" stroke="#273449"/>
     <text x="85" y="542" fill="#F3F5FA" font-size="17" font-weight="700">Client-only</text>
-    <text x="245" y="542" fill="#A8ADBD" font-size="16">message plaintext · private identity keys · session secrets · decrypted attachments</text>
+    <text x="245" y="542" fill="#A8ADBD" font-size="16">message plaintext · relationship keys · session secrets · decrypted attachments</text>
   </g>
 </svg>

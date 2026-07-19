@@ -3,38 +3,55 @@ import Foundation
 public enum FederationDirectorySignature {
     public static let algorithm = "ML-DSA-65"
 
-    public static func privateKeyData(from raw: Data?) -> Data {
+    public static func privateKeyDataThrowing(from raw: Data?) throws -> Data {
         if let raw {
-            guard raw.count <= 16_384,
-                  let bundle = try? NoctweaveCoder.decode(DirectorySigningKeyBundle.self, from: raw),
-                  bundle.algorithm == algorithm,
-                  (try? SigningKeyPair(
-                    privateKeyData: bundle.privateKeyData,
-                    publicKeyData: bundle.publicKeyData
-                  )) != nil else {
-                return Data()
+            guard raw.count <= 16_384 else {
+                throw CryptoError.invalidPrivateKey
             }
+            let bundle: DirectorySigningKeyBundle
+            do {
+                bundle = try NoctweaveCoder.decode(DirectorySigningKeyBundle.self, from: raw)
+            } catch {
+                throw CryptoError.invalidPrivateKey
+            }
+            guard bundle.algorithm == algorithm else {
+                throw CryptoError.invalidPrivateKey
+            }
+            _ = try SigningKeyPair(
+                privateKeyData: bundle.privateKeyData,
+                publicKeyData: bundle.publicKeyData
+            )
             return raw
         }
-        guard let keyPair = try? SigningKeyPair.generate() else { return Data() }
+        let keyPair = try SigningKeyPair.generate()
         let bundle = DirectorySigningKeyBundle(
             algorithm: algorithm,
             privateKeyData: keyPair.privateKeyData,
             publicKeyData: keyPair.publicKeyData
         )
-        return (try? NoctweaveCoder.encode(bundle, sortedKeys: true)) ?? Data()
+        return try NoctweaveCoder.encode(bundle, sortedKeys: true)
     }
 
-    public static func publicKeyData(from privateKeyData: Data) -> Data? {
-        guard privateKeyData.count <= 16_384,
-              let bundle = try? NoctweaveCoder.decode(DirectorySigningKeyBundle.self, from: privateKeyData),
-              bundle.algorithm == algorithm,
-              (try? SigningKeyPair(
-                privateKeyData: bundle.privateKeyData,
-                publicKeyData: bundle.publicKeyData
-              )) != nil else {
-            return nil
+    public static func publicKeyDataThrowing(from privateKeyData: Data) throws -> Data {
+        guard privateKeyData.count <= 16_384 else {
+            throw CryptoError.invalidPrivateKey
         }
+        let bundle: DirectorySigningKeyBundle
+        do {
+            bundle = try NoctweaveCoder.decode(
+                DirectorySigningKeyBundle.self,
+                from: privateKeyData
+            )
+        } catch {
+            throw CryptoError.invalidPrivateKey
+        }
+        guard bundle.algorithm == algorithm else {
+            throw CryptoError.invalidPrivateKey
+        }
+        _ = try SigningKeyPair(
+            privateKeyData: bundle.privateKeyData,
+            publicKeyData: bundle.publicKeyData
+        )
         return bundle.publicKeyData
     }
 
@@ -65,16 +82,22 @@ public enum FederationDirectorySignature {
         )
     }
 
-    public static func verify(
+    /// Keeps local ML-DSA availability failures distinct from a deterministic
+    /// invalid coordinator signature.
+    public static func verifyThrowing(
         snapshot: FederationDirectorySnapshot,
         trustedPublicKey: Data
-    ) -> Bool {
+    ) throws -> Bool {
         guard snapshot.signatureAlgorithm == algorithm,
-              let signature = snapshot.signature,
-              let payload = try? signingPayloadData(from: snapshot) else {
+              let signature = snapshot.signature else {
             return false
         }
-        return SigningKeyPair.verify(signature: signature, data: payload, publicKeyData: trustedPublicKey)
+        let payload = try signingPayloadData(from: snapshot)
+        return try SigningKeyPair.verifyThrowing(
+            signature: signature,
+            data: payload,
+            publicKeyData: trustedPublicKey
+        )
     }
 
     private struct DirectorySigningKeyBundle: Codable {

@@ -94,8 +94,6 @@ public struct MasterServerEntry: Codable, Equatable {
     public let wakeSupport: DecentralizedWakeSupport?
     public let operatorNote: String?
     public let softwareVersion: String?
-    public let groupCreationMode: GroupCreationMode?
-    public let groupSecurityModel: GroupSecurityModel?
     public let requiresPassword: Bool?
     public let useTLS: Bool?
     public let transport: RelayEndpointTransport?
@@ -127,8 +125,6 @@ public struct MasterServerEntry: Codable, Equatable {
         wakeSupport: DecentralizedWakeSupport? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
-        groupCreationMode: GroupCreationMode? = nil,
-        groupSecurityModel: GroupSecurityModel? = nil,
         requiresPassword: Bool? = nil,
         useTLS: Bool? = nil,
         transport: RelayEndpointTransport? = nil,
@@ -159,8 +155,6 @@ public struct MasterServerEntry: Codable, Equatable {
         self.wakeSupport = wakeSupport
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
-        self.groupCreationMode = groupCreationMode
-        self.groupSecurityModel = groupSecurityModel
         self.requiresPassword = requiresPassword
         self.useTLS = useTLS
         self.transport = transport
@@ -236,8 +230,6 @@ private extension RelayServerRecord {
             || entry.wakeSupport != nil
             || entry.operatorNote != nil
             || entry.softwareVersion != nil
-            || entry.groupCreationMode != nil
-            || entry.groupSecurityModel != nil
             || entry.requiresPassword != nil
             || entry.useTLS != nil
             || entry.transport != nil
@@ -265,8 +257,6 @@ private extension RelayServerRecord {
             wakeSupport: entry.wakeSupport,
             operatorNote: entry.operatorNote,
             softwareVersion: entry.softwareVersion,
-            groupCreationMode: entry.groupCreationMode,
-            groupSecurityModel: entry.groupSecurityModel,
             requiresPassword: entry.requiresPassword,
             tlsEnabled: entry.useTLS,
             transport: entry.transport,

@@ -14,9 +14,18 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.javascript.contains("Authorization"))
         XCTAssertTrue(OperatorWebUI.html.contains("Secrets stay outside the browser"))
         XCTAssertTrue(OperatorWebUI.html.contains("IPFS API endpoint"))
-        XCTAssertTrue(OperatorWebUI.html.contains("Hidden retrieval"))
-        XCTAssertTrue(OperatorWebUI.html.contains("Onion and mixnet capabilities"))
+        XCTAssertTrue(OperatorWebUI.html.contains("Hidden retrieval research"))
+        XCTAssertTrue(OperatorWebUI.html.contains("Onion and mixnet metadata"))
+        XCTAssertTrue(OperatorWebUI.html.contains("No anonymity claim"))
+        XCTAssertFalse(OperatorWebUI.html.contains("Group creation"))
+        XCTAssertFalse(OperatorWebUI.html.contains("Long poll"))
+        XCTAssertFalse(OperatorWebUI.javascript.contains("wakeLongPoll"))
         XCTAssertTrue(OperatorWebUI.html.contains("Active backend:"))
+        XCTAssertTrue(OperatorWebUI.html.contains("name=\"opaqueRouteRuntimeEnabled\" type=\"checkbox\""))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("opaqueRouteRuntimeEnabled:b(\"opaqueRouteRuntimeEnabled\")"))
+        XCTAssertTrue(OperatorWebUI.html.contains("max=\"2592000\""))
+        XCTAssertTrue(OperatorWebUI.html.contains("Opaque-route packets, rendezvous routes"))
+        XCTAssertFalse(OperatorWebUI.html.contains("Queues, prekeys"))
         XCTAssertTrue(OperatorWebUI.html.contains("aria-live=\"polite\""))
         XCTAssertTrue(OperatorWebUI.javascript.contains("restartSettingsChanged"))
         XCTAssertTrue(OperatorWebUI.javascript.contains("Configuration saved and applied"))
@@ -80,6 +89,22 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertEqual(updated.temporalBucketScheduleSeconds, [60, 120, 300])
     }
 
+    func testOperatorConfigurationAcceptsThirtyDayAttachmentRetentionOnly() throws {
+        let base = makeBaseConfiguration()
+        var editable = OperatorEditableConfiguration(configuration: base)
+        editable.attachmentDefaultTTLSeconds = 2_592_000
+        editable.attachmentMaxTTLSeconds = 2_592_000
+        XCTAssertEqual(
+            try editable.validatedConfiguration(from: base).attachmentMaxTTLSeconds,
+            OperatorEditableConfiguration.maximumAttachmentTTLSeconds
+        )
+
+        editable.attachmentMaxTTLSeconds = 2_592_001
+        XCTAssertThrowsError(try editable.validatedConfiguration(from: base)) { error in
+            XCTAssertEqual(error as? OperatorConfigurationError, .invalidField("attachment retention"))
+        }
+    }
+
     func testOperatorControlPlanePersistsAndAppliesUpdates() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -88,7 +113,7 @@ final class OperatorWebUITests: XCTestCase {
             fileURL: directory.appendingPathComponent("operator-config.json")
         )
         let configurationStore = RelayConfigurationStore(makeBaseConfiguration())
-        let relayStore = RelayStore(fileURL: nil, maxInboxMessages: 10, temporalBucketSeconds: 300)
+        let relayStore = RelayStore(fileURL: nil, temporalBucketSeconds: 300)
         let controlPlane = OperatorControlPlane(
             configurationStore: configurationStore,
             persistence: persistence,
@@ -103,14 +128,40 @@ final class OperatorWebUITests: XCTestCase {
         editable.operatorNote = "Configured in the Web UI"
         editable.temporalBucketSeconds = 120
         editable.relayPeerExchangeLimit = 0
+        editable.opaqueRouteRuntimeEnabled = false
 
         let updated = try controlPlane.update(editable)
         XCTAssertEqual(updated.configuration.relayName, "Persisted Relay")
+        XCTAssertFalse(updated.configuration.opaqueRouteRuntimeEnabled)
+        XCTAssertFalse(configurationStore.snapshot().isOpaqueRouteRuntimeEnabled)
         XCTAssertEqual(configurationStore.snapshot().operatorNote, "Configured in the Web UI")
         XCTAssertEqual(try persistence.load()?.relayName, "Persisted Relay")
 
         let attributes = try FileManager.default.attributesOfItem(atPath: persistence.fileURL!.path)
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
+    func testOperatorConfigurationRejectsDuplicateSemanticJSONFields() throws {
+        let editable = OperatorEditableConfiguration(configuration: makeBaseConfiguration())
+        let encoded = try JSONEncoder().encode(editable)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        let field = #""relayName":"#
+        XCTAssertTrue(json.contains(field))
+
+        for replacement in [
+            #""relayName":"shadow","relayName":"#,
+            #""relayName":"shadow","\u0072elayName":"#
+        ] {
+            let ambiguous = json.replacingOccurrences(of: field, with: replacement)
+            XCTAssertThrowsError(
+                try decodeOperatorJSON(
+                    OperatorEditableConfiguration.self,
+                    from: Data(ambiguous.utf8)
+                )
+            ) { error in
+                XCTAssertTrue(String(describing: error).contains("duplicate object member"))
+            }
+        }
     }
 
     func testIPFSSettingsPersistAndRequireRestart() throws {
@@ -124,7 +175,7 @@ final class OperatorWebUITests: XCTestCase {
         let controlPlane = OperatorControlPlane(
             configurationStore: RelayConfigurationStore(base),
             persistence: persistence,
-            relayStore: RelayStore(fileURL: nil, maxInboxMessages: 10),
+            relayStore: RelayStore(fileURL: nil),
             startedAt: Date(),
             bootstrap: [:],
             storageDescription: "SQLite",
@@ -170,8 +221,6 @@ final class OperatorWebUITests: XCTestCase {
         editable.mixnetMinBatchSize = 8
         editable.mixnetCoverPacketsPerBatch = 2
         editable.mixnetMaxDelaySeconds = 120
-        editable.groupSecurityModel = GroupSecurityModel.mlsDerivedTree.rawValue
-
         let updated = try editable.validatedConfiguration(from: base)
         XCTAssertEqual(updated.hiddenRetrieval?.defaultCoverSetSize, 12)
         XCTAssertEqual(updated.onionTransport?.maxHops, 4)
@@ -179,23 +228,6 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertEqual(updated.openFederationDHTMaxRecords, 128)
         XCTAssertEqual(updated.openFederationDHTMaxRecordsPerHost, 3)
         XCTAssertEqual(updated.openFederationDHTMaxQueryRecords, 192)
-        XCTAssertEqual(updated.groupSecurityModel, .mlsDerivedTree)
-    }
-
-    func testLegacyOperatorConfigurationDecodesWithNewFieldsAbsent() throws {
-        let current = OperatorEditableConfiguration(configuration: makeBaseConfiguration())
-        let encoded = try JSONEncoder().encode(current)
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        [
-            "attachmentStorageMode", "ipfsAPIEndpoint", "ipfsGatewayEndpoint", "ipfsTimeoutSeconds",
-            "hiddenRetrievalEnabled", "onionTransportEnabled", "mixnetTransportEnabled"
-        ].forEach { object.removeValue(forKey: $0) }
-        let legacyData = try JSONSerialization.data(withJSONObject: object)
-
-        let decoded = try JSONDecoder().decode(OperatorEditableConfiguration.self, from: legacyData)
-        XCTAssertNil(decoded.attachmentStorageMode)
-        XCTAssertNil(decoded.hiddenRetrievalEnabled)
-        XCTAssertNoThrow(try decoded.validatedConfiguration(from: makeBaseConfiguration()))
     }
 
     func testOperatorSecurityHeadersDisallowEmbeddingAndInlineCode() {

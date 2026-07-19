@@ -46,14 +46,6 @@ public struct SigningKeyPair: Codable {
         case publicKeyData
     }
 
-    public init() {
-        do {
-            self = try Self.generate()
-        } catch {
-            fatalError("Noctweave could not generate an ML-DSA-65 signing key: \(error)")
-        }
-    }
-
     public static func generate() throws -> SigningKeyPair {
         let sig = try PQCLibrary.signature()
         defer { OQS_SIG_free(sig) }
@@ -79,8 +71,14 @@ public struct SigningKeyPair: Codable {
         let sig = try PQCLibrary.signature()
         defer { OQS_SIG_free(sig) }
         guard privateKeyData.count == Int(sig.pointee.length_secret_key),
-              publicKeyData.count == Int(sig.pointee.length_public_key),
-              Self.keysMatch(privateKeyData: privateKeyData, publicKeyData: publicKeyData, signature: sig) else {
+              publicKeyData.count == Int(sig.pointee.length_public_key) else {
+            throw CryptoError.invalidPrivateKey
+        }
+        guard try Self.keysMatch(
+            privateKeyData: privateKeyData,
+            publicKeyData: publicKeyData,
+            signature: sig
+        ) else {
             throw CryptoError.invalidPrivateKey
         }
         self.privateKeyData = privateKeyData
@@ -139,51 +137,61 @@ public struct SigningKeyPair: Codable {
         return signature
     }
 
-    public static func verify(signature: Data, data: Data, publicKeyData: Data) -> Bool {
-        do {
-            let sig = try PQCLibrary.signature()
-            defer { OQS_SIG_free(sig) }
-            guard data.count <= maximumSignedMessageBytes,
-                  publicKeyData.count == Int(sig.pointee.length_public_key),
-                  signature.count == Int(sig.pointee.length_signature) else {
-                return false
-            }
-            let messageStorage = data.isEmpty ? Data([0]) : data
-            let result = signature.withUnsafeBytes { sigPtr in
-                messageStorage.withUnsafeBytes { msgPtr in
-                    publicKeyData.withUnsafeBytes { publicPtr in
-                        OQS_SIG_verify(
-                            sig,
-                            msgPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                            data.count,
-                            sigPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
-                            signature.count,
-                            publicPtr.baseAddress?.assumingMemoryBound(to: UInt8.self)
-                        )
-                    }
-                }
-            }
-            return result == OQS_SUCCESS
-        } catch {
+    /// Verifies peer-controlled signature material without hiding a local
+    /// ML-DSA runtime or algorithm-availability failure.
+    public static func verifyThrowing(
+        signature: Data,
+        data: Data,
+        publicKeyData: Data
+    ) throws -> Bool {
+        let sig = try PQCLibrary.signature()
+        defer { OQS_SIG_free(sig) }
+        guard data.count <= maximumSignedMessageBytes,
+              publicKeyData.count == Int(sig.pointee.length_public_key),
+              signature.count == Int(sig.pointee.length_signature) else {
             return false
         }
+        let messageStorage = data.isEmpty ? Data([0]) : data
+        let result = signature.withUnsafeBytes { sigPtr in
+            messageStorage.withUnsafeBytes { msgPtr in
+                publicKeyData.withUnsafeBytes { publicPtr in
+                    OQS_SIG_verify(
+                        sig,
+                        msgPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        data.count,
+                        sigPtr.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                        signature.count,
+                        publicPtr.baseAddress?.assumingMemoryBound(to: UInt8.self)
+                    )
+                }
+            }
+        }
+        return result == OQS_SUCCESS
+    }
+
+    public static func verify(signature: Data, data: Data, publicKeyData: Data) -> Bool {
+        (try? verifyThrowing(
+            signature: signature,
+            data: data,
+            publicKeyData: publicKeyData
+        )) == true
+    }
+
+    public static func isValidPublicKeyThrowing(_ publicKeyData: Data) throws -> Bool {
+        let sig = try PQCLibrary.signature()
+        defer { OQS_SIG_free(sig) }
+        return publicKeyData.count == Int(sig.pointee.length_public_key)
     }
 
     public static func isValidPublicKey(_ publicKeyData: Data) -> Bool {
-        do {
-            let sig = try PQCLibrary.signature()
-            defer { OQS_SIG_free(sig) }
-            return publicKeyData.count == Int(sig.pointee.length_public_key)
-        } catch {
-            return false
-        }
+        (try? isValidPublicKeyThrowing(publicKeyData)) == true
     }
 
     private static func keysMatch(
         privateKeyData: Data,
         publicKeyData: Data,
         signature sig: UnsafeMutablePointer<OQS_SIG>
-    ) -> Bool {
+    ) throws -> Bool {
         let challenge = Data("Noctweave/ML-DSA-65/keypair-validation/v1".utf8)
         var signature = Data(count: Int(sig.pointee.length_signature))
         defer { signature.secureWipe() }
@@ -204,7 +212,7 @@ public struct SigningKeyPair: Codable {
         }
         guard signResult == OQS_SUCCESS,
               signatureLength == sig.pointee.length_signature else {
-            return false
+            throw CryptoError.operationFailed
         }
         return signature.withUnsafeBytes { signaturePointer in
             challenge.withUnsafeBytes { challengePointer in
@@ -242,14 +250,6 @@ public struct AgreementKeyPair: Codable {
         case publicKeyData
     }
 
-    public init() {
-        do {
-            self = try Self.generate()
-        } catch {
-            fatalError("Noctweave could not generate an ML-KEM-768 agreement key: \(error)")
-        }
-    }
-
     public static func generate() throws -> AgreementKeyPair {
         let kem = try PQCLibrary.kem()
         defer { OQS_KEM_free(kem) }
@@ -275,8 +275,14 @@ public struct AgreementKeyPair: Codable {
         let kem = try PQCLibrary.kem()
         defer { OQS_KEM_free(kem) }
         guard privateKeyData.count == Int(kem.pointee.length_secret_key),
-              publicKeyData.count == Int(kem.pointee.length_public_key),
-              Self.keysMatch(privateKeyData: privateKeyData, publicKeyData: publicKeyData, kem: kem) else {
+              publicKeyData.count == Int(kem.pointee.length_public_key) else {
+            throw CryptoError.invalidPrivateKey
+        }
+        guard try Self.keysMatch(
+            privateKeyData: privateKeyData,
+            publicKeyData: publicKeyData,
+            kem: kem
+        ) else {
             throw CryptoError.invalidPrivateKey
         }
         self.privateKeyData = privateKeyData
@@ -328,14 +334,14 @@ public struct AgreementKeyPair: Codable {
         return KEMOutput(ciphertext: ciphertext, sharedSecret: sharedSecret)
     }
 
+    public static func isValidPublicKeyThrowing(_ publicKeyData: Data) throws -> Bool {
+        let kem = try PQCLibrary.kem()
+        defer { OQS_KEM_free(kem) }
+        return publicKeyData.count == Int(kem.pointee.length_public_key)
+    }
+
     public static func isValidPublicKey(_ publicKeyData: Data) -> Bool {
-        do {
-            let kem = try PQCLibrary.kem()
-            defer { OQS_KEM_free(kem) }
-            return publicKeyData.count == Int(kem.pointee.length_public_key)
-        } catch {
-            return false
-        }
+        (try? isValidPublicKeyThrowing(publicKeyData)) == true
     }
 
     public func decapsulate(ciphertext: Data) throws -> Data {
@@ -370,7 +376,7 @@ public struct AgreementKeyPair: Codable {
         privateKeyData: Data,
         publicKeyData: Data,
         kem: UnsafeMutablePointer<OQS_KEM>
-    ) -> Bool {
+    ) throws -> Bool {
         var ciphertext = Data(count: Int(kem.pointee.length_ciphertext))
         var encapsulatedSecret = Data(count: Int(kem.pointee.length_shared_secret))
         var decapsulatedSecret = Data(count: Int(kem.pointee.length_shared_secret))
@@ -391,7 +397,9 @@ public struct AgreementKeyPair: Codable {
                 }
             }
         }
-        guard encapsulationResult == OQS_SUCCESS else { return false }
+        guard encapsulationResult == OQS_SUCCESS else {
+            throw CryptoError.operationFailed
+        }
         let decapsulationResult = decapsulatedSecret.withUnsafeMutableBytes { secretPointer in
             ciphertext.withUnsafeBytes { ciphertextPointer in
                 privateKeyData.withUnsafeBytes { privatePointer in
@@ -404,8 +412,10 @@ public struct AgreementKeyPair: Codable {
                 }
             }
         }
-        return decapsulationResult == OQS_SUCCESS
-            && timingSafeEqual(encapsulatedSecret, decapsulatedSecret)
+        guard decapsulationResult == OQS_SUCCESS else {
+            throw CryptoError.operationFailed
+        }
+        return timingSafeEqual(encapsulatedSecret, decapsulatedSecret)
     }
 }
 
@@ -417,9 +427,21 @@ public enum CryptoBox {
     }
 
     public static func decrypt(_ payload: EncryptedPayload, key: SymmetricKey, authenticatedData: Data) throws -> Data {
-        let nonce = try AES.GCM.Nonce(data: payload.nonce)
-        let box = try AES.GCM.SealedBox(nonce: nonce, ciphertext: payload.ciphertext, tag: payload.tag)
-        return try AES.GCM.open(box, using: key, authenticating: authenticatedData)
+        do {
+            let nonce = try AES.GCM.Nonce(data: payload.nonce)
+            let box = try AES.GCM.SealedBox(
+                nonce: nonce,
+                ciphertext: payload.ciphertext,
+                tag: payload.tag
+            )
+            return try AES.GCM.open(box, using: key, authenticating: authenticatedData)
+        } catch {
+            // Authentication failure and malformed sealed-box bytes are
+            // deterministic properties of this envelope. Normalize them so
+            // ordered opaque-route consumers can quarantine the event without
+            // treating it as a transient crypto-runtime failure.
+            throw CryptoError.invalidPayload
+        }
     }
 
     public static func fingerprint(for publicKeyData: Data) -> String {
@@ -435,14 +457,89 @@ public enum CryptoBox {
 }
 
 public struct EncryptedPayload: Codable, Equatable {
+    public static let nonceByteCount = 12
+    public static let tagByteCount = 16
+    /// The largest encrypted payload used by any current protocol module.
+    /// Individual modules, including attachment upload, impose tighter bounds.
+    public static let maximumCiphertextBytes = 2 * 1_024 * 1_024
+
     public let nonce: Data
     public let ciphertext: Data
     public let tag: Data
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case nonce
+        case ciphertext
+        case tag
+    }
 
     public init(nonce: Data, ciphertext: Data, tag: Data) {
         self.nonce = nonce
         self.ciphertext = ciphertext
         self.tag = tag
+    }
+
+    public init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: EncryptedPayloadCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Encrypted payload fields must match the current schema exactly"
+                )
+            )
+        }
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        nonce = try values.decode(Data.self, forKey: .nonce)
+        ciphertext = try values.decode(Data.self, forKey: .ciphertext)
+        tag = try values.decode(Data.self, forKey: .tag)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorrupted(
+                .init(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Encrypted payload has invalid cryptographic field lengths"
+                )
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                .init(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Encrypted payload has invalid cryptographic field lengths"
+                )
+            )
+        }
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(nonce, forKey: .nonce)
+        try values.encode(ciphertext, forKey: .ciphertext)
+        try values.encode(tag, forKey: .tag)
+    }
+
+    public var isStructurallyValid: Bool {
+        nonce.count == Self.nonceByteCount
+            && tag.count == Self.tagByteCount
+            && !ciphertext.isEmpty
+            && ciphertext.count <= Self.maximumCiphertextBytes
+    }
+}
+
+private struct EncryptedPayloadCodingKey: CodingKey {
+    let stringValue: String
+    let intValue: Int?
+
+    init?(stringValue: String) {
+        self.stringValue = stringValue
+        intValue = nil
+    }
+
+    init?(intValue: Int) {
+        stringValue = String(intValue)
+        self.intValue = intValue
     }
 }
 

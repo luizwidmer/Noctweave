@@ -6,6 +6,14 @@ import Darwin
 import Glibc
 #endif
 
+protocol RetryableRelayLocalError: Error {}
+
+enum OQSSignatureVerifierError: RetryableRelayLocalError, Equatable {
+    case runtimeUnavailable
+    case operationUnavailable
+    case invalidLocalKeyMaterial
+}
+
 final class OQSSignatureVerifier: @unchecked Sendable {
     static let shared = OQSSignatureVerifier()
     static let mlDSA65PublicKeyBytes = 1_952
@@ -22,15 +30,17 @@ final class OQSSignatureVerifier: @unchecked Sendable {
         runtimeFunctions() != nil
     }
 
-    func verify(signature: Data, data: Data, publicKey: Data) -> Bool {
-        guard let runtime = runtimeFunctions(),
-              signature.count == Self.mlDSA65SignatureBytes,
+    func verifyThrowing(signature: Data, data: Data, publicKey: Data) throws -> Bool {
+        guard signature.count == Self.mlDSA65SignatureBytes,
               !data.isEmpty,
               publicKey.count == Self.mlDSA65PublicKeyBytes else {
             return false
         }
+        guard let runtime = runtimeFunctions() else {
+            throw OQSSignatureVerifierError.runtimeUnavailable
+        }
         guard let sig = runtime.newSignature() else {
-            return false
+            throw OQSSignatureVerifierError.operationUnavailable
         }
         defer { runtime.freeSignature(sig) }
         let status = signature.withUnsafeBytes { signaturePtr in
@@ -50,12 +60,12 @@ final class OQSSignatureVerifier: @unchecked Sendable {
         return status == OQSRuntime.success
     }
 
-    func generateKeyPair() -> (privateKey: Data, publicKey: Data)? {
+    func generateKeyPairThrowing() throws -> (privateKey: Data, publicKey: Data) {
         guard let runtime = runtimeFunctions() else {
-            return nil
+            throw OQSSignatureVerifierError.runtimeUnavailable
         }
         guard let sig = runtime.newSignature() else {
-            return nil
+            throw OQSSignatureVerifierError.operationUnavailable
         }
         defer { runtime.freeSignature(sig) }
         var publicKey = Data(count: Self.mlDSA65PublicKeyBytes)
@@ -70,20 +80,22 @@ final class OQSSignatureVerifier: @unchecked Sendable {
             }
         }
         guard status == OQSRuntime.success else {
-            return nil
+            throw OQSSignatureVerifierError.operationUnavailable
         }
         return (privateKey, publicKey)
     }
 
-    func sign(data: Data, privateKey: Data, publicKey: Data) -> Data? {
-        guard let runtime = runtimeFunctions(),
-              !data.isEmpty,
+    func signThrowing(data: Data, privateKey: Data, publicKey: Data) throws -> Data {
+        guard !data.isEmpty,
               privateKey.count == Self.mlDSA65PrivateKeyBytes,
               publicKey.count == Self.mlDSA65PublicKeyBytes else {
-            return nil
+            throw OQSSignatureVerifierError.invalidLocalKeyMaterial
+        }
+        guard let runtime = runtimeFunctions() else {
+            throw OQSSignatureVerifierError.runtimeUnavailable
         }
         guard let sig = runtime.newSignature() else {
-            return nil
+            throw OQSSignatureVerifierError.operationUnavailable
         }
         defer { runtime.freeSignature(sig) }
         var signature = Data(count: Self.mlDSA65SignatureBytes)
@@ -103,7 +115,7 @@ final class OQSSignatureVerifier: @unchecked Sendable {
             }
         }
         guard status == OQSRuntime.success, signatureLength <= signature.count else {
-            return nil
+            throw OQSSignatureVerifierError.operationUnavailable
         }
         signature.count = signatureLength
         return signature

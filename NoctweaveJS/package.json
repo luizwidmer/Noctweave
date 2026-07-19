@@ -1,7 +1,7 @@
 {
   "name": "@noctweave/js-client",
   "version": "0.1.0",
-  "description": "Noctweave JavaScript protocol library, encrypted storage adapters, and working browser messaging client.",
+  "description": "Noctweave JavaScript protocol library, encrypted storage adapters, and browser integration shell.",
   "type": "module",
   "main": "./src/index.js",
   "exports": {
@@ -26,7 +26,6 @@
     "desktop:watch": "electrobun dev --watch",
     "desktop:build": "electrobun build --env=stable",
     "desktop:icons": "bun desktop/scripts/generate-icons.ts",
-    "smoke:client": "node scripts/client-chat-smoke.js",
     "smoke:relay": "node scripts/relay-smoke.js",
     "typecheck:desktop": "tsc --noEmit",
     "test": "node --test"

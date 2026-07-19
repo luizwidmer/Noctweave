@@ -1,0 +1,1001 @@
+import Foundation
+import XCTest
+@testable import NoctweaveCore
+
+final class OpaqueRouteRelayStoreV2Tests: XCTestCase {
+    private let origin = Date(timeIntervalSince1970: 300_000)
+
+    func testReadCredentialAloneBuildsExactSyncAndCommitRequests() async throws {
+        let fixture = try await makeFixture()
+        let syncID = OpaqueRouteIdempotencyKeyV2.generate()
+        let syncNonce = OpaqueRouteProofNonceV2.generate()
+        let fullSync = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 17,
+            requestID: syncID,
+            authorizedAt: origin,
+            nonce: syncNonce
+        )
+        let readOnlySync = try fixture.material.readCredential.makeSyncRequest(
+            routeID: fixture.material.routeID,
+            after: nil,
+            limit: 17,
+            requestID: syncID,
+            authorizedAt: origin,
+            nonce: syncNonce
+        )
+        XCTAssertEqual(readOnlySync, fullSync)
+
+        let cursor = OpaqueRouteCursorV2(rawValue: Data(repeating: 0xA5, count: 68))
+        let commitID = OpaqueRouteIdempotencyKeyV2.generate()
+        let commitNonce = OpaqueRouteProofNonceV2.generate()
+        let fullCommit = try fixture.material.makeCommitRequest(
+            cursor: cursor,
+            requestID: commitID,
+            authorizedAt: origin,
+            nonce: commitNonce
+        )
+        let readOnlyCommit = try fixture.material.readCredential.makeCommitRequest(
+            routeID: fixture.material.routeID,
+            cursor: cursor,
+            requestID: commitID,
+            authorizedAt: origin,
+            nonce: commitNonce
+        )
+        XCTAssertEqual(readOnlyCommit, fullCommit)
+    }
+
+    func testAppendSyncCommitAndExactExpiredRetries() async throws {
+        let fixture = try await makeFixture()
+        let first = try makePacket(
+            Data("first".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(10)
+        )
+        let second = try makePacket(
+            Data("second".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(10)
+        )
+        let firstReceipt = try await fixture.store.append(
+            first,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(10)
+        )
+        _ = try await fixture.store.append(
+            second,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(10)
+        )
+
+        XCTAssertEqual(firstReceipt.packetID, first.packetID)
+        XCTAssertEqual(firstReceipt.acceptedCursor.rawValue.count, 68)
+        XCTAssertEqual(String(describing: firstReceipt.acceptedCursor), "OpaqueRouteCursorV2(<redacted>)")
+        XCTAssertTrue(Mirror(reflecting: firstReceipt.acceptedCursor).children.isEmpty)
+        XCTAssertFalse(firstReceipt.acceptedCursor.rawValue.containsSubsequence(
+            fixture.material.routeID.rawValue
+        ))
+
+        let syncRequest = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 1,
+            authorizedAt: origin.addingTimeInterval(20)
+        )
+        let firstPage = try await fixture.store.sync(
+            syncRequest,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(20)
+        )
+        XCTAssertEqual(firstPage.packets.map(\.packet), [first])
+        XCTAssertEqual(firstPage.packets.map(\.routeRevision), [0])
+        XCTAssertEqual(firstPage.packets.map(\.sequence), [1])
+        XCTAssertEqual(firstPage.startsAfterSequence, 0)
+        XCTAssertEqual(firstPage.nextSequence, 1)
+        XCTAssertEqual(firstPage.highWatermarkSequence, 2)
+        XCTAssertEqual(firstPage.retentionFloorSequence, 0)
+        XCTAssertEqual(
+            firstPage.packets.first?.previousRecordDigest,
+            firstPage.startsAfterRecordDigest
+        )
+        XCTAssertEqual(
+            firstPage.packets.last?.recordDigest,
+            firstPage.nextRecordDigest
+        )
+        XCTAssertTrue(firstPage.isStructurallyValid)
+        XCTAssertTrue(firstPage.hasMore)
+
+        let expiredProofRetry = try await fixture.store.sync(
+            syncRequest,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(400)
+        )
+        XCTAssertEqual(expiredProofRetry, firstPage)
+
+        let appendRetry = try await fixture.store.append(
+            first,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(401)
+        )
+        XCTAssertEqual(appendRetry, firstReceipt)
+
+        let commitRequest = try fixture.material.makeCommitRequest(
+            cursor: firstPage.nextCursor,
+            authorizedAt: origin.addingTimeInterval(401)
+        )
+        _ = try await fixture.store.commit(
+            commitRequest,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(401)
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.commit(
+            commitRequest,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(800)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .authorizationExpired)
+        }
+        let refreshedCommit = try fixture.material.makeCommitRequest(
+            cursor: firstPage.nextCursor,
+            authorizedAt: origin.addingTimeInterval(800)
+        )
+        _ = try await fixture.store.commit(
+            refreshedCommit,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(800)
+        )
+
+        let secondRequest = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 8,
+            authorizedAt: origin.addingTimeInterval(800)
+        )
+        let secondPage = try await fixture.store.sync(
+            secondRequest,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(800)
+        )
+        XCTAssertEqual(secondPage.packets.map(\.packet), [second])
+        XCTAssertEqual(secondPage.packets.map(\.routeRevision), [0])
+        XCTAssertEqual(secondPage.packets.map(\.sequence), [2])
+        XCTAssertEqual(secondPage.startsAfterSequence, 1)
+        XCTAssertEqual(secondPage.nextSequence, 2)
+        XCTAssertEqual(
+            secondPage.packets.first?.previousRecordDigest,
+            firstPage.nextRecordDigest
+        )
+        XCTAssertTrue(secondPage.isStructurallyValid)
+        XCTAssertFalse(secondPage.hasMore)
+
+        let finish = try fixture.material.makeCommitRequest(
+            cursor: secondPage.nextCursor,
+            authorizedAt: origin.addingTimeInterval(801)
+        )
+        _ = try await fixture.store.commit(
+            finish,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(801)
+        )
+        let emptyRequest = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 8,
+            authorizedAt: origin.addingTimeInterval(802)
+        )
+        let empty = try await fixture.store.sync(
+            emptyRequest,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(802)
+        )
+        XCTAssertTrue(empty.packets.isEmpty)
+        XCTAssertFalse(empty.hasMore)
+    }
+
+    func testPacketIdentifierConflictRequiresValidAuthorization() async throws {
+        let fixture = try await makeFixture()
+        let first = try makePacket(
+            Data("retained".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(10)
+        )
+        let other = try makePacket(
+            Data("different".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(11)
+        )
+        _ = try await fixture.store.append(
+            first,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(10)
+        )
+
+        let operationDigest = OpaqueRoutePacketV2.operationDigest(
+            routeID: fixture.material.routeID,
+            packetID: first.packetID,
+            sealedFrame: other.sealedFrame
+        )
+        let proof = try fixture.material.makeSendAuthorization(
+            operationDigest: operationDigest,
+            authorizedAt: origin.addingTimeInterval(11)
+        )
+        let conflict = OpaqueRoutePacketV2(
+            routeID: fixture.material.routeID,
+            packetID: first.packetID,
+            sealedFrame: other.sealedFrame,
+            authorization: proof
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.append(
+            conflict,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(11)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteRelayStoreV2Error, .packetIdentifierConflict)
+        }
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.append(
+            conflict,
+            presentedCapability: RouteSendCapabilityV2.generate(),
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(11)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .invalidAuthorization)
+        }
+    }
+
+    func testSyncCarriesRouteRevisionAcrossRenewal() async throws {
+        let fixture = try await makeFixture()
+        let before = try makePacket(
+            Data("before-renewal".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(10),
+            routeRevision: 0
+        )
+        _ = try await fixture.store.append(
+            before,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(10)
+        )
+        let renewal = try fixture.material.makeRenewRequest(
+            current: fixture.route,
+            newExpiry: origin.addingTimeInterval(8_000),
+            authorizedAt: origin.addingTimeInterval(20),
+            idempotencyKey: .generate()
+        )
+        let renewed = try await fixture.store.renew(
+            renewal,
+            presentedCapability: fixture.material.renewCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(20)
+        )
+        XCTAssertEqual(renewed.lease.renewalSequence, 1)
+
+        let after = try makePacket(
+            Data("after-renewal".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(21),
+            routeRevision: 1
+        )
+        _ = try await fixture.store.append(
+            after,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(21)
+        )
+        let request = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 8,
+            authorizedAt: origin.addingTimeInterval(22)
+        )
+        let response = try await fixture.store.sync(
+            request,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(22)
+        )
+        XCTAssertEqual(response.packets.map(\.routeRevision), [0, 1])
+        let openedBefore = try response.packets[0].packet.open(
+            payloadKey: fixture.payloadKey,
+            routeRevision: response.packets[0].routeRevision
+        )
+        let openedAfter = try response.packets[1].packet.open(
+            payloadKey: fixture.payloadKey,
+            routeRevision: response.packets[1].routeRevision
+        )
+        XCTAssertEqual(openedBefore.payload, Data("before-renewal".utf8))
+        XCTAssertEqual(openedAfter.payload, Data("after-renewal".utf8))
+        XCTAssertThrowsError(try response.packets[1].packet.open(
+            payloadKey: fixture.payloadKey,
+            routeRevision: 0
+        )) {
+            XCTAssertEqual($0 as? OpaqueRoutePacketV2Error, .decryptionFailed)
+        }
+    }
+
+    func testCursorAuthenticationAndRequestIdentifierConflict() async throws {
+        let fixture = try await makeFixture()
+        let packet = try makePacket(
+            Data("cursor-bound".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(10)
+        )
+        let receipt = try await fixture.store.append(
+            packet,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(10)
+        )
+
+        var tamperedBytes = receipt.acceptedCursor.rawValue
+        tamperedBytes[tamperedBytes.startIndex + 20] ^= 0x80
+        let tampered = OpaqueRouteCursorV2(rawValue: tamperedBytes)
+        let tamperedCommit = try fixture.material.makeCommitRequest(
+            cursor: tampered,
+            authorizedAt: origin.addingTimeInterval(20)
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.commit(
+            tamperedCommit,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(20)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteRelayStoreV2Error, .invalidCursor)
+        }
+
+        let requestID = OpaqueRouteIdempotencyKeyV2.generate()
+        let first = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 1,
+            requestID: requestID,
+            authorizedAt: origin.addingTimeInterval(21)
+        )
+        _ = try await fixture.store.sync(
+            first,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(21)
+        )
+        let conflict = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 2,
+            requestID: requestID,
+            authorizedAt: origin.addingTimeInterval(22)
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.sync(
+            conflict,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(22)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteRelayStoreV2Error, .requestIdentifierConflict)
+        }
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.sync(
+            conflict,
+            presentedCredential: RouteReadCredentialV2.generate(),
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(22)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .invalidAuthorization)
+        }
+    }
+
+    func testTTLAdvancesRetentionFloorAndExpiresOldCursor() async throws {
+        let fixture = try await makeFixture(leaseDuration: 7_200)
+        let initialRequest = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 8,
+            authorizedAt: origin.addingTimeInterval(1)
+        )
+        let initial = try await fixture.store.sync(
+            initialRequest,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(1)
+        )
+        XCTAssertTrue(initial.packets.isEmpty)
+
+        let packet = try makePacket(
+            Data("expires".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(2)
+        )
+        let receipt = try await fixture.store.append(
+            packet,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(2)
+        )
+
+        let afterExpiry = origin.addingTimeInterval(3_603)
+        let expiredCursorRequest = try fixture.material.makeSyncRequest(
+            after: initial.nextCursor,
+            limit: 8,
+            authorizedAt: afterExpiry
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.sync(
+            expiredCursorRequest,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: afterExpiry
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteRelayStoreV2Error, .cursorExpired)
+        }
+
+        let currentRequest = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 8,
+            authorizedAt: afterExpiry
+        )
+        let current = try await fixture.store.sync(
+            currentRequest,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: afterExpiry
+        )
+        XCTAssertTrue(current.packets.isEmpty)
+        XCTAssertFalse(current.hasMore)
+
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.append(
+            packet,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: afterExpiry
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .authorizationExpired)
+        }
+        let replacement = try makePacket(
+            Data("fresh".utf8),
+            fixture: fixture,
+            authorizedAt: afterExpiry
+        )
+        let replacementReceipt = try await fixture.store.append(
+            replacement,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: afterExpiry
+        )
+        XCTAssertNotEqual(replacementReceipt.packetID, receipt.packetID)
+    }
+
+    func testQuotaAndPaddingPolicyAreEnforcedWithoutConsumingFailedProof() async throws {
+        let fixture = try await makeFixture()
+        let wrongPolicy = OpaqueRoutePolicyV2(
+            paddingBucket: .bytes16384,
+            retentionBucket: fixture.route.lease.policy.retentionBucket,
+            quotaBucket: fixture.route.lease.policy.quotaBucket
+        )
+        let wrongSendRoute = try makeSendRoute(
+            material: fixture.material,
+            payloadKey: fixture.payloadKey,
+            route: fixture.route,
+            policy: wrongPolicy
+        )
+        let wrongBucket = try XCTUnwrap(OpaqueRouteSealedBundleV2.seal(
+            Data("wrong-bucket".utf8),
+            to: wrongSendRoute,
+            authorizedAt: origin.addingTimeInterval(5)
+        ).packets.first)
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.append(
+            wrongBucket,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(5)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteRelayStoreV2Error, .invalidRequest)
+        }
+
+        var lastReceipt: OpaqueRouteAppendReceiptV2?
+        for index in 0..<64 {
+            let packet = try makePacket(
+                Data([UInt8(index)]),
+                fixture: fixture,
+                authorizedAt: origin.addingTimeInterval(10)
+            )
+            lastReceipt = try await fixture.store.append(
+                packet,
+                presentedCapability: fixture.material.sendCapability,
+                confidentialTransport: true,
+                receivedAt: origin.addingTimeInterval(10)
+            )
+        }
+        let overflow = try makePacket(
+            Data([0xFF]),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(10)
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.append(
+            overflow,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(10)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteRelayStoreV2Error, .routeQuotaExceeded)
+        }
+
+        let commit = try fixture.material.makeCommitRequest(
+            cursor: try XCTUnwrap(lastReceipt).acceptedCursor,
+            authorizedAt: origin.addingTimeInterval(11)
+        )
+        _ = try await fixture.store.commit(
+            commit,
+            presentedCredential: fixture.material.readCredential,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(11)
+        )
+        _ = try await fixture.store.append(
+            overflow,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(12)
+        )
+    }
+
+    func testTeardownIsPermanentAndExactlyRetryable() async throws {
+        let fixture = try await makeFixture()
+        let acceptedPacket = try makePacket(
+            Data("accepted-before-teardown".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(5)
+        )
+        _ = try await fixture.store.append(
+            acceptedPacket,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(5)
+        )
+        let teardown = try fixture.material.makeTeardownRequest(
+            current: fixture.route,
+            authorizedAt: origin.addingTimeInterval(10),
+            idempotencyKey: .generate()
+        )
+        let tombstone = try await fixture.store.teardown(
+            teardown,
+            presentedCapability: fixture.material.teardownCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(10)
+        )
+        XCTAssertEqual(tombstone.status, .tornDown)
+        let retry = try await fixture.store.teardown(
+            teardown,
+            presentedCapability: fixture.material.teardownCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(400)
+        )
+        XCTAssertEqual(retry, tombstone)
+
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.append(
+            acceptedPacket,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(400)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .routeTornDown)
+        }
+
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.create(
+            fixture.createRequest,
+            presentedCapability: fixture.material.renewCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(401)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .routeTornDown)
+        }
+        let packet = try makePacket(
+            Data("blocked".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(401)
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await fixture.store.append(
+            packet,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(401)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .routeTornDown)
+        }
+    }
+
+    func testEveryOperationRequiresConfidentialTransport() async throws {
+        let material = try OpaqueRouteClientCapabilityMaterialV2()
+        let policy = OpaqueRoutePolicyV2(
+            paddingBucket: .bytes4096,
+            retentionBucket: .oneHour,
+            quotaBucket: .packets64
+        )
+        let lease = try OpaqueRouteLeaseV2(
+            issuedAt: origin,
+            expiresAt: origin.addingTimeInterval(7_200),
+            policy: policy
+        )
+        let create = try material.makeCreateRequest(
+            lease: lease,
+            idempotencyKey: .generate()
+        )
+        let store = OpaqueRouteRelayStoreV2()
+        await XCTAssertOpaqueRouteStoreThrows(try await store.create(
+            create,
+            presentedCapability: material.renewCapability,
+            confidentialTransport: false,
+            receivedAt: origin
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .confidentialTransportRequired)
+        }
+        let route = try await store.create(
+            create,
+            presentedCapability: material.renewCapability,
+            confidentialTransport: true,
+            receivedAt: origin
+        )
+        let key = OpaqueRoutePayloadKeyV2.generate()
+        let sendRoute = try makeSendRoute(
+            material: material,
+            payloadKey: key,
+            route: route
+        )
+        let packet = try XCTUnwrap(OpaqueRouteSealedBundleV2.seal(
+            Data("transport".utf8),
+            to: sendRoute,
+            authorizedAt: origin.addingTimeInterval(10)
+        ).packets.first)
+        await XCTAssertOpaqueRouteStoreThrows(try await store.append(
+            packet,
+            presentedCapability: material.sendCapability,
+            confidentialTransport: false,
+            receivedAt: origin.addingTimeInterval(10)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .confidentialTransportRequired)
+        }
+        let receipt = try await store.append(
+            packet,
+            presentedCapability: material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(10)
+        )
+        let sync = try material.makeSyncRequest(
+            after: nil,
+            limit: 1,
+            authorizedAt: origin.addingTimeInterval(11)
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await store.sync(
+            sync,
+            presentedCredential: material.readCredential,
+            confidentialTransport: false,
+            receivedAt: origin.addingTimeInterval(11)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .confidentialTransportRequired)
+        }
+        let commit = try material.makeCommitRequest(
+            cursor: receipt.acceptedCursor,
+            authorizedAt: origin.addingTimeInterval(12)
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await store.commit(
+            commit,
+            presentedCredential: material.readCredential,
+            confidentialTransport: false,
+            receivedAt: origin.addingTimeInterval(12)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .confidentialTransportRequired)
+        }
+        let renew = try material.makeRenewRequest(
+            current: route,
+            newExpiry: origin.addingTimeInterval(8_000),
+            authorizedAt: origin.addingTimeInterval(13),
+            idempotencyKey: .generate()
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await store.renew(
+            renew,
+            presentedCapability: material.renewCapability,
+            confidentialTransport: false,
+            receivedAt: origin.addingTimeInterval(13)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .confidentialTransportRequired)
+        }
+        let teardown = try material.makeTeardownRequest(
+            current: route,
+            authorizedAt: origin.addingTimeInterval(14),
+            idempotencyKey: .generate()
+        )
+        await XCTAssertOpaqueRouteStoreThrows(try await store.teardown(
+            teardown,
+            presentedCapability: material.teardownCapability,
+            confidentialTransport: false,
+            receivedAt: origin.addingTimeInterval(14)
+        )) {
+            XCTAssertEqual($0 as? OpaqueRouteV2Error, .confidentialTransportRequired)
+        }
+    }
+
+    func testOpaqueRouteCodableGraphRejectsUnknownAndMissingNestedFields() async throws {
+        let fixture = try await makeFixture()
+
+        XCTAssertThrowsError(try NoctweaveCoder.encode(
+            OpaqueRouteCursorV2(rawValue: Data()),
+            sortedKeys: true
+        ))
+        XCTAssertThrowsError(try NoctweaveCoder.encode(
+            OpaqueReceiveRouteIDV2(rawValue: Data(repeating: 0, count: 32)),
+            sortedKeys: true
+        ))
+
+        var createObject = try opaqueRouteJSONObject(fixture.createRequest)
+        var leaseObject = try XCTUnwrap(createObject["lease"] as? [String: Any])
+        var policyObject = try XCTUnwrap(leaseObject["policy"] as? [String: Any])
+        policyObject["unexpected"] = true
+        leaseObject["policy"] = policyObject
+        createObject["lease"] = leaseObject
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteCreateRequestV2.self,
+            from: opaqueRouteJSONData(createObject)
+        ))
+
+        var materialObject = try opaqueRouteJSONObject(fixture.material)
+        var sendCapability = try XCTUnwrap(materialObject["sendCapability"] as? [String: Any])
+        sendCapability["unexpected"] = true
+        materialObject["sendCapability"] = sendCapability
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteClientCapabilityMaterialV2.self,
+            from: opaqueRouteJSONData(materialObject)
+        ))
+
+        let syncRequest = try fixture.material.makeSyncRequest(
+            after: nil,
+            limit: 1,
+            authorizedAt: origin.addingTimeInterval(10)
+        )
+        var syncObject = try opaqueRouteJSONObject(syncRequest)
+        XCTAssertTrue(syncObject["after"] is NSNull)
+        syncObject.removeValue(forKey: "after")
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteSyncRequestV2.self,
+            from: opaqueRouteJSONData(syncObject)
+        ))
+
+        var authorizationObject = try opaqueRouteJSONObject(syncRequest)
+        var authorization = try XCTUnwrap(
+            authorizationObject["authorization"] as? [String: Any]
+        )
+        var nonceObject = try XCTUnwrap(authorization["nonce"] as? [String: Any])
+        nonceObject["unexpected"] = true
+        authorization["nonce"] = nonceObject
+        authorizationObject["authorization"] = authorization
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteSyncRequestV2.self,
+            from: opaqueRouteJSONData(authorizationObject)
+        ))
+
+        var routeIDObject = try opaqueRouteJSONObject(syncRequest)
+        var routeID = try XCTUnwrap(routeIDObject["routeID"] as? [String: Any])
+        routeID["unexpected"] = true
+        routeIDObject["routeID"] = routeID
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteSyncRequestV2.self,
+            from: opaqueRouteJSONData(routeIDObject)
+        ))
+
+        var requestIDObject = try opaqueRouteJSONObject(syncRequest)
+        var requestID = try XCTUnwrap(requestIDObject["requestID"] as? [String: Any])
+        requestID["unexpected"] = true
+        requestIDObject["requestID"] = requestID
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteSyncRequestV2.self,
+            from: opaqueRouteJSONData(requestIDObject)
+        ))
+
+        let packet = try makePacket(
+            Data("exact-receipt".utf8),
+            fixture: fixture,
+            authorizedAt: origin.addingTimeInterval(11)
+        )
+        let receipt = try await fixture.store.append(
+            packet,
+            presentedCapability: fixture.material.sendCapability,
+            confidentialTransport: true,
+            receivedAt: origin.addingTimeInterval(11)
+        )
+
+        var packetObject = try opaqueRouteJSONObject(packet)
+        packetObject["unexpected"] = true
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRoutePacketV2.self,
+            from: opaqueRouteJSONData(packetObject)
+        ))
+
+        var nestedPacketIDObject = try opaqueRouteJSONObject(packet)
+        var packetID = try XCTUnwrap(nestedPacketIDObject["packetID"] as? [String: Any])
+        packetID["unexpected"] = true
+        nestedPacketIDObject["packetID"] = packetID
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRoutePacketV2.self,
+            from: opaqueRouteJSONData(nestedPacketIDObject)
+        ))
+
+        var receiptObject = try opaqueRouteJSONObject(receipt)
+        var acceptedCursor = try XCTUnwrap(
+            receiptObject["acceptedCursor"] as? [String: Any]
+        )
+        acceptedCursor["unexpected"] = true
+        receiptObject["acceptedCursor"] = acceptedCursor
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteAppendReceiptV2.self,
+            from: opaqueRouteJSONData(receiptObject)
+        ))
+
+        var routeObject = try opaqueRouteJSONObject(fixture.route)
+        var routeLease = try XCTUnwrap(routeObject["lease"] as? [String: Any])
+        routeLease["unexpected"] = true
+        routeObject["lease"] = routeLease
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueReceiveRouteV2.self,
+            from: opaqueRouteJSONData(routeObject)
+        ))
+
+        let gap = OpaqueRouteGapStateV2(
+            reason: .digestChainBreak,
+            expectedSequence: 4,
+            observedSequence: 5,
+            retentionFloorSequence: 2,
+            detectedAt: origin
+        )
+        var gapObject = try opaqueRouteJSONObject(gap)
+        gapObject["unexpected"] = true
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteGapStateV2.self,
+            from: opaqueRouteJSONData(gapObject)
+        ))
+
+        let digestObject = try opaqueRouteJSONObject([
+            "digest": Data(repeating: 0xA5, count: NoctweaveOpaqueRoutesV2.digestBytes),
+        ])
+        let expiryObject = try opaqueRouteJSONObject([
+            "expiresAt": origin.addingTimeInterval(30),
+        ])
+        var ledgerObject = try opaqueRouteJSONObject(OpaqueRouteAuthorizationReplayLedgerV2())
+        ledgerObject["entries"] = [[
+            "digest": try XCTUnwrap(digestObject["digest"]),
+            "expiresAt": try XCTUnwrap(expiryObject["expiresAt"]),
+        ]]
+        _ = try NoctweaveCoder.decode(
+            OpaqueRouteAuthorizationReplayLedgerV2.self,
+            from: opaqueRouteJSONData(ledgerObject)
+        )
+        var entries = try XCTUnwrap(ledgerObject["entries"] as? [[String: Any]])
+        entries[0]["unexpected"] = true
+        ledgerObject["entries"] = entries
+        XCTAssertThrowsError(try NoctweaveCoder.decode(
+            OpaqueRouteAuthorizationReplayLedgerV2.self,
+            from: opaqueRouteJSONData(ledgerObject)
+        ))
+    }
+
+    private struct Fixture {
+        let store: OpaqueRouteRelayStoreV2
+        let material: OpaqueRouteClientCapabilityMaterialV2
+        let payloadKey: OpaqueRoutePayloadKeyV2
+        let createRequest: OpaqueRouteCreateRequestV2
+        let route: OpaqueReceiveRouteV2
+    }
+
+    private func makeFixture(leaseDuration: TimeInterval = 7_200) async throws -> Fixture {
+        let material = try OpaqueRouteClientCapabilityMaterialV2()
+        let policy = OpaqueRoutePolicyV2(
+            paddingBucket: .bytes4096,
+            retentionBucket: .oneHour,
+            quotaBucket: .packets64
+        )
+        let lease = try OpaqueRouteLeaseV2(
+            issuedAt: origin,
+            expiresAt: origin.addingTimeInterval(leaseDuration),
+            policy: policy
+        )
+        let request = try material.makeCreateRequest(
+            lease: lease,
+            idempotencyKey: .generate()
+        )
+        let store = OpaqueRouteRelayStoreV2()
+        let route = try await store.create(
+            request,
+            presentedCapability: material.renewCapability,
+            confidentialTransport: true,
+            receivedAt: origin
+        )
+        return Fixture(
+            store: store,
+            material: material,
+            payloadKey: .generate(),
+            createRequest: request,
+            route: route
+        )
+    }
+
+    private func makePacket(
+        _ payload: Data,
+        fixture: Fixture,
+        authorizedAt: Date,
+        routeRevision: UInt64 = 0
+    ) throws -> OpaqueRoutePacketV2 {
+        let sendRoute = try makeSendRoute(
+            material: fixture.material,
+            payloadKey: fixture.payloadKey,
+            route: fixture.route,
+            routeRevision: routeRevision
+        )
+        return try XCTUnwrap(OpaqueRouteSealedBundleV2.seal(
+            payload,
+            to: sendRoute,
+            authorizedAt: authorizedAt
+        ).packets.first)
+    }
+
+    private func makeSendRoute(
+        material: OpaqueRouteClientCapabilityMaterialV2,
+        payloadKey: OpaqueRoutePayloadKeyV2,
+        route: OpaqueReceiveRouteV2,
+        routeRevision: UInt64? = nil,
+        policy: OpaqueRoutePolicyV2? = nil
+    ) throws -> OpaqueSendRouteV2 {
+        try OpaqueSendRouteV2(
+            routeID: material.routeID,
+            relay: RelayEndpoint(
+                host: "relay.example",
+                port: 443,
+                useTLS: true,
+                transport: .websocket
+            ),
+            sendCapability: material.sendCapability,
+            payloadKey: payloadKey,
+            routeRevision: routeRevision ?? route.lease.renewalSequence,
+            policy: policy ?? route.lease.policy,
+            validFrom: route.lease.issuedAt,
+            expiresAt: route.lease.expiresAt,
+            state: .active,
+            testedAt: route.lease.issuedAt
+        )
+    }
+}
+
+private func opaqueRouteJSONObject<T: Encodable>(_ value: T) throws -> [String: Any] {
+    let data = try NoctweaveCoder.encode(value, sortedKeys: true)
+    return try XCTUnwrap(
+        JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+}
+
+private func opaqueRouteJSONData(_ object: [String: Any]) throws -> Data {
+    try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+}
+
+private extension Data {
+    func containsSubsequence(_ candidate: Data) -> Bool {
+        guard !candidate.isEmpty, candidate.count <= count else { return false }
+        for start in 0...(count - candidate.count) {
+            if self[start..<(start + candidate.count)] == candidate[...] {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+private func XCTAssertOpaqueRouteStoreThrows<T>(
+    _ expression: @autoclosure () async throws -> T,
+    _ errorHandler: (Error) -> Void = { _ in },
+    file: StaticString = #filePath,
+    line: UInt = #line
+) async {
+    do {
+        _ = try await expression()
+        XCTFail("Expected expression to throw", file: file, line: line)
+    } catch {
+        errorHandler(error)
+    }
+}

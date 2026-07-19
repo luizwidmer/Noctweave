@@ -254,7 +254,7 @@ private final class OperatorHTTPHandler: ChannelInboundHandler, @unchecked Senda
         if head.method == .PUT, path == "/admin/api/config" {
             do {
                 let data = requestBody.readData(length: requestBody.readableBytes) ?? Data()
-                let editable = try operatorJSONDecoder().decode(OperatorEditableConfiguration.self, from: data)
+                let editable = try decodeOperatorJSON(OperatorEditableConfiguration.self, from: data)
                 let state = try controlPlane.update(editable)
                 respondEncodable(status: .ok, value: state, context: context)
             } catch {

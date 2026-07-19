@@ -1,219 +1,132 @@
-# Noctweave Roadmap
+# Noctweave 1.0 Roadmap
 
-**Last updated:** July 10, 2026
-**Scope:** public core protocol, `NoctweaveCLI`, Linux relay, Docker/ops tooling, and public protocol documentation.
+This roadmap starts at the clean 1.0 architecture. Pre-release identities,
+wire envelopes, persisted state, and relay APIs are not migration inputs.
 
-This roadmap reflects repository evidence rather than early planning estimates. Items are marked complete only when code, tests, documentation, or release tooling exist in this repository.
+## Architecture baseline
 
-## Current Status
+Completed in the architecture revision:
 
-Noctweave has moved past the initial prototype phase. The public repository now contains the shared Swift core, a command-line headless messaging/API client, a Linux relay server, Docker packaging, relay federation machinery, protocol documentation, security notes, SBOM generation, and release verification scripts.
+- local-only personas with no protocol key or public identifier;
+- fresh unlinkable pairwise relationship authorities;
+- one singular relationship endpoint binding with renewable PQ prekeys;
+- one-use encrypted contact rendezvous;
+- two-lane encrypted rendezvous relay transport with separated capabilities;
+- capability-separated opaque routes with bounded retention;
+- ordered non-destructive sync with local-first durable cursor advancement,
+  persisted cross-page/restart reassembly, three-class receive failure handling,
+  deterministic pressure eviction, best-effort relay commit, and effect-
+  idempotent terminal teardown;
+- immutable namespaced events, relations, receipts, and silent controls;
+- exact protocol/content capability negotiation and pre-ratchet rejection;
+- relationship-local consent, message request, mute, receipt, block, and safety
+  number state without a global identity;
+- zero-I/O durable local echo with distinct transaction, event, direct-envelope,
+  route-copy, and relay-sequence identifiers;
+- persisted per-relationship direct ratchets, per-route/session send ordering,
+  bounded retries, explicit terminal failure, and explicit artifact discard;
+- one ML-KEM signed-prekey bootstrap per direct-v4 session, symmetric chains
+  thereafter, and a fresh session after reset/gap, with no periodic PQ root
+  refresh or in-session post-compromise-healing claim;
+- per-relationship mutation serialization, a global encrypted-state save gate,
+  and independent receive-route availability;
+- make-before-break signed route-set state with restart-resumable creation,
+  publication, probe reconciliation, promotion, overlap, and failure cleanup;
+- a serialized relationship maintenance cycle that resumes exact rollover
+  journals, rotates relationship-only prekeys, begins a fresh route before
+  expiry, and finalizes elapsed drain windows;
+- exact encrypted-blob upload journaling with immutable retained coordinates;
+- selective relationship-only continuity and destructive local burn;
+- process-local pre-construction persona-scope guards that reject late results
+  after burn or restart without becoming protocol authority;
+- signed group roles, policy, complete epoch transitions, destination Welcomes,
+  deletion, and one active group-scoped credential per member;
+- anchored group-only join, atomic peer-epoch convergence, exact replay,
+  digest-only fork evidence, terminal local removal, and a 32 MiB aggregate
+  runtime bound;
+- exact terminal group-deletion outbox/inbound persistence, atomic work
+  clearing, resurrection rejection, and throwing group PQ error propagation;
+- typed group events, exact durable application-envelope retry, and replay
+  receipts;
+- signed per-credential group route announcements with direct hash-chained
+  replacement plus signer-authorized monotonic checkpoints after missed
+  revisions, a durable peer-route cache, exact packet-attempt journals,
+  transition/Welcome/control staging, independent receive cursors,
+  reassembly/quarantine, route lifecycle, and Headless group dispatch;
+- high-level group creation, text send, bounded sync, maintenance,
+  admission/add/join, exact-operation resume, and deletion in the Swift API and
+  CLI, with corresponding text/admission workflows in the native reference app;
+- independently anchored, crash-recoverable encrypted local client state with
+  an explicit erased tombstone rather than an implicit reset after file loss;
+- durable browser direct messaging and make-before-break route maintenance,
+  with a fixed-slot aggregate anchor, per-relationship anchors, and terminal
+  burn recovery supplied by the embedding host;
+- exact modular relay request/response envelopes;
+- throwing live PQ verification that preserves algorithm/runtime unavailability
+  as retryable local failure;
+- provisional 1.0-candidate status for every unaudited direct and relay module;
+- experimental route-scoped optional wake/prefetch with no identity payload;
+- explicit federation trust modes and extension lifecycle.
 
-## Completed Foundations
+## Release engineering gates
 
-- [x] Public protocol specification: `noctweave_protocol_spec_v1.md`
-- [x] Public core API orientation: `noctweave_core_public_api.md`
-- [x] Wire format and test vector documentation: `wire_format_and_test_vectors.md`
-- [x] Relay API/OpenAPI specification: `noctweave_relay_openapi.yaml`
-- [x] Security requirements document: `security_requirements.md`
-- [x] Whitepaper alignment verifier: `scripts/verify-whitepaper-alignment.sh`
-- [x] Relay operator hardening guide: `relay_ops_hardening_guide.md`
-- [x] Machine-readable SBOM snapshots and generator
-- [x] Release verification script for SBOM freshness, package pins, dependency graph checks, and relay tests
-- [x] Repository-wide internal security review with fixed findings and explicit residual-risk record
+These are finite verification and hardening tasks, not architecture migration:
 
-## Core Protocol
+- [ ] Run the complete Swift Core, Linux relay, and JavaScript suites from a
+  clean checkout on macOS and Linux.
+- [ ] Keep Swift and JavaScript golden vectors identical for every signed and
+  encrypted structure.
+- [ ] Build genuinely independent wire/failure-semantics conformance evidence
+  for each module before promoting it from provisional to stable.
+- [ ] Add differential decoders and property/fuzz tests for strict relay,
+  rendezvous, direct, route, intent, and group objects.
+- [ ] Expand the implemented NCJ-1 Swift/JavaScript positive and negative
+  vectors into a differential corpus for every signed, hashed, and encrypted
+  structure.
+- [ ] Exercise cursor recovery, exact retry, route rollover, and group epoch
+  recovery across process termination and injected storage faults, including
+  local-save-before-relay-commit and teardown-confirmation crash windows.
+- [ ] Complete an independent review of direct transcripts, the experimental
+  PQ group construction, secret zeroization, side channels, downgrade
+  resistance, forward-secrecy limits, and direct-v4's explicit absence of
+  in-session post-compromise healing.
+- [ ] Publish reproducible build, SBOM, dependency, container, and artifact
+  checksum evidence.
+- [ ] Validate operator limits, retention, federation policy, and backup
+  procedures in a deployment lab.
 
-- [x] ML-KEM/ML-DSA integration through `liboqs`
-- [x] PQ prekey bundle flow for session establishment
-- [x] Periodic ML-KEM root ratchet support
-- [x] AEAD-protected direct messages
-- [x] Bounded replay and out-of-order message handling
-- [x] Ratchet mismatch classification and recovery policy
-- [x] Identity rotation with continuity events
-- [x] Identity burn/reset primitives
-- [x] Contact safety numbers and trust state
-- [x] Password-protected contact share package format
-- [x] Fixed-bucket padded direct and group plaintext envelopes
-- [x] Encrypted local client-state storage primitives
+## Product completion
 
-## Groups
+- [ ] Expose the implemented consent/message-request, mute, receipt, block,
+  safety-number, and best-effort route-teardown controls in every end-user
+  reference surface.
+- [ ] Add accessible projections for replies, replacements, reactions,
+  retractions, delivery receipts, and optional read receipts.
+- [ ] Produce a group interoperability harness and client/process termination
+  test lab before enabling the experimental group profile by default.
+- [ ] Add advanced native group administration for role/policy changes,
+  removal, deletion, route rollover, attachments, and restart-time re-export of
+  an owner-prepared admission response.
+- [ ] Add attachment prepare/publish/retry to the high-level durable browser
+  messaging service; keep attachment requests fail-closed until that boundary
+  exists.
+- [ ] Implement an independently secured rollback-anchor backend for non-Apple
+  JavaScript desktop hosts; continue to fail closed until one exists.
 
-- [x] MLS-derived group design documented
-- [x] Relay group descriptors and lifecycle operations
-- [x] Signed group commits for membership changes
-- [x] Epoch/transcript-bound group ratchet
-- [x] Group-ratchet encrypted messages
-- [x] Group-ratchet encrypted attachments and voice-message bodies
-- [x] Member-scoped group acknowledgements
-- [x] Bounded retained epoch history for offline recovery
-- [x] Route-level tests for group join, update, delete, self-leave, stale epochs, and federated group delivery
-- [x] Bounded group protocol model checker for commit-state invariants
+## Optional post-1.0 profiles
 
-## Linux Relay
+The following remain separately negotiated research or deployment profiles:
 
-- [x] TCP line-delimited relay protocol
-- [x] HTTP and WebSocket `/relay` bridge
-- [x] Health and info routes
-- [x] Normalized SQLite persistence
-- [x] In-memory mode
-- [x] Fail-closed startup on corrupt security-relevant normalized SQLite rows
-- [x] Inbox, message, group, prekey, attachment, and replay-cache bounds
-- [x] Relay password authentication with constant-time token comparison
-- [x] Basic rate limiting and request-size limits
-- [x] HTTP security headers
-- [x] Attachment TTL policy
-- [x] Text-only relay mode
-- [x] Inline SQLite attachment storage
-- [x] IPFS-compatible encrypted attachment offload with CID, size, digest, and expiry metadata retained in SQLite
-- [x] Best-effort IPFS unpin on TTL cleanup
-- [x] Docker image with runtime `liboqs`
-- [x] Non-root Docker runtime user
-- [x] Docker + Caddy/Let's Encrypt deployment path
-- [x] Authenticated Docker relay operator console with a dedicated listener
-- [x] Atomic non-secret operator configuration persistence with mode `0600`
-- [x] Live-safe relay policy and federation updates with per-request snapshots
-- [x] Restart-aware IPFS backend and endpoint staging
-- [x] Operator console controls for hidden retrieval, onion, mixnet, DHT/PEX,
-  coordinator policy, group security, temporal bucketing, and wake advertisement
+- encrypted archive providers containing history only, never live authority;
+- LAN, offline-file, onion, and helper-mailbox delivery adapters;
+- hidden retrieval/PIR deployments with explicit assumptions;
+- mixnet scheduling and cover-traffic policy;
+- open-federation discovery hardening;
+- a reviewed conforming MLS provider or future reviewed PQ MLS profile.
 
-## Federation And Discovery
+## Deliberate non-goals
 
-- [x] Solo relay mode
-- [x] Manual standard-relay federation mode
-- [x] Curated federation mode
-- [x] Manual/curated/open network isolation policy
-- [x] Coordinator registration and heartbeat routes
-- [x] Coordinator freshness filtering
-- [x] ML-DSA signed coordinator directory snapshots
-- [x] Stable coordinator directory-signing key support
-- [x] Curated strict forwarding policy with allow-list, coordinator quorum, and signed-directory checks
-- [x] Dedicated inter-relay forwarding token path
-- [x] Guard against reusing inbound client auth tokens for relay-to-relay forwarding
-- [x] Forwarding timeout controls
-- [x] Open-federation signed DHT record model
-- [x] Bounded relay-native DHT node mode
-- [x] Bounded peer exchange hints
-- [x] Public-endpoint policy and private-address rejection for public open-federation paths
-- [x] DHT protocol-version and federation-name binding, bounded gateway responses, and no-redirect gateway fetches
-- [x] HTTP gateway transport for DHT record publish/query
-- [x] Native overlay transport bounded by peer hints
-
-## Metadata Reduction And Retrieval
-
-- [x] Temporal bucketing advertisement
-- [x] Operator-selectable temporal bucket schedule
-- [x] Operator option to disable temporal bucketing
-- [x] Hidden-retrieval cover-query planner
-- [x] Cover-query validation and fail-closed extraction
-- [x] Replicated XOR-PIR query/share/recovery primitives
-- [x] Replicated XOR-PIR operational validation for independent TLS replicas
-- [x] Relay metadata suppression for weak or misleading PIR advertisements
-- [x] Onion packet construction and ordered peeling primitive
-- [x] Relay metadata for optional onion transport
-- [x] Relay metadata suppression for unusable onion support
-- [x] Deterministic mixnet batch planning with cover packets and bounded delay
-- [x] Relay metadata for optional mixnet scheduling
-- [x] Relay metadata suppression for misleading mixnet advertisements
-
-## Decentralized Wake And Prefetch
-
-- [x] Relay-advertised wake policy
-- [x] Deterministic jitter and backoff wake planner
-- [x] Long-poll fetch behavior bounded by relay policy
-- [x] Execution planner caps for profiles, per-profile envelopes, long-poll envelopes, and total cycle envelopes
-- [x] Ciphertext-only prefetch batch model
-- [x] Encrypted prefetch batch store
-- [x] Direct-message ciphertext staging without decrypting or acknowledging relay messages
-- [x] Helper-status metadata minimization model
-
-## CLI And Public Tooling
-
-- [x] `NoctweaveCLI` executable target
-- [x] Endpoint normalization for `host:port`, `http`, `https`, `ws`, `wss`, `tcp`, and `tls`
-- [x] Public `HeadlessMessagingClient` API in `NoctweaveCore`
-- [x] Headless direct-message client state backed by `NoctweaveCore`
-- [x] Headless identity initialization with inbox access key generation
-- [x] Headless inbox registration with signed actor proof
-- [x] Headless contact-code and password-protected contact-package import/export
-- [x] Headless direct encrypted text send/fetch/decrypt/acknowledge flow
-- [x] Headless identity rotation command with continuity notification delivery
-- [x] Headless identity burn command with opt-in reset notification delivery
-- [x] Headless CLI continuity-audit inspection and purge commands
-- [x] Relay `health` command
-- [x] Relay `info` command
-- [x] Raw relay-request command from JSON string, file, or stdin
-- [x] CLI usage documentation: `noctweave_cli_usage.md`
-- [x] Shared relay endpoint parser with tests
-- [x] Public combined test runner: `scripts/run-tests.sh`
-- [x] Public release verification script: `scripts/verify-release.sh`
-- [x] Headless CLI group messaging commands
-- [x] Headless CLI attachment and voice-message commands
-
-## JavaScript Client
-
-- [x] Bounded HTTP/HTTPS and WebSocket/WSS relay client
-- [x] Redirect rejection, omitted ambient credentials, response-size limits, and redacted transport errors
-- [x] ML-KEM-768 and ML-DSA-65 liboqs WASM adapter with fixed-profile checks
-- [x] Native Noctweave direct-message/contact-offer interoperability profile
-- [x] Bounded memory, localStorage, IndexedDB, and database adapters
-- [x] AES-GCM encrypted storage wrapper and password-protected portable profile vault
-- [x] Localhost-only browser demo server with Host-header validation and DOM-safe rendering
-
-## Test And Verification Coverage
-
-- [x] Core XCTest suite
-- [x] Linux relay XCTest suite
-- [x] Direct encrypted message round trips
-- [x] Federated direct-message delivery
-- [x] Headless direct-message relay exchange with persistent state
-- [x] Headless identity rotation and burn/reset relay exchange
-- [x] Headless group-message relay exchange with persistent state
-- [x] Headless direct attachment relay exchange with persisted recovery metadata
-- [x] Headless group voice-message relay exchange with persisted recovery metadata
-- [x] Federated group-ratchet delivery
-- [x] Relay TCP integration tests
-- [x] HTTP bridge security-header tests
-- [x] Actor-proof verification tests
-- [x] Replay rejection tests
-- [x] Forwarding timeout tests
-- [x] Auth-token isolation tests
-- [x] Attachment offload and digest-mismatch tests
-- [x] Open-federation poisoning, flood, churn, and stale-record tests
-- [x] Hidden-retrieval plan validation tests
-- [x] Group protocol model-checking tests
-- [x] SBOM JSON validation
-- [x] Package pin verification
-
-## Remaining Release Gates
-
-These are finite release gates. They should stay bounded to a concrete artifact, test, or decision.
-
-- [ ] Publish a fresh public security audit report or explicitly mark the current release as unaudited.
-- [ ] Add public benchmark results for relay latency, relay throughput, and core encryption/decryption costs.
-- [ ] Add coverage reporting for `NoctweaveCore` and the Linux relay package.
-- [ ] Add CI jobs for Linux relay tests on Ubuntu.
-- [ ] Add CI container build and vulnerability scan evidence.
-- [x] Add a minimal public operator quickstart for common reverse-proxy deployments.
-- [ ] Add signed release artifact instructions for relay binaries and Docker images.
-- [x] Add semantic-versioning and source-stability policy for public `NoctweaveCore` releases.
-
-## Deferred Research
-
-These are intentionally not release blockers unless a future release claims them as production properties.
-
-- [ ] External cryptographic review of the group protocol model and MLS-derived ratchet construction.
-- [ ] External side-channel review of PQ primitive use, key handling, and memory behavior.
-- [ ] Production-grade mixnet deployment with sustained cover traffic and shared route policy.
-- [ ] Production-grade PIR deployment with non-collusion evidence and availability monitoring.
-- [ ] Wider decentralized relay discovery beyond bounded relay-native DHT and peer hints.
-- [ ] Formal proofs for identity continuity, group epochs, and recovery behavior.
-- [ ] Third-party client implementation to validate protocol interoperability.
-
-## Operational Notes
-
-- Noctweave does not rely on centralized push notifications in the public protocol.
-- IPFS attachment offload is a storage feature, not an anonymity layer.
-- Open federation remains bounded by signed records, endpoint policy, cache limits, and poisoning/flood controls.
-- Manual, curated, and open federation modes remain separate network models.
-- Relay operators should prefer TLS termination, minimal logs, explicit storage retention policy, and private IPFS infrastructure when enabling attachment offload.
+The roadmap does not contain account creation, device/installation linking,
+recovery authorities, shared live-ratchet sync, reusable public contact IDs,
+permanent managed history, vendor push requirements, public DM topics, public
+relay lists, or a migration layer for pre-release state.

@@ -10,7 +10,7 @@ Use only the public components:
 
 - `NoctweaveCore/`: Swift package with protocol models, relay client/server primitives, cryptographic flows, message ratchets, federation logic, and `NoctweaveCLI`.
 - `NoctweaveRelayServer/`: Linux/Docker relay implementation with TCP, HTTP, WebSocket, SQLite persistence, federation, IPFS attachment offload, and operator configuration.
-- `NoctweaveJS/`: bounded browser/Node relay client, liboqs WASM profile, encrypted storage wrapper, and interoperable direct-message helpers.
+- `NoctweaveJS/`: bounded browser/Node relay client, liboqs WASM profile, encrypted storage wrapper, and interoperable relationship-scoped event helpers.
 - `NoctweaveDocumentation/`: protocol specs, OpenAPI schema, relay hardening, security requirements, and whitepaper alignment notes.
 
 Do not depend on proprietary Apple client or macOS GUI relay app sources. They are outside the public integration boundary.
@@ -47,15 +47,17 @@ swift run --package-path NoctweaveCore NoctweaveCLI info --relay http://127.0.0.
 ## Security Expectations
 Preserve Noctweave’s security boundaries:
 
-- Public-key identity continuity uses post-quantum signatures.
-- Session establishment uses ML-KEM style post-quantum key agreement.
+- Each relationship mints fresh post-quantum signing authority for its own continuity; there is no global public identity.
+- Relationship-scoped session establishment uses ML-KEM style post-quantum key agreement.
+- A persona is local UI state only. Do not introduce protocol accounts, linked devices, installation manifests, recovery authorities, global inboxes, or self-sync authority.
+- Group credentials are group-scoped and must never reuse relationship or other group key material.
 - Payloads and attachments are end-to-end encrypted before relay submission.
 - Relays are storage and routing infrastructure, not trusted plaintext processors.
 - Federation modes are explicit trust domains: `solo`, `manual`, `curated`, and `open` must not be silently mixed.
 - TLS/reverse proxying protects transport metadata in transit but does not replace message encryption.
 - IPFS attachment offload is for relay storage pressure, not anonymity.
 - Raw JavaScript storage adapters are plaintext; wrap sensitive state with `EncryptedNoctweaveStore` and manage its key separately.
-- Use throwing PQ identity/key generation APIs in production so algorithm or entropy failures can be handled without terminating the host process.
+- Use throwing PQ relationship-authority/key generation APIs in production so algorithm or entropy failures can be handled without terminating the host process.
 
 Never add plaintext message logging, server-side decryption, implicit key escrow, silent downgrade paths, or cross-mode federation shortcuts.
 
@@ -63,6 +65,8 @@ Never add plaintext message logging, server-side decryption, implicit key escrow
 Relay endpoints may be raw TCP, TLS TCP, HTTP, HTTPS, WebSocket, or WSS depending on operator configuration. Client integrations should parse explicit schemes and avoid guessing ports when a URL already supplies a scheme.
 
 Manual federation is for small operator-managed meshes. Curated federation uses allow lists and coordinator policy. Open federation uses bounded signed discovery hints and must retain public endpoint safeguards.
+
+Federation discovers and coordinates relay operators; it does not forward user messages between relays. Clients submit ciphertext directly to the relay endpoints advertised in peer relationship-encrypted route sets.
 
 ## Change Discipline
 Keep integration changes narrow and testable. Update public docs when protocol behavior, relay flags, or wire formats change. Add focused tests for new relay routes, parser behavior, persistence behavior, or federation policy.

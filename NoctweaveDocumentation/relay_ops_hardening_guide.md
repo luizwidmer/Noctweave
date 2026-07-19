@@ -1,221 +1,166 @@
 # Noctweave Relay Operator Hardening Guide
 
-Last updated: July 10, 2026
+Updated July 18, 2026 for the clean 1.0 relay.
 
-This guide is for operators running a Noctweave relay on Linux or Docker. It focuses on reducing operational metadata, limiting abuse paths, and avoiding configuration drift. It does not make the relay anonymous: relays still observe source IPs, request timing, chosen inboxes, ciphertext sizes, and federation topology hints.
+The relay stores capability-protected ciphertext for direct client submission
+and receiver synchronization. It is not anonymous infrastructure: an operator
+or network observer can still see source addresses, timing, request frequency,
+selected route capabilities, ciphertext sizes, retention, and federation
+topology.
 
-## Baseline Deployment
-
-Run the relay behind a TLS reverse proxy unless you are testing on an isolated LAN. Prefer HTTPS/WSS for client traffic and relay-to-relay federation.
+## Network boundary
 
 Recommended public layout:
 
-```bash
-Client -> https://relay.example.org/relay -> reverse proxy -> relay HTTP bridge
+```text
+client -> HTTPS/WSS reverse proxy -> POST or WebSocket /relay -> relay bridge
 ```
 
-Expose only the public proxy ports (`443`, optionally `80` for ACME). Keep the raw relay TCP port and HTTP bridge port firewalled to localhost or the reverse proxy network.
+- expose `443/tcp` at the reverse proxy;
+- expose `80/tcp` only when ACME HTTP-01 needs it;
+- firewall raw TCP `9339` and bridge `9340` from direct public access where
+  possible;
+- bind operator port `9090` to loopback or a private management network;
+- allow outbound federation directory and coordination calls only to the
+  endpoints required by the selected trust mode.
 
-Use the Docker image as the default Linux deployment path. It runs as an unprivileged user and includes runtime `liboqs` for ML-DSA actor-proof and coordinator-signature verification.
+Advertise the public explicit endpoint and TLS state. Do not publish loopback,
+private, link-local, or ambiguous endpoints into public federation.
 
-## TLS And Reverse Proxy
+## Exact protocol path
 
-Use one of these patterns:
+Only the exact modular relay envelope is accepted. Health and information are
+`nw.core@2` requests through `/relay`; there is no GET compatibility endpoint.
+Configure reverse proxies to reject oversized/slow bodies and preserve
+WebSocket frame boundaries.
 
-- Caddy/Let's Encrypt stack from `NoctweaveRelayServer/docker-compose.letsencrypt.yml`.
-- Nginx Proxy Manager or Cloudflare Tunnel terminating TLS and forwarding to `POST /relay`.
-- Internal-only TCP for development only.
+After deployment, verify:
 
-When TLS is terminated by a proxy, advertise the public URL:
-
-```bash
---http-port 9340 \
---advertised-endpoint https://relay.example.org:443 \
---advertise-tls true \
---transport http
-```
-
-Do not advertise `http://`, private IPs, loopback, or LAN addresses for open federation unless the relay is intentionally private and `--allow-private-federation-endpoints true` is set for an isolated test network.
-
-## Firewall Rules
-
-Minimum public exposure:
-
-- Allow inbound `443/tcp` to the reverse proxy.
-- Allow inbound `80/tcp` only if ACME HTTP-01 challenges need it.
-- Block direct inbound access to relay raw TCP (`9339`) and bridge (`9340`) from the public internet.
-- Allow outbound HTTPS/WSS to federation peers and coordinators.
-- Bind the operator Web UI to localhost or a private management network. Never expose port `9090` as a public relay endpoint.
-
-For curated federation, restrict outbound relay-to-relay traffic to allow-listed relays where possible.
+1. `nw.core@2 health` through HTTPS;
+2. `nw.core@2 info` advertises only enabled modules;
+3. malformed/unknown fields are rejected;
+4. request/response correlation survives HTTP and WebSocket proxying;
+5. TLS validation and any configured pins work from a real client network.
 
 ## Secrets
 
-Prefer environment variables over command-line flags:
+Use separate random values for relay access, operator access, coordinator
+registration, and coordinator signing. Prefer secret files or environment
+injection over shell history.
 
-- `NOCTWEAVE_RELAY_PASSWORD`
-- `NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN`
-- `NOCTWEAVE_FEDERATION_FORWARDING_TOKEN`
-- `NOCTWEAVE_COORDINATOR_SIGNING_KEY`
-- `NOCTWEAVE_ADMIN_TOKEN`
+Never log:
 
-Keep relay passwords and federation forwarding tokens distinct. The relay already avoids forwarding inbound client auth tokens to other relays; keep that isolation operationally true by not reusing the same secret everywhere.
+- relay/admin/coordinator-registration tokens;
+- opaque route IDs or capability material;
+- rendezvous capabilities or frame bodies;
+- encrypted packet or attachment bytes;
+- request bodies containing user-supplied ciphertext.
 
-Coordinator signing keys are trust roots. Back them up offline. If a coordinator key is lost or rotated unexpectedly, clients and relays that pinned the previous public key should treat the directory as a new trust root.
-
-The operator Web UI uses a separate bearer token, never the relay client
-password. Generate at least 32 random bytes, keep the host port loopback-bound,
-and place any remote access behind SSH, a private VPN, or an authenticated TLS
-management proxy. The console stores its token only in browser session storage;
-closing the tab clears the browser-side session. The operator API does not
-return relay, federation, coordinator, or signing secrets.
+If a bearer route capability leaks, treat only that route as compromised:
+create a fresh route, move the relationship through its signed rollover, and
+tear down the old route. Do not invent a user/account revocation record.
 
 ## Storage
 
-Use a dedicated data volume with restrictive permissions:
+Run as an unprivileged user and mount `/data` with restrictive permissions.
+Back up `relay_store.sqlite` and `operator-config.json` as one consistency unit.
+Use `--memory-only` only for disposable testing.
 
-```bash
-docker run --rm \
-  -p 127.0.0.1:9340:9340 \
-  -v noctweave-relay-data:/data \
-  noctweave-relay
-```
+Validate restart behavior for:
 
-Persist `/data` for normal operation. Use `--memory-only` only for throwaway relays or development because queued messages, attachments, and coordinator keys disappear on restart.
+- route revision/idempotency state;
+- ordered packet sequences and committed cursors;
+- route expiry/teardown tombstones;
+- rendezvous expiry and replay state;
+- attachment metadata and optional external blobs;
+- federation directory/DHT bounds.
 
-Web UI changes are persisted separately as `/data/operator-config.json` with
-mode `0600`. Back it up with the relay database. The file deliberately contains
-only non-secret operator policy; bootstrap secrets remain environment or
-command-line inputs.
+Recovery must never resurrect an expired or torn-down route or report an
+in-memory mutation that did not reach durable SQLite.
 
-The console applies relay identity, delivery, temporal-bucket, group-security,
-federation, DHT/PEX, coordinator-policy, hidden-retrieval, onion, mixnet, and
-wake-advertisement changes to future requests without interrupting in-flight
-requests. Attachment backend and IPFS endpoint changes are persisted as desired
-configuration and show **Restart required** until the process restarts with the
-new blob store. Listener ports, SQLite versus RAM mode, request ceilings, relay
-passwords, admin tokens, federation tokens, and signing keys are never editable
-or returned through the browser API.
+## Bounds and retention
 
-Treat the operator console as a privileged management surface:
+Keep configured message/line limits, route quota buckets, attachment TTLs,
+rendezvous expiry, federation record limits, and request timeouts as small as
+the product permits. Validate integer conversion and disk-pressure behavior.
 
-- keep its host port loopback-bound or on a private management network;
-- use an independent random admin token of at least 32 bytes;
-- close or lock the console after use so its session-storage token is removed;
-- review `/data/operator-config.json` before restarting into staged backend or
-  federation changes;
-- do not enable replicated XOR-PIR, onion, or mixnet advertisements unless the
-  surrounding deployment actually satisfies their operational assumptions.
+Route sync is non-destructive but not permanent: expiry and bounded quota are
+the retention controls. The relay is not a history archive.
 
-Set attachment retention low enough for your budget and threat model:
+## Attachments and IPFS
 
-```bash
---attachment-default-ttl-seconds 1800 \
---attachment-max-ttl-seconds 7200
-```
+Attachment plaintext and content keys must be encrypted client-side. If IPFS
+offload is enabled:
 
-Use `--attachments-enabled false` for text-only relays.
+- use an operator-controlled node or private cluster;
+- restrict the API listener;
+- verify returned size and digest;
+- understand that unpinning is best effort, not cryptographic erasure;
+- keep gateway/API timeouts and maximum fetch bytes bounded.
 
-For storage offload, the Linux relay can store encrypted attachment chunks in an IPFS-compatible backend while keeping only chunk metadata, CIDs, byte counts, digests, and expiry data in SQLite:
+Disable `nw.blobs` when attachments are not needed.
 
-```bash
---attachment-storage ipfs \
---ipfs-api-endpoint http://127.0.0.1:5001 \
---ipfs-gateway-endpoint http://127.0.0.1:8080 \
---ipfs-timeout-seconds 10
-```
+## Federation
 
-This does not make attachment delivery anonymous. Clients still use the normal relay upload/fetch API, and the relay performs IPFS pin, fetch, digest verification, and best-effort unpin after TTL. Use a relay-controlled IPFS node or private IPFS cluster; public gateways and public DHT lookups can leak CID interest and should not be the privacy default.
+Federation discovers and coordinates relay operators. It is not a
+relay-to-relay user-message path: senders read the destination endpoint from a
+relationship-encrypted peer route set and append ciphertext directly to that
+opaque route.
 
-## Federation Mode
+- `solo`: safest default; no federation discovery or coordination.
+- `manual`: maintain explicit operator-reviewed relay descriptors and an allow
+  list.
+- `curated`: require matching trust domain, fresh coordinator evidence,
+  configured quorum, and valid signatures where enabled.
+- `open`: retain signed-record TTL, host quotas, query bounds, public endpoint
+  validation, and peer-hint ceilings.
 
-Solo mode is safest operationally because it does not forward across other relays.
+Federation requests may register or discover relays and validate endpoint
+reachability; they never carry relationship events or opaque-route packets.
+Do not reuse client auth or route capabilities for coordinator registration.
+No federation-forwarding token exists. Do not silently fall from
+curated/manual into open behavior. Treat coordinator key replacement as a new
+trust-root decision.
 
-Curated federation should use:
+## Operator console
 
-```bash
---federation-mode curated \
---federation-allow relay-a.example.org:443,relay-b.example.org:443 \
---curated-strict-policy true \
---curated-require-signed-directory true \
---curated-coordinator-quorum 1
-```
+Generate at least 32 random bytes for `NOCTWEAVE_ADMIN_TOKEN`. Keep the admin
+listener private and protect remote access with SSH, VPN, or a separately
+authenticated management proxy. Review persisted policy before restart.
 
-Manual federation should use `--federation-mode manual` with a short, explicit `--federation-allow` node list. Use it for small standard-relay meshes where operators directly exchange endpoint lists and do not want coordinator quorum, signed directory snapshots, DHT records, or peer exchange.
+The console must not expose secrets or edit listener/authentication primitives.
+Close/lock the session when not in use.
 
-Open federation is more exposed. Keep `--allow-private-federation-endpoints false`, require TLS, use public advertised endpoints, and monitor peer churn.
+## Optional privacy modules
 
-## Open Federation And DHT
+Hidden retrieval, replicated XOR-PIR metadata, onion packets, mixnet schedules,
+open DHT, and wake advertisements are experimental. Enable them only when the
+deployment satisfies their assumptions. None alone establishes global
+anonymity, cover traffic, independent PIR operators, or safe public discovery.
 
-Open-federation DHT records are discovery hints, not authority. Enable DHT node mode only for open-federation relays that should participate in relay discovery. A relay should accept records only after signed-record validation, namespace matching, lifetime checks, TLS/public-routability checks, and host/total caps.
+## Incident response
 
-The current relay supports:
+1. isolate the affected listener/storage role;
+2. preserve bounded logs that contain no capability or ciphertext bodies;
+3. rotate only the compromised operator/coordinator-registration secret or
+   opaque route;
+4. validate SQLite and external blob consistency;
+5. re-run exact protocol and persistence tests;
+6. publish changes to advertised federation trust only after verification.
 
-- HTTP gateway sidecar integration for BEP5/libp2p/custom discovery processes.
-- Native relay-protocol DHT publish/list routes when DHT node mode is enabled.
-- Bounded PEX-style traversal from `knownOpenPeers`.
+There is no global Noctweave account to suspend. Abuse controls are route,
+request, storage, network, and operator-policy controls.
 
-Do not publish user identifiers, contact codes, inbox addresses, or message metadata to any public DHT. Only relay endpoint records belong in this path.
+## Release checklist
 
-## Logs
-
-Treat logs as sensitive metadata. Avoid logging:
-
-- Inbox IDs
-- contact codes
-- full relay endpoints of clients
-- message counters
-- attachment IDs
-- auth tokens
-
-Keep logs short-lived. In Docker, prefer host log rotation:
-
-```bash
-docker run --log-opt max-size=10m --log-opt max-file=3 ...
-```
-
-If exposing logs to a monitoring system, scrub request bodies and authorization headers before export.
-
-## Rate Limits And Capacity
-
-Keep default bounds unless you have measured need:
-
-```bash
---max-inbox 1000 \
---max-message-bytes 524288 \
---max-line-bytes 655360 \
---forwarding-timeout-seconds 8
-```
-
-The Linux relay normalizes ports, timeouts, TTLs, bucket schedules, retrieval
-set sizes, DHT cache/query counts, and mixnet/onion/wake parameters into finite
-supported ranges before startup. Treat a normalization warning or unexpected
-advertised value as a configuration error; do not rely on extreme values being
-accepted literally.
-
-Lower `--relay-peer-exchange-limit` if open-federation peer churn is high. Set it to `0` to disable peer hints.
-
-## Upgrade Checklist
-
-Before upgrading:
-
-1. Back up `/data`, including coordinator signing keys.
-2. Record the relay public endpoint and federation mode.
-3. Verify the new image still includes `liboqs`.
-4. Start the upgraded relay behind the proxy.
-5. Run health checks on `/health` and client relay test connection.
-6. For federation, verify `/info` advertises the expected relay name, mode, transport, TLS state, and coordinator metadata.
-
-For release dependency review, use `dependency_sbom_and_release_policy.md`.
-
-## Incident Response
-
-If a relay token leaks:
-
-1. Rotate `NOCTWEAVE_RELAY_PASSWORD`.
-2. Rotate `NOCTWEAVE_FEDERATION_FORWARDING_TOKEN`.
-3. Restart the relay and proxy.
-4. Review logs for unexpected forwarding attempts.
-5. Notify federation peers if a curated or coordinator token was involved.
-
-If a coordinator signing key leaks, retire that coordinator identity and publish a new trust root through an out-of-band operator channel. Do not silently reuse the compromised key.
+- clean Swift relay build and test suite;
+- exact OpenAPI/schema drift check;
+- immutable liboqs and Swift dependency pins;
+- current native and CycloneDX SBOMs;
+- non-root container and restrictive volume permissions;
+- TLS/reverse-proxy integration test;
+- backup/restore and disk-pressure exercise;
+- attachment/IPFS failure exercise if enabled;
+- federation-mode-specific directory/coordination test if federation is
+  enabled;
+- no unsupported module advertised.

@@ -5,14 +5,13 @@ public final class RelayServer {
     public enum Event {
         case started(port: UInt16)
         case stopped
-        case delivered(inboxId: String, storedCount: Int)
-        case fetched(inboxId: String, count: Int)
         case error(String)
     }
 
     public var onEvent: ((Event) -> Void)?
 
     private let store: RelayStore
+    private let opaqueRouteStore: OpaqueRouteRelayStoreV2
     private var listener: NWListener?
     private var localEndpoint: RelayEndpoint?
     private var coordinatorHeartbeatTask: Task<Void, Never>?
@@ -38,19 +37,32 @@ public final class RelayServer {
     }
     private let listenerQueue = DispatchQueue(label: "NoctweaveCore.RelayServer")
 
-    public init(store: RelayStore, configuration: RelayConfiguration = RelayConfiguration()) {
+    public init(
+        store: RelayStore,
+        opaqueRouteStore: OpaqueRouteRelayStoreV2 = OpaqueRouteRelayStoreV2(),
+        configuration: RelayConfiguration = RelayConfiguration()
+    ) {
         self.store = store
+        self.opaqueRouteStore = opaqueRouteStore
         self.relayConfiguration = configuration
+        let coordinatorKeyMaterial: (privateKey: Data, publicKey: Data)?
         if configuration.kind == .coordinator {
-            let keyData = FederationDirectorySignature.privateKeyData(
-                from: configuration.coordinatorDirectorySigningPrivateKey
-            )
-            self.coordinatorDirectorySigningPrivateKey = keyData
-            self.coordinatorDirectoryPublicKey = FederationDirectorySignature.publicKeyData(from: keyData)
+            do {
+                let keyData = try FederationDirectorySignature.privateKeyDataThrowing(
+                    from: configuration.coordinatorDirectorySigningPrivateKey
+                )
+                coordinatorKeyMaterial = (
+                    keyData,
+                    try FederationDirectorySignature.publicKeyDataThrowing(from: keyData)
+                )
+            } catch {
+                coordinatorKeyMaterial = nil
+            }
         } else {
-            self.coordinatorDirectorySigningPrivateKey = nil
-            self.coordinatorDirectoryPublicKey = nil
+            coordinatorKeyMaterial = nil
         }
+        self.coordinatorDirectorySigningPrivateKey = coordinatorKeyMaterial?.privateKey
+        self.coordinatorDirectoryPublicKey = coordinatorKeyMaterial?.publicKey
     }
 
     public func start(port: UInt16) throws {
@@ -85,7 +97,13 @@ public final class RelayServer {
         listener.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
-                self?.onEvent?(.started(port: port))
+                // Port zero asks Network.framework for an available local port.
+                // Report the actual bound port so callers can establish a
+                // race-free ephemeral listener without probing a random port
+                // before startup.
+                let boundPort = self?.listener?.port?.rawValue ?? port
+                self?.localEndpoint?.port = boundPort
+                self?.onEvent?(.started(port: boundPort))
             case .failed:
                 self?.onEvent?(.error("Listener failed"))
             default:
@@ -128,7 +146,6 @@ public final class RelayServer {
             configuration.federationAllowList = updated.federationAllowList
             configuration.federationCoordinatorEndpoints = updated.federationCoordinatorEndpoints
             configuration.coordinatorRegistrationToken = updated.coordinatorRegistrationToken
-            configuration.federationForwardingAuthToken = updated.federationForwardingAuthToken
             configuration.coordinatorHeartbeatSeconds = updated.coordinatorHeartbeatSeconds
             configuration.coordinatorDirectoryMaxStalenessSeconds = updated.coordinatorDirectoryMaxStalenessSeconds
             configuration.relayPeerExchangeLimit = isOpenFederation ? updated.relayPeerExchangeLimit : 0
@@ -156,13 +173,37 @@ public final class RelayServer {
             do {
                 try await connection.awaitReady()
                 let line = try await connection.receiveLine(maxLength: RelayClient.maxResponseBytes)
-                let request = try NoctweaveCoder.decode(RelayRequest.self, from: line)
-                let response = try await handle(
-                    request: request,
-                    sourceKey: endpointSourceKey(connection.endpoint)
-                )
+                let request: RelayRequest
+                do {
+                    request = try NoctweaveCoder.decode(RelayRequest.self, from: line)
+                } catch is CryptoError {
+                    onEvent?(.error("Relay cryptography unavailable while decoding request"))
+                    connection.cancel()
+                    return
+                } catch {
+                    onEvent?(.error("Invalid relay request"))
+                    connection.cancel()
+                    return
+                }
+                let response: RelayResponse
+                do {
+                    response = try await handle(
+                        request: request,
+                        sourceKey: endpointSourceKey(connection.endpoint)
+                    )
+                } catch {
+                    response = .error(
+                        "Relay processing failed",
+                        code: .internalFailure,
+                        retryable: true,
+                        respondingTo: request
+                    )
+                }
                 let responseData = try NoctweaveCoder.encode(response)
                 try await connection.sendLine(responseData)
+                connection.cancel()
+            } catch is CryptoError {
+                onEvent?(.error("Relay cryptography unavailable while encoding response"))
                 connection.cancel()
             } catch {
                 onEvent?(.error("Connection error"))
@@ -181,6 +222,15 @@ public final class RelayServer {
                     sourceKey: endpointSourceKey(connection.endpoint)
                 )
                 try await sendRaw(responseData, on: connection)
+            } catch is CryptoError {
+                onEvent?(.error("Relay cryptography unavailable while processing HTTP request"))
+                let errorResponse = httpResponse(
+                    statusCode: 503,
+                    reasonPhrase: "Service Unavailable",
+                    body: Data("relay temporarily unavailable\n".utf8),
+                    contentType: "text/plain; charset=utf-8"
+                )
+                try? await sendRaw(errorResponse, on: connection)
             } catch {
                 onEvent?(.error("HTTP connection error"))
                 let errorResponse = httpResponse(
@@ -288,40 +338,53 @@ public final class RelayServer {
 
     private func processHTTPRequest(_ message: HTTPMessage, sourceKey: String?) async throws -> Data {
         switch (message.method, message.path) {
-        case ("GET", "/health"):
-            return httpResponse(
-                statusCode: 200,
-                reasonPhrase: "OK",
-                body: Data("ok\n".utf8),
-                contentType: "text/plain; charset=utf-8"
-            )
-        case ("GET", "/info"):
-            let response = try await handle(request: .info())
-            let body = try NoctweaveCoder.encode(response)
-            return httpResponse(statusCode: 200, reasonPhrase: "OK", body: body)
         case ("POST", "/relay"):
             guard !message.body.isEmpty else {
-                let body = try NoctweaveCoder.encode(RelayResponse.error("Missing relay request body"))
-                return httpResponse(statusCode: 400, reasonPhrase: "Bad Request", body: body)
+                return httpResponse(
+                    statusCode: 400,
+                    reasonPhrase: "Bad Request",
+                    body: Data("missing request body\n".utf8),
+                    contentType: "text/plain; charset=utf-8"
+                )
             }
             let request: RelayRequest
             do {
                 request = try NoctweaveCoder.decode(RelayRequest.self, from: message.body)
+            } catch is CryptoError {
+                return httpResponse(
+                    statusCode: 503,
+                    reasonPhrase: "Service Unavailable",
+                    body: Data("relay temporarily unavailable\n".utf8),
+                    contentType: "text/plain; charset=utf-8"
+                )
             } catch {
-                let body = try NoctweaveCoder.encode(RelayResponse.error("Invalid relay JSON request"))
-                return httpResponse(statusCode: 400, reasonPhrase: "Bad Request", body: body)
+                return httpResponse(
+                    statusCode: 400,
+                    reasonPhrase: "Bad Request",
+                    body: Data("invalid relay request\n".utf8),
+                    contentType: "text/plain; charset=utf-8"
+                )
             }
             do {
                 let response = try await handle(request: request, sourceKey: sourceKey)
                 let body = try NoctweaveCoder.encode(response)
                 return httpResponse(statusCode: 200, reasonPhrase: "OK", body: body)
             } catch {
-                let body = try NoctweaveCoder.encode(RelayResponse.error("Relay processing failed"))
+                let body = try NoctweaveCoder.encode(RelayResponse.error(
+                    "Relay processing failed",
+                    code: .internalFailure,
+                    retryable: true,
+                    respondingTo: request
+                ))
                 return httpResponse(statusCode: 200, reasonPhrase: "OK", body: body)
             }
         case ("GET", "/relay"):
-            let body = try NoctweaveCoder.encode(RelayResponse.error("Use POST /relay"))
-            return httpResponse(statusCode: 405, reasonPhrase: "Method Not Allowed", body: body)
+            return httpResponse(
+                statusCode: 405,
+                reasonPhrase: "Method Not Allowed",
+                body: Data("method not allowed\n".utf8),
+                contentType: "text/plain; charset=utf-8"
+            )
         default:
             return httpResponse(
                 statusCode: 404,
@@ -383,326 +446,212 @@ public final class RelayServer {
     private func handle(request: RelayRequest, sourceKey: String? = nil) async throws -> RelayResponse {
         if let sourceKey,
            await !requestRateLimiter.allow(sourceKey: sourceKey) {
-            return .error("Rate limit exceeded")
+            return .error(
+                "Rate limit exceeded",
+                code: .rateLimited,
+                retryable: true,
+                respondingTo: request
+            )
         }
-        if requiresAuthentication(for: request.type),
+        if requiresAuthentication(for: request.binding),
            let authFailure = validateAuthentication(token: request.authToken) {
-            return authFailure
+            return .error(
+                authFailure,
+                code: .authenticationRequired,
+                respondingTo: request
+            )
         }
         if configuration.kind == .coordinator,
-           !isCoordinatorDirectoryRequestType(request.type) {
-            return .error("Coordinator relays are directory-only and do not carry user traffic.")
+           !isCoordinatorDirectoryRequest(request.binding) {
+            return .error(
+                "Coordinator relays are directory-only and do not carry user traffic.",
+                code: .unavailable,
+                respondingTo: request
+            )
         }
-        switch request.type {
-        case .deliver:
-            guard let deliver = request.deliver else {
-                return .error("Missing deliver payload")
+        switch request.body {
+        case .createOpaqueRoute(let payload):
+            guard payload.isStructurallyValid else {
+                return .error("Invalid opaque route create request", respondingTo: request)
             }
-            let routingToken = deliver.routingToken ?? deliver.inboxId
-            guard InboxAddress.isValid(routingToken) else {
-                return .error("Invalid routing token")
+            do {
+                return .success(.opaqueRoute(try await opaqueRouteStore.create(
+                    payload.request,
+                    presentedCapability: payload.renewCapability,
+                    confidentialTransport: hasConfidentialRouteTransport(sourceKey),
+                    receivedAt: Date()
+                )), respondingTo: request)
+            } catch {
+                return opaqueRouteErrorResponse(error, respondingTo: request)
             }
-            if let destination = deliver.destinationRelay,
-               destination != localEndpoint {
-                do {
-                    if let response = try await federationGate(forwardingTo: destination) {
-                        return response
-                    }
-                    let forward = DeliverRequest(
-                        inboxId: deliver.inboxId,
-                        routingToken: routingToken,
-                        envelope: deliver.envelope
-                    )
-                    let client = RelayClient(endpoint: destination, authToken: configuration.federationForwardingAuthToken)
-                    return try await client.send(.deliver(forward))
-                } catch {
-                    return .error("Forwarding failed")
+        case .renewOpaqueRoute(let payload):
+            guard payload.isStructurallyValid else {
+                return .error("Invalid opaque route renewal request", respondingTo: request)
+            }
+            do {
+                return .success(.opaqueRoute(try await opaqueRouteStore.renew(
+                    payload.request,
+                    presentedCapability: payload.renewCapability,
+                    confidentialTransport: hasConfidentialRouteTransport(sourceKey),
+                    receivedAt: Date()
+                )), respondingTo: request)
+            } catch {
+                return opaqueRouteErrorResponse(error, respondingTo: request)
+            }
+        case .teardownOpaqueRoute(let payload):
+            guard payload.isStructurallyValid else {
+                return .error("Invalid opaque route teardown request", respondingTo: request)
+            }
+            do {
+                return .success(.opaqueRoute(try await opaqueRouteStore.teardown(
+                    payload.request,
+                    presentedCapability: payload.teardownCapability,
+                    confidentialTransport: hasConfidentialRouteTransport(sourceKey),
+                    receivedAt: Date()
+                )), respondingTo: request)
+            } catch {
+                return opaqueRouteErrorResponse(error, respondingTo: request)
+            }
+        case .appendOpaqueRoute(let payload):
+            guard payload.isStructurallyValid else {
+                return .error("Invalid opaque route append request", respondingTo: request)
+            }
+            do {
+                return .success(.opaqueRouteAppend(try await opaqueRouteStore.append(
+                    payload.packet,
+                    presentedCapability: payload.sendCapability,
+                    confidentialTransport: hasConfidentialRouteTransport(sourceKey),
+                    receivedAt: Date()
+                )), respondingTo: request)
+            } catch {
+                return opaqueRouteErrorResponse(error, respondingTo: request)
+            }
+        case .syncOpaqueRoute(let payload):
+            guard payload.isStructurallyValid else {
+                return .error("Invalid opaque route sync request", respondingTo: request)
+            }
+            do {
+                return .success(.opaqueRouteSync(try await opaqueRouteStore.sync(
+                    payload.request,
+                    presentedCredential: payload.readCredential,
+                    confidentialTransport: hasConfidentialRouteTransport(sourceKey),
+                    receivedAt: Date()
+                )), respondingTo: request)
+            } catch {
+                return opaqueRouteErrorResponse(error, respondingTo: request)
+            }
+        case .commitOpaqueRoute(let payload):
+            guard payload.isStructurallyValid else {
+                return .error("Invalid opaque route commit request", respondingTo: request)
+            }
+            do {
+                return .success(.opaqueRouteCommit(try await opaqueRouteStore.commit(
+                    payload.request,
+                    presentedCredential: payload.readCredential,
+                    confidentialTransport: hasConfidentialRouteTransport(sourceKey),
+                    receivedAt: Date()
+                )), respondingTo: request)
+            } catch {
+                return opaqueRouteErrorResponse(error, respondingTo: request)
+            }
+        case .registerRendezvous(let registration):
+            guard configuration.isRendezvousTransportEnabled else {
+                return .error("Rendezvous transport is disabled", code: .unavailable, respondingTo: request)
+            }
+            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+                return .error("Rendezvous transport requires confidential transport", respondingTo: request)
+            }
+            guard registration.isStructurallyValid() else {
+                return .error("Invalid rendezvous transport request", respondingTo: request)
+            }
+            do {
+                try await store.registerRendezvousTransportV2(registration)
+                return .success(.empty, respondingTo: request)
+            } catch let error as RelayStoreError {
+                return relayStoreErrorResponse(error, respondingTo: request)
+            } catch {
+                return .error("Relay storage is unavailable", code: .unavailable, retryable: true, respondingTo: request)
+            }
+        case .appendRendezvous(let append):
+            guard configuration.isRendezvousTransportEnabled else {
+                return .error("Rendezvous transport is disabled", code: .unavailable, respondingTo: request)
+            }
+            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+                return .error("Rendezvous transport requires confidential transport", respondingTo: request)
+            }
+            guard append.isStructurallyValid else {
+                return .error("Invalid rendezvous transport request", respondingTo: request)
+            }
+            do {
+                _ = try await store.appendRendezvousTransportV2(append)
+                return .success(.empty, respondingTo: request)
+            } catch let error as RelayStoreError {
+                return relayStoreErrorResponse(error, respondingTo: request)
+            } catch {
+                return .error("Relay storage is unavailable", code: .unavailable, retryable: true, respondingTo: request)
+            }
+        case .syncRendezvous(let sync):
+            guard configuration.isRendezvousTransportEnabled else {
+                return .error("Rendezvous transport is disabled", code: .unavailable, respondingTo: request)
+            }
+            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+                return .error("Rendezvous transport requires confidential transport", respondingTo: request)
+            }
+            guard sync.isStructurallyValid else {
+                return .error("Invalid rendezvous transport request", respondingTo: request)
+            }
+            do {
+                return .success(.rendezvousSync(try await store.syncRendezvousTransportV2(sync)), respondingTo: request)
+            } catch let error as RelayStoreError {
+                return relayStoreErrorResponse(error, respondingTo: request)
+            } catch {
+                return .error("Relay storage is unavailable", code: .unavailable, retryable: true, respondingTo: request)
+            }
+        case .deleteRendezvous(let deletion):
+            guard configuration.isRendezvousTransportEnabled else {
+                return .error("Rendezvous transport is disabled", code: .unavailable, respondingTo: request)
+            }
+            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+                return .error("Rendezvous transport requires confidential transport", respondingTo: request)
+            }
+            guard deletion.isStructurallyValid else {
+                return .error("Invalid rendezvous transport request", respondingTo: request)
+            }
+            do {
+                try await store.deleteRendezvousTransportV2(deletion)
+                return .success(.empty, respondingTo: request)
+            } catch let error as RelayStoreError {
+                return relayStoreErrorResponse(error, respondingTo: request)
+            } catch {
+                return .error("Relay storage is unavailable", code: .unavailable, retryable: true, respondingTo: request)
+            }
+        case .empty:
+            switch request.method {
+            case .health:
+                return .success(.empty, respondingTo: request)
+            case .info:
+                var info = configuration.makeInfo()
+                if configuration.kind == .coordinator {
+                    info.coordinatorReportedRelayCount = await store.listFederationNodes(
+                        ListFederationNodesRequest(
+                            mode: configuration.federation.mode,
+                            federationName: configuration.federation.name,
+                            onlyHealthy: true,
+                            maxStalenessSeconds: configuration.coordinatorDirectoryMaxStalenessSeconds
+                        )
+                    ).count
+                    info.federationDirectoryPublicKey = coordinatorDirectoryPublicKey
+                } else {
+                    let hints = knownOpenFederationPeers()
+                    info.knownOpenPeers = hints.isEmpty ? nil : hints
                 }
+                return .success(.relayInfo(info), respondingTo: request)
+            default:
+                return .error("Invalid empty relay request", respondingTo: request)
             }
-            do {
-                let count = try await store.deliver(deliver.envelope, to: routingToken)
-                onEvent?(.delivered(inboxId: routingToken, storedCount: count))
-                return .delivered(count: count)
-            } catch RelayStoreError.inboxFull {
-                return .error("Inbox full")
-            } catch RelayStoreError.relayCapacityExceeded {
-                return .error("Relay storage capacity reached")
-            }
-        case .registerInbox:
-            guard let registration = request.registerInbox else {
-                return .error("Missing inbox registration payload")
-            }
-            guard InboxAddress.isValid(registration.inboxId),
-                  !registration.accessPublicKey.isEmpty,
-                  InboxAddress.isBound(registration.inboxId, to: registration.accessPublicKey) else {
-                return .error("Invalid inbox registration")
-            }
-            guard let offer = registration.contactOffer,
-                  (try? offer.verified()) != nil,
-                  offer.inboxId == registration.inboxId,
-                  offer.inboxAccessPublicKey == registration.accessPublicKey else {
-                return .error("Inbox registration is not bound to a valid identity offer")
-            }
-            let accessFingerprint = CryptoBox.fingerprint(for: registration.accessPublicKey)
-            if let proofFailure = await validateActorProof(
-                registration.accessProof,
-                expectedFingerprint: accessFingerprint,
-                expectedSigningKey: registration.accessPublicKey,
-                signableDataBuilder: { proof in try registration.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            do {
-                try await store.registerInbox(
-                    inboxId: registration.inboxId,
-                    accessPublicKey: registration.accessPublicKey
-                )
-                return .ok()
-            } catch RelayStoreError.inboxAlreadyRegistered {
-                return .error("Inbox is already registered to another access key")
-            } catch RelayStoreError.relayCapacityExceeded {
-                return .error("Relay storage capacity reached")
-            } catch {
-                return .error("Invalid inbox registration")
-            }
-        case .fetch:
-            guard let fetch = request.fetch else {
-                return .error("Missing fetch payload")
-            }
-            let routingToken = fetch.routingToken ?? fetch.inboxId
-            guard InboxAddress.isValid(routingToken) else {
-                return .error("Invalid routing token")
-            }
-            guard let accessPublicKey = await store.inboxAccessPublicKey(for: routingToken) else {
-                return .error("Inbox is not registered")
-            }
-            let accessFingerprint = CryptoBox.fingerprint(for: accessPublicKey)
-            if let proofFailure = await validateActorProof(
-                fetch.accessProof,
-                expectedFingerprint: accessFingerprint,
-                expectedSigningKey: accessPublicKey,
-                signableDataBuilder: { proof in try fetch.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            let messages = try await fetchWithOptionalLongPoll(fetch, routingToken: routingToken)
-            onEvent?(.fetched(inboxId: routingToken, count: messages.count))
-            return .messages(messages)
-        case .acknowledgeMessages:
-            guard let acknowledgement = request.acknowledgeMessages else {
-                return .error("Missing acknowledgement payload")
-            }
-            guard InboxAddress.isValid(acknowledgement.inboxId),
-                  !acknowledgement.messageIds.isEmpty,
-                  acknowledgement.messageIds.count <= 1_000 else {
-                return .error("Invalid acknowledgement")
-            }
-            guard let accessPublicKey = await store.inboxAccessPublicKey(for: acknowledgement.inboxId) else {
-                return .error("Inbox is not registered")
-            }
-            let accessFingerprint = CryptoBox.fingerprint(for: accessPublicKey)
-            if let proofFailure = await validateActorProof(
-                acknowledgement.accessProof,
-                expectedFingerprint: accessFingerprint,
-                expectedSigningKey: accessPublicKey,
-                signableDataBuilder: { proof in try acknowledgement.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            _ = try await store.acknowledge(
-                inboxId: acknowledgement.inboxId,
-                messageIds: acknowledgement.messageIds
-            )
-            return .ok()
-        case .deliverGroupMessage:
-            guard let deliver = request.deliverGroupMessage else {
-                return .error("Missing group message delivery payload")
-            }
-            guard InboxAddress.isValid(deliver.groupInboxId),
-                  deliver.envelope.groupId == deliver.groupId else {
-                return .error("Invalid group message delivery")
-            }
-            if let destination = deliver.destinationRelay,
-               destination != localEndpoint {
-                do {
-                    if let response = try await federationGate(forwardingTo: destination) {
-                        return response
-                    }
-                    let forward = DeliverGroupMessageRequest(
-                        groupId: deliver.groupId,
-                        groupInboxId: deliver.groupInboxId,
-                        envelope: deliver.envelope
-                    )
-                    let client = RelayClient(endpoint: destination, authToken: configuration.federationForwardingAuthToken)
-                    return try await client.send(.deliverGroupMessage(forward))
-                } catch {
-                    return .error("Forwarding failed")
-                }
-            }
-            guard let group = await store.fetchGroup(groupId: deliver.groupId),
-                  group.inboxId == deliver.groupInboxId else {
-                return .error("Group not found")
-            }
-            guard let senderKey = registeredSigningKey(
-                for: deliver.envelope.senderFingerprint,
-                in: group
-            ),
-                  deliver.envelope.verifySignature(publicSigningKey: senderKey) else {
-                return .error("Invalid group message signature")
-            }
-            do {
-                let recipientFingerprints = group.members
-                    .map(\.fingerprint)
-                    .filter { $0 != deliver.envelope.senderFingerprint }
-                let count = try await store.deliverGroupEnvelope(
-                    carrierEnvelope(for: deliver.envelope),
-                    to: deliver.groupInboxId,
-                    recipientFingerprints: recipientFingerprints
-                )
-                onEvent?(.delivered(inboxId: deliver.groupInboxId, storedCount: count))
-                return .delivered(count: count)
-            } catch RelayStoreError.inboxFull {
-                return .error("Inbox full")
-            } catch RelayStoreError.relayCapacityExceeded {
-                return .error("Relay storage capacity reached")
-            }
-        case .fetchGroupMessages:
-            guard let fetch = request.fetchGroupMessages else {
-                return .error("Missing group message fetch payload")
-            }
-            guard InboxAddress.isValid(fetch.groupInboxId) else {
-                return .error("Invalid group inbox")
-            }
-            guard let group = await store.fetchGroup(groupId: fetch.groupId),
-                  group.inboxId == fetch.groupInboxId else {
-                return .error("Group not found")
-            }
-            guard let signingKey = registeredSigningKey(for: fetch.actorFingerprint, in: group) else {
-                return .error("Actor is not a group member")
-            }
-            if let proofFailure = await validateActorProof(
-                fetch.actorProof,
-                expectedFingerprint: fetch.actorFingerprint,
-                expectedSigningKey: signingKey,
-                signableDataBuilder: { proof in try fetch.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            let messages = try await fetchGroupMessagesWithOptionalLongPoll(fetch)
-            onEvent?(.fetched(inboxId: fetch.groupInboxId, count: messages.count))
-            return .groupMessages(messages)
-        case .acknowledgeGroupMessages:
-            guard let acknowledgement = request.acknowledgeGroupMessages else {
-                return .error("Missing group acknowledgement payload")
-            }
-            guard InboxAddress.isValid(acknowledgement.groupInboxId),
-                  !acknowledgement.messageIds.isEmpty,
-                  acknowledgement.messageIds.count <= 1_000 else {
-                return .error("Invalid group acknowledgement")
-            }
-            guard let group = await store.fetchGroup(groupId: acknowledgement.groupId),
-                  group.inboxId == acknowledgement.groupInboxId else {
-                return .error("Group not found")
-            }
-            guard let signingKey = registeredSigningKey(for: acknowledgement.actorFingerprint, in: group) else {
-                return .error("Actor is not a group member")
-            }
-            if let proofFailure = await validateActorProof(
-                acknowledgement.actorProof,
-                expectedFingerprint: acknowledgement.actorFingerprint,
-                expectedSigningKey: signingKey,
-                signableDataBuilder: { proof in try acknowledgement.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            _ = try await store.acknowledgeGroupEnvelopes(
-                inboxId: acknowledgement.groupInboxId,
-                messageIds: acknowledgement.messageIds,
-                recipientFingerprint: acknowledgement.actorFingerprint
-            )
-            return .ok()
-        case .health:
-            return .ok()
-        case .info:
-            var info = configuration.makeInfo()
-            if configuration.kind == .coordinator {
-                info.coordinatorReportedRelayCount = await store.listFederationNodes(
-                    ListFederationNodesRequest(
-                        mode: configuration.federation.mode,
-                        federationName: configuration.federation.name,
-                        onlyHealthy: true,
-                        maxStalenessSeconds: configuration.coordinatorDirectoryMaxStalenessSeconds
-                    )
-                ).count
-                info.federationDirectoryPublicKey = coordinatorDirectoryPublicKey
-            } else {
-                let hints = knownOpenFederationPeers()
-                info.knownOpenPeers = hints.isEmpty ? nil : hints
-            }
-            return .info(info)
-        case .announce:
-            guard let announce = request.announce else {
-                return .error("Missing announce payload")
-            }
-            do {
-                _ = try announce.offer.verified()
-            } catch {
-                return .error("Invalid contact offer.")
-            }
-            let announcement = await store.announce(announce.offer, ttlSeconds: announce.ttlSeconds)
-            return .announcements([announcement])
-        case .listAnnouncements:
-            guard let list = request.listAnnouncements else {
-                return .error("Missing list payload")
-            }
-            let announcements = await store.listAnnouncements(limit: list.limit)
-            return .announcements(announcements)
-        case .sendPairRequest:
-            guard let pair = request.sendPairRequest else {
-                return .error("Missing pair request payload")
-            }
-            guard isValidIdentityFingerprint(pair.targetFingerprint) else {
-                return .error("Invalid target fingerprint.")
-            }
-            do {
-                _ = try pair.offer.verified()
-            } catch {
-                return .error("Invalid contact offer.")
-            }
-            if let proofFailure = await validateActorProof(
-                pair.actorProof,
-                expectedFingerprint: pair.offer.fingerprint,
-                expectedSigningKey: pair.offer.signingPublicKey,
-                signableDataBuilder: { proof in try pair.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            _ = await store.sendPairRequest(targetFingerprint: pair.targetFingerprint, offer: pair.offer)
-            return .ok()
-        case .fetchPairRequests:
-            guard let fetch = request.fetchPairRequests else {
-                return .error("Missing fetch pair payload")
-            }
-            let fingerprint = fetch.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard isValidIdentityFingerprint(fingerprint) else {
-                return .error("Invalid fingerprint.")
-            }
-            if let proofFailure = await validateActorProof(
-                fetch.actorProof,
-                expectedFingerprint: fingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try fetch.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            let requests = await store.fetchPairRequests(targetFingerprint: fetch.fingerprint, maxCount: fetch.maxCount)
-            return .pairRequests(requests)
-        case .uploadAttachment:
+        case .uploadAttachment(let upload):
             guard configuration.attachmentsEnabled != false else {
-                return .error("Attachments are disabled on this relay")
-            }
-            guard let upload = request.uploadAttachment else {
-                return .error("Missing upload attachment payload")
+                return .error("Attachments are disabled on this relay", code: .unavailable, respondingTo: request)
             }
             let boundedTTL = boundedAttachmentTTL(requested: upload.ttlSeconds)
             do {
@@ -710,444 +659,49 @@ public final class RelayServer {
                     attachmentId: upload.attachmentId,
                     chunkIndex: upload.chunkIndex,
                     payload: upload.payload,
-                    ttlSeconds: boundedTTL
+                    ttlSeconds: upload.ttlSeconds,
+                    idempotencyKey: upload.idempotencyKey,
+                    effectiveTTLSeconds: boundedTTL
                 )
-                return .attachment(chunk)
+                return .success(.attachment(chunk), respondingTo: request)
             } catch RelayStoreError.invalidChunkIndex {
-                return .error("Invalid chunk index")
+                return .error("Invalid chunk index", respondingTo: request)
             } catch RelayStoreError.invalidAttachmentPayload {
-                return .error("Invalid attachment payload")
+                return .error("Invalid attachment payload", respondingTo: request)
+            } catch RelayStoreError.invalidAttachmentIdempotency {
+                return .error("Invalid attachment idempotency key", respondingTo: request)
+            } catch RelayStoreError.attachmentConflict {
+                return .error(
+                    "Attachment coordinate conflicts with stored state",
+                    code: .conflict,
+                    respondingTo: request
+                )
             } catch {
-                return .error("Attachment store error")
+                return .error("Attachment store error", code: .unavailable, retryable: true, respondingTo: request)
             }
-        case .fetchAttachment:
+        case .fetchAttachment(let fetch):
             guard configuration.attachmentsEnabled != false else {
-                return .error("Attachments are disabled on this relay")
-            }
-            guard let fetch = request.fetchAttachment else {
-                return .error("Missing fetch attachment payload")
+                return .error("Attachments are disabled on this relay", code: .unavailable, respondingTo: request)
             }
             do {
                 if let chunk = try await store.fetchAttachment(
                     attachmentId: fetch.attachmentId,
                     chunkIndex: fetch.chunkIndex
                 ) {
-                    return .attachment(chunk)
+                    return .success(.attachment(chunk), respondingTo: request)
                 }
-                return .error("Attachment not found")
+                return .error("Attachment not found", code: .notFound, respondingTo: request)
             } catch RelayStoreError.invalidChunkIndex {
-                return .error("Invalid chunk index")
+                return .error("Invalid chunk index", respondingTo: request)
             } catch {
-                return .error("Attachment store error")
+                return .error("Attachment store error", code: .unavailable, retryable: true, respondingTo: request)
             }
-        case .uploadPrekeys:
-            guard let upload = request.uploadPrekeys else {
-                return .error("Missing prekey bundle payload")
-            }
-            let fingerprint = upload.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard fingerprint == upload.bundle.identityFingerprint else {
-                return .error("Prekey bundle fingerprint mismatch.")
-            }
-            if let proofFailure = await validateActorProof(
-                upload.actorProof,
-                expectedFingerprint: fingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try upload.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            guard let publicSigningKey = upload.actorProof?.publicSigningKey,
-                  upload.bundle.isStructurallyValid(),
-                  upload.bundle.signedPrekey.verify(using: publicSigningKey),
-                  upload.bundle.oneTimePrekeys.allSatisfy({ $0.verify(using: publicSigningKey) }) else {
-                return .error("Invalid authenticated prekey bundle.")
-            }
-            do {
-                try await store.uploadPrekeyBundle(
-                    fingerprint: fingerprint,
-                    bundle: upload.bundle,
-                    ttlSeconds: upload.ttlSeconds
-                )
-                return .ok()
-            } catch RelayStoreError.invalidPrekeyBundle {
-                return .error("Invalid prekey bundle.")
-            }
-        case .fetchPrekeyBundle:
-            guard let fetch = request.fetchPrekeyBundle else {
-                return .error("Missing fetch prekey payload")
-            }
-            let bundle = try await store.fetchPrekeyBundle(fingerprint: fetch.fingerprint)
-            return .prekeyBundle(bundle)
-        case .createGroup:
-            guard let create = request.createGroup else {
-                return .error("Missing create group payload")
-            }
-            guard configuration.groupCreationMode != .disabled else {
-                return .error("Group creation is disabled on this relay.")
-            }
-            let creatorFingerprint = create.creatorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !creatorFingerprint.isEmpty else {
-                return .error("Invalid fingerprint")
-            }
-            guard let creatorProfile = create.creatorProfile,
-                  let creatorSigningKey = creatorProfile.signingPublicKey,
-                  !creatorSigningKey.isEmpty else {
-                return .error("Creator profile must include a signing key.")
-            }
-            guard creatorProfile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines) == creatorFingerprint else {
-                return .error("Creator profile fingerprint mismatch.")
-            }
-            if let proofFailure = await validateActorProof(
-                create.creatorProof,
-                expectedFingerprint: creatorFingerprint,
-                expectedSigningKey: creatorSigningKey,
-                signableDataBuilder: { proof in try create.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            do {
-                let group = try await store.createGroup(
-                    groupId: create.groupId,
-                    title: create.title,
-                    creatorFingerprint: create.creatorFingerprint,
-                    memberFingerprints: create.memberFingerprints,
-                    creatorProfile: create.creatorProfile,
-                    memberProfiles: create.memberProfiles,
-                    invitedFingerprints: create.invitedFingerprints,
-                    initialRatchetSecretDistribution: create.initialRatchetSecretDistribution
-                )
-                return .group(group)
-            } catch let error as RelayStoreError {
-                return relayStoreErrorResponse(error)
-            } catch {
-                return .error("Group creation failed")
-            }
-        case .getGroup:
-            guard let get = request.getGroup else {
-                return .error("Missing get group payload")
-            }
-            guard let group = await store.fetchGroup(groupId: get.groupId) else {
-                return .group(nil)
-            }
-            let memberFingerprint = get.memberFingerprint?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !memberFingerprint.isEmpty else {
-                return .error("Group membership is required")
-            }
-            let memberKey = registeredSigningKey(for: memberFingerprint, in: group)
-            let isInvited = await store.hasGroupInvitation(
-                groupId: get.groupId,
-                invitedFingerprint: memberFingerprint
-            )
-            guard memberKey != nil || isInvited else {
-                return .error("Group membership is required")
-            }
-            if let proofFailure = await validateActorProof(
-                get.memberProof,
-                expectedFingerprint: memberFingerprint,
-                expectedSigningKey: memberKey,
-                signableDataBuilder: { proof in try get.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            return .group(group)
-        case .listGroups:
-            guard let list = request.listGroups else {
-                return .error("Missing list groups payload")
-            }
-            let memberFingerprint = list.memberFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !memberFingerprint.isEmpty else {
-                return .error("Invalid fingerprint")
-            }
-            if let proofFailure = await validateActorProof(
-                list.memberProof,
-                expectedFingerprint: memberFingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try list.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            let groups = await store.listGroups(memberFingerprint: list.memberFingerprint, limit: list.limit)
-            return .groups(groups)
-        case .listGroupInvitations:
-            guard let list = request.listGroupInvitations else {
-                return .error("Missing list invitations payload")
-            }
-            let invitedFingerprint = list.invitedFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !invitedFingerprint.isEmpty else {
-                return .error("Invalid fingerprint")
-            }
-            if let proofFailure = await validateActorProof(
-                list.invitedProof,
-                expectedFingerprint: invitedFingerprint,
-                expectedSigningKey: nil,
-                signableDataBuilder: { proof in try list.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            let invitations = await store.listGroupInvitations(list)
-            return .groupInvitations(invitations)
-        case .inviteGroupMembers:
-            guard let invite = request.inviteGroupMembers else {
-                return .error("Missing invite group members payload")
-            }
-            guard let group = await store.fetchGroup(groupId: invite.groupId) else {
-                return relayStoreErrorResponse(.groupNotFound)
-            }
-            let actorFingerprint = invite.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard actorFingerprint == group.createdByFingerprint else {
-                return relayStoreErrorResponse(.unauthorizedGroupMutation)
-            }
-            guard let actorSigningKey = registeredSigningKey(
-                for: actorFingerprint,
-                in: group
-            ) else {
-                return .error("Group creator signing key is missing. Re-pair and re-join the group.")
-            }
-            if let proofFailure = await validateActorProof(
-                invite.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try invite.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            do {
-                let group = try await store.inviteGroupMembers(invite)
-                return .group(group)
-            } catch let error as RelayStoreError {
-                return relayStoreErrorResponse(error)
-            } catch {
-                return .error("Group invitation failed")
-            }
-        case .updateGroup:
-            guard let update = request.updateGroup else {
-                return .error("Missing update group payload")
-            }
-            guard let group = await store.fetchGroup(groupId: update.groupId) else {
-                return relayStoreErrorResponse(.groupNotFound)
-            }
-            let actorFingerprint = update.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return .error("Invalid fingerprint")
-            }
-            guard let actorSigningKey = registeredSigningKey(
-                for: actorFingerprint,
-                in: group
-            ) else {
-                return .error("Group member signing key is missing. Re-pair and re-join the group.")
-            }
-            guard let groupCommit = update.groupCommit else {
-                return .error("Missing signed group commit")
-            }
-            if let proofFailure = await validateActorProof(
-                groupCommit.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try groupCommit.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            do {
-                let group = try await store.updateGroup(update)
-                return .group(group)
-            } catch let error as RelayStoreError {
-                return relayStoreErrorResponse(error)
-            } catch {
-                return .error("Group update failed")
-            }
-        case .deleteGroup:
-            guard let delete = request.deleteGroup else {
-                return .error("Missing delete group payload")
-            }
-            guard let group = await store.fetchGroup(groupId: delete.groupId) else {
-                return relayStoreErrorResponse(.groupNotFound)
-            }
-            let actorFingerprint = delete.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return .error("Invalid fingerprint")
-            }
-            guard let actorSigningKey = registeredSigningKey(
-                for: actorFingerprint,
-                in: group
-            ) else {
-                return .error("Group member signing key is missing. Re-pair and re-join the group.")
-            }
-            if let proofFailure = await validateActorProof(
-                delete.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try delete.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            do {
-                try await store.deleteGroup(delete)
-                return .ok()
-            } catch let error as RelayStoreError {
-                return relayStoreErrorResponse(error)
-            } catch {
-                return .error("Delete group failed")
-            }
-        case .requestGroupJoin:
-            guard let join = request.requestGroupJoin else {
-                return .error("Missing request join payload")
-            }
-            let requesterFingerprint = join.requesterProfile.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !requesterFingerprint.isEmpty else {
-                return .error("Invalid fingerprint")
-            }
-            guard let requesterSigningKey = join.requesterProfile.signingPublicKey,
-                  !requesterSigningKey.isEmpty else {
-                return .error("Requester profile must include a signing key.")
-            }
-            if let proofFailure = await validateActorProof(
-                join.requesterProof,
-                expectedFingerprint: requesterFingerprint,
-                expectedSigningKey: requesterSigningKey,
-                signableDataBuilder: { proof in try join.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            if let groupCommit = join.groupCommit {
-                if let proofFailure = await validateActorProof(
-                    groupCommit.actorProof,
-                    expectedFingerprint: requesterFingerprint,
-                    expectedSigningKey: requesterSigningKey,
-                    signableDataBuilder: { proof in try groupCommit.signableData(for: proof) }
-                ) {
-                    return proofFailure
-                }
-            }
-            do {
-                if join.invitedFingerprint?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false,
-                   join.groupCommit != nil {
-                    let group = try await store.acceptGroupInvitation(join)
-                    return .group(group)
-                }
-                let created = try await store.requestGroupJoin(join)
-                return .groupJoinRequests([created])
-            } catch let error as RelayStoreError {
-                return relayStoreErrorResponse(error)
-            } catch {
-                return .error("Group join request failed")
-            }
-        case .listGroupJoinRequests:
-            guard let list = request.listGroupJoinRequests else {
-                return .error("Missing list join payload")
-            }
-            guard let group = await store.fetchGroup(groupId: list.groupId) else {
-                return relayStoreErrorResponse(.groupNotFound)
-            }
-            let actorFingerprint = list.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return .error("Invalid fingerprint")
-            }
-            guard let actorSigningKey = registeredSigningKey(
-                for: actorFingerprint,
-                in: group
-            ) else {
-                return .error("Group member signing key is missing. Re-pair and re-join the group.")
-            }
-            if let proofFailure = await validateActorProof(
-                list.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try list.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            do {
-                let requests = try await store.listGroupJoinRequests(list)
-                return .groupJoinRequests(requests)
-            } catch let error as RelayStoreError {
-                return relayStoreErrorResponse(error)
-            } catch {
-                return .error("List join requests failed")
-            }
-        case .approveGroupJoin:
-            guard let approve = request.approveGroupJoin else {
-                return .error("Missing approve join payload")
-            }
-            guard let group = await store.fetchGroup(groupId: approve.groupId) else {
-                return relayStoreErrorResponse(.groupNotFound)
-            }
-            let actorFingerprint = approve.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return .error("Invalid fingerprint")
-            }
-            guard let actorSigningKey = registeredSigningKey(
-                for: actorFingerprint,
-                in: group
-            ) else {
-                return .error("Group member signing key is missing. Re-pair and re-join the group.")
-            }
-            if let proofFailure = await validateActorProof(
-                approve.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try approve.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            if let proofFailure = await validateActorProof(
-                approve.groupCommit.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try approve.groupCommit.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            do {
-                let group = try await store.approveGroupJoin(approve)
-                return .group(group)
-            } catch let error as RelayStoreError {
-                return relayStoreErrorResponse(error)
-            } catch {
-                return .error("Approve join failed")
-            }
-        case .rejectGroupJoin:
-            guard let reject = request.rejectGroupJoin else {
-                return .error("Missing reject join payload")
-            }
-            guard let group = await store.fetchGroup(groupId: reject.groupId) else {
-                return relayStoreErrorResponse(.groupNotFound)
-            }
-            let actorFingerprint = reject.actorFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actorFingerprint.isEmpty else {
-                return .error("Invalid fingerprint")
-            }
-            guard let actorSigningKey = registeredSigningKey(
-                for: actorFingerprint,
-                in: group
-            ) else {
-                return .error("Group member signing key is missing. Re-pair and re-join the group.")
-            }
-            if let proofFailure = await validateActorProof(
-                reject.actorProof,
-                expectedFingerprint: actorFingerprint,
-                expectedSigningKey: actorSigningKey,
-                signableDataBuilder: { proof in try reject.signableData(for: proof) }
-            ) {
-                return proofFailure
-            }
-            do {
-                try await store.rejectGroupJoin(reject)
-                return .ok()
-            } catch let error as RelayStoreError {
-                return relayStoreErrorResponse(error)
-            } catch {
-                return .error("Reject join failed")
-            }
-        case .registerFederationNode:
+        case .registerFederationNode(let registration):
             guard configuration.kind == .coordinator else {
-                return .error("This relay is not a coordinator node.")
+                return .error("This relay is not a coordinator node.", code: .unavailable, respondingTo: request)
             }
             if let authFailure = validateCoordinatorRegistrationAuthentication(token: request.authToken) {
-                return authFailure
-            }
-            guard let registration = request.registerFederationNode else {
-                return .error("Missing federation registration payload")
+                return .error(authFailure, code: .authenticationRequired, respondingTo: request)
             }
             let federationSource = normalizedFederationSourceKey(sourceKey)
             let allowed = await store.allowFederationRegistration(
@@ -1155,301 +709,191 @@ public final class RelayServer {
                 endpoint: registration.endpoint
             )
             guard allowed else {
-                return .error("Coordinator registration throttled. Retry later.")
+                return .error("Coordinator registration throttled. Retry later.", code: .rateLimited, retryable: true, respondingTo: request)
             }
             if let reachabilityFailure = try await validateFederationRegistrationReachability(registration) {
-                return reachabilityFailure
+                return .error(reachabilityFailure, code: .invalidRequest, respondingTo: request)
             }
             do {
                 let node = try await store.registerFederationNode(registration)
-                return .federationNodes([node])
+                return .success(.federationNodes(FederationNodesResponseBody(nodes: [node])), respondingTo: request)
             } catch {
-                return .error("Coordinator registration failed")
+                return .error("Coordinator registration failed", code: .unavailable, retryable: true, respondingTo: request)
             }
-        case .listFederationNodes:
-            let listRequest = request.listFederationNodes ?? ListFederationNodesRequest()
+        case .listFederationNodes(let listRequest):
             if configuration.kind == .coordinator {
                 let federationSource = normalizedFederationSourceKey(sourceKey)
                 let allowed = await store.allowFederationDirectoryList(sourceKey: federationSource)
                 guard allowed else {
-                    return .error("Coordinator directory listing throttled. Retry later.")
+                    return .error("Coordinator directory listing throttled. Retry later.", code: .rateLimited, retryable: true, respondingTo: request)
                 }
                 let nodes = await store.listFederationNodes(listRequest)
-                let snapshot = makeCoordinatorDirectorySnapshot(nodes: nodes, request: listRequest)
-                if listRequest.requireSignedSnapshot == true, snapshot == nil {
-                    return .error("Coordinator snapshot signing is not available.")
+                let snapshot: FederationDirectorySnapshot?
+                do {
+                    snapshot = try makeCoordinatorDirectorySnapshot(
+                        nodes: nodes,
+                        request: listRequest
+                    )
+                } catch {
+                    return .error(
+                        "Coordinator snapshot signing is temporarily unavailable.",
+                        code: .internalFailure,
+                        retryable: true,
+                        respondingTo: request
+                    )
                 }
-                return .federationNodes(nodes, snapshot: snapshot)
+                if listRequest.requireSignedSnapshot == true, snapshot == nil {
+                    return .error(
+                        "Coordinator snapshot signing is not available.",
+                        code: .unavailable,
+                        retryable: true,
+                        respondingTo: request
+                    )
+                }
+                return .success(.federationNodes(FederationNodesResponseBody(nodes: nodes, snapshot: snapshot)), respondingTo: request)
             }
             let remoteNodes = try await fetchCoordinatorNodeDirectory(request: listRequest)
-            return .federationNodes(remoteNodes)
-        case .publishOpenFederationDHTRecord:
+            return .success(.federationNodes(FederationNodesResponseBody(nodes: remoteNodes)), respondingTo: request)
+        case .publishDHTRecord(let publish):
             guard let dhtConfiguration = openFederationDHTConfiguration() else {
-                return .error("Open-federation DHT is available only on DHT-enabled open non-coordinator relays.")
-            }
-            guard let publish = request.publishOpenFederationDHTRecord else {
-                return .error("Missing open-federation DHT record payload")
+                return .error("Open-federation DHT is available only on DHT-enabled open non-coordinator relays.", code: .unavailable, respondingTo: request)
             }
             let expectedNamespace = OpenFederationDHTRecord.namespace(federationName: dhtConfiguration.federationName)
             guard publish.namespace == expectedNamespace else {
-                return .error("Open-federation DHT namespace mismatch.")
+                return .error("Open-federation DHT namespace mismatch.", respondingTo: request)
             }
-            let result = await store.ingestOpenFederationDHTRecords(
+            let result = try await store.ingestOpenFederationDHTRecords(
                 [publish.record],
                 configuration: dhtConfiguration
             )
             guard !result.accepted.isEmpty else {
                 let reason = result.rejected.first.map { "\($0.reason)" } ?? "record rejected"
-                return .error("Open-federation DHT record rejected: \(reason)")
+                return .error("Open-federation DHT record rejected: \(reason)", respondingTo: request)
             }
-            return .ok()
-        case .listOpenFederationDHTRecords:
+            return .success(.empty, respondingTo: request)
+        case .listDHTRecords(let list):
             guard let dhtConfiguration = openFederationDHTConfiguration() else {
-                return .error("Open-federation DHT is available only on DHT-enabled open non-coordinator relays.")
-            }
-            guard let list = request.listOpenFederationDHTRecords else {
-                return .error("Missing open-federation DHT list payload")
+                return .error("Open-federation DHT is available only on DHT-enabled open non-coordinator relays.", code: .unavailable, respondingTo: request)
             }
             let expectedNamespace = OpenFederationDHTRecord.namespace(federationName: dhtConfiguration.federationName)
             guard list.namespace == expectedNamespace else {
-                return .error("Open-federation DHT namespace mismatch.")
+                return .error("Open-federation DHT namespace mismatch.", respondingTo: request)
             }
             let records = await store.listOpenFederationDHTRecords(
                 configuration: dhtConfiguration,
                 limit: list.limit
             )
-            return .openFederationDHTRecords(records)
+            return .success(.dhtRecords(records), respondingTo: request)
         }
     }
 
-    private func relayStoreErrorResponse(_ error: RelayStoreError) -> RelayResponse {
+    private func hasConfidentialRouteTransport(_ sourceKey: String?) -> Bool {
+        configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey)
+    }
+
+    private func opaqueRouteErrorResponse(
+        _ error: Error,
+        respondingTo request: RelayRequest
+    ) -> RelayResponse {
+        if let error = error as? OpaqueRouteRelayStoreV2Error {
+            switch error {
+            case .routeNotFound:
+                return .error("Opaque route is unavailable", code: .notFound, respondingTo: request)
+            case .invalidRequest:
+                return .error("Invalid opaque route request", respondingTo: request)
+            case .invalidCursor:
+                return .error("Invalid opaque route cursor", respondingTo: request)
+            case .cursorExpired:
+                return .error("Opaque route cursor expired", code: .conflict, respondingTo: request)
+            case .cursorAheadOfRoute:
+                return .error("Opaque route cursor is ahead of the route", code: .conflict, respondingTo: request)
+            case .packetIdentifierConflict:
+                return .error("Opaque route packet identifier conflict", code: .conflict, respondingTo: request)
+            case .requestIdentifierConflict:
+                return .error("Opaque route request identifier conflict", code: .conflict, respondingTo: request)
+            case .routeQuotaExceeded:
+                return .error("Opaque route quota reached", code: .capacity, respondingTo: request)
+            case .routeCapacityExceeded:
+                return .error("Opaque route capacity reached", code: .capacity, respondingTo: request)
+            case .packetIdentifierLedgerExhausted:
+                return .error("Opaque route packet ledger exhausted", code: .capacity, respondingTo: request)
+            case .requestReceiptLedgerExhausted:
+                return .error("Opaque route request ledger exhausted", code: .capacity, respondingTo: request)
+            case .sequenceExhausted:
+                return .error("Opaque route sequence exhausted", code: .capacity, respondingTo: request)
+            }
+        }
+        if let error = error as? OpaqueRouteV2Error {
+            switch error {
+            case .confidentialTransportRequired:
+                return .error("Opaque routes require confidential transport", respondingTo: request)
+            case .invalidAuthorization, .authorizationExpired, .authorizationReplay:
+                return .error("Opaque route authorization failed", code: .authenticationRequired, respondingTo: request)
+            case .routeExpired, .routeTornDown:
+                return .error("Opaque route is unavailable", code: .notFound, respondingTo: request)
+            case .routeAlreadyExists, .idempotencyConflict:
+                return .error("Opaque route idempotency conflict", code: .conflict, respondingTo: request)
+            case .staleTransition, .transitionOutOfOrder, .transitionFork:
+                return .error("Opaque route transition rejected", code: .conflict, respondingTo: request)
+            case .renewalSequenceExhausted:
+                return .error("Opaque route renewal sequence exhausted", code: .capacity, respondingTo: request)
+            case .authorizationLedgerExhausted:
+                return .error("Opaque route authorization ledger exhausted", code: .capacity, respondingTo: request)
+            case .invalidRouteIdentifier, .invalidCredential, .invalidIdempotencyKey,
+                 .invalidPolicy, .invalidLease, .invalidRequest, .routeMismatch:
+                return .error("Invalid opaque route request", respondingTo: request)
+            }
+        }
+        return .error("Opaque route storage is unavailable", code: .unavailable, retryable: true, respondingTo: request)
+    }
+
+    private func relayStoreErrorResponse(
+        _ error: RelayStoreError,
+        respondingTo request: RelayRequest
+    ) -> RelayResponse {
         switch error {
-        case .inboxFull:
-            return .error("Inbox full")
-        case .invalidInboxRegistration:
-            return .error("Invalid inbox registration")
-        case .inboxAlreadyRegistered:
-            return .error("Inbox is already registered")
+        case .invalidRendezvousRoute:
+            return .error("Invalid rendezvous transport request", respondingTo: request)
+        case .rendezvousRouteUnavailable:
+            return .error("Rendezvous route is unavailable", code: .notFound, respondingTo: request)
+        case .rendezvousRegistrationConflict:
+            return .error("Rendezvous route registration conflicts with stored state", code: .conflict, respondingTo: request)
+        case .rendezvousCapacityReached:
+            return .error("Rendezvous transport capacity reached", code: .capacity, respondingTo: request)
+        case .rendezvousFrameConflict:
+            return .error("Rendezvous frame conflicts with stored state", code: .conflict, respondingTo: request)
+        case .rendezvousSequenceGap:
+            return .error("Rendezvous lane sequence is not contiguous", code: .conflict, respondingTo: request)
+        case .rendezvousQuotaReached:
+            return .error("Rendezvous lane quota reached", code: .capacity, respondingTo: request)
         case .relayCapacityExceeded:
-            return .error("Relay storage capacity reached")
-        case .invalidEnvelopePayload:
-            return .error("Invalid envelope payload")
+            return .error("Relay storage capacity reached", code: .capacity, respondingTo: request)
         case .invalidChunkIndex:
-            return .error("Invalid chunk index")
+            return .error("Invalid chunk index", respondingTo: request)
         case .invalidAttachmentPayload:
-            return .error("Invalid attachment payload")
-        case .invalidPrekeyBundle:
-            return .error("Invalid prekey bundle")
-        case .groupCapacityExceeded:
-            return .error("Group capacity reached")
-        case .invalidGroupTitle:
-            return .error("Invalid group title")
-        case .invalidFingerprint:
-            return .error("Invalid fingerprint")
-        case .invalidGroupCommit:
-            return .error("Invalid group commit")
-        case .notEnoughGroupMembers:
-            return .error("A group requires at least 2 members")
-        case .groupNotFound:
-            return .error("Group not found")
-        case .unauthorizedGroupMutation:
-            return .error("Unauthorized group update")
-        case .groupJoinRequestNotFound:
-            return .error("Group join request not found")
-        case .alreadyGroupMember:
-            return .error("Requester is already a group member")
-        }
-    }
-
-    private func registeredSigningKey(
-        for actorFingerprint: String,
-        in group: RelayGroupDescriptor
-    ) -> Data? {
-        guard let key = group.members.first(where: { member in
-            member.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines) == actorFingerprint
-        })?.signingPublicKey,
-            !key.isEmpty else {
-            return nil
-        }
-        return key
-    }
-
-    private func validateActorProof(
-        _ proof: RelayActorProof?,
-        expectedFingerprint: String,
-        expectedSigningKey: Data?,
-        signableDataBuilder: (RelayActorProof) throws -> Data
-    ) async -> RelayResponse? {
-        guard let proof else {
-            return .error("Missing actor proof.")
-        }
-        guard proof.fingerprint.trimmingCharacters(in: .whitespacesAndNewlines) == expectedFingerprint else {
-            return .error("Actor proof fingerprint mismatch.")
-        }
-        guard proof.isConsistentFingerprint() else {
-            return .error("Actor proof key does not match fingerprint.")
-        }
-        if let expectedSigningKey, proof.publicSigningKey != expectedSigningKey {
-            return .error("Actor proof signing key mismatch.")
-        }
-        let maxAgeSeconds: TimeInterval = 300
-        guard abs(proof.signedAt.timeIntervalSinceNow) <= maxAgeSeconds else {
-            return .error("Actor proof expired.")
-        }
-        let signableData: Data
-        do {
-            signableData = try signableDataBuilder(proof)
-        } catch {
-            return .error("Invalid actor proof payload.")
-        }
-        guard proof.verify(signableData: signableData) else {
-            return .error("Invalid actor proof signature.")
-        }
-        let nonceAccepted = await store.consumeActorProofNonce(
-            fingerprint: proof.fingerprint,
-            nonce: proof.nonce,
-            now: Date(),
-            maxAgeSeconds: maxAgeSeconds
-        )
-        guard nonceAccepted else {
-            return .error("Actor proof replay detected.")
-        }
-        return nil
-    }
-
-    private func fetchWithOptionalLongPoll(_ fetch: FetchRequest, routingToken: String) async throws -> [Envelope] {
-        var messages = try await store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
-        guard messages.isEmpty,
-              let timeout = boundedLongPollTimeoutSeconds(for: fetch) else {
-            return messages
-        }
-
-        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
-        while Date() < deadline {
-            let remaining = max(0, deadline.timeIntervalSinceNow)
-            let sleepSeconds = min(0.25, remaining)
-            if sleepSeconds > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(sleepSeconds * 1_000_000_000))
-            }
-            messages = try await store.fetch(inboxId: routingToken, maxCount: fetch.maxCount)
-            if !messages.isEmpty {
-                return messages
-            }
-        }
-        return messages
-    }
-
-    private func fetchGroupMessagesWithOptionalLongPoll(_ fetch: FetchGroupMessagesRequest) async throws -> [GroupRatchetEnvelope] {
-        var messages = try await store.fetchGroupEnvelopes(
-            inboxId: fetch.groupInboxId,
-            recipientFingerprint: fetch.actorFingerprint,
-            maxCount: fetch.maxCount
-        )
-            .compactMap(groupRatchetEnvelope)
-        guard messages.isEmpty,
-              let timeout = boundedLongPollTimeoutSeconds(
-                requested: fetch.longPollTimeoutSeconds
-              ) else {
-            return messages
-        }
-
-        let deadline = Date().addingTimeInterval(TimeInterval(timeout))
-        while Date() < deadline {
-            let remaining = max(0, deadline.timeIntervalSinceNow)
-            let sleepSeconds = min(0.25, remaining)
-            if sleepSeconds > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(sleepSeconds * 1_000_000_000))
-            }
-            messages = try await store.fetchGroupEnvelopes(
-                inboxId: fetch.groupInboxId,
-                recipientFingerprint: fetch.actorFingerprint,
-                maxCount: fetch.maxCount
+            return .error("Invalid attachment payload", respondingTo: request)
+        case .invalidAttachmentIdempotency:
+            return .error("Invalid attachment idempotency key", respondingTo: request)
+        case .attachmentConflict:
+            return .error(
+                "Attachment coordinate conflicts with stored state",
+                code: .conflict,
+                respondingTo: request
             )
-                .compactMap(groupRatchetEnvelope)
-            if !messages.isEmpty {
-                return messages
-            }
-        }
-        return messages
-    }
-
-    private func boundedLongPollTimeoutSeconds(for fetch: FetchRequest) -> Int? {
-        boundedLongPollTimeoutSeconds(requested: fetch.longPollTimeoutSeconds)
-    }
-
-    private func boundedLongPollTimeoutSeconds(requested: Int?) -> Int? {
-        guard let requested,
-              requested > 0,
-              configuration.wakeSupport?.mode == .longPoll else {
-            return nil
-        }
-        let advertised = configuration.wakeSupport?.longPollTimeoutSeconds
-            ?? configuration.wakeSupport?.minPollIntervalSeconds
-            ?? 0
-        guard advertised > 0 else {
-            return nil
-        }
-        return min(max(1, requested), advertised)
-    }
-
-    private func carrierEnvelope(for envelope: GroupRatchetEnvelope) -> Envelope {
-        Envelope(
-            id: envelope.id,
-            conversationId: "group:\(envelope.groupId.uuidString)",
-            sessionId: nil,
-            senderFingerprint: envelope.senderFingerprint,
-            sentAt: envelope.sentAt,
-            messageCounter: envelope.messageCounter,
-            kemCiphertext: nil,
-            prekey: nil,
-            rootRatchet: nil,
-            authenticatedContext: .group(
-                groupId: envelope.groupId,
-                epoch: envelope.epoch,
-                senderFingerprint: envelope.senderFingerprint,
-                transcriptHash: envelope.transcriptHash
-            ),
-            payload: envelope.payload,
-            signature: envelope.signature
-        )
-    }
-
-    private func groupRatchetEnvelope(from carrier: Envelope) -> GroupRatchetEnvelope? {
-        guard let context = carrier.authenticatedContext?.group else {
-            return nil
-        }
-        return GroupRatchetEnvelope(
-            id: carrier.id,
-            groupId: context.groupId,
-            epoch: context.epoch,
-            transcriptHash: context.transcriptHash,
-            senderFingerprint: carrier.senderFingerprint,
-            sentAt: carrier.sentAt,
-            messageCounter: carrier.messageCounter,
-            payload: carrier.payload,
-            signature: carrier.signature
-        )
-    }
-
-    private func requiresAuthentication(for type: RelayRequestType) -> Bool {
-        switch type {
-        case .health, .info, .registerFederationNode, .listFederationNodes:
-            return false
-        default:
-            return true
         }
     }
 
-    private func isCoordinatorDirectoryRequestType(_ type: RelayRequestType) -> Bool {
-        switch type {
-        case .health, .info, .registerFederationNode, .listFederationNodes:
-            return true
-        default:
-            return false
-        }
+    private func requiresAuthentication(for binding: RelayOperationBinding) -> Bool {
+        binding.module != .core
+            && !(binding.module == .federation && [.register, .list].contains(binding.method))
     }
 
-    private func validateAuthentication(token: String?) -> RelayResponse? {
+    private func isCoordinatorDirectoryRequest(_ binding: RelayOperationBinding) -> Bool {
+        binding.module == .core
+            || (binding.module == .federation && [.register, .list].contains(binding.method))
+    }
+
+    private func validateAuthentication(token: String?) -> String? {
         let expected = configuration.accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !expected.isEmpty else {
             return nil
@@ -1457,19 +901,19 @@ public final class RelayServer {
         guard expected.utf8.count <= 4_096,
               let token,
               token.utf8.count <= 4_096 else {
-            return .error("Unauthorized: relay password is required.")
+            return "Unauthorized: relay password is required."
         }
         let provided = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard secureCompare(provided, expected) else {
-            return .error("Unauthorized: relay password is required.")
+            return "Unauthorized: relay password is required."
         }
         return nil
     }
 
-    private func validateCoordinatorRegistrationAuthentication(token: String?) -> RelayResponse? {
+    private func validateCoordinatorRegistrationAuthentication(token: String?) -> String? {
         let expected = configuration.coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if expected.isEmpty, configuration.federation.mode == .curated {
-            return .error("Coordinator configuration error: curated registration requires a token.")
+            return "Coordinator configuration error: curated registration requires a token."
         }
         guard !expected.isEmpty else {
             return nil
@@ -1477,11 +921,11 @@ public final class RelayServer {
         guard expected.utf8.count <= 4_096,
               let token,
               token.utf8.count <= 4_096 else {
-            return .error("Unauthorized: coordinator registration token is required.")
+            return "Unauthorized: coordinator registration token is required."
         }
         let provided = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard secureCompare(provided, expected) else {
-            return .error("Unauthorized: coordinator registration token is required.")
+            return "Unauthorized: coordinator registration token is required."
         }
         return nil
     }
@@ -1505,32 +949,36 @@ public final class RelayServer {
         }
     }
 
+    private func isLiteralLoopbackSource(_ source: String?) -> Bool {
+        source == "127.0.0.1" || source == "::1" || source == "0:0:0:0:0:0:0:1"
+    }
+
     private func validateFederationRegistrationReachability(
         _ registration: FederationNodeRegistrationRequest
-    ) async throws -> RelayResponse? {
+    ) async throws -> String? {
         guard registration.relayInfo.federation.mode == configuration.federation.mode else {
-            return .error("Coordinator registration rejected: node federation mode differs from coordinator policy.")
+            return "Coordinator registration rejected: node federation mode differs from coordinator policy."
         }
         if let coordinatorName = configuration.federation.name?.trimmingCharacters(in: .whitespacesAndNewlines),
            !coordinatorName.isEmpty,
            registration.relayInfo.federation.name != coordinatorName {
-            return .error("Coordinator registration rejected: node federation name differs from coordinator policy.")
+            return "Coordinator registration rejected: node federation name differs from coordinator policy."
         }
         if configuration.federation.mode == .open,
            !configuration.allowPrivateFederationEndpoints,
            (!registration.endpoint.useTLS || !PublicRelayEndpointPolicy.permits(registration.endpoint)) {
-            return .error("Coordinator registration rejected: open-federation endpoint must use TLS and be publicly routable.")
+            return "Coordinator registration rejected: open-federation endpoint must use TLS and be publicly routable."
         }
         guard let info = try await fetchRelayInfo(endpoint: registration.endpoint) else {
-            return .error("Coordinator registration rejected: endpoint is unreachable or did not return relay info.")
+            return "Coordinator registration rejected: endpoint is unreachable or did not return relay info."
         }
         guard info.federation.mode == registration.relayInfo.federation.mode else {
-            return .error("Coordinator registration rejected: federation mode mismatch.")
+            return "Coordinator registration rejected: federation mode mismatch."
         }
         if let expectedName = registration.relayInfo.federation.name?.trimmingCharacters(in: .whitespacesAndNewlines),
            !expectedName.isEmpty,
            info.federation.name != expectedName {
-            return .error("Coordinator registration rejected: federation name mismatch.")
+            return "Coordinator registration rejected: federation name mismatch."
         }
         return nil
     }
@@ -1545,103 +993,6 @@ public final class RelayServer {
             difference |= Int(left ^ right)
         }
         return difference == 0
-    }
-
-    private func isValidIdentityFingerprint(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed == value
-            && trimmed.count <= 64
-            && Data(base64Encoded: trimmed)?.count == 32
-    }
-
-    private func federationGate(forwardingTo destination: RelayEndpoint) async throws -> RelayResponse? {
-        switch configuration.federation.mode {
-        case .solo:
-            return .error("Relay is not configured for federation forwarding.")
-        case .manual:
-            guard configuration.federationAllowList.contains(destination) else {
-                return .error("Manual federation: destination relay is not in the node list.")
-            }
-            guard let info = try await fetchRelayInfo(endpoint: destination) else {
-                return .error("Federation check failed: destination relay did not report its configuration.")
-            }
-            guard info.federation.mode == .manual else {
-                return .error("Federation mismatch: destination relay is not manual.")
-            }
-            guard info.kind == .standard else {
-                return .error("Manual federation requires destination relay kind standard.")
-            }
-            if let name = configuration.federation.name,
-               !name.isEmpty,
-               info.federation.name != name {
-                return .error("Federation mismatch: destination relay name differs.")
-            }
-            return nil
-        case .open:
-            if !configuration.federationAllowList.isEmpty {
-                return .error("Open federation cannot use an allow list.")
-            }
-            guard configuration.allowPrivateFederationEndpoints
-                    || (destination.useTLS && PublicRelayEndpointPolicy.permits(destination)) else {
-                return .error("Open federation destination must use TLS and be publicly routable.")
-            }
-            guard let info = try await fetchRelayInfo(endpoint: destination) else {
-                return .error("Federation check failed: destination relay did not report its configuration.")
-            }
-            guard info.federation.mode == .open else {
-                return .error("Federation mismatch: destination relay is not open.")
-            }
-            if let name = configuration.federation.name,
-               !name.isEmpty,
-               info.federation.name != name {
-                return .error("Federation mismatch: destination relay name differs.")
-            }
-            return nil
-        case .curated:
-            let isInStaticAllowList = configuration.federationAllowList.contains(destination)
-            if configuration.curatedStrictPolicyEnabled {
-                guard !configuration.federationAllowList.isEmpty else {
-                    return .error("Curated strict policy requires a non-empty allow list.")
-                }
-                guard isInStaticAllowList else {
-                    return .error("Curated strict policy: destination relay is not in the allow list.")
-                }
-                guard !coordinatorEndpoints().isEmpty else {
-                    return .error("Curated strict policy requires coordinator endpoints.")
-                }
-                let quorum = max(1, configuration.curatedCoordinatorQuorum)
-                let seenBy = try await destinationSeenByCoordinatorCount(
-                    destination,
-                    request: ListFederationNodesRequest(
-                        mode: .curated,
-                        federationName: configuration.federation.name,
-                        onlyHealthy: true,
-                        maxStalenessSeconds: configuration.coordinatorDirectoryMaxStalenessSeconds,
-                        requireSignedSnapshot: configuration.curatedRequireSignedDirectory
-                    )
-                )
-                guard seenBy >= quorum else {
-                    return .error("Curated strict policy: destination relay quorum not met (\(seenBy)/\(quorum)).")
-                }
-            } else {
-                let isAllowedByCoordinator = try await isDestinationAllowedByCoordinator(destination)
-                guard isInStaticAllowList || isAllowedByCoordinator else {
-                    return .error("Destination relay is not in the federation allow list.")
-                }
-            }
-            guard let info = try await fetchRelayInfo(endpoint: destination) else {
-                return .error("Federation check failed: destination relay did not report its configuration.")
-            }
-            guard info.federation.mode == .curated else {
-                return .error("Federation mismatch: destination relay is not curated.")
-            }
-            if let name = configuration.federation.name,
-               !name.isEmpty,
-               info.federation.name != name {
-                return .error("Federation mismatch: destination relay name differs.")
-            }
-            return nil
-        }
     }
 
     private func coordinatorEndpoints() -> [RelayEndpoint] {
@@ -1787,23 +1138,23 @@ public final class RelayServer {
     ) async throws -> [FederationNodeRecord] {
         let client = RelayClient(endpoint: coordinator)
         let infoResponse = try await client.send(.info())
-        guard infoResponse.type == .info else {
+        guard case .relayInfo(let relayInfo)? = infoResponse.successBody else {
             return []
         }
-        let advertisedPublicKey = infoResponse.relayInfo?.federationDirectoryPublicKey
+        let advertisedPublicKey = relayInfo.federationDirectoryPublicKey
         let trustedPublicKey = coordinator.directorySigningPublicKey
         if let trustedPublicKey, let advertisedPublicKey, trustedPublicKey != advertisedPublicKey {
             throw RelayNetworkError.invalidResponse
         }
         let response = try await client.send(.listFederationNodes(request))
-        guard response.type == .federationNodes else {
+        guard case .federationNodes(let directory)? = response.successBody else {
             return []
         }
         if request.requireSignedSnapshot == true, trustedPublicKey == nil {
             throw RelayNetworkError.invalidResponse
         }
         return try validatedCoordinatorNodes(
-            response: response,
+            directory: directory,
             request: request,
             trustedPublicKey: trustedPublicKey
         )
@@ -1812,7 +1163,7 @@ public final class RelayServer {
     private func makeCoordinatorDirectorySnapshot(
         nodes: [FederationNodeRecord],
         request: ListFederationNodesRequest
-    ) -> FederationDirectorySnapshot? {
+    ) throws -> FederationDirectorySnapshot? {
         guard configuration.kind == .coordinator,
               let privateKey = coordinatorDirectorySigningPrivateKey else {
             return nil
@@ -1828,15 +1179,18 @@ public final class RelayServer {
             maxStalenessSeconds: maxStaleness,
             nodes: nodes
         )
-        return try? FederationDirectorySignature.signedSnapshot(from: unsigned, privateKeyData: privateKey)
+        return try FederationDirectorySignature.signedSnapshot(
+            from: unsigned,
+            privateKeyData: privateKey
+        )
     }
 
     private func validatedCoordinatorNodes(
-        response: RelayResponse,
+        directory: FederationNodesResponseBody,
         request: ListFederationNodesRequest,
         trustedPublicKey: Data?
     ) throws -> [FederationNodeRecord] {
-        if let snapshot = response.federationSnapshot {
+        if let snapshot = directory.snapshot {
             if let mode = request.mode, snapshot.mode != mode {
                 throw RelayNetworkError.invalidResponse
             }
@@ -1850,11 +1204,17 @@ public final class RelayServer {
             }
             if request.requireSignedSnapshot == true {
                 guard let trustedPublicKey,
-                      FederationDirectorySignature.verify(snapshot: snapshot, trustedPublicKey: trustedPublicKey) else {
+                      try FederationDirectorySignature.verifyThrowing(
+                          snapshot: snapshot,
+                          trustedPublicKey: trustedPublicKey
+                      ) else {
                     throw RelayNetworkError.invalidResponse
                 }
             } else if let trustedPublicKey, snapshot.signature != nil {
-                guard FederationDirectorySignature.verify(snapshot: snapshot, trustedPublicKey: trustedPublicKey) else {
+                guard try FederationDirectorySignature.verifyThrowing(
+                    snapshot: snapshot,
+                    trustedPublicKey: trustedPublicKey
+                ) else {
                     throw RelayNetworkError.invalidResponse
                 }
             }
@@ -1863,7 +1223,7 @@ public final class RelayServer {
         if request.requireSignedSnapshot == true {
             throw RelayNetworkError.invalidResponse
         }
-        return applyFreshnessPolicy(nodes: response.federationNodes ?? [], request: request)
+        return applyFreshnessPolicy(nodes: directory.nodes, request: request)
     }
 
     private func applyFreshnessPolicy(
@@ -1992,10 +1352,10 @@ public final class RelayServer {
     private func fetchRelayInfo(endpoint: RelayEndpoint) async throws -> RelayInfo? {
         let client = RelayClient(endpoint: endpoint)
         let response = try await client.send(.info())
-        guard response.type == .info else {
+        guard case .relayInfo(let info)? = response.successBody else {
             return nil
         }
-        return response.relayInfo
+        return info
     }
 
     private func setCoordinatorDirectoryCache(_ nodes: [FederationNodeRecord]) {

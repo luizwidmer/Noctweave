@@ -1,306 +1,374 @@
 # NoctweaveJS
 
-NoctweaveJS is the JavaScript implementation and reference browser client for Noctweave. It includes relay transport, bounded storage adapters, browser-safe cryptography, post-quantum liboqs WASM bindings, and a working encrypted direct-messaging application. The library targets browsers, workers, and Node-backed web apps.
+NoctweaveJS is the JavaScript implementation of the Noctweave 1.0 protocol
+base. It provides bounded HTTP/WebSocket relay access, post-quantum pairwise
+contact establishment, direct-message cryptography, opaque route packets, and
+encrypted local storage.
 
-The WASM surface is intentionally narrow: ML-KEM-768 for KEM and ML-DSA-65 for signatures. WebCrypto provides AES-256-GCM, HKDF, HMAC, hashing, and secure randomness.
+The protocol has no network-visible persona or reusable global identity. A
+persona is only a local UI/storage label. Every contact pairing creates fresh
+ML-DSA, ML-KEM, endpoint, prekey, payload-key, and route material scoped to
+that one relationship.
 
-## Install
+## Install and verify
 
 ```sh
-npm install @noctweave/js-client
-```
-
-For local repository development:
-
-```sh
-cd NoctweaveJS
+npm install
 npm test
+npm run typecheck:desktop
 ```
 
-Build the optional liboqs WASM module after installing Emscripten:
+The checked-in liboqs WASM artifact is the reference post-quantum runtime. To
+rebuild it, provide an Emscripten toolchain and run:
 
 ```sh
-source ~/emsdk/emsdk_env.sh
 npm run build:oqs-wasm
 ```
 
-## Relay Client
+## Relay client
 
-```js
-import { NoctweaveRelayClient, relayRequests } from "@noctweave/js-client";
+Every relay operation uses one exact correlated envelope:
 
-const relay = new NoctweaveRelayClient("https://relay.example");
-
-const health = await relay.health();
-const info = await relay.info();
-
-const response = await relay.send(
-  relayRequests.fetch({
-    inboxId: "nw1...",
-    routingToken: "nw1...",
-    maxCount: 20,
-    longPollTimeoutSeconds: 10,
-    accessProof: signedProof
-  })
-);
+```text
+request:  requestID, module, version, method, body, authToken
+response: requestID, module, version, method, status, body, error
 ```
 
-Production applications can supply deployment policy without changing protocol
-invariants:
+There is no alternate health endpoint, tagged legacy body, or uncorrelated
+response form. Relationship delivery uses opaque-route v2:
+
+- `createOpaqueRoute`
+- `renewOpaqueRoute`
+- `teardownOpaqueRoute`
+- `enqueueOpaqueRoute`
+- `syncOpaqueRoute`
+- `commitOpaqueRoute`
+
+One-use contact rendezvous uses the separate identity-blind
+`nw.rendezvous-transport@2` surface:
+
+- `registerRendezvousTransportV2`
+- `appendRendezvousTransportV2`
+- `syncRendezvousTransportV2`
+- `deleteRendezvousTransportV2`
+
+Encrypted attachment storage uses the exact `nw.blobs@1` request builders:
+
+- `relayRequests.uploadAttachment`
+- `relayRequests.fetchAttachment`
+
+An upload requires a base64-encoded 32-byte `idempotencyKey`. Keep the complete
+request unchanged for retries. While the relay retains an
+`(attachmentId, chunkIndex)` coordinate, the same key and canonical body
+returns the original chunk without refreshing TTL or rewriting blob storage;
+any key, payload, or requested-TTL change is a non-retryable conflict. Use a
+fresh attachment UUID for replacement content. The payload must already be
+end-to-end encrypted; the relay request never carries plaintext or its content
+key.
+
+Route creation returns relay-authoritative state. Enqueue accepts independently
+padded, end-to-end encrypted packets. Every synchronized packet carries a
+monotonic sequence plus previous/current record digests, and every batch binds
+its start, continuation, high watermark, and retention floor. The client
+recomputes that chain and rejects omissions, reordering, substitution, and
+cursor regression before commit. `LocalOpaqueReceiveRouteV2` persists the
+opaque cursor together with `committedSequence` and `committedRecordDigest`;
+the initial values are zero and cannot be inferred from a global identity.
+
+`NoctweaveWebClient.syncOpaqueRoute(localReceiveRoute)` is the state-aware
+entry point. Commit requires a real application persistence transaction:
 
 ```js
-const relay = new NoctweaveRelayClient("https://relay.example", {
-  policy: {
-    timeoutMs: 12_000,
-    defaultTCPPort: 9339,
-    maxRequestBytes: 1024 * 1024,
-    maxResponseBytes: 2 * 1024 * 1024
+const synced = await client.syncOpaqueRoute(localReceiveRoute);
+const committed = await client.commitOpaqueRoute({
+  localReceiveRoute,
+  batch: synced.batch,
+  persistLocalState: async ({ localReceiveRoute: candidate, batch }) => {
+    // Atomically store `candidate`, its reassembly snapshot, and every local
+    // effect derived from `batch` as one encrypted application record before
+    // this callback resolves.
+    await encryptedStore.set(routeStateKey, {
+      localReceiveRoute: candidate,
+      appliedBatchDigest: batch.nextRecordDigest,
+      effects: deriveApplicationEffects(batch)
+    });
   }
 });
+localReceiveRoute = committed.localReceiveRoute;
 ```
 
-These values remain constrained by exported absolute ceilings in
-`relayClientPolicyLimits`. Cryptographic key sizes, signature sizes, padding
-buckets, authentication bounds, and wire-format maxima are protocol/security
-invariants and are deliberately not configurable.
-
-Supported web transports are `http`, `https`, `ws`, and `wss`. Raw TCP relays are intentionally not supported in browser JavaScript.
-
-For a quick live relay smoke test:
-
-```sh
-npm run smoke:relay -- --relay http://127.0.0.1:9339
-```
-
-This verifies HTTP relay connectivity, creates a WASM-signed inbox registration, submits an encoded envelope, fetches the inbox, and checks that the encoded payload round-trips.
-
-## NoctweaveJS Client
-
-The repository includes a complete minimal direct-messaging client, separate from the lower-level protocol demo. Run it with:
-
-```sh
-npm run dev:client
-```
-
-Open `http://127.0.0.1:5173/client/`. First run guides the user through:
-
-1. acknowledging browser security boundaries;
-2. creating an AES-256-GCM encrypted local profile;
-3. verifying a client-facing HTTP/HTTPS/WS/WSS relay;
-4. generating ML-DSA-65 signing and access keys plus an ML-KEM-768 agreement key;
-5. registering the inbox and entering the client shell.
-
-After setup, the client provides:
-
-- a verified contact book with optional local aliases and contact deletion;
-- signed contact-code reveal, copy, download, and file import;
-- durable one-to-one encrypted conversations with unread badges and search;
-- send retry state and safe skipped-message ratchet recovery;
-- manual and automatic inbox sync while the page is visible;
-- multiple verified relay records and live health checks;
-- encrypted profile export/import, lock, and local reset.
-
-Fetched envelopes are acknowledged only after successful verification,
-decryption, and local persistence. Failed or unknown envelopes remain available
-for a later safe retry.
-
-Test a real encrypted round trip against a running HTTP relay:
-
-```sh
-npm run smoke:client -- --relay http://127.0.0.1:9340
-```
-
-The smoke test creates two identities, verifies their pairing material, sends
-and decrypts in both directions, and acknowledges both messages.
-
-## Desktop Client
-
-The same client is packaged as a small Electrobun desktop application using the
-operating system WebView. Chromium/CEF is not bundled. The desktop shell keeps
-the existing encrypted profile, contact book, post-quantum WASM, and messaging
-code; only HTTP/HTTPS relay requests cross a bounded typed bridge to the Bun
-process so browser CORS does not interfere. WebSocket and WSS connections remain
-direct from the client view.
-
-Install dependencies and run the desktop client:
-
-```sh
-cd NoctweaveJS
-bun install --frozen-lockfile
-bun run desktop:dev
-```
-
-### Build a native client from source
-
-NoctweaveJS does not publish official desktop binaries. Build the client on the
-operating system and architecture where it will run; Electrobun packages the
-native target provided by the host machine.
-
-Install Git and Bun 1.3.14, clone this repository, then run:
-
-```sh
-cd NoctweaveJS
-bun install --frozen-lockfile
-bun test
-bun run typecheck:desktop
-bun run desktop:icons
-bun run desktop:build
-```
-
-The distributable is written to `NoctweaveJS/artifacts/`. Repeat this process on
-macOS, Windows, or Linux for each platform you need. Electrobun currently
-targets macOS 14+, Windows 11+, and Ubuntu 22.04+.
-
-The package includes the Noctweave app icon for macOS, Windows, and Linux.
-After changing `desktop/assets/app-icon.png`, regenerate native formats with
-`bun run desktop:icons` before building.
-
-Local builds are intentionally unsigned. Sign and notarize redistributed builds
-with your own platform identity. You can record checksums with
-`shasum -a 256 artifacts/*` on macOS/Linux or
-`Get-FileHash .\artifacts\* -Algorithm SHA256` in Windows PowerShell.
-
-### Desktop boundary
-
-- The Electrobun package uses the operating system WebView and does not expose
-  the profile to ordinary browser extensions.
-- HTTP/HTTPS relay requests cross a bounded native bridge; WS/WSS remains in the
-  WebView. Raw TCP is not enabled by this client.
-- Profile contents remain AES-256-GCM encrypted at rest. Plaintext necessarily
-  exists while the profile is unlocked and in use.
-- Install only signed releases from a trusted source. A compromised OS account,
-  modified binary, platform WebView, or JavaScript dependency can read unlocked
-  data. Local development builds are unsigned and are not distribution builds.
-
-## Browser Protocol Demo
-
-Run a local browser client:
-
-```sh
-npm run dev:browser-client
-```
-
-Open `http://127.0.0.1:5173/examples/browser-client/`. The demo generates WASM ML-DSA/ML-KEM keys in the browser, registers a test inbox, pairs by copy/pasting contact codes, sends ML-KEM/AES-GCM encrypted messages, verifies ML-DSA envelope signatures, and fetches/decrypts messages from the relay. A local Node proxy is used only to avoid browser CORS restrictions while testing relays.
-
-The protocol demo includes a compact address book, manual and automatic fetch controls, encrypted local profile storage, and diagnostics intended for interoperability work. The `client/` application should be used for normal browser-client evaluation. Neither surface has received an independent security audit.
-
-To test two browser clients on one machine, open:
-
-- `http://127.0.0.1:5173/examples/browser-client/?profile=alice`
-- `http://127.0.0.1:5173/examples/browser-client/?profile=bob`
-
-Create an inbox in each profile, copy Alice's contact code into Bob and Bob's into Alice, then send from one profile and press `Fetch` on the other or enable `Auto-fetch`.
-
-## Storage Choices
-
-Browser `localStorage` with encryption at the storage boundary:
+The relay cursor commit happens only after that callback succeeds and is
+best-effort; `committed.relayCommit.status === "deferred"` is safe to retry.
+A boolean assertion cannot substitute for durable storage. The lower-level
+`NoctweaveRelayClient` exposes exact relay submissions for integrations that
+already own equivalent durable state handling. Committing a cursor advances
+only that route's durable read position. The persisted route includes a bounded
+1 MiB exact reassembly snapshot so fragmented bundles survive restarts; it is
+not a plaintext receipt or a peer-read signal.
 
 ```js
 import {
-  BrowserLocalStorageStore,
-  EncryptedNoctweaveStore,
-  NoctweaveStateRepository
+  NoctweaveRelayClient,
+  WebCryptoPrimitives,
+  createOpaqueRouteClientCapabilityMaterialV2,
+  createOpaqueRouteIdempotencyKeyV2,
+  createOpaqueRouteLeaseV2,
+  createOpaqueRoutePolicyV2,
+  createOpaqueRouteProofNonceV2,
+  createRendezvousRelayAdapterV2,
+  makeOpaqueRouteCreateRequestV2,
+  makeOpaqueRouteSyncRequestV2,
+  swiftISODate
 } from "@noctweave/js-client";
 
-const backend = new BrowserLocalStorageStore({ namespace: "my-app:noctweave" });
-const applicationManagedKeyBytes = await loadApplicationKey(); // exactly 32 bytes
-const store = new EncryptedNoctweaveStore(backend, {
-  keyBytes: applicationManagedKeyBytes
+const crypto = new WebCryptoPrimitives();
+const relay = new NoctweaveRelayClient("https://relay.example", { crypto });
+const capabilities = await createOpaqueRouteClientCapabilityMaterialV2(crypto);
+const issuedAt = new Date();
+const lease = createOpaqueRouteLeaseV2({
+  issuedAt: swiftISODate(issuedAt),
+  expiresAt: swiftISODate(new Date(issuedAt.getTime() + 60 * 60 * 1000)),
+  policy: createOpaqueRoutePolicyV2({
+    paddingBucket: 4096,
+    retentionBucket: 3600,
+    quotaBucket: 64
+  })
 });
-const repo = new NoctweaveStateRepository(store);
+const createRequest = await makeOpaqueRouteCreateRequestV2({
+  crypto,
+  capabilities,
+  lease,
+  idempotencyKey: await createOpaqueRouteIdempotencyKeyV2(crypto),
+  nonce: await createOpaqueRouteProofNonceV2(crypto)
+});
 
-await repo.save({ activeRelay: "https://relay.example" });
-const state = await repo.load();
+const created = await relay.createOpaqueRoute({
+  request: createRequest,
+  renewCapability: capabilities.renewCapability
+});
+
+const request = await makeOpaqueRouteSyncRequestV2({
+  crypto,
+  capabilities,
+  limit: 64
+});
+const batch = await relay.syncOpaqueRoute({
+  request,
+  readCredential: capabilities.readCredential
+});
+
+console.log(created.status, batch.hasMore);
 ```
 
-IndexedDB:
+`createRendezvousRelayAdapterV2({ crypto, offer })` deterministically derives
+one route capability and two directional lanes from the invitation's one-use
+transport capability. Publish, read, and delete authorities are independent;
+the relay receives no relationship key, endpoint binding, or contact
+identifier. The adapter wraps both the PQ open and encrypted session frames in
+authenticated outer buckets of 4096, 16384, 65536, or 131072 bytes.
 
 ```js
-import { IndexedDBNoctweaveStore } from "@noctweave/js-client";
+const transport = await createRendezvousRelayAdapterV2({ crypto, offer });
+await relay.registerRendezvousTransportV2(transport.registrationRequest);
 
-const store = new IndexedDBNoctweaveStore({
-  databaseName: "my-app",
-  storeName: "noctweave"
-});
+const outbound = await transport.sealOpen({ open });
+await relay.appendRendezvousTransportV2(outbound);
+
+const incoming = await relay.syncRendezvousTransportV2(
+  transport.syncRequest({ receivingAs: "offerer" })
+);
+for (const frame of incoming.frames) {
+  await transport.open({ frame, direction: "responderToOfferer" });
+}
+
+for (const request of transport.deletionRequests()) {
+  await relay.deleteRendezvousTransportV2(request);
+}
 ```
 
-`BrowserLocalStorageStore`, `IndexedDBNoctweaveStore`, and
-`DatabaseNoctweaveStore` are bounded raw adapters; they do not encrypt values by
-themselves. Wrap any adapter in `EncryptedNoctweaveStore` before persisting
-identity, contact, conversation, or key material. Supply either a 32-byte key
-managed outside that adapter, or a strong passphrase with a unique persisted
-salt and an explicit supported PBKDF2 iteration count.
+The application deletes both temporary lanes when pairing finishes or is
+abandoned. Registration is bounded to ten minutes; each lane accepts at most
+32 frames and 2 MiB of fixed-bucket ciphertext.
 
-Database adapter:
+`send()` is the bounded transport primitive. It accepts only the exact current
+module/version/method envelope and rejects any other field set before network
+I/O.
+
+Relay operators can use the bounded `nw.federation@1` methods
+`registerFederationNode` and `listFederationNodes`. Their exact directories
+contain relay endpoints and operator metadata only; they carry no persona,
+relationship, or global identity. Federation coordinates relay discovery and
+policy. Ordinary user-message delivery remains direct to the endpoint selected
+from the peer's relationship-encrypted route set and is never forwarded between
+relays.
+
+Run a complete create/enqueue/sync/commit/teardown probe against a local relay:
+
+```sh
+npm run smoke:relay -- --relay http://127.0.0.1:9340
+```
+
+## Pairwise contact establishment
+
+`createContactPairingInvitationV2` creates a short-lived, one-use PQ
+rendezvous. The invitation discloses no relationship identity or receive
+route. After the encrypted rendezvous is established, both sides exchange
+fresh relationship-scoped introductions and mutually confirm the transcript.
+Each introduction carries one disposable relationship authority, one
+`RelationshipEndpointBindingV4`, and pairwise routes. There is no global
+endpoint registry, generation log, checkpoint, or endpoint-revocation API.
+
+`NoctweaveBrowserPairingService.preparePairingParticipant` registers the fresh
+opaque receive route and retains all read, renewal, teardown, and payload
+secrets locally. A peer introduction receives only the send authority and the
+payload key needed for that relationship. The local persona label is never
+copied into the introduction: callers may supply an explicit relationship
+pseudonym, otherwise the service uses the fixed `Noctweave peer` label.
+
+The browser service exposes independent crash-resumable participant flows:
+
+1. The offerer calls `prepareOffererPairing`; the responder imports only its
+   invitation and calls `prepareResponderPairing`.
+2. Persist the returned `persona` after every call. Its pending record contains
+   only that participant's private state and an exact encrypted outbox.
+3. Publish each `outboundTransportFrames` entry without rebuilding it. After
+   durable relay acceptance, remove it with `acknowledgePairingOutbound`.
+4. Feed received rendezvous frames to `processPairingFrame`. After a restart,
+   call `resumePairing` and retry the unchanged outbox.
+5. Once mutual confirmation is complete, call `finalizePairing`, persist the
+   returned relationship, and submit its `rendezvousDeletionRequests`.
+6. If the flow is abandoned, call `cancelPairing` and submit the same bounded
+   lane-deletion requests.
+
+The checked-in browser shell performs this pump for either role, persists every
+returned participant state before continuing, resumes pending work after
+unlock/restart, and removes terminal pending state only after lane deletion is
+prepared. Its UI exposes retry, finalize, and cancel without rendering pairing
+IDs, bearer capabilities, private keys, or the peer's local persona label.
+
+There is deliberately no `establishPairing` production helper: one process
+must never receive both participants' private relationship state.
+
+The browser and desktop shells store:
+
+- a local persona label;
+- independent pairwise relationships;
+- one-use pending rendezvous state;
+- encrypted protocol state through `EncryptedNoctweaveStore`.
+
+They do not mint a persona-wide protocol key, provider identity, recovery
+authority, or cross-contact route identifier.
+
+## Durable pairwise messaging
+
+`DurablePairwiseMessagingRuntimeV2` journals one relationship's encrypted
+events, exact retry packets, ratchets, route/lifecycle state, and receive cursor. Its
+rollback anchor is mandatory and relationship-local. Host-local policy is
+stored in that same monotonic relationship record; `blocked` is terminal and
+an older aggregate vault cannot restore it to accepted. This does not publish
+policy or create protocol identity. Completed histories, quarantines, retired-route evidence,
+and unused sessions compact without removing pending or in-flight dependencies.
+Transient relay failure remains retryable after any number of attempts, and a
+logical send is relay-accepted once at least one independently attempted route
+accepts its complete bundle.
+
+Ordinary browser storage cannot honestly provide the required monotonic CAS,
+so the browser shell leaves durable messaging unavailable unless its embedding
+host supplies `noctweaveRelationshipStateAnchorStoreFactory`. The Electrobun
+client supplies that boundary on macOS:
+
+- the encrypted local persona aggregate uses one fixed host application-state
+  slot. Its random vault scope and salt come only from the authenticated slot,
+  never a URL, profile name, or Web Storage selector. The slot is local storage
+  coordination, not a persona or protocol identity;
+- aggregate burn advances `active -> burning -> burned`. `burning` cannot be
+  unlocked for ordinary use or replaced with a fresh scope; it can only decrypt
+  into the terminal recovery path. Every relationship is then blocked and
+  tombstoned before aggregate ciphertext is removed, and relay cleanup begins
+  only afterward. Fresh post-burn initialization requires CAS from the
+  authenticated burned generation;
+- the WebView encrypts each relationship record with the unlocked vault key;
+- Bun receives only the relationship ID that binds a fixed application scope and the
+  `EncryptedNoctweaveStore` envelope, never message content, decrypted protocol
+  state, WebView storage keys, URL profile names, or the vault key; changing
+  those WebView details cannot mint a new burn scope, and this remains a local
+  encryption boundary rather than anonymity from the desktop host;
+- a fsynced filesystem journal uses hashed scope identifiers, stages the
+  ciphertext and transition, and a fail-closed scope lock serializes competing
+  host processes without race-prone stale-lock reclamation;
+- macOS Keychain stores the OS-protected current generation, host-computed
+  ciphertext digest, and permanent burn tombstone, and is the transaction
+  commit point;
+- startup recovery completes or aborts interrupted commits and destructive
+  relationship burns; a valid older ciphertext cannot be paired with the
+  newer Keychain generation, and restored files cannot resurrect a burned
+  relationship scope.
+
+This boundary assumes the user's macOS login Keychain is available and that
+the operating system and logged-in user session are not compromised. A locked,
+missing, reset, or conflicting Keychain item is an availability failure; the
+client does not recreate authority over existing relationship files.
+
+The macOS `security` command has no generic-password stdin form. The host never
+passes a secret through it: the Keychain value contains only opaque hashed
+scope metadata, generations, digests, erasure state, and a corruption
+checksum. Encryption keys and plaintext remain in the WebView. The Keychain
+item itself—not that checksum—is the independent rollback authority.
+
+The current Linux and Windows Electrobun builds have no audited OS-backed
+monotonic coordinator and therefore fail closed for durable messaging. A file,
+Web Storage, or IndexedDB HMAC stored beside its ciphertext is not accepted as
+rollback resistance.
+
+Swift and JavaScript freeze the direct-v4 root/session KDF in
+`NoctweaveDocumentation/test_vectors/direct_v4_root_session_v1.json`. The JS
+test imports the implementation module directly; the derivation helper is
+intentionally absent from the package's public index.
+
+## Storage
+
+Raw adapters (`MemoryNoctweaveStore`, `BrowserLocalStorageStore`,
+`IndexedDBNoctweaveStore`, and `DatabaseNoctweaveStore`) store the values they
+receive. Wrap sensitive state with `EncryptedNoctweaveStore` and keep its key
+outside the same backing store.
 
 ```js
-import { DatabaseNoctweaveStore } from "@noctweave/js-client";
+import {
+  EncryptedNoctweaveStore,
+  IndexedDBNoctweaveStore,
+  NoctweaveStateRepository,
+  WebCryptoPrimitives
+} from "@noctweave/js-client";
 
-const store = new DatabaseNoctweaveStore({
-  get: (key) => db.noctweaveState.findUnique({ where: { key } }),
-  set: (key, value) => db.noctweaveState.upsert({
-    where: { key },
-    update: { value },
-    create: { key, value }
-  }),
-  delete: (key) => db.noctweaveState.delete({ where: { key } }),
-  clear: () => db.noctweaveState.deleteMany()
-});
+const crypto = new WebCryptoPrimitives();
+const encrypted = new EncryptedNoctweaveStore(
+  new IndexedDBNoctweaveStore(),
+  { key: crypto.randomBytes(32), crypto }
+);
+const repository = new NoctweaveStateRepository(encrypted);
 ```
 
-## Web Client Wrapper
+## Transport and security boundaries
 
-```js
-import { MemoryNoctweaveStore, NoctweaveWebClient } from "@noctweave/js-client";
+- Browser clients support explicit HTTP(S) and WebSocket(S) relay endpoints.
+- Raw TCP endpoints fail explicitly in the browser client.
+- Request and response byte ceilings are enforced before unbounded allocation.
+- HTTP redirects, ambient credentials, referrers, and caching are disabled.
+- Relay errors are classified without echoing response bodies or bearer data.
+- Opaque route authority proofs are verified locally before submission.
+- Route responses are exact-field decoded and bound to the initiating request.
+- Endpoint manifests advertise exact module and application-content major-version
+  capabilities; two-field manifests without `contentTypes` are invalid.
+- Direct-v4 authenticates the shared content families in its session transcript
+  and refuses outbound application or receipt types the peer did not advertise.
+- Signed-prekey freshness gates only a new bootstrap at its authenticated send
+  time. Established sessions remain valid after prekey expiry, and bounded
+  retired private prekeys admit delayed pre-expiry bootstraps within the receive
+  retention window.
+- Relationship route updates, targeted route probes, and endpoint-prekey updates
+  use independently signed, relationship-scoped control frames.
+- Unknown application content may be retained. Unknown authenticated controls are
+  quarantined, and malformed known controls fail closed without mutating state.
 
-const client = new NoctweaveWebClient({
-  relay: "https://relay.example",
-  store: new MemoryNoctweaveStore()
-});
-
-await client.saveState({ selectedRelay: "https://relay.example" });
-await client.health();
-```
-
-## Crypto Suite
-
-Use WebCrypto for symmetric operations and the bundled liboqs WASM adapter for post-quantum keys:
-
-```js
-import oqsFactory from "./wasm/dist/noctweave_oqs.js";
-import { NoctweaveCryptoSuite } from "@noctweave/js-client";
-
-const cryptoSuite = await NoctweaveCryptoSuite.fromOQSWasmFactory(oqsFactory, {
-  wasmOptions: {
-    locateFile: (path) => `/assets/${path}`
-  }
-});
-
-const signing = cryptoSuite.generateSigningKeypair();
-const kem = cryptoSuite.generateKemKeypair();
-const encapsulated = cryptoSuite.encapsulate(kem.publicKey);
-const plaintextKey = await cryptoSuite.hkdfSha256({
-  ikm: encapsulated.sharedSecret,
-  info: "noctweave-message",
-  length: 32
-});
-```
-
-The native Swift core and the JS/WASM adapter use the same algorithm profile:
-
-- KEM: `ML-KEM-768`, public key `1184`, secret key `2400`, ciphertext `1088`, shared secret `32`.
-- Signatures: `ML-DSA-65`, public key `1952`, secret key `4032`, max signature `3309`.
-
-## Security Notes
-
-### Browser boundary
-
-- Relay responses and stored records are untrusted until your application verifies them.
-- Local browser storage is not secure against a compromised browser profile, extension, or OS account.
-- Clearing site data removes the profile; export an encrypted backup first if it
-  must be recoverable.
-- Raw storage adapters are plaintext. Use `EncryptedNoctweaveStore` for sensitive state and keep its key outside the wrapped adapter.
-- The WASM adapter validates key and ciphertext lengths before calling liboqs.
-- Relay requests reject redirects and omit ambient credentials to reduce cross-origin credential leakage.
-- WebCrypto remains responsible for AES-GCM, HKDF/SHA-256, and random bytes.
-- A browser runtime cannot protect secrets from a compromised browser, extension, JavaScript supply chain, or OS account.
+Noctweave relays route and retain ciphertext. They are not plaintext processors,
+key escrow services, identity providers, or required notification providers.

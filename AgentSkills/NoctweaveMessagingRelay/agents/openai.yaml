@@ -1,4 +1,0 @@
-interface:
-  display_name: "Noctweave Messaging + Relay"
-  short_description: "Use Noctweave CLI and operate relays"
-  default_prompt: "Use $NoctweaveMessagingRelay to diagnose a Noctweave relay and send a headless test message."
