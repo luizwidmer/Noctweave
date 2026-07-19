@@ -21,9 +21,7 @@ Package.resolved
 .research/
 .relay-data/
 .runtime/
-NoctweaveJS/wasm/build/
-NoctweaveJS/node_modules/
-NoctweaveJS/artifacts/
+NoctweaveJS/
 NoctweaveRelayServer/node_modules/
 NoctweaveRelayServer/artifacts/
 AGENTS.md
@@ -37,8 +35,8 @@ AGENTS.md
 *.tar.gz
 
 # Nested repositories kept with their own history
-Noctyra Messaging Client/
-Noctyra Relay/
+Noctweave Messaging Client/
+Noctweave Relay/
 Noctweave.xcworkspace/
 NoctweaveCore/liboqs/
 

@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Noctweave Offset Veil identity system</title>
+  <desc id="desc">A production identity sheet showing the Noctweave mark, construction, lockups, color palette, typography, graphic corridors, and application icons.</desc>
+  <defs>
+    <symbol id="nw-mark" viewBox="0 0 256 256">
+      <path d="M96 32H224V176L140 134V110L96 88ZM32 80L116 122V146L160 168V224H32Z" fill="currentColor"/>
+    </symbol>
+    <symbol id="nw-wordmark" viewBox="0 0 734 88">
+      <g fill="currentColor">
+        <path d="M0 88V0h14l36 62V0h14v88H50L14 26v62Z"/>
+        <path fill-rule="evenodd" d="M98 0h32c10 0 16 6 16 16v56c0 10-6 16-16 16H98c-10 0-16-6-16-16V16c0-10 6-16 16-16Zm1 13c-2 0-3 1-3 4v54c0 3 1 4 3 4h30c2 0 3-1 3-4V17c0-3-1-4-3-4Z"/>
+        <path d="M180 0h48v13h-47c-2 0-3 1-3 4v54c0 3 1 4 3 4h47v13h-48c-10 0-16-6-16-16V16c0-10 6-16 16-16Z"/>
+        <path d="M246 0h64v13h-25v75h-14V13h-25Z"/>
+        <path d="M334 0 348 88 368 28 388 88 402 0" fill="none" stroke="currentColor" stroke-width="13" stroke-linecap="butt" stroke-linejoin="miter"/>
+        <path d="M424 0h64v13h-50v23h43v13h-43v26h50v13h-64Z"/>
+        <path fill-rule="evenodd" d="M506 88 530 0h16l24 88h-15l-5-20h-24l-5 20Zm23-33h18l-9-36Z"/>
+        <path d="M588 0h15l17 68 17-68h15l-24 88h-16Z"/>
+        <path d="M670 0h64v13h-50v23h43v13h-43v26h50v13h-64Z"/>
+      </g>
+    </symbol>
+    <linearGradient id="dark-surface" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#2D1C23"/>
+      <stop offset="1" stop-color="#1B1217"/>
+    </linearGradient>
+    <pattern id="corridor-pattern" width="180" height="96" patternUnits="userSpaceOnUse">
+      <path d="M-36 12 72 66v18L180 138" fill="none" stroke="#C96A61" stroke-width="2" opacity=".55"/>
+      <path d="M-36-12 84 48v18l120 60" fill="none" stroke="#922D35" stroke-width="8" opacity=".12"/>
+    </pattern>
+    <filter id="paper-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="16" flood-color="#1B1217" flood-opacity=".18"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#FAF3EA"/>
+  <g stroke="#D9C8BC" stroke-width="1">
+    <path d="M650 0v680M1010 0v390M1250 0v390M650 390h950M650 680h950M0 680h1600"/>
+  </g>
+
+  <g font-family="Inter, Geist, Helvetica Neue, Arial, sans-serif" fill="#1B1217">
+    <text x="48" y="54" font-size="13" font-weight="700" letter-spacing="2.8">NOCTWEAVE / IDENTITY SYSTEM</text>
+    <text x="48" y="82" fill="#C96A61" font-size="12" font-weight="700" letter-spacing="2.4">OFFSET VEIL / 01</text>
+
+    <g transform="translate(54 124) scale(1.62)">
+      <path d="M96 32H224V176L140 134V110L96 88Z" fill="#922D35"/>
+      <path d="M32 80L116 122V146L160 168V224H32Z" fill="#C96A61"/>
+    </g>
+    <use href="#nw-wordmark" x="48" y="548" width="548" height="66" color="#1B1217"/>
+    <text x="48" y="648" font-size="13" font-weight="700" letter-spacing="2.4">TWO TRUST PLANES. ONE PRIVATE CORRIDOR.</text>
+
+    <text x="680" y="48" font-size="12" font-weight="700" letter-spacing="2">01 / CONSTRUCTION</text>
+    <g transform="translate(714 78)">
+      <g stroke="#C96A61" stroke-width="1" opacity=".35" stroke-dasharray="5 5">
+        <path d="M0 32h256M0 80h256M0 110h256M0 122h256M0 134h256M0 146h256M0 176h256M0 224h256"/>
+        <path d="M32 0v256M96 0v256M116 0v256M140 0v256M160 0v256M224 0v256"/>
+      </g>
+      <use href="#nw-mark" width="256" height="256" color="#1B1217" opacity=".78"/>
+      <path d="M32 80 116 122v24l44 22M96 88l44 22v24l84 42" fill="none" stroke="#C96A61" stroke-width="2"/>
+    </g>
+    <text x="680" y="361" font-size="12" fill="#6F565E">24-unit corridor / 24-unit center offset / hard geometric terminals</text>
+
+    <text x="1040" y="48" font-size="12" font-weight="700" letter-spacing="2">02 / LOCKUPS</text>
+    <use href="#nw-mark" x="1040" y="82" width="72" height="72" color="#1B1217"/>
+    <use href="#nw-wordmark" x="1122" y="103" width="328" height="40" color="#1B1217"/>
+    <rect x="1040" y="190" width="500" height="116" rx="6" fill="url(#dark-surface)"/>
+    <use href="#nw-mark" x="1064" y="212" width="72" height="72" color="#FAF3EA"/>
+    <use href="#nw-wordmark" x="1146" y="233" width="328" height="40" color="#FAF3EA"/>
+    <text x="1040" y="346" font-size="11" fill="#6F565E" letter-spacing="1.4">PRIMARY / REVERSE / ONE COLOR</text>
+
+    <text x="680" y="438" font-size="12" font-weight="700" letter-spacing="2">03 / COLOR</text>
+    <g transform="translate(680 470)">
+      <g><rect width="100" height="86" fill="#FAF3EA" stroke="#D9C8BC"/><text y="108" font-size="11">#FAF3EA</text></g>
+      <g transform="translate(116)"><rect width="100" height="86" fill="#EBC7AF"/><text y="108" font-size="11">#EBC7AF</text></g>
+      <g transform="translate(232)"><rect width="100" height="86" fill="#C96A61"/><text y="108" font-size="11">#C96A61</text></g>
+      <g transform="translate(348)"><rect width="100" height="86" fill="#922D35"/><text y="108" font-size="11">#922D35</text></g>
+      <g transform="translate(464)"><rect width="100" height="86" fill="#1B1217"/><text y="108" font-size="11">#1B1217</text></g>
+    </g>
+
+    <text x="1250" y="438" font-size="12" font-weight="700" letter-spacing="2">04 / TYPE</text>
+    <text x="1250" y="532" font-size="84" font-weight="600" letter-spacing="-4">Aa</text>
+    <text x="1390" y="493" font-size="15" font-weight="700">SYSTEM</text>
+    <text x="1390" y="520" font-size="13" fill="#6F565E">Inter / Geist</text>
+    <text x="1390" y="545" font-size="13" fill="#6F565E">Regular 400</text>
+    <text x="1390" y="570" font-size="13" fill="#6F565E">Semibold 600</text>
+    <text x="1250" y="624" font-family="SFMono-Regular, Menlo, monospace" font-size="12" letter-spacing="1">ROUTE / VERIFY / DELIVER</text>
+
+    <text x="48" y="724" font-size="12" font-weight="700" letter-spacing="2">05 / CORRIDOR LANGUAGE</text>
+    <rect x="48" y="758" width="650" height="178" rx="8" fill="#1B1217"/>
+    <path d="M48 812H250L358 866h64l140 70" fill="none" stroke="#FAF3EA" stroke-width="28"/>
+    <path d="M48 806H250L358 860h64l140 70" fill="none" stroke="#C96A61" stroke-width="3"/>
+    <g transform="translate(522 782)" fill="#FAF3EA" font-size="11" font-weight="700" letter-spacing="1.6">
+      <text y="0">ENCRYPT</text><text y="30">ROUTE</text><text y="60">VERIFY</text><text y="90">DELIVER</text>
+    </g>
+
+    <text x="738" y="724" font-size="12" font-weight="700" letter-spacing="2">06 / APPLICATIONS</text>
+    <g transform="translate(738 758)">
+      <rect width="248" height="178" rx="12" fill="url(#dark-surface)"/>
+      <use href="#nw-mark" x="30" y="28" width="64" height="64" color="#FAF3EA"/>
+      <text x="30" y="130" fill="#FAF3EA" font-size="17" font-weight="700">API REFERENCE</text>
+      <text x="30" y="152" fill="#C96A61" font-size="11" font-weight="700" letter-spacing="1.5">SELF-HOSTED / PQ</text>
+      <path d="M148 0v54l100 50" fill="none" stroke="#C96A61" stroke-width="2" opacity=".7"/>
+    </g>
+    <g transform="translate(1014 758)">
+      <rect width="248" height="178" rx="12" fill="#EBC7AF"/>
+      <rect x="24" y="24" width="200" height="130" rx="9" fill="#FAF3EA" filter="url(#paper-shadow)"/>
+      <use href="#nw-mark" x="78" y="47" width="92" height="92" color="#922D35" opacity=".22"/>
+    </g>
+    <g transform="translate(1290 758)">
+      <rect width="122" height="122" rx="30" fill="url(#dark-surface)" stroke="#56313A" stroke-width="2"/>
+      <g transform="translate(19 19) scale(.33)">
+        <path d="M96 32H224V176L140 134V110L96 88Z" fill="#FAF3EA"/>
+        <path d="M32 80L116 122V146L160 168V224H32Z" fill="#C96A61"/>
+      </g>
+      <text y="155" font-size="11" font-weight="700" letter-spacing="1.4">APP ICON</text>
+    </g>
+    <g transform="translate(1440 758)">
+      <circle cx="61" cy="61" r="61" fill="#C96A61"/>
+      <use href="#nw-mark" x="22" y="22" width="78" height="78" color="#FAF3EA"/>
+      <text y="155" font-size="11" font-weight="700" letter-spacing="1.4">AVATAR</text>
+    </g>
+
+    <text x="48" y="975" font-size="11" fill="#6F565E" letter-spacing="1.6">NOCTWEAVE / OFFSET VEIL / PRODUCTION IDENTITY</text>
+    <text x="1552" y="975" font-size="11" fill="#6F565E" text-anchor="end" letter-spacing="1.6">PRIVATE BY ARCHITECTURE</text>
+  </g>
+</svg>

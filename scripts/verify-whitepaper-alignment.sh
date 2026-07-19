@@ -16,7 +16,7 @@ swift test \
   --filter '(OpaqueRouteRuntimeV2Tests|OpaqueRouteRelayIntegrationTests|RelayWireExactEnvelopeTests|RelayWireStructuralBoundaryTests|RendezvousRelayTransportTests|RelayCapabilitiesV2Tests|StableResponseExactModelsTests|StableModelBoundsTests|RelayStoreCurrentTests|AttachmentBlobStoreExactJSONTests)'
 
 echo "Verifying public repository boundary..."
-if git -C "$ROOT_DIR" ls-files | grep -E '^(Noctyra Messaging Client|Noctyra Relay|Noctweave\.xcworkspace)/'; then
+if git -C "$ROOT_DIR" ls-files | grep -E '^(Noctweave Messaging Client|Noctweave Relay|Noctweave\.xcworkspace)/'; then
   echo "Private Apple app workspaces or sources must not be tracked in the public repository." >&2
   exit 1
 fi

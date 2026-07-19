@@ -9,7 +9,7 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.html.contains("/admin/assets/app.css"))
         XCTAssertTrue(OperatorWebUI.html.contains("/admin/assets/app.js"))
         XCTAssertFalse(OperatorWebUI.html.contains("<script>"))
-        XCTAssertTrue(OperatorWebUI.css.contains("--accent:#7b61ff"))
+        XCTAssertTrue(OperatorWebUI.css.contains("--accent:#c96a61"))
         XCTAssertTrue(OperatorWebUI.html.contains("class=\"brandLogo\""))
         XCTAssertTrue(OperatorWebUI.javascript.contains("Authorization"))
         XCTAssertTrue(OperatorWebUI.html.contains("Secrets stay outside the browser"))
