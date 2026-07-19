@@ -31,11 +31,25 @@ ClientState
         ├── signed roles and permissions
         ├── complete signed epoch transitions and welcomes
         ├── anchored joins, replay/fork journals, and terminal removal
-        └── exact application and deletion outboxes
+        ├── signed peer route cache and independent receive cursors
+        └── exact application, control, epoch, Welcome, and deletion outboxes
 ```
 
 There is no account object, global inbox, device or installation registry,
 recovery authority, persona public key, or shared self-sync channel.
+
+The aggregate is encrypted at rest and bound to an independently durable local
+generation anchor. File and anchor advance through one crash-recoverable
+transaction. Missing files, replayed snapshots, stale writers, and unanchored
+pending files fail closed. Explicit whole-database erasure advances an
+identity-free tombstone before removing ciphertext, so deletion is not confused
+with an accidental reset. This anchor never leaves the host and is not persona,
+relationship, group, route, relay, or wire authority.
+
+Every replacement compares the exact caller-supplied prior aggregate with the
+currently committed aggregate under the store lock. A stale client sharing the
+same store cannot overwrite a newer relationship mutation or resurrect state
+after burn merely because it loaded an older valid generation.
 
 ## Contact pairing
 
@@ -70,7 +84,9 @@ One endpoint-signed ML-KEM prekey bootstrap derives the direct-v4 root and its
 independent symmetric send and receive chains. There is no periodic PQ root
 refresh and no in-session post-compromise-healing claim. Reset is terminal for
 that session; communication resumes only through a fresh bootstrap and distinct
-session state.
+session state. The session identifier hashes the KEM-derived root together with
+the complete endpoint/capability binding; two fresh bootstraps cannot alias one
+ratchet merely because they use the same relationship endpoints.
 
 Application content and security controls are separate wire families. Content
 is namespaced and versioned; replies, replacements, reactions, retractions,
@@ -163,6 +179,32 @@ a later healthy route, and the call fails only when no route succeeds.
 Receiver-observed time governs freshness windows and local state chronology.
 Peer timestamps remain authenticated display/audit metadata and cannot alone
 advance expiry, retention, epoch, route, or prekey state into the future.
+Historical prekey bindings are selected only by the envelope's exact binding
+digests and only while both send and receiver-observation times remain inside
+the route's bounded delivery window and the signed prekey validity interval.
+
+The authoritative encrypted browser aggregate and every durable relationship
+record require independently authenticated, atomic last-value generation
+anchors. Ciphertext and anchor advance or burn as recoverable transactions;
+storing an HMAC beside the same rollbackable browser record is insufficient.
+The aggregate lives under one fixed local application-state slot. That slot is
+storage authority only: it is never serialized into a persona, relationship,
+group, route, or wire object, and it cannot be selected by a URL or profile
+name. A burn advances it through authenticated `active -> burning -> burned`
+generations. Normal unlock and reinitialization fail while `burning`; recovery
+can only finish relationship tombstones and aggregate erasure before any
+best-effort relay cleanup.
+
+The macOS Electrobun embedding implements the aggregate and per-relationship
+anchors with fsynced, scope-locked Bun crash journals and macOS Keychain as the
+commit point while keeping vault keys and plaintext in the WebView. The host
+binds each exact encrypted envelope with its own ciphertext digest and retains
+erasure tombstones, so restored companion files cannot roll back or resurrect
+burned authority. The RPC necessarily exposes opaque local storage scopes to
+the host; it is an encryption boundary, not host anonymity. Keychain supplies
+an OS-protected last value, not a hardware monotonic counter, and does not
+protect against rollback of the whole Keychain or host. Embeddings without an
+audited, independently protected atomic last-value facility fail closed.
 
 A torn-down route is terminal. To close the crash window after the relay
 applies teardown but before the client removes its capability, a fresh valid
@@ -196,6 +238,14 @@ rollover from its saved intent and exact request. If a crash follows probe
 acceptance, the accepted testing snapshot can reconcile promotion. A terminal
 rollover failure is retained until explicitly discarded; it is never mistaken
 for a completed route change.
+
+The public maintenance cycle resumes that journal, refreshes only the
+relationship-scoped prekey, begins a fresh route thirty minutes before the
+current six-hour route expires, and finalizes elapsed drain windows. Reference
+applications invoke it on startup/foreground and periodically. An already
+expired or missing route is reported for explicit re-pair recovery; the client
+does not manufacture an account locator, reuse a route forever, or link another
+relationship to repair it.
 
 ## Burn and selective continuity
 
@@ -240,15 +290,23 @@ bounded digest evidence. The aggregate runtime record is capped at 32 MiB.
 Live group signing, verification, and provider operations propagate PQ
 algorithm/runtime failure through throwing APIs.
 
-The runtime also persists exact pending group application envelopes and
-processed-envelope replay receipts. `GroupOpaqueRouteFanoutPlanV2` and
-`publishGroupFanoutPlan` are low-level, stateless experimental transport
-primitives: a caller supplies routes, creates a plan, and publishes its sealed
-packets. They do not yet provide durable recipient/route authorization
-snapshots, exact packet-attempt persistence, transition-plus-Welcome staging,
-group receive cursors/reassembly/quarantine, group route lifecycle, or Headless
-group-envelope dispatch. The implemented group state machine therefore must not
-be described as end-to-end crash-safe opaque-route group transport.
+The runtime also persists exact pending group application envelopes,
+processed-envelope replay receipts, credential-signed peer route
+announcements, recipient authorization snapshots, fixed opaque packets, and
+per-route attempts. Application and control publication resumes exact bytes
+after restart. Each local group route durably owns its sequence/digest cursor,
+partial reassembly, processed effects, and quarantine before relay cursor
+commit. The Headless client now orchestrates creation, text send, bounded sync,
+route maintenance, admission/add/join, exact-operation resume, and deletion.
+
+The first route for a prospective member remains an authenticated invitation
+bootstrap, not relay-discovered authority. Existing peer route sets may change
+through either a verified direct hash-chained successor or, after missed
+revisions, a strictly newer credential-signed monotonic checkpoint whose issue
+time does not move backwards. Same/older revisions and invalid direct
+successors fail closed. Admission artifacts are transport-neutral and must
+cross a caller-selected authenticated encrypted channel; no persona, pairwise
+relationship, device, or global invitation service becomes group authority.
 
 The supplied PQ group provider is experimental, Noctweave-specific, and not
 RFC 9420 MLS. MLS contributes useful vocabulary and discipline, not a

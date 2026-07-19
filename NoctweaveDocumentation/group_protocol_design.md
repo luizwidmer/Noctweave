@@ -95,11 +95,33 @@ opaque-route fanout plan maps that same envelope to member-supplied routes;
 processed-envelope receipts make exact replay idempotent and reject conflicting
 event-ID reuse or counter gaps.
 
-The fanout plan and Headless publication method are stateless experimental
-helpers. They do not persist route-authorization snapshots or packet attempts,
-stage transitions with all Welcomes, manage group routes, or implement group
-receive cursors, reassembly/quarantine, and Headless dispatch. They are not an
-end-to-end crash-safe transport.
+The runtime now owns the complete opaque-route transport workflow. Every active
+credential publishes a signed, group-scoped route announcement. A receiver
+verifies the credential signature and route-set signature. An exact replay is
+idempotent. The immediately following revision must prove the prior route-set
+digest through the hash chain. If one or more expiring revisions were missed,
+a strictly newer credential-signed route set may be accepted as a monotonic
+checkpoint when its issue time does not move backwards. Same/older revisions
+and direct-successor forks are rejected. The latest accepted announcement is
+persisted in the encrypted group record. Routes supplied by a caller are
+accepted only for a not-yet-cached credential during the authenticated
+admission bootstrap; they cannot replace an established peer route set.
+
+Before relay I/O, the runtime persists the exact recipient snapshot, fixed-size
+opaque packets, and per-route attempt state for applications, route
+announcements, transitions, Welcomes, and deletion. Recovery resumes those
+exact bytes. Each local receive route independently persists its sequence,
+digest-chain cursor, partial reassembly, processed effects, and quarantine.
+Known group controls are authenticated and stored before the relay cursor is
+committed; unknown or invalid controls fail closed or are quarantined according
+to the protocol error class.
+
+`HeadlessMessagingClient` exposes creation, route registration, text send,
+bounded sync, route maintenance, exact-operation resume, member-admission
+preparation, join acceptance, and deletion over this runtime. Admission
+artifacts still require a caller-selected authenticated and encrypted channel:
+Noctweave does not create a global invitation, contact, account, or device
+service.
 
 ## Crash and fork safety
 
@@ -140,5 +162,7 @@ a cryptographic proof.
 
 Before a production group-security claim, the experimental construction still
 requires independent cryptographic review, side-channel and zeroization review,
-fuzzing of every signed decoder, cross-implementation vectors, and adversarial
-post-compromise/forward-secrecy analysis.
+fuzzing of every signed decoder, cross-implementation vectors, adversarial
+post-compromise/forward-secrecy analysis, and process-kill testing against live
+relays. Complete transport orchestration is implementation evidence; it does
+not promote the cryptographic profile beyond experimental.

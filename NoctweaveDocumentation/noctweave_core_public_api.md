@@ -32,6 +32,43 @@ let client = try HeadlessMessagingClient(
 persona has no protocol key or network identity. Live authority exists only in
 `PairwiseRelationshipV2` and group runtime records.
 
+Encrypted state is generation-bound to a separate local rollback anchor. On
+Apple hosts the default anchor is a non-synchronizing Keychain item scoped to
+the resolved state path. Other hosts must supply a
+`ClientStateRollbackAnchorStore` whose compare-and-swap is atomic, durable, and
+independently protected; encrypted mode fails closed when none is available.
+The anchor is local storage authority only and never enters a persona,
+relationship, group, route, relay request, or wire object.
+
+The Apple Keychain backend is an OS-protected last-value authority, not a
+hardware monotonic counter. It detects rollback or deletion of the companion
+state file; rollback of the whole Keychain or host is outside this guarantee.
+
+`save` advances the pending encrypted file and anchor through a two-phase,
+crash-recoverable commit. Missing or replayed state with a newer anchor is an
+error, not a reset. Replacement is an exact compare-and-replace operation:
+
+```swift
+try await store.save(candidate, replacing: prior)
+```
+
+The expected prior aggregate is checked under the store lock, so a second stale
+client cannot overwrite a newer burn or relationship mutation. A brand-new
+store uses `replacing: nil`. After an anchored erasure, only an explicitly
+fresh save with `replacing: nil` may advance beyond the tombstone; a retained
+pre-erasure aggregate cannot. Intentional whole-database destruction is
+explicit:
+
+```swift
+try await store.eraseAllLocalState()
+```
+
+Erasure advances an identity-free anchor tombstone, removes state, and prevents
+an older file from resurrecting. A later unrelated database advances from the
+next local generation. `.insecurePlaintextForTesting` and
+`VolatileClientStateRollbackAnchorStore` are bounded test facilities, not
+production rollback protection.
+
 Relationship mutations are serialized per relationship. A process-wide
 encrypted-state save gate merges each successful mutation against the latest
 aggregate so awaited work on independent relationships cannot overwrite newer
@@ -289,8 +326,23 @@ local receive route, and advertises it as `testing` through the old working
 route. `HeadlessRouteRolloverResult.state` reports the durable intent stage;
 `routeSetPublication` reports the per-route control publication when one was
 attempted. The peer's targeted probe promotes the new route and marks the old
-route draining for bounded overlap. Drained-route teardown remains explicit
-and retryable. A terminal failed rollover retains its recovery artifact until
+route draining for bounded overlap. Applications should run the maintenance
+entry point on startup, foreground activation, and a bounded periodic timer:
+
+```swift
+let reports = try await client.maintainAllRelationships()
+for report in reports where report.requiresFollowUp {
+    presentRouteRecovery(for: report.relationshipID)
+}
+```
+
+`maintainRelationship` resumes the exact unfinished rollover, rotates only the
+relationship endpoint's expiring signed prekey, starts a fresh replacement
+opaque route thirty minutes before its six-hour lease expires, and finalizes
+elapsed drain windows. It does not renew a stable route, authorize a device, or
+create persona-wide routing state. `routeExpired`, `noLocalRoute`, and
+`rolloverFailed` require explicit product recovery rather than invented global
+identity. A terminal failed rollover retains its recovery artifact until
 `discardFailedRouteRollover` explicitly removes or revokes it.
 
 ## Encrypted attachment publication
@@ -402,13 +454,41 @@ application/epoch work atomically, accept exact replay, and reject later
 resurrection. Runtime records enforce a 32 MiB aggregate encoded-state bound,
 and live group PQ operations use throwing error propagation.
 
-`GroupOpaqueRouteFanoutPlanV2` creates member-route copies, and
-`HeadlessMessagingClient.publishGroupFanoutPlan` attempts their already sealed
-bytes. These are low-level stateless experimental helpers. They do not persist
-the recipient/route authorization snapshot or exact packet attempts, stage a
-transition with all Welcomes, manage group routes, receive cursors,
-reassembly/quarantine, or dispatch group envelopes through Headless sync. A
-caller must not treat them as crash-safe end-to-end group delivery.
+`SignedGroupRouteSetAnnouncementV2` and `GroupPeerRouteSetCacheV2` bind current
+opaque routes to one active group credential. The runtime verifies and persists
+an exact replay, a valid direct hash-chained successor, or a strictly newer
+credential-signed monotonic checkpoint when intermediate revisions were
+missed. A checkpoint cannot move the issue time backwards, and a direct
+successor cannot bypass its predecessor digest. Ordinary sends resolve routes
+only from that authenticated cache. Explicit route sets are accepted solely
+for a newly admitted credential that has no cached announcement yet.
+
+`prepareApplicationTransport` and the equivalent epoch/control preparation
+methods persist the exact recipient snapshot, sealed packets, and attempt state
+before relay I/O. `resumeGroupTransport` retries those bytes without rebuilding
+the cryptographic operation. Inbound sync stores each route's cursor, digest
+chain, partial reassembly, processed effects, and quarantine before committing
+the relay cursor.
+
+Most applications should use the high-level `HeadlessMessagingClient` entry
+points:
+
+```swift
+let created = try await client.createGroup(relay: relay)
+let send = try await client.sendGroupText(
+    groupID: created.groupID,
+    text: "hello"
+)
+let pages = try await client.syncGroup(groupID: created.groupID)
+let maintenance = try await client.maintainGroup(groupID: created.groupID)
+```
+
+The client also exposes `prepareGroupAdmission`,
+`resumeGroupAdmissionRoute`, `prepareGroupMemberAddition`, join acceptance,
+exact-operation resume, and deletion. The returned admission and Welcome
+artifacts are deliberately transport-neutral and must cross an independently
+authenticated encrypted channel selected by the caller. The API does not infer
+a contact, authorize a device, or create a global invitation service.
 
 This provider is not RFC 9420 MLS and requires independent review before a
 production security claim.

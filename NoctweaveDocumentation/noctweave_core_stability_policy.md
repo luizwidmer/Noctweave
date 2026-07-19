@@ -1,6 +1,6 @@
 # NoctweaveCore Stability Policy
 
-The architecture-revision branch defines the Noctweave 1.0 origin. Public APIs,
+The clean architecture revision defines the Noctweave 1.0 origin. Public APIs,
 wire objects, persisted state, CLI behavior, JavaScript models, Linux relay
 models, OpenAPI, and test vectors must describe that one architecture.
 

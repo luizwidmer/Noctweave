@@ -32,6 +32,9 @@ Completed in the architecture revision:
   and independent receive-route availability;
 - make-before-break signed route-set state with restart-resumable creation,
   publication, probe reconciliation, promotion, overlap, and failure cleanup;
+- a serialized relationship maintenance cycle that resumes exact rollover
+  journals, rotates relationship-only prekeys, begins a fresh route before
+  expiry, and finalizes elapsed drain windows;
 - exact encrypted-blob upload journaling with immutable retained coordinates;
 - selective relationship-only continuity and destructive local burn;
 - process-local pre-construction persona-scope guards that reject late results
@@ -45,8 +48,19 @@ Completed in the architecture revision:
   clearing, resurrection rejection, and throwing group PQ error propagation;
 - typed group events, exact durable application-envelope retry, and replay
   receipts;
-- low-level stateless experimental group opaque-route fanout planning and
-  publication helpers, without an end-to-end durable group transport claim;
+- signed per-credential group route announcements with direct hash-chained
+  replacement plus signer-authorized monotonic checkpoints after missed
+  revisions, a durable peer-route cache, exact packet-attempt journals,
+  transition/Welcome/control staging, independent receive cursors,
+  reassembly/quarantine, route lifecycle, and Headless group dispatch;
+- high-level group creation, text send, bounded sync, maintenance,
+  admission/add/join, exact-operation resume, and deletion in the Swift API and
+  CLI, with corresponding text/admission workflows in the native reference app;
+- independently anchored, crash-recoverable encrypted local client state with
+  an explicit erased tombstone rather than an implicit reset after file loss;
+- durable browser direct messaging and make-before-break route maintenance,
+  with a fixed-slot aggregate anchor, per-relationship anchors, and terminal
+  burn recovery supplied by the embedding host;
 - exact modular relay request/response envelopes;
 - throwing live PQ verification that preserves algorithm/runtime unavailability
   as retryable local failure;
@@ -66,9 +80,9 @@ These are finite verification and hardening tasks, not architecture migration:
   for each module before promoting it from provisional to stable.
 - [ ] Add differential decoders and property/fuzz tests for strict relay,
   rendezvous, direct, route, intent, and group objects.
-- [ ] Replace sorted-JSON signing inputs with one explicitly specified
-  cross-language canonical signing representation, or prove the current
-  profile byte-for-byte across independent implementations.
+- [ ] Expand the implemented NCJ-1 Swift/JavaScript positive and negative
+  vectors into a differential corpus for every signed, hashed, and encrypted
+  structure.
 - [ ] Exercise cursor recovery, exact retry, route rollover, and group epoch
   recovery across process termination and injected storage faults, including
   local-save-before-relay-commit and teardown-confirmation crash windows.
@@ -83,23 +97,21 @@ These are finite verification and hardening tasks, not architecture migration:
 
 ## Product completion
 
-- [ ] Complete end-user one-use pairing UX without exposing private participant
-  files or persona labels.
 - [ ] Expose the implemented consent/message-request, mute, receipt, block,
   safety-number, and best-effort route-teardown controls in every end-user
   reference surface.
-- [ ] Complete automatic drained-route teardown after the implemented
-  restart-resumable register, advertise-as-testing, targeted-probe, promote,
-  and overlap flow.
 - [ ] Add accessible projections for replies, replacements, reactions,
   retractions, delivery receipts, and optional read receipts.
 - [ ] Produce a group interoperability harness and client/process termination
   test lab before enabling the experimental group profile by default.
-- [ ] Build the experimental group transport orchestration above the current
-  stateless helpers: durable recipient/route authorization snapshots, exact
-  packet-attempt persistence, atomic transition-plus-Welcome staging, group
-  receive cursors/reassembly/quarantine, group route lifecycle, and Headless
-  group-envelope dispatch.
+- [ ] Add advanced native group administration for role/policy changes,
+  removal, deletion, route rollover, attachments, and restart-time re-export of
+  an owner-prepared admission response.
+- [ ] Add attachment prepare/publish/retry to the high-level durable browser
+  messaging service; keep attachment requests fail-closed until that boundary
+  exists.
+- [ ] Implement an independently secured rollback-anchor backend for non-Apple
+  JavaScript desktop hosts; continue to fail closed until one exists.
 
 ## Optional post-1.0 profiles
 

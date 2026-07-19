@@ -119,9 +119,16 @@ time, while terminal failures remain visible until explicit discard. Discarding
 a terminal ratchet gap fails dependent later artifacts and makes the next send
 bootstrap a fresh session.
 
-All mutations for one relationship are serialized. A global encrypted-state
-save gate merges independent relationship work against the latest aggregate,
+All mutations for one relationship are serialized. A process-wide local
+encrypted-state save gate merges independent relationship work against the
+latest aggregate,
 preventing a later save from clobbering another relationship's newer state.
+The store also compares the caller's exact expected prior aggregate before
+replacement. A stale client sharing the same store therefore cannot resurrect
+a persona or relationship after another client burns it. The independently
+anchored generation/ciphertext digest and permanent identity-free erased
+tombstone make file rollback, deletion, or unanchored reinitialization fail
+closed without becoming protocol identity.
 
 Consent, message-request state, mute, receipt preferences, and block state are
 local policy on one relationship. Blocking succeeds locally first, clears
@@ -184,12 +191,23 @@ The runtime provides:
   sendable work, conflict/resurrection rejection, and throwing PQ error
   propagation.
 
-Group opaque-route transport is not complete. `GroupOpaqueRouteFanoutPlanV2`
-and `publishGroupFanoutPlan` are low-level stateless experimental primitives.
-Durable recipient/route authorization snapshots, exact packet-attempt state,
-transition-plus-Welcome staging, receive cursors/reassembly/quarantine, group
-route lifecycle, and Headless group-envelope dispatch remain product work. The
-runtime therefore does not claim end-to-end crash-safe group fanout.
+Group opaque-route transport is now a durable runtime workflow. Every active
+credential announces its own signed group-scoped route set. Exact replay is
+idempotent; an immediately following revision must prove the predecessor
+digest; after missed revisions, a strictly
+newer credential-signed route set may act as a monotonic checkpoint only when
+its issue time does not move backwards. Same/older revisions and invalid
+direct successors fail closed.
+
+Before relay I/O, the runtime persists recipient authorization snapshots,
+fixed-size packets, and per-route attempt state for applications, route
+announcements, transitions, Welcomes, and deletion. Every receive route keeps
+its own digest-chain cursor, partial reassembly, processed effects, and bounded
+quarantine before relay cursor commit. High-level Headless and CLI operations
+cover creation, send, sync, maintenance, admission/add/join, exact-operation
+resume, and deletion. Admission artifacts remain caller-transported over an
+independently authenticated encrypted channel and create no contact, account,
+device, or cross-group authority.
 
 The implemented `nw.pq-group.experimental-2` provider is Noctweave-specific,
 O(n), bounded to 128 active credentials, and not RFC 9420 MLS.
@@ -199,6 +217,57 @@ relationship IDs, authorities, endpoints, handles, and routes cannot be reused;
 group IDs, member/credential handles, admission digests, and signing/agreement
 keys cannot overlap another group or any relationship, including across local
 personas. Failed upserts leave the prior valid state untouched.
+
+## Tool and app integration
+
+`NoctweaveCLI` exposes the clean protocol directly: one-use pairing, durable
+direct send/sync and route maintenance, relationship-local policy and
+continuity, explicit persona burn, and the complete experimental group
+workflow. Group creation requires an operator-chosen UUID so interrupted work
+keeps a stable target for status, maintenance, and exact-operation resume.
+Group deletion and full database erasure require
+confirmation tokens bound to the lowercase group UUID plus the first 16 hex
+characters of SHA-256 over the canonical current signed-group-state encoding,
+or to the same short hash over the canonical absolute state path.
+Incomplete group publication still emits its structured result but exits
+nonzero, distinguishing retry, authorization recovery, relay rejection, and an
+invalid relay response for automation. Command-specific option allowlists run
+before side effects. State now defaults to the user's Application Support
+directory. Bounded descriptor-based private input and no-clobber,
+directory-synchronized mode-`0600` output eliminate check-then-open handling
+for CLI artifacts.
+
+The browser integration shell now performs durable direct text messaging,
+receipt/control processing, ordered synchronization, block/burn, and
+make-before-break route maintenance. Its durable state coordinator requires an
+independently protected atomic last-value anchor. Static browser storage cannot
+provide that authority and fails closed. The authoritative encrypted persona
+aggregate is committed through a fixed local application-state slot, while each
+relationship retains its own anchor. The slot never enters protocol state and
+cannot be selected by a URL or profile alias. Burn advances it through
+`active -> burning -> burned`, refuses ordinary unlock during recovery, makes
+every relationship terminal, erases aggregate ciphertext, and only then permits
+best-effort relay cleanup. The high-level browser service deliberately
+rejects attachment publication until attachments have the same exact
+prepare/publish/retry journal; integrations may use the lower-level encrypted
+blob protocol only when they supply that durability themselves.
+
+On macOS, the Electrobun host supplies scope locks, crash-recoverable encrypted
+journals, Keychain-bound committed generations and ciphertext digests, and
+permanent erased tombstones for both the aggregate and relationship records.
+Plaintext protocol state, message content, and vault keys remain in the
+WebView, while opaque local scope metadata is host-visible; this boundary is
+rollback protection, not local-host anonymity. The Keychain item detects
+rollback or deletion of companion files; it is not a hardware monotonic counter
+and does not protect against rollback of the whole Keychain or host. Non-Apple
+desktop hosts remain fail-closed until they provide an equivalent independent
+last-value authority.
+
+The native reference app integrates group creation, text send/sync,
+maintenance, and admission/add/join flows and resumes sync and maintenance on
+unlock, foreground entry, and a bounded periodic cadence. It is a reference
+product surface, not part of the public integration API; external applications
+depend on `NoctweaveCore`, the relay wire, or `NoctweaveJS`.
 
 ## Relay and transport operation
 
@@ -369,7 +438,7 @@ change. The prior baseline and current closure are recorded in:
 - `6b392a1` — the focused architecture gate expanded to retain every recursive
   protocol-boundary regression;
 - `247823b` — the final JavaScript packet-index and cross-runtime capability-
-  limit-key bounds aligned, closing that candidate-wire audit.
+  limit-key bounds aligned, closing that candidate-wire audit;
 - `7a7b041` — pairwise and group protocol state made crash-durable, ordered,
   replay-safe, terminal where required, and strict about local PQ-runtime
   failures;
@@ -378,73 +447,102 @@ change. The prior baseline and current closure are recorded in:
 - `086655d` — architecture, protocol, security, public API, and roadmap
   documentation reconciled with the philosophy-filtered implementation;
 - `f7daa82` — explicit throwing group-credential validation and stale-runtime
-  error classification corrected after the final compiler gate exposed them.
+  error classification corrected after the final compiler gate exposed them;
+- `f682bf8` — JavaScript opaque-route receive state made crash-durable;
+- `a75c3c7` — the browser rendezvous integration completed;
+- `ea48df1` — relay operator controls aligned with the clean protocol;
+- `169f7dc` — relationship route maintenance automated;
+- `8ecc17d` — the definitive clean-architecture CLI workflows exposed;
+- `2d637c4` — group opaque-route fanout made crash-durable;
+- `7c95cb5` — read-only route-sync authority exposed without broadening route
+  capabilities;
+- `f7e53d8` — NCJ-1 made the canonical authenticated JSON profile;
+- `15bb358` — production PQ authority/key generation made throwing;
+- `26b8acf` — the private ignored research workspace reserved;
+- `fd3e025` — durable group transport and admission orchestration completed;
+- `849ee02` — exact rollback compare-and-replace, permanent erased anchors,
+  group route checkpoints, throwing PQ propagation, and epoch-overflow closure;
+- `8a06831` — the direct-v4 root/session derivation frozen as a shared canonical
+  Swift/JavaScript vector;
+- `ec32c7e` — strict CLI option allowlists, bounded private file I/O,
+  target-bound confirmations, and durable group outcomes completed;
+- `650a2ed` — durable browser messaging, aggregate and relationship rollback
+  anchors, terminal local burn, Electrobun host storage, and application
+  integration completed;
+- this documentation commit — README, public integration skill, normative
+  specifications, security requirements, and this evidence record reconciled.
+
+The separate native Noctyra reference-app repository retains its own clean
+companion history: `734ce44` adopts the clean architecture, `583de08` completes
+group workflows, `be8cabb` automates protocol maintenance, and `3c1962a`
+removes the remaining pre-1.0 identity surfaces.
 
 Earlier commits retain the incremental route, strict-wire, group-runtime, and
 pairing work that led to this clean baseline. Obsolete intermediate concepts
 remain visible in history but are absent from the 1.0 source and schemas.
 
-## Verification evidence
+## Final verification record
 
-The exact committed revision passed the authoritative matrix:
+The completed revision passed the following final matrix on 2026-07-18:
 
 - `swift build --package-path NoctweaveCore` — passed;
-- `swift test --package-path NoctweaveCore` — 371 tests executed, 1 skipped,
-  0 failures;
+- `swift test --package-path NoctweaveCore` — 402 tests, zero failures, one
+  intentionally opt-in live-TLS test skipped;
 - `swift build --package-path NoctweaveRelayServer` — passed;
-- `swift test --package-path NoctweaveRelayServer` — 71 tests executed,
-  0 failures;
-- `scripts/run-tests.sh` — passed the Core, relay, JavaScript, and desktop
-  type-check gates; the JavaScript suite executed 114 tests with 0 failures;
-- `scripts/verify-whitepaper-alignment.sh` — passed its focused Core/relay
-  suites and public-boundary checks;
-- `scripts/verify-release.sh` — passed package-pin, liboqs-pin, SBOM,
-  dependency-graph, relay-test, and Dockerfile checks;
-- all four Swift source/test trees parsed independently with `swiftc`;
-- the OpenAPI document parsed and all 87 unique local references resolved;
-- `git diff --check` passed.
+- `swift test --package-path NoctweaveRelayServer` — 72 tests, zero failures;
+- `scripts/run-tests.sh` — passed the 402-test Core suite, 72-test relay suite,
+  178-test JavaScript suite, CLI smoke checks, and desktop TypeScript check;
+- `scripts/verify-whitepaper-alignment.sh` — passed the focused clean-
+  architecture suites and public-boundary checks;
+- `scripts/verify-release.sh` — passed package-pin, vendored-liboqs, SBOM,
+  dependency-graph, 72-test relay, and Dockerfile checks; Trivy was not
+  installed, so its optional vulnerability scan did not run;
+- `npm run desktop:build` in `NoctweaveJS` — produced the stable Electrobun
+  artifacts using the host disk-image service;
+- native Noctyra macOS and generic iOS builds — passed, as did the attachment-
+  sanitizer smoke test; the iOS build retains the existing extension/app
+  `CFBundleVersion` 6-versus-7 warning;
+- the public `noctweave-messaging-relay` AgentSkill validator — passed;
+- `git diff --check` — passed after final documentation reconciliation.
 
-The relay build emitted a host-only linker warning because this machine's
-Homebrew SQLite dylib was built for macOS 26 while the package retains its lower
-deployment targets. Tests linked and passed; the protocol target was not raised
-to hide a local toolchain warning. Trivy was not installed, so release
-verification explicitly skipped the optional vulnerability scan.
-
-The added focused tests cover zero-I/O prepare/reopen, transaction replay,
-per-route/session order, retry and explicit discard, local-first cursor
+Focused coverage includes exact state compare-and-replace after burn,
+permanent erased tombstones, zero-I/O prepare/reopen, transaction replay,
+per-route/session ordering, retry and explicit discard, local-first cursor
 recovery, effect-idempotent teardown, rollover resumption, exact blob
-idempotency, group convergence, terminal deletion, stale-runtime rejection, and
-PQ error propagation.
+idempotency, group route checkpoints, group convergence, terminal deletion,
+epoch-overflow rejection, stale-runtime rejection, throwing PQ-error
+propagation, and the shared direct-v4 root/session transcript.
 
 ## Remaining engineering and assurance work
 
-The 1.0 architecture semantics are implemented, but the candidate modules
-remain provisional. Remaining work is product orchestration, conformance, and
-assurance before promotion or any production-security claim:
+The 1.0 architecture semantics and primary protocol/tool workflows are
+implemented, but every direct/relay candidate module remains provisional and
+the group cryptographic profile remains experimental. Remaining work before
+promotion or any production-security claim is finite assurance and product
+closure, not another account/device architecture revision:
 
-1. retain the complete green matrix as macOS and Linux CI evidence from a clean
-   checkout;
-2. expose the implemented pairing, relationship-policy, message-request,
-   safety-number, receipt, route-rollover, and teardown flows consistently in
-   the CLI and end-user reference clients;
-3. complete automatic route drain/teardown cleanup after the implemented
-   create, advertise-as-testing, targeted-probe, promote, and overlap flow;
-4. replace sorted-JSON signing inputs with an explicitly specified
-   cross-language canonical representation, or prove every signing byte in an
-   independent implementation;
-5. add shared Swift/JavaScript golden vectors and differential/fuzz testing for
-   every strict decoder;
-6. conduct independent direct/group cryptographic, side-channel, zeroization,
-   downgrade, forward-secrecy, and post-compromise review;
-7. complete process-termination, storage-fault, route rollover, and group epoch
-   recovery labs;
-8. publish reproducible SBOM, dependency, container, and release artifacts;
-9. complete accessible UI projections for typed relations, optional receipts,
-   group governance, and local moderation state;
-10. complete experimental group transport orchestration above the current
-    stateless helpers: durable route authorization/packet attempts,
-    transition-plus-Welcome staging, receive cursors/reassembly/quarantine,
-    route lifecycle, and Headless dispatch.
+1. retain the same green matrix as macOS and Linux CI evidence from clean
+   checkouts;
+2. expand NCJ-1 and the existing shared protocol fixtures into a larger golden-
+   vector corpus plus differential/fuzz testing for every signed, hashed,
+   encrypted, and strict-decoder boundary;
+3. conduct independent direct/group cryptographic, side-channel, zeroization,
+   downgrade, forward-secrecy, and post-compromise review; retain the explicit
+   direct-v4 healing limits and experimental group label;
+4. complete process-termination and injected storage-fault labs for local
+   save/anchor replacement, route rollover, cursor commit, group transition,
+   admission, deletion, and exact retry;
+5. add an independently secured rollback-anchor backend for non-Apple desktop
+   hosts; continue to fail closed rather than trusting rollbackable local files;
+6. add attachment prepare/publish/retry to the high-level durable browser
+   messaging service; keep its current attachment operation fail-closed until
+   that journal exists;
+7. finish accessible typed-relation, optional-receipt, local moderation, and
+   advanced group administration projections across reference clients;
+8. run live cross-client interoperability for CLI, Swift, browser/desktop, and
+   native reference surfaces, including restart-time group admission recovery;
+9. publish reproducible SBOM, dependency, container, checksum, and release
+   artifacts with the final exact test evidence.
 
 Optional hidden retrieval, onion, mixnet, mesh, and open-discovery work remains
 separate research. None is a prerequisite for the direct protocol, and none is
@@ -454,6 +552,7 @@ currently a production anonymity claim.
 
 Noctweave 1.0 is not “XMTP with post-quantum keys” and not a private account
 system. It is a pairwise-private, post-quantum event system with fresh
-relationship contexts, group-scoped credentials, opaque replaceable routes,
-strict relay modules, and explicit failure/retry semantics. The useful state
-machine lessons were retained; the stable-account assumptions were removed.
+unlinkable and disposable relationship contexts, group-scoped credentials,
+opaque replaceable routes, strict relay modules, and explicit failure/retry
+semantics. The useful state-machine lessons were retained; the stable-account
+assumptions were removed.

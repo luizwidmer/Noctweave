@@ -47,6 +47,8 @@ SQLite is the default durable store. `--memory-only` is for ephemeral tests.
 Route records are ordered and digest-chained. The receiver commits an opaque
 cursor only after durable processing. Retention, quota, and padding are coarse
 route policy buckets. Send, read, renew, and teardown capabilities are distinct.
+Pairwise and group ciphertext use the same opaque-route module; the relay never
+learns which application protocol produced a packet.
 
 Encrypted blob storage and optional IPFS offload reduce relay disk pressure;
 they do not provide anonymity or cryptographic deletion.

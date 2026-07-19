@@ -13,17 +13,32 @@ The current transport representation is BOM-free UTF-8 JSON:
 - binary values are canonical padded Base64;
 - UUID values use the standard hyphenated form;
 - dates use UTC ISO-8601 whole seconds;
-- signed JSON payloads use lexicographically sorted object keys;
+- signed, hashed, and otherwise authenticated JSON payloads use Noctweave
+  Canonical JSON version 1 (`NCJ-1`);
 - bounded protocol objects reject missing and unknown fields;
 - duplicate semantic object fields (including escaped or canonically equivalent
-  spellings), unpaired Unicode surrogates, numeric magnitudes that cannot remain
-  finite, and nesting beyond 128 containers fail before native decoding;
+  spellings), unpaired Unicode surrogates, non-integer or unsafe numeric values,
+  and nesting beyond 128 containers fail before native decoding;
 - security-sensitive nested payloads must decode and re-encode to identical
   canonical bytes before execution.
 
-Sorted JSON is the implemented signing profile, not a general claim that every
-JSON implementation is canonical. A release-grade cross-language canonical
-signing representation remains an explicit roadmap gate.
+`NCJ-1` has one deliberately small data model: null, booleans, strings, arrays,
+objects, and integers in the interoperable range `-(2^53-1)...2^53-1`. Strings
+and object keys are NFC-normalized. Object keys are ordered by their normalized
+UTF-8 bytes. Output is BOM-free UTF-8 with no insignificant whitespace and
+minimal JSON escapes; `/` is not escaped. Floats, exponents, negative zero,
+unsafe integers, normalized-key collisions, invalid Unicode, duplicate keys,
+cycles, and non-record JavaScript objects are outside the profile.
+
+The shared positive and negative conformance vectors are:
+
+- `test_vectors/canonical_json_v1.json`
+
+Swift canonicalizes from its independently encoded `Encodable` projection.
+JavaScript independently encodes the protocol data model and can enable the
+safe-integer scanner before parsing authenticated JSON. Both implementations
+must match the same vector bytes; using a platform's generic "sorted JSON"
+option is not sufficient.
 
 ## Exact relay envelope
 
@@ -78,6 +93,34 @@ are quarantined and never executed. Direct envelope authentication binds the
 relationship, both endpoint handles and binding digests, session/counter,
 event ID, PQ profile, nonce, ciphertext, and tag.
 
+## Direct-v4 root and session vector
+
+The checked-in cross-language root/session derivation vector is:
+
+- `test_vectors/direct_v4_root_session_v1.json`
+
+It fixes these exact byte formulas, where `||` is unframed concatenation:
+
+```text
+rootInfo = UTF8("Noctweave/direct-v4/root")
+        || UTF8(lowercase-hyphenated-relationship-UUID)
+        || negotiatedCapabilitiesDigest
+rootKey = HKDF-SHA256(sharedSecret, UTF8("NOCTWEAVE-ROOT"), rootInfo, 32)
+
+sessionTranscript = UTF8("NOCTWEAVE-SESSION")
+                 || UTF8(lowercase-hyphenated-relationship-UUID)
+                 || UTF8(cipherSuite)
+                 || negotiatedCapabilitiesDigest
+                 || rootKey
+sessionDigest = SHA256(sessionTranscript)
+sessionId = padded-base64(sessionDigest)
+```
+
+Swift and JavaScript conformance tests consume the same fixture and compare the
+complete root-info and session-transcript bytes as well as the derived root,
+digest, and identifier. This prevents matching final values from concealing a
+transcript construction mismatch.
+
 ## Opaque-route packet boundary
 
 `OpaqueRoutePacketV2` exposes only route-local delivery information. Append,
@@ -112,6 +155,9 @@ Release vectors must cover:
 - every modular relay request, success response, and error response;
 - group admissions, commits, states, welcomes, ciphertexts, and credential
   replacement;
+- group route announcements covering exact replay, a direct hash-chained
+  successor, a missed-revision signer-authorized monotonic checkpoint, and
+  rejection of same/older revisions or a forked direct successor;
 - negative cases for unknown fields, non-canonical nested bytes, wrong module
   binding, stale revisions, replay, and transcript tampering.
 

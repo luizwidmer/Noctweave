@@ -133,6 +133,17 @@ with the older retained prefix and allows safe resumption from local state.
 Relay commit and generated receipts or route-control followups are best-effort
 after that local transition. A failed route does not prevent the same pass from
 processing another healthy receive route.
+
+Authentication at rest does not by itself make local state monotonic. The
+reference client therefore commits each encrypted generation against separate
+host-local rollback authority. Ciphertext and authority advance through a
+recoverable transaction; replay, unexplained file loss, and stale writers fail
+closed. Every replacement compares the caller's exact prior aggregate with the
+committed aggregate under the store lock, so one stale client cannot resurrect
+state after another burns it. Explicit destruction leaves an identity-free
+erased tombstone. The anchor is local storage authority only and never becomes
+a network identity or portable recovery key.
+
 Terminal route teardown is effect-idempotent: a fresh authenticated repeat
 returns the existing tombstone, while all non-teardown operations stay rejected.
 
@@ -184,16 +195,28 @@ Typed immutable group events use negotiated content capabilities. Exact sealed
 application envelopes remain in a durable runtime outbox; retries reuse that
 ciphertext and inbound replay receipts prevent a second ratchet advance.
 
-The current opaque-route group helpers are lower-level and stateless. They can
-plan member-route packet copies and attempt publication, but they do not yet
-persist recipient/route authorization snapshots, packet attempts, or complete
-transition-plus-Welcome delivery; nor do they provide group receive cursors,
-reassembly/quarantine, route lifecycle, or Headless group dispatch. End-to-end
-crash-safe opaque-route group transport remains experimental product work.
+The group runtime now persists credential-signed peer route announcements,
+recipient authorization snapshots, exact fixed-size packets and attempts, and
+complete application/route-announcement/transition/Welcome/deletion work before
+relay I/O. A direct route revision must hash-chain to its predecessor; a
+strictly newer credential-signed monotonic checkpoint is accepted only after
+missed revisions and cannot move issue time backwards. Each local group route
+independently persists its ordered cursor,
+digest chain, partial reassembly, processed effects, and quarantine before
+authorizing relay garbage collection. Headless APIs orchestrate creation, text
+send, bounded sync, maintenance, admission/add/join, exact-operation resume,
+and deletion.
+
+The admission artifacts remain transport-neutral and must cross a
+caller-selected authenticated encrypted channel. They create only one
+group-scoped credential; they do not create an account, contact, device, or
+cross-group continuity link.
 
 This design learns state-machine discipline from MLS, but the current PQ
-provider has custom wire and cryptography. It needs independent review and must
-remain labeled experimental.
+provider has custom wire and cryptography. Complete transport orchestration is
+implementation evidence, not a cryptographic audit. The provider still needs
+independent review, cross-implementation vectors, fuzzing, and live
+process-termination testing and must remain labeled experimental.
 
 ## 9. Federation and deployment
 

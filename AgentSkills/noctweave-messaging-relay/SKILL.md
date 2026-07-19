@@ -1,5 +1,5 @@
 ---
-name: NoctweaveMessagingRelay
+name: noctweave-messaging-relay
 description: "Operate the public Noctweave 1.0 relationship protocol, headless client, exact modular relay, opaque routes, and federation without relying on proprietary app code."
 ---
 
@@ -47,8 +47,9 @@ swift run --package-path NoctweaveCore NoctweaveCLI info --relay http://127.0.0.
 ## Messaging tasks
 
 Read `references/messaging-cli.md` for local persona initialization, one-use
-contact rendezvous, pairwise send/sync, prekey renewal, route rollover, explicit
-continuity, and persona burn.
+contact rendezvous, pairwise send/sync, durable group admission and transport,
+prekey renewal, route rollover, explicit continuity, persona burn, and complete
+local-state erasure.
 
 ## Relay tasks
 
@@ -70,6 +71,8 @@ scripts/run-tests.sh
 ```
 
 For relay work, query `health` and `info` through the actual `/relay` endpoint.
-For messaging work, prove one encrypted relationship event is relay-accepted,
-synced, durably processed, and cursor-committed. Do not call a relay response a
-peer delivery or read receipt.
+For pairwise messaging work, prove one encrypted relationship event is
+relay-accepted, synced, durably processed, and cursor-committed. For group work,
+also prove the group-only invitation/admission artifacts, signed route
+announcement, persisted transport operation, and restart-safe resume path. Do
+not call a relay response a peer delivery or read receipt.

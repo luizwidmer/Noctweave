@@ -20,8 +20,23 @@ swift run --package-path NoctweaveCore NoctweaveCLI relationships
 The display name is a local persona label. It is never used as a relationship
 pseudonym or transmitted automatically.
 
-State is encrypted by default. `--plaintext true` is for disposable test
-fixtures only. `--state path` selects another state file.
+State is encrypted by default. Without `--state`, the database lives at the
+platform's user Application Support location under
+`NoctweaveCLI/client-state.json`, not in the current working directory.
+`--plaintext true` is for disposable test fixtures only. `--state path`
+selects another state file; its parent must be owned by the current user and
+must not be group/other writable. The CLI creates a missing final state
+directory with mode `0700` but does not change an existing caller-owned
+directory's permissions.
+
+Each command rejects options outside its own strict allowlist before loading
+state or performing network/file side effects. Sensitive inputs are read once
+through a held descriptor, must be bounded regular files, and cannot be final
+component symlinks, FIFOs, or growing files. Sensitive outputs are created with
+mode `0600`, flushed with their parent directory, and installed without
+replacement. An exact existing artifact is accepted as an idempotent retry;
+different existing bytes are never clobbered. Output paths may not overlap the
+state file, its pending/lock files, or the command's input artifacts.
 
 ## Prepare pairwise material
 
@@ -110,6 +125,104 @@ swift run --package-path NoctweaveCore NoctweaveCLI finalize-routes \
 route replacement before expiry. Permanent delivery or rollover failures stay
 visible until the operator uses the corresponding `discard-*` command.
 
+## Experimental groups
+
+Create a fresh group-scoped credential and opaque receive route, then send,
+sync, and maintain the group runtime:
+
+```sh
+swift run --package-path NoctweaveCore NoctweaveCLI group-create \
+  --group 00000000-0000-0000-0000-000000000000 \
+  --relay https://relay.example
+
+swift run --package-path NoctweaveCore NoctweaveCLI group-send \
+  --group 00000000-0000-0000-0000-000000000000 \
+  --text-file ./group-message.private.txt
+
+swift run --package-path NoctweaveCore NoctweaveCLI group-sync \
+  --group 00000000-0000-0000-0000-000000000000 \
+  --max 128 --pages 8
+
+swift run --package-path NoctweaveCore NoctweaveCLI group-maintain --all true
+```
+
+`group-create` requires an explicit UUID, so an interrupted creation still has
+a known target for `group-status`, maintenance, or exact-operation resume. Do
+not rerun creation after the group has been installed locally; resume the
+reported operation instead. The CLI never silently substitutes a second group
+identity. Group transport commands print their structured result even when
+publication is incomplete, then exit nonzero so automation cannot mistake
+partial progress for completion:
+
+- exit `75`: exact work remains pending for retry;
+- exit `77`: local authorization recovery is required;
+- exit `69`: the relay rejected the operation;
+- exit `76`: the relay response was invalid.
+
+Use `group-resume --group <uuid> --operation <uuid>` or the relevant admission
+resume command after correcting the reported condition. These outcomes retain
+the exact prepared group artifacts; retry does not create a replacement
+transition, Welcome, ciphertext, or deletion tombstone.
+
+For exit `77`, first inspect `group-status` and the saved operation. Repair the
+affected local receive route with `group-maintain` when the route can be
+renewed, then resume the exact operation. If the bearer capability itself is no
+longer available, recovery requires an explicit operator decision; the CLI has
+no implicit credential or authority fallback.
+
+Member admission is deliberately a four-step exchange. Every generated file
+must travel through an independently authenticated and encrypted channel; the
+CLI does not infer a contact, upload invitations, or create an account/device
+service.
+
+```sh
+# Existing authorized member creates the one-use request.
+swift run --package-path NoctweaveCore NoctweaveCLI group-invite-request \
+  --group 00000000-0000-0000-0000-000000000000 \
+  --out ./group-invitation.private.json
+
+# Prospective member creates a fresh group-only credential and receive route.
+swift run --package-path NoctweaveCore NoctweaveCLI group-admission-prepare \
+  --invitation-file ./group-invitation.private.json \
+  --relay https://relay.example \
+  --response-out ./group-admission.private.json
+
+# Preserve the admissionID printed in the command's JSON result.
+
+# Existing member commits the admission and exports the exact join package.
+swift run --package-path NoctweaveCore NoctweaveCLI group-add-member \
+  --group 00000000-0000-0000-0000-000000000000 \
+  --invitation-file ./group-invitation.private.json \
+  --response-file ./group-admission.private.json \
+  --join-out ./group-join.private.json \
+  --role member
+
+# Prospective member consumes its saved one-use admission.
+swift run --package-path NoctweaveCore NoctweaveCLI group-join-accept \
+  --admission 00000000-0000-0000-0000-000000000000 \
+  --join-file ./group-join.private.json
+```
+
+The printed `admissionID` is the durable identifier used by
+`group-join-accept` and admission resume commands. If the output was not
+retained, `group-admissions` lists the locally saved admission; do not prepare
+a replacement.
+
+`group-admission-resume`, `group-admissions`, and `group-resume` recover exact
+saved work after relay or process failure. Group deletion requires a
+target-bound confirmation token:
+
+```text
+DELETE-GROUP:<lowercase-group-uuid>:<first-16-hex-SHA256-of-canonical-current-group-state>
+```
+
+Run `group-delete --group <uuid>` without a valid `--confirm` value to have the
+CLI print the exact expected token, inspect the target, then repeat the command
+with that token. The command creates and durably publishes the signed terminal
+tombstone; a partial publication uses the nonzero outcomes above. The
+implemented `nw.pq-group.experimental-2` provider remains unaudited and is not
+RFC 9420 MLS.
+
 ## Relationship-local trust and policy
 
 ```sh
@@ -161,6 +274,21 @@ swift run --package-path NoctweaveCore NoctweaveCLI burn-persona \
 Burn removes the old persona record from local state and creates an unrelated
 empty container. It does not publish continuity or preserve recoverable live
 authority.
+
+To intentionally erase the entire encrypted local database, including all
+personas and group state, use the distinct destructive command:
+
+```sh
+swift run --package-path NoctweaveCore NoctweaveCLI erase-local-state \
+  --confirm ERASE:<first-16-hex-SHA256-of-canonical-absolute-state-path>
+```
+
+Encrypted mode advances an identity-free local rollback tombstone before the
+database is considered erased. Missing files are never interpreted as a fresh
+state automatically. The confirmation is bound to the canonical state path so
+a token copied from one database cannot authorize another. Invoke the command
+without a valid token to print the exact expected value, verify the path, then
+repeat it deliberately.
 
 ## Relay diagnostics
 

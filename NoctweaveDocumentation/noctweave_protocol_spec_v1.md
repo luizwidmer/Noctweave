@@ -24,18 +24,19 @@ defined by [`noctweave_identity_philosophy.md`](noctweave_identity_philosophy.md
 
 ## 2. Encoding rules
 
-JSON transport objects use BOM-free UTF-8, canonical padded Base64 for `Data`, UTC
-ISO-8601 whole-second dates, and lexicographically sorted object keys for
-authenticated payloads. Security-sensitive decoded objects require the exact
-current field set and canonical nested bytes. Unknown, missing, duplicate,
-malformed, non-finite, out-of-range, or structurally inconsistent values fail
-closed. Objects and arrays nested beyond 128 containers are rejected before
-native decoding.
+JSON transport objects use BOM-free UTF-8, canonical padded Base64 for `Data`,
+and UTC ISO-8601 whole-second dates. Signed, hashed, and otherwise authenticated
+JSON uses Noctweave Canonical JSON version 1 (`NCJ-1`): null, booleans, NFC
+strings, arrays, objects whose NFC keys are ordered by UTF-8 bytes, and decimal
+integers in `-(2^53-1)...2^53-1`. Output has no insignificant whitespace and
+uses minimal JSON escapes without escaping `/`. Floats, exponents, negative
+zero, unsafe integers, normalized-key collisions, invalid Unicode, duplicate
+keys, and nesting beyond 128 containers fail before native decoding.
 
-Sorted JSON is the implemented 1.0 signing profile, not a claim that arbitrary
-JSON encoders produce the same bytes. Every implementation must reproduce the
-repository vectors exactly. Moving to a separately specified deterministic
-binary representation remains a release-hardening gate.
+Security-sensitive decoded objects require the exact current field set and
+canonical nested bytes. Every implementation must independently reproduce
+`test_vectors/canonical_json_v1.json`; a platform's generic sorted-JSON option
+is not the authenticated representation.
 
 Every signature, KDF, MAC, and AEAD context uses a purpose-specific domain.
 
@@ -214,6 +215,14 @@ accepted testing/probe state reconciles a crash before promotion. A terminal
 failure stays explicit until discarded and is never reused as a successful
 route-set event.
 
+The reference client starts replacement when an active six-hour route has at
+most thirty minutes remaining. Its serialized maintenance cycle also resumes
+unfinished route intents, publishes an expiring relationship-only prekey, and
+finalizes elapsed drain windows. This timer is local product orchestration, not
+a wire identity or server lease-renewal mechanism. A client that wakes after
+the last route expires reports recovery as required and does not derive a
+stable address from another relationship or local persona.
+
 ## 9. Durable intents and delivery state
 
 Multi-step local mutations use bounded `ProtocolIntentV2` records containing an
@@ -224,6 +233,18 @@ The client serializes mutations within one relationship and uses a process-wide
 encrypted-state save gate for the aggregate. Each save must merge against the
 latest state so independent awaited relationship operations cannot overwrite
 one another.
+
+Encrypted local state is generation-bound to independently durable host-local
+authority. The pending ciphertext, trusted anchor, atomic file replacement,
+and committed anchor form one recoverable transaction. A missing or replayed
+file with an existing anchor, an unanchored pending file, or a stale writer is
+rejected. Each replacement compares the caller's exact expected prior aggregate
+with the committed aggregate under the store lock, preventing a stale client
+from overwriting a newer burn or relationship mutation. Explicit whole-state
+erasure advances an identity-free tombstone;
+the protocol never interprets unexplained deletion as a fresh database. This
+authority is local storage metadata and must not appear in any protocol object
+or relay request.
 
 `prepareSend` performs no relay I/O. Before returning local echo it atomically
 persists the logical event, unique transaction binding, advanced ratchet,
@@ -344,12 +365,34 @@ The canonical group runtime aggregate is limited to 32 MiB. Group signing,
 verification, key validation, and provider processing use throwing PQ paths so
 local algorithm/runtime failure is not reclassified as invalid peer input.
 
-`GroupOpaqueRouteFanoutPlanV2` and
-`HeadlessMessagingClient.publishGroupFanoutPlan` are low-level stateless
-experimental helpers. They do not durably own recipient/route authorization
-snapshots, packet-attempt state, transition-plus-Welcome staging, group receive
-cursors/reassembly/quarantine, group route lifecycle, or Headless group
-dispatch. They are not an end-to-end crash-safe group transport.
+Every active group credential may announce a signed
+`SignedGroupRouteSetAnnouncementV2`. The announcement is group- and
+credential-scoped and expires with its route set. Exact replay is idempotent.
+The immediately following revision must be a signature-verified hash-chained
+successor. When the receiver missed one or more revisions, it may accept a
+strictly newer credential-signed route set as a monotonic checkpoint only when
+its issue time does not precede the cached route set. Same/older revisions and
+an invalid direct successor fail closed. The encrypted runtime stores one
+current peer announcement per active remote credential. A caller may supply an
+uncached initial route set only for a newly admitted credential over the
+already authenticated invitation flow; it cannot override cached peer
+authority.
+
+The runtime persists the exact recipient/route snapshot, fixed opaque packets,
+and per-route attempts before publishing application, route-announcement,
+transition, Welcome, or deletion work. Each local receive route owns an
+independent sequence/digest cursor, partial reassembly, processed-effect state,
+and bounded quarantine. A page cursor advances locally only after its verified
+effects and reassembly snapshot are durable, and relay garbage collection is
+authorized only after that local commit.
+
+`HeadlessMessagingClient` supplies durable group creation, route registration,
+text send, bounded sync, maintenance, exact-operation resumption, admission
+preparation, member addition, join acceptance, and deletion. Admission request,
+anchor, route-announcement, transition, and Welcome artifacts must still travel
+through a caller-selected authenticated and encrypted channel. They grant only
+the named group credential and create no account, contact, installation, or
+cross-group authority.
 
 This profile is not RFC 9420 MLS.
 
