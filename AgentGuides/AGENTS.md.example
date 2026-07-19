@@ -10,7 +10,7 @@ Use only the public components:
 
 - `NoctweaveCore/`: Swift package with protocol models, relay client/server primitives, cryptographic flows, message ratchets, federation logic, and `NoctweaveCLI`.
 - `NoctweaveRelayServer/`: Linux/Docker relay implementation with TCP, HTTP, WebSocket, SQLite persistence, federation, IPFS attachment offload, and operator configuration.
-- `NoctweaveJS/`: bounded browser/Node relay client, liboqs WASM profile, encrypted storage wrapper, and interoperable relationship-scoped event helpers.
+- [NoctweaveJS](https://github.com/luizwidmer/NoctweaveJS): standalone bounded browser/Node relay client, liboqs WASM profile, encrypted storage wrapper, and interoperable relationship-scoped event helpers.
 - `NoctweaveDocumentation/`: protocol specs, OpenAPI schema, relay hardening, security requirements, and whitepaper alignment notes.
 
 Do not depend on proprietary Apple client or macOS GUI relay app sources. They are outside the public integration boundary.
@@ -23,6 +23,7 @@ Start by reading:
 - `NoctweaveDocumentation/noctweave_core_public_api.md`
 - `NoctweaveRelayServer/README.md`
 - `NoctweaveDocumentation/relay_ops_hardening_guide.md`
+- `https://github.com/luizwidmer/NoctweaveJS` for JavaScript integrations
 
 For Swift projects, integrate `NoctweaveCore` as a package dependency or local package path. For non-Swift services, use the relay wire/API documentation and the Linux relay as the interoperability reference.
 

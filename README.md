@@ -32,9 +32,10 @@ There are no hosted accounts, developer-operated relays, or required central
 notification services. You choose where every component runs.
 
 The supported public integration surface is `NoctweaveCore` (including
-`NoctweaveCLI`), `NoctweaveRelayServer`, `NoctweaveJS`, and the published
-protocol/API documentation. The proprietary Noctyra Apple client and macOS GUI
-relay are separate products and are not integration dependencies.
+`NoctweaveCLI`), `NoctweaveRelayServer`, the standalone
+[NoctweaveJS](https://github.com/luizwidmer/NoctweaveJS) repository, and the
+published protocol/API documentation. The native Noctweave client and macOS GUI
+relay are separate applications and are not integration dependencies.
 
 ## Noctweave 1.0 Architecture
 
@@ -105,8 +106,9 @@ and enter the generated token.
 ### 3. Exercise the public relay/client boundary
 
 ```sh
+git clone https://github.com/luizwidmer/NoctweaveJS.git
 cd NoctweaveJS
-npm install
+bun install --frozen-lockfile
 npm run smoke:relay -- --relay http://127.0.0.1:9340
 ```
 
@@ -135,7 +137,7 @@ available to integrations that supply that boundary.
 | I want to… | Start here |
 | --- | --- |
 | Run a relay | [`NoctweaveRelayServer/`](NoctweaveRelayServer/) |
-| Build a browser or Node client | [`NoctweaveJS/`](NoctweaveJS/) |
+| Build a browser or Node client | [NoctweaveJS](https://github.com/luizwidmer/NoctweaveJS) |
 | Integrate from Swift | [`NoctweaveCore/`](NoctweaveCore/) |
 | Script personas, relationships, and messages | [`NoctweaveCLI`](NoctweaveDocumentation/noctweave_cli_usage.md) |
 | Automate relay and messaging integration | [`noctweave-messaging-relay` skill](AgentSkills/noctweave-messaging-relay/SKILL.md) |
@@ -164,8 +166,9 @@ use the [relay guide](NoctweaveRelayServer/README.md) and
 Run the browser integration shell:
 
 ```sh
+git clone https://github.com/luizwidmer/NoctweaveJS.git
 cd NoctweaveJS
-npm install
+bun install --frozen-lockfile
 npm run dev:client
 ```
 
@@ -188,7 +191,7 @@ await relay.health();
 await store.set("selectedRelay", relay.endpoint);
 ```
 
-See the [NoctweaveJS guide](NoctweaveJS/README.md) for browser storage,
+See the [NoctweaveJS guide](https://github.com/luizwidmer/NoctweaveJS#readme) for browser storage,
 database adapters, encrypted state, WASM setup, pairing, and interoperability.
 
 ### NoctweaveCLI
@@ -225,6 +228,7 @@ bun run desktop:dev
 JavaScript client:
 
 ```sh
+git clone https://github.com/luizwidmer/NoctweaveJS.git
 cd NoctweaveJS
 bun install --frozen-lockfile
 bun run desktop:dev
@@ -235,7 +239,7 @@ evaluation, not the proprietary native applications. No official prebuilt
 desktop binaries are published yet. The macOS client supplies the
 rollback-protected aggregate and per-relationship state authority required for
 durable messaging; other hosts fail closed until they implement the same
-boundary. See the [NoctweaveJS guide](NoctweaveJS/README.md) for its exact
+boundary. See the [NoctweaveJS guide](https://github.com/luizwidmer/NoctweaveJS#readme) for its exact
 Keychain, journal, metadata, and full-host-rollback limitations.
 
 ## What Is Included
@@ -246,8 +250,9 @@ Keychain, journal, metadata, and full-host-rollback limitations.
   relay primitives, federation logic, and tests.
 - **NoctweaveRelayServer** — Linux/Docker relay, SQLite storage, operator Web
   UI, federation, and optional IPFS attachment storage.
-- **NoctweaveJS** — browser/Node protocol transports, encrypted stores, a
-  browser integration shell, and post-quantum WASM bindings.
+- **[NoctweaveJS](https://github.com/luizwidmer/NoctweaveJS)** — standalone
+  browser/Node protocol transports, encrypted stores, a browser integration
+  shell, and post-quantum WASM bindings.
 - **NoctweaveCLI** — headless persona, pairwise relationship, relay, and
   messaging workflows.
 - **[AgentGuides](AgentGuides/AGENTS.md.example) and
@@ -300,14 +305,17 @@ swift build --package-path NoctweaveCore
 swift test --package-path NoctweaveCore
 swift build --package-path NoctweaveRelayServer
 swift test --package-path NoctweaveRelayServer
-(cd NoctweaveJS && npm test)
-(cd NoctweaveJS && npm run typecheck:desktop)
 ```
 
 Run the combined public checks with `scripts/run-tests.sh` and the normative
 boundary gate with `scripts/verify-whitepaper-alignment.sh`. Run release, SBOM,
 dependency, Docker, and optional container-scan checks with
 `scripts/verify-release.sh`.
+
+NoctweaveJS runs its protocol suite, desktop type-check, and package validation
+in its [own CI](https://github.com/luizwidmer/NoctweaveJS/actions). A sibling
+checkout is detected automatically by `scripts/run-tests.sh` for local
+cross-repository verification.
 
 ## Documentation
 
@@ -329,10 +337,11 @@ Technical detail lives in focused documents:
 
 ## Contributing
 
-Contributions to the public protocol, relay, CLI, JavaScript implementation,
-tests, documentation, and examples are welcome. Read
+Contributions to the public protocol, relay, CLI, tests, documentation, and
+examples are welcome. Read
 [`CONTRIBUTING.md`](CONTRIBUTING.md) for scope, testing, and path-specific
-license requirements.
+license requirements. JavaScript client contributions belong in the
+[NoctweaveJS repository](https://github.com/luizwidmer/NoctweaveJS).
 
 ## License
 
@@ -342,10 +351,10 @@ Noctweave is a multi-license repository. The nearest license file governs:
 | --- | --- |
 | `NoctweaveCore/`, `NoctweaveRelayServer/` | `AGPL-3.0-or-later` |
 | `NoctweaveCore/COMMERCIAL-LICENSE.md` | Optional commercial terms for NoctweaveCore |
-| `NoctweaveJS/` | `Apache-2.0` |
-| `NoctweaveJS/examples/` | `MIT` |
 | `NoctweaveDocumentation/`, `docs/assets/` | `CC-BY-SA-4.0` |
 
 See [`NOTICE`](NOTICE), [`LICENSE`](LICENSE), and
 [`COMMERCIAL-LICENSE.md`](COMMERCIAL-LICENSE.md) for the repository-level
-summary.
+summary. Standalone repositories, including
+[NoctweaveJS](https://github.com/luizwidmer/NoctweaveJS), publish their own
+license maps.

@@ -11,7 +11,7 @@ Use only:
 
 - `NoctweaveCore/` and `NoctweaveCore/Sources/NoctweaveCLI/`
 - `NoctweaveRelayServer/`
-- `NoctweaveJS/`
+- the standalone `NoctweaveJS` repository when it is cloned alongside this checkout
 - `NoctweaveDocumentation/`
 - `scripts/`
 

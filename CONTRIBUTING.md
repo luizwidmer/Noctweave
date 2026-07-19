@@ -1,7 +1,9 @@
 # Contributing to Noctweave
 
 Contributions are welcome across the public protocol core, Linux/Docker relay,
-NoctweaveCLI, NoctweaveJS, tests, examples, agent guides, and documentation.
+NoctweaveCLI, tests, examples, agent guides, and documentation. JavaScript
+client contributions belong in the standalone
+[NoctweaveJS repository](https://github.com/luizwidmer/NoctweaveJS).
 
 ## Start Here
 
@@ -17,7 +19,6 @@ Run the relevant package tests before submitting. For repository-wide changes:
 ```sh
 swift test --package-path NoctweaveCore
 swift test --package-path NoctweaveRelayServer
-(cd NoctweaveJS && npm test)
 scripts/run-tests.sh
 ```
 
@@ -39,8 +40,6 @@ Contributions are licensed under the license governing their destination:
 | Destination | License |
 | --- | --- |
 | `NoctweaveCore/`, `NoctweaveCLI`, `NoctweaveRelayServer/` | `AGPL-3.0-or-later` |
-| `NoctweaveJS/` | `Apache-2.0` |
-| `NoctweaveJS/examples/` | `MIT` |
 | `NoctweaveDocumentation/`, `docs/assets/` | `CC-BY-SA-4.0` |
 
 Larger contributions to dual-licensed components may require a separate

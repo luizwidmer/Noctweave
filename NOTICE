@@ -10,11 +10,9 @@ SPDX/header to determine the license for a file.
   availability for NoctweaveCore only.
 - NoctweaveCore/Sources/NoctweaveCLI/ is licensed under AGPL-3.0-or-later.
 - NoctweaveRelayServer/ is licensed under AGPL-3.0-or-later.
-- NoctweaveJS/ is licensed under Apache-2.0.
-- NoctweaveJS/examples/ is licensed under MIT.
 - NoctweaveDocumentation/ and docs/assets/ are licensed under CC-BY-SA-4.0
   unless a file states otherwise. See NoctweaveDocumentation/LICENSE.
 - Unlisted repository files are licensed under AGPL-3.0-or-later unless a
   nearer license file or explicit notice says otherwise.
 
-Noctyra is a product name for proprietary client and relay applications built on Noctweave. No trademark license is granted by the source-code license.
+Standalone native client and relay applications are distributed from their own repositories. No trademark license is granted by the source-code license.
