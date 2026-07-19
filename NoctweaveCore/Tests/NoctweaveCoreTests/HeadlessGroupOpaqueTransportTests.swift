@@ -43,13 +43,13 @@ final class HeadlessGroupOpaqueTransportTests: XCTestCase {
 
         let store = ClientStateStore(
             fileURL: root.appendingPathComponent("state.json"),
-            useEncryption: false
+            protection: .insecurePlaintextForTesting
         )
         var state = try ClientState(displayName: "local only", createdAt: now)
         try state.updateActivePersona {
             try $0.upsert(groupRuntime: ownerRecord)
         }
-        try await store.save(state)
+        try await store.save(state, replacing: nil)
         let client = try HeadlessMessagingClient(
             stateStore: store,
             initialState: state

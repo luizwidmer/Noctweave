@@ -42,6 +42,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
     public let advertisedRouteSet: SignedGroupOpaqueRouteSetV2?
     public let anchor: GroupJoinAnchorV2?
     public let anchorPinnedAt: Date?
+    public let peerRouteCache: GroupPeerRouteSetCacheV2
     public let transition: GroupEpochTransitionEnvelopeV2?
     public let transitionObservedAt: Date?
     public let welcome: SignedGroupWelcomeV2?
@@ -61,6 +62,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
         case advertisedRouteSet
         case anchor
         case anchorPinnedAt
+        case peerRouteCache
         case transition
         case transitionObservedAt
         case welcome
@@ -81,6 +83,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
         advertisedRouteSet: SignedGroupOpaqueRouteSetV2?,
         anchor: GroupJoinAnchorV2?,
         anchorPinnedAt: Date?,
+        peerRouteCache: GroupPeerRouteSetCacheV2,
         transition: GroupEpochTransitionEnvelopeV2?,
         transitionObservedAt: Date?,
         welcome: SignedGroupWelcomeV2?,
@@ -99,6 +102,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
         self.advertisedRouteSet = advertisedRouteSet
         self.anchor = anchor
         self.anchorPinnedAt = anchorPinnedAt
+        self.peerRouteCache = peerRouteCache
         self.transition = transition
         self.transitionObservedAt = transitionObservedAt
         self.welcome = welcome
@@ -164,6 +168,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
             advertisedRouteSet: nil,
             anchor: nil,
             anchorPinnedAt: nil,
+            peerRouteCache: .empty,
             transition: nil,
             transitionObservedAt: nil,
             welcome: nil,
@@ -216,6 +221,10 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
             ),
             anchor: try values.decodeIfPresent(GroupJoinAnchorV2.self, forKey: .anchor),
             anchorPinnedAt: try values.decodeIfPresent(Date.self, forKey: .anchorPinnedAt),
+            peerRouteCache: try values.decode(
+                GroupPeerRouteSetCacheV2.self,
+                forKey: .peerRouteCache
+            ),
             transition: try values.decodeIfPresent(
                 GroupEpochTransitionEnvelopeV2.self,
                 forKey: .transition
@@ -260,6 +269,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
         try values.encode(advertisedRouteSet, forKey: .advertisedRouteSet)
         try values.encode(anchor, forKey: .anchor)
         try values.encode(anchorPinnedAt, forKey: .anchorPinnedAt)
+        try values.encode(peerRouteCache, forKey: .peerRouteCache)
         try values.encode(transition, forKey: .transition)
         try values.encode(transitionObservedAt, forKey: .transitionObservedAt)
         try values.encode(welcome, forKey: .welcome)
@@ -301,6 +311,12 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
                   (welcome == nil) == (welcomeObservedAt == nil),
                   transition == nil || anchor != nil,
                   welcome == nil || anchor != nil,
+                  (try anchor.map {
+                      try peerRouteCache.validated(
+                          against: $0.baseState,
+                          localCredential: localCredential
+                      )
+                  } ?? peerRouteCache.entries.isEmpty),
                   try pinnedAnchorIsValid(),
                   try stagedTransitionIsValid(),
                   try stagedWelcomeIsValid() else {
@@ -320,6 +336,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
             && anchor != nil
             && transition != nil
             && welcome != nil
+            && peerRoutesReady
             && completionObservedAt != nil
     }
 
@@ -331,6 +348,16 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
             return nil
         }
         return max(max(anchorPinnedAt, transitionObservedAt), max(welcomeObservedAt, activatedAt))
+    }
+
+    public var peerRoutesReady: Bool {
+        guard let transition, let observedAt = completionObservedAt else {
+            return false
+        }
+        let remote = transition.nextState.activeCredentials.filter {
+            $0.memberHandle != localCredential.memberHandle
+        }
+        return (try? peerRouteCache.routeSets(for: remote, at: observedAt)) != nil
     }
 
     public func activatingRoute(
@@ -445,13 +472,44 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
         return result
     }
 
-    public func inboundTransportState() throws -> GroupOpaqueRouteInboundStateV2 {
+    public func staging(
+        routeAnnouncement: SignedGroupRouteSetAnnouncementV2,
+        observedAt: Date
+    ) throws -> Self {
+        guard let anchor else { throw PendingGroupAdmissionV2Error.anchorRequired }
+        let updated = try peerRouteCache.accepting(
+            routeAnnouncement,
+            state: anchor.baseState,
+            localCredential: localCredential,
+            observedAt: observedAt
+        )
+        if updated == peerRouteCache { return self }
+        let result = replacing(
+            peerRouteCache: updated,
+            updatedAt: observedAt
+        )
+        guard try result.isStructurallyValidThrowing else {
+            throw PendingGroupAdmissionV2Error.invalidState
+        }
+        return result
+    }
+
+    public func inboundTransportState(
+        announcement: SignedGroupRouteSetAnnouncementV2,
+        pendingAnnouncementID: UUID?
+    ) throws -> GroupOpaqueRouteInboundStateV2 {
         guard let activeRoute, let advertisedRouteSet else {
             throw PendingGroupAdmissionV2Error.admissionIncomplete
+        }
+        guard announcement.routeSet == advertisedRouteSet,
+              pendingAnnouncementID == nil || pendingAnnouncementID == announcement.id else {
+            throw PendingGroupAdmissionV2Error.invalidState
         }
         let result = GroupOpaqueRouteInboundStateV2(
             localRoutes: [activeRoute],
             advertisedRouteSet: advertisedRouteSet,
+            advertisedRouteAnnouncement: announcement,
+            pendingRouteAnnouncementID: pendingAnnouncementID,
             routeSetOwnerSigningPublicKey: localCredential.signingKey.publicKeyData
         )
         guard result.isStructurallyValid else {
@@ -466,6 +524,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
         advertisedRouteSet: SignedGroupOpaqueRouteSetV2?? = nil,
         anchor: GroupJoinAnchorV2?? = nil,
         anchorPinnedAt: Date?? = nil,
+        peerRouteCache: GroupPeerRouteSetCacheV2? = nil,
         transition: GroupEpochTransitionEnvelopeV2?? = nil,
         transitionObservedAt: Date?? = nil,
         welcome: SignedGroupWelcomeV2?? = nil,
@@ -484,6 +543,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
             advertisedRouteSet: advertisedRouteSet ?? self.advertisedRouteSet,
             anchor: anchor ?? self.anchor,
             anchorPinnedAt: anchorPinnedAt ?? self.anchorPinnedAt,
+            peerRouteCache: peerRouteCache ?? self.peerRouteCache,
             transition: transition ?? self.transition,
             transitionObservedAt: transitionObservedAt ?? self.transitionObservedAt,
             welcome: welcome ?? self.welcome,
@@ -562,6 +622,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
               welcome.destinationCredentialHandle == localCredential.credentialHandle,
               welcome.destinationAdmissionDigest == localCredential.admissionDigest,
               welcomeObservedAt >= createdAt,
+              anchor.baseState.epoch < UInt64.max,
               welcome.epoch == anchor.baseState.epoch + 1 else {
             return false
         }
@@ -600,6 +661,7 @@ public struct HeadlessGroupAdmissionProgressV2: Codable, Equatable {
     public let groupID: UUID
     public let routeReady: Bool
     public let anchorPinned: Bool
+    public let peerRoutesReady: Bool
     public let transitionStaged: Bool
     public let welcomeStaged: Bool
     public let completed: Bool
@@ -609,6 +671,7 @@ public struct HeadlessGroupAdmissionProgressV2: Codable, Equatable {
         groupID = admission.groupID
         routeReady = admission.activeRoute != nil
         anchorPinned = admission.anchor != nil
+        peerRoutesReady = admission.peerRoutesReady
         transitionStaged = admission.transition != nil
         welcomeStaged = admission.welcome != nil
         self.completed = completed

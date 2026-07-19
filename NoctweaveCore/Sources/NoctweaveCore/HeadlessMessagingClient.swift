@@ -180,6 +180,49 @@ public struct HeadlessPreparedGroupDeletionV2: Codable, Equatable {
     }
 }
 
+public struct HeadlessGroupCreationResultV2: Codable, Equatable {
+    public let groupID: UUID
+    public let ownerMemberHandle: GroupScopedMemberHandleV2
+    public let ownerCredentialHandle: GroupScopedCredentialHandleV2
+    public let signedState: SignedGroupStateV2
+    public let receiveRoute: HeadlessGroupReceiveRouteResultV2
+}
+
+/// Exact artifacts the inviter must deliver through an already authenticated,
+/// encrypted invitation channel. No artifact creates authority outside this
+/// group, and transport publication remains separately resumable.
+public struct HeadlessPreparedGroupMemberAdditionV2: Codable, Equatable {
+    public let groupID: UUID
+    public let anchor: GroupJoinAnchorV2
+    public let transition: GroupEpochTransitionEnvelopeV2
+    public let welcome: SignedGroupWelcomeV2
+    public let existingMemberRouteAnnouncements: [SignedGroupRouteSetAnnouncementV2]
+    public let transportOperation: GroupOpaqueRouteOutboundOperationV2?
+    public let complete: Bool
+}
+
+public struct HeadlessGroupTextSendResultV2: Codable, Equatable {
+    public let groupID: UUID
+    public let event: GroupConversationEventV2
+    public let operationID: UUID?
+    public let transport: HeadlessGroupTransportResumeResultV2?
+    public let complete: Bool
+    public let disposition: HeadlessGroupTransportDispositionV2
+}
+
+public struct HeadlessGroupMaintenanceReportV2: Codable, Equatable {
+    public let groupID: UUID
+    public let observedAt: Date
+    public let resumedReceiveRoute: HeadlessGroupReceiveRouteResultV2?
+    public let transportResults: [HeadlessGroupTransportResumeResultV2]
+    public let finalizedRouteSet: SignedGroupOpaqueRouteSetV2?
+
+    public var requiresFollowUp: Bool {
+        resumedReceiveRoute?.announcementComplete == false
+            || transportResults.contains { !$0.complete }
+    }
+}
+
 /// Why a durable group transport operation stopped. Exact packets remain in
 /// the encrypted client state for every non-complete disposition.
 public enum HeadlessGroupTransportDispositionV2: String, Codable, Equatable {
@@ -273,7 +316,7 @@ public actor HeadlessMessagingClient {
             )
         }
         let state = try ClientState(displayName: displayName)
-        try await stateStore.save(state)
+        try await stateStore.save(state, replacing: nil)
         return try HeadlessMessagingClient(
             stateStore: stateStore,
             initialState: state
@@ -331,7 +374,7 @@ public actor HeadlessMessagingClient {
             try candidate.updateActivePersona { persona in
                 try persona.upsert(relationship: relationship)
             }
-            try await stateStore.save(candidate)
+            try await stateStore.save(candidate, replacing: state)
             state = candidate
         }
     }
@@ -439,7 +482,7 @@ public actor HeadlessMessagingClient {
             try candidate.updateActivePersona { persona in
                 try persona.upsert(groupRuntime: record)
             }
-            try await stateStore.save(candidate)
+            try await stateStore.save(candidate, replacing: state)
             state = candidate
         }
     }
@@ -469,6 +512,77 @@ public actor HeadlessMessagingClient {
         return try NoctweavePQGroupRuntimeV2(
             record: record,
             persistence: persistence
+        )
+    }
+
+    /// Creates and durably installs a fresh one-member group with new
+    /// group-scoped signing/agreement authority, then creates its first opaque
+    /// receive route. No pairwise or persona key becomes group authority.
+    public func createGroup(
+        groupID: UUID = UUID(),
+        relay: RelayEndpoint,
+        permissions: GroupPermissionPolicy = .default,
+        metadataDigest: Data? = nil,
+        policy: OpaqueRoutePolicyV2 = OpaqueRoutePolicyV2(
+            paddingBucket: .bytes4096,
+            retentionBucket: .sixHours,
+            quotaBucket: .packets256
+        ),
+        createdAt: Date = Date()
+    ) async throws -> HeadlessGroupCreationResultV2 {
+        if !HeadlessTransactionContext.groupIDs.contains(groupID) {
+            return try await withGroupTransaction(groupID) {
+                try await self.createGroup(
+                    groupID: groupID,
+                    relay: relay,
+                    permissions: permissions,
+                    metadataDigest: metadataDigest,
+                    policy: policy,
+                    createdAt: createdAt
+                )
+            }
+        }
+        guard !state.activePersona.groupRuntimes.contains(where: {
+            $0.groupId == groupID
+        }), !state.activePersona.pendingGroupAdmissions.contains(where: {
+            $0.groupID == groupID
+        }) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let record = try makeHeadlessGroupGenesisRecordV2(
+            groupID: groupID,
+            permissions: permissions,
+            metadataDigest: metadataDigest,
+            createdAt: createdAt
+        )
+        try await withStateSaveLock {
+            guard !state.activePersona.groupRuntimes.contains(where: {
+                $0.groupId == groupID
+            }) else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            var candidate = state
+            try candidate.updateActivePersona { persona in
+                try persona.upsert(groupRuntime: record)
+            }
+            guard try candidate.isStructurallyValidThrowing else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            try await stateStore.save(candidate, replacing: state)
+            state = candidate
+        }
+        let receiveRoute = try await registerGroupReceiveRoute(
+            groupID: groupID,
+            relay: relay,
+            policy: policy,
+            at: createdAt
+        )
+        return HeadlessGroupCreationResultV2(
+            groupID: groupID,
+            ownerMemberHandle: record.localCredential.memberHandle,
+            ownerCredentialHandle: record.localCredential.credentialHandle,
+            signedState: record.signedState,
+            receiveRoute: receiveRoute
         )
     }
 
@@ -529,7 +643,7 @@ public actor HeadlessMessagingClient {
             try candidate.updateActivePersona { persona in
                 try persona.insert(pendingGroupAdmission: admission)
             }
-            try await stateStore.save(candidate)
+            try await stateStore.save(candidate, replacing: state)
             state = candidate
         }
         return HeadlessGroupAdmissionPreparationV2(
@@ -671,6 +785,34 @@ public actor HeadlessMessagingClient {
         return try await completePendingGroupAdmissionIfReady(admissionID)
     }
 
+    /// Verifies and saves one existing member's signed group-only route
+    /// announcement received through the encrypted invitation channel.
+    public func acceptGroupAdmissionRouteAnnouncement(
+        admissionID: UUID,
+        announcement: SignedGroupRouteSetAnnouncementV2,
+        observedAt: Date = Date()
+    ) async throws -> HeadlessGroupAdmissionProgressV2 {
+        let groupID = try pendingGroupAdmission(admissionID).groupID
+        if !HeadlessTransactionContext.groupIDs.contains(groupID) {
+            return try await withGroupTransaction(groupID) {
+                try await self.acceptGroupAdmissionRouteAnnouncement(
+                    admissionID: admissionID,
+                    announcement: announcement,
+                    observedAt: observedAt
+                )
+            }
+        }
+        let current = try pendingGroupAdmission(admissionID)
+        let staged = try current.staging(
+            routeAnnouncement: announcement,
+            observedAt: observedAt
+        )
+        if staged != current {
+            try await persistPendingGroupAdmission(staged, expected: current)
+        }
+        return try await completePendingGroupAdmissionIfReady(admissionID)
+    }
+
     /// Convenience demultiplexer for encrypted invitation-channel artifacts.
     public func acceptGroupAdmissionEnvelope(
         admissionID: UUID,
@@ -690,6 +832,12 @@ public actor HeadlessMessagingClient {
                 welcome: welcome,
                 observedAt: observedAt
             )
+        case .groupRouteSetV2(let announcement):
+            return try await acceptGroupAdmissionRouteAnnouncement(
+                admissionID: admissionID,
+                announcement: announcement,
+                observedAt: observedAt
+            )
         case .directV4, .groupApplicationV2, .groupDeletionV2:
             throw HeadlessMessagingClientError.invalidControl
         }
@@ -699,6 +847,32 @@ public actor HeadlessMessagingClient {
         state.activePersona.pendingGroupAdmissions.map {
             HeadlessGroupAdmissionProgressV2($0)
         }
+    }
+
+    /// Accepts a signed route announcement received through an authenticated,
+    /// encrypted group channel (including invitation bootstrap). It never
+    /// derives identity continuity outside this group.
+    public func acceptGroupRouteSetAnnouncement(
+        groupID: UUID,
+        announcement: SignedGroupRouteSetAnnouncementV2,
+        observedAt: Date = Date()
+    ) async throws {
+        if !HeadlessTransactionContext.groupIDs.contains(groupID) {
+            return try await withGroupTransaction(groupID) {
+                try await self.acceptGroupRouteSetAnnouncement(
+                    groupID: groupID,
+                    announcement: announcement,
+                    observedAt: observedAt
+                )
+            }
+        }
+        guard announcement.groupID == groupID else {
+            throw HeadlessMessagingClientError.invalidControl
+        }
+        try await openGroupRuntime(groupID: groupID).acceptPeerRouteSetAnnouncement(
+            announcement,
+            observedAt: observedAt
+        )
     }
 
     /// Creates the first or replacement group receive route. Capability
@@ -783,10 +957,27 @@ public actor HeadlessMessagingClient {
             createdRoute: created,
             activatedAt: date
         )
+        let announcementOperation = await runtime.pendingRouteSetAnnouncementTransport()
+        guard let announcement = await runtime.currentRouteSetAnnouncement() else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let announcementComplete: Bool
+        if let announcementOperation {
+            announcementComplete = try await resumeGroupTransport(
+                groupID: groupID,
+                operationID: announcementOperation.id,
+                at: date
+            ).complete
+        } else {
+            announcementComplete = true
+        }
         return HeadlessGroupReceiveRouteResultV2(
             groupID: groupID,
             routeID: routeID,
-            routeSet: routeSet
+            routeSet: routeSet,
+            announcement: announcement,
+            announcementOperationID: announcementOperation?.id,
+            announcementComplete: announcementComplete
         )
     }
 
@@ -801,7 +992,16 @@ public actor HeadlessMessagingClient {
                 try await self.refreshGroupReceiveRouteSet(groupID: groupID, at: date)
             }
         }
-        return try await openGroupRuntime(groupID: groupID).refreshInboundRouteSet(at: date)
+        let runtime = try openGroupRuntime(groupID: groupID)
+        let routeSet = try await runtime.refreshInboundRouteSet(at: date)
+        if let operation = await runtime.pendingRouteSetAnnouncementTransport() {
+            _ = try await resumeGroupTransport(
+                groupID: groupID,
+                operationID: operation.id,
+                at: date
+            )
+        }
+        return routeSet
     }
 
     /// Removes expired draining routes only after persisting a successor that
@@ -819,6 +1019,13 @@ public actor HeadlessMessagingClient {
         let runtime = try openGroupRuntime(groupID: groupID)
         guard let finalized = try await runtime.finalizeExpiredInboundRoutes(at: date) else {
             return nil
+        }
+        if let operation = await runtime.pendingRouteSetAnnouncementTransport() {
+            _ = try await resumeGroupTransport(
+                groupID: groupID,
+                operationID: operation.id,
+                at: date
+            )
         }
         for route in finalized.removedRoutes {
             guard let teardown = try? route.clientCapabilities.makeTeardownRequest(
@@ -878,7 +1085,7 @@ public actor HeadlessMessagingClient {
     /// exact opaque-route packets as one resumable workflow before relay I/O.
     public func prepareGroupApplication(
         _ event: GroupConversationEventV2,
-        routeSets: [SignedGroupOpaqueRouteSetV2],
+        routeSets: [SignedGroupOpaqueRouteSetV2] = [],
         at date: Date = Date()
     ) async throws -> HeadlessPreparedGroupApplicationV2 {
         if !HeadlessTransactionContext.groupIDs.contains(event.groupID) {
@@ -894,10 +1101,14 @@ public actor HeadlessMessagingClient {
             throw HeadlessMessagingClientError.invalidState
         }
         let runtime = try openGroupRuntime(groupID: event.groupID)
+        let resolvedRouteSets = try await runtime.routeSetsForTransport(
+            additionalRouteSets: routeSets,
+            at: date
+        )
         let envelope = try await runtime.prepareApplicationEvent(event, at: date)
         let operation = try await runtime.prepareApplicationTransport(
             eventID: event.id,
-            routeSets: routeSets,
+            routeSets: resolvedRouteSets,
             at: date
         )
         if operation == nil {
@@ -909,6 +1120,197 @@ public actor HeadlessMessagingClient {
             envelope: envelope,
             transportOperation: operation,
             complete: operation == nil
+        )
+    }
+
+    /// High-level durable group text send. It creates local echo state,
+    /// persists exact encrypted packets, resumes relay publication, and returns
+    /// an explicit retry disposition without exposing journal mechanics.
+    public func sendGroupText(
+        groupID: UUID,
+        text: String,
+        eventID: UUID = UUID(),
+        clientTransactionID: UUID = UUID(),
+        createdAt: Date = Date()
+    ) async throws -> HeadlessGroupTextSendResultV2 {
+        if !HeadlessTransactionContext.groupIDs.contains(groupID) {
+            return try await withGroupTransaction(groupID) {
+                try await self.sendGroupText(
+                    groupID: groupID,
+                    text: text,
+                    eventID: eventID,
+                    clientTransactionID: clientTransactionID,
+                    createdAt: createdAt
+                )
+            }
+        }
+        let runtime = try openGroupRuntime(groupID: groupID)
+        let snapshot = await runtime.snapshot()
+        guard let content = EncodedContent.text(text) else {
+            throw HeadlessMessagingClientError.unsupportedContentType
+        }
+        let event = GroupConversationEventV2(
+            id: eventID,
+            clientTransactionID: clientTransactionID,
+            groupID: groupID,
+            authorMemberHandle: snapshot.localCredential.memberHandle,
+            authorCredentialHandle: snapshot.localCredential.credentialHandle,
+            createdAt: createdAt,
+            kind: .application,
+            content: content
+        )
+        let prepared = try await prepareGroupApplication(event, at: createdAt)
+        guard let operation = prepared.transportOperation else {
+            return HeadlessGroupTextSendResultV2(
+                groupID: groupID,
+                event: event,
+                operationID: nil,
+                transport: nil,
+                complete: true,
+                disposition: .complete
+            )
+        }
+        let transport = try await resumeGroupTransport(
+            groupID: groupID,
+            operationID: operation.id,
+            at: createdAt
+        )
+        return HeadlessGroupTextSendResultV2(
+            groupID: groupID,
+            event: event,
+            operationID: operation.id,
+            transport: transport,
+            complete: transport.complete,
+            disposition: transport.disposition
+        )
+    }
+
+    /// Prepares an exact add-member epoch from a verified one-use admission
+    /// and its initial group-only route. The caller still chooses the existing
+    /// authenticated invitation channel used to deliver the returned anchor,
+    /// route announcements, transition, and Welcome.
+    public func prepareGroupMemberAddition(
+        groupID: UUID,
+        admission: GroupCredentialAdmissionV2,
+        initialRouteSet: SignedGroupOpaqueRouteSetV2,
+        role: GroupRole = .member,
+        anchorExpiresAt: Date? = nil,
+        idempotencyKey: Data,
+        createdAt: Date = Date()
+    ) async throws -> HeadlessPreparedGroupMemberAdditionV2 {
+        if !HeadlessTransactionContext.groupIDs.contains(groupID) {
+            return try await withGroupTransaction(groupID) {
+                try await self.prepareGroupMemberAddition(
+                    groupID: groupID,
+                    admission: admission,
+                    initialRouteSet: initialRouteSet,
+                    role: role,
+                    anchorExpiresAt: anchorExpiresAt,
+                    idempotencyKey: idempotencyKey,
+                    createdAt: createdAt
+                )
+            }
+        }
+        guard role != .owner,
+              createdAt.timeIntervalSince1970.isFinite,
+              admission.groupId == groupID,
+              initialRouteSet.groupID == groupID,
+              initialRouteSet.ownerCredentialHandle == admission.credentialHandle,
+              initialRouteSet.ownerAdmissionDigest == admission.digest,
+              try initialRouteSet.verifyThrowing(
+                  ownerSigningPublicKey: admission.groupSigningPublicKey
+              ),
+              !initialRouteSet.usableRoutes(at: createdAt).isEmpty else {
+            throw HeadlessMessagingClientError.invalidControl
+        }
+        let runtime = try openGroupRuntime(groupID: groupID)
+        let snapshot = await runtime.snapshot()
+        guard snapshot.deletionState == nil,
+              snapshot.localRemoval == nil,
+              snapshot.signedState.epoch < UInt64.max,
+              !snapshot.signedState.members.contains(where: {
+                  $0.id == admission.memberHandle
+              }),
+              !snapshot.signedState.memberCredentials.contains(where: {
+                  $0.credentialHandle == admission.credentialHandle
+              }) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let nextEpoch = snapshot.signedState.epoch + 1
+        let newCredential = try GroupMemberCredentialV2.fromVerifiedProjection(
+            admission,
+            addedEpoch: nextEpoch
+        )
+        let newMember = GroupMemberV2(
+            id: admission.memberHandle,
+            role: role,
+            addedEpoch: nextEpoch
+        )
+        let invitationExpiry = min(
+            anchorExpiresAt ?? createdAt.addingTimeInterval(12 * 60 * 60),
+            admission.expiresAt
+        )
+        let anchor = try GroupJoinAnchorV2(
+            baseState: snapshot.signedState,
+            destinationMemberHandle: admission.memberHandle,
+            destinationCredentialHandle: admission.credentialHandle,
+            destinationAdmissionDigest: try requiredAdmissionDigest(admission),
+            issuedAt: createdAt,
+            expiresAt: invitationExpiry
+        )
+
+        var routeAnnouncements: [SignedGroupRouteSetAnnouncementV2] = []
+        for credential in snapshot.signedState.activeCredentials {
+            let announcement: SignedGroupRouteSetAnnouncementV2?
+            if credential.credentialHandle == snapshot.localCredential.credentialHandle {
+                announcement = snapshot.inboundTransport.advertisedRouteAnnouncement
+            } else {
+                announcement = snapshot.peerRouteCache.entries.first {
+                    $0.id == credential.credentialHandle
+                }?.announcement
+            }
+            guard let announcement,
+                  announcement.routeSet.ownerCredentialHandle
+                    == credential.credentialHandle,
+                  !announcement.routeSet.usableRoutes(at: createdAt).isEmpty else {
+                throw GroupRouteSetAnnouncementV2Error.routeSetMissing
+            }
+            _ = try announcement.verified(
+                against: snapshot.signedState,
+                observedAt: createdAt
+            )
+            routeAnnouncements.append(announcement)
+        }
+        routeAnnouncements.sort {
+            $0.routeSet.ownerCredentialHandle.rawValue
+                < $1.routeSet.ownerCredentialHandle.rawValue
+        }
+
+        let prepared = try await prepareGroupEpoch(
+            groupID: groupID,
+            operation: .addMember,
+            proposedMembers: snapshot.signedState.members + [newMember],
+            proposedCredentials: snapshot.signedState.memberCredentials + [newCredential],
+            admissionProjection: admission,
+            proposedPermissions: snapshot.signedState.permissions,
+            proposedMetadataDigest: snapshot.signedState.metadataDigest,
+            idempotencyKey: idempotencyKey,
+            routeSets: [initialRouteSet],
+            createdAt: createdAt
+        )
+        guard let welcome = prepared.publication.signedWelcomes.first(where: {
+            $0.destinationCredentialHandle == admission.credentialHandle
+        }) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        return HeadlessPreparedGroupMemberAdditionV2(
+            groupID: groupID,
+            anchor: anchor,
+            transition: prepared.publication.transition,
+            welcome: welcome,
+            existingMemberRouteAnnouncements: routeAnnouncements,
+            transportOperation: prepared.transportOperation,
+            complete: prepared.complete
         )
     }
 
@@ -924,7 +1326,7 @@ public actor HeadlessMessagingClient {
         proposedPermissions: GroupPermissionPolicy,
         proposedMetadataDigest: Data?,
         idempotencyKey: Data,
-        routeSets: [SignedGroupOpaqueRouteSetV2],
+        routeSets: [SignedGroupOpaqueRouteSetV2] = [],
         createdAt: Date = Date()
     ) async throws -> HeadlessPreparedGroupEpochV2 {
         if !HeadlessTransactionContext.groupIDs.contains(groupID) {
@@ -959,9 +1361,14 @@ public actor HeadlessMessagingClient {
             idempotencyKey: idempotencyKey,
             createdAt: createdAt
         )
+        let resolvedRouteSets = try await runtime.routeSetsForTransport(
+            state: publication.signedState,
+            additionalRouteSets: routeSets,
+            at: createdAt
+        )
         let transportOperation = try await runtime.prepareEpochTransport(
             intentID: publication.intentId,
-            routeSets: routeSets,
+            routeSets: resolvedRouteSets,
             at: createdAt
         )
         if transportOperation == nil {
@@ -985,7 +1392,7 @@ public actor HeadlessMessagingClient {
         groupID: UUID,
         reasonDigest: Data? = nil,
         idempotencyKey: Data,
-        routeSets: [SignedGroupOpaqueRouteSetV2],
+        routeSets: [SignedGroupOpaqueRouteSetV2] = [],
         createdAt: Date = Date()
     ) async throws -> HeadlessPreparedGroupDeletionV2 {
         if !HeadlessTransactionContext.groupIDs.contains(groupID) {
@@ -1000,6 +1407,10 @@ public actor HeadlessMessagingClient {
             }
         }
         let runtime = try openGroupRuntime(groupID: groupID)
+        let resolvedRouteSets = try await runtime.routeSetsForTransport(
+            additionalRouteSets: routeSets,
+            at: createdAt
+        )
         let tombstone = try await runtime.prepareDeletion(
             reasonDigest: reasonDigest,
             idempotencyKey: idempotencyKey,
@@ -1007,7 +1418,7 @@ public actor HeadlessMessagingClient {
         )
         let transport = try await runtime.prepareDeletionTransport(
             tombstoneID: tombstone.id,
-            routeSets: routeSets,
+            routeSets: resolvedRouteSets,
             at: createdAt
         )
         if transport == nil {
@@ -1147,6 +1558,10 @@ public actor HeadlessMessagingClient {
                     tombstoneID: currentOperation.logicalID,
                     at: max(max(Date(), date), currentOperation.updatedAt)
                 )
+            case .routeAnnouncement:
+                try await runtime.markRouteSetAnnouncementPublished(
+                    announcementID: currentOperation.logicalID
+                )
             }
         }
 
@@ -1208,6 +1623,9 @@ public actor HeadlessMessagingClient {
                     && pendingApplicationIDs.contains(operation.logicalID))
                 || (operation.kind == .epoch
                     && pendingEpochIDs.contains(operation.logicalID))
+                || (operation.kind == .routeAnnouncement
+                    && snapshot.inboundTransport.pendingRouteAnnouncementID
+                        == operation.logicalID)
         }.map(\.id)
         var results: [HeadlessGroupTransportResumeResultV2] = []
         results.reserveCapacity(operationIDs.count)
@@ -1219,6 +1637,57 @@ public actor HeadlessMessagingClient {
             ))
         }
         return results
+    }
+
+    /// Resumes only already-persisted group work: a pending route create,
+    /// announcement/application/epoch/deletion transports, and expired drain
+    /// finalization. It never invents a new receive route.
+    public func maintainGroup(
+        groupID: UUID,
+        at date: Date = Date()
+    ) async throws -> HeadlessGroupMaintenanceReportV2 {
+        if !HeadlessTransactionContext.groupIDs.contains(groupID) {
+            return try await withGroupTransaction(groupID) {
+                try await self.maintainGroup(groupID: groupID, at: date)
+            }
+        }
+        guard date.timeIntervalSince1970.isFinite else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        var runtime = try openGroupRuntime(groupID: groupID)
+        let initial = await runtime.snapshot()
+        let resumedRoute: HeadlessGroupReceiveRouteResultV2?
+        if let pending = initial.inboundTransport.pendingRoute {
+            resumedRoute = try await resumeGroupReceiveRoute(
+                groupID: groupID,
+                routeID: pending.clientCapabilities.routeID,
+                at: date
+            )
+        } else {
+            resumedRoute = nil
+        }
+        let transportResults = try await resumePendingGroupTransports(
+            groupID: groupID,
+            at: date
+        )
+        runtime = try openGroupRuntime(groupID: groupID)
+        let refreshed = await runtime.snapshot()
+        let finalizedRouteSet: SignedGroupOpaqueRouteSetV2?
+        if refreshed.deletionState == nil, refreshed.localRemoval == nil {
+            finalizedRouteSet = try await finalizeExpiredGroupReceiveRoutes(
+                groupID: groupID,
+                at: date
+            )
+        } else {
+            finalizedRouteSet = nil
+        }
+        return HeadlessGroupMaintenanceReportV2(
+            groupID: groupID,
+            observedAt: date,
+            resumedReceiveRoute: resumedRoute,
+            transportResults: transportResults,
+            finalizedRouteSet: finalizedRouteSet
+        )
     }
 
     public func setContinuityPolicy(
@@ -2845,7 +3314,7 @@ public actor HeadlessMessagingClient {
             }
             candidate.personas[index] = replacement
             candidate.activePersonaID = replacement.id
-            try await stateStore.save(candidate)
+            try await stateStore.save(candidate, replacing: state)
             state = candidate
         }
         return replacement
@@ -4527,7 +4996,7 @@ public actor HeadlessMessagingClient {
             guard try candidate.isStructurallyValidThrowing else {
                 throw HeadlessMessagingClientError.invalidState
             }
-            try await stateStore.save(candidate)
+            try await stateStore.save(candidate, replacing: state)
             state = candidate
         }
     }
@@ -4557,8 +5026,52 @@ public actor HeadlessMessagingClient {
             observedAt: observedAt,
             persistence: volatile
         )
-        let joined = await joinedRuntime.snapshot().replacing(
-            inboundTransport: try admission.inboundTransportState()
+        let joinedSnapshot = await joinedRuntime.snapshot()
+        let peerRouteCache = try admission.peerRouteCache.pruning(
+            to: joinedSnapshot.signedState,
+            localCredential: admission.localCredential
+        )
+        guard let localRouteSet = admission.advertisedRouteSet else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let announcement = try SignedGroupRouteSetAnnouncementV2.create(
+            state: joinedSnapshot.signedState,
+            routeSet: localRouteSet,
+            localCredential: admission.localCredential,
+            announcedAt: observedAt
+        )
+        let remoteCredentials = joinedSnapshot.signedState.activeCredentials.filter {
+            $0.memberHandle != admission.localCredential.memberHandle
+        }
+        let announcementOperation: GroupOpaqueRouteOutboundOperationV2?
+        if remoteCredentials.isEmpty {
+            announcementOperation = nil
+        } else {
+            let routeSets = try peerRouteCache.routeSets(
+                for: remoteCredentials,
+                at: observedAt
+            )
+            let snapshots = try zip(remoteCredentials, routeSets).map {
+                try GroupOpaqueRouteDestinationSnapshotV2(
+                    credential: $0.0,
+                    routeSet: $0.1,
+                    capturedAt: observedAt
+                )
+            }
+            announcementOperation = try GroupOpaqueRouteOutboundOperationV2
+                .routeAnnouncement(
+                    announcement,
+                    snapshots: snapshots,
+                    at: observedAt
+                )
+        }
+        let joined = joinedSnapshot.replacing(
+            outboundTransportOperations: announcementOperation.map { [$0] } ?? [],
+            inboundTransport: try admission.inboundTransportState(
+                announcement: announcement,
+                pendingAnnouncementID: announcementOperation?.logicalID
+            ),
+            peerRouteCache: peerRouteCache
         )
         guard try joined.isStructurallyValidThrowing else {
             throw HeadlessMessagingClientError.invalidState
@@ -4581,7 +5094,7 @@ public actor HeadlessMessagingClient {
             guard try candidate.isStructurallyValidThrowing else {
                 throw HeadlessMessagingClientError.invalidState
             }
-            try await stateStore.save(candidate)
+            try await stateStore.save(candidate, replacing: state)
             state = candidate
         }
         return HeadlessGroupAdmissionProgressV2(admission, completed: true)
@@ -4605,7 +5118,7 @@ public actor HeadlessMessagingClient {
             guard try candidate.isStructurallyValidThrowing else {
                 throw HeadlessMessagingClientError.invalidState
             }
-            try await stateStore.save(candidate)
+            try await stateStore.save(candidate, replacing: state)
             state = candidate
         }
     }
@@ -4769,10 +5282,102 @@ public actor HeadlessMessagingClient {
             guard try candidate.isStructurallyValidThrowing else {
                 throw HeadlessMessagingClientError.invalidState
             }
-            try await stateStore.save(candidate)
+            try await stateStore.save(candidate, replacing: state)
             state = candidate
         }
     }
+}
+
+private func requiredAdmissionDigest(
+    _ admission: GroupCredentialAdmissionV2
+) throws -> Data {
+    guard let digest = admission.digest, digest.count == SHA256.byteCount else {
+        throw HeadlessMessagingClientError.invalidControl
+    }
+    return digest
+}
+
+private func makeHeadlessGroupGenesisRecordV2(
+    groupID: UUID,
+    permissions: GroupPermissionPolicy,
+    metadataDigest: Data?,
+    createdAt: Date
+) throws -> GroupRuntimeRecord {
+    guard createdAt.timeIntervalSince1970.isFinite,
+          permissions.isStructurallyValid else {
+        throw HeadlessMessagingClientError.invalidState
+    }
+    let memberHandle = GroupScopedMemberHandleV2.generate()
+    let signingKey = try SigningKeyPair.generate()
+    let agreementKey = try AgreementKeyPair.generate()
+    let admission = try GroupCredentialAdmissionV2.create(
+        groupId: groupID,
+        memberHandle: memberHandle,
+        groupSigningKey: signingKey,
+        groupAgreementKey: agreementKey,
+        issuedAt: createdAt,
+        expiresAt: createdAt.addingTimeInterval(30 * 24 * 60 * 60)
+    )
+    let leaf = try GroupMemberCredentialV2.fromVerifiedProjection(
+        admission,
+        addedEpoch: 1
+    )
+    let localCredential = LocalGroupCredentialV2(
+        groupId: groupID,
+        memberHandle: memberHandle,
+        credentialHandle: leaf.credentialHandle,
+        admissionDigest: leaf.admissionDigest,
+        signingKey: signingKey,
+        agreementKey: agreementKey
+    )
+    let creator = GroupMemberV2(
+        id: memberHandle,
+        role: .owner,
+        addedEpoch: 1
+    )
+    let provider = NoctweavePQGroupExperimentalProviderV2()
+    let membership = try provider.membership(
+        groupId: groupID,
+        epoch: 1,
+        members: [creator],
+        leaves: [leaf]
+    )
+    let prepared = try provider.prepareGenesis(
+        membership: membership,
+        localCredential: localCredential
+    )
+    guard let providerDigest = prepared.providerCommitDigest else {
+        throw HeadlessMessagingClientError.invalidState
+    }
+    let signedState = try SignedGroupStateV2.initial(
+        groupId: groupID,
+        creator: creator,
+        creatorAdmission: admission,
+        permissions: permissions,
+        metadataDigest: metadataDigest,
+        providerGenesisDigest: providerDigest,
+        signingKey: signingKey,
+        signedAt: createdAt
+    )
+    let acceptance = GroupCryptoAcceptedEpochV2(
+        proposal: prepared.proposal,
+        providerCommitDigest: providerDigest,
+        signedCommitDigest: signedState.commitDigest,
+        acceptedTranscriptHash: signedState.confirmedTranscriptHash
+    )
+    let record = GroupRuntimeRecord(
+        groupId: groupID,
+        localCredential: localCredential,
+        signedState: signedState,
+        cryptoState: try provider.finalizePreparedEpoch(
+            prepared,
+            acceptance: acceptance
+        )
+    )
+    guard try record.isStructurallyValidThrowing else {
+        throw HeadlessMessagingClientError.invalidState
+    }
+    return record
 }
 
 private enum HeadlessTransactionContext {

@@ -556,6 +556,7 @@ public enum ProtocolEnvelopeV1: Codable, Identifiable, Equatable {
     case groupCommitV2(GroupEpochTransitionEnvelopeV2)
     case groupWelcomeV2(SignedGroupWelcomeV2)
     case groupDeletionV2(SignedGroupDeletionTombstoneV2)
+    case groupRouteSetV2(SignedGroupRouteSetAnnouncementV2)
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case version
@@ -564,6 +565,7 @@ public enum ProtocolEnvelopeV1: Codable, Identifiable, Equatable {
         case groupCommitV2
         case groupWelcomeV2
         case groupDeletionV2
+        case groupRouteSetV2
     }
 
     public init(from decoder: Decoder) throws {
@@ -617,6 +619,13 @@ public enum ProtocolEnvelopeV1: Codable, Identifiable, Equatable {
             self = .groupDeletionV2(
                 try container.decode(SignedGroupDeletionTombstoneV2.self, forKey: .groupDeletionV2)
             )
+        case .groupRouteSetV2:
+            self = .groupRouteSetV2(
+                try container.decode(
+                    SignedGroupRouteSetAnnouncementV2.self,
+                    forKey: .groupRouteSetV2
+                )
+            )
         case .version:
             throw DecodingError.dataCorruptedError(
                 forKey: .version,
@@ -657,6 +666,8 @@ public enum ProtocolEnvelopeV1: Codable, Identifiable, Equatable {
             try container.encode(welcome, forKey: .groupWelcomeV2)
         case .groupDeletionV2(let deletion):
             try container.encode(deletion, forKey: .groupDeletionV2)
+        case .groupRouteSetV2(let announcement):
+            try container.encode(announcement, forKey: .groupRouteSetV2)
         }
     }
 
@@ -667,6 +678,7 @@ public enum ProtocolEnvelopeV1: Codable, Identifiable, Equatable {
         case .groupCommitV2(let commit): return commit.id
         case .groupWelcomeV2(let welcome): return welcome.id
         case .groupDeletionV2(let deletion): return deletion.id
+        case .groupRouteSetV2(let announcement): return announcement.id
         }
     }
 
@@ -677,6 +689,7 @@ public enum ProtocolEnvelopeV1: Codable, Identifiable, Equatable {
         case .groupCommitV2(let commit): return commit.isStructurallyValid
         case .groupWelcomeV2(let welcome): return welcome.isStructurallyValid
         case .groupDeletionV2(let deletion): return deletion.isStructurallyValid
+        case .groupRouteSetV2(let announcement): return announcement.isStructurallyValid
         }
     }
 
@@ -690,7 +703,7 @@ public enum ProtocolEnvelopeV1: Codable, Identifiable, Equatable {
             return envelope.payload.nonce.count
                 + envelope.payload.ciphertext.count
                 + envelope.payload.tag.count
-        case .groupCommitV2, .groupWelcomeV2, .groupDeletionV2:
+        case .groupCommitV2, .groupWelcomeV2, .groupDeletionV2, .groupRouteSetV2:
             return (try? NoctweaveCoder.encode(self).count) ?? Int.max
         }
     }

@@ -13,7 +13,7 @@ final class HeadlessCurrentArchitectureTests: XCTestCase {
         let client = try HeadlessMessagingClient(
             stateStore: ClientStateStore(
                 fileURL: directory.appendingPathComponent("state.json"),
-                useEncryption: false
+                protection: .insecurePlaintextForTesting
             ),
             initialState: state
         )
@@ -47,7 +47,7 @@ final class HeadlessCurrentArchitectureTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = ClientStateStore(
             fileURL: directory.appendingPathComponent("state.json"),
-            useEncryption: false
+            protection: .insecurePlaintextForTesting
         )
         let initial = try ClientState(
             displayName: "First local mask",

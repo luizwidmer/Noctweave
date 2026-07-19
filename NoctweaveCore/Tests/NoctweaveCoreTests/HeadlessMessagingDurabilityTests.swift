@@ -688,11 +688,12 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
             )
         )
         XCTAssertTrue(failedRelationship.isStructurallyValid)
-        var failedState = await harness.client.snapshot()
+        let priorState = await harness.client.snapshot()
+        var failedState = priorState
         try failedState.updateActivePersona {
             try $0.upsert(relationship: failedRelationship)
         }
-        try await harness.store.save(failedState)
+        try await harness.store.save(failedState, replacing: priorState)
         let resumed = try HeadlessMessagingClient(
             stateStore: harness.store,
             initialState: failedState
@@ -795,9 +796,10 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
                 at: origin.addingTimeInterval(121)
             )
         )
-        var state = await discardHarness.client.snapshot()
+        let priorState = await discardHarness.client.snapshot()
+        var state = priorState
         try state.updateActivePersona { try $0.upsert(relationship: relationship) }
-        try await discardHarness.store.save(state)
+        try await discardHarness.store.save(state, replacing: priorState)
         let resumed = try HeadlessMessagingClient(
             stateStore: discardHarness.store,
             initialState: state
@@ -1060,11 +1062,12 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
                 at: origin.addingTimeInterval(173)
             )
         )
-        var failedState = await harness.client.snapshot()
+        let priorState = await harness.client.snapshot()
+        var failedState = priorState
         try failedState.updateActivePersona {
             try $0.upsert(relationship: failedRelationship)
         }
-        try await harness.store.save(failedState)
+        try await harness.store.save(failedState, replacing: priorState)
         let resumed = try HeadlessMessagingClient(
             stateStore: harness.store,
             initialState: failedState
@@ -1134,11 +1137,12 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
                 at: origin.addingTimeInterval(181)
             )
         )
-        var failedState = await harness.client.snapshot()
+        let priorState = await harness.client.snapshot()
+        var failedState = priorState
         try failedState.updateActivePersona {
             try $0.upsert(relationship: relationship)
         }
-        try await harness.store.save(failedState)
+        try await harness.store.save(failedState, replacing: priorState)
         let resumed = try HeadlessMessagingClient(
             stateStore: harness.store,
             initialState: failedState
@@ -1421,7 +1425,7 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
         )
         let store = ClientStateStore(
             fileURL: directory.appendingPathComponent("state.json"),
-            useEncryption: false
+            protection: .insecurePlaintextForTesting
         )
         let relationship: PairwiseRelationshipV2
         if let suppliedRelationship {

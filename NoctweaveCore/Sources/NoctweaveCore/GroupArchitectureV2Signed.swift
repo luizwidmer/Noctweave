@@ -1667,7 +1667,8 @@ public struct SignedGroupStateV2: Codable, Equatable, Identifiable {
         guard isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
         let authorKey: Data
         if let previousState {
-            guard epoch == previousState.epoch + 1,
+            guard previousState.epoch < UInt64.max,
+                  epoch == previousState.epoch + 1,
                   groupId == previousState.groupId,
                   profile == previousState.profile,
                   cipherSuite == previousState.cipherSuite else {

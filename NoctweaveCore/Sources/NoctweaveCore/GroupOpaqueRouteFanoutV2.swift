@@ -421,6 +421,7 @@ private extension ProtocolEnvelopeV1 {
         case .groupCommitV2(let transition): return transition.commit.groupId
         case .groupWelcomeV2(let welcome): return welcome.groupId
         case .groupDeletionV2(let deletion): return deletion.groupId
+        case .groupRouteSetV2(let announcement): return announcement.groupID
         case .directV4: return nil
         }
     }

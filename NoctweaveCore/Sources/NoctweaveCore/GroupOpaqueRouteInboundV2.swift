@@ -388,6 +388,8 @@ public struct GroupOpaqueRouteInboundStateV2: Codable, Equatable {
     public let pendingRoute: PendingLocalOpaqueReceiveRouteV2?
     public let localRoutes: [GroupLocalOpaqueReceiveRouteV2]
     public let advertisedRouteSet: SignedGroupOpaqueRouteSetV2?
+    public let advertisedRouteAnnouncement: SignedGroupRouteSetAnnouncementV2?
+    public let pendingRouteAnnouncementID: UUID?
     public let routeSetOwnerSigningPublicKey: Data?
     public let pendingBundles: [PendingGroupInboundBundleV2]
     public let epochStaging: GroupInboundEpochStagingV2
@@ -398,6 +400,8 @@ public struct GroupOpaqueRouteInboundStateV2: Codable, Equatable {
         case pendingRoute
         case localRoutes
         case advertisedRouteSet
+        case advertisedRouteAnnouncement
+        case pendingRouteAnnouncementID
         case routeSetOwnerSigningPublicKey
         case pendingBundles
         case epochStaging
@@ -409,6 +413,8 @@ public struct GroupOpaqueRouteInboundStateV2: Codable, Equatable {
         pendingRoute: PendingLocalOpaqueReceiveRouteV2? = nil,
         localRoutes: [GroupLocalOpaqueReceiveRouteV2] = [],
         advertisedRouteSet: SignedGroupOpaqueRouteSetV2? = nil,
+        advertisedRouteAnnouncement: SignedGroupRouteSetAnnouncementV2? = nil,
+        pendingRouteAnnouncementID: UUID? = nil,
         routeSetOwnerSigningPublicKey: Data? = nil,
         pendingBundles: [PendingGroupInboundBundleV2] = [],
         epochStaging: GroupInboundEpochStagingV2 = .empty,
@@ -418,6 +424,8 @@ public struct GroupOpaqueRouteInboundStateV2: Codable, Equatable {
         self.pendingRoute = pendingRoute
         self.localRoutes = localRoutes
         self.advertisedRouteSet = advertisedRouteSet
+        self.advertisedRouteAnnouncement = advertisedRouteAnnouncement
+        self.pendingRouteAnnouncementID = pendingRouteAnnouncementID
         self.routeSetOwnerSigningPublicKey = routeSetOwnerSigningPublicKey
         self.pendingBundles = pendingBundles
         self.epochStaging = epochStaging
@@ -440,6 +448,14 @@ public struct GroupOpaqueRouteInboundStateV2: Codable, Equatable {
             advertisedRouteSet: try values.decodeIfPresent(
                 SignedGroupOpaqueRouteSetV2.self,
                 forKey: .advertisedRouteSet
+            ),
+            advertisedRouteAnnouncement: try values.decodeIfPresent(
+                SignedGroupRouteSetAnnouncementV2.self,
+                forKey: .advertisedRouteAnnouncement
+            ),
+            pendingRouteAnnouncementID: try values.decodeIfPresent(
+                UUID.self,
+                forKey: .pendingRouteAnnouncementID
             ),
             routeSetOwnerSigningPublicKey: try values.decodeIfPresent(
                 Data.self,
@@ -479,6 +495,8 @@ public struct GroupOpaqueRouteInboundStateV2: Codable, Equatable {
         try values.encode(pendingRoute, forKey: .pendingRoute)
         try values.encode(localRoutes, forKey: .localRoutes)
         try values.encode(advertisedRouteSet, forKey: .advertisedRouteSet)
+        try values.encode(advertisedRouteAnnouncement, forKey: .advertisedRouteAnnouncement)
+        try values.encode(pendingRouteAnnouncementID, forKey: .pendingRouteAnnouncementID)
         try values.encode(routeSetOwnerSigningPublicKey, forKey: .routeSetOwnerSigningPublicKey)
         try values.encode(pendingBundles, forKey: .pendingBundles)
         try values.encode(epochStaging, forKey: .epochStaging)
@@ -494,10 +512,15 @@ public struct GroupOpaqueRouteInboundStateV2: Codable, Equatable {
             && (localRoutes.filter {
                 $0.advertisedState == .active || $0.advertisedState == .draining
             }.isEmpty == (advertisedRouteSet == nil))
+            && ((advertisedRouteSet == nil) == (advertisedRouteAnnouncement == nil))
+            && (pendingRouteAnnouncementID.map {
+                $0 == advertisedRouteAnnouncement?.id
+            } ?? true)
             && ((advertisedRouteSet == nil) == (routeSetOwnerSigningPublicKey == nil))
             && (routeSetOwnerSigningPublicKey.map { !$0.isEmpty && $0.count <= 8 * 1_024 }
                 ?? true)
             && advertisedRoutesMatchLocalState
+            && advertisedAnnouncementMatchesRouteSet
             && pendingBundles.count <= Self.maximumPendingBundles
             && Set(pendingBundles.map(\.id)).count == pendingBundles.count
             && pendingBundles.allSatisfy(\.isStructurallyValid)
@@ -523,10 +546,27 @@ public struct GroupOpaqueRouteInboundStateV2: Codable, Equatable {
             && projections == advertisedRouteSet.routes
     }
 
+    private var advertisedAnnouncementMatchesRouteSet: Bool {
+        guard let advertisedRouteSet,
+              let advertisedRouteAnnouncement,
+              let routeSetOwnerSigningPublicKey else {
+            return advertisedRouteSet == nil
+                && advertisedRouteAnnouncement == nil
+                && pendingRouteAnnouncementID == nil
+        }
+        return advertisedRouteAnnouncement.routeSet == advertisedRouteSet
+            && (try? advertisedRouteAnnouncement.verified(
+                ownerSigningPublicKey: routeSetOwnerSigningPublicKey,
+                observedAt: advertisedRouteAnnouncement.announcedAt
+            )) != nil
+    }
+
     func replacing(
         pendingRoute: PendingLocalOpaqueReceiveRouteV2?? = nil,
         localRoutes: [GroupLocalOpaqueReceiveRouteV2]? = nil,
         advertisedRouteSet: SignedGroupOpaqueRouteSetV2?? = nil,
+        advertisedRouteAnnouncement: SignedGroupRouteSetAnnouncementV2?? = nil,
+        pendingRouteAnnouncementID: UUID?? = nil,
         routeSetOwnerSigningPublicKey: Data?? = nil,
         pendingBundles: [PendingGroupInboundBundleV2]? = nil,
         epochStaging: GroupInboundEpochStagingV2? = nil,
@@ -537,6 +577,10 @@ public struct GroupOpaqueRouteInboundStateV2: Codable, Equatable {
             pendingRoute: pendingRoute ?? self.pendingRoute,
             localRoutes: localRoutes ?? self.localRoutes,
             advertisedRouteSet: advertisedRouteSet ?? self.advertisedRouteSet,
+            advertisedRouteAnnouncement: advertisedRouteAnnouncement
+                ?? self.advertisedRouteAnnouncement,
+            pendingRouteAnnouncementID: pendingRouteAnnouncementID
+                ?? self.pendingRouteAnnouncementID,
             routeSetOwnerSigningPublicKey: routeSetOwnerSigningPublicKey
                 ?? self.routeSetOwnerSigningPublicKey,
             pendingBundles: pendingBundles ?? self.pendingBundles,
@@ -558,6 +602,9 @@ public struct HeadlessGroupReceiveRouteResultV2: Codable, Equatable {
     public let groupID: UUID
     public let routeID: OpaqueReceiveRouteIDV2
     public let routeSet: SignedGroupOpaqueRouteSetV2
+    public let announcement: SignedGroupRouteSetAnnouncementV2
+    public let announcementOperationID: UUID?
+    public let announcementComplete: Bool
 }
 
 extension NoctweavePQGroupRuntimeV2 {
@@ -637,16 +684,22 @@ extension NoctweavePQGroupRuntimeV2 {
             previous: inbound.advertisedRouteSet,
             issuedAt: activatedAt
         )
-        let candidate = inbound.replacing(
-            pendingRoute: .some(nil),
+        let staged = try stageLocalRouteAnnouncement(
+            inbound: inbound,
             localRoutes: localRoutes,
-            advertisedRouteSet: .some(routeSet),
-            routeSetOwnerSigningPublicKey: .some(record.localCredential.signingKey.publicKeyData)
+            routeSet: routeSet,
+            pendingRoute: .some(nil),
+            announcedAt: activatedAt
         )
-        guard candidate.isStructurallyValid else {
+        guard staged.inbound.isStructurallyValid else {
             throw GroupOpaqueRouteInboundV2Error.invalidState
         }
-        try await persist(record.replacing(inboundTransport: candidate))
+        try await persist(record.replacing(
+            outboundTransportOperations: staged.operation.map {
+                record.outboundTransportOperations + [$0]
+            } ?? record.outboundTransportOperations,
+            inboundTransport: staged.inbound
+        ))
         return routeSet
     }
 
@@ -668,11 +721,18 @@ extension NoctweavePQGroupRuntimeV2 {
             previous: sameOwner ? inbound.advertisedRouteSet : nil,
             issuedAt: date
         )
-        let candidate = inbound.replacing(
-            advertisedRouteSet: .some(routeSet),
-            routeSetOwnerSigningPublicKey: .some(record.localCredential.signingKey.publicKeyData)
+        let staged = try stageLocalRouteAnnouncement(
+            inbound: inbound,
+            localRoutes: inbound.localRoutes,
+            routeSet: routeSet,
+            announcedAt: date
         )
-        try await persist(record.replacing(inboundTransport: candidate))
+        try await persist(record.replacing(
+            outboundTransportOperations: staged.operation.map {
+                record.outboundTransportOperations + [$0]
+            } ?? record.outboundTransportOperations,
+            inboundTransport: staged.inbound
+        ))
         return routeSet
     }
 
@@ -704,13 +764,123 @@ extension NoctweavePQGroupRuntimeV2 {
             previous: inbound.advertisedRouteSet,
             issuedAt: date
         )
-        let candidate = inbound.replacing(
+        let staged = try stageLocalRouteAnnouncement(
+            inbound: inbound,
             localRoutes: retained,
-            advertisedRouteSet: .some(routeSet),
-            routeSetOwnerSigningPublicKey: .some(record.localCredential.signingKey.publicKeyData)
+            routeSet: routeSet,
+            announcedAt: date
         )
-        try await persist(record.replacing(inboundTransport: candidate))
+        try await persist(record.replacing(
+            outboundTransportOperations: staged.operation.map {
+                record.outboundTransportOperations + [$0]
+            } ?? record.outboundTransportOperations,
+            inboundTransport: staged.inbound
+        ))
         return (routeSet, removed.map(\.localRoute))
+    }
+
+    public func currentRouteSetAnnouncement() -> SignedGroupRouteSetAnnouncementV2? {
+        record.inboundTransport.advertisedRouteAnnouncement
+    }
+
+    public func pendingRouteSetAnnouncementTransport()
+        -> GroupOpaqueRouteOutboundOperationV2? {
+        guard let id = record.inboundTransport.pendingRouteAnnouncementID else {
+            return nil
+        }
+        return record.outboundTransportOperations.first {
+            $0.kind == .routeAnnouncement && $0.logicalID == id
+        }
+    }
+
+    internal func markRouteSetAnnouncementPublished(
+        announcementID: UUID
+    ) async throws {
+        let inbound = record.inboundTransport
+        guard inbound.pendingRouteAnnouncementID == announcementID,
+              record.outboundTransportOperations.contains(where: {
+                  $0.kind == .routeAnnouncement
+                      && $0.logicalID == announcementID
+                      && $0.isComplete
+              }) else {
+            throw GroupOpaqueRouteInboundV2Error.invalidState
+        }
+        try await persist(record.replacing(
+            inboundTransport: inbound.replacing(
+                pendingRouteAnnouncementID: .some(nil)
+            )
+        ))
+    }
+
+    private func stageLocalRouteAnnouncement(
+        inbound: GroupOpaqueRouteInboundStateV2,
+        localRoutes: [GroupLocalOpaqueReceiveRouteV2],
+        routeSet: SignedGroupOpaqueRouteSetV2,
+        pendingRoute: PendingLocalOpaqueReceiveRouteV2?? = nil,
+        announcedAt: Date
+    ) throws -> (
+        inbound: GroupOpaqueRouteInboundStateV2,
+        operation: GroupOpaqueRouteOutboundOperationV2?
+    ) {
+        guard inbound.pendingRouteAnnouncementID == nil else {
+            throw GroupOpaqueRouteInboundV2Error.invalidState
+        }
+        let announcement = try SignedGroupRouteSetAnnouncementV2.create(
+            state: record.signedState,
+            routeSet: routeSet,
+            localCredential: record.localCredential,
+            announcedAt: announcedAt
+        )
+        let recipients = record.signedState.activeCredentials.filter {
+            $0.memberHandle != record.localCredential.memberHandle
+        }
+        let operation: GroupOpaqueRouteOutboundOperationV2?
+        if recipients.isEmpty {
+            operation = nil
+        } else {
+            guard record.outboundTransportOperations.count
+                    < GroupOpaqueRouteOutboundOperationV2.maximumJournalEntries else {
+                throw GroupOpaqueRouteTransportV2Error.capacityReached
+            }
+            do {
+                let routeSets = try record.peerRouteCache.routeSets(
+                    for: recipients,
+                    at: announcedAt
+                )
+                let snapshots = try zip(recipients, routeSets).map {
+                    try GroupOpaqueRouteDestinationSnapshotV2(
+                        credential: $0.0,
+                        routeSet: $0.1,
+                        capturedAt: announcedAt
+                    )
+                }
+                operation = try GroupOpaqueRouteOutboundOperationV2.routeAnnouncement(
+                    announcement,
+                    snapshots: snapshots,
+                    at: announcedAt
+                )
+            } catch GroupRouteSetAnnouncementV2Error.routeSetMissing
+                where inbound.advertisedRouteSet == nil {
+                // A first receive route is invitation/bootstrap material. Once
+                // a route has been advertised, every successor must fan out
+                // through the complete authenticated peer cache.
+                operation = nil
+            }
+        }
+        let candidate = inbound.replacing(
+            pendingRoute: pendingRoute,
+            localRoutes: localRoutes,
+            advertisedRouteSet: .some(routeSet),
+            advertisedRouteAnnouncement: .some(announcement),
+            pendingRouteAnnouncementID: .some(operation?.logicalID),
+            routeSetOwnerSigningPublicKey: .some(
+                record.localCredential.signingKey.publicKeyData
+            )
+        )
+        guard candidate.isStructurallyValid else {
+            throw GroupOpaqueRouteInboundV2Error.invalidState
+        }
+        return (candidate, operation)
     }
 
     /// Reassembles one relay-authenticated packet and persists either partial
@@ -848,6 +1018,14 @@ extension NoctweavePQGroupRuntimeV2 {
                         throw GroupOpaqueRouteInboundV2Error.unsupportedEnvelope
                     }
                     _ = try await processDeletionTombstone(tombstone, observedAt: date)
+                case .groupRouteSetV2(let announcement):
+                    guard announcement.groupID == record.groupId else {
+                        throw GroupOpaqueRouteInboundV2Error.unsupportedEnvelope
+                    }
+                    try await acceptPeerRouteSetAnnouncement(
+                        announcement,
+                        observedAt: date
+                    )
                 case .directV4:
                     throw GroupOpaqueRouteInboundV2Error.unsupportedEnvelope
                 }
@@ -1167,6 +1345,9 @@ extension NoctweavePQGroupRuntimeV2 {
         if let error = error as? GroupOpaqueRouteInboundV2Error,
            error == .unsupportedEnvelope {
             return .incompatibleProtocol
+        }
+        if let error = error as? GroupRouteSetAnnouncementV2Error {
+            return error == .invalidSignature ? .invalidAttribution : .invalidEnvelope
         }
         if let error = error as? GroupRuntimeError {
             switch error {

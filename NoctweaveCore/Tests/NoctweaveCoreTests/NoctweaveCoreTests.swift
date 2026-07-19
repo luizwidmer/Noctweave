@@ -2410,7 +2410,10 @@ final class NoctweaveCoreTests: XCTestCase {
         try handle.truncate(atOffset: UInt64(ClientStateStore.maximumStoredBytes + 1))
         try handle.close()
 
-        let store = ClientStateStore(fileURL: fileURL, useEncryption: false)
+        let store = ClientStateStore(
+            fileURL: fileURL,
+            protection: .insecurePlaintextForTesting
+        )
         do {
             _ = try await store.load()
             XCTFail("Expected oversized state to be rejected before decoding")

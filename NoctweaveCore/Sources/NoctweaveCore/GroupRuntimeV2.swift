@@ -602,6 +602,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
     public let processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]
     public let outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2]
     public let inboundTransport: GroupOpaqueRouteInboundStateV2
+    public let peerRouteCache: GroupPeerRouteSetCacheV2
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case formatVersion
@@ -622,6 +623,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         case processedApplicationEnvelopes
         case outboundTransportOperations
         case inboundTransport
+        case peerRouteCache
     }
 
     public init(
@@ -642,7 +644,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         pendingApplicationPublications: [PendingGroupApplicationPublicationV2] = [],
         processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2] = [],
         outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2] = [],
-        inboundTransport: GroupOpaqueRouteInboundStateV2 = .init()
+        inboundTransport: GroupOpaqueRouteInboundStateV2 = .init(),
+        peerRouteCache: GroupPeerRouteSetCacheV2 = .empty
     ) {
         self.formatVersion = formatVersion
         self.groupId = groupId
@@ -687,6 +690,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             return $0.id.uuidString < $1.id.uuidString
         }
         self.inboundTransport = inboundTransport
+        self.peerRouteCache = peerRouteCache
     }
 
     public init(from decoder: Decoder) throws {
@@ -729,6 +733,10 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             GroupOpaqueRouteInboundStateV2.self,
             forKey: .inboundTransport
         )
+        let decodedPeerRouteCache = try values.decode(
+            GroupPeerRouteSetCacheV2.self,
+            forKey: .peerRouteCache
+        )
         self.init(
             formatVersion: try values.decode(Int.self, forKey: .formatVersion),
             groupId: try values.decode(UUID.self, forKey: .groupId),
@@ -756,7 +764,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             pendingApplicationPublications: decodedPending,
             processedApplicationEnvelopes: decodedProcessed,
             outboundTransportOperations: decodedOutboundTransport,
-            inboundTransport: decodedInboundTransport
+            inboundTransport: decodedInboundTransport,
+            peerRouteCache: decodedPeerRouteCache
         )
         guard epochIntents == intents,
               quarantinedForks == forks,
@@ -768,6 +777,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               processedApplicationEnvelopes == decodedProcessed,
               outboundTransportOperations == decodedOutboundTransport,
               inboundTransport == decodedInboundTransport,
+              peerRouteCache == decodedPeerRouteCache,
               try isStructurallyValidThrowing else {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: decoder.codingPath, debugDescription: "Invalid group runtime record")
@@ -813,11 +823,20 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
             forKey: .outboundTransportOperations
         )
         try values.encode(inboundTransport, forKey: .inboundTransport)
+        try values.encode(peerRouteCache, forKey: .peerRouteCache)
     }
 
     public var isStructurallyValidThrowing: Bool {
         get throws {
             try requireCryptographicRuntime()
+            let pendingRouteAnnouncementIDs = Set(
+                inboundTransport.pendingRouteAnnouncementID.map { [$0] } ?? []
+            )
+            let incompleteRouteAnnouncementIDs = Set(
+                outboundTransportOperations.filter {
+                    $0.kind == .routeAnnouncement && !$0.isComplete
+                }.map(\.logicalID)
+            )
             guard formatVersion == Self.version,
               try localCredential.isStructurallyValidThrowing,
               localCredential.groupId == groupId,
@@ -899,9 +918,23 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
               }),
               inboundTransport.isStructurallyValid,
               inboundTransport.advertisedRouteSet.map({ $0.groupID == groupId }) ?? true,
+              inboundTransport.advertisedRouteAnnouncement.map({
+                  $0.groupID == groupId
+                      && $0.routeSet == inboundTransport.advertisedRouteSet
+              }) ?? true,
+              incompleteRouteAnnouncementIDs.isSubset(of: pendingRouteAnnouncementIDs),
+              pendingRouteAnnouncementIDs.allSatisfy({ id in
+                  outboundTransportOperations.contains {
+                      $0.kind == .routeAnnouncement && $0.logicalID == id
+                  }
+              }),
               inboundTransport.epochStaging.transitions.allSatisfy({
                   $0.commit.groupId == groupId
               }),
+              try peerRouteCache.validated(
+                  against: signedState,
+                  localCredential: localCredential
+              ),
               outboundTransportOperations.allSatisfy({ operation in
                   guard operation.kind == .epoch,
                         let intent = epochIntents.first(where: {
@@ -957,6 +990,11 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                               && $0.publicationState == .pending
                               && $0.deletedState.tombstone.id == operation.logicalID
                       } ?? false
+                  case .routeAnnouncement:
+                      return inboundTransport.pendingRouteAnnouncementID
+                          == operation.logicalID
+                          && inboundTransport.advertisedRouteAnnouncement?.id
+                          == operation.logicalID
                   }
               }),
               Set(processedApplicationEnvelopes.lazy.filter {
@@ -1064,24 +1102,44 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                 $0.outcome != .accepted || retainedEventIDs.contains($0.eventID)
             }.suffix(NoctweaveArchitectureV2.processedGroupEnvelopeRecentWindow)
         )
-        let unfinishedTransport = outboundTransportOperations.filter { !$0.isComplete }
-        guard unfinishedTransport.count
+        let recoveryTransport = outboundTransportOperations.filter { operation in
+            if !operation.isComplete { return true }
+            switch operation.kind {
+            case .application:
+                return pendingApplicationPublications.contains {
+                    $0.event.id == operation.logicalID
+                }
+            case .epoch:
+                return epochIntents.contains {
+                    $0.id == operation.logicalID && $0.requiresRecoveryState
+                }
+            case .deletion:
+                return deletionState?.publicationState == .pending
+                    && deletionState?.deletedState.tombstone.id == operation.logicalID
+            case .routeAnnouncement:
+                return inboundTransport.pendingRouteAnnouncementID == operation.logicalID
+            }
+        }
+        guard recoveryTransport.count
                 <= GroupOpaqueRouteOutboundOperationV2.maximumJournalEntries else {
             throw GroupRuntimeError.invalidRecord
         }
         let completedCapacity = max(
             0,
             GroupOpaqueRouteOutboundOperationV2.maximumJournalEntries
-                - unfinishedTransport.count
+                - recoveryTransport.count
         )
+        let recoveryTransportIDs = Set(recoveryTransport.map(\.id))
         let retainedCompletedTransport = Array(
-            outboundTransportOperations.filter(\.isComplete).suffix(min(
+            outboundTransportOperations.filter {
+                $0.isComplete && !recoveryTransportIDs.contains($0.id)
+            }.suffix(min(
                 GroupOpaqueRouteOutboundOperationV2.recentCompletedWindow,
                 completedCapacity
             ))
         )
         let retainedTransportIDs = Set(
-            unfinishedTransport.map(\.id) + retainedCompletedTransport.map(\.id)
+            recoveryTransport.map(\.id) + retainedCompletedTransport.map(\.id)
         )
         let candidate = replacing(
             epochIntents: epochIntents.filter { retainedIDs.contains($0.id) },
@@ -1124,7 +1182,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         pendingApplicationPublications: [PendingGroupApplicationPublicationV2]? = nil,
         processedApplicationEnvelopes: [ProcessedGroupApplicationEnvelopeV2]? = nil,
         outboundTransportOperations: [GroupOpaqueRouteOutboundOperationV2]? = nil,
-        inboundTransport: GroupOpaqueRouteInboundStateV2? = nil
+        inboundTransport: GroupOpaqueRouteInboundStateV2? = nil,
+        peerRouteCache: GroupPeerRouteSetCacheV2? = nil
     ) -> GroupRuntimeRecord {
         GroupRuntimeRecord(
             formatVersion: formatVersion,
@@ -1147,7 +1206,8 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
                 ?? self.processedApplicationEnvelopes,
             outboundTransportOperations: outboundTransportOperations
                 ?? self.outboundTransportOperations,
-            inboundTransport: inboundTransport ?? self.inboundTransport
+            inboundTransport: inboundTransport ?? self.inboundTransport,
+            peerRouteCache: peerRouteCache ?? self.peerRouteCache
         )
     }
 
@@ -1190,6 +1250,7 @@ public struct GroupRuntimeRecord: Codable, Equatable, Identifiable {
         try add(processedApplicationEnvelopes)
         try add(outboundTransportOperations)
         try add(inboundTransport)
+        try add(peerRouteCache)
         return total
     }
 
@@ -2024,6 +2085,10 @@ public actor NoctweavePQGroupRuntimeV2 {
                 throw GroupRuntimeError.invalidRecord
             }
             intents[index] = committed
+            let peerRouteCache = try record.peerRouteCache.pruning(
+                to: localIntent.nextSignedState,
+                localCredential: localIntent.localCredentialAfterCommit
+            )
             try await persist(record.replacing(
                 localCredential: localIntent.localCredentialAfterCommit,
                 signedState: localIntent.nextSignedState,
@@ -2033,7 +2098,8 @@ public actor NoctweavePQGroupRuntimeV2 {
                 pendingLocalCredentials: record.pendingLocalCredentials.filter {
                     $0.credentialHandle
                         != localIntent.localCredentialAfterCommit.credentialHandle
-                }
+                },
+                peerRouteCache: peerRouteCache
             ))
             return .active
         }
@@ -2137,6 +2203,10 @@ public actor NoctweavePQGroupRuntimeV2 {
         let nextJournal = record.peerEpochJournal + [journal]
         let candidate: GroupRuntimeRecord
         if let nextCredential, let nextCryptoState {
+            let peerRouteCache = try record.peerRouteCache.pruning(
+                to: transition.nextState,
+                localCredential: nextCredential
+            )
             candidate = record.replacing(
                 localCredential: nextCredential,
                 signedState: transition.nextState,
@@ -2144,7 +2214,8 @@ public actor NoctweavePQGroupRuntimeV2 {
                 peerEpochJournal: nextJournal,
                 pendingLocalCredentials: record.pendingLocalCredentials.filter {
                     $0.credentialHandle != nextCredential.credentialHandle
-                }
+                },
+                peerRouteCache: peerRouteCache
             )
         } else {
             guard let transitionDigest = transition.digest else {
@@ -2165,7 +2236,11 @@ public actor NoctweavePQGroupRuntimeV2 {
                 pendingLocalCredentials: [],
                 localRemoval: removal,
                 pendingApplicationPublications: [],
-                outboundTransportOperations: []
+                outboundTransportOperations: [],
+                peerRouteCache: try record.peerRouteCache.pruning(
+                    to: transition.nextState,
+                    localCredential: record.localCredential
+                )
             )
         }
         try await persist(candidate)
@@ -2248,11 +2323,16 @@ public actor NoctweavePQGroupRuntimeV2 {
         let committedIntent = try intent.advancing(to: .stateCommitted, at: date)
         var intents = record.epochIntents
         intents[index] = committedIntent
+        let peerRouteCache = try record.peerRouteCache.pruning(
+            to: intent.nextSignedState,
+            localCredential: intent.localCredentialAfterCommit
+        )
         let candidate = record.replacing(
             localCredential: intent.localCredentialAfterCommit,
             signedState: intent.nextSignedState,
             cryptoState: intent.nextCryptoState,
-            epochIntents: intents
+            epochIntents: intents,
+            peerRouteCache: peerRouteCache
         )
         try await persist(candidate)
         return committedIntent.publication

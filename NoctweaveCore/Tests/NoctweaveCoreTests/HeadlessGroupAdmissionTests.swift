@@ -29,9 +29,30 @@ final class HeadlessGroupAdmissionTests: XCTestCase {
             record: ownerRecord,
             persistence: ownerStore
         )
+        let ownerPendingRoute = try await owner.prepareInboundReceiveRoute(
+            relay: endpoint,
+            createdAt: startedAt.addingTimeInterval(0.2)
+        )
+        let ownerRouteResponse = try await RelayClient(endpoint: endpoint).send(
+            .createOpaqueRouteV2(
+                CreateOpaqueRouteRelayRequestV2(
+                    request: ownerPendingRoute.createRequest,
+                    renewCapability: ownerPendingRoute.clientCapabilities.renewCapability
+                )
+            )
+        )
+        guard case .opaqueRoute(let ownerCreatedRoute)? = ownerRouteResponse.successBody else {
+            return XCTFail("Owner route creation failed")
+        }
+        _ = try await owner.activateInboundReceiveRoute(
+            createdRoute: ownerCreatedRoute,
+            activatedAt: startedAt.addingTimeInterval(0.3)
+        )
+        let ownerAnnouncementSnapshot = await owner.currentRouteSetAnnouncement()
+        let ownerRouteAnnouncement = try XCTUnwrap(ownerAnnouncementSnapshot)
         let stateStore = ClientStateStore(
             fileURL: root.appendingPathComponent("member.json"),
-            useEncryption: false
+            protection: .insecurePlaintextForTesting
         )
         var member = try await HeadlessMessagingClient.open(
             stateStore: stateStore,
@@ -115,6 +136,11 @@ final class HeadlessGroupAdmissionTests: XCTestCase {
             anchor: anchor,
             invitationBindingDigest: binding,
             observedAt: startedAt.addingTimeInterval(3.1)
+        )
+        _ = try await member.acceptGroupAdmissionRouteAnnouncement(
+            admissionID: preparation.admissionID,
+            announcement: ownerRouteAnnouncement,
+            observedAt: startedAt.addingTimeInterval(3.2)
         )
         let welcomeProgress = try await member.acceptGroupAdmissionWelcome(
             admissionID: preparation.admissionID,

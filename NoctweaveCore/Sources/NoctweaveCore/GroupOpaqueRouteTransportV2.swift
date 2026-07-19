@@ -242,6 +242,16 @@ public struct SignedGroupOpaqueRouteSetV2: Codable, Equatable {
         of previous: SignedGroupOpaqueRouteSetV2,
         ownerSigningPublicKey: Data
     ) -> Bool {
+        (try? isValidSuccessorThrowing(
+            of: previous,
+            ownerSigningPublicKey: ownerSigningPublicKey
+        )) == true
+    }
+
+    public func isValidSuccessorThrowing(
+        of previous: SignedGroupOpaqueRouteSetV2,
+        ownerSigningPublicKey: Data
+    ) throws -> Bool {
         guard previous.revision < UInt64.max,
               groupID == previous.groupID,
               ownerCredentialHandle == previous.ownerCredentialHandle,
@@ -251,7 +261,7 @@ public struct SignedGroupOpaqueRouteSetV2: Codable, Equatable {
               issuedAt >= previous.issuedAt else {
             return false
         }
-        return verify(ownerSigningPublicKey: ownerSigningPublicKey)
+        return try verifyThrowing(ownerSigningPublicKey: ownerSigningPublicKey)
     }
 
     public func usableRoutes(at date: Date) -> [OpaqueSendRouteV2] {
@@ -460,6 +470,7 @@ public enum GroupOpaqueRouteOutboundOperationKindV2: String, Codable, Equatable 
     case application
     case epoch
     case deletion
+    case routeAnnouncement
 }
 
 public enum GroupOpaqueRouteArtifactKindV2: String, Codable, Equatable {
@@ -467,6 +478,7 @@ public enum GroupOpaqueRouteArtifactKindV2: String, Codable, Equatable {
     case epochTransition
     case epochWelcome
     case deletion
+    case routeAnnouncement
 }
 
 public struct GroupOpaqueRoutePublicationAcceptanceV2: Codable, Equatable {
@@ -1034,6 +1046,13 @@ public struct GroupOpaqueRouteOutboundOperationV2: Codable, Equatable, Identifia
                 && deliveries[0].attempts.allSatisfy {
                     $0.predecessorPublicationID == nil
                 }
+        case .routeAnnouncement:
+            return deliveries.count == 1
+                && deliveries[0].artifactKind == .routeAnnouncement
+                && deliveries[0].plan.protocolEnvelopeID == logicalID
+                && deliveries[0].attempts.allSatisfy {
+                    $0.predecessorPublicationID == nil
+                }
         }
     }
 
@@ -1229,6 +1248,39 @@ public struct GroupOpaqueRouteOutboundOperationV2: Codable, Equatable, Identifia
             groupID: groupID,
             kind: .deletion,
             logicalID: tombstone.id,
+            destinationSnapshots: snapshots,
+            deliveries: [delivery],
+            createdAt: date,
+            updatedAt: date
+        )
+        guard result.isStructurallyValid else {
+            throw GroupOpaqueRouteTransportV2Error.invalidOperation
+        }
+        return result
+    }
+
+    static func routeAnnouncement(
+        _ announcement: SignedGroupRouteSetAnnouncementV2,
+        snapshots: [GroupOpaqueRouteDestinationSnapshotV2],
+        at date: Date
+    ) throws -> Self {
+        let plan = try GroupOpaqueRouteFanoutPlanV2.create(
+            envelope: .groupRouteSetV2(announcement),
+            groupID: announcement.groupID,
+            destinations: snapshots.map(\.fanoutDestination),
+            at: date
+        )
+        let delivery = GroupOpaqueRouteTransportDeliveryV2(
+            artifactKind: .routeAnnouncement,
+            requiredCredentialHandles: snapshots.map {
+                $0.credential.credentialHandle
+            },
+            plan: plan
+        )
+        let result = Self(
+            groupID: announcement.groupID,
+            kind: .routeAnnouncement,
+            logicalID: announcement.id,
             destinationSnapshots: snapshots,
             deliveries: [delivery],
             createdAt: date,

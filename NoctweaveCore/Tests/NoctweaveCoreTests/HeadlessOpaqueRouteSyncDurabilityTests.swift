@@ -793,14 +793,14 @@ final class HeadlessOpaqueRouteSyncDurabilityTests: XCTestCase {
             }
             let senderStore = ClientStateStore(
                 fileURL: senderStateURL,
-                useEncryption: false
+                protection: .insecurePlaintextForTesting
             )
             let receiverStore = ClientStateStore(
                 fileURL: receiverStateURL,
-                useEncryption: false
+                protection: .insecurePlaintextForTesting
             )
-            try await senderStore.save(senderState)
-            try await receiverStore.save(receiverState)
+            try await senderStore.save(senderState, replacing: nil)
+            try await receiverStore.save(receiverState, replacing: nil)
             return Fixture(
                 rootDirectory: root,
                 senderDirectory: senderDirectory,

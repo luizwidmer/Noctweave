@@ -26,6 +26,221 @@ final class GroupOpaqueRouteInboundTests: XCTestCase {
         ))
     }
 
+    func testSignedPeerRouteCacheDrivesDefaultSendAndSuccessorRotation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "noctweave-group-route-cache-\(UUID().uuidString)"
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = UInt16.random(in: 40_000...57_000)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(
+            store: RelayStore(),
+            opaqueRouteStore: OpaqueRouteRelayStoreV2()
+        )
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let fixture = try await makeTwoMemberFixture(
+            at: NoctweaveRendezvousV2.canonicalTimestamp(
+                Date().addingTimeInterval(-3)
+            )
+        )
+        let owner = try await makeClient(
+            record: fixture.ownerRecord,
+            store: ClientStateStore(
+                fileURL: root.appendingPathComponent("owner.json"),
+                protection: .insecurePlaintextForTesting
+            ),
+            name: "owner"
+        )
+        let member = try await makeClient(
+            record: fixture.memberRecord,
+            store: ClientStateStore(
+                fileURL: root.appendingPathComponent("member.json"),
+                protection: .insecurePlaintextForTesting
+            ),
+            name: "member"
+        )
+        let ownerRoute = try await owner.registerGroupReceiveRoute(
+            groupID: fixture.ownerRecord.groupId,
+            relay: endpoint
+        )
+        let memberRoute = try await member.registerGroupReceiveRoute(
+            groupID: fixture.ownerRecord.groupId,
+            relay: endpoint
+        )
+        let exchangedAt = Date()
+        try await owner.acceptGroupRouteSetAnnouncement(
+            groupID: fixture.ownerRecord.groupId,
+            announcement: memberRoute.announcement,
+            observedAt: exchangedAt
+        )
+        try await member.acceptGroupRouteSetAnnouncement(
+            groupID: fixture.ownerRecord.groupId,
+            announcement: ownerRoute.announcement,
+            observedAt: exchangedAt
+        )
+
+        let first = GroupConversationEventV2(
+            groupID: fixture.ownerRecord.groupId,
+            authorMemberHandle: fixture.ownerRecord.localCredential.memberHandle,
+            authorCredentialHandle: fixture.ownerRecord.localCredential.credentialHandle,
+            createdAt: Date(),
+            kind: .application,
+            content: try XCTUnwrap(.text("cache-default"))
+        )
+        let firstPrepared = try await owner.prepareGroupApplication(first)
+        let firstOperation = try XCTUnwrap(firstPrepared.transportOperation)
+        let firstResume = try await owner.resumeGroupTransport(
+            groupID: first.groupID,
+            operationID: firstOperation.id
+        )
+        XCTAssertTrue(firstResume.complete)
+        let firstSync = try await member.syncGroup(groupID: first.groupID)
+        XCTAssertEqual(
+            firstSync.flatMap(\.receivedEvents).map(\.id),
+            [first.id]
+        )
+
+        let rotated = try await member.registerGroupReceiveRoute(
+            groupID: first.groupID,
+            relay: endpoint,
+            at: Date()
+        )
+        XCTAssertEqual(rotated.routeSet.revision, memberRoute.routeSet.revision + 1)
+        XCTAssertNotNil(rotated.announcementOperationID)
+        XCTAssertTrue(rotated.announcementComplete)
+        _ = try await owner.syncGroup(groupID: first.groupID)
+        let ownerSnapshot = await owner.snapshot()
+        let ownerRecord = try XCTUnwrap(ownerSnapshot.activePersona.groupRuntimes.first {
+            $0.groupId == first.groupID
+        })
+        XCTAssertEqual(
+            ownerRecord.peerRouteCache.entries.first {
+                $0.id == fixture.memberCredential.credentialHandle
+            }?.announcement.routeSet.revision,
+            rotated.routeSet.revision
+        )
+
+        let second = GroupConversationEventV2(
+            groupID: first.groupID,
+            authorMemberHandle: fixture.ownerRecord.localCredential.memberHandle,
+            authorCredentialHandle: fixture.ownerRecord.localCredential.credentialHandle,
+            createdAt: Date(),
+            kind: .application,
+            content: try XCTUnwrap(.text("rotated-cache-default"))
+        )
+        let secondPrepared = try await owner.prepareGroupApplication(second)
+        let secondOperation = try XCTUnwrap(secondPrepared.transportOperation)
+        let secondResume = try await owner.resumeGroupTransport(
+            groupID: second.groupID,
+            operationID: secondOperation.id
+        )
+        XCTAssertTrue(secondResume.complete)
+        let secondSync = try await member.syncGroup(groupID: second.groupID)
+        XCTAssertEqual(
+            secondSync.flatMap(\.receivedEvents).map(\.id),
+            [second.id]
+        )
+    }
+
+    func testPeerRouteCacheAcceptsNewerSignedCheckpointAfterMissedRevision() async throws {
+        let fixture = try await makeTwoMemberFixture(at: Date().addingTimeInterval(-2))
+        let now = Date()
+        let pending = try PendingLocalOpaqueReceiveRouteV2.prepare(
+            relay: RelayEndpoint(host: "127.0.0.1", port: 9_340),
+            createdAt: now
+        )
+        let created = try OpaqueReceiveRouteV2.creating(
+            from: pending.createRequest,
+            presentedRenewCapability: pending.clientCapabilities.renewCapability,
+            existing: nil,
+            confidentialTransport: true,
+            receivedAt: now
+        )
+        let groupRoute = try GroupLocalOpaqueReceiveRouteV2(
+            localRoute: pending.activate(createdRoute: created),
+            advertisedState: .active,
+            activatedAt: now
+        )
+        let initial = try SignedGroupOpaqueRouteSetV2.create(
+            groupID: fixture.memberRecord.groupId,
+            ownerCredentialHandle: fixture.memberRecord.localCredential.credentialHandle,
+            ownerAdmissionDigest: fixture.memberRecord.localCredential.admissionDigest,
+            routes: [try groupRoute.advertisedSendRoute()],
+            issuedAt: now,
+            expiresAt: created.lease.expiresAt,
+            signingKey: fixture.memberRecord.localCredential.signingKey
+        )
+        let successor = try initial.successor(
+            routes: initial.routes,
+            issuedAt: now.addingTimeInterval(0.1),
+            expiresAt: created.lease.expiresAt,
+            signingKey: fixture.memberRecord.localCredential.signingKey
+        )
+        let skipped = try successor.successor(
+            routes: successor.routes,
+            issuedAt: now.addingTimeInterval(0.2),
+            expiresAt: created.lease.expiresAt,
+            signingKey: fixture.memberRecord.localCredential.signingKey
+        )
+        let conflictingCheckpoint = try successor.successor(
+            routes: successor.routes,
+            issuedAt: now.addingTimeInterval(0.3),
+            expiresAt: created.lease.expiresAt,
+            signingKey: fixture.memberRecord.localCredential.signingKey
+        )
+        let initialAnnouncement = try SignedGroupRouteSetAnnouncementV2.create(
+            state: fixture.memberRecord.signedState,
+            routeSet: initial,
+            localCredential: fixture.memberRecord.localCredential,
+            announcedAt: now
+        )
+        let skippedAnnouncement = try SignedGroupRouteSetAnnouncementV2.create(
+            state: fixture.memberRecord.signedState,
+            routeSet: skipped,
+            localCredential: fixture.memberRecord.localCredential,
+            announcedAt: now.addingTimeInterval(0.2)
+        )
+        let conflictingAnnouncement = try SignedGroupRouteSetAnnouncementV2.create(
+            state: fixture.memberRecord.signedState,
+            routeSet: conflictingCheckpoint,
+            localCredential: fixture.memberRecord.localCredential,
+            announcedAt: now.addingTimeInterval(0.3)
+        )
+        let store = GroupInboundTestStore(record: fixture.ownerRecord)
+        let owner = try NoctweavePQGroupRuntimeV2(
+            record: fixture.ownerRecord,
+            persistence: store
+        )
+        try await owner.acceptPeerRouteSetAnnouncement(
+            initialAnnouncement,
+            observedAt: now
+        )
+        try await owner.acceptPeerRouteSetAnnouncement(
+            skippedAnnouncement,
+            observedAt: now.addingTimeInterval(0.2)
+        )
+        let cached = await owner.peerRouteCacheSnapshot()
+        XCTAssertEqual(
+            cached.entries.first?.announcement.routeSet.revision,
+            skipped.revision
+        )
+        do {
+            try await owner.acceptPeerRouteSetAnnouncement(
+                conflictingAnnouncement,
+                observedAt: now.addingTimeInterval(0.3)
+            )
+            XCTFail("Expected a conflicting checkpoint revision to be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? GroupRouteSetAnnouncementV2Error,
+                .invalidSuccessor
+            )
+        }
+    }
+
     func testLiveInboundRouteStagesEpochSurvivesRestartAndProcessesDeletion() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "noctweave-group-inbound-\(UUID().uuidString)"
@@ -48,11 +263,11 @@ final class GroupOpaqueRouteInboundTests: XCTestCase {
         )
         let ownerStore = ClientStateStore(
             fileURL: root.appendingPathComponent("owner.json"),
-            useEncryption: false
+            protection: .insecurePlaintextForTesting
         )
         let memberStore = ClientStateStore(
             fileURL: root.appendingPathComponent("member.json"),
-            useEncryption: false
+            protection: .insecurePlaintextForTesting
         )
         let owner = try await makeClient(
             record: fixture.ownerRecord,
@@ -499,7 +714,7 @@ private func makeClient(
 ) async throws -> HeadlessMessagingClient {
     var state = try ClientState(displayName: name, createdAt: Date())
     try state.updateActivePersona { try $0.upsert(groupRuntime: record) }
-    try await store.save(state)
+    try await store.save(state, replacing: nil)
     return try HeadlessMessagingClient(stateStore: store, initialState: state)
 }
 

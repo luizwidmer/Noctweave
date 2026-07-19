@@ -377,6 +377,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
               currentState.epoch == currentMembership.epoch,
               currentState.membershipDigest == currentMembership.membershipDigest,
               proposedMembership.groupId == currentMembership.groupId,
+              currentMembership.epoch < UInt64.max,
               proposedMembership.epoch == currentMembership.epoch + 1,
               acceptance.proposal.baseEpoch == currentMembership.epoch,
               acceptance.proposal.nextEpoch == proposedMembership.epoch,
