@@ -12,11 +12,11 @@ public enum PasswordProtectedPairingPackageV1Error: Error, Equatable {
     case decryptionFailed
 }
 
-/// A password-encrypted carrier for a one-use pairing invitation.
+/// A password-encrypted carrier for bounded one-use pairing data.
 ///
-/// This protects invitation handoff through files and system sharing. It does
-/// not replace the invitation's relay rendezvous or the authenticated pairing
-/// transcript.
+/// Relay Pairing uses it for the invitation handoff. Direct Pairing can use it
+/// for each authenticated transcript stage, keeping that transcript out of a
+/// rendezvous relay.
 public enum PasswordProtectedPairingPackageV1 {
     public static let version = 1
     public static let minimumPasswordCharacters = 8

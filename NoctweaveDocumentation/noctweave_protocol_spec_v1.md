@@ -40,7 +40,7 @@ is not the authenticated representation.
 
 Every signature, KDF, MAC, and AEAD context uses a purpose-specific domain.
 
-## 3. Contact rendezvous
+## 3. Contact pairing rendezvous
 
 `RendezvousPurposeV2` has one value: `contactPairing`.
 
@@ -66,6 +66,19 @@ When a relay carries the rendezvous, it exposes two unlabeled ciphertext lanes.
 Each lane has independent publish, read, and delete capabilities; the relay
 stores only bearer digests and terminal tombstones. TLS is mandatory except for
 an explicitly allowed loopback development endpoint.
+
+The same authenticated state machine may instead use a direct carrier. A
+`DirectPairingTransferV2` exchange moves `invitation`, `response`, `offer`,
+`confirmation`, and `finalConfirmation` stages in order by QR or a protected
+file. The relay does not store those handshake stages. Both participants still
+provision one relationship-scoped opaque receive route, potentially at
+different relays, before their encrypted introductions are produced.
+
+Direct transfer does not make live session state exportable. Offerer and
+responder flows remain non-serializable and an interrupted exchange restarts
+with fresh one-use material. A password-protected file carrier applies
+authenticated encryption to one stage; its password must be conveyed through a
+different channel.
 
 Inside the session each party sends fresh, independently generated:
 

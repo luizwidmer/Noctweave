@@ -45,8 +45,9 @@ adapters.
 
 A persona is only a local UI container. Every pairwise relationship creates a
 fresh unlinkable ML-DSA/ML-KEM authority, one singular relationship endpoint,
-renewable prekeys, and private opaque routes. Pairing uses a short-lived
-one-use encrypted rendezvous. Relays see capability-authorized opaque packets,
+renewable prekeys, and private opaque routes. Pairing can use a short-lived
+relay rendezvous or carry the same authenticated transcript directly by QR or
+password-protected files. Relays see capability-authorized opaque packets,
 ordered route positions, and bounded retention—not accounts, global user IDs,
 contact graphs, or plaintext.
 

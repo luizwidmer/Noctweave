@@ -58,6 +58,13 @@ Relay-assisted pairing uses two unlabeled encrypted directional lanes with
 separate publish, read, and delete capabilities. The relay persists only
 capability digests and tombstones, not reusable participant identity.
 
+Direct pairing transports the same authenticated state-machine stages in order
+by animated QR or password-protected files. No rendezvous relay receives the
+pairing transcript, and the participants may advertise routes at different
+relays. Each participant must still provision its relationship-scoped receive
+route before producing its encrypted introduction; interrupted direct exchanges
+restart with fresh one-use material instead of serializing live session keys.
+
 Replaying an invitation cannot create another accepted relationship. The same
 rendezvous state machine is not overloaded for device linking, history import,
 route rollover, or group membership.

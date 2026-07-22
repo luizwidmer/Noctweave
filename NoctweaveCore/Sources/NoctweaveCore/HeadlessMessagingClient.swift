@@ -327,6 +327,52 @@ public actor HeadlessMessagingClient {
 
     public func activePersona() -> PersonaProfileV1 { state.activePersona }
 
+    /// Saves the local access metadata needed to keep using a relay after
+    /// pairing. This preference is encrypted with the rest of client state and
+    /// is never advertised to contacts or the relay directory.
+    public func upsertRelayPreference(
+        endpoint: RelayEndpoint,
+        name: String,
+        accessPassword: String?
+    ) async throws {
+        let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPassword = accessPassword?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedName.isEmpty,
+              normalizedName.utf8.count <= 512,
+              normalizedPassword?.utf8.count ?? 0 <= RelayClient.maxAuthenticationBytes else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        try await withStateSaveLock {
+            var candidate = state
+            if let index = candidate.relayPreferences.firstIndex(where: {
+                $0.endpoint == endpoint
+            }) {
+                candidate.relayPreferences[index].name = normalizedName
+                candidate.relayPreferences[index].accessPassword =
+                    normalizedPassword?.isEmpty == false ? normalizedPassword : nil
+            } else {
+                guard candidate.relayPreferences.count < ClientState.maximumRelayPreferences else {
+                    throw HeadlessMessagingClientError.invalidState
+                }
+                candidate.relayPreferences.append(
+                    LocalRelayPreference(
+                        name: normalizedName,
+                        endpoint: endpoint,
+                        accessPassword: normalizedPassword?.isEmpty == false
+                            ? normalizedPassword
+                            : nil
+                    )
+                )
+            }
+            guard try candidate.isStructurallyValidThrowing else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            try await stateStore.save(candidate, replacing: state)
+            state = candidate
+        }
+    }
+
     /// Mints a process-local guard for relationship or group construction that
     /// may suspend outside this actor. A persona burn invalidates every token
     /// minted for the replaced local persona.
@@ -1763,6 +1809,38 @@ public actor HeadlessMessagingClient {
             throw HeadlessMessagingClientError.relayRejected
         }
         return try pending.activate(createdRoute: route)
+    }
+
+    /// Removes a prepared pairing route that was never committed to a
+    /// relationship. Cancellation and failed handshakes use this to avoid
+    /// leaving an otherwise unreachable temporary mailbox at the relay.
+    public func teardownContactParticipant(
+        _ participant: PreparedContactParticipantV2,
+        at date: Date = Date()
+    ) async throws {
+        guard try participant.isStructurallyValidThrowing else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let localRoute = participant.localReceiveRoute
+        let teardown = try localRoute.clientCapabilities.makeTeardownRequest(
+            current: localRoute.route,
+            authorizedAt: date,
+            idempotencyKey: .generate()
+        )
+        let response = try await relayClient(for: localRoute.relay).send(
+            .teardownOpaqueRouteV2(
+                TeardownOpaqueRouteRelayRequestV2(
+                    request: teardown,
+                    teardownCapability: localRoute.clientCapabilities.teardownCapability
+                )
+            )
+        )
+        guard response.status == .success,
+              case .opaqueRoute(let route)? = response.successBody,
+              route.routeID == localRoute.route.routeID,
+              route.status == .tornDown else {
+            throw HeadlessMessagingClientError.relayRejected
+        }
     }
 
     public func makeContactPairingInvitation(

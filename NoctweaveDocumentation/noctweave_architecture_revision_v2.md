@@ -58,7 +58,9 @@ after burn merely because it loaded an older valid generation.
    redemption secret.
 3. Each side generates a relationship authority, endpoint binding, signed
    prekey, opaque receive route, and relationship pseudonym.
-4. Those values are exchanged inside the encrypted rendezvous session.
+4. Those values are exchanged inside the encrypted rendezvous session. The
+   session frames may use bounded relay lanes or the ordered
+   `DirectPairingTransferV2` QR/file carrier stages.
 5. Both sides derive the same relationship identifier from the transcript.
 6. The redemption is recorded so replay cannot create another relationship.
 
@@ -70,6 +72,10 @@ contains no reusable identity; burn or restart invalidates it.
 
 The encoded invitation is tested to exclude persona labels, relationship IDs,
 relationship-authority keys, endpoint IDs, relay URLs, and route capabilities.
+Direct transfer keeps the live cryptographic flows in process and carries only
+the invitation, response, offer, confirmation, and final confirmation. It does
+not create a reusable public contact package or make private session state
+portable.
 
 ## Direct messaging
 

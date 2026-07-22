@@ -87,6 +87,25 @@ let health = try await relay.send(.health())
 `RelayClient` verifies that every response repeats the outstanding request ID,
 module, version, and method.
 
+Before pairing, verify the exact relay surface that the selected path needs:
+
+```swift
+let relayClient = RelayClient(endpoint: endpoint, authToken: relayPassword)
+let relayPairing = try await RelayPairingPreflight.check(
+    client: relayClient,
+    requirement: .rendezvous
+)
+
+let directPairing = try await RelayPairingPreflight.check(
+    client: relayClient,
+    requirement: .opaqueRouteOnly
+)
+```
+
+The functional check creates and removes a temporary opaque route. Rendezvous
+mode additionally registers and removes temporary one-use lanes. A successful
+health response alone is not considered pairing readiness.
+
 ## Prepare one pairing participant
 
 ```swift
@@ -146,12 +165,27 @@ burn or client restart, preventing an old asynchronous pairing result from
 entering a replacement persona. The same rule applies to `addGroupRuntime` for
 externally constructed group state.
 
-### Password-protected offline handoff
+### Relay and direct/offline carriers
 
-An integration may move its complete one-use invitation by QR, AirDrop,
-removable storage, or another out-of-band path. Files and system shares should
-use `PasswordProtectedPairingPackageV1`, which applies PBKDF2-HMAC-SHA256 with a
-fresh salt and AES-256-GCM authentication:
+Relay Pairing moves the initial one-use invitation out of band, then transports
+the encrypted transcript through `nw.rendezvous-transport@2`. Direct / Offline
+Pairing instead transports each existing authenticated flow stage by QR,
+AirDrop, removable storage, or another direct path. It uses
+`DirectPairingTransferV2` stages in this order:
+
+1. `invitation`
+2. `response`
+3. `offer`
+4. `confirmation`
+5. `finalConfirmation`
+
+Each stage is bounded, strictly decoded, and prefixed with
+`noctweave-direct-pair-v2:`. The live offerer/responder flow remains in memory;
+an interrupted exchange is restarted rather than serializing session keys.
+
+Files and system shares should wrap either a relay invitation or one direct
+stage with `PasswordProtectedPairingPackageV1`, which applies
+PBKDF2-HMAC-SHA256 with a fresh salt and AES-256-GCM authentication:
 
 ```swift
 let package = try PasswordProtectedPairingPackageV1.seal(
@@ -165,11 +199,12 @@ let recovered = try PasswordProtectedPairingPackageV1.open(
 )
 ```
 
-This makes the invitation carrier safe to store or hand off; it does not make
-the pairing handshake network-independent. Both participants must still reach
-the invitation's rendezvous relay before expiry to exchange and verify their
-relationship-scoped introductions. The password must travel through a
-different channel from the protected package.
+In Relay Pairing both devices must reach the invitation's rendezvous relay
+before expiry. In Direct Pairing no relay stores the handshake frames, and the
+devices need not share a relay; each device must still reach its own relay to
+provision the relationship-scoped receive route advertised inside the encrypted
+introduction. The password must travel through a different channel from the
+protected package.
 
 The combined `ContactPairingHandshakeV2.establish` orchestration is internal to
 tests and conformance work; it is not a public integration API.
