@@ -41,6 +41,15 @@ public actor ClientStateStore {
     private static let erasedStateDigestDomain = Data(
         "noctweave.client-state.erased.v1\0".utf8
     )
+    private static let stableScopeDomain = Data(
+        "noctweave.client-state.scope.v2\0".utf8
+    )
+    private static let stableAnchorAccountDomain = Data(
+        "noctweave.client-state.anchor.v2\0".utf8
+    )
+    private static let legacyAnchorAccountDomain = Data(
+        "noctweave.client-state.anchor.v1\0".utf8
+    )
 
     private let fileURL: URL
     private let pendingFileURL: URL
@@ -49,38 +58,81 @@ public actor ClientStateStore {
     private let protection: ClientStateStoreProtection
     private let suppliedEncryptionKey: SymmetricKey?
     private let rollbackAnchorStore: (any ClientStateRollbackAnchorStore)?
+    private let legacyStoreScopeDigest: Data?
+    private let legacyRollbackAnchorStore: (any ClientStateRollbackAnchorStore)?
 
+    /// Creates a durable client-state store.
+    ///
+    /// `storageScopeIdentifier` must be a stable, installation-independent ID
+    /// for stores whose container path can move (for example during an Apple
+    /// app update). Once deployed, never change it for that logical store. The
+    /// optional legacy anchor lets non-Apple hosts migrate an older path-bound
+    /// store; Apple hosts discover the matching legacy Keychain anchor
+    /// automatically while it is still addressable.
     public init(
         fileURL: URL,
         protection: ClientStateStoreProtection = .encrypted,
         encryptionKey: SymmetricKey? = nil,
-        rollbackAnchorStore: (any ClientStateRollbackAnchorStore)? = nil
+        rollbackAnchorStore: (any ClientStateRollbackAnchorStore)? = nil,
+        storageScopeIdentifier: String? = nil,
+        legacyRollbackAnchorStore: (any ClientStateRollbackAnchorStore)? = nil
     ) {
         let standardizedURL = fileURL.standardizedFileURL.resolvingSymlinksInPath()
+        let pathScopeDigest = Data(SHA256.hash(data: Data(standardizedURL.path.utf8)))
         self.fileURL = standardizedURL
         self.pendingFileURL = standardizedURL.appendingPathExtension("pending")
         self.lockFileURL = standardizedURL.appendingPathExtension("lock")
-        self.storeScopeDigest = Data(SHA256.hash(data: Data(standardizedURL.path.utf8)))
+        if let storageScopeIdentifier {
+            self.storeScopeDigest = Data(SHA256.hash(
+                data: Self.stableScopeDomain + Data(storageScopeIdentifier.utf8)
+            ))
+            self.legacyStoreScopeDigest = pathScopeDigest
+        } else {
+            self.storeScopeDigest = pathScopeDigest
+            self.legacyStoreScopeDigest = nil
+        }
         self.protection = protection
         self.suppliedEncryptionKey = encryptionKey
 
         if protection == .encrypted, let rollbackAnchorStore {
             self.rollbackAnchorStore = rollbackAnchorStore
+            self.legacyRollbackAnchorStore = storageScopeIdentifier == nil
+                ? nil
+                : legacyRollbackAnchorStore
         } else if protection == .encrypted {
             #if canImport(Security)
-            let accountDigest = Data(SHA256.hash(
-                data: Data("noctweave.client-state.anchor.v1\0".utf8)
-                    + Data(standardizedURL.path.utf8)
-            ))
+            let accountDigest: Data
+            if let storageScopeIdentifier {
+                accountDigest = Data(SHA256.hash(
+                    data: Self.stableAnchorAccountDomain + Data(storageScopeIdentifier.utf8)
+                ))
+            } else {
+                accountDigest = Data(SHA256.hash(
+                    data: Self.legacyAnchorAccountDomain + Data(standardizedURL.path.utf8)
+                ))
+            }
             self.rollbackAnchorStore = KeychainClientStateRollbackAnchorStore(
                 service: Self.secureStorageService,
-                account: "state-anchor-v1-\(accountDigest.base64URLEncodedString())"
+                account: "state-anchor-\(storageScopeIdentifier == nil ? "v1" : "v2")-\(accountDigest.base64URLEncodedString())"
             )
+            if storageScopeIdentifier != nil {
+                let legacyAccountDigest = Data(SHA256.hash(
+                    data: Self.legacyAnchorAccountDomain + Data(standardizedURL.path.utf8)
+                ))
+                self.legacyRollbackAnchorStore = KeychainClientStateRollbackAnchorStore(
+                    service: Self.secureStorageService,
+                    account: "state-anchor-v1-\(legacyAccountDigest.base64URLEncodedString())"
+                )
+            } else {
+                self.legacyRollbackAnchorStore = nil
+            }
             #else
             self.rollbackAnchorStore = nil
+            self.legacyRollbackAnchorStore = nil
             #endif
         } else {
             self.rollbackAnchorStore = nil
+            self.legacyRollbackAnchorStore = nil
         }
     }
 
@@ -102,11 +154,15 @@ public actor ClientStateStore {
             guard let rollbackAnchorStore else {
                 throw ClientStateStoreError.rollbackAnchorUnavailable
             }
-            let resolved = try resolveEncryptedState(using: rollbackAnchorStore)
+            try migrateLegacyPathScopeIfNeeded(to: rollbackAnchorStore)
+            let resolved = try resolveEncryptedState(
+                using: rollbackAnchorStore,
+                scopeDigest: storeScopeDigest
+            )
             guard case .state(let envelope, _) = resolved else {
                 return nil
             }
-            var payload = try decrypt(envelope)
+            var payload = try decrypt(envelope, scopeDigest: storeScopeDigest)
             defer { payload.secureWipe() }
             guard payload.count <= Self.maximumPlaintextBytes else {
                 throw ClientStateStoreError.stateTooLarge
@@ -166,7 +222,11 @@ public actor ClientStateStore {
                 throw ClientStateStoreError.rollbackAnchorUnavailable
             }
 
-            let prior = try resolveEncryptedState(using: rollbackAnchorStore)
+            try migrateLegacyPathScopeIfNeeded(to: rollbackAnchorStore)
+            let prior = try resolveEncryptedState(
+                using: rollbackAnchorStore,
+                scopeDigest: storeScopeDigest
+            )
             try requireExpectedState(expectedState, matches: prior)
             let currentRecord = try rollbackAnchorStore.load()
             guard currentRecord?.pending == nil,
@@ -181,7 +241,8 @@ public actor ClientStateStore {
             let envelope = try encrypt(
                 payload,
                 generation: generation,
-                previousStateDigest: current?.stateDigest
+                previousStateDigest: current?.stateDigest,
+                scopeDigest: storeScopeDigest
             )
             let next = try ClientStateRollbackAnchor(
                 generation: generation,
@@ -255,7 +316,8 @@ public actor ClientStateStore {
                     pending.stateDigest,
                     erasedStateDigest(
                         generation: pending.generation,
-                        previousStateDigest: record?.current?.stateDigest
+                        previousStateDigest: record?.current?.stateDigest,
+                        scopeDigest: storeScopeDigest
                     )
                 ) else {
                     throw ClientStateStoreError.rollbackDetected
@@ -291,7 +353,8 @@ public actor ClientStateStore {
                 generation: generation,
                 stateDigest: erasedStateDigest(
                     generation: generation,
-                    previousStateDigest: base?.stateDigest
+                    previousStateDigest: base?.stateDigest,
+                    scopeDigest: storeScopeDigest
                 ),
                 kind: .erased
             )
@@ -323,6 +386,115 @@ public actor ClientStateStore {
         }
     }
 
+    /// Rebinds the legacy absolute-path-scoped database to a stable host scope.
+    ///
+    /// Apple may move an app's data container while preserving its contents
+    /// during an update. Older Noctweave stores included that absolute path in
+    /// both AEAD associated data and the Keychain anchor account. When the
+    /// legacy anchor is still addressable, migrate in place before resolving
+    /// the stable store. The staged anchor makes every interruption recoverable:
+    /// either the legacy file remains authoritative or the stable pending file
+    /// is promoted on the next open.
+    private func migrateLegacyPathScopeIfNeeded(
+        to stableAnchorStore: any ClientStateRollbackAnchorStore
+    ) throws {
+        guard let legacyStoreScopeDigest,
+              let legacyRollbackAnchorStore,
+              try stableAnchorStore.load() == nil,
+              try legacyRollbackAnchorStore.load() != nil else {
+            return
+        }
+
+        let legacy = try resolveEncryptedState(
+            using: legacyRollbackAnchorStore,
+            scopeDigest: legacyStoreScopeDigest
+        )
+        switch legacy {
+        case .empty(let legacyAnchor):
+            guard let legacyAnchor, legacyAnchor.kind == .erased else { return }
+            let migrated = try ClientStateRollbackAnchor(
+                generation: legacyAnchor.generation,
+                stateDigest: erasedStateDigest(
+                    generation: legacyAnchor.generation,
+                    previousStateDigest: nil,
+                    scopeDigest: storeScopeDigest
+                ),
+                kind: .erased
+            )
+            do {
+                try stableAnchorStore.compareAndSwap(
+                    expected: nil,
+                    replacement: try ClientStateRollbackAnchorRecord(
+                        current: migrated,
+                        pending: nil
+                    )
+                )
+            } catch ClientStateRollbackAnchorError.compareAndSwapFailed {
+                throw ClientStateStoreError.concurrentUpdate
+            }
+
+        case .state(let legacyEnvelope, let legacyAnchor):
+            guard legacyAnchor.kind == .state,
+                  legacyAnchor.generation < ClientStateRollbackAnchor.maximumGeneration else {
+                throw ClientStateStoreError.storageUnavailable
+            }
+            var payload = try decrypt(
+                legacyEnvelope,
+                scopeDigest: legacyStoreScopeDigest
+            )
+            defer { payload.secureWipe() }
+            _ = try NoctweaveCoder.decode(ClientState.self, from: payload)
+
+            let generation = legacyAnchor.generation + 1
+            let migratedEnvelope = try encrypt(
+                payload,
+                generation: generation,
+                previousStateDigest: legacyAnchor.stateDigest,
+                scopeDigest: storeScopeDigest
+            )
+            let migratedAnchor = try ClientStateRollbackAnchor(
+                generation: generation,
+                stateDigest: migratedEnvelope.stateDigest
+            )
+            let staged = try ClientStateRollbackAnchorRecord(
+                current: legacyAnchor,
+                pending: migratedAnchor
+            )
+            let committed = try ClientStateRollbackAnchorRecord(
+                current: migratedAnchor,
+                pending: nil
+            )
+            var encoded = try NoctweaveCoder.encode(
+                migratedEnvelope,
+                sortedKeys: true
+            )
+            defer { encoded.secureWipe() }
+            guard encoded.count <= Self.maximumStoredBytes else {
+                throw ClientStateStoreError.stateTooLarge
+            }
+
+            try writePendingFile(encoded)
+            do {
+                try stableAnchorStore.compareAndSwap(
+                    expected: nil,
+                    replacement: staged
+                )
+            } catch ClientStateRollbackAnchorError.compareAndSwapFailed {
+                try? removeFileIfPresent(at: pendingFileURL)
+                throw ClientStateStoreError.concurrentUpdate
+            } catch {
+                try? removeFileIfPresent(at: pendingFileURL)
+                throw error
+            }
+            try replaceMainWithPendingFile()
+            try finalizeRecoveredAnchor(
+                anchorStore: stableAnchorStore,
+                expected: staged,
+                committed: committed
+            )
+        }
+    }
+
     private func requireExpectedState(
         _ expectedState: ClientState?,
         matches resolved: ResolvedEncryptedState
@@ -339,7 +511,7 @@ public actor ClientStateStore {
             guard let expectedState else {
                 throw ClientStateStoreError.concurrentUpdate
             }
-            var payload = try decrypt(envelope)
+            var payload = try decrypt(envelope, scopeDigest: storeScopeDigest)
             defer { payload.secureWipe() }
             _ = try NoctweaveCoder.decode(ClientState.self, from: payload)
             guard try expectedStateMatchesPayload(
@@ -369,7 +541,8 @@ public actor ClientStateStore {
     }
 
     private func resolveEncryptedState(
-        using anchorStore: any ClientStateRollbackAnchorStore
+        using anchorStore: any ClientStateRollbackAnchorStore,
+        scopeDigest: Data
     ) throws -> ResolvedEncryptedState {
         let record = try anchorStore.load()
         let mainExists = FileManager.default.fileExists(atPath: fileURL.path)
@@ -395,7 +568,8 @@ public actor ClientStateStore {
                     pending.stateDigest,
                     erasedStateDigest(
                         generation: pending.generation,
-                        previousStateDigest: record.current?.stateDigest
+                        previousStateDigest: record.current?.stateDigest,
+                        scopeDigest: scopeDigest
                     )
                 ) else {
                     throw ClientStateStoreError.rollbackDetected
@@ -413,7 +587,7 @@ public actor ClientStateStore {
                 return .empty(anchor: pending)
             }
             if let mainEnvelope = try readEnvelopeIfPresent(from: fileURL),
-               envelope(mainEnvelope, matches: pending),
+               envelope(mainEnvelope, matches: pending, scopeDigest: scopeDigest),
                pendingChainIsValid(mainEnvelope, record: record) {
                 try applyPrivacyAttributes(to: fileURL)
                 try syncFile(at: fileURL)
@@ -429,7 +603,7 @@ public actor ClientStateStore {
                 return .state(envelope: mainEnvelope, anchor: pending)
             }
             if let stagedEnvelope = try readEnvelopeIfPresent(from: pendingFileURL),
-               envelope(stagedEnvelope, matches: pending),
+               envelope(stagedEnvelope, matches: pending, scopeDigest: scopeDigest),
                pendingChainIsValid(stagedEnvelope, record: record) {
                 try replaceMainWithPendingFile()
                 let committed = try ClientStateRollbackAnchorRecord(current: pending, pending: nil)
@@ -454,7 +628,7 @@ public actor ClientStateStore {
         }
         guard
               let mainEnvelope = try readEnvelopeIfPresent(from: fileURL),
-              envelope(mainEnvelope, matches: current) else {
+              envelope(mainEnvelope, matches: current, scopeDigest: scopeDigest) else {
             throw ClientStateStoreError.rollbackDetected
         }
         if pendingExists {
@@ -479,11 +653,13 @@ public actor ClientStateStore {
     private func encrypt(
         _ payload: Data,
         generation: UInt64,
-        previousStateDigest: Data?
+        previousStateDigest: Data?,
+        scopeDigest: Data
     ) throws -> EncryptedStateEnvelope {
         let aad = stateAAD(
             generation: generation,
-            previousStateDigest: previousStateDigest
+            previousStateDigest: previousStateDigest,
+            scopeDigest: scopeDigest
         )
         let sealed = try AES.GCM.seal(payload, using: try encryptionKey(), authenticating: aad)
         guard var combined = sealed.combined else {
@@ -493,7 +669,8 @@ public actor ClientStateStore {
         let digest = stateDigest(
             generation: generation,
             previousStateDigest: previousStateDigest,
-            sealed: combined
+            sealed: combined,
+            scopeDigest: scopeDigest
         )
         return try EncryptedStateEnvelope(
             version: Self.envelopeVersion,
@@ -504,11 +681,15 @@ public actor ClientStateStore {
         )
     }
 
-    private func decrypt(_ envelope: EncryptedStateEnvelope) throws -> Data {
+    private func decrypt(
+        _ envelope: EncryptedStateEnvelope,
+        scopeDigest: Data
+    ) throws -> Data {
         let expectedDigest = stateDigest(
             generation: envelope.generation,
             previousStateDigest: envelope.previousStateDigest,
-            sealed: envelope.sealed
+            sealed: envelope.sealed,
+            scopeDigest: scopeDigest
         )
         guard constantTimeEqual(expectedDigest, envelope.stateDigest) else {
             throw ClientStateStoreError.rollbackDetected
@@ -516,7 +697,8 @@ public actor ClientStateStore {
         let sealed = try AES.GCM.SealedBox(combined: envelope.sealed)
         let aad = stateAAD(
             generation: envelope.generation,
-            previousStateDigest: envelope.previousStateDigest
+            previousStateDigest: envelope.previousStateDigest,
+            scopeDigest: scopeDigest
         )
         do {
             return try AES.GCM.open(sealed, using: try encryptionKey(), authenticating: aad)
@@ -527,10 +709,11 @@ public actor ClientStateStore {
 
     private func stateAAD(
         generation: UInt64,
-        previousStateDigest: Data?
+        previousStateDigest: Data?,
+        scopeDigest: Data
     ) -> Data {
         var material = Self.stateAADDomain
-        material.append(storeScopeDigest)
+        material.append(scopeDigest)
         material.appendUInt64BigEndian(generation)
         if let previousStateDigest {
             material.append(1)
@@ -544,12 +727,14 @@ public actor ClientStateStore {
     private func stateDigest(
         generation: UInt64,
         previousStateDigest: Data?,
-        sealed: Data
+        sealed: Data,
+        scopeDigest: Data
     ) -> Data {
         var material = Self.stateDigestDomain
         material.append(stateAAD(
             generation: generation,
-            previousStateDigest: previousStateDigest
+            previousStateDigest: previousStateDigest,
+            scopeDigest: scopeDigest
         ))
         material.append(sealed)
         return Data(SHA256.hash(data: material))
@@ -557,7 +742,8 @@ public actor ClientStateStore {
 
     private func envelope(
         _ envelope: EncryptedStateEnvelope,
-        matches anchor: ClientStateRollbackAnchor
+        matches anchor: ClientStateRollbackAnchor,
+        scopeDigest: Data
     ) -> Bool {
         anchor.kind == .state
             && envelope.generation == anchor.generation
@@ -566,7 +752,8 @@ public actor ClientStateStore {
                 stateDigest(
                     generation: envelope.generation,
                     previousStateDigest: envelope.previousStateDigest,
-                    sealed: envelope.sealed
+                    sealed: envelope.sealed,
+                    scopeDigest: scopeDigest
                 ),
                 envelope.stateDigest
             )
@@ -590,10 +777,11 @@ public actor ClientStateStore {
 
     private func erasedStateDigest(
         generation: UInt64,
-        previousStateDigest: Data?
+        previousStateDigest: Data?,
+        scopeDigest: Data
     ) -> Data {
         var material = Self.erasedStateDigestDomain
-        material.append(storeScopeDigest)
+        material.append(scopeDigest)
         material.appendUInt64BigEndian(generation)
         if let previousStateDigest {
             material.append(1)

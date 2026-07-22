@@ -287,6 +287,70 @@ final class ClientStateCurrentSchemaTests: XCTestCase {
         }
     }
 
+    func testStableStorageScopeSurvivesContainerPathChange() async throws {
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstDirectory = root.appendingPathComponent("container-a", isDirectory: true)
+        let secondDirectory = root.appendingPathComponent("container-b", isDirectory: true)
+        let firstURL = firstDirectory.appendingPathComponent("state.json")
+        let secondURL = secondDirectory.appendingPathComponent("state.json")
+        let key = SymmetricKey(data: Data(repeating: 0xB4, count: 32))
+        let anchorStore = VolatileClientStateRollbackAnchorStore()
+        let state = try makeState(displayName: "Survives App Update")
+        let scope = "org.noctweave.tests.primary-client-state"
+
+        let original = ClientStateStore(
+            fileURL: firstURL,
+            encryptionKey: key,
+            rollbackAnchorStore: anchorStore,
+            storageScopeIdentifier: scope
+        )
+        try await original.save(state, replacing: nil)
+        try FileManager.default.createDirectory(
+            at: secondDirectory,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.moveItem(at: firstURL, to: secondURL)
+
+        let updated = ClientStateStore(
+            fileURL: secondURL,
+            encryptionKey: key,
+            rollbackAnchorStore: anchorStore,
+            storageScopeIdentifier: scope
+        )
+        let updatedState = try await updated.load()
+        XCTAssertEqual(updatedState, state)
+    }
+
+    func testLegacyPathScopeMigratesWithoutResettingState() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("state.json")
+        let key = SymmetricKey(data: Data(repeating: 0x6B, count: 32))
+        let legacyAnchorStore = VolatileClientStateRollbackAnchorStore()
+        let stableAnchorStore = VolatileClientStateRollbackAnchorStore()
+        let state = try makeState(displayName: "Existing Installation")
+
+        let legacy = ClientStateStore(
+            fileURL: fileURL,
+            encryptionKey: key,
+            rollbackAnchorStore: legacyAnchorStore
+        )
+        try await legacy.save(state, replacing: nil)
+
+        let migrated = ClientStateStore(
+            fileURL: fileURL,
+            encryptionKey: key,
+            rollbackAnchorStore: stableAnchorStore,
+            storageScopeIdentifier: "org.noctweave.tests.migrated-client-state",
+            legacyRollbackAnchorStore: legacyAnchorStore
+        )
+        let migratedState = try await migrated.load()
+        XCTAssertEqual(migratedState, state)
+        XCTAssertEqual(try stableAnchorStore.load()?.current?.generation, 2)
+        XCTAssertNil(try stableAnchorStore.load()?.pending)
+    }
+
     func testEncryptedStoreRejectsPlaintextCurrentState() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
