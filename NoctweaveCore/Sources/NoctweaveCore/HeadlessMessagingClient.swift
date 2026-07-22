@@ -373,6 +373,57 @@ public actor HeadlessMessagingClient {
         }
     }
 
+    /// Persists local presentation only. It is never projected into a
+    /// relationship, group, relay request, or protocol envelope.
+    public func updateAppearanceSettings(_ settings: AppearanceSettings) async throws {
+        guard settings.isStructurallyValid else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        try await withStateSaveLock {
+            var candidate = state
+            candidate.appearance = settings
+            guard try candidate.isStructurallyValidThrowing else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            try await stateStore.save(candidate, replacing: state)
+            state = candidate
+        }
+    }
+
+    /// Persists device-local privacy preferences without granting those values
+    /// any protocol authority.
+    public func updatePrivacySettings(_ settings: PrivacySettings) async throws {
+        guard settings.isStructurallyValid else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        try await withStateSaveLock {
+            var candidate = state
+            candidate.privacy = settings
+            guard try candidate.isStructurallyValidThrowing else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            try await stateStore.save(candidate, replacing: state)
+            state = candidate
+        }
+    }
+
+    /// Atomically replaces local app-lock policy. Callers must finish any PIN
+    /// derivation and biometric authorization before invoking this method.
+    public func updateAppLockSettings(_ settings: AppLockSettings) async throws {
+        guard settings.isStructurallyValid else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        try await withStateSaveLock {
+            var candidate = state
+            candidate.appLock = settings
+            guard try candidate.isStructurallyValidThrowing else {
+                throw HeadlessMessagingClientError.invalidState
+            }
+            try await stateStore.save(candidate, replacing: state)
+            state = candidate
+        }
+    }
+
     /// Mints a process-local guard for relationship or group construction that
     /// may suspend outside this actor. A persona burn invalidates every token
     /// minted for the replaced local persona.
