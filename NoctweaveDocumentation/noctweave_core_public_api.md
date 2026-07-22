@@ -146,6 +146,31 @@ burn or client restart, preventing an old asynchronous pairing result from
 entering a replacement persona. The same rule applies to `addGroupRuntime` for
 externally constructed group state.
 
+### Password-protected offline handoff
+
+An integration may move its complete one-use invitation by QR, AirDrop,
+removable storage, or another out-of-band path. Files and system shares should
+use `PasswordProtectedPairingPackageV1`, which applies PBKDF2-HMAC-SHA256 with a
+fresh salt and AES-256-GCM authentication:
+
+```swift
+let package = try PasswordProtectedPairingPackageV1.seal(
+    invitation: shareable,
+    password: separatelySharedPassword
+)
+
+let recovered = try PasswordProtectedPairingPackageV1.open(
+    package: package,
+    password: separatelySharedPassword
+)
+```
+
+This makes the invitation carrier safe to store or hand off; it does not make
+the pairing handshake network-independent. Both participants must still reach
+the invitation's rendezvous relay before expiry to exchange and verify their
+relationship-scoped introductions. The password must travel through a
+different channel from the protected package.
+
 The combined `ContactPairingHandshakeV2.establish` orchestration is internal to
 tests and conformance work; it is not a public integration API.
 
