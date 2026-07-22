@@ -97,6 +97,21 @@ liboqs source commit. Mount `/data` persistently.
 There is no separate GET health or information route. Health and information
 are `nw.core@2` requests through the normal relay transport.
 
+Opaque-route and rendezvous capability operations require a confidential
+transport. Literal loopback, listener TLS, or an explicitly trusted TLS reverse
+proxy satisfy that gate. When nginx, Caddy, or another proxy owns HTTPS/WSS,
+start the relay with:
+
+```sh
+--advertised-endpoint https://relay.example \
+--trusted-reverse-proxy-tls true
+```
+
+This flag trusts the deployment boundary, not an `X-Forwarded-*` header. The
+plain backend listener must therefore be firewalled or bound so clients cannot
+bypass the trusted proxy. Leave the flag off for an exposed plaintext listener;
+capability-bearing operations then fail closed.
+
 Example:
 
 ```sh
@@ -188,6 +203,9 @@ admin listener to loopback/private management networking. The console may
 change non-secret operator policy; it cannot return relay passwords, admin
 tokens, coordinator registration tokens, or signing private keys. Runtime
 policy persists in `operator-config.json` with restrictive permissions.
+Listener addresses, database mode, request ceilings, and secret values remain
+process-owned startup configuration. Editable policy is validated and applied
+without silently changing those boundaries.
 
 ## Optional privacy advertisements
 

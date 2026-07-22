@@ -274,6 +274,223 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
         )
     }
 
+    func testDirectAttachmentLocalFirstCommitContainsOutboxAndAllUploadIntents() async throws {
+        let harness = try makeHarness(label: #function)
+        defer { try? FileManager.default.removeItem(at: harness.directory) }
+        let bytes = Data(repeating: 0x41, count: 70_000)
+        let eventID = UUID(uuidString: "36000000-0000-4000-8000-000000000001")!
+        let transactionID = UUID(uuidString: "36000000-0000-4000-8000-000000000002")!
+
+        do {
+            _ = try await harness.client.sendAttachment(
+                bytes: bytes,
+                canonicalMIME: "application/octet-stream",
+                relay: offlineRelay(host: "peer.offline.invalid"),
+                relationshipID: harness.relationshipID,
+                attachmentID: UUID(uuidString: "36000000-0000-4000-8000-000000000003")!,
+                eventID: eventID,
+                clientTransactionID: transactionID,
+                sentAt: origin.addingTimeInterval(40)
+            )
+            XCTFail("Offline attachment send unexpectedly succeeded")
+        } catch let error as HeadlessMessagingClientError {
+            XCTAssertEqual(error, .relayRejected)
+        }
+
+        let relationship = try await harness.client.relationship(harness.relationshipID)
+        XCTAssertEqual(relationship.events.filter { $0.id == eventID }.count, 1)
+        XCTAssertEqual(relationship.pendingAttachmentUploads.count, 2)
+        XCTAssertEqual(
+            relationship.protocolIntents.filter { $0.kind == .uploadBlob }.count,
+            2
+        )
+        XCTAssertFalse(relationship.pendingDeliveries.isEmpty)
+        XCTAssertTrue(relationship.pendingAttachmentUploads.allSatisfy {
+            $0.request.payload.ciphertext != bytes
+        })
+        let loaded = try await harness.store.load()
+        let persisted = try XCTUnwrap(loaded)
+        let persistedBytes = try NoctweaveCoder.encode(persisted, sortedKeys: true)
+        XCTAssertFalse(
+            persistedBytes.range(of: bytes.base64EncodedData()) != nil,
+            "Direct attachment state must not contain the sanitized plaintext"
+        )
+    }
+
+    func testDirectAttachmentRejectsBlobRelayOutsidePeerRouteSetBeforePersistence() async throws {
+        let harness = try makeHarness(label: #function)
+        defer { try? FileManager.default.removeItem(at: harness.directory) }
+
+        do {
+            _ = try await harness.client.sendAttachment(
+                Data("wrong relay".utf8),
+                mimeType: "text/plain",
+                relay: offlineRelay(host: "unadvertised.offline.invalid"),
+                relationshipID: harness.relationshipID,
+                sentAt: origin.addingTimeInterval(45)
+            )
+            XCTFail("An attachment relay outside the peer route set was accepted")
+        } catch let error as HeadlessMessagingClientError {
+            XCTAssertEqual(error, .noUsableRoute)
+        }
+
+        let relationship = try await harness.client.relationship(harness.relationshipID)
+        XCTAssertTrue(relationship.events.isEmpty)
+        XCTAssertTrue(relationship.pendingDeliveries.isEmpty)
+        XCTAssertTrue(relationship.pendingAttachmentUploads.isEmpty)
+        XCTAssertTrue(relationship.directSessions.isEmpty)
+    }
+
+    func testDirectAttachmentChunkUsesDescriptorRatchetKeyAndContext() async throws {
+        let relationship = try makeRelationship()
+        let created = try MessageEngine.createOutboundEndpointSession(
+            relationship: relationship,
+            now: origin.addingTimeInterval(50)
+        )
+        var seededRelationship = relationship
+        try seededRelationship.upsertDirectSession(created.conversation)
+        var expectedConversation = created.conversation
+        let expected = try MessageEngine.prepareMessageKey(
+            conversation: &expectedConversation
+        )
+        let harness = try makeHarness(
+            label: #function,
+            relationship: seededRelationship
+        )
+        defer { try? FileManager.default.removeItem(at: harness.directory) }
+        let bytes = Data((0..<70_000).map { UInt8($0 % 251) })
+        let attachmentID = UUID(uuidString: "37000000-0000-4000-8000-000000000001")!
+
+        do {
+            _ = try await harness.client.sendAttachment(
+                bytes,
+                mimeType: "text/plain",
+                relay: offlineRelay(host: "peer.offline.invalid"),
+                relationshipID: harness.relationshipID,
+                attachmentID: attachmentID,
+                eventID: UUID(uuidString: "37000000-0000-4000-8000-000000000002")!,
+                clientTransactionID: UUID(uuidString: "37000000-0000-4000-8000-000000000003")!,
+                sentAt: origin.addingTimeInterval(51)
+            )
+            XCTFail("Offline attachment send unexpectedly succeeded")
+        } catch let error as HeadlessMessagingClientError {
+            XCTAssertEqual(error, .relayRejected)
+        }
+
+        let current = try await harness.client.relationship(harness.relationshipID)
+        let pending = current.pendingAttachmentUploads.sorted {
+            $0.request.chunkIndex < $1.request.chunkIndex
+        }
+        XCTAssertEqual(pending.count, 2)
+        var decrypted = Data()
+        for upload in pending {
+            let start = upload.request.chunkIndex * AttachmentDescriptor.maximumTransportChunkBytes
+            let expectedCount = min(
+                AttachmentDescriptor.maximumTransportChunkBytes,
+                bytes.count - start
+            )
+            let context = AttachmentCrypto.authenticatedData(
+                conversationId: created.conversation.id,
+                sessionId: created.conversation.sessionId,
+                messageCounter: expected.counter,
+                attachmentId: attachmentID,
+                chunkIndex: upload.request.chunkIndex,
+                byteCount: expectedCount
+            )
+            decrypted.append(try AttachmentCrypto.decryptChunk(
+                payload: upload.request.payload,
+                messageKey: expected.key,
+                attachmentId: attachmentID,
+                chunkIndex: upload.request.chunkIndex,
+                authenticatedData: context
+            ))
+        }
+        XCTAssertEqual(decrypted, bytes)
+        XCTAssertEqual(current.directSessions.last?.sendChain.counter, expected.counter + 1)
+    }
+
+    func testDirectAttachmentUploadsBeforePublishingDescriptor() async throws {
+        let harness = try makeHarness(label: #function)
+        defer { try? FileManager.default.removeItem(at: harness.directory) }
+        let eventID = UUID(uuidString: "38000000-0000-4000-8000-000000000001")!
+        let transactionID = UUID(uuidString: "38000000-0000-4000-8000-000000000002")!
+
+        do {
+            _ = try await harness.client.sendAttachment(
+                Data(repeating: 0x52, count: 8),
+                mimeType: "application/octet-stream",
+                relay: offlineRelay(host: "peer.offline.invalid"),
+                relationshipID: harness.relationshipID,
+                eventID: eventID,
+                clientTransactionID: transactionID,
+                sentAt: origin.addingTimeInterval(60)
+            )
+            XCTFail("Offline attachment send unexpectedly succeeded")
+        } catch let error as HeadlessMessagingClientError {
+            XCTAssertEqual(error, .relayRejected)
+        }
+
+        let relationship = try await harness.client.relationship(harness.relationshipID)
+        let uploadIntent = try XCTUnwrap(
+            relationship.protocolIntents.first { $0.kind == .uploadBlob }
+        )
+        let eventIntent = try XCTUnwrap(
+            relationship.protocolIntents.first {
+                $0.kind == .sendEvent
+                    && $0.targetIdentifier == Data(eventID.uuidString.lowercased().utf8)
+            }
+        )
+        XCTAssertGreaterThan(uploadIntent.attemptCount, 0)
+        XCTAssertEqual(eventIntent.attemptCount, 0)
+        XCTAssertEqual(eventIntent.state, .prepared)
+    }
+
+    func testDirectAttachmentRetryIsIdempotentAfterUploadFailure() async throws {
+        let port = UInt16.random(in: 45_000...46_999)
+        let relay = RelayEndpoint(host: "127.0.0.1", port: port, transport: .tcp)
+        let harness = try makeHarness(
+            label: #function,
+            relationship: makeRelationship(peerRelay: relay)
+        )
+        defer { try? FileManager.default.removeItem(at: harness.directory) }
+        let server = RelayServer(store: RelayStore())
+        let sentAt = origin.addingTimeInterval(70)
+
+        do {
+            _ = try await harness.client.sendAttachment(
+                Data("retryable bytes".utf8),
+                mimeType: "application/octet-stream",
+                relay: relay,
+                relationshipID: harness.relationshipID,
+                eventID: UUID(uuidString: "39000000-0000-4000-8000-000000000001")!,
+                clientTransactionID: UUID(uuidString: "39000000-0000-4000-8000-000000000002")!,
+                sentAt: sentAt
+            )
+            XCTFail("Unstarted relay unexpectedly accepted the upload")
+        } catch let error as HeadlessMessagingClientError {
+            XCTAssertEqual(error, .relayRejected)
+        }
+
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        let retried = try await harness.client.retryPendingAttachmentUploads(
+            relationshipID: harness.relationshipID,
+            at: sentAt.addingTimeInterval(120)
+        )
+        XCTAssertEqual(retried.count, 1)
+        XCTAssertTrue(retried[0].accepted)
+        let afterRetry = try await harness.client.relationship(harness.relationshipID)
+        XCTAssertTrue(afterRetry.pendingAttachmentUploads.isEmpty)
+
+        let secondRetry = try await harness.client.retryPendingAttachmentUploads(
+            relationshipID: harness.relationshipID,
+            at: sentAt.addingTimeInterval(121)
+        )
+        XCTAssertTrue(secondRetry.isEmpty)
+    }
+
     func testConcurrentPrepareSendOnOneRelationshipRetainsBothAndRatchetState() async throws {
         let harness = try makeHarness(label: #function)
         defer { try? FileManager.default.removeItem(at: harness.directory) }
@@ -1309,6 +1526,7 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
             _ = try await receiverHarness.client.processInboundBundle(
                 bundle,
                 sourceRouteID: sourceRoute.route.routeID,
+                attachmentRelay: sourceRoute.relay,
                 receivedAt: receiverObservedAt,
                 relationship: &receiverRelationship
             )
@@ -1319,6 +1537,75 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
         XCTAssertTrue(receiverRelationship.directSessions.isEmpty)
         XCTAssertTrue(receiverRelationship.events.isEmpty)
         XCTAssertTrue(receiverRelationship.inboundReceipts.isEmpty)
+    }
+
+    func testInboundAttachmentProjectionRetainsSourceRelayForDownload() async throws {
+        let offer = try ContactPairingHandshakeV2.makeOffer(
+            createdAt: origin,
+            expiresAt: origin.addingTimeInterval(300)
+        )
+        var pendingOffer = offer.pending
+        var ledger = RendezvousRedemptionLedgerV2()
+        let paired = try ContactPairingHandshakeV2.establish(
+            pendingOffer: &pendingOffer,
+            invitation: offer.invitation,
+            offerer: try makeParticipant(name: "Attachment sender", host: "sender.invalid"),
+            responder: try makeParticipant(name: "Attachment receiver", host: "receiver.invalid"),
+            ledger: &ledger,
+            at: origin.addingTimeInterval(1)
+        )
+        let senderHarness = try makeHarness(
+            label: "\(#function)-sender",
+            relationship: paired.offererRelationship
+        )
+        let receiverHarness = try makeHarness(
+            label: "\(#function)-receiver",
+            relationship: paired.responderRelationship
+        )
+        defer {
+            try? FileManager.default.removeItem(at: senderHarness.directory)
+            try? FileManager.default.removeItem(at: receiverHarness.directory)
+        }
+        let descriptor = AttachmentDescriptor(
+            fileName: nil,
+            mimeType: "text/plain",
+            byteCount: 4,
+            sha256: AttachmentCrypto.sha256(Data("test".utf8)),
+            chunkCount: 1,
+            chunkSize: AttachmentDescriptor.maximumTransportChunkBytes,
+            relayTTLSeconds: 3_600
+        )
+        let prepared = try await senderHarness.client.prepareSend(
+            body: .attachment(descriptor),
+            relationshipID: paired.relationshipID,
+            sentAt: origin.addingTimeInterval(2)
+        )
+        let payload = try NoctweaveCoder.encode(prepared.envelope, sortedKeys: true)
+        let sourceRoute = try XCTUnwrap(paired.responderRelationship.localReceiveRoutes.first)
+        let bundle = OpaqueRouteReassembledBundleV2(
+            routeID: sourceRoute.route.routeID,
+            routeRevision: sourceRoute.route.lease.renewalSequence,
+            bundleID: .generate(),
+            bundleDigest: Data(SHA256.hash(data: payload)),
+            payload: payload
+        )
+        var receiverRelationship = paired.responderRelationship
+
+        _ = try await receiverHarness.client.processInboundBundle(
+            bundle,
+            sourceRouteID: sourceRoute.route.routeID,
+            attachmentRelay: sourceRoute.relay,
+            receivedAt: origin.addingTimeInterval(3),
+            relationship: &receiverRelationship
+        )
+
+        let projected = try XCTUnwrap(
+            receiverRelationship.directSessions
+                .flatMap(\.messages)
+                .first { $0.id == prepared.event.id }
+        )
+        XCTAssertEqual(projected.attachment?.relay, sourceRoute.relay)
+        XCTAssertEqual(projected.attachment?.descriptor, descriptor)
     }
 
     func testProbeSchedulingSkipsTestingRouteOutsideObservedValidityWindow() async throws {
@@ -1448,7 +1735,7 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
         )
     }
 
-    private func makeRelationship() throws -> PairwiseRelationshipV2 {
+    private func makeRelationship(peerRelay: RelayEndpoint? = nil) throws -> PairwiseRelationshipV2 {
         let offer = try ContactPairingHandshakeV2.makeOffer(
             createdAt: origin,
             expiresAt: origin.addingTimeInterval(300)
@@ -1459,7 +1746,10 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
             pendingOffer: &pendingOffer,
             invitation: offer.invitation,
             offerer: try makeParticipant(name: "Local", host: "local.offline.invalid"),
-            responder: try makeParticipant(name: "Peer", host: "peer.offline.invalid"),
+            responder: try makeParticipant(
+                name: "Peer",
+                relay: peerRelay ?? offlineRelay(host: "peer.offline.invalid")
+            ),
             ledger: &ledger,
             at: origin.addingTimeInterval(1)
         ).offererRelationship
@@ -1469,9 +1759,16 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
         name: String,
         host: String
     ) throws -> PreparedContactParticipantV2 {
+        try makeParticipant(name: name, relay: offlineRelay(host: host))
+    }
+
+    private func makeParticipant(
+        name: String,
+        relay: RelayEndpoint
+    ) throws -> PreparedContactParticipantV2 {
         let pending = try PendingContactParticipantV2.prepare(
             relationshipPseudonym: name,
-            relay: offlineRelay(host: host),
+            relay: relay,
             createdAt: origin
         )
         let route = try OpaqueReceiveRouteV2.creating(

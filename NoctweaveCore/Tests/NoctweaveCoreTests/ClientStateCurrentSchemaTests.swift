@@ -4,6 +4,66 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ClientStateCurrentSchemaTests: XCTestCase {
+    func testProductionDefaultsRequireExplicitOnboardingAcceptance() throws {
+        let state = try ClientState(displayName: "Needs acceptance")
+        XCTAssertFalse(state.hasCompletedOnboarding)
+        XCTAssertFalse(state.hasAcceptedPrivacyPolicy)
+        XCTAssertFalse(state.hasAcceptedTermsOfUse)
+        var incomplete = state
+        XCTAssertThrowsError(
+            try incomplete.completeOnboarding(
+                privacyPolicyAccepted: true,
+                termsOfUseAccepted: false
+            )
+        ) { error in
+            XCTAssertEqual(error as? ClientStateError, .onboardingAcceptanceRequired)
+        }
+        var completed = state
+        try completed.completeOnboarding(privacyPolicyAccepted: true, termsOfUseAccepted: true)
+        XCTAssertTrue(completed.hasCompletedOnboarding)
+    }
+
+    func testArchivedPersonasAreLocalStateAndActivePersonaCannotBeArchived() throws {
+        var state = try ClientState(displayName: "Primary")
+        let primaryID = state.activePersonaID
+        let secondary = try state.addPersona(displayName: "Secondary")
+        XCTAssertThrowsError(try state.archivePersona(secondary.id)) { error in
+            XCTAssertEqual(error as? ClientStateError, .activePersonaCannotBeArchived)
+        }
+        try state.archivePersona(primaryID)
+        XCTAssertTrue(state.isPersonaArchived(primaryID))
+        try state.selectPersona(primaryID)
+        XCTAssertFalse(state.isPersonaArchived(primaryID))
+
+        var object = try jsonObject(NoctweaveCoder.encode(state, sortedKeys: true))
+        object["archivedPersonaIDs"] = [state.activePersonaID.uuidString]
+        XCTAssertThrowsError(
+            try NoctweaveCoder.decode(ClientState.self, from: try jsonData(object))
+        )
+    }
+
+    func testPreferredRelaySelectionStaysOutsidePersonaWireModel() throws {
+        var state = try makeState()
+        let relayID = try XCTUnwrap(state.relayPreferences.first?.id)
+        try state.setPreferredRelayPreference(relayID, forPersonaID: state.activePersonaID)
+        XCTAssertEqual(state.preferredRelayPreferenceID(forPersonaID: state.activePersonaID), relayID)
+        let object = try jsonObject(NoctweaveCoder.encode(state, sortedKeys: true))
+        let persona = try XCTUnwrap((object["personas"] as? [[String: Any]])?.first)
+        XCTAssertNil(persona["relay"])
+        XCTAssertNil(persona["preferredRelay"])
+        XCTAssertEqual(
+            (object["preferredRelayPreferenceIDsByPersonaID"] as? [String: String])?.count,
+            1
+        )
+
+        try state.removeRelayPreference(relayID)
+        XCTAssertTrue(state.relayPreferences.isEmpty)
+        XCTAssertNil(state.preferredRelayPreferenceID(forPersonaID: state.activePersonaID))
+        XCTAssertThrowsError(try state.removeRelayPreference(relayID)) { error in
+            XCTAssertEqual(error as? ClientStateError, .relayPreferenceNotFound)
+        }
+    }
+
     func testClientStateContainsOnlyCurrentPersonaAndLocalPreferenceFields() throws {
         let state = try makeState()
         let encoded = try NoctweaveCoder.encode(state, sortedKeys: true)
@@ -22,6 +82,8 @@ final class ClientStateCurrentSchemaTests: XCTestCase {
                 "appLock",
                 "chatList",
                 "relayCertificatePins",
+                "preferredRelayPreferenceIDsByPersonaID",
+                "archivedPersonaIDs",
                 "hasCompletedOnboarding",
                 "hasAcceptedPrivacyPolicy",
                 "hasAcceptedTermsOfUse"
@@ -672,6 +734,11 @@ final class ClientStateCurrentSchemaTests: XCTestCase {
             relayPreferences: [relay],
             relaySourcePreferences: [source],
             relayCertificatePins: [pin],
+            preferredRelayPreferenceIDsByPersonaID: [:],
+            archivedPersonaIDs: [],
+            hasCompletedOnboarding: true,
+            hasAcceptedPrivacyPolicy: true,
+            hasAcceptedTermsOfUse: true,
             createdAt: Date(timeIntervalSince1970: 100)
         )
     }

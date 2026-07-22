@@ -480,7 +480,7 @@ struct OpaqueRouteAuthorizationProofV2: Codable, Equatable {
 
     var replayDigest: Data? {
         guard isStructurallyValid,
-              let encoded = try? RelayCodec.encoder(sortedKeys: true).encode(self) else {
+              let encoded = try? RelayCanonicalJSON.encode(self) else {
             return nil
         }
         return opaqueRouteDigest(
@@ -746,7 +746,7 @@ struct OpaqueRouteCreateRequestV2: Codable, Equatable {
         )
         return try? opaqueRouteDigest(
             domain: "org.noctweave.opaque-route.create/v2",
-            components: [RelayCodec.encoder(sortedKeys: true).encode(value)]
+            components: [RelayCanonicalJSON.encode(value)]
         )
     }
 
@@ -876,7 +876,7 @@ struct OpaqueRouteRenewRequestV2: Codable, Equatable {
         )
         return try? opaqueRouteDigest(
             domain: "org.noctweave.opaque-route.renew/v2",
-            components: [RelayCodec.encoder(sortedKeys: true).encode(value)]
+            components: [RelayCanonicalJSON.encode(value)]
         )
     }
 
@@ -997,7 +997,7 @@ struct OpaqueRouteTeardownRequestV2: Codable, Equatable {
         )
         return try? opaqueRouteDigest(
             domain: "org.noctweave.opaque-route.teardown/v2",
-            components: [RelayCodec.encoder(sortedKeys: true).encode(value)]
+            components: [RelayCanonicalJSON.encode(value)]
         )
     }
 
@@ -3362,7 +3362,7 @@ private func opaqueRouteAuthorizationMaterial(
     authorizedAt: Date,
     nonce: OpaqueRouteProofNonceV2
 ) throws -> Data {
-    try RelayCodec.encoder(sortedKeys: true).encode(OpaqueRouteAuthorizationMACPayloadV2(
+    try RelayCanonicalJSON.encode(OpaqueRouteAuthorizationMACPayloadV2(
         version: NoctweaveOpaqueRoutesV2.version,
         authority: authority,
         routeID: routeID,

@@ -206,6 +206,7 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
             )
             return
         } catch {
+            print("[relay] malformed HTTP request: \(relayRequestDecodeFailureSummary(error))")
             sendHTTPResponse(
                 status: .badRequest,
                 body: Data(#"{"error":"Malformed relay request"}"#.utf8),
@@ -264,6 +265,26 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         context.close(promise: nil)
+    }
+}
+
+private func relayRequestDecodeFailureSummary(_ error: Error) -> String {
+    func path(_ context: DecodingError.Context) -> String {
+        let value = context.codingPath.map(\.stringValue).joined(separator: ".")
+        return value.isEmpty ? "<root>" : value
+    }
+
+    switch error {
+    case DecodingError.dataCorrupted(let context):
+        return "data corrupted at \(path(context))"
+    case DecodingError.keyNotFound(let key, let context):
+        return "missing key \(key.stringValue) at \(path(context))"
+    case DecodingError.typeMismatch(_, let context):
+        return "type mismatch at \(path(context))"
+    case DecodingError.valueNotFound(_, let context):
+        return "missing value at \(path(context))"
+    default:
+        return "unsupported request envelope"
     }
 }
 

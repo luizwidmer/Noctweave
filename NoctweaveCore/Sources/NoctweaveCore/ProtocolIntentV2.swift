@@ -4,6 +4,7 @@ import Foundation
 public enum ProtocolIntentKindV2: String, Codable, Equatable, CaseIterable {
     case sendEvent
     case uploadBlob
+    case downloadBlob
     case rolloverRoute
     case renewRelationshipPrekey
 }

@@ -18,7 +18,9 @@ they are not separate HTTP compatibility endpoints.
 
 ```sh
 swift run --package-path NoctweaveCore NoctweaveCLI init \
-  --display-name "local label"
+  --display-name "local label" \
+  --accept-privacy-policy true \
+  --accept-terms-of-use true
 swift run --package-path NoctweaveCore NoctweaveCLI status
 ```
 

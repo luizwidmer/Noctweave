@@ -20,6 +20,7 @@ public enum NoctweaveArchitectureV2 {
     public static let maximumIntentAttempts = 64
     public static let maximumPendingDirectDeliveries = 1_024
     public static let maximumPendingAttachmentUploads = 512
+    public static let maximumPendingAttachmentDownloads = 512
     public static let maximumDirectSessionsPerRelationship = 8
     public static let maximumProtocolIntents = 1_024
     public static let protocolIntentRecentWindow = 768

@@ -147,8 +147,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
                 return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            let confidentialTransport = relayConfiguration.tlsEnabled == true
-                || isLoopbackRequestSource(requestSourceKey)
+            let confidentialTransport = hasConfidentialTransport(requestSourceKey)
             guard confidentialTransport else {
                 return failure("Opaque route runtime requires confidential transport")
             }
@@ -167,8 +166,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
                 return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            let confidentialTransport = relayConfiguration.tlsEnabled == true
-                || isLoopbackRequestSource(requestSourceKey)
+            let confidentialTransport = hasConfidentialTransport(requestSourceKey)
             guard confidentialTransport else {
                 return failure("Opaque route runtime requires confidential transport")
             }
@@ -187,8 +185,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
                 return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            let confidentialTransport = relayConfiguration.tlsEnabled == true
-                || isLoopbackRequestSource(requestSourceKey)
+            let confidentialTransport = hasConfidentialTransport(requestSourceKey)
             guard confidentialTransport else {
                 return failure("Opaque route runtime requires confidential transport")
             }
@@ -207,8 +204,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
                 return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            let confidentialTransport = relayConfiguration.tlsEnabled == true
-                || isLoopbackRequestSource(requestSourceKey)
+            let confidentialTransport = hasConfidentialTransport(requestSourceKey)
             guard confidentialTransport else {
                 return failure("Opaque route runtime requires confidential transport")
             }
@@ -227,8 +223,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
                 return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            let confidentialTransport = relayConfiguration.tlsEnabled == true
-                || isLoopbackRequestSource(requestSourceKey)
+            let confidentialTransport = hasConfidentialTransport(requestSourceKey)
             guard confidentialTransport else {
                 return failure("Opaque route runtime requires confidential transport")
             }
@@ -247,8 +242,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
                 return failure("Opaque route runtime is disabled", code: .unavailable)
             }
-            let confidentialTransport = relayConfiguration.tlsEnabled == true
-                || isLoopbackRequestSource(requestSourceKey)
+            let confidentialTransport = hasConfidentialTransport(requestSourceKey)
             guard confidentialTransport else {
                 return failure("Opaque route runtime requires confidential transport")
             }
@@ -267,8 +261,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isRendezvousTransportEnabled else {
                 return failure("Rendezvous transport is disabled", code: .unavailable)
             }
-            guard relayConfiguration.tlsEnabled == true
-                    || isLoopbackRequestSource(requestSourceKey) else {
+            guard hasConfidentialTransport(requestSourceKey) else {
                 return failure("Rendezvous transport requires confidential transport")
             }
             guard registration.isStructurallyValid() else {
@@ -284,8 +277,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isRendezvousTransportEnabled else {
                 return failure("Rendezvous transport is disabled", code: .unavailable)
             }
-            guard relayConfiguration.tlsEnabled == true
-                    || isLoopbackRequestSource(requestSourceKey) else {
+            guard hasConfidentialTransport(requestSourceKey) else {
                 return failure("Rendezvous transport requires confidential transport")
             }
             guard append.isStructurallyValid else {
@@ -301,8 +293,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isRendezvousTransportEnabled else {
                 return failure("Rendezvous transport is disabled", code: .unavailable)
             }
-            guard relayConfiguration.tlsEnabled == true
-                    || isLoopbackRequestSource(requestSourceKey) else {
+            guard hasConfidentialTransport(requestSourceKey) else {
                 return failure("Rendezvous transport requires confidential transport")
             }
             guard sync.isStructurallyValid else {
@@ -317,8 +308,7 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isRendezvousTransportEnabled else {
                 return failure("Rendezvous transport is disabled", code: .unavailable)
             }
-            guard relayConfiguration.tlsEnabled == true
-                    || isLoopbackRequestSource(requestSourceKey) else {
+            guard hasConfidentialTransport(requestSourceKey) else {
                 return failure("Rendezvous transport requires confidential transport")
             }
             guard deletion.isStructurallyValid else {
@@ -1220,6 +1210,12 @@ final class RelayHandler: ChannelInboundHandler {
             return ipAddress.lowercased()
         }
         return normalizedFederationSourceKey(address?.description)
+    }
+
+    private func hasConfidentialTransport(_ source: String) -> Bool {
+        relayConfiguration.effectiveTransportConfidentiality(
+            isLiteralLoopbackSource: isLoopbackRequestSource(source)
+        ).permitsCapabilityTransport
     }
 
     private func isLoopbackRequestSource(_ source: String) -> Bool {

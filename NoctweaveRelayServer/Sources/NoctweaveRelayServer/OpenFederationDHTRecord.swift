@@ -180,7 +180,7 @@ struct OpenFederationDHTRecord: Codable, Equatable {
     }
 
     private func signingPayloadData() throws -> Data {
-        try RelayCodec.encoder(sortedKeys: true).encode(
+        try RelayCanonicalJSON.encode(
             SigningPayload(
                 version: version,
                 namespace: namespace,

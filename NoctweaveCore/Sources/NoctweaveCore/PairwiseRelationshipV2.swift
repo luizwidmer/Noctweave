@@ -454,6 +454,126 @@ public struct PendingAttachmentUploadV2: Codable, Equatable, Identifiable {
     }
 }
 
+/// Durable receive-side attachment journal. It contains only the descriptor
+/// and relay-returned ciphertext chunks; plaintext and message keys remain in
+/// the native caller's memory or protected file destination.
+public struct PendingAttachmentDownloadV2: Codable, Equatable, Identifiable {
+    public static let version = 2
+
+    public let version: Int
+    public let id: UUID
+    public let relationshipID: UUID
+    public let relay: RelayEndpoint
+    public let descriptor: AttachmentDescriptor
+    public var receivedChunks: [AttachmentChunk]
+    public let queuedAt: Date
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case version
+        case id
+        case relationshipID
+        case relay
+        case descriptor
+        case receivedChunks
+        case queuedAt
+    }
+
+    public init(
+        id: UUID = UUID(),
+        relationshipID: UUID,
+        relay: RelayEndpoint,
+        descriptor: AttachmentDescriptor,
+        receivedChunks: [AttachmentChunk] = [],
+        queuedAt: Date
+    ) throws {
+        self.version = Self.version
+        self.id = id
+        self.relationshipID = relationshipID
+        self.relay = relay
+        self.descriptor = descriptor
+        self.receivedChunks = receivedChunks
+        self.queuedAt = queuedAt
+        guard isStructurallyValid else {
+            throw PairwiseRelationshipV2Error.invalidState
+        }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: PairwiseRelationshipCodingKey.self)
+        guard Set(strict.allKeys.map(\.stringValue))
+                == Set(CodingKeys.allCases.map(\.rawValue)) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Pending attachment download fields must match the current protocol exactly"
+                )
+            )
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        id = try container.decode(UUID.self, forKey: .id)
+        relationshipID = try container.decode(UUID.self, forKey: .relationshipID)
+        relay = try container.decode(RelayEndpoint.self, forKey: .relay)
+        descriptor = try container.decode(AttachmentDescriptor.self, forKey: .descriptor)
+        receivedChunks = try container.decode([AttachmentChunk].self, forKey: .receivedChunks)
+        queuedAt = try container.decode(Date.self, forKey: .queuedAt)
+        guard isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .receivedChunks,
+                in: container,
+                debugDescription: "Pending attachment download is structurally invalid"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Pending attachment download is structurally invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(version, forKey: .version)
+        try container.encode(id, forKey: .id)
+        try container.encode(relationshipID, forKey: .relationshipID)
+        try container.encode(relay, forKey: .relay)
+        try container.encode(descriptor, forKey: .descriptor)
+        try container.encode(receivedChunks, forKey: .receivedChunks)
+        try container.encode(queuedAt, forKey: .queuedAt)
+    }
+
+    public var nextChunkIndex: Int { receivedChunks.count }
+
+    public var isComplete: Bool { receivedChunks.count == descriptor.chunkCount }
+
+    public var isStructurallyValid: Bool {
+        guard version == Self.version,
+              relationshipID != UUID(),
+              descriptor.isStructurallyValid(),
+              receivedChunks.count <= descriptor.chunkCount,
+              receivedChunks.enumerated().allSatisfy({ offset, chunk in
+                  chunk.attachmentId == descriptor.id
+                      && chunk.chunkIndex == offset
+                      && chunk.isStructurallyValid
+                      && chunk.payload.ciphertext.count
+                          == expectedEncryptedChunkBytes(at: offset)
+              }),
+              queuedAt.timeIntervalSince1970.isFinite else {
+            return false
+        }
+        return true
+    }
+
+    private func expectedEncryptedChunkBytes(at index: Int) -> Int {
+        let remaining = descriptor.byteCount - index * descriptor.chunkSize
+        return min(descriptor.chunkSize, remaining)
+    }
+}
+
 /// Complete local state for one independently keyed pairwise relationship.
 /// Nothing in this object is shared with another contact unless an explicit,
 /// old-key-signed continuity event is sent to that contact.
@@ -465,6 +585,8 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
         NoctweaveArchitectureV2.maximumPendingDirectDeliveries
     public static let maximumPendingAttachmentUploads =
         NoctweaveArchitectureV2.maximumPendingAttachmentUploads
+    public static let maximumPendingAttachmentDownloads =
+        NoctweaveArchitectureV2.maximumPendingAttachmentDownloads
     public static let maximumIntents = NoctweaveArchitectureV2.maximumProtocolIntents
     public static let maximumTransportQuarantine =
         NoctweaveArchitectureV2.maximumQuarantinedTransportEnvelopes
@@ -484,6 +606,7 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
     public var pendingDeliveries: [PendingOpaqueRouteDeliveryV2]
     public var pendingRouteRollovers: [PendingLocalOpaqueReceiveRouteV2]
     public var pendingAttachmentUploads: [PendingAttachmentUploadV2]
+    public var pendingAttachmentDownloads: [PendingAttachmentDownloadV2]
     public var deliveryStates: [DeliveryStateRecord]
     public var inboundReceipts: [InboundEnvelopeReceiptV2]
     public var transportQuarantine: [QuarantinedTransportEnvelopeV2]
@@ -507,6 +630,7 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
         case pendingDeliveries
         case pendingRouteRollovers
         case pendingAttachmentUploads
+        case pendingAttachmentDownloads
         case deliveryStates
         case inboundReceipts
         case transportQuarantine
@@ -546,6 +670,7 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
         self.pendingDeliveries = []
         self.pendingRouteRollovers = []
         self.pendingAttachmentUploads = []
+        self.pendingAttachmentDownloads = []
         self.deliveryStates = []
         self.inboundReceipts = []
         self.transportQuarantine = []
@@ -601,6 +726,10 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
         pendingAttachmentUploads = try container.decode(
             [PendingAttachmentUploadV2].self,
             forKey: .pendingAttachmentUploads
+        )
+        pendingAttachmentDownloads = try container.decode(
+            [PendingAttachmentDownloadV2].self,
+            forKey: .pendingAttachmentDownloads
         )
         deliveryStates = try container.decode(
             [DeliveryStateRecord].self,
@@ -664,6 +793,7 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
         try container.encode(pendingDeliveries, forKey: .pendingDeliveries)
         try container.encode(pendingRouteRollovers, forKey: .pendingRouteRollovers)
         try container.encode(pendingAttachmentUploads, forKey: .pendingAttachmentUploads)
+        try container.encode(pendingAttachmentDownloads, forKey: .pendingAttachmentDownloads)
         try container.encode(deliveryStates, forKey: .deliveryStates)
         try container.encode(inboundReceipts, forKey: .inboundReceipts)
         try container.encode(transportQuarantine, forKey: .transportQuarantine)
@@ -695,6 +825,9 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
             }
             for upload in pendingAttachmentUploads {
                 guard try upload.isStructurallyValidThrowing else { return false }
+            }
+            for download in pendingAttachmentDownloads {
+                guard download.isStructurallyValid else { return false }
             }
             return hasValidAggregateStructureAfterCryptoPreflight
         }
@@ -740,6 +873,22 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
                     && intent.createdAt == pending.queuedAt
                     && intent.expiresAt == pending.queuedAt.addingTimeInterval(ttl)
                     && intent.idempotencyKey.rawValue == pending.request.idempotencyKey
+            case .downloadBlob:
+                guard intent.expectedEpoch == nil,
+                      let downloadID = Self.uuidTarget(intent.targetIdentifier) else {
+                    return false
+                }
+                let matching = pendingAttachmentDownloads.filter { $0.id == downloadID }
+                if intent.state == .finalized { return matching.isEmpty }
+                if intent.state == .permanentFailure && matching.isEmpty { return true }
+                guard matching.count == 1, let pending = matching.first,
+                      let digest = Self.canonicalDigest(pending.descriptor) else { return false }
+                return pending.relationshipID == id
+                    && digest == intent.payloadDigest
+                    && intent.createdAt == pending.queuedAt
+                    && intent.expiresAt == pending.queuedAt.addingTimeInterval(
+                        TimeInterval(pending.descriptor.relayTTLSeconds ?? 3_600)
+                    )
             case .rolloverRoute:
                 guard let target = intent.targetIdentifier,
                       OpaqueReceiveRouteIDV2(rawValue: target).isStructurallyValid,
@@ -882,6 +1031,15 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
             }).count == pendingAttachmentUploads.count
             && pendingAttachmentUploads.allSatisfy {
                 $0.relationshipID == id
+            }
+            && pendingAttachmentDownloads.count <= Self.maximumPendingAttachmentDownloads
+            && Set(pendingAttachmentDownloads.map(\.id)).count
+                == pendingAttachmentDownloads.count
+            && Set(pendingAttachmentDownloads.map {
+                $0.descriptor.id
+            }).count == pendingAttachmentDownloads.count
+            && pendingAttachmentDownloads.allSatisfy {
+                $0.relationshipID == id && $0.isStructurallyValid
             }
             && deliveryStates.count <= NoctweaveArchitectureV2.maximumDeliveryStates
             && Set(deliveryStates.map(DeliveryStateKey.init)).count == deliveryStates.count
@@ -1375,6 +1533,14 @@ public struct PairwiseRelationshipV2: Codable, Equatable, Identifiable {
             guard intent.kind == .rolloverRoute,
                   pendingRouteRollovers.contains(where: {
                       intent.targetIdentifier == $0.clientCapabilities.routeID.rawValue
+                  }) else { return nil }
+            return intent.id
+        })
+        retainedIntentIDs.formUnion(protocolIntents.compactMap { intent in
+            guard intent.kind == .downloadBlob,
+                  pendingAttachmentDownloads.contains(where: {
+                      intent.targetIdentifier
+                        == Data($0.id.uuidString.lowercased().utf8)
                   }) else { return nil }
             return intent.id
         })

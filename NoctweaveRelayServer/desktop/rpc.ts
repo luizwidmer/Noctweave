@@ -8,6 +8,8 @@ export type RelayLauncherSettings = {
   tcpPort: number;
   httpPort: number;
   adminPort: number;
+  rendezvousTransportEnabled: boolean;
+  trustedReverseProxyTLS: boolean;
 };
 
 export type RelayLauncherStatus = {

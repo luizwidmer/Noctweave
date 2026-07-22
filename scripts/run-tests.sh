@@ -8,14 +8,27 @@ JS_DIR="${NOCTWEAVE_JS_DIR:-$ROOT_DIR/NoctweaveJS}"
 
 source "$ROOT_DIR/scripts/liboqs-runtime.sh"
 
-echo "Running core XCTest suite..."
-(cd "$CORE_DIR" && swift test)
+echo "Building public Core and CLI product paths..."
+swift build --package-path "$CORE_DIR"
 
-echo "Running NoctweaveCLI smoke suite..."
+echo "Running Core XCTest suite..."
+swift test --package-path "$CORE_DIR"
+
+echo "Running public CLI acceptance suite (init, state, maintenance, pairing artifacts)..."
 "$ROOT_DIR/scripts/test-cli.sh"
 
-echo "Running relay XCTest suite..."
-(cd "$RELAY_DIR" && swift test)
+echo "Building public relay product path..."
+swift build --package-path "$RELAY_DIR"
+
+echo "Running relay XCTest suite and product integration coverage..."
+swift test --package-path "$RELAY_DIR"
+
+if command -v bun >/dev/null 2>&1 && [ -f "$RELAY_DIR/package.json" ]; then
+  echo "Running public relay OperatorWebUI and Electrobun launcher TypeScript suite..."
+  (cd "$RELAY_DIR" && bun test desktop/test)
+else
+  echo "Bun or the public relay desktop package is unavailable; skipping Electrobun TypeScript checks."
+fi
 
 if [ -f "$JS_DIR/package.json" ]; then
   echo "Running standalone NoctweaveJS protocol suite..."

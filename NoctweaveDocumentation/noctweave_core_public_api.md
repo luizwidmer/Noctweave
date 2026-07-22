@@ -407,9 +407,27 @@ identity. A terminal failed rollover retains its recovery artifact until
 
 ## Encrypted attachment publication
 
-Blob upload and chat descriptor publication are separate operations. First
-encrypt each chunk end to end, then journal and publish the already encrypted
-request:
+For normal direct messaging, prefer the atomic sanitized-byte entry point:
+
+```swift
+let result = try await client.sendAttachment(
+    bytes: sanitizedBytes,
+    canonicalMIME: "image/jpeg",
+    relay: endpoint,
+    relationshipID: relationshipID
+)
+```
+
+It persists the local descriptor event, one direct-ratchet advance, exact route
+ciphertext, and all encrypted chunk-upload journals as one state replacement
+before network I/O. It omits the source filename and rejects a relay unless the
+peer has a usable advertised route on that same relay. Upload retries therefore
+cannot create a second event, consume another message key, or strand a
+descriptor that points to an undiscoverable blob location.
+
+Low-level integrations that already own an equivalent transaction may keep
+blob upload and descriptor publication separate. First encrypt each chunk end
+to end, then journal and publish the already encrypted request:
 
 ```swift
 let request = UploadAttachmentRequest(
@@ -446,6 +464,12 @@ blob storage. A different key, payload, or requested TTL is a non-retryable
 conflict; replacement content requires a fresh attachment ID. Only after all
 required chunks are available should the application send the corresponding
 `AttachmentDescriptor` with `sendAttachment`.
+
+Receive integrations use `prepareAttachmentDownload`,
+`fetchAttachmentDownload`, and `retryPendingAttachmentDownloads`. The exact
+relay, descriptor, next index, and accepted ciphertext chunks are encrypted and
+saved after every fetch. Completed plaintext is returned to the caller for
+bounded use and is not retained in Core state.
 
 Read `attachmentDefaultTTLSeconds` and `attachmentMaxTTLSeconds` from relay
 info rather than assuming the default example above. Both values are bounded

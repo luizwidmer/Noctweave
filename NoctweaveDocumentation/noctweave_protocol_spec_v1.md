@@ -341,6 +341,16 @@ returns the original result without extending expiry or rewriting local/IPFS
 storage. A different key, ciphertext, or requested expiry is a non-retryable
 conflict; replacement requires a fresh attachment ID.
 
+The high-level direct attachment transaction persists the local descriptor
+event, one ratchet advance, exact route ciphertext, and every encrypted chunk
+upload together before its first network request. Descriptor delivery is
+restricted to peer-advertised opaque routes on the same relay that stores the
+chunks. An arbitrary blob relay is rejected before this transaction mutates
+relationship state because the encrypted descriptor carries no public blob
+location. Receive-side chunk progress is likewise journaled in encrypted local
+state, one exact chunk at a time, before completed plaintext is returned to the
+application.
+
 Storage offload, including optional IPFS, changes storage placement only. It is
 not an anonymity feature.
 
@@ -368,8 +378,12 @@ bounded digest-only fork evidence and does not replace state.
 A runtime that does not yet exist may be created only from a caller-pinned
 `GroupJoinAnchorV2` supplied through an already encrypted group-only invitation.
 The anchor binds the base state and intended member, credential, and admission
-digest; a Welcome cannot authorize its own recipient. Accepted removal of the
-local credential is terminal and clears sendable work. A local deletion first
+digest; a Welcome cannot authorize its own recipient. A member may author the
+single signed removal of its own group-scoped handle without gaining moderator
+authority. The runtime retains the previous active epoch only while the exact
+departure fanout is crash-resumably delivered, forbids new application sends
+during that window, and then commits terminal local removal. Accepted removal
+of the local credential clears sendable work. A local deletion first
 persists its exact signed tombstone outbox and clears application/epoch work in
 one atomic replacement; an inbound deletion is likewise terminal. Exact
 deletion replay is accepted, while conflicting deletion and post-deletion

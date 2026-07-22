@@ -33,7 +33,7 @@ enum FederationDirectorySignature {
             privateKeyData: keyPair.privateKey,
             publicKeyData: keyPair.publicKey
         )
-        return try RelayCodec.encoder(sortedKeys: true).encode(bundle)
+        return try RelayCanonicalJSON.encode(bundle)
     }
 
     static func publicKeyDataThrowing(from privateKeyData: Data) throws -> Data {
@@ -136,6 +136,6 @@ enum FederationDirectorySignature {
             maxStalenessSeconds: snapshot.maxStalenessSeconds,
             nodes: snapshot.nodes
         )
-        return try RelayCodec.encoder(sortedKeys: true).encode(payload)
+        return try RelayCanonicalJSON.encode(payload)
     }
 }

@@ -22,6 +22,7 @@ public enum OpaqueRouteRelayStoreV2Error: Error, Equatable {
     case packetIdentifierLedgerExhausted
     case requestReceiptLedgerExhausted
     case sequenceExhausted
+    case invalidSnapshot
 }
 
 // MARK: - Opaque cursors and read requests
@@ -701,6 +702,242 @@ public struct OpaqueRouteCommitResponseV2: Codable, Equatable {
     }
 }
 
+// MARK: - Durable relay-state snapshot
+
+/// A durable, caller-owned snapshot of opaque-route relay state. The snapshot
+/// contains route capability digests, encrypted packets, replay ledgers, and
+/// cursor authentication material, but no plaintext application payload.
+/// Persist it inside the host application's encrypted store; Core never
+/// writes it to disk itself.
+public struct OpaqueRouteStoredPacketSnapshotV2: Codable, Equatable {
+    public let sequence: UInt64
+    public let previousRecordDigest: Data
+    public let recordDigest: Data
+    public let routeRevision: UInt64
+    public let packet: OpaqueRoutePacketV2
+    public let expiresAt: Date
+
+    public init(
+        sequence: UInt64,
+        previousRecordDigest: Data,
+        recordDigest: Data,
+        routeRevision: UInt64,
+        packet: OpaqueRoutePacketV2,
+        expiresAt: Date
+    ) {
+        self.sequence = sequence
+        self.previousRecordDigest = previousRecordDigest
+        self.recordDigest = recordDigest
+        self.routeRevision = routeRevision
+        self.packet = packet
+        self.expiresAt = expiresAt
+    }
+
+    public var isStructurallyValid: Bool {
+        OpaqueRouteReceivedPacketV2(
+            sequence: sequence,
+            previousRecordDigest: previousRecordDigest,
+            recordDigest: recordDigest,
+            routeRevision: routeRevision,
+            packet: packet
+        ).isStructurallyValid
+            && expiresAt.timeIntervalSince1970.isFinite
+    }
+}
+
+public struct OpaqueRouteAcceptedPacketSnapshotV2: Codable, Equatable {
+    public let packetID: OpaqueRoutePacketIDV2
+    public let operationDigest: Data
+    public let receipt: OpaqueRouteAppendReceiptV2
+    public let authorizationExpiresAt: Date
+
+    public init(
+        packetID: OpaqueRoutePacketIDV2,
+        operationDigest: Data,
+        receipt: OpaqueRouteAppendReceiptV2,
+        authorizationExpiresAt: Date
+    ) {
+        self.packetID = packetID
+        self.operationDigest = operationDigest
+        self.receipt = receipt
+        self.authorizationExpiresAt = authorizationExpiresAt
+    }
+
+    public var isStructurallyValid: Bool {
+        packetID.isStructurallyValid
+            && operationDigest.count == NoctweaveOpaqueRoutesV2.digestBytes
+            && receipt.isStructurallyValid
+            && receipt.packetID == packetID
+            && authorizationExpiresAt.timeIntervalSince1970.isFinite
+    }
+}
+
+public enum OpaqueRouteCachedReadResultV2: Codable, Equatable {
+    case sync(OpaqueRouteSyncResponseV2)
+    case commit(OpaqueRouteCommitResponseV2)
+
+    private enum CodingKeys: String, CodingKey, CaseIterable { case kind, sync, commit }
+
+    public init(from decoder: Decoder) throws {
+        try opaqueRouteRelayRequireExactObject(
+            decoder,
+            keys: CodingKeys.allCases.map(\.rawValue)
+        )
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decode(String.self, forKey: .kind)
+        switch kind {
+        case "sync":
+            guard try container.decodeNil(forKey: .commit) else { throw OpaqueRouteRelayStoreV2Error.invalidSnapshot }
+            self = .sync(try container.decode(OpaqueRouteSyncResponseV2.self, forKey: .sync))
+        case "commit":
+            guard try container.decodeNil(forKey: .sync) else { throw OpaqueRouteRelayStoreV2Error.invalidSnapshot }
+            self = .commit(try container.decode(OpaqueRouteCommitResponseV2.self, forKey: .commit))
+        default:
+            throw OpaqueRouteRelayStoreV2Error.invalidSnapshot
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .sync(let value):
+            try container.encode("sync", forKey: .kind)
+            try container.encode(value, forKey: .sync)
+            try container.encodeNil(forKey: .commit)
+        case .commit(let value):
+            try container.encode("commit", forKey: .kind)
+            try container.encodeNil(forKey: .sync)
+            try container.encode(value, forKey: .commit)
+        }
+    }
+
+    public var isStructurallyValid: Bool {
+        switch self {
+        case .sync(let value): value.isStructurallyValid
+        case .commit(let value): value.isStructurallyValid
+        }
+    }
+}
+
+public struct OpaqueRouteAcceptedReadSnapshotV2: Codable, Equatable {
+    public let requestID: OpaqueRouteIdempotencyKeyV2
+    public let operationDigest: Data
+    public let result: OpaqueRouteCachedReadResultV2
+    public let authorizationExpiresAt: Date
+    public let bodyExpiresAt: Date?
+
+    public init(
+        requestID: OpaqueRouteIdempotencyKeyV2,
+        operationDigest: Data,
+        result: OpaqueRouteCachedReadResultV2,
+        authorizationExpiresAt: Date,
+        bodyExpiresAt: Date? = nil
+    ) {
+        self.requestID = requestID
+        self.operationDigest = operationDigest
+        self.result = result
+        self.authorizationExpiresAt = authorizationExpiresAt
+        self.bodyExpiresAt = bodyExpiresAt
+    }
+
+    public var isStructurallyValid: Bool {
+        requestID.isStructurallyValid
+            && operationDigest.count == NoctweaveOpaqueRoutesV2.digestBytes
+            && result.isStructurallyValid
+            && authorizationExpiresAt.timeIntervalSince1970.isFinite
+            && bodyExpiresAt?.timeIntervalSince1970.isFinite != false
+    }
+}
+
+public struct OpaqueRouteRelayRouteSnapshotV2: Codable, Equatable {
+    public let route: OpaqueReceiveRouteV2
+    public let replayLedger: OpaqueRouteAuthorizationReplayLedgerV2
+    public let packets: [OpaqueRouteStoredPacketSnapshotV2]
+    public let nextSequence: UInt64
+    public let retentionFloor: UInt64
+    public let retentionFloorDigest: Data
+    public let committedSequence: UInt64
+    public let acceptedPackets: [OpaqueRouteAcceptedPacketSnapshotV2]
+    public let acceptedReads: [OpaqueRouteAcceptedReadSnapshotV2]
+    public let observedAtHighWatermark: Date
+
+    public init(
+        route: OpaqueReceiveRouteV2,
+        replayLedger: OpaqueRouteAuthorizationReplayLedgerV2,
+        packets: [OpaqueRouteStoredPacketSnapshotV2],
+        nextSequence: UInt64,
+        retentionFloor: UInt64,
+        retentionFloorDigest: Data,
+        committedSequence: UInt64,
+        acceptedPackets: [OpaqueRouteAcceptedPacketSnapshotV2],
+        acceptedReads: [OpaqueRouteAcceptedReadSnapshotV2],
+        observedAtHighWatermark: Date
+    ) {
+        self.route = route
+        self.replayLedger = replayLedger
+        self.packets = packets
+        self.nextSequence = nextSequence
+        self.retentionFloor = retentionFloor
+        self.retentionFloorDigest = retentionFloorDigest
+        self.committedSequence = committedSequence
+        self.acceptedPackets = acceptedPackets
+        self.acceptedReads = acceptedReads
+        self.observedAtHighWatermark = observedAtHighWatermark
+    }
+
+    public var isStructurallyValid: Bool {
+        guard route.isStructurallyValid,
+              nextSequence > 0,
+              retentionFloor < nextSequence,
+              committedSequence < nextSequence,
+              retentionFloorDigest.count == NoctweaveOpaqueRoutesV2.digestBytes,
+              packets.count <= Int(route.lease.policy.quotaBucket.rawValue),
+              packets.allSatisfy(\.isStructurallyValid),
+              acceptedPackets.count <= NoctweaveOpaqueRouteRelayStoreV2.maximumAcceptedPacketIdentifiers,
+              acceptedReads.count <= NoctweaveOpaqueRouteRelayStoreV2.maximumReadRequestReceipts,
+              acceptedPackets.allSatisfy(\.isStructurallyValid),
+              acceptedReads.allSatisfy(\.isStructurallyValid),
+              replayLedger.isStructurallyValid,
+              observedAtHighWatermark.timeIntervalSince1970.isFinite else { return false }
+        let sequences = packets.map(\.sequence)
+        guard Set(sequences).count == sequences.count,
+              sequences == sequences.sorted(),
+              sequences.allSatisfy({ $0 > retentionFloor && $0 < nextSequence }),
+              Set(acceptedPackets.map(\.packetID)).count == acceptedPackets.count,
+              Set(acceptedReads.map(\.requestID)).count == acceptedReads.count else { return false }
+        if let first = packets.first {
+            guard first.previousRecordDigest == retentionFloorDigest else { return false }
+        }
+        return true
+    }
+}
+
+public struct OpaqueRouteRelayStateSnapshotV2: Codable, Equatable {
+    public static let version = 1
+    public let version: Int
+    public let cursorKey: Data
+    public let routes: [OpaqueRouteRelayRouteSnapshotV2]
+
+    public init(
+        version: Int = Self.version,
+        cursorKey: Data,
+        routes: [OpaqueRouteRelayRouteSnapshotV2]
+    ) throws {
+        self.version = version
+        self.cursorKey = cursorKey
+        self.routes = routes
+        guard isStructurallyValid else { throw OpaqueRouteRelayStoreV2Error.invalidSnapshot }
+    }
+
+    public var isStructurallyValid: Bool {
+        version == Self.version
+            && cursorKey.count == 32
+            && routes.count <= NoctweaveOpaqueRouteRelayStoreV2.maximumRoutes
+            && routes.allSatisfy(\.isStructurallyValid)
+            && Set(routes.map { $0.route.routeID }).count == routes.count
+    }
+}
+
 // MARK: - Authoritative in-memory relay state
 
 public actor OpaqueRouteRelayStoreV2 {
@@ -753,11 +990,128 @@ public actor OpaqueRouteRelayStoreV2 {
         var observedAtHighWatermark: Date
     }
 
-    private let cursorKey: SymmetricKey
+    private var cursorKey: SymmetricKey
     private var routes: [OpaqueReceiveRouteIDV2: RouteState] = [:]
 
     public init() {
         cursorKey = SymmetricKey(size: .bits256)
+    }
+
+    /// Returns the complete relay runtime state for encrypted host persistence.
+    /// The returned cursor key is required to keep previously issued cursors
+    /// valid after restart; callers must protect this snapshot at rest.
+    public func snapshot() throws -> OpaqueRouteRelayStateSnapshotV2 {
+        let keyData = cursorKey.withUnsafeBytes { Data($0) }
+        let routeSnapshots = routes.values.map { state in
+            OpaqueRouteRelayRouteSnapshotV2(
+                route: state.route,
+                replayLedger: state.replayLedger,
+                packets: state.packets.map {
+                    OpaqueRouteStoredPacketSnapshotV2(
+                        sequence: $0.sequence,
+                        previousRecordDigest: $0.previousRecordDigest,
+                        recordDigest: $0.recordDigest,
+                        routeRevision: $0.routeRevision,
+                        packet: $0.packet,
+                        expiresAt: $0.expiresAt
+                    )
+                },
+                nextSequence: state.nextSequence,
+                retentionFloor: state.retentionFloor,
+                retentionFloorDigest: state.retentionFloorDigest,
+                committedSequence: state.committedSequence,
+                acceptedPackets: state.acceptedPackets.map { packetID, accepted in
+                    OpaqueRouteAcceptedPacketSnapshotV2(
+                        packetID: packetID,
+                        operationDigest: accepted.operationDigest,
+                        receipt: accepted.receipt,
+                        authorizationExpiresAt: accepted.authorizationExpiresAt
+                    )
+                },
+                acceptedReads: state.acceptedReads.map { requestID, accepted in
+                    OpaqueRouteAcceptedReadSnapshotV2(
+                        requestID: requestID,
+                        operationDigest: accepted.operationDigest,
+                        result: {
+                            switch accepted.result {
+                            case .sync(let value): return .sync(value.response)
+                            case .commit(let value): return .commit(value)
+                            }
+                        }(),
+                        authorizationExpiresAt: accepted.authorizationExpiresAt,
+                        bodyExpiresAt: {
+                            switch accepted.result {
+                            case .sync(let value): return value.bodyExpiresAt
+                            case .commit: return nil
+                            }
+                        }()
+                    )
+                },
+                observedAtHighWatermark: state.observedAtHighWatermark
+            )
+        }.sorted { $0.route.routeID.rawValue.lexicographicallyPrecedes($1.route.routeID.rawValue) }
+        return try OpaqueRouteRelayStateSnapshotV2(cursorKey: keyData, routes: routeSnapshots)
+    }
+
+    /// Replaces runtime state from a previously captured, validated snapshot.
+    /// This is intentionally explicit so a host cannot silently restore stale
+    /// or untrusted relay state.
+    public func restore(_ snapshot: OpaqueRouteRelayStateSnapshotV2) throws {
+        guard snapshot.isStructurallyValid else {
+            throw OpaqueRouteRelayStoreV2Error.invalidSnapshot
+        }
+        var restored: [OpaqueReceiveRouteIDV2: RouteState] = [:]
+        for routeSnapshot in snapshot.routes {
+            var acceptedPackets: [OpaqueRoutePacketIDV2: AcceptedPacket] = [:]
+            for value in routeSnapshot.acceptedPackets {
+                acceptedPackets[value.packetID] = AcceptedPacket(
+                    operationDigest: value.operationDigest,
+                    receipt: value.receipt,
+                    authorizationExpiresAt: value.authorizationExpiresAt
+                )
+            }
+            var acceptedReads: [OpaqueRouteIdempotencyKeyV2: AcceptedReadRequest] = [:]
+            for value in routeSnapshot.acceptedReads {
+                let result: CachedReadResult
+                switch value.result {
+                case .sync(let sync): result = .sync(CachedSync(
+                    packetSequences: sync.packets.map(\.sequence),
+                    response: sync,
+                    authorizationExpiresAt: value.authorizationExpiresAt,
+                    bodyExpiresAt: value.bodyExpiresAt
+                ))
+                case .commit(let commit): result = .commit(commit)
+                }
+                acceptedReads[value.requestID] = AcceptedReadRequest(
+                    operationDigest: value.operationDigest,
+                    result: result,
+                    authorizationExpiresAt: value.authorizationExpiresAt
+                )
+            }
+            restored[routeSnapshot.route.routeID] = RouteState(
+                route: routeSnapshot.route,
+                replayLedger: routeSnapshot.replayLedger,
+                packets: routeSnapshot.packets.map {
+                    StoredPacket(
+                        sequence: $0.sequence,
+                        previousRecordDigest: $0.previousRecordDigest,
+                        recordDigest: $0.recordDigest,
+                        routeRevision: $0.routeRevision,
+                        packet: $0.packet,
+                        expiresAt: $0.expiresAt
+                    )
+                },
+                nextSequence: routeSnapshot.nextSequence,
+                retentionFloor: routeSnapshot.retentionFloor,
+                retentionFloorDigest: routeSnapshot.retentionFloorDigest,
+                committedSequence: routeSnapshot.committedSequence,
+                acceptedPackets: acceptedPackets,
+                acceptedReads: acceptedReads,
+                observedAtHighWatermark: routeSnapshot.observedAtHighWatermark
+            )
+        }
+        cursorKey = SymmetricKey(data: snapshot.cursorKey)
+        routes = restored
     }
 
     @discardableResult

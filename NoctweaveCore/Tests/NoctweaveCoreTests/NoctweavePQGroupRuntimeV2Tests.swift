@@ -1120,6 +1120,112 @@ final class NoctweavePQGroupRuntimeV2Tests: XCTestCase {
         XCTAssertTrue(reopenedState.isStructurallyValid)
     }
 
+    func testMemberCanPublishCrashResumableSelfRemovalAndBecomesTerminal() async throws {
+        let fixture = try await makeTwoMemberRuntimeFixture()
+        let memberState = await fixture.member.snapshot()
+        let ownerState = await fixture.owner.snapshot()
+        let removalEpoch = memberState.signedState.epoch + 1
+        let localMemberHandle = memberState.localCredential.memberHandle
+        let removedMembers = memberState.signedState.members.map { member in
+            member.id == localMemberHandle
+                ? GroupMemberV2(
+                    id: member.id,
+                    role: member.role,
+                    addedEpoch: member.addedEpoch,
+                    removedEpoch: removalEpoch
+                )
+                : member
+        }
+        let removedCredentials = memberState.signedState.memberCredentials.map { credential in
+            credential.memberHandle == localMemberHandle && credential.isActive(at: memberState.signedState.epoch)
+                ? GroupMemberCredentialV2(
+                    memberHandle: credential.memberHandle,
+                    credentialHandle: credential.credentialHandle,
+                    admissionDigest: credential.admissionDigest,
+                    signingPublicKey: credential.signingPublicKey,
+                    agreementPublicKey: credential.agreementPublicKey,
+                    contentTypes: credential.contentTypes,
+                    addedEpoch: credential.addedEpoch,
+                    removedEpoch: removalEpoch
+                )
+                : credential
+        }
+
+        let publication = try await fixture.member.prepareEpoch(
+            operation: .removeMember,
+            proposedMembers: removedMembers,
+            proposedCredentials: removedCredentials,
+            proposedPermissions: memberState.signedState.permissions,
+            proposedMetadataDigest: memberState.signedState.metadataDigest,
+            idempotencyKey: bytes(0xC4),
+            createdAt: fixture.now.addingTimeInterval(10)
+        )
+        var pending = await fixture.member.snapshot()
+        let pendingIntent = try XCTUnwrap(
+            pending.epochIntents.first(where: { $0.id == publication.intentId })
+        )
+        XCTAssertTrue(pendingIntent.isLocalSelfRemoval)
+        XCTAssertEqual(pendingIntent.phase, .stateCommitted)
+        XCTAssertEqual(pending.signedState.epoch, memberState.signedState.epoch)
+        XCTAssertNil(pending.localRemoval)
+
+        let ownReplay = try await fixture.member.processPeerEpoch(
+            publication.transition,
+            welcome: nil,
+            observedAt: fixture.now.addingTimeInterval(11)
+        )
+        XCTAssertEqual(ownReplay, .active)
+        let resumedMember = try await NoctweavePQGroupRuntimeV2.open(
+            persistence: fixture.memberStore
+        )
+
+        let ownerRouteSet = try makeGroupRouteSet(
+            credential: ownerState.localCredential,
+            groupID: memberState.groupId,
+            marker: 0xC5,
+            now: fixture.now
+        )
+        let preparedOperation = try await resumedMember.prepareEpochTransport(
+            intentID: publication.intentId,
+            routeSets: [ownerRouteSet],
+            at: fixture.now.addingTimeInterval(12)
+        )
+        let operation = try XCTUnwrap(preparedOperation)
+        var deliveredAt = fixture.now.addingTimeInterval(12)
+        while let candidate = try await resumedMember
+            .eligibleOutboundTransportPublications(operationID: operation.id).first {
+            deliveredAt = deliveredAt.addingTimeInterval(1)
+            _ = try await resumedMember.recordOutboundTransportAttempt(
+                operationID: operation.id,
+                publicationID: candidate.id,
+                at: deliveredAt
+            )
+            deliveredAt = deliveredAt.addingTimeInterval(1)
+            try await resumedMember.recordOutboundTransportAcceptance(
+                operationID: operation.id,
+                publicationID: candidate.id,
+                receipts: transportReceipts(for: candidate, marker: 0xC6),
+                at: deliveredAt
+            )
+        }
+        try await resumedMember.finalizeEpoch(
+            intentId: publication.intentId,
+            at: deliveredAt.addingTimeInterval(1)
+        )
+
+        pending = await resumedMember.snapshot()
+        XCTAssertEqual(pending.localRemoval?.acceptedEpoch, removalEpoch)
+        XCTAssertEqual(pending.signedState.epoch, removalEpoch)
+        XCTAssertTrue(pending.pendingApplicationPublications.isEmpty)
+        XCTAssertTrue(pending.isStructurallyValid)
+        let terminalReplay = try await resumedMember.processPeerEpoch(
+            publication.transition,
+            welcome: nil,
+            observedAt: deliveredAt.addingTimeInterval(2)
+        )
+        XCTAssertEqual(terminalReplay, .localRemoved)
+    }
+
     func testJoinRequiresExplicitPinnedGroupOnlyInvitationAnchor() async throws {
         let base = try makeSignedFixture()
         let invitation = try await makeAddMemberInvitation(base: base)

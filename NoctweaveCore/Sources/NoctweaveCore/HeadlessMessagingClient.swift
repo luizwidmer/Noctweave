@@ -107,6 +107,17 @@ public struct HeadlessBlobUploadResult: Codable, Equatable {
     public let accepted: Bool
 }
 
+public struct HeadlessBlobDownloadResult: Codable, Equatable {
+    public let relationshipID: UUID
+    public let downloadID: UUID
+    public let attachmentID: UUID
+    public let chunkIndex: Int?
+    public let chunks: [AttachmentChunk]
+    public let state: ProtocolIntentStateV2
+    public let complete: Bool
+    public let accepted: Bool
+}
+
 public struct HeadlessSyncResult: Codable, Equatable {
     public let relationshipID: UUID
     public let receivedEvents: [ConversationEvent]
@@ -284,6 +295,7 @@ public actor HeadlessMessagingClient {
     private let personaScopeIssuer = UUID()
     private var activeDeliveryIntentIDs = Set<UUID>()
     private var activeBlobIntentIDs = Set<UUID>()
+    private var activeAttachmentDownloadIntentIDs = Set<UUID>()
     private var activeRolloverIntentIDs = Set<UUID>()
     private var stateSaveInProgress = false
     private var stateSaveWaiters: [CheckedContinuation<Void, Never>] = []
@@ -368,6 +380,34 @@ public actor HeadlessMessagingClient {
             guard try candidate.isStructurallyValidThrowing else {
                 throw HeadlessMessagingClientError.invalidState
             }
+            try await stateStore.save(candidate, replacing: state)
+            state = candidate
+        }
+    }
+
+    /// Selects a saved relay for one local persona without placing that
+    /// preference into any persona, relationship, or wire representation.
+    public func setPreferredRelayPreference(
+        _ relayPreferenceID: UUID?,
+        forPersonaID personaID: UUID
+    ) async throws {
+        try await withStateSaveLock {
+            var candidate = state
+            try candidate.setPreferredRelayPreference(
+                relayPreferenceID,
+                forPersonaID: personaID
+            )
+            try await stateStore.save(candidate, replacing: state)
+            state = candidate
+        }
+    }
+
+    /// Removes local operator metadata for a relay. Existing relationships and
+    /// groups retain their independently persisted route endpoints.
+    public func removeRelayPreference(_ relayPreferenceID: UUID) async throws {
+        try await withStateSaveLock {
+            var candidate = state
+            try candidate.removeRelayPreference(relayPreferenceID)
             try await stateStore.save(candidate, replacing: state)
             state = candidate
         }
@@ -518,6 +558,7 @@ public actor HeadlessMessagingClient {
             }
             relationship.pendingRouteRollovers.removeAll(keepingCapacity: false)
             relationship.pendingAttachmentUploads.removeAll(keepingCapacity: false)
+            relationship.pendingAttachmentDownloads.removeAll(keepingCapacity: false)
             relationship.directSessions.removeAll(keepingCapacity: false)
             for index in relationship.protocolIntents.indices
                 where !relationship.protocolIntents[index].state.isTerminal
@@ -525,7 +566,8 @@ public actor HeadlessMessagingClient {
                         || relationship.protocolIntents[index].kind
                             == .renewRelationshipPrekey
                         || relationship.protocolIntents[index].kind == .rolloverRoute
-                        || relationship.protocolIntents[index].kind == .uploadBlob) {
+                        || relationship.protocolIntents[index].kind == .uploadBlob
+                        || relationship.protocolIntents[index].kind == .downloadBlob) {
                 if let failed = relationship.protocolIntents[index].failingPermanently(
                     errorClass: .authorizationRejected,
                     at: max(date, relationship.protocolIntents[index].updatedAt)
@@ -2776,6 +2818,468 @@ public actor HeadlessMessagingClient {
         return try await publishPreparedSendResult(prepared, at: sentAt)
     }
 
+    /// Sends sanitized attachment bytes as one crash-safe direct operation.
+    /// The descriptor event, its exact outbox ciphertext, and every encrypted
+    /// chunk upload are committed together before the first relay request.
+    /// Uploads remain retained until the descriptor event is accepted, so a
+    /// retry never needs plaintext or a reusable attachment key.
+    public func sendAttachment(
+        _ sanitizedBytes: Data,
+        mimeType: String,
+        relay: RelayEndpoint,
+        relationshipID: UUID,
+        attachmentID: UUID = UUID(),
+        eventID: UUID = UUID(),
+        clientTransactionID: UUID = UUID(),
+        sentAt: Date = Date()
+    ) async throws -> HeadlessSendResult {
+        try await sendDirectAttachment(
+            sanitizedBytes: sanitizedBytes,
+            canonicalMIME: mimeType,
+            relay: relay,
+            relationshipID: relationshipID,
+            attachmentID: attachmentID,
+            eventID: eventID,
+            clientTransactionID: clientTransactionID,
+            sentAt: sentAt
+        )
+    }
+
+    /// Labelled spelling for callers that want the sanitized-input boundary
+    /// to be explicit at the call site.
+    public func sendAttachment(
+        bytes sanitizedBytes: Data,
+        canonicalMIME: String,
+        relay: RelayEndpoint,
+        relationshipID: UUID,
+        attachmentID: UUID = UUID(),
+        eventID: UUID = UUID(),
+        clientTransactionID: UUID = UUID(),
+        sentAt: Date = Date()
+    ) async throws -> HeadlessSendResult {
+        try await sendDirectAttachment(
+            sanitizedBytes: sanitizedBytes,
+            canonicalMIME: canonicalMIME,
+            relay: relay,
+            relationshipID: relationshipID,
+            attachmentID: attachmentID,
+            eventID: eventID,
+            clientTransactionID: clientTransactionID,
+            sentAt: sentAt
+        )
+    }
+
+    private func sendDirectAttachment(
+        sanitizedBytes: Data,
+        canonicalMIME: String,
+        relay: RelayEndpoint,
+        relationshipID: UUID,
+        attachmentID: UUID,
+        eventID: UUID,
+        clientTransactionID: UUID,
+        sentAt: Date
+    ) async throws -> HeadlessSendResult {
+        if !HeadlessTransactionContext.relationshipIDs.contains(relationshipID) {
+            return try await withRelationshipTransaction(relationshipID) {
+                try await self.sendDirectAttachment(
+                    sanitizedBytes: sanitizedBytes,
+                    canonicalMIME: canonicalMIME,
+                    relay: relay,
+                    relationshipID: relationshipID,
+                    attachmentID: attachmentID,
+                    eventID: eventID,
+                    clientTransactionID: clientTransactionID,
+                    sentAt: sentAt
+                )
+            }
+        }
+        guard sentAt.timeIntervalSince1970.isFinite,
+              canonicalMIME == canonicalMIME.trimmingCharacters(in: .whitespacesAndNewlines),
+              !canonicalMIME.isEmpty,
+              !canonicalMIME.contains(";"),
+              try relay.isStructurallyValidThrowing else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+
+        let descriptor = AttachmentDescriptor(
+            id: attachmentID,
+            fileName: nil,
+            mimeType: canonicalMIME,
+            byteCount: sanitizedBytes.count,
+            sha256: AttachmentCrypto.sha256(sanitizedBytes),
+            chunkCount: (sanitizedBytes.count / AttachmentDescriptor.maximumTransportChunkBytes)
+                + (sanitizedBytes.count % AttachmentDescriptor.maximumTransportChunkBytes == 0 ? 0 : 1),
+            chunkSize: AttachmentDescriptor.maximumTransportChunkBytes
+        )
+        guard descriptor.isStructurallyValid() else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+
+        let current = try relationship(relationshipID)
+        if let existing = current.events.first(where: {
+            $0.authorEndpointHandle == current.localEndpointHandle
+                && $0.clientTransactionId == clientTransactionID
+        }) {
+            guard existing.id == eventID,
+                  existing.content.type == .attachment,
+                  try NoctweaveCoder.decode(
+                    AttachmentDescriptor.self,
+                    from: existing.content.payload
+                  ) == descriptor else {
+                throw HeadlessMessagingClientError.conflictingEnvelope
+            }
+            // The exact envelope is retained in the sealed route outbox and
+            // can be resumed through retryPendingAttachmentUploads followed
+            // by publishPreparedEvent. Do not consume the ratchet again.
+            throw HeadlessMessagingClientError.conflictingEnvelope
+        }
+
+        let prepared = try await persistDirectAttachment(
+            bytes: sanitizedBytes,
+            descriptor: descriptor,
+            relay: relay,
+            relationshipID: relationshipID,
+            eventID: eventID,
+            clientTransactionID: clientTransactionID,
+            sentAt: sentAt
+        )
+        return try await publishDirectAttachment(
+            descriptor: descriptor,
+            prepared: prepared,
+            at: sentAt
+        )
+    }
+
+    private struct PreparedDirectAttachment {
+        let prepared: HeadlessPreparedSend
+        let uploadIDs: [UUID]
+    }
+
+    private func persistDirectAttachment(
+        bytes: Data,
+        descriptor: AttachmentDescriptor,
+        relay: RelayEndpoint,
+        relationshipID: UUID,
+        eventID: UUID,
+        clientTransactionID: UUID,
+        sentAt: Date
+    ) async throws -> PreparedDirectAttachment {
+        var relationship = try relationship(relationshipID)
+        guard !relationship.events.contains(where: { $0.id == eventID }),
+              !relationship.events.contains(where: {
+                  $0.authorEndpointHandle == relationship.localEndpointHandle
+                      && $0.clientTransactionId == clientTransactionID
+              }) else {
+            throw HeadlessMessagingClientError.conflictingEnvelope
+        }
+        guard relationship.localPolicy.allowsUserSending else {
+            if relationship.localPolicy.consent == .blocked {
+                throw HeadlessMessagingClientError.relationshipBlocked
+            }
+            throw HeadlessMessagingClientError.relationshipConsentRequired
+        }
+        guard relationship.peerIdentity.endpointBinding.capabilities
+            .supports(contentType: ContentTypeId.attachment) else {
+            throw HeadlessMessagingClientError.unsupportedContentType
+        }
+        let attachmentRouteIDs = Set(
+            relationship.peerIdentity.sendRoutes.usableRoutes(at: sentAt)
+                .filter { $0.relay == relay }
+                .map(\.routeID)
+        )
+        guard !attachmentRouteIDs.isEmpty else {
+            // The descriptor does not expose a separate blob location. It must
+            // therefore travel through the same relay that stores its chunks,
+            // allowing the receiver to bind download provenance to the source
+            // route without trusting unencrypted location metadata.
+            throw HeadlessMessagingClientError.noUsableRoute
+        }
+        let wirePayload = try WirePayloadV2.projectingMessageBody(
+            .attachment(descriptor),
+            eventId: eventID,
+            clientTransactionId: clientTransactionID,
+            conversationId: relationship.conversationID,
+            authorEndpointHandle: relationship.localEndpointHandle,
+            createdAt: sentAt
+        )
+        guard let event = wirePayload.application else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+
+        let sessionResult: (Conversation, DirectBootstrapV4)
+        if let existing = relationship.directSessions.last,
+           existing.ratchetState != .reset {
+            sessionResult = (existing, .none)
+        } else {
+            let created = try MessageEngine.createOutboundEndpointSession(
+                relationship: relationship,
+                now: sentAt
+            )
+            sessionResult = (
+                created.conversation,
+                .signedPrekey(
+                    kemCiphertext: created.kemCiphertext,
+                    prekey: created.prekey
+                )
+            )
+        }
+        var conversation = sessionResult.0
+        let preparedKey = try MessageEngine.prepareMessageKey(conversation: &conversation)
+        let envelope = try MessageEngine.encryptDirectV4(
+            wirePayload: wirePayload,
+            eventID: event.id,
+            relationship: relationship,
+            conversation: conversation,
+            messageCounter: preparedKey.counter,
+            messageKey: preparedKey.key,
+            bootstrap: sessionResult.1,
+            sentAt: sentAt
+        )
+
+        let ttl = descriptor.relayTTLSeconds
+        var pendingUploads: [PendingAttachmentUploadV2] = []
+        var uploadIDs: [UUID] = []
+        pendingUploads.reserveCapacity(descriptor.chunkCount)
+        uploadIDs.reserveCapacity(descriptor.chunkCount)
+        for chunkIndex in 0..<descriptor.chunkCount {
+            let start = chunkIndex * descriptor.chunkSize
+            let end = min(start + descriptor.chunkSize, descriptor.byteCount)
+            let uploadID = Self.directAttachmentUploadID(
+                attachmentID: descriptor.id,
+                eventID: event.id,
+                chunkIndex: chunkIndex
+            )
+            let context = AttachmentCrypto.authenticatedData(
+                conversationId: conversation.id,
+                sessionId: conversation.sessionId,
+                messageCounter: preparedKey.counter,
+                attachmentId: descriptor.id,
+                chunkIndex: chunkIndex,
+                byteCount: end - start
+            )
+            let request = UploadAttachmentRequest(
+                attachmentId: descriptor.id,
+                chunkIndex: chunkIndex,
+                payload: try AttachmentCrypto.encryptChunk(
+                    plaintext: bytes.subdata(in: start..<end),
+                    messageKey: preparedKey.key,
+                    attachmentId: descriptor.id,
+                    chunkIndex: chunkIndex,
+                    authenticatedData: context
+                ),
+                ttlSeconds: ttl,
+                idempotencyKey: Self.directAttachmentIdempotencyKey(
+                    attachmentID: descriptor.id,
+                    eventID: event.id,
+                    chunkIndex: chunkIndex
+                )
+            )
+            pendingUploads.append(try PendingAttachmentUploadV2(
+                id: uploadID,
+                relationshipID: relationshipID,
+                relay: relay,
+                request: request,
+                queuedAt: sentAt
+            ))
+            uploadIDs.append(uploadID)
+        }
+        let envelopeBytes = try NoctweaveCoder.encode(envelope, sortedKeys: true)
+        try relationship.upsertDirectSession(conversation)
+        guard try relationship.appendEvent(event) else {
+            throw HeadlessMessagingClientError.conflictingEnvelope
+        }
+        let deliveries = try relationship.enqueue(
+            logicalEventID: event.id,
+            payload: envelopeBytes,
+            destinationRouteIDs: attachmentRouteIDs,
+            expiresAt: sentAt.addingTimeInterval(24 * 60 * 60),
+            at: sentAt
+        )
+        guard !deliveries.isEmpty else { throw HeadlessMessagingClientError.noUsableRoute }
+        for pending in pendingUploads {
+            let requestBytes = try NoctweaveCoder.encode(pending.request, sortedKeys: true)
+            let intent = ProtocolIntentV2.prepare(
+                id: pending.id,
+                kind: .uploadBlob,
+                targetIdentifier: Data(pending.id.uuidString.lowercased().utf8),
+                idempotencyKey: ProtocolIntentIdempotencyKeyV2(
+                    rawValue: pending.request.idempotencyKey
+                ),
+                payloadDigest: Data(SHA256.hash(data: requestBytes)),
+                createdAt: sentAt,
+                expiresAt: sentAt.addingTimeInterval(TimeInterval(ttl ?? 3_600))
+            )
+            _ = try relationship.appendProtocolIntent(intent)
+        }
+        relationship.pendingAttachmentUploads.append(contentsOf: pendingUploads)
+        _ = try relationship.recordDeliveryState(
+            DeliveryStateRecord(
+                eventId: event.id,
+                destinationEndpoint: relationship.peerIdentity.sendRoutes.ownerEndpointHandle,
+                state: .locallyPersisted,
+                updatedAt: sentAt
+            )
+        )
+        try await commitRelationship(relationship)
+        return PreparedDirectAttachment(
+            prepared: HeadlessPreparedSend(
+                relationshipID: relationshipID,
+                event: event,
+                envelope: envelope,
+                deliveryIDs: deliveries.map(\.id)
+            ),
+            uploadIDs: uploadIDs
+        )
+    }
+
+    private func publishDirectAttachment(
+        descriptor: AttachmentDescriptor,
+        prepared: PreparedDirectAttachment,
+        at date: Date
+    ) async throws -> HeadlessSendResult {
+        for uploadID in prepared.uploadIDs {
+            guard try await publishDirectAttachmentUpload(
+                uploadID: uploadID,
+                relationshipID: prepared.prepared.relationshipID,
+                at: date
+            ) else {
+                throw HeadlessMessagingClientError.relayRejected
+            }
+        }
+        let publication = try await publishPreparedEvent(
+            eventID: prepared.prepared.event.id,
+            relationshipID: prepared.prepared.relationshipID,
+            at: date
+        )
+        if publication.pendingDeliveryCount == 0,
+           publication.failedDeliveryCount == 0 {
+            var relationship = try self.relationship(prepared.prepared.relationshipID)
+            relationship.pendingAttachmentUploads.removeAll {
+                $0.request.attachmentId == descriptor.id
+            }
+            try await commitRelationship(relationship)
+        }
+        return HeadlessSendResult(
+            event: prepared.prepared.event,
+            envelope: prepared.prepared.envelope,
+            acceptedDeliveryCount: publication.acceptedDeliveryCount,
+            pendingDeliveryCount: publication.pendingDeliveryCount,
+            failedDeliveryCount: publication.failedDeliveryCount,
+            nextRetryNotBefore: publication.nextRetryNotBefore
+        )
+    }
+
+    private func publishDirectAttachmentUpload(
+        uploadID: UUID,
+        relationshipID: UUID,
+        at date: Date
+    ) async throws -> Bool {
+        var relationship = try relationship(relationshipID)
+        guard let pending = relationship.pendingAttachmentUploads.first(where: {
+            $0.id == uploadID
+        }), let intentIndex = relationship.protocolIntents.firstIndex(where: {
+            $0.id == uploadID && $0.kind == .uploadBlob
+        }) else {
+            return false
+        }
+        let intent = relationship.protocolIntents[intentIndex]
+        if intent.state == .finalized { return true }
+        guard !activeBlobIntentIDs.contains(intent.id) else { return false }
+        activeBlobIntentIDs.insert(intent.id)
+        defer { activeBlobIntentIDs.remove(intent.id) }
+        guard let attemptID = try await beginIntentAttempt(
+            intentID: intent.id,
+            relationshipID: relationshipID,
+            at: date
+        ) else {
+            return false
+        }
+
+        let response: RelayResponse
+        do {
+            response = try await relayClient(for: pending.relay).send(
+                .uploadAttachment(pending.request)
+            )
+        } catch {
+            try await finishIntentFailure(
+                intentID: intent.id,
+                relationshipID: relationshipID,
+                attemptID: attemptID,
+                errorClass: .networkUnavailable,
+                at: date
+            )
+            return false
+        }
+        guard case .attachment(let chunk)? = response.successBody,
+              chunk.attachmentId == pending.request.attachmentId,
+              chunk.chunkIndex == pending.request.chunkIndex,
+              chunk.payload == pending.request.payload else {
+            try await finishIntentFailure(
+                intentID: intent.id,
+                relationshipID: relationshipID,
+                attemptID: attemptID,
+                errorClass: classifyRelayFailure(response),
+                at: date
+            )
+            return false
+        }
+
+        relationship = try self.relationship(relationshipID)
+        guard let currentIndex = relationship.protocolIntents.firstIndex(where: {
+            $0.id == intent.id
+        }) else { throw HeadlessMessagingClientError.invalidState }
+        let current = relationship.protocolIntents[currentIndex]
+        let transitionAt = max(date, current.updatedAt)
+        guard let published = current.advancing(
+            to: .published,
+            attemptId: attemptID,
+            at: transitionAt
+        ), let committed = published.advancing(
+            to: .committed,
+            attemptId: attemptID,
+            at: transitionAt
+        ), let finalized = committed.advancing(
+            to: .finalized,
+            attemptId: attemptID,
+            at: transitionAt
+        ) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        relationship.protocolIntents[currentIndex] = finalized
+        // Keep the exact encrypted request until the descriptor event is
+        // accepted. This closes the crash window between the final chunk and
+        // descriptor publication.
+        try await commitRelationship(relationship)
+        return true
+    }
+
+    private static func directAttachmentUploadID(
+        attachmentID: UUID,
+        eventID: UUID,
+        chunkIndex: Int
+    ) -> UUID {
+        let material = Data(
+            "Noctweave/direct-attachment-upload/v1/\(attachmentID.uuidString.lowercased())/\(eventID.uuidString.lowercased())/\(chunkIndex)".utf8
+        )
+        let digest = Array(SHA256.hash(data: material))
+        return UUID(uuid: (
+            digest[0], digest[1], digest[2], digest[3],
+            digest[4], digest[5], digest[6], digest[7],
+            digest[8], digest[9], digest[10], digest[11],
+            digest[12], digest[13], digest[14], digest[15]
+        ))
+    }
+
+    private static func directAttachmentIdempotencyKey(
+        attachmentID: UUID,
+        eventID: UUID,
+        chunkIndex: Int
+    ) -> Data {
+        Data(SHA256.hash(data: Data(
+            "Noctweave/direct-attachment-idempotency/v1/\(attachmentID.uuidString.lowercased())/\(eventID.uuidString.lowercased())/\(chunkIndex)".utf8
+        )))
+    }
+
     /// Journals an already end-to-end-encrypted attachment chunk before relay
     /// I/O. Encryption keys and plaintext remain outside this protocol record.
     public func prepareAttachmentUpload(
@@ -3012,6 +3516,301 @@ public actor HeadlessMessagingClient {
             throw HeadlessMessagingClientError.invalidState
         }
         relationship.pendingAttachmentUploads.removeAll { $0.id == uploadID }
+        try await commitRelationship(relationship)
+    }
+
+    /// Journals a receive-side attachment fetch. The journal keeps only the
+    /// descriptor and encrypted relay chunks, so native callers can decrypt
+    /// and write the completed file without placing plaintext in Core state.
+    public func prepareAttachmentDownload(
+        _ descriptor: AttachmentDescriptor,
+        relay: RelayEndpoint,
+        relationshipID: UUID,
+        at date: Date = Date()
+    ) async throws -> PendingAttachmentDownloadV2 {
+        if !HeadlessTransactionContext.relationshipIDs.contains(relationshipID) {
+            return try await withRelationshipTransaction(relationshipID) {
+                try await self.prepareAttachmentDownload(
+                    descriptor,
+                    relay: relay,
+                    relationshipID: relationshipID,
+                    at: date
+                )
+            }
+        }
+        var relationship = try relationship(relationshipID)
+        guard descriptor.isStructurallyValid(),
+              try relay.isStructurallyValidThrowing,
+              relationship.localPolicy.acceptsInboundEvents,
+              relationship.pendingAttachmentDownloads.count
+                < PairwiseRelationshipV2.maximumPendingAttachmentDownloads,
+              !relationship.pendingAttachmentDownloads.contains(where: {
+                  $0.descriptor.id == descriptor.id
+              }) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        let pending = try PendingAttachmentDownloadV2(
+            relationshipID: relationshipID,
+            relay: relay,
+            descriptor: descriptor,
+            queuedAt: date
+        )
+        let descriptorBytes = try NoctweaveCoder.encode(descriptor, sortedKeys: true)
+        let ttl = TimeInterval(descriptor.relayTTLSeconds ?? 3_600)
+        let intentID = UUID()
+        let intent = ProtocolIntentV2.prepare(
+            id: intentID,
+            kind: .downloadBlob,
+            targetIdentifier: Data(pending.id.uuidString.lowercased().utf8),
+            idempotencyKey: .generate(intentId: intentID),
+            payloadDigest: Data(SHA256.hash(data: descriptorBytes)),
+            createdAt: date,
+            expiresAt: date.addingTimeInterval(ttl)
+        )
+        relationship.pendingAttachmentDownloads.append(pending)
+        _ = try relationship.appendProtocolIntent(intent)
+        try await commitRelationship(relationship)
+        return pending
+    }
+
+    /// Fetches exactly the next missing encrypted chunk and durably journals
+    /// it. Repeating after a crash requests the same chunk index; a mismatched
+    /// attachment ID, index, shape, or ciphertext length is rejected.
+    public func fetchAttachmentDownload(
+        downloadID: UUID,
+        relationshipID: UUID,
+        at date: Date = Date()
+    ) async throws -> HeadlessBlobDownloadResult {
+        if !HeadlessTransactionContext.relationshipIDs.contains(relationshipID) {
+            return try await withRelationshipTransaction(relationshipID) {
+                try await self.fetchAttachmentDownload(
+                    downloadID: downloadID,
+                    relationshipID: relationshipID,
+                    at: date
+                )
+            }
+        }
+        var relationship = try relationship(relationshipID)
+        guard relationship.localPolicy.acceptsInboundEvents,
+              let pending = relationship.pendingAttachmentDownloads.first(where: {
+                  $0.id == downloadID
+              }),
+              let intent = relationship.protocolIntents.first(where: {
+                  $0.kind == .downloadBlob
+                      && $0.targetIdentifier
+                        == Data(downloadID.uuidString.lowercased().utf8)
+              }) else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        if pending.isComplete {
+            return HeadlessBlobDownloadResult(
+                relationshipID: relationshipID,
+                downloadID: downloadID,
+                attachmentID: pending.descriptor.id,
+                chunkIndex: nil,
+                chunks: pending.receivedChunks,
+                state: intent.state,
+                complete: true,
+                accepted: false
+            )
+        }
+        guard !activeAttachmentDownloadIntentIDs.contains(intent.id) else {
+            return HeadlessBlobDownloadResult(
+                relationshipID: relationshipID,
+                downloadID: downloadID,
+                attachmentID: pending.descriptor.id,
+                chunkIndex: pending.nextChunkIndex,
+                chunks: pending.receivedChunks,
+                state: intent.state,
+                complete: false,
+                accepted: false
+            )
+        }
+        activeAttachmentDownloadIntentIDs.insert(intent.id)
+        defer { activeAttachmentDownloadIntentIDs.remove(intent.id) }
+        guard let attemptID = try await beginIntentAttempt(
+            intentID: intent.id,
+            relationshipID: relationshipID,
+            at: date
+        ) else {
+            let current = try self.relationship(relationshipID)
+            guard let currentPending = current.pendingAttachmentDownloads.first(where: {
+                $0.id == downloadID
+            }), let currentIntent = current.protocolIntents.first(where: {
+                $0.id == intent.id
+            }) else { throw HeadlessMessagingClientError.invalidState }
+            return HeadlessBlobDownloadResult(
+                relationshipID: relationshipID,
+                downloadID: downloadID,
+                attachmentID: currentPending.descriptor.id,
+                chunkIndex: currentPending.isComplete ? nil : currentPending.nextChunkIndex,
+                chunks: currentPending.receivedChunks,
+                state: currentIntent.state,
+                complete: currentPending.isComplete,
+                accepted: false
+            )
+        }
+
+        let chunkIndex = pending.nextChunkIndex
+        let response: RelayResponse
+        do {
+            response = try await relayClient(for: pending.relay).send(
+                .fetchAttachment(FetchAttachmentRequest(
+                    attachmentId: pending.descriptor.id,
+                    chunkIndex: chunkIndex
+                ))
+            )
+        } catch {
+            try await finishIntentFailure(
+                intentID: intent.id,
+                relationshipID: relationshipID,
+                attemptID: attemptID,
+                errorClass: .networkUnavailable,
+                at: date
+            )
+            let current = try self.relationship(relationshipID)
+            let currentPending = current.pendingAttachmentDownloads.first {
+                $0.id == downloadID
+            }!
+            let currentIntent = current.protocolIntents.first { $0.id == intent.id }!
+            return HeadlessBlobDownloadResult(
+                relationshipID: relationshipID,
+                downloadID: downloadID,
+                attachmentID: currentPending.descriptor.id,
+                chunkIndex: chunkIndex,
+                chunks: currentPending.receivedChunks,
+                state: currentIntent.state,
+                complete: false,
+                accepted: false
+            )
+        }
+
+        guard case .attachment(let chunk)? = response.successBody,
+              chunk.attachmentId == pending.descriptor.id,
+              chunk.chunkIndex == chunkIndex,
+              chunk.isStructurallyValid,
+              chunk.payload.ciphertext.count
+                == min(
+                    pending.descriptor.chunkSize,
+                    pending.descriptor.byteCount - chunkIndex * pending.descriptor.chunkSize
+                ) else {
+            try await finishIntentFailure(
+                intentID: intent.id,
+                relationshipID: relationshipID,
+                attemptID: attemptID,
+                errorClass: classifyRelayFailure(response),
+                at: date
+            )
+            let current = try self.relationship(relationshipID)
+            let currentPending = current.pendingAttachmentDownloads.first {
+                $0.id == downloadID
+            }!
+            let currentIntent = current.protocolIntents.first { $0.id == intent.id }!
+            return HeadlessBlobDownloadResult(
+                relationshipID: relationshipID,
+                downloadID: downloadID,
+                attachmentID: currentPending.descriptor.id,
+                chunkIndex: chunkIndex,
+                chunks: currentPending.receivedChunks,
+                state: currentIntent.state,
+                complete: false,
+                accepted: false
+            )
+        }
+
+        relationship = try self.relationship(relationshipID)
+        guard let pendingIndex = relationship.pendingAttachmentDownloads.firstIndex(where: {
+            $0.id == downloadID
+        }), let intentIndex = relationship.protocolIntents.firstIndex(where: {
+            $0.id == intent.id
+        }) else { throw HeadlessMessagingClientError.invalidState }
+        var updated = relationship.pendingAttachmentDownloads[pendingIndex]
+        guard updated.nextChunkIndex == chunkIndex else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        updated.receivedChunks.append(chunk)
+        guard updated.isStructurallyValid else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        relationship.pendingAttachmentDownloads[pendingIndex] = updated
+        var updatedIntent = relationship.protocolIntents[intentIndex]
+        if updated.isComplete {
+            let transitionAt = max(date, updatedIntent.updatedAt)
+            guard let published = updatedIntent.advancing(
+                to: .published,
+                attemptId: attemptID,
+                at: transitionAt
+            ), let committed = published.advancing(
+                to: .committed,
+                attemptId: attemptID,
+                at: transitionAt
+            ), let finalized = committed.advancing(
+                to: .finalized,
+                attemptId: attemptID,
+                at: transitionAt
+            ) else { throw HeadlessMessagingClientError.invalidState }
+            updatedIntent = finalized
+            relationship.pendingAttachmentDownloads.removeAll { $0.id == downloadID }
+        }
+        relationship.protocolIntents[intentIndex] = updatedIntent
+        try await commitRelationship(relationship)
+        return HeadlessBlobDownloadResult(
+            relationshipID: relationshipID,
+            downloadID: downloadID,
+            attachmentID: updated.descriptor.id,
+            chunkIndex: chunkIndex,
+            chunks: updated.receivedChunks,
+            state: updatedIntent.state,
+            complete: updated.isComplete,
+            accepted: true
+        )
+    }
+
+    public func retryPendingAttachmentDownloads(
+        relationshipID: UUID,
+        at date: Date = Date()
+    ) async throws -> [HeadlessBlobDownloadResult] {
+        if !HeadlessTransactionContext.relationshipIDs.contains(relationshipID) {
+            return try await withRelationshipTransaction(relationshipID) {
+                try await self.retryPendingAttachmentDownloads(
+                    relationshipID: relationshipID,
+                    at: date
+                )
+            }
+        }
+        let ids = try relationship(relationshipID).pendingAttachmentDownloads.map(\.id)
+        var results: [HeadlessBlobDownloadResult] = []
+        for downloadID in ids {
+            results.append(try await fetchAttachmentDownload(
+                downloadID: downloadID,
+                relationshipID: relationshipID,
+                at: date
+            ))
+        }
+        return results
+    }
+
+    public func discardFailedAttachmentDownload(
+        downloadID: UUID,
+        relationshipID: UUID
+    ) async throws {
+        if !HeadlessTransactionContext.relationshipIDs.contains(relationshipID) {
+            return try await withRelationshipTransaction(relationshipID) {
+                try await self.discardFailedAttachmentDownload(
+                    downloadID: downloadID,
+                    relationshipID: relationshipID
+                )
+            }
+        }
+        var relationship = try relationship(relationshipID)
+        guard let intent = relationship.protocolIntents.first(where: {
+            $0.kind == .downloadBlob
+                && $0.targetIdentifier
+                    == Data(downloadID.uuidString.lowercased().utf8)
+        }), intent.state == .permanentFailure else {
+            throw HeadlessMessagingClientError.invalidState
+        }
+        relationship.pendingAttachmentDownloads.removeAll { $0.id == downloadID }
         try await commitRelationship(relationship)
     }
 
@@ -4125,6 +4924,7 @@ public actor HeadlessMessagingClient {
                         if let event = try processInboundBundle(
                             bundle,
                             sourceRouteID: route.route.routeID,
+                            attachmentRelay: route.relay,
                             receivedAt: batchReceivedAt,
                             relationship: &packetCandidate
                         ) {
@@ -4416,6 +5216,7 @@ public actor HeadlessMessagingClient {
     func processInboundBundle(
         _ bundle: OpaqueRouteReassembledBundleV2,
         sourceRouteID: OpaqueReceiveRouteIDV2,
+        attachmentRelay: RelayEndpoint,
         receivedAt: Date,
         relationship: inout PairwiseRelationshipV2
     ) throws -> ConversationEvent? {
@@ -4535,6 +5336,7 @@ public actor HeadlessMessagingClient {
                         counter: envelope.messageCounter,
                         timestamp: envelope.sentAt,
                         conversation: &conversation,
+                        attachmentRelay: attachmentRelay,
                         messageKey: result.messageKey
                     )
                 }

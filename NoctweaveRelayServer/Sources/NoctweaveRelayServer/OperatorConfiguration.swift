@@ -26,6 +26,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var relayName: String
     var operatorNote: String
     var advertisedEndpoint: String
+    var trustedReverseProxyTLS: Bool
     var federationMode: String
     var federationName: String
     var federationDescription: String
@@ -65,11 +66,13 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var curatedRequireSignedDirectory: Bool?
     var allowPrivateFederationEndpoints: Bool?
     var opaqueRouteRuntimeEnabled: Bool
+    var rendezvousTransportEnabled: Bool
 
     init(configuration: RelayConfiguration, serverConfiguration: ServerConfig? = nil) {
         relayName = configuration.relayName ?? ""
         operatorNote = configuration.operatorNote ?? ""
         advertisedEndpoint = configuration.advertisedEndpoint.map(operatorRelayEndpointString) ?? ""
+        trustedReverseProxyTLS = configuration.trustedReverseProxyTLS
         federationMode = configuration.federation.mode.rawValue
         federationName = configuration.federation.name ?? ""
         federationDescription = configuration.federation.description ?? ""
@@ -116,6 +119,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         curatedRequireSignedDirectory = configuration.curatedRequireSignedDirectory
         allowPrivateFederationEndpoints = configuration.allowPrivateFederationEndpoints
         opaqueRouteRuntimeEnabled = configuration.isOpaqueRouteRuntimeEnabled
+        rendezvousTransportEnabled = configuration.isRendezvousTransportEnabled
     }
 
     func validatedConfiguration(from current: RelayConfiguration) throws -> RelayConfiguration {
@@ -210,7 +214,9 @@ struct OperatorEditableConfiguration: Codable, Equatable {
                 name: normalizedFederationName.nilIfEmpty,
                 description: normalizedFederationDescription.nilIfEmpty
             ),
-            tlsEnabled: endpoint?.useTLS,
+            tlsEnabled: current.tlsEnabled,
+            advertisedTLSEnabled: endpoint?.useTLS,
+            trustedReverseProxyTLS: trustedReverseProxyTLS,
             transport: endpoint?.transport ?? current.transport,
             temporalBucketSeconds: temporalBucketSeconds,
             temporalBucketScheduleSeconds: bucketSchedule,
@@ -242,7 +248,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             federationAllowList: mode == .solo ? [] : allowList,
             allowPrivateFederationEndpoints: allowPrivateFederationEndpoints ?? current.allowPrivateFederationEndpoints,
             opaqueRouteRuntimeEnabled: opaqueRouteRuntimeEnabled,
-            rendezvousTransportEnabled: current.isRendezvousTransportEnabled
+            rendezvousTransportEnabled: rendezvousTransportEnabled
         )
     }
 
@@ -254,7 +260,9 @@ struct OperatorEditableConfiguration: Codable, Equatable {
                 name: config.federationName,
                 description: config.federationDescription
             ),
-            tlsEnabled: config.advertisedEndpoint?.useTLS,
+            tlsEnabled: false,
+            advertisedTLSEnabled: config.advertisedEndpoint?.useTLS,
+            trustedReverseProxyTLS: config.trustedReverseProxyTLS,
             transport: config.advertisedEndpoint?.transport ?? config.relayTransport,
             temporalBucketSeconds: config.temporalBucketSeconds,
             temporalBucketScheduleSeconds: config.temporalBucketScheduleSeconds,
@@ -323,6 +331,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.allowPrivateFederationEndpoints = updated.allowPrivateFederationEndpoints
         config.opaqueRouteRuntimeEnabled = updated.isOpaqueRouteRuntimeEnabled
         config.rendezvousTransportEnabled = updated.isRendezvousTransportEnabled
+        config.trustedReverseProxyTLS = updated.trustedReverseProxyTLS
     }
 
     var restartControlledSignature: String {

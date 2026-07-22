@@ -733,6 +733,9 @@ public struct RelayConfiguration: Codable, Equatable {
     public var coordinatorRegistrationToken: String?
     public var tlsEnabled: Bool
     public var advertisedTLSEnabled: Bool?
+    /// True only when an operator has explicitly configured a trusted
+    /// reverse proxy to terminate client TLS before the local listener.
+    public var trustedReverseProxyTLS: Bool
     public var transport: RelayEndpointTransport
     public var tlsIdentityPKCS12Path: String?
     public var tlsIdentityPassword: String?
@@ -773,6 +776,7 @@ public struct RelayConfiguration: Codable, Equatable {
         coordinatorRegistrationToken: String? = nil,
         tlsEnabled: Bool = false,
         advertisedTLSEnabled: Bool? = nil,
+        trustedReverseProxyTLS: Bool = false,
         transport: RelayEndpointTransport = .tcp,
         tlsIdentityPKCS12Path: String? = nil,
         tlsIdentityPassword: String? = nil,
@@ -829,6 +833,7 @@ public struct RelayConfiguration: Codable, Equatable {
         self.coordinatorRegistrationToken = normalizedRegistrationToken?.isEmpty == false ? normalizedRegistrationToken : nil
         self.tlsEnabled = tlsEnabled
         self.advertisedTLSEnabled = advertisedTLSEnabled
+        self.trustedReverseProxyTLS = trustedReverseProxyTLS
         self.transport = transport
         self.tlsIdentityPKCS12Path = tlsIdentityPKCS12Path
         self.tlsIdentityPassword = tlsIdentityPassword
@@ -854,6 +859,21 @@ public struct RelayConfiguration: Codable, Equatable {
 
     public var isRendezvousTransportEnabled: Bool {
         rendezvousTransportEnabled == true
+    }
+
+    public var transportConfidentiality: RelayTransportConfidentialityConfiguration {
+        RelayTransportConfidentialityConfiguration(
+            listenerTLS: tlsEnabled,
+            trustedReverseProxyTLS: trustedReverseProxyTLS
+        )
+    }
+
+    public func effectiveTransportConfidentiality(
+        isLiteralLoopbackSource: Bool
+    ) -> EffectiveTransportConfidentiality {
+        transportConfidentiality.effectiveTransport(
+            isLiteralLoopbackSource: isLiteralLoopbackSource
+        )
     }
 
     public func makeInfo(now: Date = Date()) -> RelayInfo {

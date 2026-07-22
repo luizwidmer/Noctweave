@@ -43,6 +43,10 @@ private struct CommandRunner {
             try await initialize(options)
         case "status":
             try await status(options)
+        case "attachment-download-prepare":
+            try await prepareAttachmentDownload(options)
+        case "attachment-download-fetch":
+            try await fetchAttachmentDownload(options)
         case "relationships":
             let client = try await headlessClient(options)
             try writeJSON(await client.activePersona().relationships.map(
@@ -139,9 +143,17 @@ private struct CommandRunner {
         case "help", "--help", "-h":
             return []
         case "init":
-            return ["--display-name", "--state", "--plaintext"]
+            return [
+                "--display-name", "--relay", "--relay-name",
+                "--accept-privacy-policy", "--accept-terms-of-use",
+                "--state", "--plaintext",
+            ]
         case "status", "relationships", "groups", "group-admissions":
             return ["--state", "--plaintext"]
+        case "attachment-download-prepare":
+            return ["--relationship", "--descriptor-file", "--relay", "--out", "--state", "--plaintext"]
+        case "attachment-download-fetch":
+            return ["--relationship", "--download", "--out", "--state", "--plaintext"]
         case "group-status":
             return ["--group", "--state", "--plaintext"]
         case "prepare-participant":
@@ -235,20 +247,89 @@ private struct CommandRunner {
 
     private func initialize(_ options: ParsedOptions) async throws {
         let name = try required(options, "--display-name")
+        guard try options.bool("--accept-privacy-policy") == true else {
+            throw CLIError(
+                "`init` requires `--accept-privacy-policy true`; review the current privacy policy before continuing."
+            )
+        }
+        guard try options.bool("--accept-terms-of-use") == true else {
+            throw CLIError(
+                "`init` requires `--accept-terms-of-use true`; review the current terms of use before continuing."
+            )
+        }
+        let relay: LocalRelayPreference?
+        if let relayValue = options.value("--relay") {
+            let endpoint = try RelayEndpointParser.parse(relayValue)
+            relay = LocalRelayPreference(
+                name: options.value("--relay-name") ?? "Initial relay",
+                endpoint: endpoint
+            )
+        } else if options.value("--relay-name") != nil {
+            throw CLIError("`--relay-name` requires `--relay`.")
+        } else {
+            relay = nil
+        }
         let store = try stateStore(options)
         if try await store.load() != nil {
             throw CLIError("State already exists.")
         }
-        let client = try await HeadlessMessagingClient.open(
-            stateStore: store,
-            displayName: name
+        var state = try ClientState.initialLocalState(
+            displayName: name,
+            relayPreferences: relay.map { [$0] } ?? [],
+            preferredRelayPreferenceID: relay?.id
         )
-        try writeJSON(PersonaStatusOutput(await client.activePersona()))
+        try state.completeOnboarding(
+            privacyPolicyAccepted: true,
+            termsOfUseAccepted: true
+        )
+        try await store.save(state, replacing: nil)
+        try writeJSON(PersonaStatusOutput(state.activePersona))
     }
 
     private func status(_ options: ParsedOptions) async throws {
         let client = try await headlessClient(options)
         try writeJSON(PersonaStatusOutput(await client.activePersona()))
+    }
+
+    private func prepareAttachmentDownload(_ options: ParsedOptions) async throws {
+        let output = try required(options, "--out")
+        try validateSensitiveOutputPath(output, options: options)
+        let descriptor = try readSensitiveJSON(
+            AttachmentDescriptor.self,
+            from: try required(options, "--descriptor-file")
+        )
+        let client = try await headlessClient(options)
+        let pending = try await client.prepareAttachmentDownload(
+            descriptor,
+            relay: try endpoint(options),
+            relationshipID: try relationshipIdentifier(options)
+        )
+        try writeSensitiveJSON(pending, to: output)
+        try writeJSON(AttachmentDownloadJournalOutput(
+            relationshipID: pending.relationshipID,
+            downloadID: pending.id,
+            attachmentID: pending.descriptor.id,
+            output: output
+        ))
+    }
+
+    private func fetchAttachmentDownload(_ options: ParsedOptions) async throws {
+        let output = try required(options, "--out")
+        try validateSensitiveOutputPath(output, options: options)
+        let result = try await headlessClient(options).fetchAttachmentDownload(
+            downloadID: try uuidOption(options, "--download"),
+            relationshipID: try relationshipIdentifier(options)
+        )
+        try writeSensitiveJSON(result, to: output)
+        try writeJSON(AttachmentDownloadFetchOutput(
+            relationshipID: result.relationshipID,
+            downloadID: result.downloadID,
+            attachmentID: result.attachmentID,
+            chunkIndex: result.chunkIndex,
+            complete: result.complete,
+            accepted: result.accepted,
+            output: output
+        ))
     }
 
     private func prepareParticipant(_ options: ParsedOptions) async throws {
@@ -1985,8 +2066,10 @@ private struct CommandRunner {
         FileHandle.standardOutput.writeLine("""
         NoctweaveCLI — pairwise-private Noctweave 1.0 architecture
 
-          init --display-name <local-label> [--state path] [--plaintext true]
+          init --display-name <local-label> --accept-privacy-policy true --accept-terms-of-use true [--relay <url|host:port>] [--relay-name <local-label>] [--state path] [--plaintext true]
           status [--state path] [--plaintext true]
+          attachment-download-prepare --relationship <uuid> --descriptor-file <private-file> --relay <url|host:port> --out <private-file>
+          attachment-download-fetch --relationship <uuid> --download <uuid> --out <private-file>
           relationships [--state path] [--plaintext true]
           groups [--state path] [--plaintext true]
           group-status --group <uuid>
@@ -2711,6 +2794,23 @@ private struct PersonaStatusOutput: Codable {
         relationships = persona.relationships.map(RelationshipStatusOutput.init)
         groupIDs = persona.groupRuntimes.map(\.groupId)
     }
+}
+
+private struct AttachmentDownloadJournalOutput: Codable {
+    let relationshipID: UUID
+    let downloadID: UUID
+    let attachmentID: UUID
+    let output: String
+}
+
+private struct AttachmentDownloadFetchOutput: Codable {
+    let relationshipID: UUID
+    let downloadID: UUID
+    let attachmentID: UUID
+    let chunkIndex: Int?
+    let complete: Bool
+    let accepted: Bool
+    let output: String
 }
 
 private struct RelationshipStatusOutput: Codable {

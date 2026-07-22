@@ -513,6 +513,36 @@ idempotency, group route checkpoints, group convergence, terminal deletion,
 epoch-overflow rejection, stale-runtime rejection, throwing PQ-error
 propagation, and the shared direct-v4 root/session transcript.
 
+## Regression closure: 2026-07-22
+
+A cross-surface audit after the architecture revision restored the product
+workflows around the clean protocol core without reintroducing accounts,
+device graphs, global identities, or legacy wire formats. The closure adds:
+
+- explicit legal, persona, verified-relay, storage, privacy, and optional lock
+  gates before either native or browser clients can enter their main shell;
+- durable per-persona relay selection, encrypted archived-persona metadata,
+  strict relay URL validation, and transport-confidentiality policy shared by
+  clients and relay operators;
+- local-first direct-message and attachment projection, atomic attachment
+  publication, same-relay download provenance, durable download/upload retry
+  journals, and fixed per-chunk authenticated byte counts;
+- crash-resumable signed group self-removal, terminal local departure,
+  moderator removal, owner extinction, and native group lifecycle controls;
+- encrypted macOS relay opaque-route snapshots, persistent runtime policy,
+  explicit trusted-reverse-proxy handling, and rendezvous disabled by default
+  unless the effective transport is confidential;
+- browser rollback limits stated directly in the UI and documentation, with
+  anchored relationship authority reserved for the desktop host profile.
+
+The closure passed `scripts/run-tests.sh`, including Core and CLI acceptance,
+standalone relay and Electrobun relay coverage, 179 JavaScript tests, and the
+desktop TypeScript check. `scripts/verify-whitepaper-alignment.sh`, the focused
+crash/reopen group-departure test, macOS relay policy/vault tests, native arm64
+macOS and iOS Simulator builds, and the six-test iPhone UI suite also passed.
+A live JavaScript-to-standalone-relay smoke test verified bidirectional send and
+fetch against the current strict wire profile.
+
 ## Remaining engineering and assurance work
 
 The 1.0 architecture semantics and primary protocol/tool workflows are

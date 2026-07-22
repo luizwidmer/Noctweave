@@ -16,6 +16,8 @@ grep -q -- 'safety-number --relationship <uuid>' "$WORK_DIR/help.txt"
 
 swift run --package-path "$CORE_DIR" NoctweaveCLI init \
   --display-name "CLI smoke persona" \
+  --accept-privacy-policy true \
+  --accept-terms-of-use true \
   --state "$STATE_FILE" \
   --plaintext true >"$WORK_DIR/init.json"
 

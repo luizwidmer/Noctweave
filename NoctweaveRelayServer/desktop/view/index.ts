@@ -35,7 +35,9 @@ function settingsFromForm(): RelayLauncherSettings {
     exposure: data.get("exposure") === "network" ? "network" : "local",
     tcpPort: Number(data.get("tcpPort")),
     httpPort: Number(data.get("httpPort")),
-    adminPort: Number(data.get("adminPort"))
+    adminPort: Number(data.get("adminPort")),
+    rendezvousTransportEnabled: data.get("rendezvousTransportEnabled") === "on",
+    trustedReverseProxyTLS: data.get("trustedReverseProxyTLS") === "on"
   };
 }
 
@@ -45,6 +47,8 @@ function fillSettings(settings: RelayLauncherSettings): void {
   (form.elements.namedItem("tcpPort") as HTMLInputElement).value = String(settings.tcpPort);
   (form.elements.namedItem("httpPort") as HTMLInputElement).value = String(settings.httpPort);
   (form.elements.namedItem("adminPort") as HTMLInputElement).value = String(settings.adminPort);
+  (form.elements.namedItem("rendezvousTransportEnabled") as HTMLInputElement).checked = settings.rendezvousTransportEnabled;
+  (form.elements.namedItem("trustedReverseProxyTLS") as HTMLInputElement).checked = settings.trustedReverseProxyTLS;
 }
 
 function render(status: RelayLauncherStatus, preserveForm = false): void {

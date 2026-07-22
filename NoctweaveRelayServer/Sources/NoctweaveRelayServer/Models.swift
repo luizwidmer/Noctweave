@@ -1166,7 +1166,10 @@ struct RelayInfo: Codable, Equatable {
 struct RelayConfiguration: Codable, Equatable {
     var kind: RelayKind
     var federation: FederationDescriptor
+    /// TLS on the local listener, not TLS terminated by a trusted proxy.
     var tlsEnabled: Bool?
+    var advertisedTLSEnabled: Bool?
+    var trustedReverseProxyTLS: Bool
     var transport: RelayEndpointTransport
     var temporalBucketSeconds: Int
     var temporalBucketScheduleSeconds: [Int]?
@@ -1204,6 +1207,8 @@ struct RelayConfiguration: Codable, Equatable {
         kind: RelayKind = .standard,
         federation: FederationDescriptor = FederationDescriptor(mode: .solo),
         tlsEnabled: Bool? = nil,
+        advertisedTLSEnabled: Bool? = nil,
+        trustedReverseProxyTLS: Bool = false,
         transport: RelayEndpointTransport = .tcp,
         temporalBucketSeconds: Int = 300,
         temporalBucketScheduleSeconds: [Int]? = nil,
@@ -1240,6 +1245,8 @@ struct RelayConfiguration: Codable, Equatable {
         self.kind = kind
         self.federation = federation
         self.tlsEnabled = tlsEnabled
+        self.advertisedTLSEnabled = advertisedTLSEnabled
+        self.trustedReverseProxyTLS = trustedReverseProxyTLS
         self.transport = transport
         self.temporalBucketSeconds = min(max(0, temporalBucketSeconds), 86_400)
         if let temporalBucketScheduleSeconds {
@@ -1301,6 +1308,24 @@ struct RelayConfiguration: Codable, Equatable {
         rendezvousTransportEnabled
     }
 
+    enum EffectiveTransportConfidentiality: Equatable {
+        case none
+        case listenerTLS
+        case trustedReverseProxyTLS
+        case loopback
+
+        var permitsCapabilityTransport: Bool { self != .none }
+    }
+
+    func effectiveTransportConfidentiality(
+        isLiteralLoopbackSource: Bool
+    ) -> EffectiveTransportConfidentiality {
+        if tlsEnabled == true { return .listenerTLS }
+        if trustedReverseProxyTLS { return .trustedReverseProxyTLS }
+        if isLiteralLoopbackSource { return .loopback }
+        return .none
+    }
+
     func makeInfo(now: Date = Date()) -> RelayInfo {
         let curatedMode = federation.mode == .curated
         let trimmedPassword = accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1309,7 +1334,7 @@ struct RelayConfiguration: Codable, Equatable {
         return RelayInfo(
             kind: kind,
             federation: federation,
-            tlsEnabled: tlsEnabled,
+            tlsEnabled: advertisedTLSEnabled ?? tlsEnabled,
             transport: transport,
             temporalBucketSeconds: temporalBucketSeconds,
             temporalBucketScheduleSeconds: temporalBucketScheduleSeconds,

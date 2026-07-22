@@ -122,14 +122,14 @@ JavaScript shell with the required rollback-protected host state authority.
 The browser shell drives either side of a rendezvous independently and renders
 the one-use encoded invitation for transfer. Treat that invitation as sensitive
 short-lived bearer material. It never exposes raw route capabilities or pairing
-identifiers separately. A plain browser tab deliberately refuses to create or
-unlock persistent live authority; Web Storage is not accepted as rollback
-protection. With a conforming host, the JavaScript service provides local-first
-text send, exact outbox retry, ordered receive sync, optional receipts, local
-block and burn, and make-before-break route maintenance. High-level attachment
-publication remains fail-closed until it has the same durable
-prepare/publish/retry journal; the lower-level encrypted `nw.blobs` transport is
-available to integrations that supply that boundary.
+identifiers separately. A browser may use the explicitly acknowledged,
+rollbackable IndexedDB profile for evaluation; a conforming desktop host should
+provide a separately anchored state authority. The JavaScript service provides
+local-first text send, exact outbox retry, ordered receive sync, optional
+receipts, local block and burn, and make-before-break route maintenance.
+High-level attachment publication remains fail-closed until it has the same
+durable prepare/publish/retry journal; the lower-level encrypted `nw.blobs`
+transport is available to integrations that supply that boundary.
 
 ![NoctweaveJS browser integration shell](docs/assets/NoctweaveJSClient.png)
 
@@ -202,7 +202,9 @@ swift run --package-path NoctweaveCore NoctweaveCLI help
 swift run --package-path NoctweaveCore NoctweaveCLI health \
   --relay http://127.0.0.1:9340
 swift run --package-path NoctweaveCore NoctweaveCLI init \
-  --display-name "local mask"
+  --display-name "local mask" \
+  --accept-privacy-policy true \
+  --accept-terms-of-use true
 ```
 
 The CLI supports exact relay diagnostics, encrypted local persona state,
@@ -237,9 +239,10 @@ bun run desktop:dev
 
 These public JavaScript launchers are convenience wrappers for local use and
 evaluation, not the proprietary native applications. No official prebuilt
-desktop binaries are published yet. The macOS client supplies the
+desktop binaries are published yet. The macOS launcher supplies the
 rollback-protected aggregate and per-relationship state authority required for
-durable messaging; other hosts fail closed until they implement the same
+durable messaging. Browser-only use is explicitly labeled as rollbackable;
+unsupported desktop hosts fail closed until they implement the same anchored
 boundary. See the [NoctweaveJS guide](https://github.com/luizwidmer/NoctweaveJS#readme) for its exact
 Keychain, journal, metadata, and full-host-rollback limitations.
 

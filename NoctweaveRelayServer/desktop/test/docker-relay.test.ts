@@ -15,7 +15,9 @@ const settings = {
   exposure: "local" as const,
   tcpPort: 9339,
   httpPort: 9340,
-  adminPort: 9090
+  adminPort: 9090,
+  rendezvousTransportEnabled: true,
+  trustedReverseProxyTLS: false
 };
 
 describe("relay launcher validation", () => {
@@ -27,6 +29,8 @@ describe("relay launcher validation", () => {
     expect(args).toContain(relayImage);
     expect(args.slice(args.indexOf("--rendezvous-transport"), args.indexOf("--rendezvous-transport") + 2))
       .toEqual(["--rendezvous-transport", "true"]);
+    expect(args.slice(args.indexOf("--trusted-reverse-proxy-tls"), args.indexOf("--trusted-reverse-proxy-tls") + 2))
+      .toEqual(["--trusted-reverse-proxy-tls", "false"]);
     expect(args.slice(-2)).toEqual(["--relay-name", "Community Relay"]);
   });
 

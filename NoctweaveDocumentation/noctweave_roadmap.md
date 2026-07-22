@@ -56,6 +56,9 @@ Completed in the architecture revision:
 - high-level group creation, text send, bounded sync, maintenance,
   admission/add/join, exact-operation resume, and deletion in the Swift API and
   CLI, with corresponding text/admission workflows in the native reference app;
+- signed crash-resumable member self-departure plus native local naming,
+  invitation, eligible moderator removal, owner extinguish, and terminal-group
+  navigation cleanup;
 - independently anchored, crash-recoverable encrypted local client state with
   an explicit erased tombstone rather than an implicit reset after file loss;
 - durable browser direct messaging and make-before-break route maintenance,
@@ -104,9 +107,11 @@ These are finite verification and hardening tasks, not architecture migration:
   retractions, delivery receipts, and optional read receipts.
 - [ ] Produce a group interoperability harness and client/process termination
   test lab before enabling the experimental group profile by default.
-- [ ] Add advanced native group administration for role/policy changes,
-  removal, deletion, route rollover, attachments, and restart-time re-export of
-  an owner-prepared admission response.
+- [x] Expose native group invitation, eligible member removal, signed
+  self-departure, owner deletion, and local naming with explicit confirmations.
+- [ ] Add advanced native role/policy changes, group route rollover,
+  attachments, and restart-time re-export of an owner-prepared admission
+  response.
 - [ ] Add attachment prepare/publish/retry to the high-level durable browser
   messaging service; keep attachment requests fail-closed until that boundary
   exists.

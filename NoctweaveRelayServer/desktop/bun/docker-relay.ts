@@ -27,7 +27,9 @@ export const defaultSettings: RelayLauncherSettings = {
   exposure: "local",
   tcpPort: 9339,
   httpPort: 9340,
-  adminPort: 9090
+  adminPort: 9090,
+  rendezvousTransportEnabled: true,
+  trustedReverseProxyTLS: false
 };
 
 export function validateSettings(input: RelayLauncherSettings): RelayLauncherSettings {
@@ -44,6 +46,10 @@ export function validateSettings(input: RelayLauncherSettings): RelayLauncherSet
   }
   if (new Set(ports).size !== ports.length) {
     throw new Error("TCP, HTTP/WebSocket, and operator ports must be different.");
+  }
+  if (typeof input.rendezvousTransportEnabled !== "boolean"
+      || typeof input.trustedReverseProxyTLS !== "boolean") {
+    throw new Error("Relay transport confidentiality settings must be explicit booleans.");
   }
   return { ...input, relayName };
 }
@@ -77,7 +83,8 @@ export function dockerRunArguments(
     "--http-port", "9340",
     "--admin-port", "9090",
     "--data-dir", "/data",
-    "--rendezvous-transport", "true",
+    "--rendezvous-transport", String(settings.rendezvousTransportEnabled),
+    "--trusted-reverse-proxy-tls", String(settings.trustedReverseProxyTLS),
     "--relay-name", settings.relayName
   ];
 }

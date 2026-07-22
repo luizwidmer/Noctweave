@@ -3,6 +3,18 @@ import XCTest
 @testable import NoctweaveRelayServer
 
 final class OpaqueRouteRuntimeV2Tests: XCTestCase {
+    func testTrustedReverseProxyTLSIsSeparateFromListenerTLS() {
+        let configuration = RelayConfiguration(
+            tlsEnabled: false,
+            trustedReverseProxyTLS: true
+        )
+        XCTAssertFalse(configuration.tlsEnabled == true)
+        XCTAssertEqual(
+            configuration.effectiveTransportConfidentiality(isLiteralLoopbackSource: false),
+            .trustedReverseProxyTLS
+        )
+    }
+
     func testFixedOpaquePacketRoundTripsWithoutChangingBytes() throws {
         let fixture = Fixture()
         let packet = try fixture.packet(at: fixture.now, fill: 0xA5)

@@ -7,7 +7,7 @@ import { defaultSettings, validateSettings } from "./docker-relay.js";
 import type { RelayLauncherSettings } from "../rpc.js";
 
 type StoredLauncherState = {
-  version: 1;
+  version: 2;
   adminToken: string;
   settings: RelayLauncherSettings;
 };
@@ -19,18 +19,18 @@ export class LauncherStore {
     try {
       const decoded = JSON.parse(await readFile(this.fileURL, "utf8")) as Partial<StoredLauncherState>;
       const adminToken = decoded.adminToken;
-      if (decoded.version !== 1 || !adminToken || !/^[a-f0-9]{64}$/u.test(adminToken) || !decoded.settings) {
+      if (decoded.version !== 2 || !adminToken || !/^[a-f0-9]{64}$/u.test(adminToken) || !decoded.settings) {
         throw new Error("invalid launcher state");
       }
       return {
-        version: 1,
+        version: 2,
         adminToken,
         settings: validateSettings(decoded.settings)
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       const initial: StoredLauncherState = {
-        version: 1,
+        version: 2,
         adminToken: randomBytes(32).toString("hex"),
         settings: defaultSettings
       };
@@ -41,7 +41,7 @@ export class LauncherStore {
 
   async save(state: StoredLauncherState): Promise<void> {
     const validated: StoredLauncherState = {
-      version: 1,
+      version: 2,
       adminToken: state.adminToken,
       settings: validateSettings(state.settings)
     };

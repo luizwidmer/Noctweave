@@ -392,6 +392,25 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
         )
     }
 
+    /// True only for a member-authored transition that removes the local
+    /// group-scoped credential. The retained next-epoch crypto state exists
+    /// solely to make the removal fanout crash-resumable; it cannot authorize
+    /// further application traffic.
+    public var isLocalSelfRemoval: Bool {
+        guard signedCommit.operation == .removeMember,
+              let removedLeaf = nextSignedState.memberCredentials.first(where: {
+                  $0.credentialHandle == localCredentialAfterCommit.credentialHandle
+              }),
+              removedLeaf.memberHandle == localCredentialAfterCommit.memberHandle,
+              removedLeaf.removedEpoch == nextEpoch,
+              !nextSignedState.activeCredentials.contains(where: {
+                  $0.memberHandle == localCredentialAfterCommit.memberHandle
+              }) else {
+            return false
+        }
+        return true
+    }
+
     public var isStructurallyValid: Bool {
         guard idempotencyKey.count == 32,
               baseEpoch < UInt64.max,
@@ -450,11 +469,20 @@ public struct GroupEpochIntent: Codable, Equatable, Identifiable {
             return false
         }
         do {
-            try NoctweavePQGroupExperimentalProviderV2().validateActiveState(
-                nextCryptoState,
-                signedState: nextSignedState,
-                localCredential: localCredentialAfterCommit
-            )
+            let provider = NoctweavePQGroupExperimentalProviderV2()
+            if isLocalSelfRemoval {
+                try provider.validateSelfRemovalState(
+                    nextCryptoState,
+                    signedState: nextSignedState,
+                    removedLocalCredential: localCredentialAfterCommit
+                )
+            } else {
+                try provider.validateActiveState(
+                    nextCryptoState,
+                    signedState: nextSignedState,
+                    localCredential: localCredentialAfterCommit
+                )
+            }
         } catch {
             return false
         }
@@ -1837,12 +1865,17 @@ public actor NoctweavePQGroupRuntimeV2 {
             members: proposedMembers,
             leaves: proposedCredentials
         )
+        let isLocalSelfRemoval = operation == .removeMember
+            && !proposedMembership.credentials.contains(where: {
+                $0.memberHandle == record.localCredential.memberHandle
+            })
         let prepared = try provider.prepareCommit(
             state: record.cryptoState,
             currentMembership: currentMembership,
             proposedMembership: proposedMembership,
             localCredential: record.localCredential,
-            nextLocalCredential: replacementLocalCredential
+            nextLocalCredential: replacementLocalCredential,
+            allowLocalSelfRemoval: isLocalSelfRemoval
         )
         guard let providerCommitDigest = prepared.providerCommitDigest else {
             throw GroupRuntimeError.invalidIntent
@@ -1984,6 +2017,42 @@ public actor NoctweavePQGroupRuntimeV2 {
         let updated = try intent.advancing(to: .finalized, at: date)
         var intents = record.epochIntents
         intents[index] = updated
+        if intent.isLocalSelfRemoval {
+            let transition = intent.publication.transition
+            guard let transitionDigest = transition.digest,
+                  record.peerEpochJournal.count
+                    < GroupRuntimeRecord.maximumPeerEpochJournalEntries else {
+                throw GroupRuntimeError.invalidRecord
+            }
+            let journal = try GroupPeerEpochJournalEntryV2(
+                transition: transition,
+                welcome: nil,
+                outcome: .localRemoved,
+                observedAt: date
+            )
+            let removal = GroupLocalRemovalStateV2(
+                groupId: record.groupId,
+                memberHandle: record.localCredential.memberHandle,
+                removedCredentialHandle: record.localCredential.credentialHandle,
+                acceptedEpoch: intent.nextSignedState.epoch,
+                transitionDigest: transitionDigest,
+                observedAt: date
+            )
+            let candidate = record.replacing(
+                signedState: intent.nextSignedState,
+                epochIntents: intents,
+                peerEpochJournal: record.peerEpochJournal + [journal],
+                pendingLocalCredentials: [],
+                localRemoval: removal,
+                pendingApplicationPublications: [],
+                peerRouteCache: try record.peerRouteCache.pruning(
+                    to: intent.nextSignedState,
+                    localCredential: record.localCredential
+                )
+            )
+            try await persist(candidate)
+            return
+        }
         try await persist(record.replacing(epochIntents: intents))
     }
 
@@ -2049,6 +2118,17 @@ public actor NoctweavePQGroupRuntimeV2 {
                 throw GroupRuntimeError.conflictingCommitQuarantined
             }
             if localIntent.phase != .prepared {
+                if localIntent.isLocalSelfRemoval {
+                    // A self-removal intentionally keeps the previous epoch
+                    // active until the exact removal fanout is relay-backed.
+                    // Seeing our own transition during that window is an
+                    // idempotent replay, not evidence of a corrupt record.
+                    guard record.localRemoval == nil,
+                          record.signedState.epoch == localIntent.baseEpoch else {
+                        throw GroupRuntimeError.invalidRecord
+                    }
+                    return .active
+                }
                 guard record.signedState.epoch >= localIntent.nextEpoch else {
                     throw GroupRuntimeError.invalidRecord
                 }
@@ -2315,14 +2395,30 @@ public actor NoctweavePQGroupRuntimeV2 {
             // commit that was too far in the future when first observed.
             observedAt: intent.createdAt
         )
-        try provider.validateActiveState(
-            intent.nextCryptoState,
-            signedState: intent.nextSignedState,
-            localCredential: intent.localCredentialAfterCommit
-        )
+        if intent.isLocalSelfRemoval {
+            try provider.validateSelfRemovalState(
+                intent.nextCryptoState,
+                signedState: intent.nextSignedState,
+                removedLocalCredential: intent.localCredentialAfterCommit
+            )
+        } else {
+            try provider.validateActiveState(
+                intent.nextCryptoState,
+                signedState: intent.nextSignedState,
+                localCredential: intent.localCredentialAfterCommit
+            )
+        }
         let committedIntent = try intent.advancing(to: .stateCommitted, at: date)
         var intents = record.epochIntents
         intents[index] = committedIntent
+        if intent.isLocalSelfRemoval {
+            // Keep the current active epoch until every remaining member has
+            // durable relay evidence for the removal. A crash can therefore
+            // resume the exact fanout without either restoring local sending
+            // authority after departure or stranding a terminal record.
+            try await persist(record.replacing(epochIntents: intents))
+            return committedIntent.publication
+        }
         let peerRouteCache = try record.peerRouteCache.pruning(
             to: intent.nextSignedState,
             localCredential: intent.localCredentialAfterCommit

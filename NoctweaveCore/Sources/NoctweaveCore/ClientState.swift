@@ -4,6 +4,9 @@ public enum ClientStateError: Error, Equatable {
     case invalidState
     case personaNotFound
     case personaCapacityReached
+    case activePersonaCannotBeArchived
+    case relayPreferenceNotFound
+    case onboardingAcceptanceRequired
 }
 
 public enum RelayCertificatePinOrigin: String, Codable, Equatable {
@@ -332,9 +335,15 @@ public struct ClientState: Codable, Equatable {
     public var appLock: AppLockSettings
     public var chatList: ChatListSettings
     public var relayCertificatePins: [RelayCertificatePinRecord]
-    public var hasCompletedOnboarding: Bool
-    public var hasAcceptedPrivacyPolicy: Bool
-    public var hasAcceptedTermsOfUse: Bool
+    /// Local presentation/configuration only. This is intentionally separate
+    /// from PersonaProfileV1 and is never projected into protocol models.
+    public private(set) var preferredRelayPreferenceIDsByPersonaID: [UUID: UUID]
+    /// Local presentation state only. Archived persona IDs remain inside the
+    /// encrypted ClientState store and are never placed on the wire.
+    public private(set) var archivedPersonaIDs: Set<UUID>
+    public private(set) var hasCompletedOnboarding: Bool
+    public private(set) var hasAcceptedPrivacyPolicy: Bool
+    public private(set) var hasAcceptedTermsOfUse: Bool
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case version
@@ -347,6 +356,8 @@ public struct ClientState: Codable, Equatable {
         case appLock
         case chatList
         case relayCertificatePins
+        case preferredRelayPreferenceIDsByPersonaID
+        case archivedPersonaIDs
         case hasCompletedOnboarding
         case hasAcceptedPrivacyPolicy
         case hasAcceptedTermsOfUse
@@ -361,9 +372,11 @@ public struct ClientState: Codable, Equatable {
         appLock: AppLockSettings = AppLockSettings(),
         chatList: ChatListSettings = ChatListSettings(),
         relayCertificatePins: [RelayCertificatePinRecord] = [],
-        hasCompletedOnboarding: Bool = true,
-        hasAcceptedPrivacyPolicy: Bool = true,
-        hasAcceptedTermsOfUse: Bool = true,
+        preferredRelayPreferenceIDsByPersonaID: [UUID: UUID] = [:],
+        archivedPersonaIDs: Set<UUID> = [],
+        hasCompletedOnboarding: Bool = false,
+        hasAcceptedPrivacyPolicy: Bool = false,
+        hasAcceptedTermsOfUse: Bool = false,
         createdAt: Date = Date()
     ) throws {
         let persona = try PersonaProfileV1(displayName: displayName, createdAt: createdAt)
@@ -377,6 +390,8 @@ public struct ClientState: Codable, Equatable {
         self.appLock = appLock
         self.chatList = chatList
         self.relayCertificatePins = relayCertificatePins
+        self.preferredRelayPreferenceIDsByPersonaID = preferredRelayPreferenceIDsByPersonaID
+        self.archivedPersonaIDs = archivedPersonaIDs
         self.hasCompletedOnboarding = hasCompletedOnboarding
         self.hasAcceptedPrivacyPolicy = hasAcceptedPrivacyPolicy
         self.hasAcceptedTermsOfUse = hasAcceptedTermsOfUse
@@ -408,6 +423,15 @@ public struct ClientState: Codable, Equatable {
             [RelayCertificatePinRecord].self,
             forKey: .relayCertificatePins
         )
+        preferredRelayPreferenceIDsByPersonaID = try decodePreferredRelayPreferenceMap(
+            from: container,
+            forKey: .preferredRelayPreferenceIDsByPersonaID
+        )
+        let encodedArchivedPersonaIDs = try container.decode([UUID].self, forKey: .archivedPersonaIDs)
+        guard Set(encodedArchivedPersonaIDs).count == encodedArchivedPersonaIDs.count else {
+            throw ClientStateError.invalidState
+        }
+        archivedPersonaIDs = Set(encodedArchivedPersonaIDs)
         hasCompletedOnboarding = try container.decode(Bool.self, forKey: .hasCompletedOnboarding)
         hasAcceptedPrivacyPolicy = try container.decode(Bool.self, forKey: .hasAcceptedPrivacyPolicy)
         hasAcceptedTermsOfUse = try container.decode(Bool.self, forKey: .hasAcceptedTermsOfUse)
@@ -437,6 +461,15 @@ public struct ClientState: Codable, Equatable {
         try container.encode(appLock, forKey: .appLock)
         try container.encode(chatList, forKey: .chatList)
         try container.encode(relayCertificatePins, forKey: .relayCertificatePins)
+        try encodePreferredRelayPreferenceMap(
+            preferredRelayPreferenceIDsByPersonaID,
+            into: &container,
+            forKey: .preferredRelayPreferenceIDsByPersonaID
+        )
+        try container.encode(
+            archivedPersonaIDs.sorted { $0.uuidString < $1.uuidString },
+            forKey: .archivedPersonaIDs
+        )
         try container.encode(hasCompletedOnboarding, forKey: .hasCompletedOnboarding)
         try container.encode(hasAcceptedPrivacyPolicy, forKey: .hasAcceptedPrivacyPolicy)
         try container.encode(hasAcceptedTermsOfUse, forKey: .hasAcceptedTermsOfUse)
@@ -497,6 +530,18 @@ public struct ClientState: Codable, Equatable {
             && relayCertificatePins.count <= Self.maximumCertificatePins
             && Set(relayCertificatePins.map(\.id)).count == relayCertificatePins.count
             && relayCertificatePins.allSatisfy(\.isStructurallyValid)
+            && preferredRelayPreferenceIDsByPersonaID.count <= Self.maximumRelayPreferences
+            && preferredRelayPreferenceIDsByPersonaID.allSatisfy { personaID, relayID in
+                personas.contains { $0.id == personaID }
+                    && relayPreferences.contains { $0.id == relayID }
+            }
+            && archivedPersonaIDs.count <= Self.maximumPersonas
+            && archivedPersonaIDs.allSatisfy { personaID in
+                personas.contains { $0.id == personaID }
+                    && personaID != activePersonaID
+            }
+            && (!hasCompletedOnboarding
+                || (hasAcceptedPrivacyPolicy && hasAcceptedTermsOfUse))
             && appearance.isStructurallyValid
             && privacy.isStructurallyValid
             && appLock.isStructurallyValid
@@ -505,6 +550,106 @@ public struct ClientState: Codable, Equatable {
 
     public var isStructurallyValid: Bool {
         (try? isStructurallyValidThrowing) == true
+    }
+
+    /// Builds a new local state aggregate with onboarding still incomplete.
+    /// Native clients and the CLI can then explicitly call
+    /// `completeOnboarding(privacyPolicyAccepted:termsOfUseAccepted:)`.
+    public static func initialLocalState(
+        displayName: String,
+        relayPreferences: [LocalRelayPreference] = [],
+        preferredRelayPreferenceID: UUID? = nil,
+        relaySourcePreferences: [LocalRelaySourcePreference] = [],
+        appearance: AppearanceSettings = AppearanceSettings(),
+        privacy: PrivacySettings = PrivacySettings(),
+        appLock: AppLockSettings = AppLockSettings(),
+        chatList: ChatListSettings = ChatListSettings(),
+        relayCertificatePins: [RelayCertificatePinRecord] = [],
+        createdAt: Date = Date()
+    ) throws -> ClientState {
+        let state = try ClientState(
+            displayName: displayName,
+            relayPreferences: relayPreferences,
+            relaySourcePreferences: relaySourcePreferences,
+            appearance: appearance,
+            privacy: privacy,
+            appLock: appLock,
+            chatList: chatList,
+            relayCertificatePins: relayCertificatePins,
+            preferredRelayPreferenceIDsByPersonaID: [:],
+            archivedPersonaIDs: [],
+            createdAt: createdAt
+        )
+        guard let preferredRelayPreferenceID else { return state }
+        guard relayPreferences.contains(where: { $0.id == preferredRelayPreferenceID }) else {
+            throw ClientStateError.relayPreferenceNotFound
+        }
+        var configured = state
+        configured.preferredRelayPreferenceIDsByPersonaID = [
+            configured.activePersonaID: preferredRelayPreferenceID
+        ]
+        guard try configured.isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
+        return configured
+    }
+
+    /// Records the explicit privacy and terms acceptance required to finish
+    /// local onboarding. Passing either flag as false fails closed.
+    public mutating func completeOnboarding(
+        privacyPolicyAccepted: Bool,
+        termsOfUseAccepted: Bool
+    ) throws {
+        guard privacyPolicyAccepted, termsOfUseAccepted else {
+            throw ClientStateError.onboardingAcceptanceRequired
+        }
+        hasAcceptedPrivacyPolicy = true
+        hasAcceptedTermsOfUse = true
+        hasCompletedOnboarding = true
+        guard try isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
+    }
+
+    public func preferredRelayPreferenceID(forPersonaID personaID: UUID) -> UUID? {
+        preferredRelayPreferenceIDsByPersonaID[personaID]
+    }
+
+    /// Stores a per-persona relay choice as local presentation/configuration
+    /// only. The selected relay is not added to the persona or any wire model.
+    public mutating func setPreferredRelayPreference(
+        _ relayPreferenceID: UUID?,
+        forPersonaID personaID: UUID
+    ) throws {
+        guard personas.contains(where: { $0.id == personaID }) else {
+            throw ClientStateError.personaNotFound
+        }
+        if let relayPreferenceID {
+            guard relayPreferences.contains(where: { $0.id == relayPreferenceID }) else {
+                throw ClientStateError.relayPreferenceNotFound
+            }
+            preferredRelayPreferenceIDsByPersonaID[personaID] = relayPreferenceID
+        } else {
+            preferredRelayPreferenceIDsByPersonaID.removeValue(forKey: personaID)
+        }
+        guard try isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
+    }
+
+    /// Removes only the local saved relay entry and clears persona selections
+    /// that referenced it. Relationship and group routes are independent and
+    /// remain untouched.
+    public mutating func removeRelayPreference(_ relayPreferenceID: UUID) throws {
+        guard relayPreferences.contains(where: { $0.id == relayPreferenceID }) else {
+            throw ClientStateError.relayPreferenceNotFound
+        }
+        relayPreferences.removeAll { $0.id == relayPreferenceID }
+        preferredRelayPreferenceIDsByPersonaID =
+            preferredRelayPreferenceIDsByPersonaID.filter { $0.value != relayPreferenceID }
+        guard try isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
     }
 
     public mutating func addPersona(
@@ -520,11 +665,55 @@ public struct ClientState: Codable, Equatable {
         return persona
     }
 
+    public mutating func renamePersona(_ id: UUID, displayName: String) throws {
+        let normalized = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty,
+              normalized.utf8.count <= 512,
+              let index = personas.firstIndex(where: { $0.id == id }) else {
+            throw ClientStateError.personaNotFound
+        }
+        personas[index].displayName = normalized
+        guard try isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
+    }
+
     public mutating func selectPersona(_ id: UUID) throws {
         guard personas.contains(where: { $0.id == id }) else {
             throw ClientStateError.personaNotFound
         }
         activePersonaID = id
+        archivedPersonaIDs.remove(id)
+    }
+
+    /// Archives an inactive local persona for presentation purposes. This
+    /// does not revoke or alter any relationship-scoped protocol authority.
+    public mutating func archivePersona(_ id: UUID) throws {
+        guard personas.contains(where: { $0.id == id }) else {
+            throw ClientStateError.personaNotFound
+        }
+        guard id != activePersonaID else {
+            throw ClientStateError.activePersonaCannotBeArchived
+        }
+        archivedPersonaIDs.insert(id)
+        guard try isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
+    }
+
+    /// Removes the local archived presentation marker for a persona.
+    public mutating func unarchivePersona(_ id: UUID) throws {
+        guard personas.contains(where: { $0.id == id }) else {
+            throw ClientStateError.personaNotFound
+        }
+        archivedPersonaIDs.remove(id)
+        guard try isStructurallyValidThrowing else {
+            throw ClientStateError.invalidState
+        }
+    }
+
+    public func isPersonaArchived(_ id: UUID) -> Bool {
+        archivedPersonaIDs.contains(id)
     }
 
     public mutating func updateActivePersona(
@@ -1211,4 +1400,38 @@ private func optionalLocalStringIsValid(_ value: String?, maximumBytes: Int) -> 
 private func optionalOpaqueLocalStringIsValid(_ value: String?, maximumBytes: Int) -> Bool {
     guard let value else { return true }
     return !value.isEmpty && value.utf8.count <= maximumBytes
+}
+
+private func decodePreferredRelayPreferenceMap<Key: CodingKey>(
+    from container: KeyedDecodingContainer<Key>,
+    forKey key: Key
+) throws -> [UUID: UUID] {
+    let encoded = try container.decode([String: String].self, forKey: key)
+    var result: [UUID: UUID] = [:]
+    result.reserveCapacity(encoded.count)
+    for (personaText, relayText) in encoded {
+        guard let personaID = UUID(uuidString: personaText),
+              let relayID = UUID(uuidString: relayText),
+              personaText == personaID.uuidString.lowercased(),
+              relayText == relayID.uuidString.lowercased() else {
+            throw DecodingError.dataCorruptedError(
+                forKey: key,
+                in: container,
+                debugDescription: "Preferred relay selection uses non-canonical UUID keys"
+            )
+        }
+        result[personaID] = relayID
+    }
+    return result
+}
+
+private func encodePreferredRelayPreferenceMap<Key: CodingKey>(
+    _ value: [UUID: UUID],
+    into container: inout KeyedEncodingContainer<Key>,
+    forKey key: Key
+) throws {
+    let encoded = Dictionary(uniqueKeysWithValues: value.map { personaID, relayID in
+        (personaID.uuidString.lowercased(), relayID.uuidString.lowercased())
+    })
+    try container.encode(encoded, forKey: key)
 }

@@ -9,6 +9,10 @@ public final class RelayServer {
     }
 
     public var onEvent: ((Event) -> Void)?
+    /// Optional host-owned durability hook. When configured, every successful
+    /// opaque-route mutation is acknowledged only after the validated snapshot
+    /// has been persisted by the host.
+    public var onOpaqueRouteStateSnapshot: (@Sendable (OpaqueRouteRelayStateSnapshotV2) async throws -> Void)?
 
     private let store: RelayStore
     private let opaqueRouteStore: OpaqueRouteRelayStoreV2
@@ -67,6 +71,20 @@ public final class RelayServer {
 
     public func start(port: UInt16) throws {
         try start(host: "0.0.0.0", port: port)
+    }
+
+    /// Captures opaque-route runtime state for the host application's durable
+    /// encrypted relay snapshot. Core does not persist this data itself.
+    public func opaqueRouteStateSnapshot() async throws -> OpaqueRouteRelayStateSnapshotV2 {
+        try await opaqueRouteStore.snapshot()
+    }
+
+    /// Restores opaque-route runtime state from an explicit validated snapshot.
+    /// The host must load it from its encrypted persistence boundary.
+    public func restoreOpaqueRouteState(
+        from snapshot: OpaqueRouteRelayStateSnapshotV2
+    ) async throws {
+        try await opaqueRouteStore.restore(snapshot)
     }
 
     public func start(host: String, port: UInt16) throws {
@@ -475,12 +493,13 @@ public final class RelayServer {
                 return .error("Invalid opaque route create request", respondingTo: request)
             }
             do {
-                return .success(.opaqueRoute(try await opaqueRouteStore.create(
+                let result = try await opaqueRouteStore.create(
                     payload.request,
                     presentedCapability: payload.renewCapability,
                     confidentialTransport: hasConfidentialRouteTransport(sourceKey),
                     receivedAt: Date()
-                )), respondingTo: request)
+                )
+                return try await durableOpaqueRouteResponse(.opaqueRoute(result), respondingTo: request)
             } catch {
                 return opaqueRouteErrorResponse(error, respondingTo: request)
             }
@@ -489,12 +508,13 @@ public final class RelayServer {
                 return .error("Invalid opaque route renewal request", respondingTo: request)
             }
             do {
-                return .success(.opaqueRoute(try await opaqueRouteStore.renew(
+                let result = try await opaqueRouteStore.renew(
                     payload.request,
                     presentedCapability: payload.renewCapability,
                     confidentialTransport: hasConfidentialRouteTransport(sourceKey),
                     receivedAt: Date()
-                )), respondingTo: request)
+                )
+                return try await durableOpaqueRouteResponse(.opaqueRoute(result), respondingTo: request)
             } catch {
                 return opaqueRouteErrorResponse(error, respondingTo: request)
             }
@@ -503,12 +523,13 @@ public final class RelayServer {
                 return .error("Invalid opaque route teardown request", respondingTo: request)
             }
             do {
-                return .success(.opaqueRoute(try await opaqueRouteStore.teardown(
+                let result = try await opaqueRouteStore.teardown(
                     payload.request,
                     presentedCapability: payload.teardownCapability,
                     confidentialTransport: hasConfidentialRouteTransport(sourceKey),
                     receivedAt: Date()
-                )), respondingTo: request)
+                )
+                return try await durableOpaqueRouteResponse(.opaqueRoute(result), respondingTo: request)
             } catch {
                 return opaqueRouteErrorResponse(error, respondingTo: request)
             }
@@ -517,12 +538,13 @@ public final class RelayServer {
                 return .error("Invalid opaque route append request", respondingTo: request)
             }
             do {
-                return .success(.opaqueRouteAppend(try await opaqueRouteStore.append(
+                let result = try await opaqueRouteStore.append(
                     payload.packet,
                     presentedCapability: payload.sendCapability,
                     confidentialTransport: hasConfidentialRouteTransport(sourceKey),
                     receivedAt: Date()
-                )), respondingTo: request)
+                )
+                return try await durableOpaqueRouteResponse(.opaqueRouteAppend(result), respondingTo: request)
             } catch {
                 return opaqueRouteErrorResponse(error, respondingTo: request)
             }
@@ -531,12 +553,13 @@ public final class RelayServer {
                 return .error("Invalid opaque route sync request", respondingTo: request)
             }
             do {
-                return .success(.opaqueRouteSync(try await opaqueRouteStore.sync(
+                let result = try await opaqueRouteStore.sync(
                     payload.request,
                     presentedCredential: payload.readCredential,
                     confidentialTransport: hasConfidentialRouteTransport(sourceKey),
                     receivedAt: Date()
-                )), respondingTo: request)
+                )
+                return try await durableOpaqueRouteResponse(.opaqueRouteSync(result), respondingTo: request)
             } catch {
                 return opaqueRouteErrorResponse(error, respondingTo: request)
             }
@@ -545,12 +568,13 @@ public final class RelayServer {
                 return .error("Invalid opaque route commit request", respondingTo: request)
             }
             do {
-                return .success(.opaqueRouteCommit(try await opaqueRouteStore.commit(
+                let result = try await opaqueRouteStore.commit(
                     payload.request,
                     presentedCredential: payload.readCredential,
                     confidentialTransport: hasConfidentialRouteTransport(sourceKey),
                     receivedAt: Date()
-                )), respondingTo: request)
+                )
+                return try await durableOpaqueRouteResponse(.opaqueRouteCommit(result), respondingTo: request)
             } catch {
                 return opaqueRouteErrorResponse(error, respondingTo: request)
             }
@@ -558,7 +582,7 @@ public final class RelayServer {
             guard configuration.isRendezvousTransportEnabled else {
                 return .error("Rendezvous transport is disabled", code: .unavailable, respondingTo: request)
             }
-            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+            guard hasConfidentialRouteTransport(sourceKey) else {
                 return .error("Rendezvous transport requires confidential transport", respondingTo: request)
             }
             guard registration.isStructurallyValid() else {
@@ -576,7 +600,7 @@ public final class RelayServer {
             guard configuration.isRendezvousTransportEnabled else {
                 return .error("Rendezvous transport is disabled", code: .unavailable, respondingTo: request)
             }
-            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+            guard hasConfidentialRouteTransport(sourceKey) else {
                 return .error("Rendezvous transport requires confidential transport", respondingTo: request)
             }
             guard append.isStructurallyValid else {
@@ -594,7 +618,7 @@ public final class RelayServer {
             guard configuration.isRendezvousTransportEnabled else {
                 return .error("Rendezvous transport is disabled", code: .unavailable, respondingTo: request)
             }
-            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+            guard hasConfidentialRouteTransport(sourceKey) else {
                 return .error("Rendezvous transport requires confidential transport", respondingTo: request)
             }
             guard sync.isStructurallyValid else {
@@ -611,7 +635,7 @@ public final class RelayServer {
             guard configuration.isRendezvousTransportEnabled else {
                 return .error("Rendezvous transport is disabled", code: .unavailable, respondingTo: request)
             }
-            guard configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey) else {
+            guard hasConfidentialRouteTransport(sourceKey) else {
                 return .error("Rendezvous transport requires confidential transport", respondingTo: request)
             }
             guard deletion.isStructurallyValid else {
@@ -788,7 +812,9 @@ public final class RelayServer {
     }
 
     private func hasConfidentialRouteTransport(_ sourceKey: String?) -> Bool {
-        configuration.tlsEnabled || isLiteralLoopbackSource(sourceKey)
+        configuration.effectiveTransportConfidentiality(
+            isLiteralLoopbackSource: isLiteralLoopbackSource(sourceKey)
+        ).permitsCapabilityTransport
     }
 
     private func opaqueRouteErrorResponse(
@@ -821,6 +847,8 @@ public final class RelayServer {
                 return .error("Opaque route request ledger exhausted", code: .capacity, respondingTo: request)
             case .sequenceExhausted:
                 return .error("Opaque route sequence exhausted", code: .capacity, respondingTo: request)
+            case .invalidSnapshot:
+                return .error("Invalid opaque route state snapshot", respondingTo: request)
             }
         }
         if let error = error as? OpaqueRouteV2Error {
@@ -845,6 +873,16 @@ public final class RelayServer {
             }
         }
         return .error("Opaque route storage is unavailable", code: .unavailable, retryable: true, respondingTo: request)
+    }
+
+    private func durableOpaqueRouteResponse(
+        _ body: RelaySuccessBody,
+        respondingTo request: RelayRequest
+    ) async throws -> RelayResponse {
+        if let onOpaqueRouteStateSnapshot {
+            try await onOpaqueRouteStateSnapshot(try await opaqueRouteStore.snapshot())
+        }
+        return .success(body, respondingTo: request)
     }
 
     private func relayStoreErrorResponse(

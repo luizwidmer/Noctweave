@@ -24,6 +24,7 @@ struct ServerConfig {
       --relay-name <name>              Operator-visible relay name
       --federation-mode <mode>         solo, manual, curated, or open
       --advertised-endpoint <endpoint> Public tcp/tls/http/https/ws/wss endpoint
+      --trusted-reverse-proxy-tls <bool> Trust TLS terminated before this raw listener
       --access-password <password>     Require relay client authentication
       --attachments-enabled <bool>     Enable or disable attachment chunks
       --attachment-storage <mode>      inline or ipfs
@@ -63,6 +64,7 @@ struct ServerConfig {
     var federationName: String?
     var federationDescription: String?
     var advertiseTLS: Bool?
+    var trustedReverseProxyTLS: Bool
     var temporalBucketSeconds: Int
     var temporalBucketScheduleSeconds: [Int]
     var attachmentDefaultTTLSeconds: Int
@@ -118,6 +120,10 @@ struct ServerConfig {
         var federationName: String?
         var federationDescription: String?
         var advertiseTLS: Bool?
+        var trustedReverseProxyTLS = parseBoolFlag(
+            environment["NOCTWEAVE_TRUSTED_REVERSE_PROXY_TLS"] ?? "false",
+            defaultValue: false
+        )
         var temporalBucketSeconds: Int = 300
         var temporalBucketScheduleSeconds: [Int] = []
         var attachmentDefaultTTLSeconds: Int = 3600
@@ -444,6 +450,10 @@ struct ServerConfig {
                 if let value = iterator.next() {
                     advertisedEndpoint = parseRelayEndpoint(value)
                 }
+            case "--trusted-reverse-proxy-tls":
+                if let value = iterator.next() {
+                    trustedReverseProxyTLS = parseBoolFlag(value, defaultValue: trustedReverseProxyTLS)
+                }
             case "--federation-allow":
                 if let value = iterator.next() {
                     let entries = value.split(separator: ",").map { String($0) }
@@ -583,6 +593,7 @@ struct ServerConfig {
             federationName: federationName,
             federationDescription: federationDescription,
             advertiseTLS: advertiseTLS,
+            trustedReverseProxyTLS: trustedReverseProxyTLS,
             temporalBucketSeconds: temporalBucketSeconds,
             temporalBucketScheduleSeconds: temporalBucketScheduleSeconds,
             attachmentDefaultTTLSeconds: attachmentDefaultTTLSeconds,
@@ -832,7 +843,9 @@ var relayConfiguration = RelayConfiguration(
         name: config.federationName,
         description: config.federationDescription
     ),
-    tlsEnabled: effectiveAdvertiseTLS,
+    tlsEnabled: false,
+    advertisedTLSEnabled: effectiveAdvertiseTLS,
+    trustedReverseProxyTLS: config.trustedReverseProxyTLS,
     transport: config.advertisedEndpoint?.transport ?? config.relayTransport,
     temporalBucketSeconds: config.temporalBucketSeconds,
     temporalBucketScheduleSeconds: config.temporalBucketScheduleSeconds,

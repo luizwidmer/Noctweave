@@ -48,6 +48,8 @@
         <label>Raw TCP port<input name="tcpPort" type="number" min="1024" max="65535" required></label>
         <label>HTTP / WebSocket port<input name="httpPort" type="number" min="1024" max="65535" required></label>
         <label>Operator port<input name="adminPort" type="number" min="1024" max="65535" required></label>
+        <label class="check"><input name="rendezvousTransportEnabled" type="checkbox"> Enable rendezvous transport</label>
+        <label class="check"><input name="trustedReverseProxyTLS" type="checkbox"> Trust reverse-proxy TLS (does not enable local TLS)</label>
       </form>
       <div class="warning"><strong>Docker access is powerful.</strong><span>This app can create and stop only its named relay container. Build from source you have reviewed, and do not expose the operator port publicly.</span></div>
     </section>

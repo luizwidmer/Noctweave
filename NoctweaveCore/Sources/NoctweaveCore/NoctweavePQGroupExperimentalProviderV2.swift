@@ -267,6 +267,36 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         }
     }
 
+    /// Validates the transient next-epoch state retained while a member's
+    /// self-authored removal is being delivered. The local credential is
+    /// deliberately absent from the next active membership, so this state may
+    /// only be used to finish the exact removal fanout and must never authorize
+    /// new group application traffic.
+    public func validateSelfRemovalState(
+        _ state: GroupCryptoState,
+        signedState: SignedGroupStateV2,
+        removedLocalCredential: LocalGroupCredentialV2
+    ) throws {
+        let localState = try requireActiveState(state)
+        try validateSignedBinding(localState, signedState: signedState)
+        guard try removedLocalCredential.isStructurallyValidThrowing,
+              removedLocalCredential.groupId == signedState.groupId,
+              localState.localCredentialHandle == removedLocalCredential.credentialHandle,
+              let removedLeaf = signedState.memberCredentials.first(where: {
+                  $0.credentialHandle == removedLocalCredential.credentialHandle
+              }),
+              removedLeaf.memberHandle == removedLocalCredential.memberHandle,
+              removedLeaf.admissionDigest == removedLocalCredential.admissionDigest,
+              removedLeaf.signingPublicKey == removedLocalCredential.signingKey.publicKeyData,
+              removedLeaf.agreementPublicKey == removedLocalCredential.agreementKey.publicKeyData,
+              removedLeaf.removedEpoch == signedState.epoch,
+              !signedState.activeCredentials.contains(where: {
+                  $0.memberHandle == removedLocalCredential.memberHandle
+              }) else {
+            throw NoctweavePQGroupExperimentalErrorV2.invalidCredential
+        }
+    }
+
     public func prepareGenesis(
         membership: GroupProviderMembershipV2,
         localCredential: LocalGroupCredentialV2
@@ -297,20 +327,35 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         currentMembership: GroupProviderMembershipV2,
         proposedMembership: GroupProviderMembershipV2,
         localCredential: LocalGroupCredentialV2,
-        nextLocalCredential: LocalGroupCredentialV2? = nil
+        nextLocalCredential: LocalGroupCredentialV2? = nil,
+        allowLocalSelfRemoval: Bool = false
     ) throws -> GroupCryptoPreparedEpochV2 {
         let localState = try requireActiveState(state)
         try validateMembership(currentMembership)
         try validateMembership(proposedMembership)
         try validate(localCredential, in: currentMembership)
-        let nextCredential = nextLocalCredential ?? localCredential
-        try validate(nextCredential, in: proposedMembership)
+        let nextCredentialHandle: GroupScopedCredentialHandleV2
+        if allowLocalSelfRemoval {
+            guard nextLocalCredential == nil,
+                  !proposedMembership.credentials.contains(where: {
+                      $0.memberHandle == localCredential.memberHandle
+                  }) else {
+                throw NoctweavePQGroupExperimentalErrorV2.invalidCredential
+            }
+            nextCredentialHandle = localCredential.credentialHandle
+        } else {
+            let nextCredential = nextLocalCredential ?? localCredential
+            try validate(nextCredential, in: proposedMembership)
+            guard nextCredential.groupId == localCredential.groupId,
+                  nextCredential.memberHandle == localCredential.memberHandle else {
+                throw NoctweavePQGroupExperimentalErrorV2.invalidCredential
+            }
+            nextCredentialHandle = nextCredential.credentialHandle
+        }
         guard localState.groupId == currentMembership.groupId,
               localState.epoch == currentMembership.epoch,
               localState.membershipDigest == currentMembership.membershipDigest,
               localState.localCredentialHandle == localCredential.credentialHandle,
-              nextCredential.groupId == localCredential.groupId,
-              nextCredential.memberHandle == localCredential.memberHandle,
               proposedMembership.groupId == currentMembership.groupId,
               currentMembership.epoch < UInt64.max,
               proposedMembership.epoch == currentMembership.epoch + 1 else {
@@ -328,7 +373,7 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
         return try makePreparedEpoch(
             proposal: proposal,
             proposedMembership: proposedMembership,
-            localCredentialHandle: nextCredential.credentialHandle
+            localCredentialHandle: nextCredentialHandle
         )
     }
 
@@ -924,16 +969,24 @@ public struct NoctweavePQGroupExperimentalProviderV2 {
             epoch: proposal.nextEpoch,
             membershipDigest: membership.membershipDigest
         )
-        let chains = membership.credentials.map { credential -> PQGroupSenderChainStateV2 in
+        var senderHandles = membership.credentials.map(\.credentialHandle)
+        if !senderHandles.contains(localCredentialHandle) {
+            // A member preparing its own removal still needs one bounded,
+            // transient local chain so the next-epoch state can be persisted
+            // and the exact fanout resumed after a crash. Runtime policy never
+            // exposes this state for new application sends.
+            senderHandles.append(localCredentialHandle)
+        }
+        let chains = senderHandles.map { credentialHandle -> PQGroupSenderChainStateV2 in
             let senderRoot = deriveSenderRoot(
                 epochRoot: epochRoot,
                 groupId: proposal.groupId,
                 epoch: proposal.nextEpoch,
                 membershipDigest: membership.membershipDigest,
-                credentialHandle: credential.credentialHandle
+                credentialHandle: credentialHandle
             )
             return PQGroupSenderChainStateV2(
-                credentialHandle: credential.credentialHandle,
+                credentialHandle: credentialHandle,
                 nextSendCounter: 0,
                 sendChainKey: senderRoot,
                 nextReceiveCounter: 0,

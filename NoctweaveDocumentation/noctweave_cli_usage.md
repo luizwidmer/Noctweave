@@ -11,7 +11,9 @@ swift run --package-path NoctweaveCore NoctweaveCLI help
 
 ```sh
 swift run --package-path NoctweaveCore NoctweaveCLI init \
-  --display-name "local mask"
+  --display-name "local mask" \
+  --accept-privacy-policy true \
+  --accept-terms-of-use true
 
 swift run --package-path NoctweaveCore NoctweaveCLI status
 swift run --package-path NoctweaveCore NoctweaveCLI relationships
@@ -19,6 +21,10 @@ swift run --package-path NoctweaveCore NoctweaveCLI relationships
 
 The display name is a local persona label. It is never used as a relationship
 pseudonym or transmitted automatically.
+
+Initialization fails unless both legal acceptance flags are explicitly `true`.
+The CLI records those exact onboarding gates in encrypted local state; it does
+not infer acceptance from running a command or from a previous installation.
 
 State is encrypted by default. Without `--state`, the database lives at the
 platform's user Application Support location under
