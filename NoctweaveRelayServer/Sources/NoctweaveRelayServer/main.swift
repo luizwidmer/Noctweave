@@ -1,4 +1,5 @@
 import Foundation
+import Crypto
 @preconcurrency import NIOCore
 @preconcurrency import NIOPosix
 
@@ -7,7 +8,7 @@ struct ServerConfig {
     static let maximumTemporalBucketSeconds = 24 * 60 * 60
     static let maximumAttachmentTTLSeconds = 30 * 24 * 60 * 60
     static let usage = """
-    NoctweaveRelayServer — ciphertext relay and federation node
+    NoctweaveRelayServer — standard, passthrough, or host relay
 
     Usage:
       NoctweaveRelayServer [options]
@@ -22,6 +23,9 @@ struct ServerConfig {
       --memory-only                    Keep relay state in memory
       --data-dir <path>                SQLite state directory (default: /data)
       --relay-name <name>              Operator-visible relay name
+      --relay-kind <role>              standard, passthrough, or host
+      --passthrough-allow-endpoint <https-url> Repeatable passthrough destination
+      --net-host-default-ttl-seconds <n> Default host object retention
       --federation-mode <mode>         solo, manual, curated, or open
       --advertised-endpoint <endpoint> Public tcp/tls/http/https/ws/wss endpoint
       --trusted-reverse-proxy-tls <bool> Trust TLS terminated before this raw listener
@@ -59,6 +63,10 @@ struct ServerConfig {
     var maxLineBytes: Int?
     var forwardingRequestTimeoutSeconds: Int
     var relayKind: RelayKind
+    var passthroughAllowedEndpoints: [RelayEndpoint]
+    var netHostDefaultTTLSeconds: Int
+    var netHostMaximumObjects: Int
+    var netHostMaximumTotalBytes: UInt64
     var relayTransport: RelayEndpointTransport
     var federationMode: FederationMode
     var federationName: String?
@@ -115,6 +123,20 @@ struct ServerConfig {
         var maxLineBytes: Int? = 640 * 1024
         var forwardingRequestTimeoutSeconds: Int = 8
         var relayKind: RelayKind = .standard
+        var passthroughAllowedEndpoints = (
+            environment["NOCTWEAVE_PASSTHROUGH_ALLOWED_ENDPOINTS"] ?? ""
+        ).split(separator: ",").compactMap {
+            parseRelayEndpoint(String($0).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        var netHostDefaultTTLSeconds = Int(
+            environment["NOCTWEAVE_NET_HOST_DEFAULT_TTL_SECONDS"] ?? ""
+        ) ?? 86_400
+        var netHostMaximumObjects = Int(
+            environment["NOCTWEAVE_NET_HOST_MAX_OBJECTS"] ?? ""
+        ) ?? 4_096
+        var netHostMaximumTotalBytes = UInt64(
+            environment["NOCTWEAVE_NET_HOST_MAX_TOTAL_BYTES"] ?? ""
+        ) ?? 4 * 1_024 * 1_024 * 1_024
         var relayTransport: RelayEndpointTransport = .tcp
         var federationMode: FederationMode = .solo
         var federationName: String?
@@ -232,6 +254,22 @@ struct ServerConfig {
             case "--relay-kind":
                 if let value = iterator.next(), let parsed = RelayKind(rawValue: value) {
                     relayKind = parsed
+                }
+            case "--passthrough-allow-endpoint":
+                if let value = iterator.next(), let endpoint = parseRelayEndpoint(value) {
+                    passthroughAllowedEndpoints.append(endpoint)
+                }
+            case "--net-host-default-ttl-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    netHostDefaultTTLSeconds = parsed
+                }
+            case "--net-host-max-objects":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    netHostMaximumObjects = parsed
+                }
+            case "--net-host-max-total-bytes":
+                if let value = iterator.next(), let parsed = UInt64(value) {
+                    netHostMaximumTotalBytes = parsed
                 }
             case "--transport":
                 if let value = iterator.next(), let parsed = RelayEndpointTransport(rawValue: value) {
@@ -499,6 +537,27 @@ struct ServerConfig {
         httpPort = httpPort.map { min(max($0, 1), Int(UInt16.max)) }
         adminPort = adminPort.map { min(max($0, 1), Int(UInt16.max)) }
         forwardingRequestTimeoutSeconds = min(max(forwardingRequestTimeoutSeconds, 1), 300)
+        passthroughAllowedEndpoints = Array(
+            Set(passthroughAllowedEndpoints.map {
+                "\($0.host.lowercased()):\($0.port):\($0.useTLS):\($0.transport.rawValue)"
+            }).compactMap { key in
+                passthroughAllowedEndpoints.first {
+                    "\($0.host.lowercased()):\($0.port):\($0.useTLS):\($0.transport.rawValue)" == key
+                }
+            }.prefix(64)
+        )
+        netHostDefaultTTLSeconds = min(
+            max(netHostDefaultTTLSeconds, NoctweaveNetLimits.minimumHostRetentionSeconds),
+            NoctweaveNetLimits.maximumHostRetentionSeconds
+        )
+        netHostMaximumObjects = min(max(netHostMaximumObjects, 1), 100_000)
+        netHostMaximumTotalBytes = min(
+            max(
+                netHostMaximumTotalBytes,
+                UInt64(NoctweaveNetLimits.maximumHostObjectBytes)
+            ),
+            1_099_511_627_776
+        )
         temporalBucketSeconds = min(max(temporalBucketSeconds, 0), maximumTemporalBucketSeconds)
         temporalBucketScheduleSeconds = Array(
             Set(temporalBucketScheduleSeconds.filter { (1...maximumTemporalBucketSeconds).contains($0) })
@@ -569,7 +628,19 @@ struct ServerConfig {
                 maxDelaySeconds: mixnetMaxDelaySeconds
             )
             : nil
-        let normalizedMaxMessageBytes = min(max(1_024, maxMessageBytes ?? (512 * 1024)), 8 * 1024 * 1024)
+        let roleMinimumMessageBytes: Int
+        switch relayKind {
+        case .host:
+            roleMinimumMessageBytes = 2 * 1_024 * 1_024
+        case .passthrough:
+            roleMinimumMessageBytes = 1 * 1_024 * 1_024
+        default:
+            roleMinimumMessageBytes = 1_024
+        }
+        let normalizedMaxMessageBytes = min(
+            max(roleMinimumMessageBytes, maxMessageBytes ?? (512 * 1024)),
+            8 * 1024 * 1_024
+        )
         let normalizedMaxLineBytes = min(
             max(maxLineBytes ?? (640 * 1024), normalizedMaxMessageBytes + (128 * 1024)),
             10 * 1024 * 1024
@@ -588,6 +659,10 @@ struct ServerConfig {
             maxLineBytes: normalizedMaxLineBytes,
             forwardingRequestTimeoutSeconds: forwardingRequestTimeoutSeconds,
             relayKind: relayKind,
+            passthroughAllowedEndpoints: passthroughAllowedEndpoints,
+            netHostDefaultTTLSeconds: netHostDefaultTTLSeconds,
+            netHostMaximumObjects: netHostMaximumObjects,
+            netHostMaximumTotalBytes: netHostMaximumTotalBytes,
             relayTransport: relayTransport,
             federationMode: federationMode,
             federationName: federationName,
@@ -756,6 +831,32 @@ do {
     print("[relay] Refusing to start because operator-config.json is invalid.")
     exit(2)
 }
+guard config.relayKind.isCurrentTopologyRole else {
+    print("[relay] --relay-kind must be standard, passthrough, or host")
+    exit(2)
+}
+if config.relayKind != .standard, config.federationMode != .solo {
+    print("[relay] passthrough and host relays require --federation-mode solo; Noctweave Net coordination belongs to consensus")
+    exit(2)
+}
+if config.relayKind == .passthrough {
+    guard !config.passthroughAllowedEndpoints.isEmpty,
+          config.passthroughAllowedEndpoints.allSatisfy({
+              $0.transport == .http
+                  && $0.useTLS
+                  && PublicRelayEndpointPolicy.permits($0)
+          }) else {
+        print("[relay] passthrough relays require at least one public HTTPS --passthrough-allow-endpoint")
+        exit(2)
+    }
+}
+if config.relayKind == .passthrough || config.relayKind == .host {
+    guard let password = config.accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines),
+          password.utf8.count >= 12 else {
+        print("[relay] passthrough and host relays require NOCTWEAVE_RELAY_PASSWORD or --access-password")
+        exit(2)
+    }
+}
 if config.federationMode == .manual {
     guard config.relayKind == .standard else {
         print("[relay] manual federation requires --relay-kind standard")
@@ -816,6 +917,56 @@ case .ipfs:
         timeoutSeconds: TimeInterval(config.ipfsTimeoutSeconds)
     )
     print("[relay] Attachment chunks will be offloaded to IPFS through \(apiEndpoint.absoluteString)")
+}
+let netHostStore: NoctweaveNetHostStore?
+if config.relayKind == .host {
+    let signingPrivateKey: Curve25519.Signing.PrivateKey
+    if let dataDir = config.dataDir {
+        let keyURL = dataDir.appendingPathComponent(
+            "noctweave_net_host_signing_key",
+            isDirectory: false
+        )
+        do {
+            if FileManager.default.fileExists(atPath: keyURL.path) {
+                let keyData = try Data(contentsOf: keyURL)
+                guard keyData.count == 32 else {
+                    throw NoctweaveNetHostStoreError.corruptPersistence
+                }
+                signingPrivateKey = try Curve25519.Signing.PrivateKey(
+                    rawRepresentation: keyData
+                )
+            } else {
+                signingPrivateKey = Curve25519.Signing.PrivateKey()
+                try signingPrivateKey.rawRepresentation.write(to: keyURL, options: [.atomic])
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: keyURL.path
+                )
+            }
+        } catch {
+            print("[relay] Refusing to start because the Noctweave Net host signing key is unavailable.")
+            exit(2)
+        }
+    } else {
+        signingPrivateKey = Curve25519.Signing.PrivateKey()
+        print("[relay] Warning: Noctweave Net host receipts use an ephemeral key in memory-only mode.")
+    }
+    let hostStore = NoctweaveNetHostStore(
+        directoryURL: config.dataDir?.appendingPathComponent("net-host", isDirectory: true),
+        signingPrivateKey: signingPrivateKey,
+        defaultTTLSeconds: config.netHostDefaultTTLSeconds,
+        maximumObjects: config.netHostMaximumObjects,
+        maximumTotalBytes: config.netHostMaximumTotalBytes
+    )
+    do {
+        try hostStore.load()
+    } catch {
+        print("[relay] Refusing to start because the Noctweave Net host store is invalid.")
+        exit(2)
+    }
+    netHostStore = hostStore
+} else {
+    netHostStore = nil
 }
 let store = RelayStore(
     fileURL: fileURL,
@@ -957,7 +1108,9 @@ let bootstrap = ServerBootstrap(group: group)
                     maxLineBytes: config.maxLineBytes,
                     localEndpoint: RelayEndpoint(host: config.host, port: UInt16(config.port)),
                     relayConfiguration: relayConfigurationStore.snapshot(),
-                    forwardingRequestTimeoutSeconds: config.forwardingRequestTimeoutSeconds
+                    forwardingRequestTimeoutSeconds: config.forwardingRequestTimeoutSeconds,
+                    netHostStore: netHostStore,
+                    passthroughAllowedEndpoints: config.passthroughAllowedEndpoints
                 ))
             }
         }

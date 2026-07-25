@@ -15,6 +15,7 @@ private enum RelayForwardHTTPError: Error {
     case invalidURL
     case badStatus(Int)
     case invalidResponseBinding
+    case destinationRejected
 }
 
 private enum RelayForwardTransportError: Error {
@@ -35,6 +36,8 @@ final class RelayHandler: ChannelInboundHandler {
     private let localEndpoint: RelayEndpoint?
     private let relayConfiguration: RelayConfiguration
     private let forwardingRequestTimeoutSeconds: Int
+    private let netHostStore: NoctweaveNetHostStore?
+    private let passthroughAllowedEndpoints: [RelayEndpoint]
     private let coordinatorDirectorySigningPrivateKey: Data?
     private let coordinatorDirectoryPublicKey: Data?
     private let coordinatorHeartbeatLock = NIOLock()
@@ -46,7 +49,9 @@ final class RelayHandler: ChannelInboundHandler {
         maxLineBytes: Int?,
         localEndpoint: RelayEndpoint?,
         relayConfiguration: RelayConfiguration,
-        forwardingRequestTimeoutSeconds: Int
+        forwardingRequestTimeoutSeconds: Int,
+        netHostStore: NoctweaveNetHostStore? = nil,
+        passthroughAllowedEndpoints: [RelayEndpoint] = []
     ) {
         self.store = store
         self.maxMessageBytes = min(max(1_024, maxMessageBytes ?? (512 * 1024)), 8 * 1024 * 1024)
@@ -57,6 +62,8 @@ final class RelayHandler: ChannelInboundHandler {
         self.localEndpoint = localEndpoint
         self.relayConfiguration = relayConfiguration
         self.forwardingRequestTimeoutSeconds = max(1, forwardingRequestTimeoutSeconds)
+        self.netHostStore = netHostStore
+        self.passthroughAllowedEndpoints = Array(passthroughAllowedEndpoints.prefix(64))
         let coordinatorKeyMaterial: (privateKey: Data, publicKey: Data)?
         if relayConfiguration.kind == .coordinator {
             do {
@@ -137,6 +144,12 @@ final class RelayHandler: ChannelInboundHandler {
         if requiresAuthentication(for: request.binding),
            let authFailure = validateAuthentication(token: request.authToken) {
             return failure(authFailure, code: .authenticationRequired)
+        }
+        guard roleAllows(request.binding) else {
+            return failure(
+                "Relay role \(relayConfiguration.kind.rawValue) does not serve this module.",
+                code: .unavailable
+            )
         }
         if relayConfiguration.kind == .coordinator,
            !isCoordinatorDirectoryRequest(request.binding) {
@@ -554,6 +567,80 @@ final class RelayHandler: ChannelInboundHandler {
                 limit: list.limit
             )
             return success(.dhtRecords(records))
+        case .netPassthrough(let passthrough):
+            guard relayConfiguration.kind == .passthrough else {
+                return failure("This relay is not a passthrough relay.", code: .unavailable)
+            }
+            guard passthrough.isStructurallyValid,
+                  passthrough.destination.useTLS,
+                  passthroughAllowedEndpoints.contains(passthrough.destination),
+                  PublicRelayEndpointPolicy.permits(passthrough.destination) else {
+                return failure("Passthrough destination is not allowed.")
+            }
+            return forwardNoctweaveNetPayload(
+                passthrough.payload,
+                to: passthrough.destination,
+                on: context.eventLoop
+            ).map {
+                .success(
+                    .netPassthrough(NoctweaveNetPassthroughResponse(payload: $0)),
+                    respondingTo: request
+                )
+            }.flatMapError { _ in
+                failure(
+                    "Passthrough destination is unavailable.",
+                    code: .unavailable,
+                    retryable: true
+                )
+            }
+        case .putNetHostObject(let put):
+            guard relayConfiguration.kind == .host, let netHostStore else {
+                return failure("This relay is not a host relay.", code: .unavailable)
+            }
+            do {
+                return success(.netHostReceipt(try netHostStore.put(put)))
+            } catch NoctweaveNetHostStoreError.conflict {
+                return failure("Host object conflicts with stored state.", code: .conflict)
+            } catch NoctweaveNetHostStoreError.capacityExceeded {
+                return failure("Host object capacity reached.", code: .capacity)
+            } catch {
+                return failure("Host object could not be stored.", code: .internalFailure, retryable: true)
+            }
+        case .getNetHostObject(let get):
+            guard relayConfiguration.kind == .host, let netHostStore else {
+                return failure("This relay is not a host relay.", code: .unavailable)
+            }
+            do {
+                guard let object = try netHostStore.fetch(get) else {
+                    return failure("Host object not found.", code: .notFound)
+                }
+                return success(.netHostObject(object))
+            } catch {
+                return failure("Host object could not be read.", code: .internalFailure, retryable: true)
+            }
+        case .hasNetHostObject(let has):
+            guard relayConfiguration.kind == .host, let netHostStore else {
+                return failure("This relay is not a host relay.", code: .unavailable)
+            }
+            do {
+                return success(.netHostPresence(try netHostStore.presence(has)))
+            } catch {
+                return failure("Host object presence could not be read.", code: .internalFailure, retryable: true)
+            }
+        case .releaseNetHostObject(let release):
+            guard relayConfiguration.kind == .host, let netHostStore else {
+                return failure("This relay is not a host relay.", code: .unavailable)
+            }
+            do {
+                return success(.netHostRelease(try netHostStore.release(release)))
+            } catch NoctweaveNetHostStoreError.unauthorizedRelease {
+                return failure(
+                    "Host release capability rejected.",
+                    code: .authenticationRequired
+                )
+            } catch {
+                return failure("Host object could not be released.", code: .internalFailure, retryable: true)
+            }
         }
     }
 
@@ -1157,9 +1244,90 @@ final class RelayHandler: ChannelInboundHandler {
         return promise.futureResult
     }
 
+    private func forwardNoctweaveNetPayload(
+        _ payload: Data,
+        to endpoint: RelayEndpoint,
+        on eventLoop: EventLoop
+    ) -> EventLoopFuture<Data> {
+        let promise = eventLoop.makePromise(of: Data.self)
+        let completion = ForwardingCompletion()
+        let forwardingTask = Task.detached {
+            do {
+                guard endpoint.transport == .http,
+                      endpoint.useTLS,
+                      PublicRelayEndpointPolicy.permits(endpoint) else {
+                    throw RelayForwardHTTPError.destinationRejected
+                }
+                var components = URLComponents()
+                components.scheme = "https"
+                components.host = endpoint.host
+                components.port = Int(endpoint.port)
+                components.path = "/relay"
+                guard let url = components.url else {
+                    throw RelayForwardHTTPError.invalidURL
+                }
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = payload
+                request.timeoutInterval = TimeInterval(self.forwardingRequestTimeoutSeconds)
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+                let (data, response) = try await BoundedURLSessionLoader.load(
+                    request,
+                    maximumBytes: NoctweaveNetLimits.maximumPassthroughPayloadBytes
+                )
+                try Task.checkCancellation()
+                guard let status = (response as? HTTPURLResponse)?.statusCode,
+                      (200...299).contains(status),
+                      !data.isEmpty else {
+                    throw RelayForwardHTTPError.badStatus(
+                        (response as? HTTPURLResponse)?.statusCode ?? -1
+                    )
+                }
+                eventLoop.execute {
+                    completion.resolve(promise, .success(data))
+                }
+            } catch {
+                eventLoop.execute {
+                    completion.resolve(promise, .failure(error))
+                }
+            }
+        }
+        let timeoutTask = eventLoop.scheduleTask(
+            in: .seconds(Int64(forwardingRequestTimeoutSeconds))
+        ) {
+            forwardingTask.cancel()
+            completion.resolve(promise, .failure(RelayForwardTimeoutError()))
+        }
+        promise.futureResult.whenComplete { _ in
+            timeoutTask.cancel()
+        }
+        return promise.futureResult
+    }
+
     private func requiresAuthentication(for binding: RelayOperationBinding) -> Bool {
-        binding.module != .core
+        if binding.module == .netHost,
+           [.get, .has].contains(binding.method) {
+            return false
+        }
+        return binding.module != .core
             && !(binding.module == .federation && [.register, .list].contains(binding.method))
+    }
+
+    private func roleAllows(_ binding: RelayOperationBinding) -> Bool {
+        if binding.module == .core {
+            return true
+        }
+        switch relayConfiguration.kind {
+        case .standard:
+            return binding.module != .netPassthrough && binding.module != .netHost
+        case .passthrough:
+            return binding.module == .netPassthrough
+        case .host:
+            return binding.module == .netHost
+        case .discovery, .bridge, .privateRelay, .coordinator:
+            return binding.module != .netPassthrough && binding.module != .netHost
+        }
     }
 
     private func validateAuthentication(token: String?) -> String? {
@@ -1296,7 +1464,10 @@ private final class ForwardingCompletion: @unchecked Sendable {
     private let lock = NIOLock()
     private var completed = false
 
-    func resolve(_ promise: EventLoopPromise<RelayResponse>, _ result: Result<RelayResponse, Error>) {
+    func resolve<Value>(
+        _ promise: EventLoopPromise<Value>,
+        _ result: Result<Value, Error>
+    ) {
         lock.lock()
         defer { lock.unlock() }
         guard !completed else { return }

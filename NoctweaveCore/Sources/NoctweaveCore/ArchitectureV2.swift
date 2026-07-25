@@ -440,6 +440,8 @@ public struct ProtocolCapabilityManifest: Codable, Equatable {
         ProtocolModuleCapability(module: "nw.wake", versions: [1], status: .experimental),
         ProtocolModuleCapability(module: "nw.federation", versions: [1], status: .provisional),
         ProtocolModuleCapability(module: "nw.open-discovery", versions: [1], status: .experimental),
+        ProtocolModuleCapability(module: "nw.net-passthrough", versions: [1], status: .provisional),
+        ProtocolModuleCapability(module: "nw.net-host", versions: [1], status: .provisional),
         ProtocolModuleCapability(
             module: "nw.privacy.hidden-retrieval",
             versions: [1],

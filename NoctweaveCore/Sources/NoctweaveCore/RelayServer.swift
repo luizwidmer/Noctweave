@@ -92,6 +92,12 @@ public final class RelayServer {
             return
         }
         let configuration = configuration
+        guard configuration.kind != .passthrough,
+              configuration.kind != .host else {
+            // These roles require the bounded forwarding and durable hosting
+            // runtimes supplied by NoctweaveRelayServer.
+            throw RelayNetworkError.connectionFailed
+        }
         localEndpoint = RelayEndpoint(
             host: host,
             port: port,
@@ -808,6 +814,16 @@ public final class RelayServer {
                 limit: list.limit
             )
             return .success(.dhtRecords(records), respondingTo: request)
+        case .netPassthrough,
+             .putNetHostObject,
+             .getNetHostObject,
+             .hasNetHostObject,
+             .releaseNetHostObject:
+            return .error(
+                "Noctweave Net relay roles require NoctweaveRelayServer.",
+                code: .unavailable,
+                respondingTo: request
+            )
         }
     }
 

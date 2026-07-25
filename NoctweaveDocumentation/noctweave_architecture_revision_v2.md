@@ -346,7 +346,18 @@ Provisional 1.0-candidate relay modules are deliberately small:
 - `nw.rendezvous-transport` — bounded one-use pairing transport over two
   encrypted directional lanes with separate capabilities;
 - `nw.blobs` — encrypted attachment chunks;
-- `nw.federation` — operator-selected registration and listing.
+- `nw.federation` — operator-selected registration and listing;
+- `nw.net-passthrough` — one authenticated, bounded HTTPS exchange to an exact
+  operator-allowlisted public Noctweave endpoint;
+- `nw.net-host` — bounded content-addressed object hosting with signed storage
+  receipts and capability-protected release.
+
+The current relay topology has exactly three operator-selectable roles.
+`standard` retains the existing messaging and optional federation surface.
+`passthrough` advertises only `nw.core@2` and `nw.net-passthrough@1`. `host`
+advertises only `nw.core@2` and `nw.net-host@1`. Passthrough and host roles run
+in `solo` federation mode; Noctweave Net publication coordination belongs to a
+separate consensus adapter rather than relay federation.
 
 Experimental relay modules are separately advertised only when their runtime
 is explicitly enabled:
@@ -355,7 +366,10 @@ is explicitly enabled:
   only when its runtime is enabled.
 
 `nw.direct` is a provisional client-to-client capability, not relay plaintext
-logic. A module is not advertised until its exact runtime exists.
+logic. A module is not advertised until its exact runtime exists. The public
+Swift package supplies the Noctweave Net wire models and client bindings; the
+passthrough and host runtimes are implemented by the Linux/Docker
+`NoctweaveRelayServer`, not the smaller embedded `NoctweaveCore.RelayServer`.
 
 Both relay implementations advertise the same exact `nw.opaque-route@2`
 registry: `cursorBytes=68`, `maxPage=256`, `maxPacketBytes=65536`,

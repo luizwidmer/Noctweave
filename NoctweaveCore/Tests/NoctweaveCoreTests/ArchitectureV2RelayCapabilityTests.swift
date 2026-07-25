@@ -74,7 +74,9 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
                 "nw.opaque-route",
                 "nw.rendezvous-transport",
                 "nw.blobs",
-                "nw.federation"
+                "nw.federation",
+                "nw.net-passthrough",
+                "nw.net-host"
             ]
         )
         XCTAssertEqual(

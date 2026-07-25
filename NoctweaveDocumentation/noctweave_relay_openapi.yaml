@@ -96,6 +96,11 @@ components:
             - $ref: "#/components/schemas/FederationListRequestBinding"
             - $ref: "#/components/schemas/OpenDiscoveryPublishDHTRequestBinding"
             - $ref: "#/components/schemas/OpenDiscoveryListDHTRequestBinding"
+            - $ref: "#/components/schemas/NetPassthroughForwardRequestBinding"
+            - $ref: "#/components/schemas/NetHostPutRequestBinding"
+            - $ref: "#/components/schemas/NetHostGetRequestBinding"
+            - $ref: "#/components/schemas/NetHostHasRequestBinding"
+            - $ref: "#/components/schemas/NetHostReleaseRequestBinding"
     RelayModuleID:
       type: string
       enum:
@@ -105,9 +110,11 @@ components:
         - nw.blobs
         - nw.federation
         - nw.open-discovery
+        - nw.net-passthrough
+        - nw.net-host
     RelayMethodID:
       type: string
-      enum: [health, info, create, renew, teardown, append, sync, commit, register, delete, upload, fetch, list, publish-dht, list-dht]
+      enum: [health, info, create, renew, teardown, append, sync, commit, register, delete, upload, fetch, list, publish-dht, list-dht, forward, put, get, has, release]
     RelayResponse:
       type: object
       description: |
@@ -141,6 +148,11 @@ components:
             - $ref: "#/components/schemas/AttachmentSuccessBody"
             - $ref: "#/components/schemas/FederationNodesSuccessBody"
             - $ref: "#/components/schemas/DHTRecordsSuccessBody"
+            - $ref: "#/components/schemas/NetPassthroughSuccessBody"
+            - $ref: "#/components/schemas/NetHostReceiptSuccessBody"
+            - $ref: "#/components/schemas/NetHostObjectSuccessBody"
+            - $ref: "#/components/schemas/NetHostPresenceSuccessBody"
+            - $ref: "#/components/schemas/NetHostReleaseSuccessBody"
             - type: "null"
         error:
           oneOf:
@@ -163,6 +175,11 @@ components:
                 - $ref: "#/components/schemas/AttachmentSuccessBody"
                 - $ref: "#/components/schemas/FederationNodesSuccessBody"
                 - $ref: "#/components/schemas/DHTRecordsSuccessBody"
+                - $ref: "#/components/schemas/NetPassthroughSuccessBody"
+                - $ref: "#/components/schemas/NetHostReceiptSuccessBody"
+                - $ref: "#/components/schemas/NetHostObjectSuccessBody"
+                - $ref: "#/components/schemas/NetHostPresenceSuccessBody"
+                - $ref: "#/components/schemas/NetHostReleaseSuccessBody"
             error:
               type: "null"
         - properties:
@@ -325,6 +342,41 @@ components:
         version: { const: 1 }
         method: { const: list-dht }
         body: { $ref: "#/components/schemas/ListOpenFederationDHTRecordsRequest" }
+    NetPassthroughForwardRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.net-passthrough }
+        version: { const: 1 }
+        method: { const: forward }
+        body: { $ref: "#/components/schemas/NoctweaveNetPassthroughRequest" }
+    NetHostPutRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.net-host }
+        version: { const: 1 }
+        method: { const: put }
+        body: { $ref: "#/components/schemas/NoctweaveNetHostPutRequest" }
+    NetHostGetRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.net-host }
+        version: { const: 1 }
+        method: { const: get }
+        body: { $ref: "#/components/schemas/NoctweaveNetHostObjectRequest" }
+    NetHostHasRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.net-host }
+        version: { const: 1 }
+        method: { const: has }
+        body: { $ref: "#/components/schemas/NoctweaveNetHostObjectRequest" }
+    NetHostReleaseRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.net-host }
+        version: { const: 1 }
+        method: { const: release }
+        body: { $ref: "#/components/schemas/NoctweaveNetHostReleaseRequest" }
     RelayInfoSuccessBody:
       type: object
       required: [relayInfo]
@@ -389,6 +441,177 @@ components:
         records:
           type: array
           items: { $ref: "#/components/schemas/OpenFederationDHTRecord" }
+      additionalProperties: false
+    NetPassthroughSuccessBody:
+      type: object
+      required: [passthrough]
+      properties:
+        passthrough: { $ref: "#/components/schemas/NoctweaveNetPassthroughResponse" }
+      additionalProperties: false
+    NetHostReceiptSuccessBody:
+      type: object
+      required: [receipt]
+      properties:
+        receipt: { $ref: "#/components/schemas/NoctweaveNetHostingReceipt" }
+      additionalProperties: false
+    NetHostObjectSuccessBody:
+      type: object
+      required: [object]
+      properties:
+        object: { $ref: "#/components/schemas/NoctweaveNetHostFetchResponse" }
+      additionalProperties: false
+    NetHostPresenceSuccessBody:
+      type: object
+      required: [presence]
+      properties:
+        presence: { $ref: "#/components/schemas/NoctweaveNetHostPresence" }
+      additionalProperties: false
+    NetHostReleaseSuccessBody:
+      type: object
+      required: [release]
+      properties:
+        release: { $ref: "#/components/schemas/NoctweaveNetHostReleaseReceipt" }
+      additionalProperties: false
+    NoctweaveNetPassthroughRequest:
+      type: object
+      required: [destination, payload]
+      properties:
+        destination: { $ref: "#/components/schemas/NoctweaveNetPassthroughEndpoint" }
+        payload:
+          type: string
+          contentEncoding: base64
+          minLength: 4
+          maxLength: 699052
+      additionalProperties: false
+    NoctweaveNetPassthroughEndpoint:
+      allOf:
+        - $ref: "#/components/schemas/RelayEndpoint"
+        - type: object
+          properties:
+            useTLS: { const: true }
+            transport: { const: http }
+    NoctweaveNetPassthroughResponse:
+      type: object
+      required: [payload]
+      properties:
+        payload:
+          type: string
+          contentEncoding: base64
+          minLength: 4
+          maxLength: 699052
+      additionalProperties: false
+    NoctweaveNetHostPutRequest:
+      type: object
+      required: [objectID, payload, ttlSeconds, releaseCapabilityDigest, idempotencyKey]
+      properties:
+        objectID:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        payload:
+          type: string
+          contentEncoding: base64
+          minLength: 4
+          maxLength: 1398104
+        ttlSeconds:
+          type: [integer, "null"]
+          minimum: 60
+          maximum: 2592000
+        releaseCapabilityDigest:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        idempotencyKey:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+      additionalProperties: false
+    NoctweaveNetHostObjectRequest:
+      type: object
+      required: [objectID]
+      properties:
+        objectID:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+      additionalProperties: false
+    NoctweaveNetHostReleaseRequest:
+      type: object
+      required: [objectID, releaseCapability]
+      properties:
+        objectID:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        releaseCapability:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+      additionalProperties: false
+    NoctweaveNetHostingReceipt:
+      type: object
+      required: [objectID, byteCount, storedAt, expiresAt, signingPublicKey, signatureAlgorithm, signature]
+      properties:
+        objectID:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        byteCount:
+          type: integer
+          minimum: 1
+          maximum: 1048576
+        storedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        signingPublicKey:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        signatureAlgorithm:
+          type: string
+          const: Ed25519
+        signature:
+          type: string
+          contentEncoding: base64
+          minLength: 88
+          maxLength: 88
+      additionalProperties: false
+    NoctweaveNetHostFetchResponse:
+      type: object
+      required: [receipt, payload]
+      properties:
+        receipt: { $ref: "#/components/schemas/NoctweaveNetHostingReceipt" }
+        payload:
+          type: string
+          contentEncoding: base64
+          minLength: 4
+          maxLength: 1398104
+      additionalProperties: false
+    NoctweaveNetHostPresence:
+      type: object
+      required: [objectID, present, expiresAt]
+      properties:
+        objectID:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        present:
+          type: boolean
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+      additionalProperties: false
+    NoctweaveNetHostReleaseReceipt:
+      type: object
+      required: [objectID, released]
+      properties:
+        objectID:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        released:
+          type: boolean
       additionalProperties: false
     OpaqueRouteOpaque32V2:
       type: object
@@ -1473,7 +1696,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [standard, discovery, bridge, privateRelay, coordinator]
+          enum: [standard, passthrough, host]
         federation:
           $ref: "#/components/schemas/FederationDescriptor"
         temporalBucketSeconds:

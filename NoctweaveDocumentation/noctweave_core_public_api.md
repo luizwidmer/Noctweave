@@ -87,6 +87,33 @@ let health = try await relay.send(.health())
 `RelayClient` verifies that every response repeats the outstanding request ID,
 module, version, and method.
 
+Noctweave Net uses the same client and exact envelope:
+
+```swift
+let payload = Data("canonical capsule bytes".utf8)
+let objectID = NoctweaveNetHostPutRequest.objectID(for: payload)
+let request = RelayRequest.getNetHostObject(
+    NoctweaveNetHostObjectRequest(objectID: objectID)
+)
+let response = try await relay.send(request)
+```
+
+Current relay information identifies exactly one topology role:
+`standard`, `passthrough`, or `host`. A passthrough role advertises
+`nw.net-passthrough@1`; a host role advertises `nw.net-host@1`. Standard
+Noctweave private delivery continues to use `nw.opaque-route@2`.
+
+Host uploads commit a client-generated release-capability digest and an
+idempotency key. Fetch responses contain exact bytes plus an Ed25519-signed
+`NoctweaveNetHostingReceipt`; callers must verify the receipt signature and
+object digest before using the bytes.
+
+`NoctweaveCore` provides these exact client and wire models. The operational
+passthrough and host runtimes live in the public Linux/Docker
+`NoctweaveRelayServer`; the smaller embedded `NoctweaveCore.RelayServer`
+refuses to start in those roles and returns `unavailable` for those request
+types.
+
 Before pairing, verify the exact relay surface that the selected path needs:
 
 ```swift

@@ -28,6 +28,12 @@ JavaScript protocol client and browser integration shell, and a headless CLI.
 Relays route and store encrypted packets; message plaintext and relationship or
 group keys stay with clients.
 
+The relay exposes the three-role Noctweave Net topology: `standard` relays
+carry existing private traffic, `passthrough` relays provide bounded one-hop
+HTTPS forwarding, and `host` relays store content-addressed Noctweave Net
+objects. Shared publication coordination remains outside relays and belongs to
+the selected consensus adapter.
+
 There are no hosted accounts, developer-operated relays, or required central
 notification services. You choose where every component runs.
 
@@ -151,10 +157,12 @@ transport is available to integrations that supply that boundary.
   <img src="docs/assets/NoctweaveRelayIcon.svg" alt="Noctweave Relay icon" width="128">
 </p>
 
-The relay supports raw TCP, HTTP/HTTPS, WebSocket/WSS, SQLite persistence,
-opaque routes, one-use rendezvous transport, encrypted attachment blobs,
-federation, optional IPFS offload, and an authenticated operator console. A
-solo relay works without federation.
+The relay supports exactly three current topology roles: `standard`,
+`passthrough`, and `host`. Standard relays provide opaque routes, one-use
+rendezvous transport, encrypted attachment blobs, optional legacy federation,
+and IPFS offload. Passthrough relays advertise only bounded Noctweave Net
+forwarding; host relays advertise only content-addressed Noctweave Net storage.
+All roles use the same exact relay envelope and authenticated operator console.
 
 ![Noctweave Relay operator console](docs/assets/NoctweaveRelayConsole.png)
 

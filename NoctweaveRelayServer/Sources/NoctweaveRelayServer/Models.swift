@@ -94,10 +94,21 @@ private func isValidRelayEndpointModelList(
 
 enum RelayKind: String, Codable, CaseIterable {
     case standard
+    case passthrough
+    case host
+    // Decode-only legacy federation topology values.
     case discovery
     case bridge
     case privateRelay
     case coordinator
+
+    static var allCases: [RelayKind] {
+        [.standard, .passthrough, .host]
+    }
+
+    var isCurrentTopologyRole: Bool {
+        Self.allCases.contains(self)
+    }
 }
 
 enum FederationMode: String, Codable, CaseIterable {
@@ -1349,6 +1360,7 @@ struct RelayConfiguration: Codable, Equatable {
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
             protocolCapabilities: .advertised(
+                relayKind: kind,
                 attachmentsEnabled: attachmentsEnabled != false,
                 hiddenRetrievalEnabled: advertisedHiddenRetrieval != nil,
                 onionEnabled: advertisedOnionTransport != nil,

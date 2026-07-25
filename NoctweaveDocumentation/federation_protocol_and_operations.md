@@ -4,6 +4,11 @@ Federation is optional relay discovery and operator coordination. It does not
 create user accounts, route messages by identity, inspect ciphertext, or change
 end-to-end relationship authentication.
 
+Noctweave Net does not use this module. Its passthrough and host roles require
+`solo`; publisher heads and locator ordering come from the separately selected
+consensus adapter. This federation profile remains available only to standard
+Noctweave messaging deployments during the pre-1.0 compatibility window.
+
 ## Trust domains
 
 Every relay selects exactly one mode:

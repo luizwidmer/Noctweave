@@ -27,6 +27,24 @@ client -> HTTPS/WSS reverse proxy -> POST or WebSocket /relay -> relay bridge
 Advertise the public explicit endpoint and TLS state. Do not publish loopback,
 private, link-local, or ambiguous endpoints into public federation.
 
+## Relay roles
+
+Run exactly one current role per process:
+
+- `standard`: expose only the messaging and operator surfaces actually used;
+- `passthrough`: require relay authentication, an explicit public HTTPS allow
+  list, strict request/response/time limits, and outbound firewall policy;
+- `host`: require write authentication, persist `/data/net-host` with
+  restrictive permissions, back up its signing key with its index and object
+  files, and monitor object count, bytes, expiry, and disk pressure.
+
+Passthrough and host roles require federation mode `solo`. Their `info`
+manifests must not advertise opaque routes, rendezvous, blobs, federation,
+open discovery, or experimental privacy modules.
+
+A passthrough relay is not an open proxy or anonymity service. A host relay is
+not a publisher, consensus participant, code executor, or plaintext processor.
+
 ## Exact protocol path
 
 Only the exact modular relay envelope is accepted. Health and information are

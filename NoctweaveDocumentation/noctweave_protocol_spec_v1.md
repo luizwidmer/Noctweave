@@ -209,6 +209,30 @@ fresh request authenticated by the last valid teardown authority against an
 already-torn-down route returns its tombstone. Create, renew, append, and sync
 remain rejected.
 
+## 7A. Relay topology and Noctweave Net
+
+Current deployments select exactly one relay role:
+
+- `standard` serves private Noctweave opaque-route transport and enabled
+  standard modules;
+- `passthrough` serves only `nw.core@2` and `nw.net-passthrough@1`;
+- `host` serves only `nw.core@2` and `nw.net-host@1`.
+
+Passthrough forwarding is one-hop, authenticated, bounded, HTTPS-only, and
+restricted to operator-allow-listed public endpoints. It does not establish an
+anonymity claim or a relay-selected route.
+
+Host objects are addressed by the lowercase hexadecimal SHA-256 digest of
+their exact bytes. `put` verifies that digest before persistence. `get` returns
+the exact bytes and an Ed25519-signed bounded hosting receipt. `release`
+requires a 32-byte object-scoped capability whose domain-separated digest was
+committed during `put`.
+
+A host relay is not the publisher authority and does not finalize publication
+heads. Noctweave Net shared coordination comes from a separately specified
+consensus adapter. Consensus must not receive relationship keys, route
+capabilities, host release capabilities, or private capsule keys.
+
 ## 8. Route sets and rollover
 
 A route set is signed by the current relationship endpoint and includes a

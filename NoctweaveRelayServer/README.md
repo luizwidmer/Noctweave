@@ -31,10 +31,13 @@ Implemented modules:
 | `nw.blobs` | 1 | `upload`, `fetch` |
 | `nw.federation` | 1 | `register`, `list` |
 | `nw.open-discovery` | 1 | `publish-dht`, `list-dht` (experimental; open discovery only) |
+| `nw.net-passthrough` | 1 | `forward` |
+| `nw.net-host` | 1 | `put`, `get`, `has`, `release` |
 
-The opaque-route runtime is enabled by default. Rendezvous transport and open
-discovery are operator opt-in. A module is omitted from `info` when its exact
-runtime is disabled.
+Every process selects one current role with `--relay-kind standard`,
+`--relay-kind passthrough`, or `--relay-kind host`. `info` advertises only that
+role's surface. Legacy federation-era kind strings remain decode-compatible
+but are rejected for new server startup.
 
 ## Build and test
 
@@ -65,6 +68,54 @@ binding a listener.
 Use `--memory-only` only for disposable development. Normal operation stores
 route lifecycle, ordered packets/cursors, rendezvous frames, encrypted blob
 metadata, and federation records in `relay_store.sqlite`.
+
+Host relays additionally store exact Noctweave Net object bytes under
+`/data/net-host`, a bounded metadata index, and a stable Ed25519 receipt key.
+
+## Noctweave Net relay roles
+
+Standard is the default and retains the existing Noctweave messaging surface.
+
+A passthrough relay requires authentication and at least one explicit public
+HTTPS destination:
+
+```sh
+export NOCTWEAVE_RELAY_PASSWORD="$(openssl rand -hex 32)"
+
+NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
+  --relay-kind passthrough \
+  --passthrough-allow-endpoint https://relay.example \
+  --http-port 9340 \
+  --memory-only
+```
+
+`nw.net-passthrough@1 forward` accepts one bounded opaque request and returns
+one bounded opaque response. It does not discover destinations, follow
+redirects, retain bodies, create recursive routes, or claim anonymity.
+
+A host relay stores SHA-256-addressed object bytes:
+
+```sh
+export NOCTWEAVE_RELAY_PASSWORD="$(openssl rand -hex 32)"
+
+NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
+  --relay-kind host \
+  --http-port 9340 \
+  --data-dir /data
+```
+
+`nw.net-host@1` verifies object IDs before `put`, returns exact bytes and an
+Ed25519-signed hosting receipt from `get`, exposes bounded `has`, and requires
+an object-scoped 32-byte capability for `release`. Host receipts attest to
+storage acknowledgement, not publisher identity, consensus finality, content
+safety, or future availability. `get` and `has` are public by object ID so
+clients can retrieve a hosted site; `put` and `release` require the relay
+password, and private object bytes must already be encrypted by the client.
+
+Passthrough and host roles require `NOCTWEAVE_RELAY_PASSWORD` (or
+`--access-password`) and require federation mode `solo`. Noctweave Net
+publisher heads and locator ordering belong to consensus, not relay
+federation.
 
 ## Docker
 
