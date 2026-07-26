@@ -134,6 +134,11 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         guard let mode = FederationMode(rawValue: federationMode) else {
             throw OperatorConfigurationError.invalidField("federationMode")
         }
+        if current.isNetHostEnabled, mode != .solo {
+            throw OperatorConfigurationError.unsupportedTransition(
+                "Noctweave Net host-capable relays currently require solo federation mode."
+            )
+        }
         if mode == .manual, current.kind != .standard {
             throw OperatorConfigurationError.unsupportedTransition(
                 "Manual federation is available only to standard relays."
@@ -209,6 +214,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
 
         return RelayConfiguration(
             kind: current.kind,
+            netHostEnabled: current.isNetHostEnabled,
             federation: FederationDescriptor(
                 mode: mode,
                 name: normalizedFederationName.nilIfEmpty,
@@ -255,6 +261,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     func applyPersistedOverrides(to config: inout ServerConfig) throws {
         let current = RelayConfiguration(
             kind: config.relayKind,
+            netHostEnabled: config.netHostEnabled,
             federation: FederationDescriptor(
                 mode: config.federationMode,
                 name: config.federationName,

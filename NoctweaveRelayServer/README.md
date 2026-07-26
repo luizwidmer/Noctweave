@@ -34,10 +34,12 @@ Implemented modules:
 | `nw.net-passthrough` | 1 | `forward` |
 | `nw.net-host` | 1 | `put`, `get`, `has`, `release` |
 
-Every process selects one current role with `--relay-kind standard`,
-`--relay-kind passthrough`, or `--relay-kind host`. `info` advertises only that
-role's surface. Legacy federation-era kind strings remain decode-compatible
-but are rejected for new server startup.
+Every process selects one primary current role with `--relay-kind standard`,
+`--relay-kind passthrough`, or `--relay-kind host`. A standard relay may also
+advertise `nw.net-host@1` with `--net-host-enabled true`; this is capability
+co-location, not a fourth topology role. `info` advertises the exact enabled
+surface. Legacy federation-era kind strings remain decode-compatible but are
+rejected for new server startup.
 
 ## Build and test
 
@@ -69,7 +71,7 @@ Use `--memory-only` only for disposable development. Normal operation stores
 route lifecycle, ordered packets/cursors, rendezvous frames, encrypted blob
 metadata, and federation records in `relay_store.sqlite`.
 
-Host relays additionally store exact Noctweave Net object bytes under
+Host-capable relays additionally store exact Noctweave Net object bytes under
 `/data/net-host`, a bounded metadata index, and a stable Ed25519 receipt key.
 
 ## Noctweave Net relay roles
@@ -99,7 +101,21 @@ A host relay stores SHA-256-addressed object bytes:
 export NOCTWEAVE_RELAY_PASSWORD="$(openssl rand -hex 32)"
 
 NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
+  --host 127.0.0.1 \
   --relay-kind host \
+  --http-port 9340 \
+  --data-dir /data
+```
+
+The same host service can be co-located on a solo standard relay:
+
+```sh
+export NOCTWEAVE_RELAY_PASSWORD="$(openssl rand -hex 32)"
+
+NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
+  --host 127.0.0.1 \
+  --relay-kind standard \
+  --net-host-enabled true \
   --http-port 9340 \
   --data-dir /data
 ```
@@ -112,10 +128,51 @@ safety, or future availability. `get` and `has` are public by object ID so
 clients can retrieve a hosted site; `put` and `release` require the relay
 password, and private object bytes must already be encrypted by the client.
 
-Passthrough and host roles require `NOCTWEAVE_RELAY_PASSWORD` (or
-`--access-password`) and require federation mode `solo`. Noctweave Net
-publisher heads and locator ordering belong to consensus, not relay
-federation.
+Passthrough and every host-capable relay require
+`NOCTWEAVE_RELAY_PASSWORD` (or `--access-password`) and federation mode
+`solo`. Non-solo hosting policy, Noctweave Net publisher heads, and locator
+ordering belong to consensus, not relay federation.
+
+Those examples bind the browser/HTTP surface to loopback. For a public
+Publisher, terminate HTTPS at a reverse proxy on the same host, keep the plain
+backend listener unreachable from clients, and add both:
+
+```sh
+--advertised-endpoint https://relay.example \
+--trusted-reverse-proxy-tls true
+```
+
+Remote plaintext requests cannot load the Publisher or perform
+capability/auth-token-bearing bridge operations.
+
+### Noctweb Publisher
+
+When hosting is enabled and `--http-port` is set, the bridge serves the
+same-origin Page Publisher at `/noctweb/` only to direct loopback clients or
+through an operator-declared trusted TLS reverse proxy. This secure-context
+boundary is required because browser publisher keys use WebCrypto and write
+requests carry the relay password. The Publisher provides a focused
+Design/Code/Preview workflow, local autosave, sandboxed active-content
+preview, browser-held publication signing identity, and direct
+`nw.net-host@1` upload/release operations. The relay password is entered only
+for a write request and is not embedded in or persisted by the app.
+Every hosted revision keeps its independently encrypted release capability in
+bounded local history, so **Unhost all copies** can release older revisions as
+well as the current one.
+
+Set `--noctweb-relay-suffix .example` (or
+`NOCTWEAVE_NOCTWEB_RELAY_SUFFIX`) to choose the human-facing relay namespace
+suffix. Without it, the server derives an `r-…` suffix from its stable hosting
+receipt public key.
+
+The publisher supports ordinary HTML, CSS, and JavaScript, including
+browser-ready compiled React bundles. The relay never builds or executes a
+site. A visitor retrieves exact hosted bytes, verifies publisher integrity,
+and runs active content only in a sandbox without the relay origin.
+
+The UI reports a revision as **Hosted**, not finalized. Its displayed
+`noct://` address is a provisional namespace binding until Noctweave Net
+consensus provides naming and publisher-head finality.
 
 ## Docker
 

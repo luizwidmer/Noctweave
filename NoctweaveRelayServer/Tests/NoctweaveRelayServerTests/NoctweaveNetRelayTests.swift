@@ -23,6 +23,21 @@ final class NoctweaveNetRelayTests: XCTestCase {
         XCTAssertFalse(standard.supports(module: "nw.net-passthrough", version: 1))
         XCTAssertFalse(standard.supports(module: "nw.net-host", version: 1))
 
+        let standardHost = RelayCapabilityManifestV2.advertised(
+            relayKind: .standard,
+            netHostEnabled: true,
+            attachmentsEnabled: false,
+            hiddenRetrievalEnabled: false,
+            onionEnabled: false,
+            mixnetEnabled: false,
+            opaqueRouteRuntimeEnabled: true,
+            openDiscoveryEnabled: false,
+            rendezvousTransportEnabled: false
+        )
+        XCTAssertTrue(standardHost.supports(module: "nw.opaque-route", version: 2))
+        XCTAssertTrue(standardHost.supports(module: "nw.net-host", version: 1))
+        XCTAssertFalse(standardHost.supports(module: "nw.net-passthrough", version: 1))
+
         let passthrough = RelayCapabilityManifestV2.advertised(
             relayKind: .passthrough,
             attachmentsEnabled: true,
@@ -49,6 +64,44 @@ final class NoctweaveNetRelayTests: XCTestCase {
             rendezvousTransportEnabled: true
         )
         XCTAssertEqual(host.modules.map(\.module), ["nw.core", "nw.net-host"])
+    }
+
+    func testRelayInfoAdvertisesCoLocatedAndDedicatedHostCapability() throws {
+        let standard = RelayConfiguration(
+            kind: .standard,
+            netHostEnabled: true
+        ).makeInfo(now: Date(timeIntervalSince1970: 1_000))
+        XCTAssertTrue(
+            try XCTUnwrap(standard.protocolCapabilities)
+                .supports(module: "nw.net-host", version: 1)
+        )
+
+        let host = RelayConfiguration(kind: .host)
+            .makeInfo(now: Date(timeIntervalSince1970: 1_000))
+        XCTAssertTrue(
+            try XCTUnwrap(host.protocolCapabilities)
+                .supports(module: "nw.net-host", version: 1)
+        )
+    }
+
+    func testServerConfigEnablesHostingForStandardAndDedicatedHostRelays() {
+        let standard = ServerConfig.parse(
+            arguments: [
+                "--relay-kind", "standard",
+                "--net-host-enabled", "true",
+                "--noctweb-relay-suffix", ".atelier"
+            ],
+            environment: [:]
+        )
+        XCTAssertTrue(standard.netHostEnabled)
+        XCTAssertEqual(standard.noctwebRelaySuffix, ".atelier")
+        XCTAssertGreaterThanOrEqual(standard.maxMessageBytes ?? 0, 2 * 1_024 * 1_024)
+
+        let host = ServerConfig.parse(
+            arguments: ["--relay-kind", "host"],
+            environment: [:]
+        )
+        XCTAssertTrue(host.netHostEnabled)
     }
 
     func testHostStorePersistsVerifiesAndCapabilityReleases() throws {
@@ -135,6 +188,10 @@ final class NoctweaveNetRelayTests: XCTestCase {
             try RelayCodec.decodeWire(RelayRequest.self, from: encodedHost),
             host
         )
+        XCTAssertTrue(requestRequiresConfidentialHTTPBridge(host))
+        XCTAssertFalse(requestRequiresConfidentialHTTPBridge(
+            .getNetHostObject(.init(objectID: NoctweaveNetHostPutRequest.objectID(for: payload)))
+        ))
 
         let passthrough = RelayRequest.netPassthrough(
             NoctweaveNetPassthroughRequest(
@@ -155,5 +212,6 @@ final class NoctweaveNetRelayTests: XCTestCase {
             ),
             passthrough
         )
+        XCTAssertTrue(requestRequiresConfidentialHTTPBridge(passthrough))
     }
 }

@@ -165,6 +165,7 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
 
     static func advertised(
         relayKind: RelayKind = .standard,
+        netHostEnabled: Bool = false,
         attachmentsEnabled: Bool,
         hiddenRetrievalEnabled: Bool,
         onionEnabled: Bool,
@@ -208,6 +209,19 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
         modules.append(
             RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .provisional)
         )
+        if netHostEnabled {
+            modules.append(
+                RelayModuleCapabilityV2(
+                    module: "nw.net-host",
+                    versions: [1],
+                    status: .provisional,
+                    limits: [
+                        "maxObjectBytes": UInt64(NoctweaveNetLimits.maximumHostObjectBytes),
+                        "maxRetentionSeconds": UInt64(NoctweaveNetLimits.maximumHostRetentionSeconds)
+                    ]
+                )
+            )
+        }
         if attachmentsEnabled {
             modules.append(RelayModuleCapabilityV2(module: "nw.blobs", versions: [1], status: .provisional))
         }

@@ -571,6 +571,9 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.kind == .passthrough else {
                 return failure("This relay is not a passthrough relay.", code: .unavailable)
             }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure("Noctweave Net passthrough requires confidential transport.")
+            }
             guard passthrough.isStructurallyValid,
                   passthrough.destination.useTLS,
                   passthroughAllowedEndpoints.contains(passthrough.destination),
@@ -594,8 +597,11 @@ final class RelayHandler: ChannelInboundHandler {
                 )
             }
         case .putNetHostObject(let put):
-            guard relayConfiguration.kind == .host, let netHostStore else {
-                return failure("This relay is not a host relay.", code: .unavailable)
+            guard relayConfiguration.isNetHostEnabled, let netHostStore else {
+                return failure("This relay does not provide Noctweave Net hosting.", code: .unavailable)
+            }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure("Noctweave Net hosting writes require confidential transport.")
             }
             do {
                 return success(.netHostReceipt(try netHostStore.put(put)))
@@ -607,8 +613,8 @@ final class RelayHandler: ChannelInboundHandler {
                 return failure("Host object could not be stored.", code: .internalFailure, retryable: true)
             }
         case .getNetHostObject(let get):
-            guard relayConfiguration.kind == .host, let netHostStore else {
-                return failure("This relay is not a host relay.", code: .unavailable)
+            guard relayConfiguration.isNetHostEnabled, let netHostStore else {
+                return failure("This relay does not provide Noctweave Net hosting.", code: .unavailable)
             }
             do {
                 guard let object = try netHostStore.fetch(get) else {
@@ -619,8 +625,8 @@ final class RelayHandler: ChannelInboundHandler {
                 return failure("Host object could not be read.", code: .internalFailure, retryable: true)
             }
         case .hasNetHostObject(let has):
-            guard relayConfiguration.kind == .host, let netHostStore else {
-                return failure("This relay is not a host relay.", code: .unavailable)
+            guard relayConfiguration.isNetHostEnabled, let netHostStore else {
+                return failure("This relay does not provide Noctweave Net hosting.", code: .unavailable)
             }
             do {
                 return success(.netHostPresence(try netHostStore.presence(has)))
@@ -628,8 +634,11 @@ final class RelayHandler: ChannelInboundHandler {
                 return failure("Host object presence could not be read.", code: .internalFailure, retryable: true)
             }
         case .releaseNetHostObject(let release):
-            guard relayConfiguration.kind == .host, let netHostStore else {
-                return failure("This relay is not a host relay.", code: .unavailable)
+            guard relayConfiguration.isNetHostEnabled, let netHostStore else {
+                return failure("This relay does not provide Noctweave Net hosting.", code: .unavailable)
+            }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure("Noctweave Net hosting releases require confidential transport.")
             }
             do {
                 return success(.netHostRelease(try netHostStore.release(release)))
@@ -1318,15 +1327,18 @@ final class RelayHandler: ChannelInboundHandler {
         if binding.module == .core {
             return true
         }
+        if binding.module == .netHost {
+            return relayConfiguration.isNetHostEnabled && netHostStore != nil
+        }
         switch relayConfiguration.kind {
         case .standard:
-            return binding.module != .netPassthrough && binding.module != .netHost
+            return binding.module != .netPassthrough
         case .passthrough:
             return binding.module == .netPassthrough
         case .host:
-            return binding.module == .netHost
+            return false
         case .discovery, .bridge, .privateRelay, .coordinator:
-            return binding.module != .netPassthrough && binding.module != .netHost
+            return binding.module != .netPassthrough
         }
     }
 

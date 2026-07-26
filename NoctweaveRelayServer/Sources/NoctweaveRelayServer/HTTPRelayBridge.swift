@@ -17,7 +17,9 @@ func makeHTTPRelayBridgeBootstrap(
     group: EventLoopGroup,
     forwarder: LocalRelayForwarder,
     store: RelayStore,
-    maxMessageBytes: Int?
+    maxMessageBytes: Int?,
+    publisherSurface: NoctwebPublisherSurface? = nil,
+    relayConfigurationStore: RelayConfigurationStore? = nil
 ) -> ServerBootstrap {
     ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.backlog, value: 256)
@@ -49,7 +51,9 @@ func makeHTTPRelayBridgeBootstrap(
             let httpHandler = HTTPRelayHandler(
                 forwarder: forwarder,
                 store: store,
-                maxMessageBytes: maxMessageBytes
+                maxMessageBytes: maxMessageBytes,
+                publisherSurface: publisherSurface,
+                relayConfigurationStore: relayConfigurationStore
             )
             let upgradeConfig = NIOHTTPServerUpgradeConfiguration(
                 upgraders: [upgrader],
@@ -138,14 +142,24 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
     private let forwarder: LocalRelayForwarder
     private let store: RelayStore
     private let maxMessageBytes: Int
+    private let publisherSurface: NoctwebPublisherSurface?
+    private let relayConfigurationStore: RelayConfigurationStore?
     private var requestHead: HTTPRequestHead?
     private var requestBody = ByteBuffer()
     private var isRejected = false
 
-    init(forwarder: LocalRelayForwarder, store: RelayStore, maxMessageBytes: Int?) {
+    init(
+        forwarder: LocalRelayForwarder,
+        store: RelayStore,
+        maxMessageBytes: Int?,
+        publisherSurface: NoctwebPublisherSurface?,
+        relayConfigurationStore: RelayConfigurationStore?
+    ) {
         self.forwarder = forwarder
         self.store = store
         self.maxMessageBytes = boundedRelayRequestLimit(maxMessageBytes)
+        self.publisherSurface = publisherSurface
+        self.relayConfigurationStore = relayConfigurationStore
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -189,6 +203,37 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
 
     private func handleRequest(head: HTTPRequestHead, context: ChannelHandlerContext) {
         let path = head.uri.split(separator: "?", maxSplits: 1).first.map(String.init) ?? head.uri
+        let confidentialTransport = noctwebPublisherTransportIsPermitted(
+            directSource: context.channel.remoteAddress?.ipAddress ?? "",
+            trustedReverseProxyTLS: relayConfigurationStore?.snapshot().trustedReverseProxyTLS == true
+        )
+        if publisherSurface != nil, path == "/noctweb" || path.hasPrefix("/noctweb/") {
+            guard confidentialTransport else {
+                sendHTTPResponse(
+                    status: .forbidden,
+                    body: Data(#"{"error":"Noctweb Publisher requires loopback or trusted reverse-proxy TLS"}"#.utf8),
+                    context: context
+                )
+                return
+            }
+            guard let publisherResponse = publisherSurface?.response(
+                method: head.method.rawValue,
+                uri: head.uri
+            ) else {
+                sendHTTPResponse(
+                    status: .notFound,
+                    body: Data(#"{"error":"Not found"}"#.utf8),
+                    context: context
+                )
+                return
+            }
+            sendPublisherResponse(
+                publisherResponse,
+                includeBody: head.method != .HEAD,
+                context: context
+            )
+            return
+        }
         guard head.method == .POST, path == "/relay" else {
             sendHTTPResponse(status: .notFound, body: Data(#"{"error":"Not found"}"#.utf8), context: context)
             return
@@ -210,6 +255,19 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
             sendHTTPResponse(
                 status: .badRequest,
                 body: Data(#"{"error":"Malformed relay request"}"#.utf8),
+                context: context
+            )
+            return
+        }
+        if requestRequiresConfidentialHTTPBridge(request), !confidentialTransport {
+            sendHTTPResponse(
+                status: .ok,
+                body: encodedRelayError(
+                    for: request,
+                    message: "Relay capability operations require loopback or trusted reverse-proxy TLS",
+                    code: .invalidRequest,
+                    retryable: false
+                ),
                 context: context
             )
             return
@@ -263,8 +321,61 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
         }
     }
 
+    private func sendPublisherResponse(
+        _ response: NoctwebPublisherResponse,
+        includeBody: Bool,
+        context: ChannelHandlerContext
+    ) {
+        var headers = HTTPHeaders()
+        headers.add(name: "Content-Type", value: response.contentType)
+        headers.add(name: "Content-Length", value: "\(response.body.count)")
+        headers.add(name: "Connection", value: "close")
+        HTTPRelaySecurityHeaders.apply(to: &headers)
+        for (name, value) in response.headers {
+            headers.replaceOrAdd(name: name, value: value)
+        }
+        let responseHead = HTTPResponseHead(
+            version: .http1_1,
+            status: HTTPResponseStatus(statusCode: response.statusCode),
+            headers: headers
+        )
+        context.write(wrapOutboundOut(.head(responseHead)), promise: nil)
+        if includeBody, !response.body.isEmpty {
+            var buffer = context.channel.allocator.buffer(capacity: response.body.count)
+            buffer.writeBytes(response.body)
+            context.write(wrapOutboundOut(.body(.byteBuffer(buffer))), promise: nil)
+        }
+        let responseContext = NIOContextBox(context)
+        context.writeAndFlush(wrapOutboundOut(.end(nil))).whenComplete { _ in
+            responseContext.context.close(promise: nil)
+        }
+    }
+
     func errorCaught(context: ChannelHandlerContext, error: Error) {
         context.close(promise: nil)
+    }
+}
+
+func noctwebPublisherTransportIsPermitted(
+    directSource: String,
+    trustedReverseProxyTLS: Bool
+) -> Bool {
+    trustedReverseProxyTLS || isLoopbackRelaySource(
+        directSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    )
+}
+
+func requestRequiresConfidentialHTTPBridge(_ request: RelayRequest) -> Bool {
+    if request.authToken != nil {
+        return true
+    }
+    switch request.module {
+    case .opaqueRoute, .rendezvousTransport, .netPassthrough:
+        return true
+    case .netHost:
+        return request.method == .put || request.method == .release
+    case .core, .blobs, .federation, .openDiscovery:
+        return false
     }
 }
 

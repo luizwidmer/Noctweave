@@ -1176,6 +1176,9 @@ struct RelayInfo: Codable, Equatable {
 
 struct RelayConfiguration: Codable, Equatable {
     var kind: RelayKind
+    /// A standard relay may opt into the host module without changing its
+    /// primary topology role. Dedicated host relays always enable it.
+    var netHostEnabled: Bool?
     var federation: FederationDescriptor
     /// TLS on the local listener, not TLS terminated by a trusted proxy.
     var tlsEnabled: Bool?
@@ -1216,6 +1219,7 @@ struct RelayConfiguration: Codable, Equatable {
 
     init(
         kind: RelayKind = .standard,
+        netHostEnabled: Bool = false,
         federation: FederationDescriptor = FederationDescriptor(mode: .solo),
         tlsEnabled: Bool? = nil,
         advertisedTLSEnabled: Bool? = nil,
@@ -1254,6 +1258,7 @@ struct RelayConfiguration: Codable, Equatable {
         rendezvousTransportEnabled: Bool = false
     ) {
         self.kind = kind
+        self.netHostEnabled = kind == .host || netHostEnabled
         self.federation = federation
         self.tlsEnabled = tlsEnabled
         self.advertisedTLSEnabled = advertisedTLSEnabled
@@ -1315,6 +1320,10 @@ struct RelayConfiguration: Codable, Equatable {
         opaqueRouteRuntimeEnabled
     }
 
+    var isNetHostEnabled: Bool {
+        kind == .host || netHostEnabled == true
+    }
+
     var isRendezvousTransportEnabled: Bool {
         rendezvousTransportEnabled
     }
@@ -1361,6 +1370,7 @@ struct RelayConfiguration: Codable, Equatable {
             softwareVersion: softwareVersion,
             protocolCapabilities: .advertised(
                 relayKind: kind,
+                netHostEnabled: isNetHostEnabled,
                 attachmentsEnabled: attachmentsEnabled != false,
                 hiddenRetrievalEnabled: advertisedHiddenRetrieval != nil,
                 onionEnabled: advertisedOnionTransport != nil,

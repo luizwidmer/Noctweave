@@ -66,6 +66,22 @@ final class OperatorWebUITests: XCTestCase {
         }
     }
 
+    func testOperatorConfigurationCannotMoveHostCapableRelayOutOfSoloMode() throws {
+        var base = makeBaseConfiguration()
+        base.netHostEnabled = true
+        var editable = OperatorEditableConfiguration(configuration: base)
+        editable.federationMode = FederationMode.manual.rawValue
+
+        XCTAssertThrowsError(try editable.validatedConfiguration(from: base)) { error in
+            XCTAssertEqual(
+                error as? OperatorConfigurationError,
+                .unsupportedTransition(
+                    "Noctweave Net host-capable relays currently require solo federation mode."
+                )
+            )
+        }
+    }
+
     func testOperatorConfigurationAcceptsBoundedOpenFederationProfile() throws {
         let base = makeBaseConfiguration()
         var editable = OperatorEditableConfiguration(configuration: base)

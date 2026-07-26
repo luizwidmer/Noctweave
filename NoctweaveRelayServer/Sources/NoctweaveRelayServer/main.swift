@@ -25,7 +25,9 @@ struct ServerConfig {
       --relay-name <name>              Operator-visible relay name
       --relay-kind <role>              standard, passthrough, or host
       --passthrough-allow-endpoint <https-url> Repeatable passthrough destination
+      --net-host-enabled <bool>        Let a standard relay also host Noctweave Net objects
       --net-host-default-ttl-seconds <n> Default host object retention
+      --noctweb-relay-suffix <label>   Optional public relay namespace suffix
       --federation-mode <mode>         solo, manual, curated, or open
       --advertised-endpoint <endpoint> Public tcp/tls/http/https/ws/wss endpoint
       --trusted-reverse-proxy-tls <bool> Trust TLS terminated before this raw listener
@@ -64,9 +66,11 @@ struct ServerConfig {
     var forwardingRequestTimeoutSeconds: Int
     var relayKind: RelayKind
     var passthroughAllowedEndpoints: [RelayEndpoint]
+    var netHostEnabled: Bool
     var netHostDefaultTTLSeconds: Int
     var netHostMaximumObjects: Int
     var netHostMaximumTotalBytes: UInt64
+    var noctwebRelaySuffix: String?
     var relayTransport: RelayEndpointTransport
     var federationMode: FederationMode
     var federationName: String?
@@ -128,6 +132,10 @@ struct ServerConfig {
         ).split(separator: ",").compactMap {
             parseRelayEndpoint(String($0).trimmingCharacters(in: .whitespacesAndNewlines))
         }
+        var netHostEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_NET_HOST_ENABLED"] ?? "false",
+            defaultValue: false
+        )
         var netHostDefaultTTLSeconds = Int(
             environment["NOCTWEAVE_NET_HOST_DEFAULT_TTL_SECONDS"] ?? ""
         ) ?? 86_400
@@ -137,6 +145,7 @@ struct ServerConfig {
         var netHostMaximumTotalBytes = UInt64(
             environment["NOCTWEAVE_NET_HOST_MAX_TOTAL_BYTES"] ?? ""
         ) ?? 4 * 1_024 * 1_024 * 1_024
+        var noctwebRelaySuffix = environment["NOCTWEAVE_NOCTWEB_RELAY_SUFFIX"]
         var relayTransport: RelayEndpointTransport = .tcp
         var federationMode: FederationMode = .solo
         var federationName: String?
@@ -259,6 +268,10 @@ struct ServerConfig {
                 if let value = iterator.next(), let endpoint = parseRelayEndpoint(value) {
                     passthroughAllowedEndpoints.append(endpoint)
                 }
+            case "--net-host-enabled":
+                if let value = iterator.next() {
+                    netHostEnabled = parseBoolFlag(value, defaultValue: netHostEnabled)
+                }
             case "--net-host-default-ttl-seconds":
                 if let value = iterator.next(), let parsed = Int(value) {
                     netHostDefaultTTLSeconds = parsed
@@ -271,6 +284,8 @@ struct ServerConfig {
                 if let value = iterator.next(), let parsed = UInt64(value) {
                     netHostMaximumTotalBytes = parsed
                 }
+            case "--noctweb-relay-suffix":
+                noctwebRelaySuffix = iterator.next()
             case "--transport":
                 if let value = iterator.next(), let parsed = RelayEndpointTransport(rawValue: value) {
                     relayTransport = parsed
@@ -558,6 +573,14 @@ struct ServerConfig {
             ),
             1_099_511_627_776
         )
+        if relayKind == .host {
+            netHostEnabled = true
+        }
+        let normalizedNoctwebRelaySuffix = noctwebRelaySuffix?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        noctwebRelaySuffix = normalizedNoctwebRelaySuffix?.isEmpty == false
+            ? normalizedNoctwebRelaySuffix
+            : nil
         temporalBucketSeconds = min(max(temporalBucketSeconds, 0), maximumTemporalBucketSeconds)
         temporalBucketScheduleSeconds = Array(
             Set(temporalBucketScheduleSeconds.filter { (1...maximumTemporalBucketSeconds).contains($0) })
@@ -629,10 +652,10 @@ struct ServerConfig {
             )
             : nil
         let roleMinimumMessageBytes: Int
-        switch relayKind {
-        case .host:
+        switch (relayKind, netHostEnabled) {
+        case (.host, _), (_, true):
             roleMinimumMessageBytes = 2 * 1_024 * 1_024
-        case .passthrough:
+        case (.passthrough, _):
             roleMinimumMessageBytes = 1 * 1_024 * 1_024
         default:
             roleMinimumMessageBytes = 1_024
@@ -660,9 +683,11 @@ struct ServerConfig {
             forwardingRequestTimeoutSeconds: forwardingRequestTimeoutSeconds,
             relayKind: relayKind,
             passthroughAllowedEndpoints: passthroughAllowedEndpoints,
+            netHostEnabled: netHostEnabled,
             netHostDefaultTTLSeconds: netHostDefaultTTLSeconds,
             netHostMaximumObjects: netHostMaximumObjects,
             netHostMaximumTotalBytes: netHostMaximumTotalBytes,
+            noctwebRelaySuffix: noctwebRelaySuffix,
             relayTransport: relayTransport,
             federationMode: federationMode,
             federationName: federationName,
@@ -839,6 +864,18 @@ if config.relayKind != .standard, config.federationMode != .solo {
     print("[relay] passthrough and host relays require --federation-mode solo; Noctweave Net coordination belongs to consensus")
     exit(2)
 }
+if config.netHostEnabled, config.federationMode != .solo {
+    print("[relay] Noctweave Net hosting currently requires --federation-mode solo; non-solo hosting policy belongs to consensus")
+    exit(2)
+}
+if config.relayKind == .passthrough, config.netHostEnabled {
+    print("[relay] passthrough relays cannot co-locate the host capability")
+    exit(2)
+}
+if config.noctwebRelaySuffix != nil, !config.netHostEnabled {
+    print("[relay] --noctweb-relay-suffix requires --net-host-enabled true or --relay-kind host")
+    exit(2)
+}
 if config.relayKind == .passthrough {
     guard !config.passthroughAllowedEndpoints.isEmpty,
           config.passthroughAllowedEndpoints.allSatisfy({
@@ -850,10 +887,10 @@ if config.relayKind == .passthrough {
         exit(2)
     }
 }
-if config.relayKind == .passthrough || config.relayKind == .host {
+if config.relayKind == .passthrough || config.netHostEnabled {
     guard let password = config.accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines),
           password.utf8.count >= 12 else {
-        print("[relay] passthrough and host relays require NOCTWEAVE_RELAY_PASSWORD or --access-password")
+        print("[relay] passthrough and host-capable relays require NOCTWEAVE_RELAY_PASSWORD or --access-password")
         exit(2)
     }
 }
@@ -919,7 +956,7 @@ case .ipfs:
     print("[relay] Attachment chunks will be offloaded to IPFS through \(apiEndpoint.absoluteString)")
 }
 let netHostStore: NoctweaveNetHostStore?
-if config.relayKind == .host {
+if config.netHostEnabled {
     let signingPrivateKey: Curve25519.Signing.PrivateKey
     if let dataDir = config.dataDir {
         let keyURL = dataDir.appendingPathComponent(
@@ -968,6 +1005,20 @@ if config.relayKind == .host {
 } else {
     netHostStore = nil
 }
+let noctwebPublisherSurface: NoctwebPublisherSurface?
+if let netHostStore {
+    do {
+        noctwebPublisherSurface = try NoctwebPublisherSurface(
+            hostSigningPublicKey: netHostStore.signingPublicKey,
+            operatorSuffix: config.noctwebRelaySuffix
+        )
+    } catch {
+        print("[relay] Refusing to start because the Noctweb relay namespace suffix is invalid.")
+        exit(2)
+    }
+} else {
+    noctwebPublisherSurface = nil
+}
 let store = RelayStore(
     fileURL: fileURL,
     attachmentBlobStore: attachmentBlobStore,
@@ -989,6 +1040,7 @@ let effectiveAdvertiseTLS: Bool? = advertisedEndpointTLS
 
 var relayConfiguration = RelayConfiguration(
     kind: config.relayKind,
+    netHostEnabled: config.netHostEnabled,
     federation: FederationDescriptor(
         mode: config.federationMode,
         name: config.federationName,
@@ -1149,11 +1201,16 @@ do {
             group: group,
             forwarder: forwarder,
             store: store,
-            maxMessageBytes: config.maxMessageBytes
+            maxMessageBytes: config.maxMessageBytes,
+            publisherSurface: noctwebPublisherSurface,
+            relayConfigurationStore: relayConfigurationStore
         )
         let httpChannel = try bridgeBootstrap.bind(host: config.host, port: httpPort).wait()
         let httpAddress = httpChannel.localAddress?.description ?? "unknown"
         print("[relay] Listening (http/ws) on \(httpAddress) path=/relay")
+        if noctwebPublisherSurface != nil {
+            print("[relay] Noctweb Publisher available on \(httpAddress) path=/noctweb/ for direct loopback or trusted reverse-proxy TLS")
+        }
         closeFutures.append(httpChannel.closeFuture)
     }
 
