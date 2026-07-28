@@ -144,12 +144,37 @@ final class NoctwebPublisherWebUITests: XCTestCase {
         XCTAssertTrue(html.contains(#"sandbox="allow-scripts""#))
         XCTAssertTrue(html.contains("Hosted is not finalized"))
         XCTAssertTrue(html.contains("compiled React compatible"))
+        XCTAssertFalse(html.contains(#"name="color-scheme" content="dark""#))
+        XCTAssertTrue(html.contains(#"id="appearanceSelect"#))
+        XCTAssertTrue(html.contains(#"value="system"#))
+        XCTAssertTrue(html.contains(#"value="light"#))
+        XCTAssertTrue(html.contains(#"value="dark"#))
+        let stylesheet = try XCTUnwrap(surface.response(method: "GET", uri: "/noctweb/assets/app.css"))
+        let css = try XCTUnwrap(String(data: stylesheet.body, encoding: .utf8))
+        XCTAssertTrue(css.contains("--shell-accent: #c96a61"))
+        XCTAssertTrue(css.contains("--shell-accent-strong: #922d35"))
+        XCTAssertTrue(css.contains("brand-mark { background: linear-gradient(145deg, #c96a61, #922d35)"))
         XCTAssertFalse(script.contains("allow-same-origin"))
-        XCTAssertFalse(script.contains("localStorage"))
+        XCTAssertTrue(script.contains("noctweave.publisher.appearance"))
+        XCTAssertTrue(script.contains("localStorage"))
         XCTAssertFalse(script.contains("sessionStorage"))
         XCTAssertFalse(script.contains("cdn."))
         XCTAssertFalse(script.contains("Finalized"))
         XCTAssertFalse(script.contains("authToken: password"))
+    }
+
+    func testPublisherShellThemeDoesNotOwnGeneratedWebsiteAccentOrContent() throws {
+        let surface = try NoctwebPublisherSurface(
+            hostSigningPublicKey: key,
+            operatorSuffix: nil
+        )
+        let response = try XCTUnwrap(surface.response(method: "GET", uri: "/noctweb/assets/app.js"))
+        let script = try XCTUnwrap(String(data: response.body, encoding: .utf8))
+        XCTAssertTrue(script.contains("${project.accent}"))
+        XCTAssertTrue(script.contains("${title}"))
+        XCTAssertTrue(script.contains("${body}"))
+        XCTAssertTrue(script.contains("background: ${project.accent}"))
+        XCTAssertFalse(script.contains("var(--shell-accent)"))
     }
 
     func testPublisherRequiresLoopbackOrExplicitTrustedProxyTLS() {

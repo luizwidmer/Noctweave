@@ -37,6 +37,20 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.css.contains("flex:1 1 0;min-width:0"))
     }
 
+    func testOperatorShellProvidesPersistedAppearanceAndSemanticThemeTokens() {
+        XCTAssertFalse(OperatorWebUI.html.contains(#"name="color-scheme" content="dark""#))
+        XCTAssertTrue(OperatorWebUI.html.contains(#"id="appearanceSelect"#))
+        XCTAssertTrue(OperatorWebUI.html.contains(#"value="system"#))
+        XCTAssertTrue(OperatorWebUI.html.contains(#"value="light"#))
+        XCTAssertTrue(OperatorWebUI.html.contains(#"value="dark"#))
+        XCTAssertTrue(OperatorWebUI.css.contains("--shell-surface-raised:#f6eee8"))
+        XCTAssertTrue(OperatorWebUI.css.contains(#":root[data-theme="dark"]"#))
+        XCTAssertTrue(OperatorWebUI.css.contains("prefers-color-scheme:dark"))
+        XCTAssertTrue(OperatorWebUI.css.contains("safe-area-inset-bottom"))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("noctweave.operator.appearance"))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("localStorage"))
+    }
+
     func testOperatorTokenAuthenticatorRequiresSingleBearerToken() {
         let authenticator = OperatorTokenAuthenticator(expectedToken: "correct-operator-token")
         var valid = HTTPHeaders()

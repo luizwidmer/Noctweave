@@ -346,6 +346,7 @@ Technical detail lives in focused documents:
 - [Relay hardening](NoctweaveDocumentation/relay_ops_hardening_guide.md)
 - [Whitepaper](NoctweaveDocumentation/noctweave_whitepaper.md)
 - [Visual identity](NoctweaveDocumentation/visual_identity.md)
+- [Application design system](NoctweaveDocumentation/visual_design_system.md)
 
 ## Contributing
 

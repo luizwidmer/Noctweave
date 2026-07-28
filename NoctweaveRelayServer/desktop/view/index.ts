@@ -24,9 +24,23 @@ const stopButton = $("#stopRelay") as HTMLButtonElement;
 const consoleButton = $("#openConsole") as HTMLButtonElement;
 const tokenButton = $("#copyToken") as HTMLButtonElement;
 const logsButton = $("#refreshLogs") as HTMLButtonElement;
+const appearanceSelect = $("#appearanceSelect") as HTMLSelectElement;
+const appearanceKey = "noctweave.desktop.appearance";
 let currentStatus: RelayLauncherStatus | undefined;
 let busy = false;
 let activityMessage: { text: string; isError: boolean } | undefined;
+
+function applyAppearance(value: string): void {
+  const theme = ["system", "light", "dark"].includes(value) ? value : "system";
+  document.documentElement.dataset.theme = theme;
+  appearanceSelect.value = theme;
+  try { localStorage.setItem(appearanceKey, theme); } catch {}
+}
+
+let savedAppearance = "system";
+try { savedAppearance = localStorage.getItem(appearanceKey) ?? savedAppearance; } catch {}
+applyAppearance(savedAppearance);
+appearanceSelect.addEventListener("change", () => applyAppearance(appearanceSelect.value));
 
 function settingsFromForm(): RelayLauncherSettings {
   const data = new FormData(form);

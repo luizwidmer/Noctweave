@@ -244,7 +244,6 @@ struct NoctwebPublisherSurface {
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <meta name="color-scheme" content="dark">
       <title>Noctweb Publisher</title>
       <link rel="stylesheet" href="/noctweb/assets/app.css">
       <script src="/noctweb/assets/app.js" defer></script>
@@ -261,6 +260,7 @@ struct NoctwebPublisherSurface {
             <span id="relayLabel">Connecting to relay…</span>
           </div>
           <div class="topbar-actions">
+            <label class="appearance-control" for="appearanceSelect"><span>Appearance</span><select id="appearanceSelect" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
             <button class="button ghost" id="resetButton" type="button">Reset draft</button>
             <button class="button primary" id="hostButton" type="button">Host revision</button>
           </div>
@@ -396,7 +396,7 @@ struct NoctwebPublisherSurface {
 
     private static let css = #"""
     :root {
-      color-scheme: dark;
+      color-scheme: light dark;
       --bg: #090b10;
       --surface: #11141c;
       --surface-2: #171b25;
@@ -665,6 +665,23 @@ struct NoctwebPublisherSurface {
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
     }
+    :root { color-scheme: light; --shell-bg: #fffaf5; --shell-surface: #fffdf9; --shell-surface-raised: #f6eee8; --shell-border: #e6d8d0; --shell-text: #321a23; --shell-muted: #765f67; --shell-accent: #c96a61; --shell-accent-strong: #922d35; --shell-focus: #922d35; --bg: var(--shell-bg); --surface: var(--shell-surface); --surface-2: var(--shell-surface-raised); --line: var(--shell-border); --text: var(--shell-text); --muted: var(--shell-muted); --accent: var(--shell-accent); --accent-strong: var(--shell-accent-strong); }
+    :root[data-theme="dark"] { color-scheme: dark; --shell-bg: #1b1217; --shell-surface: #2a1b21; --shell-surface-raised: #38252b; --shell-border: #5a3c43; --shell-text: #faf3ea; --shell-muted: #c8adb0; --shell-accent: #c96a61; --shell-accent-strong: #ebc7af; --shell-focus: #ebc7af; --bg: var(--shell-bg); --surface: var(--shell-surface); --surface-2: var(--shell-surface-raised); --line: var(--shell-border); --text: var(--shell-text); --muted: var(--shell-muted); --accent: var(--shell-accent); --accent-strong: var(--shell-accent-strong); }
+    :root[data-theme="system"] { color-scheme: light dark; }
+    @media (prefers-color-scheme: dark) { :root[data-theme="system"] { --shell-bg: #1b1217; --shell-surface: #2a1b21; --shell-surface-raised: #38252b; --shell-border: #5a3c43; --shell-text: #faf3ea; --shell-muted: #c8adb0; --shell-accent: #c96a61; --shell-accent-strong: #ebc7af; --shell-focus: #ebc7af; --bg: var(--shell-bg); --surface: var(--shell-surface); --surface-2: var(--shell-surface-raised); --line: var(--shell-border); --text: var(--shell-text); --muted: var(--shell-muted); --accent: var(--shell-accent); --accent-strong: var(--shell-accent-strong); } }
+    body { background: var(--shell-bg); padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+    .topbar { border-bottom-color: var(--shell-border); background: color-mix(in srgb, var(--shell-surface) 90%, transparent); }
+    .form-card, .workspace, .publication-card, dialog { background: color-mix(in srgb, var(--shell-surface) 94%, transparent); }
+    input, textarea, select { background: var(--shell-surface-raised); color: var(--shell-text); }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 2px solid var(--shell-focus); outline-offset: 2px; }
+    .appearance-control { display: inline-flex; align-items: center; gap: 7px; margin: 0; color: var(--shell-muted); font-size: 11px; font-weight: 650; white-space: nowrap; }
+    .appearance-control span { display: none; }
+    .appearance-control select { width: auto; min-height: 38px; padding: 0 28px 0 10px; border-radius: 9px; }
+    .brand-mark { background: linear-gradient(145deg, #c96a61, #922d35); box-shadow: 0 8px 24px rgba(146,45,53,.28); }
+    .button.primary { background: var(--shell-accent); box-shadow: 0 9px 24px rgba(146,45,53,.22); }
+    .button.primary:hover { background: var(--shell-accent-strong); }
+    .button.ghost { color: var(--shell-muted); }
+    @media (max-width: 560px) { .appearance-control span { display: inline; } .topbar { padding-top: calc(9px + env(safe-area-inset-top)); } .product { padding-bottom: calc(60px + env(safe-area-inset-bottom)); } }
     """#
 
     private static let javascript = #"""
@@ -688,7 +705,7 @@ struct NoctwebPublisherSurface {
         "refreshPreviewButton", "resetButton", "hostButton", "hostedHeading",
         "hostedDetail", "copyLinkButton", "unhostButton", "hostDialog", "hostForm",
         "dialogTitle", "dialogDescription", "passwordInput", "retentionField",
-        "retentionInput", "dialogError", "dialogSubmit", "toast"
+        "retentionInput", "dialogError", "dialogSubmit", "toast", "appearanceSelect"
       ].map((id) => [id, document.getElementById(id)]));
 
       let config;
@@ -703,6 +720,20 @@ struct NoctwebPublisherSurface {
       let previewURLs = [];
       let saveTimer;
       let toastTimer;
+      const appearanceKey = "noctweave.publisher.appearance";
+
+      function applyShellTheme(value) {
+        const theme = ["system", "light", "dark"].includes(value) ? value : "system";
+        document.documentElement.dataset.theme = theme;
+        elements.appearanceSelect.value = theme;
+        try { localStorage.setItem(appearanceKey, theme); } catch {}
+      }
+
+      function restoreShellTheme() {
+        let value = "system";
+        try { value = localStorage.getItem(appearanceKey) || value; } catch {}
+        applyShellTheme(value);
+      }
 
       const defaultProject = () => ({
         publicationID: crypto.randomUUID().toUpperCase(),
@@ -722,6 +753,7 @@ struct NoctwebPublisherSurface {
       });
 
       async function start() {
+        restoreShellTheme();
         try {
           config = await fetchConfig();
           database = await openDatabase();
@@ -768,7 +800,7 @@ struct NoctwebPublisherSurface {
             <h1>Hosted copy unavailable.</h1>
             <p>This relay no longer carries the requested object. The publisher workspace remains available.</p>
           </main>`,
-          css: `:root { color-scheme: dark; font-family: system-ui, sans-serif; }
+          css: `:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
             body { margin: 0; min-height: 100vh; display: grid; place-items: center;
               background: #08080d; color: #f5f4ff; }
             .unavailable { width: min(34rem, calc(100% - 3rem)); }
@@ -800,6 +832,7 @@ struct NoctwebPublisherSurface {
       }
 
       function bindEvents() {
+        elements.appearanceSelect.addEventListener("change", () => applyShellTheme(elements.appearanceSelect.value));
         document.querySelectorAll("[data-tab]").forEach((button) => {
           button.addEventListener("click", () => selectPanel(button.dataset.tab));
         });

@@ -49,6 +49,9 @@ Product status colors are functional and sit outside the identity palette.
 Success, warning, and destructive states must remain distinguishable from the
 coral brand accent.
 
+Application surfaces, light/dark recipes, controls, and accessibility rules are
+defined in the [Noctweave visual design system](visual_design_system.md).
+
 ## Typography
 
 Use Inter or Geist for interfaces and documentation. Use the outlined SVG
