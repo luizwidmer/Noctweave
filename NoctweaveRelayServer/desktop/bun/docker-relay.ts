@@ -22,6 +22,19 @@ export type CommandRunner = (
 
 export type HealthProbe = (url: string) => Promise<boolean>;
 
+export function matchesHealthResponse(
+  requestID: string,
+  payload: Record<string, unknown>
+): boolean {
+  return typeof payload.requestID === "string"
+    && payload.requestID.toLowerCase() === requestID.toLowerCase()
+    && payload.module === "nw.core"
+    && payload.version === 2
+    && payload.method === "health"
+    && payload.status === "success"
+    && payload.error === null;
+}
+
 export const defaultSettings: RelayLauncherSettings = {
   relayName: "My Noctweave Relay",
   exposure: "local",
@@ -237,12 +250,7 @@ async function probeHealth(url: string): Promise<boolean> {
     });
     if (!response.ok) return false;
     const payload = await response.json() as Record<string, unknown>;
-    return payload.requestID === requestID
-      && payload.module === "nw.core"
-      && payload.version === 2
-      && payload.method === "health"
-      && payload.status === "success"
-      && payload.error === null;
+    return matchesHealthResponse(requestID, payload);
   } catch {
     return false;
   }

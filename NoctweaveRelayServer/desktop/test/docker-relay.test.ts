@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   DockerRelayManager,
   dockerRunArguments,
+  matchesHealthResponse,
   relayContainer,
   relayImage,
   validateSettings,
@@ -21,6 +22,19 @@ const settings = {
 };
 
 describe("relay launcher validation", () => {
+  test("accepts Swift's uppercase UUID echo in a valid health response", () => {
+    const requestID = "1527eec7-d0bb-4e2a-a9f9-ddbb5dc6aa65";
+    expect(matchesHealthResponse(requestID, {
+      requestID: requestID.toUpperCase(),
+      module: "nw.core",
+      version: 2,
+      method: "health",
+      status: "success",
+      error: null,
+      body: {}
+    })).toBe(true);
+  });
+
   test("builds a fixed local-only Docker command", () => {
     const args = dockerRunArguments(settings, token);
     expect(args).toContain("127.0.0.1:9339:9339");
