@@ -37,6 +37,7 @@
       <article><span>Docker</span><strong id="dockerState">—</strong></article>
       <article><span>Local image</span><strong id="imageState">—</strong></article>
       <article><span>Client endpoint</span><strong id="relayEndpoint">—</strong></article>
+      <article><span>Noctweb</span><strong id="noctwebState">—</strong></article>
     </section>
 
     <section id="setup" class="panel">
@@ -47,15 +48,17 @@
         <label>Raw TCP port<input name="tcpPort" type="number" min="1024" max="65535" required></label>
         <label>HTTP / WebSocket port<input name="httpPort" type="number" min="1024" max="65535" required></label>
         <label>Operator port<input name="adminPort" type="number" min="1024" max="65535" required></label>
+        <label class="check wide"><input name="noctwebHostingEnabled" type="checkbox"> Enable Noctweb hosting and Publisher / Lab</label>
         <label class="check"><input name="rendezvousTransportEnabled" type="checkbox"> Enable rendezvous transport</label>
         <label class="check"><input name="trustedReverseProxyTLS" type="checkbox"> Trust reverse-proxy TLS (does not enable local TLS)</label>
       </form>
+      <div class="warning"><strong>Noctweb hosting is explicit.</strong><span>A solo standard relay can advertise <code>nw.net-host@1</code> and serve its built-in Publisher / Lab at <code>/noctweb/</code>. The generated publisher password is separate from the operator token.</span></div>
       <div class="warning"><strong>Docker access is powerful.</strong><span>This app can create and stop only its named relay container. Build from source you have reviewed, and do not expose the operator port publicly.</span></div>
     </section>
 
     <section id="operator" class="panel split">
       <div><span class="eyebrow">CONTROL PLANE</span><h2>Operator console</h2><p>The complete relay configuration remains in the authenticated WebUI served by the relay. Its port is always bound to loopback.</p></div>
-      <div class="stack"><button id="openConsole" class="primary">Open local console</button><button id="copyToken">Copy operator token</button></div>
+      <div class="stack"><button id="openConsole" class="primary">Open local console</button><button id="copyToken">Copy operator token</button><button id="openPublisher">Open Publisher / Lab</button><button id="copyPublisherPassword">Copy publisher password</button></div>
     </section>
 
     <section id="logs" class="panel">

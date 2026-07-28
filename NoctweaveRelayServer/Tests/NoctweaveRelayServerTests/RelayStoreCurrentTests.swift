@@ -275,6 +275,17 @@ final class RelayStoreCurrentTests: XCTestCase {
         XCTAssertThrowsError(try store.load())
     }
 
+    func testEmptyPersistentStoreSurvivesImmediateRestart() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("relay.sqlite")
+
+        try RelayStore(fileURL: url).load()
+        XCTAssertNoThrow(try RelayStore(fileURL: url).load())
+    }
+
     func testPersistedSnapshotGraphRejectsUnknownAndMissingFields() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -194,5 +194,10 @@ final class NoctwebPublisherWebUITests: XCTestCase {
             directSource: "203.0.113.10",
             trustedReverseProxyTLS: true
         ))
+        XCTAssertTrue(noctwebPublisherTransportIsPermitted(
+            directSource: "172.17.0.1",
+            trustedReverseProxyTLS: false,
+            trustedLocalContainerBridge: true
+        ))
     }
 }

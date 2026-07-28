@@ -56,6 +56,8 @@ private struct CommandRunner {
             try await listGroups(options)
         case "group-status":
             try await groupStatus(options)
+        case "group-events":
+            try await groupEvents(options)
         case "prepare-participant":
             try await prepareParticipant(options)
         case "pairing-invitation":
@@ -90,6 +92,8 @@ private struct CommandRunner {
             try await listPendingGroupAdmissions(options)
         case "group-add-member":
             try await addGroupMember(options)
+        case "group-link-add-member":
+            try await addGroupMemberFromLink(options)
         case "group-join-accept":
             try await acceptGroupJoin(options)
         case "group-delete":
@@ -156,6 +160,8 @@ private struct CommandRunner {
             return ["--relationship", "--download", "--out", "--state", "--plaintext"]
         case "group-status":
             return ["--group", "--state", "--plaintext"]
+        case "group-events":
+            return ["--group", "--state", "--plaintext"]
         case "prepare-participant":
             return [
                 "--relay", "--out", "--relationship-pseudonym", "--state", "--plaintext",
@@ -205,6 +211,8 @@ private struct CommandRunner {
                 "--group", "--invitation-file", "--response-file", "--join-out", "--role",
                 "--state", "--plaintext",
             ]
+        case "group-link-add-member":
+            return ["--request-file", "--response-out", "--state", "--plaintext"]
         case "group-join-accept":
             return ["--admission", "--join-file", "--state", "--plaintext"]
         case "group-delete":
@@ -629,6 +637,28 @@ private struct CommandRunner {
         try writeJSON(GroupStatusOutput(group))
     }
 
+    private func groupEvents(_ options: ParsedOptions) async throws {
+        try options.requireOnly(["--group", "--state", "--plaintext"])
+        let groupID = try uuidOption(options, "--group")
+        let persona = await (try headlessClient(options)).activePersona()
+        guard let group = persona.groupRuntimes.first(where: { $0.groupId == groupID }) else {
+            throw CLIError("Group is not present in this local state.")
+        }
+        try writeJSON(group.events
+            .sorted {
+                if $0.createdAt == $1.createdAt {
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+                return $0.createdAt < $1.createdAt
+            }
+            .map {
+                GroupEventDetailOutput(
+                    $0,
+                    localCredentialHandle: group.localCredential.credentialHandle
+                )
+            })
+    }
+
     private func createGroup(_ options: ParsedOptions) async throws {
         try options.requireOnly(["--group", "--relay", "--state", "--plaintext"])
         // The caller supplies the logical ID so a retry after an interrupted
@@ -1010,6 +1040,49 @@ private struct CommandRunner {
             transport?.complete ?? prepared.complete,
             disposition: transport?.disposition
                 ?? (prepared.complete ? .complete : .pendingRetry),
+            operation: "group member-addition publication"
+        )
+    }
+
+    /// Accepts the same bounded one-use admission link used by the native
+    /// clients. This keeps browser-companion interoperability on the public
+    /// Core wire surface instead of duplicating group cryptography in Node.
+    private func addGroupMemberFromLink(_ options: ParsedOptions) async throws {
+        try options.requireOnly([
+            "--request-file", "--response-out", "--state", "--plaintext",
+        ])
+        let requestPath = try required(options, "--request-file")
+        let responsePath = try required(options, "--response-out")
+        try validateSensitiveOutputPath(
+            responsePath,
+            options: options,
+            distinctFrom: [requestPath]
+        )
+        let request = try NoctweaveGroupAdmissionRequestLinkV1.decode(
+            try readSensitiveText(from: requestPath)
+        )
+        let client = try await headlessClient(options)
+        let prepared = try await client.prepareGroupMemberAddition(
+            groupID: request.groupID,
+            admission: request.admission,
+            initialRouteSet: request.initialRouteSet,
+            idempotencyKey: try request.requestDigest
+        )
+        let response = try NoctweaveGroupAdmissionResponseLinkV1(
+            request: request,
+            prepared: prepared
+        )
+        try writeSensitiveText(try response.encoded(), to: responsePath)
+        let maintenance = try await client.maintainGroup(groupID: request.groupID)
+        try writeJSON(GroupLinkMemberAdditionOutput(
+            groupID: request.groupID,
+            admissionID: request.admissionID,
+            responseFile: responsePath,
+            maintenanceComplete: !maintenance.requiresFollowUp
+        ))
+        try requireCompleteGroupEffect(
+            !maintenance.requiresFollowUp,
+            disposition: maintenanceDisposition(maintenance),
             operation: "group member-addition publication"
         )
     }
@@ -2224,6 +2297,13 @@ private struct GroupMemberAdditionOutput: Codable {
     let transferRequirement: GroupArtifactTransferRequirement
 }
 
+private struct GroupLinkMemberAdditionOutput: Codable {
+    let groupID: UUID
+    let admissionID: UUID
+    let responseFile: String
+    let maintenanceComplete: Bool
+}
+
 private struct GroupJoinAcceptanceOutput: Codable {
     let groupID: UUID
     /// Present only when this invocation authenticated a saved admission.
@@ -2262,6 +2342,9 @@ private struct GroupStatusOutput: Codable {
     let incompleteTransportCount: Int
     let activeReceiveRouteCount: Int
     let receiveRoutePending: Bool
+    let localRouteAnnouncementPresent: Bool
+    let localAdvertisedRouteCount: Int
+    let localUsableAdvertisedRouteCount: Int
     let peerRouteCount: Int
     let transportQuarantineCount: Int
     let epochForkQuarantineCount: Int
@@ -2287,6 +2370,13 @@ private struct GroupStatusOutput: Codable {
             $0.advertisedState == .active || $0.advertisedState == .draining
         }.count
         receiveRoutePending = group.inboundTransport.pendingRoute != nil
+        localRouteAnnouncementPresent =
+            group.inboundTransport.advertisedRouteAnnouncement != nil
+        localAdvertisedRouteCount =
+            group.inboundTransport.advertisedRouteAnnouncement?.routeSet.routes.count ?? 0
+        localUsableAdvertisedRouteCount =
+            group.inboundTransport.advertisedRouteAnnouncement?
+                .routeSet.usableRoutes(at: Date()).count ?? 0
         peerRouteCount = group.peerRouteCache.entries.count
         transportQuarantineCount = group.inboundTransport.quarantines.count
         epochForkQuarantineCount = group.quarantinedForks.count
@@ -2959,6 +3049,35 @@ private struct GroupEventStatusOutput: Codable {
         kind = event.kind
         contentType = event.content.type
         createdAt = event.createdAt
+    }
+}
+
+private struct GroupEventDetailOutput: Codable {
+    let id: UUID
+    let clientTransactionID: UUID
+    let kind: GroupConversationEventKindV2
+    let contentType: ContentTypeId
+    let createdAt: Date
+    let authorCredentialHandle: GroupScopedCredentialHandleV2
+    let outgoing: Bool
+    let text: String?
+    let fallbackText: String?
+
+    init(
+        _ event: GroupConversationEventV2,
+        localCredentialHandle: GroupScopedCredentialHandleV2
+    ) {
+        id = event.id
+        clientTransactionID = event.clientTransactionID
+        kind = event.kind
+        contentType = event.content.type
+        createdAt = event.createdAt
+        authorCredentialHandle = event.authorCredentialHandle
+        outgoing = event.authorCredentialHandle == localCredentialHandle
+        text = event.content.type == .text
+            ? String(data: event.content.payload, encoding: .utf8)
+            : nil
+        fallbackText = event.content.fallbackText
     }
 }
 

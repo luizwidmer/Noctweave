@@ -41,6 +41,7 @@ export const defaultSettings: RelayLauncherSettings = {
   tcpPort: 9339,
   httpPort: 9340,
   adminPort: 9090,
+  noctwebHostingEnabled: true,
   rendezvousTransportEnabled: true,
   trustedReverseProxyTLS: false
 };
@@ -60,26 +61,35 @@ export function validateSettings(input: RelayLauncherSettings): RelayLauncherSet
   if (new Set(ports).size !== ports.length) {
     throw new Error("TCP, HTTP/WebSocket, and operator ports must be different.");
   }
-  if (typeof input.rendezvousTransportEnabled !== "boolean"
+  const noctwebHostingEnabled = input.noctwebHostingEnabled ?? true;
+  if (typeof noctwebHostingEnabled !== "boolean"
+      || typeof input.rendezvousTransportEnabled !== "boolean"
       || typeof input.trustedReverseProxyTLS !== "boolean") {
-    throw new Error("Relay transport confidentiality settings must be explicit booleans.");
+    throw new Error("Relay feature and transport settings must be explicit booleans.");
   }
-  return { ...input, relayName };
+  return { ...input, relayName, noctwebHostingEnabled };
 }
 
 export function dockerRunArguments(
   settingsInput: RelayLauncherSettings,
   adminToken: string,
+  publisherPassword: string,
   imageReference = relayImage
 ): string[] {
   const settings = validateSettings(settingsInput);
   if (!/^[a-f0-9]{64}$/u.test(adminToken)) {
     throw new Error("The generated operator token is invalid.");
   }
+  if (!/^[a-f0-9]{64}$/u.test(publisherPassword)) {
+    throw new Error("The generated Noctweb publisher password is invalid.");
+  }
   if (imageReference !== relayImage && !/^[a-f0-9]{12,64}$/u.test(imageReference)) {
     throw new Error("The local relay image reference is invalid.");
   }
   const relayHost = settings.exposure === "network" ? "0.0.0.0" : "127.0.0.1";
+  const hostingEnvironment = settings.noctwebHostingEnabled
+    ? ["-e", `NOCTWEAVE_PUBLISHER_PASSWORD=${publisherPassword}`]
+    : [];
   return [
     "run", "-d",
     "--name", relayContainer,
@@ -89,6 +99,7 @@ export function dockerRunArguments(
     "-p", `127.0.0.1:${settings.adminPort}:9090`,
     "-e", `NOCTWEAVE_ADMIN_TOKEN=${adminToken}`,
     "-e", "NOCTWEAVE_ADMIN_HOST=0.0.0.0",
+    ...hostingEnvironment,
     "-v", `${relayVolume}:/data`,
     imageReference,
     "--host", "0.0.0.0",
@@ -96,8 +107,11 @@ export function dockerRunArguments(
     "--http-port", "9340",
     "--admin-port", "9090",
     "--data-dir", "/data",
+    "--relay-kind", "standard",
+    "--net-host-enabled", String(settings.noctwebHostingEnabled),
     "--rendezvous-transport", String(settings.rendezvousTransportEnabled),
     "--trusted-reverse-proxy-tls", String(settings.trustedReverseProxyTLS),
+    "--trusted-local-container-bridge", String(settings.exposure === "local"),
     "--relay-name", settings.relayName
   ];
 }
@@ -106,6 +120,7 @@ export class DockerRelayManager {
   constructor(
     private readonly sourceDirectory: string,
     private readonly adminToken: string,
+    private readonly publisherPassword: string,
     private readonly runner: CommandRunner = runCommand,
     private readonly healthProbe: HealthProbe = probeHealth
   ) {}
@@ -130,7 +145,7 @@ export class DockerRelayManager {
     }
     const result = await this.runner([
       "docker",
-      ...dockerRunArguments(settings, this.adminToken, imageReference)
+      ...dockerRunArguments(settings, this.adminToken, this.publisherPassword, imageReference)
     ]);
     ensureSuccess(result, "Docker could not start the relay");
     for (let attempt = 0; attempt < 20; attempt++) {
@@ -221,6 +236,9 @@ function makeStatus(
     settings,
     relayEndpoint: `http://${clientHost}:${settings.httpPort}`,
     adminURL: `http://127.0.0.1:${settings.adminPort}/admin/`,
+    publisherURL: settings.noctwebHostingEnabled
+      ? `http://127.0.0.1:${settings.httpPort}/noctweb/`
+      : null,
     detail
   };
 }

@@ -20,7 +20,11 @@ test("relay desktop packages source and keeps Docker and admin boundaries explic
   expect(wrapper).toMatch(/"Sources", "Tests"/);
   expect(wrapper).toMatch(/relay-icon\.icns/);
   expect(backend).toMatch(/clipboardWriteText/);
+  expect(backend).toContain("publisherPassword");
   expect(html).toContain("Build from source");
+  expect(html).toContain("Enable Noctweb hosting and Publisher / Lab");
+  expect(html).toContain("Open Publisher / Lab");
+  expect(html).toContain("Copy publisher password");
   expect(html).toContain("Docker access is powerful");
   expect(html).toContain("operator port publicly");
   expect(html).not.toContain('name="color-scheme" content="dark"');
@@ -35,5 +39,7 @@ test("relay desktop packages source and keeps Docker and admin boundaries explic
   expect(styles).toContain("prefers-color-scheme: dark");
   expect(styles).toContain("safe-area-inset-bottom");
   expect(view).toContain("noctweave.desktop.appearance");
+  expect(view).toContain("noctwebHostingEnabled");
+  expect(view).toContain("openPublisher");
   expect(view).toContain("localStorage");
 });

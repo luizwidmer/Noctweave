@@ -367,7 +367,7 @@ struct NoctwebPublisherSurface {
             <button class="icon-button" value="cancel" aria-label="Close" type="submit">×</button>
           </div>
           <p id="dialogDescription" class="muted">The publisher key stays in this browser. The password authorizes only this relay write and is not saved.</p>
-          <label>Relay access password
+          <label>Publisher password
             <input id="passwordInput" type="password" minlength="12" maxlength="4096" autocomplete="off" required>
           </label>
           <label id="retentionField">Retention

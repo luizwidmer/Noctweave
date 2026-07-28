@@ -81,7 +81,7 @@ public struct ContactPairingInvitationV2: Codable, Equatable {
         guard try isStructurallyValidThrowing else {
             throw ContactPairingV2Error.invalidInvitation
         }
-        let value = try NoctweaveCoder.encode(self).base64EncodedString()
+        let value = try NoctweaveCoder.encode(self, sortedKeys: true).base64EncodedString()
         guard value.count <= Self.maximumEncodedCharacters else {
             throw ContactPairingV2Error.invalidInvitation
         }
@@ -489,7 +489,7 @@ public struct ContactPairingResponderFlowV2 {
             expiresAt: pairingIntroductionExpiry(invitation: invitation, at: date)
         )
         let acceptance = try session.seal(
-            NoctweaveCoder.encode(localBundle.introduction),
+            NoctweaveCoder.encode(localBundle.introduction, sortedKeys: true),
             kind: .contactAcceptance,
             at: date
         )
@@ -531,7 +531,7 @@ public struct ContactPairingResponderFlowV2 {
         peerIntroduction = peer
         expectedConfirmation = confirmation
         return try session.seal(
-            NoctweaveCoder.encode(confirmation),
+            NoctweaveCoder.encode(confirmation, sortedKeys: true),
             kind: .confirmation,
             at: date
         )
@@ -624,7 +624,7 @@ public struct ContactPairingOffererFlowV2 {
             expiresAt: pairingIntroductionExpiry(invitation: invitation, at: date)
         )
         let offerFrame = try session.seal(
-            NoctweaveCoder.encode(localBundle.introduction),
+            NoctweaveCoder.encode(localBundle.introduction, sortedKeys: true),
             kind: .contactOffer,
             at: date
         )
@@ -667,7 +667,7 @@ public struct ContactPairingOffererFlowV2 {
             throw ContactPairingV2Error.invalidConfirmation
         }
         let confirmationFrame = try session.seal(
-            NoctweaveCoder.encode(expectedConfirmation),
+            NoctweaveCoder.encode(expectedConfirmation, sortedKeys: true),
             kind: .confirmation,
             at: date
         )
@@ -696,10 +696,14 @@ public enum ContactPairingHandshakeV2 {
         pending: PendingRendezvousOfferV2,
         invitation: ContactPairingInvitationV2
     ) {
-        let capability = try RendezvousTransportCapabilityV2.generate(expiresAt: expiresAt)
+        let canonicalCreatedAt = NoctweaveRendezvousV2.canonicalTimestamp(createdAt)
+        let canonicalExpiresAt = NoctweaveRendezvousV2.canonicalTimestamp(expiresAt)
+        let capability = try RendezvousTransportCapabilityV2.generate(
+            expiresAt: canonicalExpiresAt
+        )
         let pending = try PendingRendezvousOfferV2.create(
             transportCapability: capability,
-            createdAt: createdAt
+            createdAt: canonicalCreatedAt
         )
         let invitation = try ContactPairingInvitationV2(
             offer: pending.offer,

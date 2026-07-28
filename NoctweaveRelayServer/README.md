@@ -196,6 +196,34 @@ docker run --rm --name noctweave-relay \
 The multi-stage image runs as an unprivileged user and pins the reviewed
 liboqs source commit. Mount `/data` persistently.
 
+### Desktop Docker launcher
+
+The source-built Electrobun launcher keeps Docker lifecycle and relay setup in
+one desktop surface:
+
+```sh
+cd NoctweaveRelayServer
+bun install --frozen-lockfile
+bun run desktop:dev
+```
+
+New launcher profiles enable Noctweb hosting on the solo standard relay by
+default. The setup screen exposes this choice explicitly, the overview reports
+`nw.net-host@1`, and **Open Publisher / Lab** opens
+`http://127.0.0.1:<http-port>/noctweb/`. The launcher creates a dedicated
+publisher password separate from its operator-console token; **Copy publisher
+password** copies it without displaying or persisting it in the WebView.
+Disabling Noctweb hosting removes both the capability and Publisher surface
+from the launched container.
+
+For local exposure, the launcher also supplies
+`--trusted-local-container-bridge true`. Docker NAT hides the host's literal
+loopback source from the relay process, so this explicit deployment assertion
+is required for the local Publisher and authenticated bridge operations. It is
+safe only while the host publishes the HTTP port to `127.0.0.1`; network
+exposure forces the assertion off. Do not set it manually for a publicly bound
+container port.
+
 ## Transports
 
 - raw TCP: one newline-delimited request and response per connection;

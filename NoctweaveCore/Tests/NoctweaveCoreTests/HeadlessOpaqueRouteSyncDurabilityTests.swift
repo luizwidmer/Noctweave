@@ -461,6 +461,83 @@ final class HeadlessOpaqueRouteSyncDurabilityTests: XCTestCase {
         XCTAssertEqual(session.ratchetState, .active)
     }
 
+    func testAuthenticatedInvalidBootstrapPayloadRetainsSessionForFollowingMessage() async throws {
+        let fixture = try await makeFixture(label: #function)
+        defer { tearDown(fixture) }
+
+        let senderRelationship = try await fixture.sender.relationship(fixture.relationshipID)
+        XCTAssertTrue(senderRelationship.directSessions.isEmpty)
+        let sendRoute = try await activeSendRoute(in: fixture.sender, fixture: fixture)
+        let created = try MessageEngine.createOutboundEndpointSession(
+            relationship: senderRelationship,
+            now: fixture.baseDate.addingTimeInterval(2)
+        )
+        var conversation = created.conversation
+        let invalidEvent = ConversationEvent(
+            conversationId: senderRelationship.conversationID,
+            authorEndpointHandle: senderRelationship.localEndpointHandle,
+            createdAt: fixture.baseDate.addingTimeInterval(2),
+            kind: .application,
+            content: EncodedContent(
+                type: .text,
+                payload: Data("authenticated but semantically invalid".utf8),
+                fallbackText: "different fallback"
+            )
+        )
+        let invalidEnvelope = try MessageEngine.encryptDirectV4(
+            wirePayload: .application(invalidEvent),
+            eventID: invalidEvent.id,
+            relationship: senderRelationship,
+            conversation: &conversation,
+            bootstrap: .signedPrekey(
+                kemCiphertext: created.kemCiphertext,
+                prekey: created.prekey
+            ),
+            sentAt: invalidEvent.createdAt
+        )
+        let validEvent = ConversationEvent(
+            conversationId: senderRelationship.conversationID,
+            authorEndpointHandle: senderRelationship.localEndpointHandle,
+            createdAt: fixture.baseDate.addingTimeInterval(3),
+            kind: .application,
+            content: try XCTUnwrap(.text("valid after invalid bootstrap payload"))
+        )
+        let validEnvelope = try MessageEngine.encryptDirectV4(
+            wirePayload: .application(validEvent),
+            eventID: validEvent.id,
+            relationship: senderRelationship,
+            conversation: &conversation,
+            bootstrap: .none,
+            sentAt: validEvent.createdAt
+        )
+
+        for envelope in [invalidEnvelope, validEnvelope] {
+            let bundle = try OpaqueRouteSealedBundleV2.seal(
+                NoctweaveCoder.encode(envelope, sortedKeys: true),
+                to: sendRoute
+            )
+            try await append(bundle.packets, through: sendRoute)
+        }
+        let result = try await syncOneRoute(
+            fixture.receiver,
+            relationshipID: fixture.relationshipID,
+            maximumPackets: 256
+        )
+
+        XCTAssertEqual(result.receivedEvents.map(\.id), [validEvent.id])
+        let relationship = try await fixture.receiver.relationship(fixture.relationshipID)
+        XCTAssertTrue(relationship.transportQuarantine.contains {
+            $0.reason == .invalidEnvelope
+                && $0.innerEnvelopeID == invalidEnvelope.id
+        })
+        XCTAssertEqual(relationship.events.filter { $0.id == validEvent.id }.count, 1)
+        let session = try XCTUnwrap(relationship.directSessions.first {
+            $0.sessionId == validEnvelope.sessionId
+        })
+        XCTAssertEqual(session.receiveChain.counter, 2)
+        XCTAssertEqual(session.ratchetState, .active)
+    }
+
     func testFirstGappedRouteDoesNotStarveLaterHealthyRoute() async throws {
         let fixture = try await makeFixture(label: #function)
         defer { tearDown(fixture) }

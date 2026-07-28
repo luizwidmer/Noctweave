@@ -144,6 +144,14 @@ final class RelayStore {
                 try validateCurrentSnapshot(snapshot)
                 applySnapshot(snapshot)
                 lastDurableSnapshot = currentSnapshot()
+            } else {
+                // A newly created database must receive a complete empty
+                // snapshot before startup succeeds. Otherwise the schema-only
+                // file is indistinguishable from a truncated store on the
+                // next process launch and correctly fails closed.
+                let snapshot = currentSnapshot()
+                try SQLiteRelayStateStore.saveState(snapshot, at: sqliteURL)
+                lastDurableSnapshot = snapshot
             }
         }
     }

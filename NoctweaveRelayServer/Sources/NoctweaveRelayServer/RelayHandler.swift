@@ -142,7 +142,10 @@ final class RelayHandler: ChannelInboundHandler {
             }
         }
         if requiresAuthentication(for: request.binding),
-           let authFailure = validateAuthentication(token: request.authToken) {
+           let authFailure = validateAuthentication(
+               token: request.authToken,
+               binding: request.binding
+           ) {
             return failure(authFailure, code: .authenticationRequired)
         }
         guard roleAllows(request.binding) else {
@@ -1342,8 +1345,15 @@ final class RelayHandler: ChannelInboundHandler {
         }
     }
 
-    private func validateAuthentication(token: String?) -> String? {
-        let expected = relayConfiguration.accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    private func validateAuthentication(
+        token: String?,
+        binding: RelayOperationBinding
+    ) -> String? {
+        let configuredPassword = binding.module == .netHost
+            && [.put, .release].contains(binding.method)
+            ? relayConfiguration.publisherPassword ?? relayConfiguration.accessPassword
+            : relayConfiguration.accessPassword
+        let expected = configuredPassword?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !expected.isEmpty else {
             return nil
         }

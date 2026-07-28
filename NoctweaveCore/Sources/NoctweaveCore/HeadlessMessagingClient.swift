@@ -1425,8 +1425,13 @@ public actor HeadlessMessagingClient {
                 < $1.routeSet.ownerCredentialHandle.rawValue
         }
 
-        let prepared = try await prepareGroupEpoch(
-            groupID: groupID,
+        // Resolve and authenticate every existing member route before the
+        // epoch mutation above. The invitation route is authenticated by the
+        // admission guard. Reusing those exact projections here avoids a
+        // second cache lookup after `prepareEpoch` has durably advanced state:
+        // a lookup failure at that point would leave a committed member
+        // without a returnable Welcome.
+        let publication = try await runtime.prepareEpoch(
             operation: .addMember,
             proposedMembers: snapshot.signedState.members + [newMember],
             proposedCredentials: snapshot.signedState.memberCredentials + [newCredential],
@@ -1434,10 +1439,26 @@ public actor HeadlessMessagingClient {
             proposedPermissions: snapshot.signedState.permissions,
             proposedMetadataDigest: snapshot.signedState.metadataDigest,
             idempotencyKey: idempotencyKey,
-            routeSets: [initialRouteSet],
             createdAt: createdAt
         )
-        guard let welcome = prepared.publication.signedWelcomes.first(where: {
+        let exactRemoteRouteSets = routeAnnouncements.compactMap { announcement in
+            announcement.routeSet.ownerCredentialHandle
+                == snapshot.localCredential.credentialHandle
+                ? nil
+                : announcement.routeSet
+        } + [initialRouteSet]
+        let transportOperation = try await runtime.prepareEpochTransport(
+            intentID: publication.intentId,
+            routeSets: exactRemoteRouteSets,
+            at: createdAt
+        )
+        if transportOperation == nil {
+            try await runtime.finalizeEpoch(
+                intentId: publication.intentId,
+                at: createdAt
+            )
+        }
+        guard let welcome = publication.signedWelcomes.first(where: {
             $0.destinationCredentialHandle == admission.credentialHandle
         }) else {
             throw HeadlessMessagingClientError.invalidState
@@ -1445,11 +1466,11 @@ public actor HeadlessMessagingClient {
         return HeadlessPreparedGroupMemberAdditionV2(
             groupID: groupID,
             anchor: anchor,
-            transition: prepared.publication.transition,
+            transition: publication.transition,
             welcome: welcome,
             existingMemberRouteAnnouncements: routeAnnouncements,
-            transportOperation: prepared.transportOperation,
-            complete: prepared.complete
+            transportOperation: transportOperation,
+            complete: transportOperation == nil
         )
     }
 

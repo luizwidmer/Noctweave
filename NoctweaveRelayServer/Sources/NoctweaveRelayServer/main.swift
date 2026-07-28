@@ -31,7 +31,9 @@ struct ServerConfig {
       --federation-mode <mode>         solo, manual, curated, or open
       --advertised-endpoint <endpoint> Public tcp/tls/http/https/ws/wss endpoint
       --trusted-reverse-proxy-tls <bool> Trust TLS terminated before this raw listener
+      --trusted-local-container-bridge <bool> Trust a container port published only to host loopback
       --access-password <password>     Require relay client authentication
+      --publisher-password <password>  Authorize Noctweave Net hosting writes only
       --attachments-enabled <bool>     Enable or disable attachment chunks
       --attachment-storage <mode>      inline or ipfs
       --opaque-route-runtime <bool>   Enable the direct-delivery runtime (default: true)
@@ -77,6 +79,7 @@ struct ServerConfig {
     var federationDescription: String?
     var advertiseTLS: Bool?
     var trustedReverseProxyTLS: Bool
+    var trustedLocalContainerBridge: Bool
     var temporalBucketSeconds: Int
     var temporalBucketScheduleSeconds: [Int]
     var attachmentDefaultTTLSeconds: Int
@@ -92,6 +95,7 @@ struct ServerConfig {
     var relayName: String?
     var operatorNote: String?
     var accessPassword: String?
+    var publisherPassword: String?
     var coordinatorRegistrationToken: String?
     var federationCoordinatorEndpoints: [RelayEndpoint]
     var coordinatorHeartbeatSeconds: Int
@@ -155,6 +159,10 @@ struct ServerConfig {
             environment["NOCTWEAVE_TRUSTED_REVERSE_PROXY_TLS"] ?? "false",
             defaultValue: false
         )
+        var trustedLocalContainerBridge = parseBoolFlag(
+            environment["NOCTWEAVE_TRUSTED_LOCAL_CONTAINER_BRIDGE"] ?? "false",
+            defaultValue: false
+        )
         var temporalBucketSeconds: Int = 300
         var temporalBucketScheduleSeconds: [Int] = []
         var attachmentDefaultTTLSeconds: Int = 3600
@@ -193,6 +201,7 @@ struct ServerConfig {
         var relayName: String?
         var operatorNote: String?
         var accessPassword: String? = environment["NOCTWEAVE_RELAY_PASSWORD"]
+        var publisherPassword: String? = environment["NOCTWEAVE_PUBLISHER_PASSWORD"]
         var coordinatorRegistrationToken: String? = environment["NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN"]
         var federationCoordinatorEndpoints: [RelayEndpoint] = []
         var coordinatorHeartbeatSeconds: Int = 45
@@ -437,6 +446,8 @@ struct ServerConfig {
                 operatorNote = iterator.next()
             case "--access-password":
                 accessPassword = iterator.next()
+            case "--publisher-password":
+                publisherPassword = iterator.next()
             case "--coordinator-registration-token":
                 coordinatorRegistrationToken = iterator.next()
             case "--federation-coordinator":
@@ -506,6 +517,13 @@ struct ServerConfig {
             case "--trusted-reverse-proxy-tls":
                 if let value = iterator.next() {
                     trustedReverseProxyTLS = parseBoolFlag(value, defaultValue: trustedReverseProxyTLS)
+                }
+            case "--trusted-local-container-bridge":
+                if let value = iterator.next() {
+                    trustedLocalContainerBridge = parseBoolFlag(
+                        value,
+                        defaultValue: trustedLocalContainerBridge
+                    )
                 }
             case "--federation-allow":
                 if let value = iterator.next() {
@@ -694,6 +712,7 @@ struct ServerConfig {
             federationDescription: federationDescription,
             advertiseTLS: advertiseTLS,
             trustedReverseProxyTLS: trustedReverseProxyTLS,
+            trustedLocalContainerBridge: trustedLocalContainerBridge,
             temporalBucketSeconds: temporalBucketSeconds,
             temporalBucketScheduleSeconds: temporalBucketScheduleSeconds,
             attachmentDefaultTTLSeconds: attachmentDefaultTTLSeconds,
@@ -709,6 +728,7 @@ struct ServerConfig {
             relayName: relayName,
             operatorNote: operatorNote,
             accessPassword: accessPassword,
+            publisherPassword: publisherPassword,
             coordinatorRegistrationToken: coordinatorRegistrationToken,
             federationCoordinatorEndpoints: federationCoordinatorEndpoints,
             coordinatorHeartbeatSeconds: coordinatorHeartbeatSeconds,
@@ -887,10 +907,18 @@ if config.relayKind == .passthrough {
         exit(2)
     }
 }
-if config.relayKind == .passthrough || config.netHostEnabled {
+if config.relayKind == .passthrough {
     guard let password = config.accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines),
           password.utf8.count >= 12 else {
-        print("[relay] passthrough and host-capable relays require NOCTWEAVE_RELAY_PASSWORD or --access-password")
+        print("[relay] passthrough relays require NOCTWEAVE_RELAY_PASSWORD or --access-password")
+        exit(2)
+    }
+}
+if config.netHostEnabled {
+    let password = config.publisherPassword ?? config.accessPassword
+    guard let password = password?.trimmingCharacters(in: .whitespacesAndNewlines),
+          password.utf8.count >= 12 else {
+        print("[relay] host-capable relays require NOCTWEAVE_PUBLISHER_PASSWORD or --publisher-password")
         exit(2)
     }
 }
@@ -907,6 +935,7 @@ if config.federationMode == .curated,
 }
 for (label, secret, minimum) in [
     ("relay password", config.accessPassword, 12),
+    ("publisher password", config.publisherPassword, 12),
     ("coordinator registration token", config.coordinatorRegistrationToken, 16),
     ("admin token", config.adminToken, 16)
 ] {
@@ -1063,6 +1092,7 @@ var relayConfiguration = RelayConfiguration(
     operatorNote: config.operatorNote,
     softwareVersion: ServerConfig.advertisedSoftwareVersion,
     accessPassword: config.accessPassword,
+    publisherPassword: config.publisherPassword,
     coordinatorRegistrationToken: config.coordinatorRegistrationToken,
     federationCoordinatorEndpoints: config.federationCoordinatorEndpoints,
     coordinatorHeartbeatSeconds: config.coordinatorHeartbeatSeconds,
@@ -1203,13 +1233,14 @@ do {
             store: store,
             maxMessageBytes: config.maxMessageBytes,
             publisherSurface: noctwebPublisherSurface,
-            relayConfigurationStore: relayConfigurationStore
+            relayConfigurationStore: relayConfigurationStore,
+            trustedLocalContainerBridge: config.trustedLocalContainerBridge
         )
         let httpChannel = try bridgeBootstrap.bind(host: config.host, port: httpPort).wait()
         let httpAddress = httpChannel.localAddress?.description ?? "unknown"
         print("[relay] Listening (http/ws) on \(httpAddress) path=/relay")
         if noctwebPublisherSurface != nil {
-            print("[relay] Noctweb Publisher available on \(httpAddress) path=/noctweb/ for direct loopback or trusted reverse-proxy TLS")
+            print("[relay] Noctweb Publisher available on \(httpAddress) path=/noctweb/ for direct loopback, an explicitly trusted local container bridge, or trusted reverse-proxy TLS")
         }
         closeFutures.append(httpChannel.closeFuture)
     }
@@ -1223,6 +1254,11 @@ do {
             "Raw TCP": "\(config.host):\(config.port)",
             "HTTP / WebSocket": config.httpPort.map { "\(config.host):\($0)" } ?? "Disabled",
             "Admin listener": "\(config.adminHost):\(adminPort)",
+            "Relay kind": config.relayKind.rawValue,
+            "Noctweb hosting": config.netHostEnabled ? "Enabled · nw.net-host@1" : "Disabled",
+            "Noctweb Publisher / Lab": config.netHostEnabled
+                ? config.httpPort.map { "http://127.0.0.1:\($0)/noctweb/" } ?? "Unavailable · HTTP listener disabled"
+                : "Unavailable",
             "Message ceiling": "\(config.maxMessageBytes ?? 0) bytes",
             "Direct delivery": config.opaqueRouteRuntimeEnabled ? "Opaque route v2" : "Disabled",
             "Attachment backend": config.attachmentStorageMode.rawValue,

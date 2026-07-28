@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 import XCTest
-@testable import NoctweaveCore
+@_spi(Testing) @testable import NoctweaveCore
 
 final class ClientStateCurrentSchemaTests: XCTestCase {
     func testStateDecryptionPreservesKeyProviderAvailabilityFailure() throws {
@@ -326,6 +326,81 @@ final class ClientStateCurrentSchemaTests: XCTestCase {
             XCTFail("Expected a foreign encrypted envelope to be rejected")
         } catch {
             // Exact envelope decoding failed closed.
+        }
+    }
+
+    func testTestingMigrationAdoptsAuthenticatedLegacyStateWithoutReset() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("state.json")
+        let key = SymmetricKey(data: Data(repeating: 0x9A, count: 32))
+        let legacyAnchor = VolatileClientStateRollbackAnchorStore()
+        let replacementAnchor = VolatileClientStateRollbackAnchorStore()
+        let scope = "org.noctweave.tests.ui-state"
+        let state = try makeState(displayName: "Preserved Test State")
+
+        let legacyStore = ClientStateStore(
+            fileURL: fileURL,
+            encryptionKey: key,
+            rollbackAnchorStore: legacyAnchor,
+            storageScopeIdentifier: scope
+        )
+        try await legacyStore.save(state, replacing: nil)
+
+        let updatedStore = ClientStateStore(
+            fileURL: fileURL,
+            encryptionKey: key,
+            rollbackAnchorStore: replacementAnchor,
+            storageScopeIdentifier: scope
+        )
+        do {
+            _ = try await updatedStore.load()
+            XCTFail("Expected the missing durable test anchor to fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? ClientStateStoreError,
+                .rollbackDetected
+            )
+        }
+
+        try await updatedStore.adoptUnanchoredEncryptedStateForTesting()
+
+        let restored = try await updatedStore.load()
+        XCTAssertEqual(restored, state)
+        XCTAssertEqual(
+            try replacementAnchor.load()?.current?.generation,
+            1
+        )
+        XCTAssertNil(try replacementAnchor.load()?.pending)
+    }
+
+    func testTestingMigrationRejectsWrongKeyWithoutCreatingAnchor() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("state.json")
+        let sourceAnchor = VolatileClientStateRollbackAnchorStore()
+        let replacementAnchor = VolatileClientStateRollbackAnchorStore()
+        let scope = "org.noctweave.tests.ui-state-wrong-key"
+
+        let source = ClientStateStore(
+            fileURL: fileURL,
+            encryptionKey: SymmetricKey(data: Data(repeating: 0xA1, count: 32)),
+            rollbackAnchorStore: sourceAnchor,
+            storageScopeIdentifier: scope
+        )
+        try await source.save(try makeState(), replacing: nil)
+
+        let updated = ClientStateStore(
+            fileURL: fileURL,
+            encryptionKey: SymmetricKey(data: Data(repeating: 0xB2, count: 32)),
+            rollbackAnchorStore: replacementAnchor,
+            storageScopeIdentifier: scope
+        )
+        do {
+            try await updated.adoptUnanchoredEncryptedStateForTesting()
+            XCTFail("Expected authentication with the wrong key to fail")
+        } catch {
+            XCTAssertNil(try replacementAnchor.load())
         }
     }
 

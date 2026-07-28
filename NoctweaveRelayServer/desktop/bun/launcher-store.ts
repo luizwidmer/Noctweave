@@ -7,9 +7,17 @@ import { defaultSettings, validateSettings } from "./docker-relay.js";
 import type { RelayLauncherSettings } from "../rpc.js";
 
 type StoredLauncherState = {
-  version: 2;
+  version: 3;
   adminToken: string;
+  publisherPassword: string;
   settings: RelayLauncherSettings;
+};
+
+type DecodedLauncherState = {
+  version?: number;
+  adminToken?: string;
+  publisherPassword?: string;
+  settings?: RelayLauncherSettings;
 };
 
 export class LauncherStore {
@@ -17,21 +25,37 @@ export class LauncherStore {
 
   async load(): Promise<StoredLauncherState> {
     try {
-      const decoded = JSON.parse(await readFile(this.fileURL, "utf8")) as Partial<StoredLauncherState>;
+      const decoded = JSON.parse(await readFile(this.fileURL, "utf8")) as DecodedLauncherState;
       const adminToken = decoded.adminToken;
-      if (decoded.version !== 2 || !adminToken || !/^[a-f0-9]{64}$/u.test(adminToken) || !decoded.settings) {
+      if (!adminToken || !isToken(adminToken) || !decoded.settings) {
         throw new Error("invalid launcher state");
       }
-      return {
-        version: 2,
-        adminToken,
-        settings: validateSettings(decoded.settings)
-      };
+      const settings = validateSettings(decoded.settings);
+      if (decoded.version === 3 && decoded.publisherPassword && isToken(decoded.publisherPassword)) {
+        return {
+          version: 3,
+          adminToken,
+          publisherPassword: decoded.publisherPassword,
+          settings
+        };
+      }
+      if (decoded.version === 2) {
+        const migrated: StoredLauncherState = {
+          version: 3,
+          adminToken,
+          publisherPassword: randomToken(),
+          settings
+        };
+        await this.save(migrated);
+        return migrated;
+      }
+      throw new Error("invalid launcher state");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       const initial: StoredLauncherState = {
-        version: 2,
-        adminToken: randomBytes(32).toString("hex"),
+        version: 3,
+        adminToken: randomToken(),
+        publisherPassword: randomToken(),
         settings: defaultSettings
       };
       await this.save(initial);
@@ -41,12 +65,13 @@ export class LauncherStore {
 
   async save(state: StoredLauncherState): Promise<void> {
     const validated: StoredLauncherState = {
-      version: 2,
+      version: 3,
       adminToken: state.adminToken,
+      publisherPassword: state.publisherPassword,
       settings: validateSettings(state.settings)
     };
-    if (!/^[a-f0-9]{64}$/u.test(validated.adminToken)) {
-      throw new Error("Refusing to persist an invalid operator token.");
+    if (!isToken(validated.adminToken) || !isToken(validated.publisherPassword)) {
+      throw new Error("Refusing to persist invalid relay credentials.");
     }
     await mkdir(dirname(this.fileURL), { recursive: true, mode: 0o700 });
     const temporary = `${this.fileURL}.${process.pid}.tmp`;
@@ -54,6 +79,14 @@ export class LauncherStore {
     await chmod(temporary, 0o600);
     await rename(temporary, this.fileURL);
   }
+}
+
+function randomToken(): string {
+  return randomBytes(32).toString("hex");
+}
+
+function isToken(value: string): boolean {
+  return /^[a-f0-9]{64}$/u.test(value);
 }
 
 function launcherStatePath(): string {

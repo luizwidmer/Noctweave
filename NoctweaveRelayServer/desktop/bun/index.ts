@@ -8,7 +8,11 @@ import { LauncherStore } from "./launcher-store.js";
 const sourceDirectory = join(PATHS.RESOURCES_FOLDER, "relay-source");
 const store = new LauncherStore();
 let state = await store.load();
-let manager = new DockerRelayManager(sourceDirectory, state.adminToken);
+let manager = new DockerRelayManager(
+  sourceDirectory,
+  state.adminToken,
+  state.publisherPassword
+);
 
 async function updateSettings(settings: RelayLauncherSettings): Promise<void> {
   state = { ...state, settings: validateSettings(settings) };
@@ -36,6 +40,17 @@ const desktopRPC = BrowserView.defineRPC<RelayDesktopRPC>({
       openConsole: () => Electrobun.Utils.openExternal(`http://127.0.0.1:${state.settings.adminPort}/admin/`),
       copyAdminToken: () => {
         Electrobun.Utils.clipboardWriteText(state.adminToken);
+        return true;
+      },
+      openPublisher: () => {
+        if (!state.settings.noctwebHostingEnabled) return false;
+        return Electrobun.Utils.openExternal(
+          `http://127.0.0.1:${state.settings.httpPort}/noctweb/`
+        );
+      },
+      copyPublisherPassword: () => {
+        if (!state.settings.noctwebHostingEnabled) return false;
+        Electrobun.Utils.clipboardWriteText(state.publisherPassword);
         return true;
       },
       getLogs: () => manager.logs()

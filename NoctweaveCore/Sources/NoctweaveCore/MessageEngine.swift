@@ -264,11 +264,23 @@ public enum MessageEngine {
             throw CryptoError.invalidPayload
         }
         var candidate = conversation
-        let decrypted = try decryptWirePayload(
-            envelope: envelope,
-            signingPublicKey: peerEndpoint.signingPublicKey,
-            conversation: &candidate
-        )
+        let decrypted: (payload: WirePayloadV2, messageKey: SymmetricKey)
+        do {
+            decrypted = try decryptWirePayload(
+                envelope: envelope,
+                signingPublicKey: peerEndpoint.signingPublicKey,
+                conversation: &candidate
+            )
+        } catch {
+            // `decryptWirePayload` mutates the candidate only after signature
+            // verification, AEAD opening, and receive-key acceptance. Preserve
+            // that authenticated ratchet progress even when strict wire
+            // decoding rejects the plaintext. This is especially important for
+            // the first envelope of a newly bootstrapped session: dropping the
+            // candidate would make every later valid envelope look retired.
+            conversation = candidate
+            throw error
+        }
         // Cryptographic acceptance consumes the receive-chain position even
         // when authenticated application/control semantics are rejected later.
         // The caller can therefore quarantine a poison event without allowing

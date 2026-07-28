@@ -18,11 +18,12 @@ final class HeadlessGroupProductAPITests: XCTestCase {
         defer { server.stop() }
         try await Task.sleep(nanoseconds: 100_000_000)
 
+        let ownerStore = ClientStateStore(
+            fileURL: root.appendingPathComponent("owner.json"),
+            protection: .insecurePlaintextForTesting
+        )
         let owner = try await HeadlessMessagingClient.open(
-            stateStore: ClientStateStore(
-                fileURL: root.appendingPathComponent("owner.json"),
-                protection: .insecurePlaintextForTesting
-            ),
+            stateStore: ownerStore,
             displayName: "owner"
         )
         let member = try await HeadlessMessagingClient.open(
@@ -54,7 +55,11 @@ final class HeadlessGroupProductAPITests: XCTestCase {
             admissionID: admission.admissionID,
             at: startedAt.addingTimeInterval(0.4)
         )
-        let preparedAddition = try await owner.prepareGroupMemberAddition(
+        let reopenedOwner = try await HeadlessMessagingClient.open(
+            stateStore: ownerStore,
+            displayName: "owner"
+        )
+        let preparedAddition = try await reopenedOwner.prepareGroupMemberAddition(
             groupID: created.groupID,
             admission: admission.admission,
             initialRouteSet: memberRoute.routeSet,
@@ -93,7 +98,7 @@ final class HeadlessGroupProductAPITests: XCTestCase {
         XCTAssertTrue(joined.completed)
 
         if let operation = preparedAddition.transportOperation {
-            let ownerTransport = try await owner.resumeGroupTransport(
+            let ownerTransport = try await reopenedOwner.resumeGroupTransport(
                 groupID: created.groupID,
                 operationID: operation.id
             )
@@ -103,9 +108,9 @@ final class HeadlessGroupProductAPITests: XCTestCase {
             groupID: created.groupID
         )
         XCTAssertFalse(memberMaintenance.requiresFollowUp)
-        _ = try await owner.syncGroup(groupID: created.groupID)
+        _ = try await reopenedOwner.syncGroup(groupID: created.groupID)
 
-        let sent = try await owner.sendGroupText(
+        let sent = try await reopenedOwner.sendGroupText(
             groupID: created.groupID,
             text: "high-level group send"
         )
@@ -115,7 +120,7 @@ final class HeadlessGroupProductAPITests: XCTestCase {
             .flatMap(\.receivedEvents)
         XCTAssertEqual(received.map(\.id), [sent.event.id])
 
-        let ownerMaintenance = try await owner.maintainGroup(
+        let ownerMaintenance = try await reopenedOwner.maintainGroup(
             groupID: created.groupID
         )
         XCTAssertFalse(ownerMaintenance.requiresFollowUp)

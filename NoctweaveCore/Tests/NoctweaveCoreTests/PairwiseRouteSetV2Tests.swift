@@ -3,6 +3,21 @@ import XCTest
 @testable import NoctweaveCore
 
 final class PairwiseRouteSetV2Tests: XCTestCase {
+    func testRelationshipEndpointHandleUsesCanonicalObjectWireShape() throws {
+        let handle = RelationshipEndpointHandle(
+            rawValue: Data(repeating: 0x42, count: 32).base64EncodedString()
+        )
+
+        let encoded = try NoctweaveCoder.encode(handle, sortedKeys: true)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+
+        XCTAssertEqual(Set(object.keys), ["rawValue"])
+        XCTAssertEqual(object["rawValue"] as? String, handle.rawValue)
+        XCTAssertEqual(try NoctweaveCoder.decode(RelationshipEndpointHandle.self, from: encoded), handle)
+    }
+
     private let origin = Date(timeIntervalSince1970: 1_800_100_000)
 
     func testRouteRolloverIsMakeBeforeBreak() throws {

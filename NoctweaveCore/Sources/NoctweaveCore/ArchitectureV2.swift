@@ -651,6 +651,46 @@ public struct RelationshipEndpointHandle: RawRepresentable, Codable, Equatable, 
         self.rawValue = rawValue
     }
 
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case rawValue
+    }
+
+    public init(from decoder: Decoder) throws {
+        let strict = try decoder.container(keyedBy: CodingKeys.self)
+        guard Set(strict.allKeys) == Set(CodingKeys.allCases) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Relationship endpoint handle fields must match the current protocol exactly"
+                )
+            )
+        }
+        let rawValue = try strict.decode(String.self, forKey: .rawValue)
+        let value = RelationshipEndpointHandle(rawValue: rawValue)
+        guard value.isStructurallyValid else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .rawValue,
+                in: strict,
+                debugDescription: "Relationship endpoint handle is structurally invalid"
+            )
+        }
+        self = value
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        guard isStructurallyValid else {
+            throw EncodingError.invalidValue(
+                self,
+                EncodingError.Context(
+                    codingPath: encoder.codingPath,
+                    debugDescription: "Relationship endpoint handle is structurally invalid"
+                )
+            )
+        }
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(rawValue, forKey: .rawValue)
+    }
+
     public static func generate(
         relationshipId: UUID,
         nonce: UUID = UUID()

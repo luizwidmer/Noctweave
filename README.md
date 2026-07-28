@@ -236,6 +236,11 @@ bun run desktop:icons
 bun run desktop:dev
 ```
 
+The launcher starts a solo standard Docker relay with optional
+`nw.net-host@1` hosting, reports that capability on its overview, and can open
+the relay's built-in `/noctweb/` Publisher / Lab. Its publisher credential is
+generated and stored separately from the operator-console token.
+
 JavaScript client:
 
 ```sh

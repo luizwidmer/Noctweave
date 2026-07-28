@@ -296,6 +296,64 @@ public actor ClientStateStore {
         _ = try rollbackAnchorStore.load()
     }
 
+    /// Adopts an authenticated encrypted state written by an older test host
+    /// that used only a process-local rollback anchor.
+    ///
+    /// This SPI is deliberately unavailable to normal application storage: it
+    /// requires both an explicitly supplied encryption key and a caller-owned
+    /// anchor store. The ciphertext is fully authenticated and decoded before
+    /// its existing generation and digest become the first durable anchor.
+    @_spi(Testing)
+    public func adoptUnanchoredEncryptedStateForTesting() throws {
+        guard protection == .encrypted,
+              suppliedEncryptionKey != nil,
+              let rollbackAnchorStore else {
+            throw ClientStateStoreError.rollbackAnchorUnavailable
+        }
+
+        try ensurePrivateDirectory()
+        try withExclusiveFileLock {
+            guard try rollbackAnchorStore.load() == nil else { return }
+            guard !FileManager.default.fileExists(atPath: pendingFileURL.path)
+            else {
+                throw ClientStateStoreError.rollbackDetected
+            }
+            guard let envelope = try readEnvelopeIfPresent(from: fileURL) else {
+                return
+            }
+            guard envelope.isStructurallyValid else {
+                throw ClientStateStoreError.rollbackDetected
+            }
+
+            var payload = try decrypt(envelope, scopeDigest: storeScopeDigest)
+            defer { payload.secureWipe() }
+            let decoded = try NoctweaveCoder.decode(
+                ClientState.self,
+                from: payload
+            )
+            guard try decoded.isStructurallyValidThrowing else {
+                throw ClientStateStoreError.rollbackDetected
+            }
+
+            let anchor = try ClientStateRollbackAnchor(
+                generation: envelope.generation,
+                stateDigest: envelope.stateDigest
+            )
+            let record = try ClientStateRollbackAnchorRecord(
+                current: anchor,
+                pending: nil
+            )
+            do {
+                try rollbackAnchorStore.compareAndSwap(
+                    expected: nil,
+                    replacement: record
+                )
+            } catch ClientStateRollbackAnchorError.compareAndSwapFailed {
+                throw ClientStateStoreError.concurrentUpdate
+            }
+        }
+    }
+
     /// Intentionally erases this local database without treating unexplained
     /// file loss as a reset. The trusted anchor advances to an identity-free
     /// tombstone, so replaying an older encrypted file remains detectable and a

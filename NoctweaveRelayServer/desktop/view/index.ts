@@ -23,6 +23,8 @@ const startButton = $("#startRelay") as HTMLButtonElement;
 const stopButton = $("#stopRelay") as HTMLButtonElement;
 const consoleButton = $("#openConsole") as HTMLButtonElement;
 const tokenButton = $("#copyToken") as HTMLButtonElement;
+const publisherButton = $("#openPublisher") as HTMLButtonElement;
+const publisherPasswordButton = $("#copyPublisherPassword") as HTMLButtonElement;
 const logsButton = $("#refreshLogs") as HTMLButtonElement;
 const appearanceSelect = $("#appearanceSelect") as HTMLSelectElement;
 const appearanceKey = "noctweave.desktop.appearance";
@@ -50,6 +52,7 @@ function settingsFromForm(): RelayLauncherSettings {
     tcpPort: Number(data.get("tcpPort")),
     httpPort: Number(data.get("httpPort")),
     adminPort: Number(data.get("adminPort")),
+    noctwebHostingEnabled: data.get("noctwebHostingEnabled") === "on",
     rendezvousTransportEnabled: data.get("rendezvousTransportEnabled") === "on",
     trustedReverseProxyTLS: data.get("trustedReverseProxyTLS") === "on"
   };
@@ -61,6 +64,7 @@ function fillSettings(settings: RelayLauncherSettings): void {
   (form.elements.namedItem("tcpPort") as HTMLInputElement).value = String(settings.tcpPort);
   (form.elements.namedItem("httpPort") as HTMLInputElement).value = String(settings.httpPort);
   (form.elements.namedItem("adminPort") as HTMLInputElement).value = String(settings.adminPort);
+  (form.elements.namedItem("noctwebHostingEnabled") as HTMLInputElement).checked = settings.noctwebHostingEnabled;
   (form.elements.namedItem("rendezvousTransportEnabled") as HTMLInputElement).checked = settings.rendezvousTransportEnabled;
   (form.elements.namedItem("trustedReverseProxyTLS") as HTMLInputElement).checked = settings.trustedReverseProxyTLS;
 }
@@ -73,6 +77,7 @@ function render(status: RelayLauncherStatus, preserveForm = false): void {
   $("#imageState").textContent = status.imageReady ? "Built locally" : "Not built";
   $("#relayState").textContent = status.relayHealthy ? "Online" : running ? "Starting" : "Stopped";
   $("#relayEndpoint").textContent = status.relayEndpoint;
+  $("#noctwebState").textContent = status.publisherURL ? "Host + Lab" : "Disabled";
   $("#statusDetail").textContent = activityMessage?.text ?? status.detail;
   $("#statusDetail").classList.toggle("errorText", activityMessage?.isError === true);
   $("#statusDot").className = `statusDot ${status.relayHealthy ? "online" : running ? "waiting" : ""}`;
@@ -82,6 +87,8 @@ function render(status: RelayLauncherStatus, preserveForm = false): void {
   buildButton.disabled = busy || !status.dockerAvailable || running;
   consoleButton.disabled = busy || !status.relayHealthy;
   tokenButton.disabled = busy || !status.relayHealthy;
+  publisherButton.disabled = busy || !status.relayHealthy || status.publisherURL === null;
+  publisherPasswordButton.disabled = busy || !status.relayHealthy || status.publisherURL === null;
 }
 
 function setBusy(value: boolean, label?: string): void {
@@ -131,6 +138,18 @@ consoleButton.addEventListener("click", async () => {
 tokenButton.addEventListener("click", async () => {
   await desktop.rpc!.request.copyAdminToken({});
   showToast("Operator token copied. Paste it into the local console login.");
+});
+publisherButton.addEventListener("click", async () => {
+  if (!await desktop.rpc!.request.openPublisher({})) {
+    showToast("Enable Noctweb hosting and restart the relay first.", true);
+  }
+});
+publisherPasswordButton.addEventListener("click", async () => {
+  if (await desktop.rpc!.request.copyPublisherPassword({})) {
+    showToast("Publisher password copied. It is used only for hosting writes.");
+  } else {
+    showToast("Noctweb hosting is disabled.", true);
+  }
 });
 logsButton.addEventListener("click", async () => {
   try {

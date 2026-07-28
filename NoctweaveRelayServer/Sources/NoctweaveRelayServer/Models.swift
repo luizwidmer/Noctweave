@@ -1198,6 +1198,7 @@ struct RelayConfiguration: Codable, Equatable {
     var operatorNote: String?
     var softwareVersion: String?
     var accessPassword: String?
+    var publisherPassword: String?
     var coordinatorRegistrationToken: String?
     var federationCoordinatorEndpoints: [RelayEndpoint]?
     var coordinatorHeartbeatSeconds: Int?
@@ -1238,6 +1239,7 @@ struct RelayConfiguration: Codable, Equatable {
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
         accessPassword: String? = nil,
+        publisherPassword: String? = nil,
         coordinatorRegistrationToken: String? = nil,
         federationCoordinatorEndpoints: [RelayEndpoint]? = nil,
         coordinatorHeartbeatSeconds: Int? = nil,
@@ -1293,6 +1295,11 @@ struct RelayConfiguration: Codable, Equatable {
         self.softwareVersion = softwareVersion
         let normalizedAccessPassword = accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.accessPassword = normalizedAccessPassword?.isEmpty == false ? normalizedAccessPassword : nil
+        let normalizedPublisherPassword = publisherPassword?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.publisherPassword = normalizedPublisherPassword?.isEmpty == false
+            ? normalizedPublisherPassword
+            : nil
         let normalizedRegistrationToken = coordinatorRegistrationToken?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.coordinatorRegistrationToken = normalizedRegistrationToken?.isEmpty == false ? normalizedRegistrationToken : nil
         self.federationCoordinatorEndpoints = federationCoordinatorEndpoints.map { Array($0.prefix(16)) }

@@ -40,6 +40,26 @@ final class ContactPairingV2Tests: XCTestCase {
         )
     }
 
+    func testOfferCanonicalizesOrdinaryFractionalWallClockTimestamps() throws {
+        let createdAt = Date(timeIntervalSince1970: 1_900_000_000.875)
+        let expiresAt = createdAt.addingTimeInterval(10 * 60)
+
+        let offer = try ContactPairingHandshakeV2.makeOffer(
+            createdAt: createdAt,
+            expiresAt: expiresAt
+        )
+
+        XCTAssertEqual(
+            offer.invitation.offer.createdAt,
+            NoctweaveRendezvousV2.canonicalTimestamp(createdAt)
+        )
+        XCTAssertEqual(
+            offer.invitation.offer.expiresAt,
+            NoctweaveRendezvousV2.canonicalTimestamp(expiresAt)
+        )
+        XCTAssertTrue(try offer.invitation.isStructurallyValidThrowing)
+    }
+
     func testHandshakeCreatesMutuallyBoundFreshPairwiseRelationships() throws {
         var fixture = try makeHandshakeFixture()
         let result = try ContactPairingHandshakeV2.establish(

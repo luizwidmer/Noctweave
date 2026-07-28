@@ -8,6 +8,7 @@ export type RelayLauncherSettings = {
   tcpPort: number;
   httpPort: number;
   adminPort: number;
+  noctwebHostingEnabled: boolean;
   rendezvousTransportEnabled: boolean;
   trustedReverseProxyTLS: boolean;
 };
@@ -20,6 +21,7 @@ export type RelayLauncherStatus = {
   settings: RelayLauncherSettings;
   relayEndpoint: string;
   adminURL: string;
+  publisherURL: string | null;
   detail: string;
 };
 
@@ -32,6 +34,8 @@ export type RelayDesktopRPC = {
       stopRelay: { params: Record<never, never>; response: RelayLauncherStatus };
       openConsole: { params: Record<never, never>; response: boolean };
       copyAdminToken: { params: Record<never, never>; response: boolean };
+      openPublisher: { params: Record<never, never>; response: boolean };
+      copyPublisherPassword: { params: Record<never, never>; response: boolean };
       getLogs: { params: Record<never, never>; response: string };
     };
     messages: Record<never, never>;

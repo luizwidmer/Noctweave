@@ -19,7 +19,8 @@ func makeHTTPRelayBridgeBootstrap(
     store: RelayStore,
     maxMessageBytes: Int?,
     publisherSurface: NoctwebPublisherSurface? = nil,
-    relayConfigurationStore: RelayConfigurationStore? = nil
+    relayConfigurationStore: RelayConfigurationStore? = nil,
+    trustedLocalContainerBridge: Bool = false
 ) -> ServerBootstrap {
     ServerBootstrap(group: group)
         .serverChannelOption(ChannelOptions.backlog, value: 256)
@@ -53,7 +54,8 @@ func makeHTTPRelayBridgeBootstrap(
                 store: store,
                 maxMessageBytes: maxMessageBytes,
                 publisherSurface: publisherSurface,
-                relayConfigurationStore: relayConfigurationStore
+                relayConfigurationStore: relayConfigurationStore,
+                trustedLocalContainerBridge: trustedLocalContainerBridge
             )
             let upgradeConfig = NIOHTTPServerUpgradeConfiguration(
                 upgraders: [upgrader],
@@ -144,6 +146,7 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
     private let maxMessageBytes: Int
     private let publisherSurface: NoctwebPublisherSurface?
     private let relayConfigurationStore: RelayConfigurationStore?
+    private let trustedLocalContainerBridge: Bool
     private var requestHead: HTTPRequestHead?
     private var requestBody = ByteBuffer()
     private var isRejected = false
@@ -153,13 +156,15 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
         store: RelayStore,
         maxMessageBytes: Int?,
         publisherSurface: NoctwebPublisherSurface?,
-        relayConfigurationStore: RelayConfigurationStore?
+        relayConfigurationStore: RelayConfigurationStore?,
+        trustedLocalContainerBridge: Bool
     ) {
         self.forwarder = forwarder
         self.store = store
         self.maxMessageBytes = boundedRelayRequestLimit(maxMessageBytes)
         self.publisherSurface = publisherSurface
         self.relayConfigurationStore = relayConfigurationStore
+        self.trustedLocalContainerBridge = trustedLocalContainerBridge
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -205,13 +210,14 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
         let path = head.uri.split(separator: "?", maxSplits: 1).first.map(String.init) ?? head.uri
         let confidentialTransport = noctwebPublisherTransportIsPermitted(
             directSource: context.channel.remoteAddress?.ipAddress ?? "",
-            trustedReverseProxyTLS: relayConfigurationStore?.snapshot().trustedReverseProxyTLS == true
+            trustedReverseProxyTLS: relayConfigurationStore?.snapshot().trustedReverseProxyTLS == true,
+            trustedLocalContainerBridge: trustedLocalContainerBridge
         )
         if publisherSurface != nil, path == "/noctweb" || path.hasPrefix("/noctweb/") {
             guard confidentialTransport else {
                 sendHTTPResponse(
                     status: .forbidden,
-                    body: Data(#"{"error":"Noctweb Publisher requires loopback or trusted reverse-proxy TLS"}"#.utf8),
+                    body: Data(#"{"error":"Noctweb Publisher requires loopback, a trusted local container bridge, or trusted reverse-proxy TLS"}"#.utf8),
                     context: context
                 )
                 return
@@ -264,7 +270,7 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
                 status: .ok,
                 body: encodedRelayError(
                     for: request,
-                    message: "Relay capability operations require loopback or trusted reverse-proxy TLS",
+                    message: "Relay capability operations require loopback, a trusted local container bridge, or trusted reverse-proxy TLS",
                     code: .invalidRequest,
                     retryable: false
                 ),
@@ -358,9 +364,10 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
 
 func noctwebPublisherTransportIsPermitted(
     directSource: String,
-    trustedReverseProxyTLS: Bool
+    trustedReverseProxyTLS: Bool,
+    trustedLocalContainerBridge: Bool = false
 ) -> Bool {
-    trustedReverseProxyTLS || isLoopbackRelaySource(
+    trustedReverseProxyTLS || trustedLocalContainerBridge || isLoopbackRelaySource(
         directSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     )
 }
