@@ -700,8 +700,25 @@ public actor ClientStateStore {
             previousStateDigest: envelope.previousStateDigest,
             scopeDigest: scopeDigest
         )
+        return try Self.openAuthenticatedState(
+            sealed,
+            authenticating: aad,
+            keyProvider: encryptionKey
+        )
+    }
+
+    static func openAuthenticatedState(
+        _ sealed: AES.GCM.SealedBox,
+        authenticating aad: Data,
+        keyProvider: () throws -> SymmetricKey
+    ) throws -> Data {
+        // Resolve secure storage before entering the authentication-failure
+        // boundary. A locked or temporarily unavailable Keychain is a
+        // recoverable host condition, not evidence that the ciphertext or key
+        // is corrupt.
+        let key = try keyProvider()
         do {
-            return try AES.GCM.open(sealed, using: try encryptionKey(), authenticating: aad)
+            return try AES.GCM.open(sealed, using: key, authenticating: aad)
         } catch {
             throw ClientStateStoreError.encryptionFailed
         }

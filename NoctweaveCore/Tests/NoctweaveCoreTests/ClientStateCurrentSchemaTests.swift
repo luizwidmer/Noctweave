@@ -4,6 +4,48 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ClientStateCurrentSchemaTests: XCTestCase {
+    func testStateDecryptionPreservesKeyProviderAvailabilityFailure() throws {
+        let key = SymmetricKey(data: Data(repeating: 0x41, count: 32))
+        let aad = Data("state-aad".utf8)
+        let sealed = try AES.GCM.seal(
+            Data("encrypted-state".utf8),
+            using: key,
+            authenticating: aad
+        )
+        let providerError = SecureStorageKeyProviderError.unavailable(status: -99)
+
+        XCTAssertThrowsError(
+            try ClientStateStore.openAuthenticatedState(
+                sealed,
+                authenticating: aad,
+                keyProvider: { throw providerError }
+            )
+        ) { error in
+            XCTAssertEqual(error as? SecureStorageKeyProviderError, providerError)
+        }
+    }
+
+    func testStateDecryptionStillFailsClosedForWrongKey() throws {
+        let key = SymmetricKey(data: Data(repeating: 0x42, count: 32))
+        let wrongKey = SymmetricKey(data: Data(repeating: 0x43, count: 32))
+        let aad = Data("state-aad".utf8)
+        let sealed = try AES.GCM.seal(
+            Data("encrypted-state".utf8),
+            using: key,
+            authenticating: aad
+        )
+
+        XCTAssertThrowsError(
+            try ClientStateStore.openAuthenticatedState(
+                sealed,
+                authenticating: aad,
+                keyProvider: { wrongKey }
+            )
+        ) { error in
+            XCTAssertEqual(error as? ClientStateStoreError, .encryptionFailed)
+        }
+    }
+
     func testProductionDefaultsRequireExplicitOnboardingAcceptance() throws {
         let state = try ClientState(displayName: "Needs acceptance")
         XCTAssertFalse(state.hasCompletedOnboarding)
