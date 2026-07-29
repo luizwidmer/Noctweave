@@ -464,6 +464,12 @@ final class RelayHandler: ChannelInboundHandler {
                 return failure("Attachment store error", code: .unavailable, retryable: true)
             }
         case .registerFederationNode(let registration):
+            guard relayConfiguration.federation.mode != .manual else {
+                return failure(
+                    "Manual federation does not accept relay registration; configure peers explicitly.",
+                    code: .invalidRequest
+                )
+            }
             guard relayConfiguration.kind == .coordinator else {
                 return failure("This relay is not a coordinator node.", code: .unavailable)
             }
@@ -788,6 +794,11 @@ final class RelayHandler: ChannelInboundHandler {
                 "Coordinator registration rejected: node federation mode differs from coordinator policy."
             )
         }
+        if relayConfiguration.federation.mode == .manual {
+            return eventLoop.makeSucceededFuture(
+                "Manual federation does not accept relay registration; configure peers explicitly."
+            )
+        }
         if let coordinatorName = relayConfiguration.federation.name?.trimmingCharacters(in: .whitespacesAndNewlines),
            !coordinatorName.isEmpty,
            registration.relayInfo.federation.name != coordinatorName {
@@ -823,9 +834,18 @@ final class RelayHandler: ChannelInboundHandler {
     }
 
     private func coordinatorEndpoints() -> [RelayEndpoint] {
-        (relayConfiguration.federationCoordinatorEndpoints ?? []).filter { endpoint in
+        let endpoints = relayConfiguration.federation.mode == .manual
+            ? relayConfiguration.federationAllowList
+            : relayConfiguration.federationCoordinatorEndpoints ?? []
+        var seen = Set<String>()
+        return endpoints.filter { endpoint in
             !endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && seen.insert(federationEndpointKey(endpoint)).inserted
         }
+    }
+
+    private func federationEndpointKey(_ endpoint: RelayEndpoint) -> String {
+        "\(endpoint.host.lowercased()):\(endpoint.port):\(endpoint.useTLS ? 1 : 0):\(endpoint.transport.rawValue)"
     }
 
     private func coordinatorHeartbeatInterval() -> TimeInterval {
@@ -867,6 +887,18 @@ final class RelayHandler: ChannelInboundHandler {
     }
 
     private func performCoordinatorHeartbeat(on eventLoop: EventLoop) -> EventLoopFuture<Void> {
+        if relayConfiguration.federation.mode == .manual {
+            return fetchCoordinatorNodeDirectory(
+                request: ListFederationNodesRequest(
+                    mode: .manual,
+                    federationName: relayConfiguration.federation.name,
+                    onlyHealthy: true,
+                    maxStalenessSeconds: relayConfiguration.coordinatorDirectoryMaxStalenessSeconds,
+                    requireSignedSnapshot: false
+                ),
+                on: eventLoop
+            ).map { _ in () }
+        }
         guard let advertisedEndpoint = effectiveAdvertisedEndpoint() else {
             return eventLoop.makeSucceededFuture(())
         }
@@ -961,6 +993,43 @@ final class RelayHandler: ChannelInboundHandler {
                 }
             }
             let trustedPublicKey = pinnedPublicKey ?? advertisedPublicKey
+            if request.mode == .manual {
+                guard relayInfo.kind == .standard,
+                      relayInfo.federation.mode == .manual else {
+                    return eventLoop.makeFailedFuture(
+                        FederationDirectoryValidationError.invalidSnapshot
+                    )
+                }
+                if let expectedName = request.federationName?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                   !expectedName.isEmpty,
+                   relayInfo.federation.name != expectedName {
+                    return eventLoop.makeFailedFuture(
+                        FederationDirectoryValidationError.invalidSnapshot
+                    )
+                }
+                let now = Date()
+                let lifetime = min(
+                    900,
+                    max(
+                        60,
+                        request.maxStalenessSeconds
+                            ?? self.relayConfiguration
+                                .coordinatorDirectoryMaxStalenessSeconds
+                            ?? 300
+                    )
+                )
+                return eventLoop.makeSucceededFuture([
+                    FederationNodeRecord(
+                        endpoint: coordinator,
+                        relayInfo: relayInfo,
+                        lastHeartbeatAt: now,
+                        expiresAt: now.addingTimeInterval(
+                            TimeInterval(lifetime)
+                        )
+                    )
+                ])
+            }
             return self.sendRequest(.listFederationNodes(request), to: coordinator, on: eventLoop).flatMapThrowing { response in
                 guard case .federationNodes(let directory)? = response.successBody else {
                     return []

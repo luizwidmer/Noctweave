@@ -727,6 +727,13 @@ public final class RelayServer {
                 return .error("Attachment store error", code: .unavailable, retryable: true, respondingTo: request)
             }
         case .registerFederationNode(let registration):
+            guard configuration.federation.mode != .manual else {
+                return .error(
+                    "Manual federation does not accept relay registration; configure peers explicitly.",
+                    code: .invalidRequest,
+                    respondingTo: request
+                )
+            }
             guard configuration.kind == .coordinator else {
                 return .error("This relay is not a coordinator node.", code: .unavailable, respondingTo: request)
             }
@@ -1013,6 +1020,9 @@ public final class RelayServer {
         guard registration.relayInfo.federation.mode == configuration.federation.mode else {
             return "Coordinator registration rejected: node federation mode differs from coordinator policy."
         }
+        if configuration.federation.mode == .manual {
+            return "Manual federation does not accept relay registration; configure peers explicitly."
+        }
         if let coordinatorName = configuration.federation.name?.trimmingCharacters(in: .whitespacesAndNewlines),
            !coordinatorName.isEmpty,
            registration.relayInfo.federation.name != coordinatorName {
@@ -1050,8 +1060,13 @@ public final class RelayServer {
     }
 
     private func coordinatorEndpoints() -> [RelayEndpoint] {
-        (configuration.federationCoordinatorEndpoints ?? []).filter { endpoint in
+        let endpoints = configuration.federation.mode == .manual
+            ? configuration.federationAllowList
+            : configuration.federationCoordinatorEndpoints ?? []
+        var seen = Set<String>()
+        return endpoints.filter { endpoint in
             !endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && seen.insert(endpointKey(endpoint)).inserted
         }
     }
 
@@ -1092,11 +1107,24 @@ public final class RelayServer {
             guard let self else { return }
             while !Task.isCancelled {
                 do {
-                    try await self.sendCoordinatorHeartbeat()
-                    if self.configuration.federation.mode == .open {
+                    let mode = self.configuration.federation.mode
+                    if mode == .manual {
+                        _ = try await self.fetchCoordinatorNodeDirectory(
+                            request: ListFederationNodesRequest(
+                                mode: mode,
+                                federationName: self.configuration.federation.name,
+                                onlyHealthy: true,
+                                maxStalenessSeconds: self.configuration.coordinatorDirectoryMaxStalenessSeconds,
+                                requireSignedSnapshot: false
+                            )
+                        )
+                    } else {
+                        try await self.sendCoordinatorHeartbeat()
+                    }
+                    if mode == .open {
                         _ = try? await self.fetchCoordinatorNodeDirectory(
                             request: ListFederationNodesRequest(
-                                mode: .open,
+                                mode: mode,
                                 federationName: self.configuration.federation.name,
                                 onlyHealthy: true,
                                 maxStalenessSeconds: self.configuration.coordinatorDirectoryMaxStalenessSeconds,
@@ -1199,6 +1227,36 @@ public final class RelayServer {
         let trustedPublicKey = coordinator.directorySigningPublicKey
         if let trustedPublicKey, let advertisedPublicKey, trustedPublicKey != advertisedPublicKey {
             throw RelayNetworkError.invalidResponse
+        }
+        if request.mode == .manual {
+            guard relayInfo.kind == .standard,
+                  relayInfo.federation.mode == .manual else {
+                throw RelayNetworkError.invalidResponse
+            }
+            if let expectedName = request.federationName?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !expectedName.isEmpty,
+               relayInfo.federation.name != expectedName {
+                throw RelayNetworkError.invalidResponse
+            }
+            let now = Date()
+            let lifetime = min(
+                900,
+                max(
+                    60,
+                    request.maxStalenessSeconds
+                        ?? configuration.coordinatorDirectoryMaxStalenessSeconds
+                        ?? 300
+                )
+            )
+            return [
+                FederationNodeRecord(
+                    endpoint: coordinator,
+                    relayInfo: relayInfo,
+                    lastHeartbeatAt: now,
+                    expiresAt: now.addingTimeInterval(TimeInterval(lifetime))
+                )
+            ]
         }
         let response = try await client.send(.listFederationNodes(request))
         guard case .federationNodes(let directory)? = response.successBody else {

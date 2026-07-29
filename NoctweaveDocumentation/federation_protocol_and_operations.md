@@ -62,6 +62,20 @@ Manual peers are operator configuration. The relay accepts no discovery record
 that expands the set. Use this mode for small known meshes and environments
 where configuration review matters more than automatic discovery.
 
+Each configured endpoint is probed directly as a standard relay. It must
+advertise `manual` mode and the same federation name when a name is configured.
+The resulting directory is a bounded set of currently reachable peers; manual
+mode does not register with a coordinator and does not recursively import a
+peer's directory. Operators may add or remove peers at runtime. Existing
+listeners, client routes, and stored ciphertext remain active while the
+directory refreshes.
+
+Cross-relay delivery still follows relationship-encrypted route sets. If Alice
+uses relay A and Bob uses relay B, pairing gives Alice the capability-bearing
+route on B and Bob the corresponding route on A. Each sender submits ciphertext
+directly to the recipient route; neither relay forwards that user packet
+through the federation module.
+
 ## Curated mode
 
 Curated mode restricts visible and accepted nodes to the configured federation

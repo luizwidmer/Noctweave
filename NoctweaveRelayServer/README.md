@@ -329,6 +329,13 @@ isolated network. `NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN` authorizes only
 relay registration with a curated coordinator; it is not a message-routing or
 client credential.
 
+In `manual` mode, every allow-listed endpoint is a standard relay peer rather
+than a coordinator. The relay probes each peer's validated `info` response,
+requires matching manual mode and federation name when configured, and exposes
+only healthy peers through `nw.federation/list`. Adding or removing manual
+peers through the native app or operator console updates the live directory;
+the relay process does not need to restart.
+
 See
 [`federation_protocol_and_operations.md`](../NoctweaveDocumentation/federation_protocol_and_operations.md).
 
