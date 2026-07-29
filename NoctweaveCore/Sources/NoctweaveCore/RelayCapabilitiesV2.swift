@@ -178,7 +178,8 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         mixnetEnabled: Bool,
         openDiscoveryEnabled: Bool = false,
         rendezvousTransportEnabled: Bool = false,
-        federationForwardingEnabled: Bool = false
+        federationForwardingEnabled: Bool = false,
+        netHostEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
             RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .provisional)
@@ -235,6 +236,23 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
                             FederationForwardingV1.maximumDeliveryLifetime
                         ),
                         "maxPacketBytes": OpaqueRouteRelayCapabilityLimitsV2.maxPacketBytes
+                    ]
+                )
+            )
+        }
+        if netHostEnabled {
+            modules.append(
+                RelayModuleCapabilityV2(
+                    module: "nw.net-host",
+                    versions: [1],
+                    status: .provisional,
+                    limits: [
+                        "maxObjectBytes": UInt64(
+                            NoctweaveNetLimits.maximumHostObjectBytes
+                        ),
+                        "maxRetentionSeconds": UInt64(
+                            NoctweaveNetLimits.maximumHostRetentionSeconds
+                        ),
                     ]
                 )
             )

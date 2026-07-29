@@ -858,6 +858,9 @@ public struct RelayConfiguration: Codable, Equatable {
     public var curatedRequireSignedDirectory: Bool
     public var advertisedEndpoint: RelayEndpoint?
     public var noctwebRelaySuffix: NoctwebRelaySuffixV1?
+    /// Enables bounded Noctweb object and name hosting on a standard relay.
+    /// Dedicated host relays always enable this capability.
+    public var netHostEnabled: Bool?
     public var federationAllowList: [RelayEndpoint]
     public var allowPrivateFederationEndpoints: Bool
     public var rendezvousTransportEnabled: Bool?
@@ -900,6 +903,7 @@ public struct RelayConfiguration: Codable, Equatable {
         curatedRequireSignedDirectory: Bool = true,
         advertisedEndpoint: RelayEndpoint? = nil,
         noctwebRelaySuffix: NoctwebRelaySuffixV1? = nil,
+        netHostEnabled: Bool = false,
         federationAllowList: [RelayEndpoint] = [],
         allowPrivateFederationEndpoints: Bool = false,
         rendezvousTransportEnabled: Bool = false
@@ -960,6 +964,7 @@ public struct RelayConfiguration: Codable, Equatable {
         self.curatedRequireSignedDirectory = curatedRequireSignedDirectory
         self.advertisedEndpoint = advertisedEndpoint
         self.noctwebRelaySuffix = noctwebRelaySuffix
+        self.netHostEnabled = kind == .host || netHostEnabled ? true : nil
         self.federationAllowList = Array(federationAllowList.prefix(256))
         self.allowPrivateFederationEndpoints = allowPrivateFederationEndpoints
         self.rendezvousTransportEnabled = rendezvousTransportEnabled ? true : nil
@@ -967,6 +972,10 @@ public struct RelayConfiguration: Codable, Equatable {
 
     public var isRendezvousTransportEnabled: Bool {
         rendezvousTransportEnabled == true
+    }
+
+    public var isNetHostEnabled: Bool {
+        kind == .host || netHostEnabled == true
     }
 
     public var transportConfidentiality: RelayTransportConfidentialityConfiguration {
@@ -1014,7 +1023,8 @@ public struct RelayConfiguration: Codable, Equatable {
                 mixnetEnabled: advertisedMixnetTransport != nil,
                 openDiscoveryEnabled: advertisedOpenFederationDiscovery?.dhtNodeEnabled == true,
                 rendezvousTransportEnabled: isRendezvousTransportEnabled,
-                federationForwardingEnabled: kind == .standard && federation.mode != .solo
+                federationForwardingEnabled: kind == .standard && federation.mode != .solo,
+                netHostEnabled: isNetHostEnabled
             ),
             requiresPassword: requiresPassword,
             tlsEnabled: advertisedTLSEnabled ?? tlsEnabled,

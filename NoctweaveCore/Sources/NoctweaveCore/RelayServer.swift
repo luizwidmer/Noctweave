@@ -20,6 +20,7 @@ public final class RelayServer {
 
     private let store: RelayStore
     private let opaqueRouteStore: OpaqueRouteRelayStoreV2
+    private let noctwebHostStore: RelayNoctwebHostStore?
     private let noctwebNamespaceRuntime =
         NoctwebNamespaceRuntimeV1()
     private var listener: NWListener?
@@ -55,10 +56,12 @@ public final class RelayServer {
         store: RelayStore,
         opaqueRouteStore: OpaqueRouteRelayStoreV2 = OpaqueRouteRelayStoreV2(),
         configuration: RelayConfiguration = RelayConfiguration(),
-        relayIdentity: RelayIdentityKeyMaterialV1? = nil
+        relayIdentity: RelayIdentityKeyMaterialV1? = nil,
+        noctwebHostStore: RelayNoctwebHostStore? = nil
     ) {
         self.store = store
         self.opaqueRouteStore = opaqueRouteStore
+        self.noctwebHostStore = noctwebHostStore
         self.relayConfiguration = configuration
         self.relayIdentityKeyMaterial = relayIdentity
             ?? (try? RelayIdentityKeyMaterialV1.generate())
@@ -118,9 +121,10 @@ public final class RelayServer {
         }
         let configuration = configuration
         guard configuration.kind != .passthrough,
-              configuration.kind != .host else {
-            // These roles require the bounded forwarding and durable hosting
-            // runtimes supplied by NoctweaveRelayServer.
+              !configuration.isNetHostEnabled
+                || noctwebHostStore != nil else {
+            // Passthrough requires the Linux forwarding runtime. Hosting
+            // requires an explicitly supplied bounded native host store.
             throw RelayNetworkError.connectionFailed
         }
         localEndpoint = RelayEndpoint(
@@ -1220,18 +1224,243 @@ public final class RelayServer {
                     respondingTo: request
                 )
             }
-        case .netPassthrough,
-             .putNetHostObject,
-             .bindNetHostName,
-             .getNetHostObject,
-             .resolveNetHostName,
-             .hasNetHostObject,
-             .releaseNetHostObject:
+        case .netPassthrough:
             return .error(
-                "Noctweave Net relay roles require NoctweaveRelayServer.",
+                "Noctweave Net passthrough requires NoctweaveRelayServer.",
                 code: .unavailable,
                 respondingTo: request
             )
+        case .putNetHostObject(let put):
+            guard configuration.isNetHostEnabled,
+                  let noctwebHostStore else {
+                return .error(
+                    "This relay does not provide Noctweave Net hosting.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            guard hasConfidentialRouteTransport(sourceKey) else {
+                return .error(
+                    "Noctweave Net hosting writes require confidential transport.",
+                    respondingTo: request
+                )
+            }
+            do {
+                return .success(
+                    .netHostReceipt(try noctwebHostStore.put(put)),
+                    respondingTo: request
+                )
+            } catch RelayNoctwebHostStoreError.conflict {
+                return .error(
+                    "Host object conflicts with stored state.",
+                    code: .conflict,
+                    respondingTo: request
+                )
+            } catch RelayNoctwebHostStoreError.capacityExceeded {
+                return .error(
+                    "Host object capacity reached.",
+                    code: .capacity,
+                    respondingTo: request
+                )
+            } catch {
+                return .error(
+                    "Host object could not be stored.",
+                    code: .internalFailure,
+                    retryable: true,
+                    respondingTo: request
+                )
+            }
+        case .bindNetHostName(let binding):
+            guard configuration.isNetHostEnabled,
+                  let noctwebHostStore,
+                  let configuredSuffix =
+                    configuration.noctwebRelaySuffix,
+                  binding.relaySuffix == configuredSuffix else {
+                return .error(
+                    "This relay does not own the requested Noctweb suffix.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            guard hasConfidentialRouteTransport(sourceKey) else {
+                return .error(
+                    "Noctweave Net name writes require confidential transport.",
+                    respondingTo: request
+                )
+            }
+            do {
+                let now = Date()
+                let stored = try noctwebHostStore.bindName(
+                    binding,
+                    now: now
+                )
+                let resolution =
+                    try NoctweaveNetHostNameResolutionV1.signed(
+                        binding: stored,
+                        updatedAt: now,
+                        signer:
+                            requiredRelayIdentityKeyMaterial(),
+                        at: now
+                    )
+                return .success(
+                    .netHostNameResolution(resolution),
+                    respondingTo: request
+                )
+            } catch RelayNoctwebHostStoreError.conflict {
+                return .error(
+                    "Noctweb name conflicts with publisher continuity.",
+                    code: .conflict,
+                    respondingTo: request
+                )
+            } catch RelayNoctwebHostStoreError.objectUnavailable {
+                return .error(
+                    "The named host object is not available.",
+                    code: .notFound,
+                    respondingTo: request
+                )
+            } catch {
+                return .error(
+                    "Noctweb name could not be stored.",
+                    code: .internalFailure,
+                    retryable: true,
+                    respondingTo: request
+                )
+            }
+        case .getNetHostObject(let get):
+            guard configuration.isNetHostEnabled,
+                  let noctwebHostStore else {
+                return .error(
+                    "This relay does not provide Noctweave Net hosting.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            do {
+                guard let object = try noctwebHostStore.fetch(get) else {
+                    return .error(
+                        "Host object not found.",
+                        code: .notFound,
+                        respondingTo: request
+                    )
+                }
+                return .success(
+                    .netHostObject(object),
+                    respondingTo: request
+                )
+            } catch {
+                return .error(
+                    "Host object could not be read.",
+                    code: .internalFailure,
+                    retryable: true,
+                    respondingTo: request
+                )
+            }
+        case .resolveNetHostName(let name):
+            guard configuration.isNetHostEnabled,
+                  let noctwebHostStore,
+                  let configuredSuffix =
+                    configuration.noctwebRelaySuffix,
+                  name.relaySuffix == configuredSuffix else {
+                return .error(
+                    "This relay does not own the requested Noctweb suffix.",
+                    code: .notFound,
+                    respondingTo: request
+                )
+            }
+            do {
+                let now = Date()
+                guard let binding =
+                    try noctwebHostStore.resolveName(
+                        name,
+                        now: now
+                    ) else {
+                    return .error(
+                        "Noctweb name not found.",
+                        code: .notFound,
+                        respondingTo: request
+                    )
+                }
+                let resolution =
+                    try NoctweaveNetHostNameResolutionV1.signed(
+                        binding: binding,
+                        updatedAt: now,
+                        signer:
+                            requiredRelayIdentityKeyMaterial(),
+                        at: now
+                    )
+                return .success(
+                    .netHostNameResolution(resolution),
+                    respondingTo: request
+                )
+            } catch {
+                return .error(
+                    "Noctweb name could not be resolved.",
+                    code: .internalFailure,
+                    retryable: true,
+                    respondingTo: request
+                )
+            }
+        case .hasNetHostObject(let has):
+            guard configuration.isNetHostEnabled,
+                  let noctwebHostStore else {
+                return .error(
+                    "This relay does not provide Noctweave Net hosting.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            do {
+                return .success(
+                    .netHostPresence(
+                        try noctwebHostStore.presence(has)
+                    ),
+                    respondingTo: request
+                )
+            } catch {
+                return .error(
+                    "Host object presence could not be read.",
+                    code: .internalFailure,
+                    retryable: true,
+                    respondingTo: request
+                )
+            }
+        case .releaseNetHostObject(let release):
+            guard configuration.isNetHostEnabled,
+                  let noctwebHostStore else {
+                return .error(
+                    "This relay does not provide Noctweave Net hosting.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            guard hasConfidentialRouteTransport(sourceKey) else {
+                return .error(
+                    "Noctweave Net hosting releases require confidential transport.",
+                    respondingTo: request
+                )
+            }
+            do {
+                return .success(
+                    .netHostRelease(
+                        try noctwebHostStore.release(release)
+                    ),
+                    respondingTo: request
+                )
+            } catch RelayNoctwebHostStoreError
+                .unauthorizedRelease {
+                return .error(
+                    "Host release capability rejected.",
+                    code: .authenticationRequired,
+                    respondingTo: request
+                )
+            } catch {
+                return .error(
+                    "Host object could not be released.",
+                    code: .internalFailure,
+                    retryable: true,
+                    respondingTo: request
+                )
+            }
         }
     }
 
@@ -1275,6 +1504,8 @@ public final class RelayServer {
             == configuration.federation.name,
            cachedRelayIdentity.claim.noctwebSuffix
             == configuration.noctwebRelaySuffix,
+           cachedRelayIdentity.claim.hostSigningPublicKey
+            == noctwebHostStore?.signingPublicKey,
            cachedRelayIdentity.claim.capabilityDigest == capabilityDigest,
            cachedRelayIdentity.claim.advertisedEndpoints
             .map(endpointKey)
@@ -1296,6 +1527,8 @@ public final class RelayServer {
             federation: configuration.federation,
             advertisedEndpoints: endpoints,
             noctwebSuffix: configuration.noctwebRelaySuffix,
+            hostSigningPublicKey:
+                noctwebHostStore?.signingPublicKey,
             capabilities: capabilities,
             issuedAt: date
         )
@@ -1316,6 +1549,8 @@ public final class RelayServer {
                 configuration: configuration
             ),
             noctwebSuffix: configuration.noctwebRelaySuffix,
+            hostSigningPublicKey:
+                noctwebHostStore?.signingPublicKey,
             precomputedIdentity: identity
         )
     }
