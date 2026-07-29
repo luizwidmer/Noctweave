@@ -26,6 +26,81 @@ private struct RelayForwardTimeoutError: LocalizedError {
     var errorDescription: String? { "Relay forwarding request timed out." }
 }
 
+final class NoctwebNamespaceAdvertiser: @unchecked Sendable {
+    private let store: RelayStore
+    private let configurationStore: RelayConfigurationStore
+    private let relayIdentityRuntime: RelayIdentityRuntime
+    private let fallbackEndpoint: RelayEndpoint
+    private let forwardingRequestTimeoutSeconds: Int
+    private let maxMessageBytes: Int?
+    private let maxLineBytes: Int?
+    private let netHostStore: NoctweaveNetHostStore?
+    private let passthroughAllowedEndpoints: [RelayEndpoint]
+
+    init(
+        store: RelayStore,
+        configurationStore: RelayConfigurationStore,
+        relayIdentityRuntime: RelayIdentityRuntime,
+        fallbackEndpoint: RelayEndpoint,
+        forwardingRequestTimeoutSeconds: Int,
+        maxMessageBytes: Int?,
+        maxLineBytes: Int?,
+        netHostStore: NoctweaveNetHostStore?,
+        passthroughAllowedEndpoints: [RelayEndpoint]
+    ) {
+        self.store = store
+        self.configurationStore = configurationStore
+        self.relayIdentityRuntime = relayIdentityRuntime
+        self.fallbackEndpoint = fallbackEndpoint
+        self.forwardingRequestTimeoutSeconds =
+            forwardingRequestTimeoutSeconds
+        self.maxMessageBytes = maxMessageBytes
+        self.maxLineBytes = maxLineBytes
+        self.netHostStore = netHostStore
+        self.passthroughAllowedEndpoints = passthroughAllowedEndpoints
+    }
+
+    func announce(on eventLoop: EventLoop) {
+        let configuration = configurationStore.snapshot()
+        guard configuration.federation.mode != .solo,
+              configuration.noctwebRelaySuffix != nil else {
+            return
+        }
+        let advertisedEndpoint =
+            configuration.advertisedEndpoint ?? fallbackEndpoint
+        do {
+            let identity = try relayIdentityRuntime.signedIdentity(
+                configuration: configuration,
+                advertisedEndpoints: [advertisedEndpoint],
+                hostSigningPublicKey: netHostStore?.signingPublicKey
+            )
+            try store.claimNoctwebNamespace(identity)
+            RelayHandler(
+                store: store,
+                maxMessageBytes: maxMessageBytes,
+                maxLineBytes: maxLineBytes,
+                localEndpoint: fallbackEndpoint,
+                relayConfiguration: configuration,
+                relayIdentityRuntime: relayIdentityRuntime,
+                forwardingRequestTimeoutSeconds:
+                    forwardingRequestTimeoutSeconds,
+                netHostStore: netHostStore,
+                passthroughAllowedEndpoints:
+                    passthroughAllowedEndpoints
+            ).announceNoctwebNamespaceMutation(
+                .claimNoctwebNamespaceV1(
+                    NoctwebNamespaceClaimRequestV1(identity: identity)
+                ),
+                on: eventLoop
+            )
+        } catch {
+            print(
+                "[relay] Noctweb namespace advertisement failed: \(error)"
+            )
+        }
+    }
+}
+
 final class RelayHandler: ChannelInboundHandler {
     typealias InboundIn = ByteBuffer
     typealias OutboundOut = ByteBuffer
@@ -1467,7 +1542,13 @@ final class RelayHandler: ChannelInboundHandler {
         let host = endpoint.host
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        return host == "127.0.0.1" || host == "::1" || host == "localhost"
+        if host == "127.0.0.1"
+            || host == "::1"
+            || host == "localhost" {
+            return true
+        }
+        return relayConfiguration.allowPrivateFederationEndpoints
+            && PublicRelayEndpointPolicy.permitsPrivate(endpoint)
     }
 
     private func advertisedIdentityEndpoints() -> [RelayEndpoint] {
@@ -2040,6 +2121,13 @@ final class RelayHandler: ChannelInboundHandler {
             futures,
             on: eventLoop
         ).whenComplete { _ in }
+    }
+
+    func announceNoctwebNamespaceMutation(
+        _ request: RelayRequest,
+        on eventLoop: EventLoop
+    ) {
+        propagateNoctwebNamespaceMutation(request, on: eventLoop)
     }
 
     private func boundedAttachmentTTL(requested: Int?) -> Int {

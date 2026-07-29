@@ -12,6 +12,27 @@ final class NoctweaveNetRelayTests: XCTestCase {
         XCTAssertFalse(RelayKind.coordinator.isCurrentTopologyRole)
     }
 
+    func testPrivateEndpointPolicyAcceptsLANAndInternalHostsOnly() {
+        XCTAssertTrue(
+            PublicRelayEndpointPolicy.permitsPrivate(
+                RelayEndpoint(host: "192.168.1.20", port: 9339)
+            )
+        )
+        XCTAssertTrue(
+            PublicRelayEndpointPolicy.permitsPrivate(
+                RelayEndpoint(
+                    host: "host.docker.internal",
+                    port: 9339
+                )
+            )
+        )
+        XCTAssertFalse(
+            PublicRelayEndpointPolicy.permitsPrivate(
+                RelayEndpoint(host: "8.8.8.8", port: 9339)
+            )
+        )
+    }
+
     func testEmbeddedRelayRefusesOperationalNetRoles() {
         for kind in [RelayKind.passthrough, .host] {
             let relay = RelayServer(

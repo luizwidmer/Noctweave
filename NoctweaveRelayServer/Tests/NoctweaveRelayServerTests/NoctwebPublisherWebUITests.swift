@@ -126,6 +126,16 @@ final class NoctwebPublisherWebUITests: XCTestCase {
             "randomBytes(32)",
             "org.noctweave.net/host-release/v1",
             "org.noctweave.net/hosting-receipt/v1",
+            "noctweb-hosted-capsule-v1",
+            "noctweb-lab-v3",
+            "org.noctweave.noctweb/signed-head/v3",
+            "org.noctweave.noctweb/head-hash/v1",
+            "previousCapsuleObjectID",
+            "previousHeadID",
+            #"relayRequest("bind""#,
+            "verifyNameBinding",
+            "Relay returned an invalid signed name binding",
+            "Revision hosted, named, and receipt verified",
             "Hosting receipt signature verification failed",
             "Publisher signature verification failed",
             "connect-src 'none'",
@@ -161,6 +171,8 @@ final class NoctwebPublisherWebUITests: XCTestCase {
         XCTAssertFalse(script.contains("cdn."))
         XCTAssertFalse(script.contains("Finalized"))
         XCTAssertFalse(script.contains("authToken: password"))
+        XCTAssertFalse(script.contains(#"const PROFILE = "noctweb-publisher-v1""#))
+        XCTAssertFalse(script.contains("org.noctweave.noctweb/publisher-bundle/v1"))
     }
 
     func testPublisherShellThemeDoesNotOwnGeneratedWebsiteAccentOrContent() throws {

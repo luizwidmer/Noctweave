@@ -2,6 +2,103 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ManualFederationPeerTests: XCTestCase {
+    func testRuntimeRefreshReannouncesNamespaceToLateManualPeer()
+        async throws
+    {
+        let federation = FederationDescriptor(
+            mode: .manual,
+            name: "manual-namespace-healing"
+        )
+        let suffix = NoctwebRelaySuffixV1(rawValue: ".latepeer")!
+        let sourcePort = UInt16.random(in: 35_000...39_999)
+        var destinationPort = UInt16.random(in: 40_000...44_999)
+        while destinationPort == sourcePort {
+            destinationPort = UInt16.random(in: 40_000...44_999)
+        }
+        let sourceEndpoint = RelayEndpoint(
+            host: "127.0.0.1",
+            port: sourcePort
+        )
+        let destinationEndpoint = RelayEndpoint(
+            host: "127.0.0.1",
+            port: destinationPort
+        )
+        let sourceConfiguration = RelayConfiguration(
+            kind: .standard,
+            federation: federation,
+            advertisedEndpoint: sourceEndpoint,
+            noctwebRelaySuffix: suffix,
+            netHostEnabled: true,
+            federationAllowList: [destinationEndpoint],
+            allowPrivateFederationEndpoints: true
+        )
+        let hostStore = try RelayNoctwebHostStore(
+            directoryURL: nil,
+            signingPrivateKeyData:
+                RelayNoctwebHostStore.generateSigningPrivateKey()
+        )
+        try hostStore.load()
+        let source = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 0),
+            configuration: sourceConfiguration,
+            relayIdentity: try RelayIdentityKeyMaterialV1.generate(),
+            noctwebHostStore: hostStore
+        )
+        let destination = RelayServer(
+            store: RelayStore(storeURL: nil, temporalBucketSeconds: 0),
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                advertisedEndpoint: destinationEndpoint,
+                federationAllowList: [sourceEndpoint],
+                allowPrivateFederationEndpoints: true
+            )
+        )
+        let sourceStarted = expectation(description: "source started")
+        let destinationStarted = expectation(
+            description: "late destination started"
+        )
+        source.onEvent = { (event: RelayServer.Event) in
+            if case .started = event {
+                sourceStarted.fulfill()
+            }
+        }
+        destination.onEvent = { (event: RelayServer.Event) in
+            if case .started = event {
+                destinationStarted.fulfill()
+            }
+        }
+
+        try source.start(host: "127.0.0.1", port: sourcePort)
+        await fulfillment(of: [sourceStarted], timeout: 5)
+        try destination.start(
+            host: "127.0.0.1",
+            port: destinationPort
+        )
+        defer {
+            source.stop()
+            destination.stop()
+        }
+        await fulfillment(of: [destinationStarted], timeout: 5)
+
+        source.updateFederationRuntimeSettings(
+            from: sourceConfiguration
+        )
+
+        let deadline = Date().addingTimeInterval(5)
+        var records = await destination.noctwebNamespaceRecords()
+        while !records.contains(where: { $0.suffix == suffix }),
+              Date() < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+            records = await destination.noctwebNamespaceRecords()
+        }
+        XCTAssertEqual(
+            records.first(where: { $0.suffix == suffix })?
+                .activeIdentityClaim?.claim.advertisedEndpoints,
+            [sourceEndpoint]
+        )
+    }
+
     func testManualFederationTreatsAllowListedStandardRelayAsLivePeer() async throws {
         let federation = FederationDescriptor(mode: .manual, name: "manual-live-test")
         let relayA = RelayServer(

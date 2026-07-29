@@ -194,16 +194,20 @@ public final class RelayServer {
                 for: suffix
             )
             let record = try await noctwebNamespaceRuntime.claim(identity)
-            await publishNoctwebNamespaceState()
             if previous != record {
-                await propagateNoctwebNamespaceMutation(
-                    .claimNoctwebNamespaceV1(
-                        NoctwebNamespaceClaimRequestV1(
-                            identity: identity
-                        )
+                await publishNoctwebNamespaceState()
+            }
+            // Re-advertise even when the local record is unchanged. A peer
+            // may have started after our original claim or recovered from a
+            // state loss; duplicate claims are idempotent and are not
+            // re-propagated by a peer that already retained the record.
+            await propagateNoctwebNamespaceMutation(
+                .claimNoctwebNamespaceV1(
+                    NoctwebNamespaceClaimRequestV1(
+                        identity: identity
                     )
                 )
-            }
+            )
         } catch {
             onEvent?(.error(
                 "Configured Noctweb namespace could not be activated."
@@ -224,6 +228,10 @@ public final class RelayServer {
     public func updateFederationAllowList(_ allowList: [RelayEndpoint]) {
         mutateConfiguration { configuration in
             configuration.federationAllowList = allowList
+        }
+        startCoordinatorHeartbeatLoopIfNeeded()
+        Task { [weak self] in
+            await self?.activateConfiguredNoctwebNamespace()
         }
     }
 
@@ -248,6 +256,9 @@ public final class RelayServer {
             configuration.advertisedEndpoint = updated.advertisedEndpoint
         }
         startCoordinatorHeartbeatLoopIfNeeded()
+        Task { [weak self] in
+            await self?.activateConfiguredNoctwebNamespace()
+        }
     }
 
     private func mutateConfiguration(_ body: (inout RelayConfiguration) -> Void) {
@@ -1799,9 +1810,13 @@ public final class RelayServer {
         let host = endpoint.host
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        return host == "127.0.0.1"
+        if host == "127.0.0.1"
             || host == "::1"
-            || host == "localhost"
+            || host == "localhost" {
+            return true
+        }
+        return configuration.allowPrivateFederationEndpoints
+            && PublicRelayEndpointPolicy.permitsPrivate(endpoint)
     }
 
     private func forwardedRelayErrorResponse(
@@ -2163,6 +2178,7 @@ public final class RelayServer {
         coordinatorHeartbeatTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
+                await self.activateConfiguredNoctwebNamespace()
                 do {
                     let mode = self.configuration.federation.mode
                     if mode == .manual {

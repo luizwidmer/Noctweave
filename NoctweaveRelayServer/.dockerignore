@@ -1,7 +1,10 @@
 .build
+artifacts
+build
 .git
 .swiftpm
 .DS_Store
+node_modules
 docker-compose*.yml
 Dockerfile.caddy-l4
 Caddyfile.layer4

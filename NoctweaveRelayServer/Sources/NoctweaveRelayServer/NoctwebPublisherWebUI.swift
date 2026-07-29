@@ -687,8 +687,10 @@ struct NoctwebPublisherSurface {
     private static let javascript = #"""
     "use strict";
     (() => {
-      const PROFILE = "noctweb-publisher-v1";
-      const SIGNING_DOMAIN = "org.noctweave.noctweb/publisher-bundle/v1";
+      const CAPSULE_PROFILE = "noctweb-hosted-capsule-v1";
+      const PROTOCOL_VERSION = "noctweb-lab-v3";
+      const SIGNED_HEAD_DOMAIN = "org.noctweave.noctweb/signed-head/v3";
+      const HEAD_HASH_DOMAIN = "org.noctweave.noctweb/head-hash/v1";
       const PUBLISHER_ID_DOMAIN = "org.noctweave.noctweb/publisher-id/v1";
       const RELEASE_DOMAIN = "org.noctweave.net/host-release/v1";
       const DB_NAME = "noctweb-publisher-v1";
@@ -736,7 +738,7 @@ struct NoctwebPublisherSurface {
       }
 
       const defaultProject = () => ({
-        publicationID: crypto.randomUUID().toUpperCase(),
+        publicationID: crypto.randomUUID().toLowerCase(),
         siteLabel: "first-light",
         title: "A quieter place on the network.",
         subtitle: "Signed by its publisher. Carried by replaceable infrastructure.",
@@ -747,6 +749,8 @@ struct NoctwebPublisherSurface {
         customCode: false,
         revision: 0,
         previousHostObjectID: null,
+        previousCapsuleObjectID: null,
+        previousHeadID: null,
         html: "",
         css: "",
         js: ""
@@ -1060,32 +1064,62 @@ struct NoctwebPublisherSurface {
         }
         const publicKey = new Uint8Array(identity.publicKey);
         const revision = Number(project.revision || 0) + 1;
-        const claims = {
-          profile: PROFILE,
-          publicationID: project.publicationID,
-          address: provisionalAddress(),
+        const publicationID = project.publicationID.toLowerCase();
+        const address = provisionalAddress();
+        const files = [
+          { path: "app.js", mediaType: "text/javascript; charset=utf-8", bytes: toBase64(encoder.encode(project.js)) },
+          { path: "index.html", mediaType: "text/html; charset=utf-8", bytes: toBase64(encoder.encode(project.html)) },
+          { path: "styles.css", mediaType: "text/css; charset=utf-8", bytes: toBase64(encoder.encode(project.css)) }
+        ].sort((left, right) => left.path.localeCompare(right.path, "en", { sensitivity: "variant" }));
+        const object = {
+          protocolVersion: PROTOCOL_VERSION,
+          publicationID,
+          address,
           relayNamespaceID: config.relayNamespaceID,
+          routeDirective: "open",
+          publisherID: identity.publisherID,
+          revision,
+          ...(project.previousCapsuleObjectID
+            ? { previousObjectID: project.previousCapsuleObjectID }
+            : {}),
+          title: project.title,
+          subtitle: project.subtitle,
+          body: project.body,
+          accentHex: project.accent,
+          bundle: {
+            entryPath: "index.html",
+            files
+          }
+        };
+        const encodedObject = encoder.encode(canonicalJSON(object));
+        const capsuleObjectID = `sha256:${hex(await sha256(encodedObject))}`;
+        const claims = {
+          protocolVersion: PROTOCOL_VERSION,
+          publicationID,
+          address,
+          relayNamespaceID: config.relayNamespaceID,
+          routeDirective: "open",
           publisherID: identity.publisherID,
           publisherPublicKey: toBase64(publicKey),
+          objectID: capsuleObjectID,
           revision,
-          previousHostObjectID: project.previousHostObjectID,
-          issuedAtMilliseconds: Date.now(),
-          files: [
-            { path: "app.js", mediaType: "text/javascript; charset=utf-8", bytes: toBase64(encoder.encode(project.js)) },
-            { path: "index.html", mediaType: "text/html; charset=utf-8", bytes: toBase64(encoder.encode(project.html)) },
-            { path: "styles.css", mediaType: "text/css; charset=utf-8", bytes: toBase64(encoder.encode(project.css)) }
-          ]
+          ...(project.previousHeadID ? { previousHeadID: project.previousHeadID } : {}),
+          issuedAtMilliseconds: Date.now()
         };
-        const claimsBytes = encoder.encode(canonicalJSON(claims));
+        const signaturePayload = publisherHeadPayload(claims);
         const signature = new Uint8Array(await crypto.subtle.sign(
           { name: "Ed25519" },
           identity.privateKey,
-          domainPayload(SIGNING_DOMAIN, claimsBytes)
+          signaturePayload
         ));
+        const head = { claims, signature: toBase64(signature) };
+        const headID = await publisherHeadID(signaturePayload, signature);
         const envelopeBytes = encoder.encode(canonicalJSON({
-          claims,
-          signatureAlgorithm: "Ed25519",
-          signature: toBase64(signature)
+          profile: CAPSULE_PROFILE,
+          object,
+          encodedObject: toBase64(encodedObject),
+          head,
+          headID
         }));
         if (envelopeBytes.byteLength > config.maximumObjectBytes) {
           throw new Error(`Signed site exceeds the relay's ${config.maximumObjectBytes}-byte object limit.`);
@@ -1094,6 +1128,7 @@ struct NoctwebPublisherSurface {
         const releaseCapability = randomBytes(32);
         const releaseDigest = await sha256(domainPayload(RELEASE_DOMAIN, releaseCapability));
         const idempotencyKey = randomBytes(32);
+        const previousObjectID = project.previousHostObjectID;
         const ttlSeconds = Number(elements.retentionInput.value);
         const relayResponse = await relayRequest("put", {
           objectID,
@@ -1104,12 +1139,45 @@ struct NoctwebPublisherSurface {
         }, password);
         const receipt = relayResponse.body?.receipt;
         await verifyHostingReceipt(receipt, objectID, envelopeBytes.byteLength);
+        try {
+          const bindingResponse = await relayRequest("bind", {
+            version: 1,
+            relaySuffix: `.${config.relaySuffix}`,
+            siteLabel: canonicalSiteLabel(project.siteLabel),
+            objectID,
+            publisherID: identity.publisherID,
+            headID,
+            revision,
+            previousObjectID,
+            idempotencyKey: toBase64(randomBytes(32))
+          }, password);
+          verifyNameBinding(bindingResponse.body?.nameResolution, {
+            relaySuffix: `.${config.relaySuffix}`,
+            siteLabel: canonicalSiteLabel(project.siteLabel),
+            objectID,
+            publisherID: identity.publisherID,
+            headID,
+            revision
+          });
+        } catch (error) {
+          try {
+            await relayRequest("release", {
+              objectID,
+              releaseCapability: toBase64(releaseCapability)
+            }, password);
+          } catch {
+            // The object is still bounded by its requested relay retention.
+          }
+          throw new Error(`Name binding failed: ${safeMessage(error, "Relay operation failed.")}`);
+        }
         const protectedRelease = await protectReleaseCapability(releaseCapability);
         const hostedCopy = {
-          publicationID: project.publicationID,
+          publicationID,
           objectID,
-          address: claims.address,
+          address,
           publisherID: identity.publisherID,
+          headID,
+          capsuleObjectID,
           receipt,
           protectedRelease
         };
@@ -1119,9 +1187,11 @@ struct NoctwebPublisherSurface {
         await persistHostingLedger();
         project.revision = revision;
         project.previousHostObjectID = objectID;
+        project.previousCapsuleObjectID = capsuleObjectID;
+        project.previousHeadID = headID;
         await persistProject();
         updateHostingUI();
-        showToast("Revision hosted and receipt verified.");
+        showToast("Revision hosted, named, and receipt verified.");
       }
 
       async function releaseHostedCopy(password) {
@@ -1239,35 +1309,61 @@ struct NoctwebPublisherSurface {
         const envelope = JSON.parse(decoder.decode(envelopeBytes));
         const files = await verifyPublisherEnvelope(envelope);
         selectPanel("preview");
-        elements.previewAddress.textContent = envelope.claims.address;
-        updatePreview(files, `Verified publisher ${shortID(envelope.claims.publisherID)} · Hosted`);
+        elements.previewAddress.textContent = envelope.object.address;
+        updatePreview(files, `Verified publisher ${shortID(envelope.object.publisherID)} · Hosted`);
         showToast("Hosted page and publisher signature verified.");
       }
 
       async function verifyPublisherEnvelope(envelope) {
-        if (!envelope || envelope.signatureAlgorithm !== "Ed25519" ||
-            envelope.claims?.profile !== PROFILE ||
-            envelope.claims.relayNamespaceID !== config.relayNamespaceID ||
-            !Array.isArray(envelope.claims.files) || envelope.claims.files.length !== 3) {
+        const object = envelope?.object;
+        const claims = envelope?.head?.claims;
+        const bundle = object?.bundle;
+        if (!envelope || envelope.profile !== CAPSULE_PROFILE ||
+            object?.protocolVersion !== PROTOCOL_VERSION ||
+            claims?.protocolVersion !== PROTOCOL_VERSION ||
+            object.relayNamespaceID !== config.relayNamespaceID ||
+            claims.relayNamespaceID !== config.relayNamespaceID ||
+            object.routeDirective !== "open" ||
+            claims.routeDirective !== "open" ||
+            bundle?.entryPath !== "index.html" ||
+            !Array.isArray(bundle.files) || bundle.files.length !== 3) {
           throw new Error("Hosted publisher envelope is invalid.");
         }
-        const publicKeyBytes = fromBase64(envelope.claims.publisherPublicKey);
+        const encodedObject = fromBase64(envelope.encodedObject);
+        const decodedObject = JSON.parse(decoder.decode(encodedObject));
+        const objectID = `sha256:${hex(await sha256(encodedObject))}`;
+        if (canonicalJSON(decodedObject) !== canonicalJSON(object) ||
+            encoder.encode(canonicalJSON(decodedObject)).byteLength !== encodedObject.byteLength ||
+            canonicalJSON(decodedObject) !== decoder.decode(encodedObject) ||
+            claims.objectID !== objectID ||
+            claims.publicationID !== object.publicationID ||
+            claims.address !== object.address ||
+            claims.publisherID !== object.publisherID ||
+            claims.revision !== object.revision) {
+          throw new Error("Hosted capsule does not match its canonical object.");
+        }
+        const publicKeyBytes = fromBase64(claims.publisherPublicKey);
         if (publicKeyBytes.byteLength !== 32 ||
-            await makePublisherID(publicKeyBytes) !== envelope.claims.publisherID) {
+            await makePublisherID(publicKeyBytes) !== claims.publisherID) {
           throw new Error("Publisher identity verification failed.");
         }
         const publicKey = await crypto.subtle.importKey(
           "raw", publicKeyBytes, { name: "Ed25519" }, false, ["verify"]
         );
+        const signaturePayload = publisherHeadPayload(claims);
+        const signature = fromBase64(envelope.head.signature);
         const verified = await crypto.subtle.verify(
           { name: "Ed25519" },
           publicKey,
-          fromBase64(envelope.signature),
-          domainPayload(SIGNING_DOMAIN, encoder.encode(canonicalJSON(envelope.claims)))
+          signature,
+          signaturePayload
         );
         if (!verified) throw new Error("Publisher signature verification failed.");
+        if (await publisherHeadID(signaturePayload, signature) !== envelope.headID) {
+          throw new Error("Publisher head identifier verification failed.");
+        }
         const mapped = {};
-        for (const file of envelope.claims.files) {
+        for (const file of bundle.files) {
           if (!["app.js", "index.html", "styles.css"].includes(file.path)) {
             throw new Error("Hosted page contains an unsupported path.");
           }
@@ -1318,6 +1414,22 @@ struct NoctwebPublisherSurface {
           message
         );
         if (!valid) throw new Error("Hosting receipt signature verification failed.");
+      }
+
+      function verifyNameBinding(resolution, expected) {
+        if (!resolution ||
+            resolution.version !== 1 ||
+            !/^nwr1[0-9a-f]{64}$/u.test(resolution.relayID) ||
+            resolution.relaySuffix !== expected.relaySuffix ||
+            resolution.siteLabel !== expected.siteLabel ||
+            resolution.objectID !== expected.objectID ||
+            resolution.publisherID !== expected.publisherID ||
+            resolution.headID !== expected.headID ||
+            resolution.revision !== expected.revision ||
+            resolution.signatureAlgorithm !== "ML-DSA-65" ||
+            typeof resolution.signature !== "string") {
+          throw new Error("Relay returned an invalid signed name binding.");
+        }
       }
 
       async function relayRequest(method, body, authToken) {
@@ -1486,6 +1598,53 @@ struct NoctwebPublisherSurface {
 
       function domainPayload(domain, payload) {
         return concatenate(encoder.encode(domain), Uint8Array.of(0), payload);
+      }
+
+      function uint32(value) {
+        if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
+          throw new Error("Transcript field length is invalid.");
+        }
+        const output = new Uint8Array(4);
+        new DataView(output.buffer).setUint32(0, value, false);
+        return output;
+      }
+
+      function transcriptField(value, maximum) {
+        const bytes = typeof value === "string" ? encoder.encode(value) : value;
+        if (!(bytes instanceof Uint8Array) || bytes.byteLength > maximum) {
+          throw new Error("Publisher transcript field exceeds its bound.");
+        }
+        return concatenate(uint32(bytes.byteLength), bytes);
+      }
+
+      function publisherHeadPayload(claims) {
+        const previousHead = claims.previousHeadID
+          ? concatenate(Uint8Array.of(1), transcriptField(claims.previousHeadID, 128))
+          : Uint8Array.of(0);
+        return concatenate(
+          transcriptField(SIGNED_HEAD_DOMAIN, 64),
+          Uint8Array.of(1),
+          transcriptField(claims.protocolVersion, 64),
+          transcriptField(claims.publicationID, 64),
+          transcriptField(claims.address, 2048),
+          transcriptField(claims.relayNamespaceID, 80),
+          transcriptField(claims.routeDirective, 32),
+          transcriptField(claims.publisherID, 128),
+          transcriptField(fromBase64(claims.publisherPublicKey), 32),
+          transcriptField(claims.objectID, 128),
+          uint64(claims.revision),
+          previousHead,
+          uint64(claims.issuedAtMilliseconds)
+        );
+      }
+
+      async function publisherHeadID(signaturePayload, signature) {
+        return `sha256:${hex(await sha256(concatenate(
+          encoder.encode(HEAD_HASH_DOMAIN),
+          Uint8Array.of(0),
+          signaturePayload,
+          signature
+        )))}`;
       }
 
       function randomBytes(length) {

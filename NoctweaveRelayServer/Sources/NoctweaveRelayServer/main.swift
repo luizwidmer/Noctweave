@@ -1278,6 +1278,40 @@ do {
     let rawAddress = rawChannel.localAddress?.description ?? "unknown"
     print("[relay] Listening (tcp) on \(rawAddress)")
 
+    let identityFallbackHost = ["0.0.0.0", "::"].contains(config.host)
+        ? "127.0.0.1"
+        : config.host
+    let namespaceAdvertiser = NoctwebNamespaceAdvertiser(
+        store: store,
+        configurationStore: relayConfigurationStore,
+        relayIdentityRuntime: relayIdentityRuntime,
+        fallbackEndpoint: RelayEndpoint(
+            host: identityFallbackHost,
+            port: UInt16(config.port),
+            useTLS: false,
+            transport: .tcp
+        ),
+        forwardingRequestTimeoutSeconds:
+            config.forwardingRequestTimeoutSeconds,
+        maxMessageBytes: config.maxMessageBytes,
+        maxLineBytes: config.maxLineBytes,
+        netHostStore: netHostStore,
+        passthroughAllowedEndpoints:
+            config.passthroughAllowedEndpoints
+    )
+    let namespaceAnnouncementEventLoop = group.next()
+    namespaceAdvertiser.announce(on: namespaceAnnouncementEventLoop)
+    let namespaceAnnouncementTask =
+        namespaceAnnouncementEventLoop.scheduleRepeatedTask(
+            initialDelay: .seconds(15),
+            delay: .seconds(15)
+        ) { _ in
+            namespaceAdvertiser.announce(
+                on: namespaceAnnouncementEventLoop
+            )
+        }
+    defer { namespaceAnnouncementTask.cancel() }
+
     var closeFutures: [EventLoopFuture<Void>] = [rawChannel.closeFuture]
 
     if let httpPort = config.httpPort {

@@ -12,6 +12,27 @@ final class NoctweaveNetRelayTests: XCTestCase {
         XCTAssertFalse(RelayKind.coordinator.isCurrentTopologyRole)
     }
 
+    func testPrivateEndpointPolicyAcceptsLANAndInternalHostsOnly() {
+        XCTAssertTrue(
+            PublicRelayEndpointPolicy.permitsPrivate(
+                RelayEndpoint(host: "192.168.1.20", port: 9339)
+            )
+        )
+        XCTAssertTrue(
+            PublicRelayEndpointPolicy.permitsPrivate(
+                RelayEndpoint(
+                    host: "host.docker.internal",
+                    port: 9339
+                )
+            )
+        )
+        XCTAssertFalse(
+            PublicRelayEndpointPolicy.permitsPrivate(
+                RelayEndpoint(host: "8.8.8.8", port: 9339)
+            )
+        )
+    }
+
     func testRoleCapabilitiesAdvertiseOnlyTheirSurface() {
         let standard = RelayCapabilityManifestV2.advertised(
             relayKind: .standard,
@@ -597,6 +618,89 @@ final class NoctweaveNetRelayTests: XCTestCase {
         XCTAssertTrue(waitForRelayCondition {
             second.namespaceRecord(for: suffix)?.status
                 == .tombstoned
+        })
+    }
+
+    func testNamespaceAdvertiserReannouncesClaimToLateManualPeer()
+        throws
+    {
+        let federation = FederationDescriptor(
+            mode: .manual,
+            name: "namespace-late-peer"
+        )
+        let sourcePort = try reserveRelayTestPort()
+        let destinationPort = try reserveRelayTestPort()
+        let sourceEndpoint = RelayEndpoint(
+            host: "127.0.0.1",
+            port: UInt16(sourcePort),
+            transport: .tcp
+        )
+        let destinationEndpoint = RelayEndpoint(
+            host: "127.0.0.1",
+            port: UInt16(destinationPort),
+            transport: .tcp
+        )
+        let suffix = NoctwebRelaySuffixV1(rawValue: ".latepeer")!
+        let sourceConfiguration = RelayConfiguration(
+            kind: .standard,
+            netHostEnabled: true,
+            federation: federation,
+            advertisedEndpoint: sourceEndpoint,
+            noctwebRelaySuffix: suffix,
+            federationAllowList: [destinationEndpoint],
+            allowPrivateFederationEndpoints: true
+        )
+        let sourceStore = RelayStore(
+            fileURL: nil,
+            temporalBucketSeconds: 0
+        )
+        let sourceIdentity = RelayIdentityRuntime(
+            keyMaterial: try RelayIdentityKeyMaterialV1.generate()
+        )
+        let sourceHostStore = NoctweaveNetHostStore(
+            directoryURL: nil,
+            signingPrivateKey: Curve25519.Signing.PrivateKey()
+        )
+        try sourceHostStore.load()
+        let advertiser = NoctwebNamespaceAdvertiser(
+            store: sourceStore,
+            configurationStore: RelayConfigurationStore(
+                sourceConfiguration
+            ),
+            relayIdentityRuntime: sourceIdentity,
+            fallbackEndpoint: sourceEndpoint,
+            forwardingRequestTimeoutSeconds: 1,
+            maxMessageBytes: 512 * 1_024,
+            maxLineBytes: 640 * 1_024,
+            netHostStore: sourceHostStore,
+            passthroughAllowedEndpoints: []
+        )
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        defer { try? group.syncShutdownGracefully() }
+
+        advertiser.announce(on: group.next())
+        Thread.sleep(forTimeInterval: 1.1)
+
+        let destination = try NoctweaveNetRelayTCPHarness(
+            port: destinationPort,
+            configuration: RelayConfiguration(
+                kind: .standard,
+                federation: federation,
+                advertisedEndpoint: destinationEndpoint,
+                federationAllowList: [sourceEndpoint],
+                allowPrivateFederationEndpoints: true
+            ),
+            identity: RelayIdentityRuntime(
+                keyMaterial: try RelayIdentityKeyMaterialV1.generate()
+            )
+        )
+        defer { try? destination.shutdown() }
+
+        advertiser.announce(on: group.next())
+
+        XCTAssertTrue(waitForRelayCondition {
+            destination.namespaceRecord(for: suffix)?.ownerRelayID
+                == sourceIdentity.relayID
         })
     }
 }

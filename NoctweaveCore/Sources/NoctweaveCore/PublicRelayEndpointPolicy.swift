@@ -22,6 +22,27 @@ enum PublicRelayEndpointPolicy {
         return addresses.allSatisfy(isPubliclyRoutable)
     }
 
+    static func permitsPrivate(_ endpoint: RelayEndpoint) -> Bool {
+        let host = endpoint.host
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !host.isEmpty else {
+            return false
+        }
+        if host == "localhost"
+            || host.hasSuffix(".localhost")
+            || host.hasSuffix(".local")
+            || host.hasSuffix(".internal")
+            || host.hasSuffix(".lan") {
+            return true
+        }
+        guard let addresses = resolvedAddresses(host: host),
+              !addresses.isEmpty else {
+            return false
+        }
+        return addresses.allSatisfy { !isPubliclyRoutable($0) }
+    }
+
     private enum Address {
         case v4([UInt8])
         case v6([UInt8])
