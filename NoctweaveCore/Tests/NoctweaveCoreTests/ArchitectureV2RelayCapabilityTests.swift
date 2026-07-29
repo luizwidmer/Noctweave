@@ -75,6 +75,7 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
                 "nw.rendezvous-transport",
                 "nw.blobs",
                 "nw.federation",
+                "nw.federation-forward",
                 "nw.net-passthrough",
                 "nw.net-host"
             ]

@@ -229,9 +229,36 @@ requires a 32-byte object-scoped capability whose domain-separated digest was
 committed during `put`.
 
 A host relay is not the publisher authority and does not finalize publication
-heads. Noctweave Net shared coordination comes from a separately specified
-consensus adapter. Consensus must not receive relationship keys, route
-capabilities, host release capabilities, or private capsule keys.
+heads. Publisher envelopes remain the authority for publication content and
+continuity.
+
+Each relay has a persistent ML-DSA-65 identity. A signed relay claim binds its
+derived relay ID, role, federation trust domain, endpoints, capability digest,
+Noctweb suffix, optional host receipt key, sequence, and validity window. The
+suffix is mandatory for non-solo standard and host relays and optional for solo
+development. Peers and clients must verify that claim before accepting a relay
+endpoint or receipt.
+
+The federation-local Noctweb namespace maps one restricted lowercase ASCII
+suffix to one relay identity. Ownership survives relay and claim expiry.
+Rotation requires one transition signed by both old and new relay keys.
+Release creates an irreversible tombstone; the suffix must never be assigned
+again.
+
+Relays sign canonical namespace snapshots. A client accepts only byte-identical
+snapshot payloads signed by the threshold configured for its trust domain.
+Manual profiles default to all configured signers, curated profiles use their
+coordinator quorum, and open profiles use an explicit signer set and threshold.
+DHT and peer exchange are candidate discovery only and never grant namespace
+authority.
+
+Name bindings connect a suffix and site label to an immutable host object,
+publisher ID, head ID, and revision. The Browser verifies the namespace quorum,
+destination relay identity, signed name mapping, object digest and hosting
+receipt, and publisher envelope before rendering.
+
+Consensus and federation forwarding must not receive relationship keys, route
+creation authority, host release capabilities, or private capsule keys.
 
 ## 8. Route sets and rollover
 
@@ -325,8 +352,11 @@ Current bindings are:
 | `nw.opaque-route` | 2 | provisional | `create`, `renew`, `teardown`, `append`, `sync`, `commit` |
 | `nw.rendezvous-transport` | 2 | provisional | `register`, `append`, `sync`, `delete` |
 | `nw.blobs` | 1 | provisional | `upload`, `fetch` |
-| `nw.federation` | 1 | provisional | `register`, `list` |
+| `nw.federation` | 1 | provisional | `register`, `list`, `namespace`, `claim`, `rotate`, `release` |
+| `nw.federation-forward` | 1 | provisional | `forward`, `deliver`, `get`, `resolve` |
 | `nw.open-discovery` | 1 | experimental | `publish-dht`, `list-dht` (advertised only when enabled) |
+| `nw.net-passthrough` | 1 | provisional | `forward` |
+| `nw.net-host` | 1 | provisional | `put`, `bind`, `get`, `resolve`, `has`, `release` |
 
 Both relay implementations advertise the exact same canonical
 `nw.opaque-route@2` limit registry:
@@ -454,9 +484,21 @@ encrypted staging, and normal cursor sync. It supplies no delivery or read
 semantics and is not required for message availability.
 
 Federation modes are explicit trust domains. Experimental open discovery uses
-its own `nw.open-discovery` module. Hidden retrieval, open discovery, onion, and
-mixnet extensions are advertised only when their exact policy and runtime are
-active. They do not alter end-to-end relationship authentication.
+its own `nw.open-discovery` module. In a non-solo standard federation, a home
+relay may forward an already encrypted opaque-route append through
+`nw.federation-forward@1`. The source and destination relay identities,
+federation membership, destination endpoint, bounded request lifetime, and
+forwarding receipt are authenticated. The destination route capability remains
+the only authority to append; forwarding creates no account or global address.
+
+The same module may proxy signed Noctweb name resolution and immutable object
+fetches to the namespace-selected host relay. The home relay's response does
+not replace destination relay, host receipt, digest, or publisher-envelope
+verification.
+
+Hidden retrieval, open discovery, onion, and mixnet extensions are advertised
+only when their exact policy and runtime are active. They do not alter
+end-to-end relationship authentication.
 
 ## 14. Resource and error rules
 

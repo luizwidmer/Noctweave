@@ -2519,6 +2519,17 @@ final class NoctweaveCoreTests: XCTestCase {
         let coordinatorEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39464)
         let nodeEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39463)
         let federation = FederationDescriptor(mode: .curated, name: "mesh-a")
+        let nodeIdentity = try RelayIdentityKeyMaterialV1.generate()
+        let nodeSuffix = try XCTUnwrap(
+            NoctwebRelaySuffixV1(rawValue: ".mesh-a-node")
+        )
+        let nodeConfiguration = RelayConfiguration(
+            kind: .standard,
+            federation: federation,
+            temporalBucketSeconds: 120,
+            advertisedEndpoint: nodeEndpoint,
+            noctwebRelaySuffix: nodeSuffix
+        )
         let coordinator = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
             configuration: RelayConfiguration(
@@ -2529,11 +2540,8 @@ final class NoctweaveCoreTests: XCTestCase {
         )
         let nodeRelay = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(
-                kind: .standard,
-                federation: federation,
-                temporalBucketSeconds: 120
-            )
+            configuration: nodeConfiguration,
+            relayIdentity: nodeIdentity
         )
         let started = expectation(description: "coordinator started")
         coordinator.onEvent = { event in
@@ -2557,11 +2565,12 @@ final class NoctweaveCoreTests: XCTestCase {
             endpoint: coordinatorEndpoint,
             authToken: "test-coordinator-registration-token"
         )
-        let nodeInfo = RelayConfiguration(
-            kind: .standard,
-            federation: federation,
-            temporalBucketSeconds: 120
-        ).makeInfo()
+        let nodeInfo = try nodeConfiguration.makeInfo().authenticated(
+            by: nodeIdentity,
+            sequence: 1,
+            advertisedEndpoints: [nodeEndpoint],
+            noctwebSuffix: nodeSuffix
+        )
 
         let registerResponse = try await client.send(
             .registerFederationNode(
@@ -2613,6 +2622,16 @@ final class NoctweaveCoreTests: XCTestCase {
         let nodeEndpoint = RelayEndpoint(host: "127.0.0.1", port: 39487)
         let token = "mesh-secret-token"
         let federation = FederationDescriptor(mode: .curated, name: "mesh-token")
+        let nodeIdentity = try RelayIdentityKeyMaterialV1.generate()
+        let nodeSuffix = try XCTUnwrap(
+            NoctwebRelaySuffixV1(rawValue: ".mesh-token-node")
+        )
+        let nodeConfiguration = RelayConfiguration(
+            kind: .standard,
+            federation: federation,
+            advertisedEndpoint: nodeEndpoint,
+            noctwebRelaySuffix: nodeSuffix
+        )
         let coordinator = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
             configuration: RelayConfiguration(
@@ -2623,10 +2642,8 @@ final class NoctweaveCoreTests: XCTestCase {
         )
         let nodeRelay = RelayServer(
             store: RelayStore(storeURL: nil, temporalBucketSeconds: 300),
-            configuration: RelayConfiguration(
-                kind: .standard,
-                federation: federation
-            )
+            configuration: nodeConfiguration,
+            relayIdentity: nodeIdentity
         )
         let started = expectation(description: "coordinator token started")
         coordinator.onEvent = { event in
@@ -2647,13 +2664,16 @@ final class NoctweaveCoreTests: XCTestCase {
         await fulfillment(of: [started, startedNode], timeout: 2.0)
 
         let client = RelayClient(endpoint: coordinatorEndpoint)
+        let nodeInfo = try nodeConfiguration.makeInfo().authenticated(
+            by: nodeIdentity,
+            sequence: 1,
+            advertisedEndpoints: [nodeEndpoint],
+            noctwebSuffix: nodeSuffix
+        )
         let request = RelayRequest.registerFederationNode(
             FederationNodeRegistrationRequest(
                 endpoint: nodeEndpoint,
-                relayInfo: RelayConfiguration(
-                    kind: .standard,
-                    federation: federation
-                ).makeInfo(),
+                relayInfo: nodeInfo,
                 ttlSeconds: 120
             )
         )
@@ -2665,6 +2685,34 @@ final class NoctweaveCoreTests: XCTestCase {
         let wrongToken = try await client.send(request.withAuthToken("wrong-token"))
         XCTAssertEqual(wrongToken.status, .error)
         XCTAssertEqual(wrongToken.error?.message, "Unauthorized: coordinator registration token is required.")
+
+        let missingSuffixConfiguration = RelayConfiguration(
+            kind: .standard,
+            federation: federation,
+            advertisedEndpoint: nodeEndpoint
+        )
+        let missingSuffixInfo = try missingSuffixConfiguration
+            .makeInfo()
+            .authenticated(
+                by: nodeIdentity,
+                sequence: 2,
+                advertisedEndpoints: [nodeEndpoint],
+                noctwebSuffix: nil
+            )
+        let missingSuffix = try await client.send(
+            RelayRequest.registerFederationNode(
+                FederationNodeRegistrationRequest(
+                    endpoint: nodeEndpoint,
+                    relayInfo: missingSuffixInfo,
+                    ttlSeconds: 120
+                )
+            ).withAuthToken(token)
+        )
+        XCTAssertEqual(missingSuffix.status, .error)
+        XCTAssertEqual(
+            missingSuffix.error?.message,
+            "Coordinator registration rejected: federated relays must advertise an authenticated Noctweb suffix."
+        )
 
         let authorized = try await client.send(request.withAuthToken(token))
         guard case .federationNodes(let directory)? = authorized.successBody else {

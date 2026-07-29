@@ -6,6 +6,7 @@ enum NoctweaveNetHostStoreError: Error, Equatable {
     case conflict
     case capacityExceeded
     case unauthorizedRelease
+    case objectUnavailable
     case corruptPersistence
 }
 
@@ -34,10 +35,11 @@ final class NoctweaveNetHostStore {
     }
 
     private struct Snapshot: Codable {
-        static let version = 1
+        static let version = 2
 
         let version: Int
         let records: [String: Record]
+        let names: [String: NoctweaveNetHostNameBindingRequestV1]
     }
 
     private let queue = DispatchQueue(label: "noctweave.net.host-store")
@@ -47,6 +49,9 @@ final class NoctweaveNetHostStore {
     private let maximumObjects: Int
     private let maximumTotalBytes: UInt64
     private var records: [String: Record] = [:]
+    private var names: [
+        String: NoctweaveNetHostNameBindingRequestV1
+    ] = [:]
     private var memoryPayloads: [String: Data] = [:]
 
     init(
@@ -93,8 +98,15 @@ final class NoctweaveNetHostStore {
             let snapshot = try decoder.decode(Snapshot.self, from: data)
             guard snapshot.version == Snapshot.version,
                   snapshot.records.count <= maximumObjects,
+                  snapshot.names.count <= maximumObjects,
                   snapshot.records.allSatisfy({ key, record in
                       key == record.objectID && record.isStructurallyValid
+                  }),
+                  snapshot.names.allSatisfy({ key, binding in
+                      key == Self.nameKey(
+                          suffix: binding.relaySuffix,
+                          siteLabel: binding.siteLabel
+                      ) && binding.isStructurallyValid
                   }),
                   snapshot.records.values.reduce(UInt64(0), { $0 + $1.byteCount })
                     <= maximumTotalBytes else {
@@ -108,6 +120,7 @@ final class NoctweaveNetHostStore {
                 }
             }
             records = snapshot.records
+            names = snapshot.names
             try pruneExpiredLocked(now: Date())
             try removeOrphanPayloadsLocked()
         }
@@ -237,6 +250,72 @@ final class NoctweaveNetHostStore {
         }
     }
 
+    func bindName(
+        _ request: NoctweaveNetHostNameBindingRequestV1,
+        now: Date = Date()
+    ) throws -> NoctweaveNetHostNameBindingRequestV1 {
+        try queue.sync {
+            guard request.isStructurallyValid else {
+                throw NoctweaveNetHostStoreError.invalidRequest
+            }
+            try pruneExpiredLocked(now: now)
+            guard records[request.objectID] != nil else {
+                throw NoctweaveNetHostStoreError.objectUnavailable
+            }
+
+            let key = Self.nameKey(
+                suffix: request.relaySuffix,
+                siteLabel: request.siteLabel
+            )
+            if let existing = names[key] {
+                if existing.hasSameBindingTarget(as: request) {
+                    return existing
+                }
+                guard existing.publisherID == request.publisherID,
+                      request.revision > existing.revision,
+                      request.previousObjectID == existing.objectID,
+                      request.objectID != existing.objectID else {
+                    throw NoctweaveNetHostStoreError.conflict
+                }
+            } else {
+                guard request.previousObjectID == nil else {
+                    throw NoctweaveNetHostStoreError.conflict
+                }
+            }
+
+            let previous = names.updateValue(request, forKey: key)
+            do {
+                try saveIndexLocked()
+            } catch {
+                if let previous {
+                    names[key] = previous
+                } else {
+                    names.removeValue(forKey: key)
+                }
+                throw error
+            }
+            return request
+        }
+    }
+
+    func resolveName(
+        _ request: NoctweaveNetHostNameRequestV1,
+        now: Date = Date()
+    ) throws -> NoctweaveNetHostNameBindingRequestV1? {
+        try queue.sync {
+            guard request.isStructurallyValid else {
+                throw NoctweaveNetHostStoreError.invalidRequest
+            }
+            try pruneExpiredLocked(now: now)
+            return names[
+                Self.nameKey(
+                    suffix: request.relaySuffix,
+                    siteLabel: request.siteLabel
+                )
+            ]
+        }
+    }
+
     private func receipt(for record: Record) throws -> NoctweaveNetHostingReceipt {
         let unsigned = NoctweaveNetHostingReceipt(
             objectID: record.objectID,
@@ -324,7 +403,13 @@ final class NoctweaveNetHostStore {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(Snapshot(version: Snapshot.version, records: records))
+        let data = try encoder.encode(
+            Snapshot(
+                version: Snapshot.version,
+                records: records,
+                names: names
+            )
+        )
         let url = directoryURL.appendingPathComponent("index.json", isDirectory: false)
         try data.write(to: url, options: [.atomic])
         try FileManager.default.setAttributes(
@@ -358,5 +443,27 @@ final class NoctweaveNetHostStore {
             difference |= Int(left ^ right)
         }
         return difference == 0
+    }
+
+    private static func nameKey(
+        suffix: NoctwebRelaySuffixV1,
+        siteLabel: String
+    ) -> String {
+        "\(siteLabel)\u{0}\(suffix.rawValue)"
+    }
+}
+
+private extension NoctweaveNetHostNameBindingRequestV1 {
+    func hasSameBindingTarget(
+        as other: NoctweaveNetHostNameBindingRequestV1
+    ) -> Bool {
+        version == other.version
+            && relaySuffix == other.relaySuffix
+            && siteLabel == other.siteLabel
+            && objectID == other.objectID
+            && publisherID == other.publisherID
+            && headID == other.headID
+            && revision == other.revision
+            && previousObjectID == other.previousObjectID
     }
 }

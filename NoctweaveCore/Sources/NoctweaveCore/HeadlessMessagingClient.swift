@@ -305,6 +305,7 @@ public actor HeadlessMessagingClient {
     private var activeGroupTransactions = Set<UUID>()
     private var groupTransactionWaiters:
         [UUID: [CheckedContinuation<Void, Never>]] = [:]
+    private var authenticatedRelayInfoCache: [String: RelayInfo] = [:]
 
     public init(
         stateStore: ClientStateStore,
@@ -1645,14 +1646,11 @@ public actor HeadlessMessagingClient {
 
             for packet in publication.packets {
                 do {
-                    let response = try await relayClient(
-                        for: publication.destinationRelay
-                    ).send(.appendOpaqueRouteV2(
-                        AppendOpaqueRouteRelayRequestV2(
-                            packet: packet,
-                            sendCapability: publication.sendCapability
-                        )
-                    ))
+                    let response = try await appendOpaquePacket(
+                        packet,
+                        sendCapability: publication.sendCapability,
+                        destinationRelay: publication.destinationRelay
+                    )
                     if response.status == .error {
                         if response.error?.code == .authenticationRequired,
                            groupAuthorizationProofExpired(packet, at: attemptAt) {
@@ -4577,13 +4575,10 @@ public actor HeadlessMessagingClient {
         var failure: ProtocolIntentErrorClassV2?
         for packet in deliveryForAttempt.packets {
             do {
-                let response = try await relayClient(for: deliveryForAttempt.destinationRelay).send(
-                    .appendOpaqueRouteV2(
-                        AppendOpaqueRouteRelayRequestV2(
-                            packet: packet,
-                            sendCapability: sendCapability
-                        )
-                    )
+                let response = try await appendOpaquePacket(
+                    packet,
+                    sendCapability: sendCapability,
+                    destinationRelay: deliveryForAttempt.destinationRelay
                 )
                 guard case .opaqueRouteAppend = response.successBody else {
                     failure = classifyRelayFailure(response)
@@ -6160,6 +6155,105 @@ public actor HeadlessMessagingClient {
             $0.endpoint == endpoint
         })?.accessPassword
         return RelayClient(endpoint: endpoint, authToken: token)
+    }
+
+    private func appendOpaquePacket(
+        _ packet: OpaqueRoutePacketV2,
+        sendCapability: RouteSendCapabilityV2,
+        destinationRelay: RelayEndpoint
+    ) async throws -> RelayResponse {
+        let append = AppendOpaqueRouteRelayRequestV2(
+            packet: packet,
+            sendCapability: sendCapability
+        )
+        guard let homeRelay = preferredHomeRelayEndpoint(),
+              !relayEndpointsMatch(homeRelay, destinationRelay) else {
+            return try await relayClient(for: destinationRelay).send(
+                .appendOpaqueRouteV2(append)
+            )
+        }
+
+        let homeInfo = try await authenticatedRelayInfo(for: homeRelay)
+        let destinationInfo = try await authenticatedRelayInfo(for: destinationRelay)
+        guard homeInfo.kind == .standard,
+              destinationInfo.kind == .standard,
+              homeInfo.federation.mode != .solo,
+              homeInfo.federation.mode == destinationInfo.federation.mode,
+              homeInfo.federation.name == destinationInfo.federation.name,
+              homeInfo.protocolCapabilities?.supports(
+                  module: "nw.federation-forward",
+                  version: 1
+              ) == true,
+              let destinationRelayID = destinationInfo.authenticatedRelayID else {
+            throw HeadlessMessagingClientError.invalidRelayResponse
+        }
+        return try await relayClient(for: homeRelay).send(
+            .forwardOpaqueRouteV1(
+                FederatedOpaqueRouteForwardRequestV1(
+                    destinationRelayID: destinationRelayID,
+                    destination: destinationRelay,
+                    append: append
+                )
+            )
+        )
+    }
+
+    private func preferredHomeRelayEndpoint() -> RelayEndpoint? {
+        guard let preferenceID = state.preferredRelayPreferenceID(
+            forPersonaID: state.activePersona.id
+        ) else {
+            return nil
+        }
+        return state.relayPreferences.first { $0.id == preferenceID }?.endpoint
+    }
+
+    private func authenticatedRelayInfo(
+        for endpoint: RelayEndpoint,
+        now: Date = Date()
+    ) async throws -> RelayInfo {
+        let key = relayEndpointCacheKey(endpoint)
+        if let cached = authenticatedRelayInfoCache[key],
+           cached.advertisedAt >= now.addingTimeInterval(-300),
+           cached.relayIdentity?.claim.expiresAt ?? .distantPast >= now,
+           relayInfo(cached, advertises: endpoint) {
+            return cached
+        }
+        let request = RelayRequest.info()
+        let response = try await relayClient(for: endpoint).send(request)
+        guard response.isResponse(to: request),
+              response.status == .success,
+              case .relayInfo(let info)? = response.successBody,
+              info.authenticatedRelayID != nil,
+              relayInfo(info, advertises: endpoint) else {
+            throw HeadlessMessagingClientError.invalidRelayResponse
+        }
+        authenticatedRelayInfoCache[key] = info
+        return info
+    }
+
+    private func relayInfo(_ info: RelayInfo, advertises endpoint: RelayEndpoint) -> Bool {
+        info.relayIdentity?.claim.advertisedEndpoints.contains {
+            relayEndpointsMatch($0, endpoint)
+        } == true
+    }
+
+    private func relayEndpointsMatch(
+        _ lhs: RelayEndpoint,
+        _ rhs: RelayEndpoint
+    ) -> Bool {
+        lhs.host.lowercased() == rhs.host.lowercased()
+            && lhs.port == rhs.port
+            && lhs.useTLS == rhs.useTLS
+            && lhs.transport == rhs.transport
+    }
+
+    private func relayEndpointCacheKey(_ endpoint: RelayEndpoint) -> String {
+        [
+            endpoint.transport.rawValue,
+            endpoint.host.lowercased(),
+            String(endpoint.port),
+            endpoint.useTLS ? "1" : "0"
+        ].joined(separator: "\u{0}")
     }
 
     private func groupAuthorizationProofExpired(

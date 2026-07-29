@@ -187,7 +187,8 @@ final class StableResponseExactModelsTests: XCTestCase {
             "federationCoordinatorEndpoints", "coordinatorReportedRelayCount",
             "coordinatorRegistrationAuthRequired", "curatedStrictPolicyEnabled",
             "curatedCoordinatorQuorum", "curatedRequireSignedDirectory",
-            "federationDirectoryPublicKey", "knownOpenPeers", "openFederationDiscovery"
+            "federationDirectoryPublicKey", "knownOpenPeers", "openFederationDiscovery",
+            "relayIdentity"
         ] {
             XCTAssertTrue(object[key] is NSNull, "Expected explicit null for \(key)")
         }
@@ -272,7 +273,7 @@ final class StableResponseExactModelsTests: XCTestCase {
         "coordinatorRegistrationAuthRequired", "curatedStrictPolicyEnabled",
         "curatedCoordinatorQuorum", "curatedRequireSignedDirectory",
         "federationDirectoryPublicKey", "knownOpenPeers", "openFederationDiscovery",
-        "advertisedAt"
+        "relayIdentity", "advertisedAt"
     ]
 
     private func relayEndpoint(host: String) -> RelayEndpoint {

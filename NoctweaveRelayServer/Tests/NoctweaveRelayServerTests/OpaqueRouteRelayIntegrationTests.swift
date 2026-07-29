@@ -107,6 +107,9 @@ private final class OpaqueRouteRelayTCPHarness {
             tlsEnabled: false,
             opaqueRouteRuntimeEnabled: enabled
         )
+        let relayIdentityRuntime = RelayIdentityRuntime(
+            keyMaterial: try RelayIdentityKeyMaterialV1.generate()
+        )
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 16)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
@@ -119,6 +122,7 @@ private final class OpaqueRouteRelayTCPHarness {
                             maxLineBytes: 640 * 1_024,
                             localEndpoint: RelayEndpoint(host: "127.0.0.1", port: 0),
                             relayConfiguration: configuration,
+                            relayIdentityRuntime: relayIdentityRuntime,
                             forwardingRequestTimeoutSeconds: 2
                         )
                     )

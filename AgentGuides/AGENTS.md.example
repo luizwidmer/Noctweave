@@ -67,7 +67,12 @@ Relay endpoints may be raw TCP, TLS TCP, HTTP, HTTPS, WebSocket, or WSS dependin
 
 Manual federation is for small operator-managed meshes. Curated federation uses allow lists and coordinator policy. Open federation uses bounded signed discovery hints and must retain public endpoint safeguards.
 
-Federation discovers and coordinates relay operators; it does not forward user messages between relays. Clients submit ciphertext directly to the relay endpoints advertised in peer relationship-encrypted route sets.
+Federation discovers and authenticates relay operators. A client may submit
+ciphertext directly to the destination endpoint in a relationship-encrypted
+route set, or its standard home relay may perform one authenticated
+`nw.federation-forward@1` hop. Forwarding must preserve the opaque append
+unchanged and must never receive relationship keys, plaintext, or a
+federation-wide bearer capability.
 
 ## Change Discipline
 Keep integration changes narrow and testable. Update public docs when protocol behavior, relay flags, or wire formats change. Add focused tests for new relay routes, parser behavior, persistence behavior, or federation policy.

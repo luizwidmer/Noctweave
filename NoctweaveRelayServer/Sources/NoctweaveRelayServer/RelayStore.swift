@@ -88,6 +88,7 @@ final class RelayStore {
     private var attachments: [String: [AttachmentRecord]] = [:]
     private var federationNodes: [String: FederationNodeRecord] = [:]
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
+    private var noctwebNamespaceLedger = NoctwebNamespaceLedgerV1()
     private var openFederationDHTCache = OpenFederationDHTCandidateCache(
         configuration: OpenFederationDHTDiscoveryConfiguration(isEnabled: false)
     )
@@ -153,6 +154,9 @@ final class RelayStore {
                 try SQLiteRelayStateStore.saveState(snapshot, at: sqliteURL)
                 lastDurableSnapshot = snapshot
             }
+            noctwebNamespaceLedger = try NoctwebNamespaceSQLiteStore.load(
+                at: sqliteURL
+            )
         }
     }
 
@@ -672,6 +676,10 @@ final class RelayStore {
             guard federationNodes[key] != nil || federationNodes.count < maxFederationNodes else {
                 throw RelayStoreError.relayCapacityExceeded
             }
+            if let identity = request.relayInfo.relayIdentity,
+               identity.claim.noctwebSuffix != nil {
+                try claimNoctwebNamespaceLocked(identity, now: now)
+            }
             let record = FederationNodeRecord(
                 endpoint: request.endpoint,
                 relayInfo: request.relayInfo,
@@ -682,6 +690,70 @@ final class RelayStore {
             pruneFederationNodesLocked(now: now)
             try saveLocked()
             return record
+        }
+    }
+
+    func claimNoctwebNamespace(
+        _ identity: SignedRelayIdentityClaimV1,
+        now: Date = Date()
+    ) throws {
+        try performSync {
+            try claimNoctwebNamespaceLocked(identity, now: now)
+        }
+    }
+
+    func rotateNoctwebNamespace(
+        _ rotation: RelayIdentityRotationV1,
+        to newIdentity: SignedRelayIdentityClaimV1,
+        now: Date = Date()
+    ) throws {
+        try performSync {
+            var candidate = noctwebNamespaceLedger
+            try candidate.rotate(
+                rotation,
+                to: newIdentity,
+                now: now
+            )
+            if let fileURL {
+                try NoctwebNamespaceSQLiteStore.save(
+                    candidate,
+                    at: sqliteStoreURL(for: fileURL)
+                )
+            }
+            noctwebNamespaceLedger = candidate
+        }
+    }
+
+    func releaseNoctwebNamespace(
+        _ release: NoctwebNamespaceReleaseV1,
+        now: Date = Date()
+    ) throws {
+        try performSync {
+            var candidate = noctwebNamespaceLedger
+            try candidate.release(release, now: now)
+            if let fileURL {
+                try NoctwebNamespaceSQLiteStore.save(
+                    candidate,
+                    at: sqliteStoreURL(for: fileURL)
+                )
+            }
+            noctwebNamespaceLedger = candidate
+        }
+    }
+
+    func noctwebNamespaceRecord(
+        for suffix: NoctwebRelaySuffixV1
+    ) -> NoctwebNamespaceRecordV1? {
+        performSync {
+            noctwebNamespaceLedger.record(for: suffix)
+        }
+    }
+
+    func noctwebNamespaceRecords(
+        at now: Date = Date()
+    ) -> [NoctwebNamespaceRecordV1] {
+        performSync {
+            noctwebNamespaceLedger.snapshotRecords(at: now)
         }
     }
 
@@ -932,6 +1004,28 @@ final class RelayStore {
         if !isReferenced {
             attachmentBlobStore?.delete(external)
         }
+    }
+
+    private func claimNoctwebNamespaceLocked(
+        _ identity: SignedRelayIdentityClaimV1,
+        now: Date
+    ) throws {
+        guard let suffix = identity.claim.noctwebSuffix else {
+            throw NoctwebNamespaceLedgerErrorV1.invalidClaim
+        }
+        if noctwebNamespaceLedger.record(for: suffix)?.activeIdentityClaim
+            == identity {
+            return
+        }
+        var candidate = noctwebNamespaceLedger
+        try candidate.claim(identity, now: now)
+        if let fileURL {
+            try NoctwebNamespaceSQLiteStore.save(
+                candidate,
+                at: sqliteStoreURL(for: fileURL)
+            )
+        }
+        noctwebNamespaceLedger = candidate
     }
 
     private func pruneFederationNodesLocked(now: Date) {

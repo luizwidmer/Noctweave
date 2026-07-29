@@ -94,11 +94,21 @@ components:
             - $ref: "#/components/schemas/BlobFetchRequestBinding"
             - $ref: "#/components/schemas/FederationRegisterRequestBinding"
             - $ref: "#/components/schemas/FederationListRequestBinding"
+            - $ref: "#/components/schemas/FederationNamespaceRequestBinding"
+            - $ref: "#/components/schemas/FederationClaimRequestBinding"
+            - $ref: "#/components/schemas/FederationRotateRequestBinding"
+            - $ref: "#/components/schemas/FederationReleaseRequestBinding"
+            - $ref: "#/components/schemas/FederationForwardRequestBinding"
+            - $ref: "#/components/schemas/FederationDeliverRequestBinding"
+            - $ref: "#/components/schemas/FederationHostGetRequestBinding"
+            - $ref: "#/components/schemas/FederationHostResolveRequestBinding"
             - $ref: "#/components/schemas/OpenDiscoveryPublishDHTRequestBinding"
             - $ref: "#/components/schemas/OpenDiscoveryListDHTRequestBinding"
             - $ref: "#/components/schemas/NetPassthroughForwardRequestBinding"
             - $ref: "#/components/schemas/NetHostPutRequestBinding"
+            - $ref: "#/components/schemas/NetHostBindRequestBinding"
             - $ref: "#/components/schemas/NetHostGetRequestBinding"
+            - $ref: "#/components/schemas/NetHostResolveRequestBinding"
             - $ref: "#/components/schemas/NetHostHasRequestBinding"
             - $ref: "#/components/schemas/NetHostReleaseRequestBinding"
     RelayModuleID:
@@ -109,12 +119,13 @@ components:
         - nw.rendezvous-transport
         - nw.blobs
         - nw.federation
+        - nw.federation-forward
         - nw.open-discovery
         - nw.net-passthrough
         - nw.net-host
     RelayMethodID:
       type: string
-      enum: [health, info, create, renew, teardown, append, sync, commit, register, delete, upload, fetch, list, publish-dht, list-dht, forward, put, get, has, release]
+      enum: [health, info, create, renew, teardown, append, sync, commit, register, delete, upload, fetch, list, namespace, claim, rotate, publish-dht, list-dht, forward, deliver, put, bind, get, resolve, has, release]
     RelayResponse:
       type: object
       description: |
@@ -147,10 +158,15 @@ components:
             - $ref: "#/components/schemas/RendezvousSyncSuccessBody"
             - $ref: "#/components/schemas/AttachmentSuccessBody"
             - $ref: "#/components/schemas/FederationNodesSuccessBody"
+            - $ref: "#/components/schemas/NoctwebNamespaceSnapshotSuccessBody"
+            - $ref: "#/components/schemas/NoctwebNamespaceRecordSuccessBody"
             - $ref: "#/components/schemas/DHTRecordsSuccessBody"
             - $ref: "#/components/schemas/NetPassthroughSuccessBody"
             - $ref: "#/components/schemas/NetHostReceiptSuccessBody"
             - $ref: "#/components/schemas/NetHostObjectSuccessBody"
+            - $ref: "#/components/schemas/FederatedNetHostObjectSuccessBody"
+            - $ref: "#/components/schemas/NetHostNameResolutionSuccessBody"
+            - $ref: "#/components/schemas/FederatedNetHostNameResolutionSuccessBody"
             - $ref: "#/components/schemas/NetHostPresenceSuccessBody"
             - $ref: "#/components/schemas/NetHostReleaseSuccessBody"
             - type: "null"
@@ -174,10 +190,15 @@ components:
                 - $ref: "#/components/schemas/RendezvousSyncSuccessBody"
                 - $ref: "#/components/schemas/AttachmentSuccessBody"
                 - $ref: "#/components/schemas/FederationNodesSuccessBody"
+                - $ref: "#/components/schemas/NoctwebNamespaceSnapshotSuccessBody"
+                - $ref: "#/components/schemas/NoctwebNamespaceRecordSuccessBody"
                 - $ref: "#/components/schemas/DHTRecordsSuccessBody"
                 - $ref: "#/components/schemas/NetPassthroughSuccessBody"
                 - $ref: "#/components/schemas/NetHostReceiptSuccessBody"
                 - $ref: "#/components/schemas/NetHostObjectSuccessBody"
+                - $ref: "#/components/schemas/FederatedNetHostObjectSuccessBody"
+                - $ref: "#/components/schemas/NetHostNameResolutionSuccessBody"
+                - $ref: "#/components/schemas/FederatedNetHostNameResolutionSuccessBody"
                 - $ref: "#/components/schemas/NetHostPresenceSuccessBody"
                 - $ref: "#/components/schemas/NetHostReleaseSuccessBody"
             error:
@@ -328,6 +349,62 @@ components:
         version: { const: 1 }
         method: { const: list }
         body: { $ref: "#/components/schemas/ListFederationNodesRequest" }
+    FederationNamespaceRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation }
+        version: { const: 1 }
+        method: { const: namespace }
+        body: { $ref: "#/components/schemas/NoctwebNamespaceSnapshotRequestV1" }
+    FederationClaimRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation }
+        version: { const: 1 }
+        method: { const: claim }
+        body: { $ref: "#/components/schemas/NoctwebNamespaceClaimRequestV1" }
+    FederationRotateRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation }
+        version: { const: 1 }
+        method: { const: rotate }
+        body: { $ref: "#/components/schemas/NoctwebNamespaceRotationRequestV1" }
+    FederationReleaseRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation }
+        version: { const: 1 }
+        method: { const: release }
+        body: { $ref: "#/components/schemas/NoctwebNamespaceReleaseV1" }
+    FederationForwardRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation-forward }
+        version: { const: 1 }
+        method: { const: forward }
+        body: { $ref: "#/components/schemas/FederatedOpaqueRouteForwardRequestV1" }
+    FederationDeliverRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation-forward }
+        version: { const: 1 }
+        method: { const: deliver }
+        body: { $ref: "#/components/schemas/FederatedOpaqueRouteDeliveryV1" }
+    FederationHostGetRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation-forward }
+        version: { const: 1 }
+        method: { const: get }
+        body: { $ref: "#/components/schemas/FederatedNetHostReadRequestV1" }
+    FederationHostResolveRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.federation-forward }
+        version: { const: 1 }
+        method: { const: resolve }
+        body: { $ref: "#/components/schemas/FederatedNetHostNameReadRequestV1" }
     OpenDiscoveryPublishDHTRequestBinding:
       type: object
       properties:
@@ -356,6 +433,13 @@ components:
         version: { const: 1 }
         method: { const: put }
         body: { $ref: "#/components/schemas/NoctweaveNetHostPutRequest" }
+    NetHostBindRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.net-host }
+        version: { const: 1 }
+        method: { const: bind }
+        body: { $ref: "#/components/schemas/NoctweaveNetHostNameBindingRequestV1" }
     NetHostGetRequestBinding:
       type: object
       properties:
@@ -363,6 +447,13 @@ components:
         version: { const: 1 }
         method: { const: get }
         body: { $ref: "#/components/schemas/NoctweaveNetHostObjectRequest" }
+    NetHostResolveRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.net-host }
+        version: { const: 1 }
+        method: { const: resolve }
+        body: { $ref: "#/components/schemas/NoctweaveNetHostNameRequestV1" }
     NetHostHasRequestBinding:
       type: object
       properties:
@@ -434,6 +525,20 @@ components:
             - $ref: "#/components/schemas/FederationDirectorySnapshot"
             - type: "null"
       additionalProperties: false
+    NoctwebNamespaceSnapshotSuccessBody:
+      type: object
+      required: [namespaceSnapshot]
+      properties:
+        namespaceSnapshot:
+          $ref: "#/components/schemas/NoctwebNamespaceSnapshotV1"
+      additionalProperties: false
+    NoctwebNamespaceRecordSuccessBody:
+      type: object
+      required: [namespaceRecord]
+      properties:
+        namespaceRecord:
+          $ref: "#/components/schemas/NoctwebNamespaceRecordV1"
+      additionalProperties: false
     DHTRecordsSuccessBody:
       type: object
       required: [records]
@@ -459,6 +564,27 @@ components:
       required: [object]
       properties:
         object: { $ref: "#/components/schemas/NoctweaveNetHostFetchResponse" }
+      additionalProperties: false
+    FederatedNetHostObjectSuccessBody:
+      type: object
+      required: [federatedObject]
+      properties:
+        federatedObject:
+          $ref: "#/components/schemas/FederatedNetHostObjectResponseV1"
+      additionalProperties: false
+    NetHostNameResolutionSuccessBody:
+      type: object
+      required: [nameResolution]
+      properties:
+        nameResolution:
+          $ref: "#/components/schemas/NoctweaveNetHostNameResolutionV1"
+      additionalProperties: false
+    FederatedNetHostNameResolutionSuccessBody:
+      type: object
+      required: [federatedNameResolution]
+      properties:
+        federatedNameResolution:
+          $ref: "#/components/schemas/FederatedNetHostNameResponseV1"
       additionalProperties: false
     NetHostPresenceSuccessBody:
       type: object
@@ -612,6 +738,332 @@ components:
           pattern: "^[0-9a-f]{64}$"
         released:
           type: boolean
+      additionalProperties: false
+    RelayIdentityIDV1:
+      type: object
+      required: [rawValue]
+      properties:
+        rawValue:
+          type: string
+          pattern: "^nwr1[0-9a-f]{64}$"
+      additionalProperties: false
+    NoctwebRelaySuffixV1:
+      type: object
+      required: [rawValue]
+      properties:
+        rawValue:
+          type: string
+          pattern: "^\\.[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])?$"
+      additionalProperties: false
+    RelayIdentityClaimV1:
+      type: object
+      required:
+        [version, relayID, signingPublicKey, sequence, relayKind,
+         federationMode, federationName, advertisedEndpoints, noctwebSuffix,
+         hostSigningPublicKey, capabilityDigest, issuedAt, expiresAt]
+      properties:
+        version: { type: integer, const: 1 }
+        relayID: { $ref: "#/components/schemas/RelayIdentityIDV1" }
+        signingPublicKey:
+          type: string
+          contentEncoding: base64
+        sequence:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        relayKind:
+          type: string
+          enum: [standard, passthrough, host, coordinator]
+        federationMode:
+          type: string
+          enum: [solo, manual, curated, open]
+        federationName:
+          type: [string, "null"]
+          maxLength: 1024
+        advertisedEndpoints:
+          type: array
+          minItems: 1
+          maxItems: 16
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/RelayEndpoint" }
+        noctwebSuffix:
+          oneOf:
+            - $ref: "#/components/schemas/NoctwebRelaySuffixV1"
+            - type: "null"
+        hostSigningPublicKey:
+          type: [string, "null"]
+          contentEncoding: base64
+        capabilityDigest:
+          type: string
+          contentEncoding: base64
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+      additionalProperties: false
+    SignedRelayIdentityClaimV1:
+      type: object
+      required: [claim, signatureAlgorithm, signature]
+      properties:
+        claim: { $ref: "#/components/schemas/RelayIdentityClaimV1" }
+        signatureAlgorithm: { type: string, const: ML-DSA-65 }
+        signature:
+          type: string
+          contentEncoding: base64
+      additionalProperties: false
+    RelayIdentityRotationV1:
+      type: object
+      required:
+        [version, oldRelayID, newRelayID, oldSigningPublicKey,
+         newSigningPublicKey, sequence, issuedAt, oldKeySignature,
+         newKeySignature]
+      properties:
+        version: { type: integer, const: 1 }
+        oldRelayID: { $ref: "#/components/schemas/RelayIdentityIDV1" }
+        newRelayID: { $ref: "#/components/schemas/RelayIdentityIDV1" }
+        oldSigningPublicKey: { type: string, contentEncoding: base64 }
+        newSigningPublicKey: { type: string, contentEncoding: base64 }
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        issuedAt: { type: string, format: date-time }
+        oldKeySignature: { type: string, contentEncoding: base64 }
+        newKeySignature: { type: string, contentEncoding: base64 }
+      additionalProperties: false
+    NoctwebNamespaceSnapshotRequestV1:
+      type: object
+      required: [version, federationMode, federationName]
+      properties:
+        version: { type: integer, const: 1 }
+        federationMode:
+          type: string
+          enum: [solo, manual, curated, open]
+        federationName:
+          type: [string, "null"]
+          maxLength: 1024
+      additionalProperties: false
+    NoctwebNamespaceClaimRequestV1:
+      type: object
+      required: [identity]
+      properties:
+        identity:
+          $ref: "#/components/schemas/SignedRelayIdentityClaimV1"
+      additionalProperties: false
+    NoctwebNamespaceRotationRequestV1:
+      type: object
+      required: [rotation, newIdentity]
+      properties:
+        rotation: { $ref: "#/components/schemas/RelayIdentityRotationV1" }
+        newIdentity:
+          $ref: "#/components/schemas/SignedRelayIdentityClaimV1"
+      additionalProperties: false
+    NoctwebNamespaceReleaseV1:
+      type: object
+      required:
+        [version, suffix, ownerRelayID, sequence, issuedAt,
+         signatureAlgorithm, signature]
+      properties:
+        version: { type: integer, const: 1 }
+        suffix: { $ref: "#/components/schemas/NoctwebRelaySuffixV1" }
+        ownerRelayID: { $ref: "#/components/schemas/RelayIdentityIDV1" }
+        sequence:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        issuedAt: { type: string, format: date-time }
+        signatureAlgorithm: { type: string, const: ML-DSA-65 }
+        signature: { type: string, contentEncoding: base64 }
+      additionalProperties: false
+    NoctwebNamespaceRecordV1:
+      type: object
+      required:
+        [suffix, ownerRelayID, ownerSigningPublicKey, ownershipSequence,
+         status, assignedAt, updatedAt, activeIdentityClaim]
+      properties:
+        suffix: { $ref: "#/components/schemas/NoctwebRelaySuffixV1" }
+        ownerRelayID: { $ref: "#/components/schemas/RelayIdentityIDV1" }
+        ownerSigningPublicKey: { type: string, contentEncoding: base64 }
+        ownershipSequence:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        status:
+          type: string
+          enum: [active, tombstoned]
+        assignedAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        activeIdentityClaim:
+          oneOf:
+            - $ref: "#/components/schemas/SignedRelayIdentityClaimV1"
+            - type: "null"
+      additionalProperties: false
+    NoctwebNamespaceSnapshotPayloadV1:
+      type: object
+      required:
+        [version, federationMode, federationName, epoch,
+         previousSnapshotDigest, records, recordsDigest, issuedAt, validUntil]
+      properties:
+        version: { type: integer, const: 1 }
+        federationMode:
+          type: string
+          enum: [solo, manual, curated, open]
+        federationName: { type: [string, "null"], maxLength: 1024 }
+        epoch:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        previousSnapshotDigest:
+          type: [string, "null"]
+          contentEncoding: base64
+        records:
+          type: array
+          maxItems: 4096
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/NoctwebNamespaceRecordV1" }
+        recordsDigest: { type: string, contentEncoding: base64 }
+        issuedAt: { type: string, format: date-time }
+        validUntil: { type: string, format: date-time }
+      additionalProperties: false
+    NoctwebNamespaceSnapshotSignatureV1:
+      type: object
+      required:
+        [signerRelayID, signerPublicKey, signatureAlgorithm, signature]
+      properties:
+        signerRelayID: { $ref: "#/components/schemas/RelayIdentityIDV1" }
+        signerPublicKey: { type: string, contentEncoding: base64 }
+        signatureAlgorithm: { type: string, const: ML-DSA-65 }
+        signature: { type: string, contentEncoding: base64 }
+      additionalProperties: false
+    NoctwebNamespaceSnapshotV1:
+      type: object
+      required: [payload, signatures]
+      properties:
+        payload:
+          $ref: "#/components/schemas/NoctwebNamespaceSnapshotPayloadV1"
+        signatures:
+          type: array
+          minItems: 1
+          maxItems: 64
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/NoctwebNamespaceSnapshotSignatureV1"
+      additionalProperties: false
+    FederatedOpaqueRouteForwardRequestV1:
+      type: object
+      required: [destinationRelayID, destination, append]
+      properties:
+        destinationRelayID:
+          $ref: "#/components/schemas/RelayIdentityIDV1"
+        destination: { $ref: "#/components/schemas/RelayEndpoint" }
+        append:
+          $ref: "#/components/schemas/OpaqueRouteAppendSubmissionV2"
+      additionalProperties: false
+    FederatedOpaqueRouteDeliveryV1:
+      type: object
+      required:
+        [version, deliveryID, sourceIdentity, destinationRelayID, append,
+         issuedAt, expiresAt, signatureAlgorithm, signature]
+      properties:
+        version: { type: integer, const: 1 }
+        deliveryID: { type: string, format: uuid }
+        sourceIdentity:
+          $ref: "#/components/schemas/SignedRelayIdentityClaimV1"
+        destinationRelayID:
+          $ref: "#/components/schemas/RelayIdentityIDV1"
+        append:
+          $ref: "#/components/schemas/OpaqueRouteAppendSubmissionV2"
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        signatureAlgorithm: { type: string, const: ML-DSA-65 }
+        signature: { type: string, contentEncoding: base64 }
+      additionalProperties: false
+    NoctweaveNetHostNameBindingRequestV1:
+      type: object
+      required:
+        [version, relaySuffix, siteLabel, objectID, publisherID, headID,
+         revision, previousObjectID, idempotencyKey]
+      properties:
+        version: { type: integer, const: 1 }
+        relaySuffix: { $ref: "#/components/schemas/NoctwebRelaySuffixV1" }
+        siteLabel: { type: string, minLength: 1, maxLength: 63 }
+        objectID: { type: string, pattern: "^[0-9a-f]{64}$" }
+        publisherID: { type: string, minLength: 1, maxLength: 256 }
+        headID: { type: [string, "null"], maxLength: 256 }
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        previousObjectID:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{64}$"
+        idempotencyKey: { type: string, contentEncoding: base64 }
+      additionalProperties: false
+    NoctweaveNetHostNameRequestV1:
+      type: object
+      required: [version, relaySuffix, siteLabel]
+      properties:
+        version: { type: integer, const: 1 }
+        relaySuffix: { $ref: "#/components/schemas/NoctwebRelaySuffixV1" }
+        siteLabel: { type: string, minLength: 1, maxLength: 63 }
+      additionalProperties: false
+    NoctweaveNetHostNameResolutionV1:
+      type: object
+      required:
+        [version, relayID, relaySuffix, siteLabel, objectID, publisherID,
+         headID, revision, updatedAt, expiresAt, signatureAlgorithm, signature]
+      properties:
+        version: { type: integer, const: 1 }
+        relayID: { $ref: "#/components/schemas/RelayIdentityIDV1" }
+        relaySuffix: { $ref: "#/components/schemas/NoctwebRelaySuffixV1" }
+        siteLabel: { type: string, minLength: 1, maxLength: 63 }
+        objectID: { type: string, pattern: "^[0-9a-f]{64}$" }
+        publisherID: { type: string, minLength: 1, maxLength: 256 }
+        headID: { type: [string, "null"], maxLength: 256 }
+        revision:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        updatedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        signatureAlgorithm: { type: string, const: ML-DSA-65 }
+        signature: { type: string, contentEncoding: base64 }
+      additionalProperties: false
+    FederatedNetHostReadRequestV1:
+      type: object
+      required: [destinationRelayID, destination, request]
+      properties:
+        destinationRelayID:
+          $ref: "#/components/schemas/RelayIdentityIDV1"
+        destination: { $ref: "#/components/schemas/RelayEndpoint" }
+        request:
+          $ref: "#/components/schemas/NoctweaveNetHostObjectRequest"
+      additionalProperties: false
+    FederatedNetHostObjectResponseV1:
+      type: object
+      required: [destinationIdentity, object]
+      properties:
+        destinationIdentity:
+          $ref: "#/components/schemas/SignedRelayIdentityClaimV1"
+        object:
+          $ref: "#/components/schemas/NoctweaveNetHostFetchResponse"
+      additionalProperties: false
+    FederatedNetHostNameReadRequestV1:
+      type: object
+      required: [destinationRelayID, destination, request]
+      properties:
+        destinationRelayID:
+          $ref: "#/components/schemas/RelayIdentityIDV1"
+        destination: { $ref: "#/components/schemas/RelayEndpoint" }
+        request:
+          $ref: "#/components/schemas/NoctweaveNetHostNameRequestV1"
+      additionalProperties: false
+    FederatedNetHostNameResponseV1:
+      type: object
+      required: [destinationIdentity, resolution]
+      properties:
+        destinationIdentity:
+          $ref: "#/components/schemas/SignedRelayIdentityClaimV1"
+        resolution:
+          $ref: "#/components/schemas/NoctweaveNetHostNameResolutionV1"
       additionalProperties: false
     OpaqueRouteOpaque32V2:
       type: object
@@ -1686,6 +2138,7 @@ components:
         - federationDirectoryPublicKey
         - knownOpenPeers
         - openFederationDiscovery
+        - relayIdentity
         - advertisedAt
       description: |
         Current exact relay advertisement. Every key is present; unavailable
@@ -1809,6 +2262,10 @@ components:
         openFederationDiscovery:
           oneOf:
             - $ref: "#/components/schemas/OpenFederationDiscoverySupport"
+            - type: "null"
+        relayIdentity:
+          oneOf:
+            - $ref: "#/components/schemas/SignedRelayIdentityClaimV1"
             - type: "null"
         advertisedAt:
           type: string

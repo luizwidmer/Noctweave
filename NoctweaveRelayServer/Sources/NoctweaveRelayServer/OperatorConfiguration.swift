@@ -134,14 +134,14 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         guard let mode = FederationMode(rawValue: federationMode) else {
             throw OperatorConfigurationError.invalidField("federationMode")
         }
-        if current.isNetHostEnabled, mode != .solo {
+        if current.kind == .passthrough, mode != .solo {
             throw OperatorConfigurationError.unsupportedTransition(
-                "Noctweave Net host-capable relays currently require solo federation mode."
+                "Passthrough relays require solo federation mode."
             )
         }
-        if mode == .manual, current.kind != .standard {
+        if mode != .solo, current.noctwebRelaySuffix == nil {
             throw OperatorConfigurationError.unsupportedTransition(
-                "Manual federation is available only to standard relays."
+                "Federated relays require a claimed Noctweb suffix configured at startup."
             )
         }
         if mode == .curated,
@@ -252,6 +252,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             curatedCoordinatorQuorum: quorum,
             curatedRequireSignedDirectory: curatedRequireSignedDirectory ?? current.curatedRequireSignedDirectory,
             advertisedEndpoint: endpoint,
+            noctwebRelaySuffix: current.noctwebRelaySuffix,
             federationAllowList: mode == .solo ? [] : allowList,
             allowPrivateFederationEndpoints: allowPrivateFederationEndpoints ?? current.allowPrivateFederationEndpoints,
             opaqueRouteRuntimeEnabled: opaqueRouteRuntimeEnabled,
@@ -300,6 +301,12 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             curatedCoordinatorQuorum: config.curatedCoordinatorQuorum,
             curatedRequireSignedDirectory: config.curatedRequireSignedDirectory,
             advertisedEndpoint: config.advertisedEndpoint,
+            noctwebRelaySuffix: config.noctwebRelaySuffix.flatMap {
+                guard let label = try? NoctwebPublisherSurface.canonicalOperatorSuffix($0) else {
+                    return nil
+                }
+                return NoctwebRelaySuffixV1(rawValue: ".\(label)")
+            },
             federationAllowList: config.federationAllowList,
             allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints,
             opaqueRouteRuntimeEnabled: config.opaqueRouteRuntimeEnabled,

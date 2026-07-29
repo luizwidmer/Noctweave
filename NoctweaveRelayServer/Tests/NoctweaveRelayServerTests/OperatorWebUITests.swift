@@ -15,6 +15,10 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.html.contains("Secrets stay outside the browser"))
         XCTAssertTrue(OperatorWebUI.html.contains("IPFS API endpoint"))
         XCTAssertTrue(OperatorWebUI.html.contains("Noctweb hosting and Publisher / Lab"))
+        XCTAssertTrue(OperatorWebUI.html.contains("id=\"relayIdentityID\""))
+        XCTAssertTrue(OperatorWebUI.html.contains("id=\"relayNoctwebSuffix\""))
+        XCTAssertTrue(OperatorWebUI.javascript.contains(#"s.bootstrap["Relay identity"]"#))
+        XCTAssertTrue(OperatorWebUI.javascript.contains(#"s.bootstrap["Noctweb suffix"]"#))
         XCTAssertTrue(OperatorWebUI.html.contains("id=\"openNoctwebPublisher\""))
         XCTAssertTrue(OperatorWebUI.javascript.contains(#"s.bootstrap["Noctweb Publisher / Lab"]"#))
         XCTAssertTrue(OperatorWebUI.javascript.contains("window.open(url"))
@@ -84,9 +88,22 @@ final class OperatorWebUITests: XCTestCase {
         }
     }
 
-    func testOperatorConfigurationCannotMoveHostCapableRelayOutOfSoloMode() throws {
+    func testOperatorConfigurationAllowsHostCapableRelayInManualFederation() throws {
         var base = makeBaseConfiguration()
         base.netHostEnabled = true
+        var editable = OperatorEditableConfiguration(configuration: base)
+        editable.federationMode = FederationMode.manual.rawValue
+        editable.federationAllowList = ["https://peer.example.org"]
+
+        let updated = try editable.validatedConfiguration(from: base)
+        XCTAssertTrue(updated.isNetHostEnabled)
+        XCTAssertEqual(updated.federation.mode, .manual)
+        XCTAssertEqual(updated.noctwebRelaySuffix?.rawValue, ".relaytest")
+    }
+
+    func testOperatorConfigurationRequiresSuffixBeforeJoiningFederation() throws {
+        var base = makeBaseConfiguration()
+        base.noctwebRelaySuffix = nil
         var editable = OperatorEditableConfiguration(configuration: base)
         editable.federationMode = FederationMode.manual.rawValue
 
@@ -94,7 +111,7 @@ final class OperatorWebUITests: XCTestCase {
             XCTAssertEqual(
                 error as? OperatorConfigurationError,
                 .unsupportedTransition(
-                    "Noctweave Net host-capable relays currently require solo federation mode."
+                    "Federated relays require a claimed Noctweb suffix configured at startup."
                 )
             )
         }
@@ -293,7 +310,8 @@ final class OperatorWebUITests: XCTestCase {
             transport: .http,
             relayPeerExchangeLimit: 12,
             openFederationDHTEnabled: false,
-            advertisedEndpoint: RelayEndpoint(host: "127.0.0.1", port: 9340, transport: .http)
+            advertisedEndpoint: RelayEndpoint(host: "127.0.0.1", port: 9340, transport: .http),
+            noctwebRelaySuffix: NoctwebRelaySuffixV1(rawValue: ".relaytest")
         )
     }
 }

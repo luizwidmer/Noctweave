@@ -35,6 +35,7 @@ final class RelayHandler: ChannelInboundHandler {
     private let maxLineBytes: Int
     private let localEndpoint: RelayEndpoint?
     private let relayConfiguration: RelayConfiguration
+    private let relayIdentityRuntime: RelayIdentityRuntime
     private let forwardingRequestTimeoutSeconds: Int
     private let netHostStore: NoctweaveNetHostStore?
     private let passthroughAllowedEndpoints: [RelayEndpoint]
@@ -49,6 +50,7 @@ final class RelayHandler: ChannelInboundHandler {
         maxLineBytes: Int?,
         localEndpoint: RelayEndpoint?,
         relayConfiguration: RelayConfiguration,
+        relayIdentityRuntime: RelayIdentityRuntime,
         forwardingRequestTimeoutSeconds: Int,
         netHostStore: NoctweaveNetHostStore? = nil,
         passthroughAllowedEndpoints: [RelayEndpoint] = []
@@ -61,6 +63,7 @@ final class RelayHandler: ChannelInboundHandler {
         )
         self.localEndpoint = localEndpoint
         self.relayConfiguration = relayConfiguration
+        self.relayIdentityRuntime = relayIdentityRuntime
         self.forwardingRequestTimeoutSeconds = max(1, forwardingRequestTimeoutSeconds)
         self.netHostStore = netHostStore
         self.passthroughAllowedEndpoints = Array(passthroughAllowedEndpoints.prefix(64))
@@ -159,6 +162,199 @@ final class RelayHandler: ChannelInboundHandler {
             return failure("Coordinator relays are directory-only and do not carry user traffic.", code: .unavailable)
         }
         switch request.body {
+        case .getNoctwebNamespaceSnapshot(let snapshotRequest):
+            guard snapshotRequest.isStructurallyValid,
+                  snapshotRequest.federationMode
+                    == relayConfiguration.federation.mode,
+                  snapshotRequest.federationName
+                    == relayConfiguration.federation.name else {
+                return failure(
+                    "Noctweb namespace snapshot trust domain mismatch.",
+                    code: .authenticationRequired
+                )
+            }
+            let eventLoop = context.eventLoop
+            let makeSnapshot: ([FederationNodeRecord]) -> RelayResponse = {
+                nodes in
+                do {
+                    let now = Date()
+                    let identity = try self.relayIdentityRuntime
+                        .signedIdentity(
+                            configuration: self.relayConfiguration,
+                            advertisedEndpoints:
+                                self.advertisedIdentityEndpoints(),
+                            hostSigningPublicKey:
+                                self.netHostStore?.signingPublicKey,
+                            at: now
+                        )
+                    if identity.claim.noctwebSuffix != nil {
+                        try self.store.claimNoctwebNamespace(
+                            identity,
+                            now: now
+                        )
+                    }
+                    for peerIdentity in nodes.compactMap({
+                        $0.relayInfo.relayIdentity
+                    }) where peerIdentity.claim.noctwebSuffix != nil {
+                        try self.store.claimNoctwebNamespace(
+                            peerIdentity,
+                            now: now
+                        )
+                    }
+                    let ledger = try NoctwebNamespaceLedgerV1(
+                        records: self.store.noctwebNamespaceRecords(
+                            at: now
+                        )
+                    )
+                    let payload = try ledger.snapshotPayload(
+                        federation: self.relayConfiguration.federation,
+                        at: now
+                    )
+                    let snapshot = try NoctwebNamespaceSnapshotV1.signed(
+                        payload: payload,
+                        by: self.relayIdentityRuntime.keyMaterial
+                    )
+                    return .success(
+                        .noctwebNamespaceSnapshot(snapshot),
+                        respondingTo: request
+                    )
+                } catch {
+                    return .error(
+                        "Noctweb namespace snapshot is unavailable.",
+                        code: .unavailable,
+                        retryable: true,
+                        respondingTo: request
+                    )
+                }
+            }
+            guard relayConfiguration.kind != .coordinator,
+                  relayConfiguration.federation.mode != .solo else {
+                return eventLoop.makeSucceededFuture(makeSnapshot([]))
+            }
+            let directoryRequest = ListFederationNodesRequest(
+                mode: relayConfiguration.federation.mode,
+                federationName: relayConfiguration.federation.name,
+                onlyHealthy: true,
+                maxStalenessSeconds:
+                    relayConfiguration
+                        .coordinatorDirectoryMaxStalenessSeconds,
+                requireSignedSnapshot:
+                    relayConfiguration.federation.mode == .manual
+                        ? false
+                        : relayConfiguration.curatedRequireSignedDirectory
+            )
+            return fetchCoordinatorNodeDirectory(
+                request: directoryRequest,
+                on: eventLoop
+            ).map(makeSnapshot)
+        case .claimNoctwebNamespace(let claim):
+            guard claim.identity.claim.federationMode
+                    == relayConfiguration.federation.mode,
+                  claim.identity.claim.federationName
+                    == relayConfiguration.federation.name,
+                  claim.identity.claim.noctwebSuffix != nil else {
+                return failure(
+                    "Noctweb namespace claim trust domain mismatch.",
+                    code: .authenticationRequired
+                )
+            }
+            do {
+                let suffix = claim.identity.claim.noctwebSuffix!
+                let previous = store.noctwebNamespaceRecord(
+                    for: suffix
+                )
+                try store.claimNoctwebNamespace(claim.identity)
+                guard let record = store.noctwebNamespaceRecord(
+                        for: suffix
+                      ) else {
+                    return failure(
+                        "Noctweb namespace claim was not retained.",
+                        code: .internalFailure
+                    )
+                }
+                if previous != record {
+                    propagateNoctwebNamespaceMutation(
+                        request,
+                        on: context.eventLoop
+                    )
+                }
+                return success(.noctwebNamespaceRecord(record))
+            } catch NoctwebNamespaceLedgerErrorV1.suffixAlreadyOwned {
+                return failure(
+                    "Noctweb suffix is already owned.",
+                    code: .conflict
+                )
+            } catch NoctwebNamespaceLedgerErrorV1.suffixTombstoned {
+                return failure(
+                    "Noctweb suffix is permanently tombstoned.",
+                    code: .conflict
+                )
+            } catch {
+                return failure(
+                    "Noctweb namespace claim is invalid.",
+                    code: .invalidRequest
+                )
+            }
+        case .rotateNoctwebNamespace(let rotationRequest):
+            guard rotationRequest.newIdentity.claim.federationMode
+                    == relayConfiguration.federation.mode,
+                  rotationRequest.newIdentity.claim.federationName
+                    == relayConfiguration.federation.name,
+                  rotationRequest.newIdentity.claim.noctwebSuffix
+                    != nil else {
+                return failure(
+                    "Noctweb namespace rotation trust domain mismatch.",
+                    code: .authenticationRequired
+                )
+            }
+            do {
+                try store.rotateNoctwebNamespace(
+                    rotationRequest.rotation,
+                    to: rotationRequest.newIdentity
+                )
+                guard let suffix =
+                    rotationRequest.newIdentity.claim.noctwebSuffix,
+                    let record = store.noctwebNamespaceRecord(
+                        for: suffix
+                    ) else {
+                    return failure(
+                        "Noctweb namespace rotation was not retained.",
+                        code: .internalFailure
+                    )
+                }
+                propagateNoctwebNamespaceMutation(
+                    request,
+                    on: context.eventLoop
+                )
+                return success(.noctwebNamespaceRecord(record))
+            } catch {
+                return failure(
+                    "Noctweb namespace rotation proof is invalid.",
+                    code: .authenticationRequired
+                )
+            }
+        case .releaseNoctwebNamespace(let release):
+            do {
+                try store.releaseNoctwebNamespace(release)
+                guard let record = store.noctwebNamespaceRecord(
+                    for: release.suffix
+                ) else {
+                    return failure(
+                        "Noctweb namespace release was not retained.",
+                        code: .internalFailure
+                    )
+                }
+                propagateNoctwebNamespaceMutation(
+                    request,
+                    on: context.eventLoop
+                )
+                return success(.noctwebNamespaceRecord(record))
+            } catch {
+                return failure(
+                    "Noctweb namespace release proof is invalid.",
+                    code: .authenticationRequired
+                )
+            }
         case .createOpaqueRoute(let submission):
             guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
                 return failure("Opaque route runtime is disabled", code: .unavailable)
@@ -234,6 +430,130 @@ final class RelayHandler: ChannelInboundHandler {
                 )))
             } catch {
                 return context.eventLoop.makeSucceededFuture(opaqueRouteErrorResponse(error, respondingTo: request))
+            }
+        case .forwardOpaqueRoute(let forwarding):
+            guard relayConfiguration.kind == .standard,
+                  relayConfiguration.federation.mode != .solo else {
+                return failure(
+                    "Federation forwarding is unavailable on this relay.",
+                    code: .unavailable
+                )
+            }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure(
+                    "Federation forwarding requires confidential client transport."
+                )
+            }
+            guard forwarding.isStructurallyValid else {
+                return failure("Invalid federation forwarding request.")
+            }
+            let eventLoop = context.eventLoop
+            return authenticatedFederationPeer(
+                destination: forwarding.destination,
+                expectedRelayID: forwarding.destinationRelayID,
+                requiredModule: "nw.federation-forward",
+                allowedKinds: [.standard],
+                on: eventLoop
+            ).flatMap { _ in
+                do {
+                    let sourceIdentity = try self.relayIdentityRuntime.signedIdentity(
+                        configuration: self.relayConfiguration,
+                        advertisedEndpoints: self.advertisedIdentityEndpoints(),
+                        hostSigningPublicKey: self.netHostStore?.signingPublicKey
+                    )
+                    let delivery = try FederatedOpaqueRouteDeliveryV1.signed(
+                        sourceIdentity: sourceIdentity,
+                        sourceKey: self.relayIdentityRuntime.keyMaterial,
+                        destinationRelayID: forwarding.destinationRelayID,
+                        append: forwarding.append
+                    )
+                    return self.sendRequest(
+                        .deliverOpaqueRouteV1(delivery),
+                        to: forwarding.destination,
+                        on: eventLoop
+                    ).map { response in
+                        if case .opaqueRouteAppend(let receipt)? = response.successBody {
+                            return .success(
+                                .opaqueRouteAppend(receipt),
+                                respondingTo: request
+                            )
+                        }
+                        return self.forwardedRelayErrorResponse(
+                            response,
+                            respondingTo: request
+                        )
+                    }
+                } catch {
+                    return eventLoop.makeFailedFuture(error)
+                }
+            }.flatMapError { _ in
+                failure(
+                    "Authenticated federation delivery failed.",
+                    code: .unavailable,
+                    retryable: true
+                )
+            }
+        case .deliverOpaqueRoute(let delivery):
+            guard relayConfiguration.kind == .standard,
+                  relayConfiguration.federation.mode != .solo,
+                  relayConfiguration.isOpaqueRouteRuntimeEnabled else {
+                return failure(
+                    "Federation delivery is unavailable on this relay.",
+                    code: .unavailable
+                )
+            }
+            do {
+                guard try delivery.verifyThrowing(
+                    expectedDestinationRelayID: relayIdentityRuntime.relayID,
+                    federation: relayConfiguration.federation
+                ) else {
+                    return failure(
+                        "Federation delivery identity is invalid.",
+                        code: .authenticationRequired
+                    )
+                }
+            } catch {
+                return failure(
+                    "Federation delivery identity verification failed.",
+                    code: .authenticationRequired
+                )
+            }
+            return isAuthenticatedFederationMember(
+                delivery.sourceIdentity,
+                requiredModule: "nw.federation-forward",
+                allowedKinds: [.standard],
+                on: context.eventLoop
+            ).map { allowed in
+                guard allowed else {
+                    return RelayResponse.error(
+                        "Federation source is not an authenticated member.",
+                        code: .authenticationRequired,
+                        respondingTo: request
+                    )
+                }
+                do {
+                    return RelayResponse.success(
+                        .opaqueRouteAppend(
+                            try self.store.appendOpaqueRouteV2(
+                                delivery.append,
+                                confidentialTransport: true
+                            )
+                        ),
+                        respondingTo: request
+                    )
+                } catch {
+                    return self.opaqueRouteErrorResponse(
+                        error,
+                        respondingTo: request
+                    )
+                }
+            }.flatMapErrorThrowing { _ in
+                RelayResponse.error(
+                    "Federation membership verification failed.",
+                    code: .unavailable,
+                    retryable: true,
+                    respondingTo: request
+                )
             }
         case .syncOpaqueRoute(let submission):
             guard relayConfiguration.isOpaqueRouteRuntimeEnabled else {
@@ -412,7 +732,21 @@ final class RelayHandler: ChannelInboundHandler {
                     )
                 }
             }
-            return success(.relayInfo(info))
+            do {
+                info = try relayIdentityRuntime.authenticatedInfo(
+                    info,
+                    configuration: relayConfiguration,
+                    advertisedEndpoints: advertisedIdentityEndpoints(),
+                    hostSigningPublicKey: netHostStore?.signingPublicKey
+                )
+                return success(.relayInfo(info))
+            } catch {
+                return failure(
+                    "Relay identity signing is unavailable.",
+                    code: .unavailable,
+                    retryable: true
+                )
+            }
         case .uploadAttachment(let upload):
             guard relayConfiguration.attachmentsEnabled != false else {
                 return failure("Attachments are disabled on this relay", code: .unavailable)
@@ -475,6 +809,11 @@ final class RelayHandler: ChannelInboundHandler {
             }
             if let authFailure = validateCoordinatorRegistrationAuthentication(token: request.authToken) {
                 return failure(authFailure, code: .authenticationRequired)
+            }
+            if let identityFailure = validateFederationRegistrationIdentity(
+                registration
+            ) {
+                return failure(identityFailure, code: .invalidRequest)
             }
             let sourceKey = sourceKey(for: context.channel.remoteAddress)
             let allowed = store.allowFederationRegistration(sourceKey: sourceKey, endpoint: registration.endpoint)
@@ -576,6 +915,117 @@ final class RelayHandler: ChannelInboundHandler {
                 limit: list.limit
             )
             return success(.dhtRecords(records))
+        case .getFederatedNetHostObject(let read):
+            guard relayConfiguration.kind == .standard,
+                  relayConfiguration.federation.mode != .solo,
+                  read.isStructurallyValid else {
+                return failure(
+                    "Federated Noctweb retrieval is unavailable.",
+                    code: .unavailable
+                )
+            }
+            let eventLoop = context.eventLoop
+            return authenticatedFederationPeer(
+                destination: read.destination,
+                expectedRelayID: read.destinationRelayID,
+                requiredModule: "nw.net-host",
+                allowedKinds: [.standard, .host],
+                on: eventLoop
+            ).flatMap { destinationInfo in
+                self.sendRequest(
+                    .getNetHostObject(read.request),
+                    to: read.destination,
+                    on: eventLoop
+                ).map { response in
+                    guard case .netHostObject(let object)? = response.successBody,
+                          let destinationIdentity = destinationInfo.relayIdentity else {
+                        return self.forwardedRelayErrorResponse(
+                            response,
+                            respondingTo: request
+                        )
+                    }
+                    let federated = FederatedNetHostObjectResponseV1(
+                        destinationIdentity: destinationIdentity,
+                        object: object
+                    )
+                    guard (try? federated.verifyThrowing(
+                        expectedRelayID: read.destinationRelayID
+                    )) == true else {
+                        return .error(
+                            "Federated Noctweb object failed relay identity verification.",
+                            code: .authenticationRequired,
+                            respondingTo: request
+                        )
+                    }
+                    return .success(
+                        .federatedNetHostObject(federated),
+                        respondingTo: request
+                    )
+                }
+            }.flatMapError { _ in
+                failure(
+                    "Federated Noctweb destination is unavailable.",
+                    code: .unavailable,
+                    retryable: true
+                )
+            }
+        case .resolveFederatedNetHostName(let read):
+            guard relayConfiguration.kind == .standard,
+                  relayConfiguration.federation.mode != .solo,
+                  read.isStructurallyValid else {
+                return failure(
+                    "Federated Noctweb name resolution is unavailable.",
+                    code: .unavailable
+                )
+            }
+            let eventLoop = context.eventLoop
+            return authenticatedFederationPeer(
+                destination: read.destination,
+                expectedRelayID: read.destinationRelayID,
+                requiredModule: "nw.net-host",
+                allowedKinds: [.standard, .host],
+                on: eventLoop
+            ).flatMap { destinationInfo in
+                self.sendRequest(
+                    .resolveNetHostName(read.request),
+                    to: read.destination,
+                    on: eventLoop
+                ).map { response in
+                    guard case .netHostNameResolution(
+                        let resolution
+                    )? = response.successBody,
+                    let destinationIdentity =
+                        destinationInfo.relayIdentity else {
+                        return self.forwardedRelayErrorResponse(
+                            response,
+                            respondingTo: request
+                        )
+                    }
+                    let federated = FederatedNetHostNameResponseV1(
+                        destinationIdentity: destinationIdentity,
+                        resolution: resolution
+                    )
+                    guard (try? federated.verifyThrowing(
+                        expectedRelayID: read.destinationRelayID
+                    )) == true else {
+                        return .error(
+                            "Federated Noctweb name failed relay identity verification.",
+                            code: .authenticationRequired,
+                            respondingTo: request
+                        )
+                    }
+                    return .success(
+                        .federatedNetHostNameResolution(federated),
+                        respondingTo: request
+                    )
+                }
+            }.flatMapError { _ in
+                failure(
+                    "Federated Noctweb destination is unavailable.",
+                    code: .unavailable,
+                    retryable: true
+                )
+            }
         case .netPassthrough(let passthrough):
             guard relayConfiguration.kind == .passthrough else {
                 return failure("This relay is not a passthrough relay.", code: .unavailable)
@@ -621,6 +1071,52 @@ final class RelayHandler: ChannelInboundHandler {
             } catch {
                 return failure("Host object could not be stored.", code: .internalFailure, retryable: true)
             }
+        case .bindNetHostName(let binding):
+            guard relayConfiguration.isNetHostEnabled,
+                  let netHostStore,
+                  let configuredSuffix =
+                    relayConfiguration.noctwebRelaySuffix,
+                  binding.relaySuffix == configuredSuffix else {
+                return failure(
+                    "This relay does not own the requested Noctweb suffix.",
+                    code: .unavailable
+                )
+            }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure(
+                    "Noctweave Net name writes require confidential transport."
+                )
+            }
+            do {
+                let now = Date()
+                let stored = try netHostStore.bindName(
+                    binding,
+                    now: now
+                )
+                let resolution = try NoctweaveNetHostNameResolutionV1.signed(
+                    binding: stored,
+                    updatedAt: now,
+                    signer: relayIdentityRuntime.keyMaterial,
+                    at: now
+                )
+                return success(.netHostNameResolution(resolution))
+            } catch NoctweaveNetHostStoreError.conflict {
+                return failure(
+                    "Noctweb name conflicts with publisher continuity.",
+                    code: .conflict
+                )
+            } catch NoctweaveNetHostStoreError.objectUnavailable {
+                return failure(
+                    "The named host object is not available.",
+                    code: .notFound
+                )
+            } catch {
+                return failure(
+                    "Noctweb name could not be stored.",
+                    code: .internalFailure,
+                    retryable: true
+                )
+            }
         case .getNetHostObject(let get):
             guard relayConfiguration.isNetHostEnabled, let netHostStore else {
                 return failure("This relay does not provide Noctweave Net hosting.", code: .unavailable)
@@ -632,6 +1128,42 @@ final class RelayHandler: ChannelInboundHandler {
                 return success(.netHostObject(object))
             } catch {
                 return failure("Host object could not be read.", code: .internalFailure, retryable: true)
+            }
+        case .resolveNetHostName(let name):
+            guard relayConfiguration.isNetHostEnabled,
+                  let netHostStore,
+                  let configuredSuffix =
+                    relayConfiguration.noctwebRelaySuffix,
+                  name.relaySuffix == configuredSuffix else {
+                return failure(
+                    "This relay does not own the requested Noctweb suffix.",
+                    code: .notFound
+                )
+            }
+            do {
+                let now = Date()
+                guard let binding = try netHostStore.resolveName(
+                    name,
+                    now: now
+                ) else {
+                    return failure(
+                        "Noctweb name not found.",
+                        code: .notFound
+                    )
+                }
+                let resolution = try NoctweaveNetHostNameResolutionV1.signed(
+                    binding: binding,
+                    updatedAt: now,
+                    signer: relayIdentityRuntime.keyMaterial,
+                    at: now
+                )
+                return success(.netHostNameResolution(resolution))
+            } catch {
+                return failure(
+                    "Noctweb name could not be resolved.",
+                    code: .internalFailure,
+                    retryable: true
+                )
             }
         case .hasNetHostObject(let has):
             guard relayConfiguration.isNetHostEnabled, let netHostStore else {
@@ -769,6 +1301,223 @@ final class RelayHandler: ChannelInboundHandler {
         }
     }
 
+    private func authenticatedFederationPeer(
+        destination: RelayEndpoint,
+        expectedRelayID: RelayIdentityIDV1,
+        requiredModule: String,
+        allowedKinds: Set<RelayKind>,
+        on eventLoop: EventLoop
+    ) -> EventLoopFuture<RelayInfo> {
+        guard permitsFederationTransport(destination) else {
+            return eventLoop.makeFailedFuture(
+                RelayForwardHTTPError.destinationRejected
+            )
+        }
+        return federationMembershipRecord(
+            destination: destination,
+            on: eventLoop
+        ).flatMap { membership in
+            self.fetchRelayInfo(from: destination, on: eventLoop).flatMapThrowing {
+                liveInfo in
+                guard let liveInfo,
+                      try self.isValidFederationPeerInfo(
+                          liveInfo,
+                          endpoint: destination,
+                          expectedRelayID: expectedRelayID,
+                          requiredModule: requiredModule,
+                          allowedKinds: allowedKinds
+                      ) else {
+                    throw RelayForwardHTTPError.destinationRejected
+                }
+                if let membership {
+                    guard let listedIdentity = membership.relayInfo.relayIdentity,
+                          try listedIdentity.verifyThrowing(at: Date()),
+                          listedIdentity.claim.relayID == expectedRelayID,
+                          listedIdentity.claim.signingPublicKey
+                            == liveInfo.relayIdentity?.claim.signingPublicKey else {
+                        throw RelayForwardHTTPError.destinationRejected
+                    }
+                }
+                return liveInfo
+            }
+        }
+    }
+
+    private func federationMembershipRecord(
+        destination: RelayEndpoint,
+        on eventLoop: EventLoop
+    ) -> EventLoopFuture<FederationNodeRecord?> {
+        guard relayConfiguration.federation.mode != .solo else {
+            return eventLoop.makeFailedFuture(
+                RelayForwardHTTPError.destinationRejected
+            )
+        }
+        if relayConfiguration.federation.mode == .manual {
+            guard relayConfiguration.federationAllowList.contains(where: {
+                federationEndpointKey($0) == federationEndpointKey(destination)
+            }) else {
+                return eventLoop.makeFailedFuture(
+                    RelayForwardHTTPError.destinationRejected
+                )
+            }
+            return eventLoop.makeSucceededFuture(nil)
+        }
+        return fetchCoordinatorNodeDirectory(
+            request: ListFederationNodesRequest(
+                mode: relayConfiguration.federation.mode,
+                federationName: relayConfiguration.federation.name,
+                onlyHealthy: true,
+                maxStalenessSeconds: relayConfiguration.coordinatorDirectoryMaxStalenessSeconds,
+                requireSignedSnapshot: true
+            ),
+            on: eventLoop
+        ).flatMapThrowing { nodes in
+            guard let record = nodes.first(where: {
+                self.federationEndpointKey($0.endpoint)
+                    == self.federationEndpointKey(destination)
+            }) else {
+                throw RelayForwardHTTPError.destinationRejected
+            }
+            return record
+        }
+    }
+
+    private func isAuthenticatedFederationMember(
+        _ identity: SignedRelayIdentityClaimV1,
+        requiredModule: String,
+        allowedKinds: Set<RelayKind>,
+        on eventLoop: EventLoop
+    ) -> EventLoopFuture<Bool> {
+        do {
+            guard try identity.verifyThrowing(at: Date()),
+                  allowedKinds.contains(identity.claim.relayKind),
+                  identity.claim.federationMode
+                    == relayConfiguration.federation.mode,
+                  identity.claim.federationName
+                    == relayConfiguration.federation.name else {
+                return eventLoop.makeSucceededFuture(false)
+            }
+        } catch {
+            return eventLoop.makeFailedFuture(error)
+        }
+        if relayConfiguration.federation.mode == .manual {
+            let allowed = identity.claim.advertisedEndpoints.contains { advertised in
+                relayConfiguration.federationAllowList.contains {
+                    federationEndpointKey($0) == federationEndpointKey(advertised)
+                }
+            }
+            return eventLoop.makeSucceededFuture(allowed)
+        }
+        return fetchCoordinatorNodeDirectory(
+            request: ListFederationNodesRequest(
+                mode: relayConfiguration.federation.mode,
+                federationName: relayConfiguration.federation.name,
+                onlyHealthy: true,
+                maxStalenessSeconds: relayConfiguration.coordinatorDirectoryMaxStalenessSeconds,
+                requireSignedSnapshot: true
+            ),
+            on: eventLoop
+        ).map { records in
+            records.contains { record in
+                guard let listedIdentity = record.relayInfo.relayIdentity,
+                      listedIdentity.claim.relayID == identity.claim.relayID,
+                      listedIdentity.claim.signingPublicKey
+                        == identity.claim.signingPublicKey,
+                      record.relayInfo.protocolCapabilities?.supports(
+                          module: requiredModule,
+                          version: 1
+                      ) == true else {
+                    return false
+                }
+                return identity.claim.advertisedEndpoints.contains {
+                    self.federationEndpointKey($0)
+                        == self.federationEndpointKey(record.endpoint)
+                }
+            }
+        }
+    }
+
+    private func isValidFederationPeerInfo(
+        _ info: RelayInfo,
+        endpoint: RelayEndpoint,
+        expectedRelayID: RelayIdentityIDV1,
+        requiredModule: String,
+        allowedKinds: Set<RelayKind>
+    ) throws -> Bool {
+        guard allowedKinds.contains(info.kind),
+              info.federation.mode == relayConfiguration.federation.mode,
+              info.federation.name == relayConfiguration.federation.name,
+              info.protocolCapabilities?.supports(
+                  module: requiredModule,
+                  version: 1
+              ) == true,
+              let identity = info.relayIdentity,
+              try identity.verifyThrowing(at: Date()),
+              identity.claim.relayID == expectedRelayID,
+              identity.claim.advertisedEndpoints.contains(where: {
+                  federationEndpointKey($0) == federationEndpointKey(endpoint)
+              }) else {
+            return false
+        }
+        return true
+    }
+
+    private func permitsFederationTransport(_ endpoint: RelayEndpoint) -> Bool {
+        if endpoint.useTLS { return true }
+        let host = endpoint.host
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return host == "127.0.0.1" || host == "::1" || host == "localhost"
+    }
+
+    private func advertisedIdentityEndpoints() -> [RelayEndpoint] {
+        if let advertised = relayConfiguration.advertisedEndpoint {
+            return [advertised]
+        }
+        guard let localEndpoint else { return [] }
+        let normalizedHost: String
+        switch localEndpoint.host
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() {
+        case "", "0.0.0.0", "::":
+            normalizedHost = "127.0.0.1"
+        default:
+            normalizedHost = localEndpoint.host
+        }
+        return [
+            RelayEndpoint(
+                host: normalizedHost,
+                port: localEndpoint.port,
+                useTLS: localEndpoint.useTLS,
+                transport: localEndpoint.transport,
+                tlsCertificateFingerprintSHA256:
+                    localEndpoint.tlsCertificateFingerprintSHA256,
+                directorySigningPublicKey:
+                    localEndpoint.directorySigningPublicKey
+            )
+        ]
+    }
+
+    private func forwardedRelayErrorResponse(
+        _ response: RelayResponse,
+        respondingTo request: RelayRequest
+    ) -> RelayResponse {
+        guard let error = response.error else {
+            return .error(
+                "Federation peer returned an invalid response.",
+                code: .unavailable,
+                retryable: true,
+                respondingTo: request
+            )
+        }
+        return .error(
+            error.message,
+            code: error.code,
+            retryable: error.retryable,
+            respondingTo: request
+        )
+    }
+
     private func openFederationDHTConfiguration() -> OpenFederationDHTDiscoveryConfiguration? {
         guard relayConfiguration.federation.mode == .open,
               relayConfiguration.kind != .coordinator,
@@ -813,6 +1562,11 @@ final class RelayHandler: ChannelInboundHandler {
                 "Coordinator registration rejected: open-federation endpoint must use TLS and be publicly routable."
             )
         }
+        guard let submittedIdentity = registration.relayInfo.relayIdentity else {
+            return eventLoop.makeSucceededFuture(
+                "Coordinator registration rejected: relay identity is missing."
+            )
+        }
         return fetchRelayInfo(from: registration.endpoint, on: eventLoop).map { info -> String? in
             guard let info else {
                 return "Coordinator registration rejected: endpoint is unreachable or did not return relay info."
@@ -825,12 +1579,42 @@ final class RelayHandler: ChannelInboundHandler {
                info.federation.name != expectedName {
                 return "Coordinator registration rejected: federation name mismatch."
             }
+            guard let liveIdentity = info.relayIdentity,
+                  (try? liveIdentity.verifyThrowing(at: info.advertisedAt)) == true,
+                  liveIdentity.claim.relayID == submittedIdentity.claim.relayID,
+                  liveIdentity.claim.signingPublicKey
+                    == submittedIdentity.claim.signingPublicKey,
+                  liveIdentity.claim.advertisedEndpoints.contains(where: {
+                      self.federationEndpointKey($0)
+                        == self.federationEndpointKey(registration.endpoint)
+                  }) else {
+                return "Coordinator registration rejected: live relay identity differs from the submitted identity."
+            }
             return nil
         }.flatMapError { _ in
             eventLoop.makeSucceededFuture(
                 String?.some("Coordinator registration rejected: endpoint reachability check failed.")
             )
         }
+    }
+
+    private func validateFederationRegistrationIdentity(
+        _ registration: FederationNodeRegistrationRequest
+    ) -> String? {
+        guard let identity = registration.relayInfo.relayIdentity,
+              (try? identity.verifyThrowing(
+                  at: registration.relayInfo.advertisedAt
+              )) == true,
+              identity.claim.advertisedEndpoints.contains(where: {
+                  federationEndpointKey($0)
+                    == federationEndpointKey(registration.endpoint)
+              }) else {
+            return "Coordinator registration rejected: relay identity is missing, invalid, or does not bind the advertised endpoint."
+        }
+        guard identity.claim.noctwebSuffix != nil else {
+            return "Coordinator registration rejected: federated relays must advertise an authenticated Noctweb suffix."
+        }
+        return nil
     }
 
     private func coordinatorEndpoints() -> [RelayEndpoint] {
@@ -908,7 +1692,17 @@ final class RelayHandler: ChannelInboundHandler {
         }
         let interval = coordinatorHeartbeatInterval()
         let ttl = max(Int(interval * 3), 60)
-        let info = relayConfiguration.makeInfo(now: Date())
+        let info: RelayInfo
+        do {
+            info = try relayIdentityRuntime.authenticatedInfo(
+                relayConfiguration.makeInfo(now: Date()),
+                configuration: relayConfiguration,
+                advertisedEndpoints: advertisedIdentityEndpoints(),
+                hostSigningPublicKey: netHostStore?.signingPublicKey
+            )
+        } catch {
+            return eventLoop.makeFailedFuture(error)
+        }
         let request = RelayRequest.registerFederationNode(
             FederationNodeRegistrationRequest(
                 endpoint: advertisedEndpoint,
@@ -1202,6 +1996,52 @@ final class RelayHandler: ChannelInboundHandler {
         return peers
     }
 
+    private func propagateNoctwebNamespaceMutation(
+        _ request: RelayRequest,
+        on eventLoop: EventLoop
+    ) {
+        guard relayConfiguration.federation.mode != .solo else {
+            return
+        }
+        var candidates = relayConfiguration.federationAllowList
+        candidates.append(
+            contentsOf:
+                relayConfiguration.federationCoordinatorEndpoints ?? []
+        )
+        candidates.append(contentsOf: knownOpenFederationPeers())
+        candidates.append(
+            contentsOf:
+                store.coordinatorDirectoryCacheSnapshot().map(\.endpoint)
+        )
+
+        let localKey = effectiveAdvertisedEndpoint().map(
+            federationEndpointKey
+        )
+        var seen = Set<String>()
+        let endpoints = Array(candidates.filter { endpoint in
+            guard permitsFederationTransport(endpoint) else {
+                return false
+            }
+            let key = federationEndpointKey(endpoint)
+            return key != localKey && seen.insert(key).inserted
+        }.prefix(64))
+        guard !endpoints.isEmpty else {
+            return
+        }
+
+        let futures = endpoints.map { endpoint in
+            sendRequest(request, to: endpoint, on: eventLoop)
+                .map { _ in () }
+                .flatMapError { _ in
+                    eventLoop.makeSucceededFuture(())
+                }
+        }
+        EventLoopFuture.andAllSucceed(
+            futures,
+            on: eventLoop
+        ).whenComplete { _ in }
+    }
+
     private func boundedAttachmentTTL(requested: Int?) -> Int {
         let defaultTTL = max(60, relayConfiguration.attachmentDefaultTTLSeconds)
         let maxTTL = max(defaultTTL, relayConfiguration.attachmentMaxTTLSeconds)
@@ -1388,11 +2228,23 @@ final class RelayHandler: ChannelInboundHandler {
 
     private func requiresAuthentication(for binding: RelayOperationBinding) -> Bool {
         if binding.module == .netHost,
-           [.get, .has].contains(binding.method) {
+           [.get, .resolve, .has].contains(binding.method) {
+            return false
+        }
+        if binding.module == .federationForward,
+           binding.method == .deliver {
             return false
         }
         return binding.module != .core
-            && !(binding.module == .federation && [.register, .list].contains(binding.method))
+            && !(binding.module == .federation
+                && [
+                    .register,
+                    .list,
+                    .namespace,
+                    .claim,
+                    .rotate,
+                    .release
+                ].contains(binding.method))
     }
 
     private func roleAllows(_ binding: RelayOperationBinding) -> Bool {
@@ -1401,6 +2253,12 @@ final class RelayHandler: ChannelInboundHandler {
         }
         if binding.module == .netHost {
             return relayConfiguration.isNetHostEnabled && netHostStore != nil
+        }
+        if binding.module == .federation,
+           [.namespace, .claim, .rotate, .release].contains(
+                binding.method
+           ) {
+            return true
         }
         switch relayConfiguration.kind {
         case .standard:
@@ -1419,7 +2277,7 @@ final class RelayHandler: ChannelInboundHandler {
         binding: RelayOperationBinding
     ) -> String? {
         let configuredPassword = binding.module == .netHost
-            && [.put, .release].contains(binding.method)
+            && [.put, .bind, .release].contains(binding.method)
             ? relayConfiguration.publisherPassword ?? relayConfiguration.accessPassword
             : relayConfiguration.accessPassword
         let expected = configuredPassword?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -1495,7 +2353,15 @@ final class RelayHandler: ChannelInboundHandler {
 
     private func isCoordinatorDirectoryRequest(_ binding: RelayOperationBinding) -> Bool {
         binding.module == .core
-            || (binding.module == .federation && [.register, .list].contains(binding.method))
+            || (binding.module == .federation
+                && [
+                    .register,
+                    .list,
+                    .namespace,
+                    .claim,
+                    .rotate,
+                    .release
+                ].contains(binding.method))
     }
 }
 

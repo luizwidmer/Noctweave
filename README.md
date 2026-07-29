@@ -31,8 +31,10 @@ group keys stay with clients.
 The relay exposes the three-role Noctweave Net topology: `standard` relays
 carry existing private traffic, `passthrough` relays provide bounded one-hop
 HTTPS forwarding, and `host` relays store content-addressed Noctweave Net
-objects. Shared publication coordination remains outside relays and belongs to
-the selected consensus adapter.
+objects. Each relay has a persistent ML-DSA identity. Federated deployments can
+use signed, quorum-verified namespace snapshots to map unique Noctweb suffixes
+to authenticated relay endpoints without making DHT or peer discovery an
+authority.
 
 There are no hosted accounts, developer-operated relays, or required central
 notification services. You choose where every component runs.
@@ -164,11 +166,20 @@ and IPFS offload. Passthrough relays advertise only bounded Noctweave Net
 forwarding; host relays advertise only content-addressed Noctweave Net storage.
 All roles use the same exact relay envelope and authenticated operator console.
 
+Federated standard relays can forward an unchanged encrypted opaque-route
+append to the authenticated destination relay, allowing a client to keep one
+home-relay connection while contacts use other relays. Host relays additionally
+bind Noctweb names to immutable objects. Suffix ownership survives downtime,
+identity rotation requires signatures from both relay keys, and explicit
+release permanently tombstones the suffix.
+
 ![Noctweave Relay operator console](docs/assets/NoctweaveRelayConsole.png)
 
 For production deployment, reverse proxies, federation, secrets, and storage,
 use the [relay guide](NoctweaveRelayServer/README.md) and
 [operator hardening guide](NoctweaveDocumentation/relay_ops_hardening_guide.md).
+The complete trust and quorum model is in the
+[federation operations guide](NoctweaveDocumentation/federation_protocol_and_operations.md).
 
 ### NoctweaveJS
 

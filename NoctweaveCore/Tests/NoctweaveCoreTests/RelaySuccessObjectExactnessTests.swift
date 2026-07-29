@@ -185,7 +185,8 @@ final class RelaySuccessObjectExactnessTests: XCTestCase {
             "requiresPassword", "tlsEnabled", "transport", "federationCoordinatorEndpoints",
             "coordinatorReportedRelayCount", "coordinatorRegistrationAuthRequired",
             "curatedStrictPolicyEnabled", "curatedCoordinatorQuorum", "curatedRequireSignedDirectory",
-            "federationDirectoryPublicKey", "knownOpenPeers", "openFederationDiscovery", "advertisedAt"
+            "federationDirectoryPublicKey", "knownOpenPeers", "openFederationDiscovery",
+            "relayIdentity", "advertisedAt"
         ]
     }
 

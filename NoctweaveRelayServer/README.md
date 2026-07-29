@@ -29,10 +29,11 @@ Implemented modules:
 | `nw.opaque-route` | 2 | `create`, `renew`, `teardown`, `append`, `sync`, `commit` |
 | `nw.rendezvous-transport` | 2 | `register`, `append`, `sync`, `delete` |
 | `nw.blobs` | 1 | `upload`, `fetch` |
-| `nw.federation` | 1 | `register`, `list` |
+| `nw.federation` | 1 | `register`, `list`, `namespace`, `claim`, `rotate`, `release` |
+| `nw.federation-forward` | 1 | `forward`, `deliver`, `get`, `resolve` |
 | `nw.open-discovery` | 1 | `publish-dht`, `list-dht` (experimental; open discovery only) |
 | `nw.net-passthrough` | 1 | `forward` |
-| `nw.net-host` | 1 | `put`, `get`, `has`, `release` |
+| `nw.net-host` | 1 | `put`, `bind`, `get`, `resolve`, `has`, `release` |
 
 Every process selects one primary current role with `--relay-kind standard`,
 `--relay-kind passthrough`, or `--relay-kind host`. A standard relay may also
@@ -73,6 +74,10 @@ metadata, and federation records in `relay_store.sqlite`.
 
 Host-capable relays additionally store exact Noctweave Net object bytes under
 `/data/net-host`, a bounded metadata index, and a stable Ed25519 receipt key.
+The relay's persistent ML-DSA-65 identity is stored as
+`/data/relay_identity_v1.json` with owner-only permissions. Namespace records,
+including irreversible suffix tombstones, are stored transactionally in
+SQLite. Back up the data directory as one security boundary.
 
 ## Noctweave Net relay roles
 
@@ -107,7 +112,9 @@ NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
   --data-dir /data
 ```
 
-The same host service can be co-located on a solo standard relay:
+The same host service can be co-located on a standard relay. This example is
+solo; manual, curated, and open modes are also supported when a suffix and the
+corresponding federation policy are configured:
 
 ```sh
 export NOCTWEAVE_RELAY_PASSWORD="$(openssl rand -hex 32)"
@@ -129,9 +136,10 @@ clients can retrieve a hosted site; `put` and `release` require the relay
 password, and private object bytes must already be encrypted by the client.
 
 Passthrough and every host-capable relay require
-`NOCTWEAVE_RELAY_PASSWORD` (or `--access-password`) and federation mode
-`solo`. Non-solo hosting policy, Noctweave Net publisher heads, and locator
-ordering belong to consensus, not relay federation.
+`NOCTWEAVE_RELAY_PASSWORD` (or `--access-password`). Passthrough remains a solo,
+bounded forwarding role. Host and host-capable standard relays may join
+`manual`, `curated`, or `open` federation so their Noctweb objects can be
+resolved and fetched through authenticated federation routes.
 
 Those examples bind the browser/HTTP surface to loopback. For a public
 Publisher, terminate HTTPS at a reverse proxy on the same host, keep the plain
@@ -162,17 +170,65 @@ well as the current one.
 
 Set `--noctweb-relay-suffix .example` (or
 `NOCTWEAVE_NOCTWEB_RELAY_SUFFIX`) to choose the human-facing relay namespace
-suffix. Without it, the server derives an `r-…` suffix from its stable hosting
-receipt public key.
+suffix. Every non-solo standard or host relay must set one. A solo host may
+omit it and use a local `r-…` Publisher fallback derived from its stable hosting
+receipt public key; that fallback is not federation namespace evidence.
 
 The publisher supports ordinary HTML, CSS, and JavaScript, including
 browser-ready compiled React bundles. The relay never builds or executes a
 site. A visitor retrieves exact hosted bytes, verifies publisher integrity,
 and runs active content only in a sandbox without the relay origin.
 
-The UI reports a revision as **Hosted**, not finalized. Its displayed
-`noct://` address is a provisional namespace binding until Noctweave Net
-consensus provides naming and publisher-head finality.
+The UI reports a revision as **Hosted**, not publisher-finalized. Publication
+content and head continuity remain signed by the publisher. In a federation,
+the displayed `noct://` address is resolved only after the Browser verifies the
+configured threshold of byte-identical, relay-signed namespace snapshots.
+
+## Authenticated federation and naming
+
+Each persistent relay advertises a signed ML-DSA identity claim. In a manual
+federation, a host-capable deployment can be started with:
+
+```sh
+NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
+  --host 0.0.0.0 \
+  --http-port 9340 \
+  --relay-kind standard \
+  --net-host-enabled true \
+  --noctweb-relay-suffix .atelier \
+  --federation-mode manual \
+  --federation-name private-mesh \
+  --federation-allow https://relay-b.example \
+  --advertised-endpoint https://relay-a.example \
+  --trusted-reverse-proxy-tls true \
+  --data-dir /data
+```
+
+Every peer must use the same mode and federation name. Manual peers are
+operator-selected and can be updated at runtime. Curated deployments configure
+coordinator endpoints and signing keys. Open deployments may use DHT/PEX to
+discover candidates, but clients still require an explicit namespace signer
+set and threshold.
+
+The namespace module exposes signed `namespace`, `claim`, `rotate`, and
+`release` operations. Accepted mutations are propagated to a bounded peer set.
+Offline operation never releases a suffix. Rotation requires a proof signed by
+both relay keys. Release is an irreversible tombstone.
+
+`nw.federation-forward@1` lets a standard home relay forward an unchanged
+encrypted opaque append to an authenticated destination relay. It also proxies
+Noctweb name resolution and object fetches to the namespace-selected host.
+Client-side relationship, namespace, destination identity, host receipt,
+object digest, and publisher verification remain mandatory.
+
+The operator console shows the persistent relay ID and active suffix as
+read-only security state. Initial suffix selection is a startup operation;
+rotation and release require signed lifecycle operations and are not treated as
+ordinary live form edits.
+
+See
+[`federation_protocol_and_operations.md`](../NoctweaveDocumentation/federation_protocol_and_operations.md)
+for trust modes, quorum behavior, lifecycle rules, and security boundaries.
 
 ## Docker
 

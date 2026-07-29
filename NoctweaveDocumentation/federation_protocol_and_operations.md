@@ -1,120 +1,162 @@
 # Noctweave Federation Protocol and Operations
 
-Federation is optional relay discovery and operator coordination. It does not
-create user accounts, route messages by identity, inspect ciphertext, or change
-end-to-end relationship authentication.
-
-Noctweave Net does not use this module. Its passthrough and host roles require
-`solo`; publisher heads and locator ordering come from the separately selected
-consensus adapter. This federation profile remains available only to standard
-Noctweave messaging deployments during the pre-1.0 compatibility window.
+Federation connects independently operated relays without introducing user
+accounts or a trusted plaintext router. It provides authenticated relay
+discovery, opaque cross-relay delivery, and a federation-local Noctweb
+namespace. Message and publication payloads remain encrypted or
+content-addressed end to end.
 
 ## Trust domains
 
 Every relay selects exactly one mode:
 
-| Mode | Meaning |
+| Mode | Membership and namespace policy |
 | --- | --- |
-| `solo` | No federation. A complete valid deployment. |
-| `manual` | Operator-configured peers only. |
-| `curated` | Peers admitted by explicit allow-list/coordinator policy. |
-| `open` | Bounded signed relay discovery records and public-endpoint policy. |
+| `solo` | One independent relay. No peer consensus is required. |
+| `manual` | Operator-configured peers. Namespace clients default to unanimity across the configured signer set. |
+| `curated` | Coordinator-admitted relays and an explicit coordinator signature quorum. |
+| `open` | Permissionless peer discovery plus an explicit namespace signer set and threshold. |
 
-Relays must not silently bridge modes. A name or coordinator used in one trust
-domain does not authorize another.
+Modes and federation names are part of signed relay identity claims. Relays
+must reject claims, forwarding, and snapshots from another trust domain.
+Changing modes creates a different network; it is not an implicit bridge.
 
-## Client routing
+## Relay identities
 
-Pairwise route sets contain the relay endpoint for each opaque send route. A
-sender submits ciphertext directly to that route's relay using the route append
-capability. No global directory resolves a persona or relationship, and relay
-federation does not receive a contact graph.
+Each relay has a persistent ML-DSA-65 identity. The private key is generated
+once and stored with operator secrets. Its signed identity claim binds:
 
-Changing relays is a relationship route rollover: the receiver registers a new
-route, sends an encrypted signed route-set update that marks it `testing`,
-accepts a targeted probe there, then promotes it while the old route drains
-through a bounded overlap.
+- the relay ID derived from the ML-DSA public key;
+- relay role, federation mode, and federation name;
+- externally reachable endpoints and transports;
+- the capability-manifest digest;
+- a Noctweb suffix for every federated standard or host relay, plus an optional
+  host receipt key;
+- a monotonic sequence and bounded validity interval.
 
-## Relay module
+Peers fetch live relay information and verify this claim before trusting an
+endpoint. TLS authenticates the transport deployment; the relay identity
+authenticates the Noctweave operator endpoint across proxy or certificate
+changes.
 
-Provisional 1.0-candidate operator coordination uses the exact
-`nw.federation` version 1 relay module:
+Key rotation is a transition signed by both the old and new ML-DSA keys. A
+rotation keeps the relay's namespace ownership while replacing its relay ID.
+An unsigned replacement is a different relay.
 
-| Method | Purpose |
-| --- | --- |
-| `register` | Register a bounded relay-node record under the selected policy. |
-| `list` | List policy-visible relay nodes within configured limits. |
+## Noctweb suffix registry
 
-The open trust domain additionally exposes the experimental
-`nw.open-discovery` version 1 module only when open discovery is enabled:
+A suffix such as `.atelier` is federation-local and can have only one owner.
+The durable ledger maps:
 
-| Method | Purpose |
-| --- | --- |
-| `publish-dht` | Publish a signed short-lived open-discovery record. |
-| `list-dht` | Return bounded validated open-discovery records. |
+```text
+suffix -> relay ID -> signed endpoints, role, capabilities, and host key
+```
 
-Requests and responses are correlated by request ID, module, version, and
-method. Federation calls never carry message plaintext or relationship keys.
+Ownership does not expire when a relay is offline. An expired identity claim
+removes currently routable endpoints from a snapshot but does not make the
+suffix available. Operators have two explicit lifecycle operations:
 
-## Manual mode
+- **rotate**: retain the suffix through a double-signed identity transition;
+- **release**: sign an irreversible release that creates a permanent
+  tombstone.
 
-Manual peers are operator configuration. The relay accepts no discovery record
-that expands the set. Use this mode for small known meshes and environments
-where configuration review matters more than automatic discovery.
+A released suffix can never be claimed again. This prevents a later operator
+from inheriting an address previously trusted by users.
 
-Each configured endpoint is probed directly as a standard relay. It must
-advertise `manual` mode and the same federation name when a name is configured.
-The resulting directory is a bounded set of currently reachable peers; manual
-mode does not register with a coordinator and does not recursively import a
-peer's directory. Operators may add or remove peers at runtime. Existing
-listeners, client routes, and stored ciphertext remain active while the
-directory refreshes.
+Namespace mutations use `nw.federation@1` methods `claim`, `rotate`, and
+`release`. Running peers propagate accepted signed mutations to their bounded
+federation peer set. Repeated claims are effect-idempotent; stale, conflicting,
+or replayed transitions are rejected.
 
-Cross-relay delivery still follows relationship-encrypted route sets. If Alice
-uses relay A and Bob uses relay B, pairing gives Alice the capability-bearing
-route on B and Bob the corresponding route on A. Each sender submits ciphertext
-directly to the recipient route; neither relay forwards that user packet
-through the federation module.
+## Consensus snapshots
 
-## Curated mode
+Relays expose a canonical, signed namespace snapshot through
+`nw.federation@1 namespace`. A client accepts a snapshot only when:
 
-Curated mode restricts visible and accepted nodes to the configured federation
-name, coordinator/allow-list policy, relay kind, endpoint policy, and signature
-requirements. Coordinator availability must not silently fall back to open
-admission.
+1. its federation mode and name match the selected network profile;
+2. each signature verifies against an explicitly trusted relay signer;
+3. the configured threshold is met; and
+4. the accepted signers attest byte-identical canonical snapshot payloads.
 
-## Open mode
+Manual profiles use all configured signers by default. Curated profiles use
+the configured coordinator quorum. Open profiles require a bounded explicit
+signer set and threshold. DHT and peer exchange can locate candidates in open
+mode, but discovery records never grant namespace authority.
 
-Open discovery records are signed, short-lived, bounded, and describe relay
-endpoints only. They must not contain:
+This is a signed-state quorum, not a global Byzantine consensus engine. A stale
+signer can delay a strict unanimity profile until it receives the signed
+transition. It cannot silently create a second accepted owner.
 
-- persona, relationship, group, or route identifiers;
-- contact invitations or public keys belonging to chat participants;
-- message counts, topics, content hints, or attachment references;
-- authorization for opaque routes.
+## Opaque cross-relay messaging
 
-Public endpoint validation rejects loopback, private, link-local, multicast,
-unspecified, documentation-only, and malformed destinations according to the
-configured open-federation policy. Record count, size, TTL, peer-exchange fanout,
-and cache retention are bounded.
+Relationship route sets remain the authority for delivery. They contain
+opaque destination routes and capabilities, not user identities.
 
-## Discovery is not message trust
+When a client is connected to home relay A and a destination route lives on
+relay B:
 
-A discovered relay record says where a relay claims to operate. It does not
-authenticate a contact, authorize a route, prove honest storage, or grant
-federation-wide delivery. Pairwise cryptographic verification and opaque route
-capabilities remain mandatory.
+1. the client submits the already encrypted route packet to A;
+2. A verifies that B is an authenticated member of the same federation;
+3. A wraps the unchanged opaque append in `nw.federation-forward@1`;
+4. B authenticates A's short-lived relay claim and federation membership;
+5. B applies the destination route capability and stores the ciphertext.
 
-## Operator requirements
+Neither relay learns message plaintext, relationship keys, or a global user
+identifier. Clients may still submit directly to B when policy and
+connectivity permit. Home-relay forwarding is a delivery convenience, not a
+new message trust authority.
 
-- publish the exact externally reachable endpoint and TLS posture;
-- use dedicated operator/federation credentials, never user route authority;
-- protect coordinator and allow-list configuration as security state;
-- rate-limit registration, listing, and open-discovery methods independently;
-- retain bounded audit metadata without logging ciphertext bodies or tokens;
-- monitor rejected records, cache pressure, signature failures, and peer churn;
-- document the metadata visible to every configured peer and coordinator.
+## Federated Noctweb retrieval
+
+A host relay binds a site label and suffix to an immutable hosted object,
+publisher ID, publication head, and revision. The binding and fetch receipts
+are signed and tied to the relay identity claim.
+
+The Browser:
+
+1. obtains a quorum-verified namespace snapshot;
+2. resolves the suffix to the authenticated destination relay;
+3. asks its selected home relay to resolve the remote name and fetch the
+   object, or contacts the destination directly when they are the same relay;
+4. verifies the destination relay identity, signed name mapping, object digest,
+   host receipt key, and publisher envelope before rendering.
+
+The Lab publishes the immutable object first and then performs the strict name
+binding. A failed bind never turns an uploaded object into an addressable
+publication.
+
+## Operator configuration
+
+All federated standard and host relays must configure:
+
+- a stable data directory for relay identity and namespace state;
+- one externally reachable advertised endpoint;
+- the exact federation mode and name;
+- TLS or a trusted TLS reverse proxy;
+- peer/coordinator endpoints appropriate to the selected mode;
+- one canonical suffix, even when the relay routes to a separate content host.
+
+For manual mode, list every expected peer. For curated mode, configure the
+coordinator endpoints, directory signing keys, registration token, and quorum.
+For open mode, enable DHT/PEX only for discovery and distribute the independent
+namespace signer policy to clients.
+
+Operators can add and remove runtime peers without restarting listeners.
+Removing a peer changes reachability and future quorum policy; it does not
+erase that relay's durable suffix ownership or historical tombstones.
+
+## Security boundaries
+
+Federation never carries plaintext, relationship signing keys, route creation
+authority, host release capabilities, or private publication keys. Do not:
+
+- infer user identity from relay identity;
+- treat DHT/PEX output as authorization;
+- mix federation modes or names;
+- accept a relay identity without verifying its signed live claim;
+- accept a Noctweb name or object without the namespace, relay, host, digest,
+  and publisher verification chain;
+- reclaim an offline or tombstoned suffix.
 
 See `relay_ops_hardening_guide.md` for deployment controls and
-`open_federation_discovery_research.md` for the explicitly experimental open
-discovery threat analysis.
+`open_federation_discovery_research.md` for the open-discovery threat model.

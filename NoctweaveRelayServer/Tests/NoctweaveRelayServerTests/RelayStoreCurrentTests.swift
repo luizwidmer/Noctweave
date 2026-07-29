@@ -131,7 +131,10 @@ final class RelayStoreCurrentTests: XCTestCase {
         )
         XCTAssertEqual(reader.listFederationNodes(nil).map(\.endpoint), [endpoint])
         XCTAssertEqual(reader.pinnedCoordinatorPublicKey(for: endpoint), pinnedKey)
-        XCTAssertEqual(try tableNames(in: url), ["relay_runtime_state_v1"])
+        XCTAssertEqual(
+            try tableNames(in: url),
+            ["noctweb_namespace_ownership_v1", "relay_runtime_state_v1"]
+        )
     }
 
     func testPersistenceFailureRestoresLastDurableAttachmentState() throws {

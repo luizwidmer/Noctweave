@@ -120,10 +120,11 @@ Disable `nw.blobs` when attachments are not needed.
 
 ## Federation
 
-Federation discovers and coordinates relay operators. It is not a
-relay-to-relay user-message path: senders read the destination endpoint from a
-relationship-encrypted peer route set and append ciphertext directly to that
-opaque route.
+Federation discovers and authenticates relay operators. Senders may append
+directly to the destination endpoint from a relationship-encrypted route set,
+or a standard home relay may make one authenticated
+`nw.federation-forward@1` hop. The forwarded object is the unchanged opaque
+append; relays do not receive relationship keys or message plaintext.
 
 - `solo`: safest default; no federation discovery or coordination.
 - `manual`: maintain explicit operator-reviewed relay descriptors and an allow
@@ -133,12 +134,13 @@ opaque route.
 - `open`: retain signed-record TTL, host quotas, query bounds, public endpoint
   validation, and peer-hint ceilings.
 
-Federation requests may register or discover relays and validate endpoint
-reachability; they never carry relationship events or opaque-route packets.
-Do not reuse client auth or route capabilities for coordinator registration.
-No federation-forwarding token exists. Do not silently fall from
-curated/manual into open behavior. Treat coordinator key replacement as a new
-trust-root decision.
+Federation requests may register or discover relays, validate endpoint
+reachability, distribute signed namespace state, and carry bounded opaque
+forwarding envelopes. Do not reuse client auth or route capabilities for
+coordinator registration. There is no reusable federation-wide forwarding
+token: each forwarded append retains its destination-scoped authorization.
+Do not silently fall from curated/manual into open behavior. Treat coordinator
+key replacement as a new trust-root decision.
 
 ## Operator console
 

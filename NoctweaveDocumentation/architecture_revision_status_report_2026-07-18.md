@@ -291,9 +291,11 @@ HTTP, WebSocket, raw TCP, and federation all carry the same strict envelope.
 Responses must correlate the complete operation tuple. Linux persists opaque
 route lifecycle and ordered packet state in SQLite. The relay does not expose
 a plaintext group registry, account endpoint, or GET compatibility health API.
-Federation discovers and coordinates relay operators; direct delivery never
-forwards a user's message from relay to relay. A sender submits ciphertext
-directly to the endpoint in the peer's relationship-encrypted route set.
+Federation discovers and authenticates relay operators. A sender may submit
+ciphertext directly to the endpoint in the relationship-encrypted route set,
+or use one authenticated standard-relay hop that forwards the unchanged opaque
+append. Neither path exposes relationship keys or plaintext to federation
+coordination.
 
 The pairing transport uses two unlabeled encrypted directional lanes with
 separate publish, read, and delete capabilities. The relay persists capability

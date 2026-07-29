@@ -65,6 +65,18 @@ Completed in the architecture revision:
   with a fixed-slot aggregate anchor, per-relationship anchors, and terminal
   burn recovery supplied by the embedding host;
 - exact modular relay request/response envelopes;
+- persistent ML-DSA relay identities bound to role, trust domain, endpoints,
+  capability digest, federation-required Noctweb suffix, and optional host
+  receipt key;
+- a durable federation-local Noctweb suffix ledger with uniqueness,
+  double-signed relay identity rotation, permanent release tombstones, and
+  threshold verification of byte-identical signed snapshots;
+- effect-idempotent live propagation of namespace claims and lifecycle proofs
+  across bounded federation peers;
+- authenticated one-hop federation forwarding for opaque-route appends and
+  federated Noctweb name/object reads, without plaintext or user identity;
+- strict Noctweb name binding, signed name resolution, publisher-envelope
+  verification, and Browser/Lab integration through the public Core package;
 - throwing live PQ verification that preserves algorithm/runtime unavailability
   as retryable local failure;
 - provisional 1.0-candidate status for every unaudited direct and relay module;
@@ -89,6 +101,9 @@ These are finite verification and hardening tasks, not architecture migration:
 - [ ] Exercise cursor recovery, exact retry, route rollover, and group epoch
   recovery across process termination and injected storage faults, including
   local-save-before-relay-commit and teardown-confirmation crash windows.
+- [ ] Exercise namespace convergence under offline signers, partition healing,
+  simultaneous claims, rotation interruption, and tombstone propagation in the
+  deployment fault lab.
 - [ ] Complete an independent review of direct transcripts, the experimental
   PQ group construction, secret zeroization, side channels, downgrade
   resistance, forward-secrecy limits, and direct-v4's explicit absence of

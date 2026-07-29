@@ -437,6 +437,7 @@ public struct RelayInfo: Codable, Equatable {
     public var federationDirectoryPublicKey: Data?
     public var knownOpenPeers: [RelayEndpoint]?
     public var openFederationDiscovery: OpenFederationDiscoverySupport?
+    public var relayIdentity: SignedRelayIdentityClaimV1?
     public var advertisedAt: Date
 
     public init(
@@ -468,6 +469,7 @@ public struct RelayInfo: Codable, Equatable {
         federationDirectoryPublicKey: Data? = nil,
         knownOpenPeers: [RelayEndpoint]? = nil,
         openFederationDiscovery: OpenFederationDiscoverySupport? = nil,
+        relayIdentity: SignedRelayIdentityClaimV1? = nil,
         advertisedAt: Date = Date()
     ) {
         self.kind = kind
@@ -507,6 +509,7 @@ public struct RelayInfo: Codable, Equatable {
         self.federationDirectoryPublicKey = federationDirectoryPublicKey
         self.knownOpenPeers = knownOpenPeers
         self.openFederationDiscovery = openFederationDiscovery
+        self.relayIdentity = relayIdentity
         self.advertisedAt = relayCanonicalizedDate(advertisedAt)
     }
 
@@ -524,7 +527,8 @@ public struct RelayInfo: Codable, Equatable {
               mixnetTransport?.isStructurallyValid != false,
               relayIsValidWakeSupport(wakeSupport),
               protocolCapabilities?.isStructurallyValid != false,
-              openFederationDiscovery?.isStructurallyValid != false else {
+              openFederationDiscovery?.isStructurallyValid != false,
+              try relayIdentityIsValid else {
             return false
         }
         if let schedule = temporalBucketScheduleSeconds {
@@ -572,6 +576,90 @@ public struct RelayInfo: Codable, Equatable {
         }
     }
 
+    private var relayIdentityIsValid: Bool {
+        get throws {
+            guard let relayIdentity else {
+                return true
+            }
+            guard let protocolCapabilities,
+                  try relayIdentity.verifyThrowing(at: advertisedAt),
+                  relayIdentity.claim.relayKind == kind,
+                  relayIdentity.claim.federationMode == federation.mode,
+                  relayIdentity.claim.federationName == federation.name,
+                  relayIdentity.claim.capabilityDigest
+                    == (try RelayIdentityClaimV1.capabilityDigest(for: protocolCapabilities)) else {
+                return false
+            }
+            return true
+        }
+    }
+
+    public var authenticatedRelayID: RelayIdentityIDV1? {
+        guard let relayIdentity,
+              (try? relayIdentity.verifyThrowing(at: advertisedAt)) == true else {
+            return nil
+        }
+        return relayIdentity.claim.relayID
+    }
+
+    public var authenticatedNoctwebSuffix: NoctwebRelaySuffixV1? {
+        guard authenticatedRelayID != nil else {
+            return nil
+        }
+        return relayIdentity?.claim.noctwebSuffix
+    }
+
+    public func authenticated(
+        by keyMaterial: RelayIdentityKeyMaterialV1,
+        sequence: Int,
+        advertisedEndpoints: [RelayEndpoint],
+        noctwebSuffix: NoctwebRelaySuffixV1?,
+        hostSigningPublicKey: Data? = nil,
+        lifetime: TimeInterval = 24 * 60 * 60,
+        precomputedIdentity: SignedRelayIdentityClaimV1? = nil
+    ) throws -> RelayInfo {
+        guard let protocolCapabilities else {
+            throw CryptoError.invalidPayload
+        }
+        var result = self
+        if let precomputedIdentity {
+            let capabilityDigest = try RelayIdentityClaimV1.capabilityDigest(
+                for: protocolCapabilities
+            )
+            guard try precomputedIdentity.verifyThrowing(
+                at: advertisedAt
+            ),
+            precomputedIdentity.claim.relayID == keyMaterial.relayID,
+            precomputedIdentity.claim.relayKind == kind,
+            precomputedIdentity.claim.federationMode == federation.mode,
+            precomputedIdentity.claim.federationName == federation.name,
+            precomputedIdentity.claim.noctwebSuffix == noctwebSuffix,
+            precomputedIdentity.claim.hostSigningPublicKey
+                == hostSigningPublicKey,
+            precomputedIdentity.claim.capabilityDigest
+                == capabilityDigest else {
+                throw CryptoError.invalidPayload
+            }
+            result.relayIdentity = precomputedIdentity
+        } else {
+            result.relayIdentity = try keyMaterial.makeSignedClaim(
+                sequence: sequence,
+                relayKind: kind,
+                federation: federation,
+                advertisedEndpoints: advertisedEndpoints,
+                noctwebSuffix: noctwebSuffix,
+                hostSigningPublicKey: hostSigningPublicKey,
+                capabilities: protocolCapabilities,
+                issuedAt: advertisedAt,
+                lifetime: lifetime
+            )
+        }
+        guard try result.isStructurallyValidThrowing else {
+            throw CryptoError.invalidPayload
+        }
+        return result
+    }
+
     public var isStructurallyValid: Bool {
         (try? isStructurallyValidThrowing) == true
     }
@@ -605,6 +693,7 @@ public struct RelayInfo: Codable, Equatable {
         case federationDirectoryPublicKey
         case knownOpenPeers
         case openFederationDiscovery
+        case relayIdentity
         case advertisedAt
     }
 
@@ -678,6 +767,10 @@ public struct RelayInfo: Codable, Equatable {
             OpenFederationDiscoverySupport.self,
             forKey: .openFederationDiscovery
         )
+        relayIdentity = try container.decodeIfPresent(
+            SignedRelayIdentityClaimV1.self,
+            forKey: .relayIdentity
+        )
         advertisedAt = try container.decode(Date.self, forKey: .advertisedAt)
         guard try isStructurallyValidThrowing else {
             throw relayWireError(decoder, "Relay information is invalid")
@@ -720,6 +813,7 @@ public struct RelayInfo: Codable, Equatable {
         try container.encode(federationDirectoryPublicKey, forKey: .federationDirectoryPublicKey)
         try container.encode(knownOpenPeers, forKey: .knownOpenPeers)
         try container.encode(openFederationDiscovery, forKey: .openFederationDiscovery)
+        try container.encode(relayIdentity, forKey: .relayIdentity)
         try container.encode(advertisedAt, forKey: .advertisedAt)
     }
 }
@@ -763,6 +857,7 @@ public struct RelayConfiguration: Codable, Equatable {
     public var curatedCoordinatorQuorum: Int
     public var curatedRequireSignedDirectory: Bool
     public var advertisedEndpoint: RelayEndpoint?
+    public var noctwebRelaySuffix: NoctwebRelaySuffixV1?
     public var federationAllowList: [RelayEndpoint]
     public var allowPrivateFederationEndpoints: Bool
     public var rendezvousTransportEnabled: Bool?
@@ -804,6 +899,7 @@ public struct RelayConfiguration: Codable, Equatable {
         curatedCoordinatorQuorum: Int = 1,
         curatedRequireSignedDirectory: Bool = true,
         advertisedEndpoint: RelayEndpoint? = nil,
+        noctwebRelaySuffix: NoctwebRelaySuffixV1? = nil,
         federationAllowList: [RelayEndpoint] = [],
         allowPrivateFederationEndpoints: Bool = false,
         rendezvousTransportEnabled: Bool = false
@@ -863,6 +959,7 @@ public struct RelayConfiguration: Codable, Equatable {
         self.curatedCoordinatorQuorum = min(max(1, curatedCoordinatorQuorum), 16)
         self.curatedRequireSignedDirectory = curatedRequireSignedDirectory
         self.advertisedEndpoint = advertisedEndpoint
+        self.noctwebRelaySuffix = noctwebRelaySuffix
         self.federationAllowList = Array(federationAllowList.prefix(256))
         self.allowPrivateFederationEndpoints = allowPrivateFederationEndpoints
         self.rendezvousTransportEnabled = rendezvousTransportEnabled ? true : nil
@@ -916,7 +1013,8 @@ public struct RelayConfiguration: Codable, Equatable {
                 onionEnabled: advertisedOnionTransport != nil,
                 mixnetEnabled: advertisedMixnetTransport != nil,
                 openDiscoveryEnabled: advertisedOpenFederationDiscovery?.dhtNodeEnabled == true,
-                rendezvousTransportEnabled: isRendezvousTransportEnabled
+                rendezvousTransportEnabled: isRendezvousTransportEnabled,
+                federationForwardingEnabled: kind == .standard && federation.mode != .solo
             ),
             requiresPassword: requiresPassword,
             tlsEnabled: advertisedTLSEnabled ?? tlsEnabled,
@@ -986,6 +1084,7 @@ public enum RelayModuleID: String, Codable, CaseIterable {
     case rendezvousTransport = "nw.rendezvous-transport"
     case blobs = "nw.blobs"
     case federation = "nw.federation"
+    case federationForward = "nw.federation-forward"
     case openDiscovery = "nw.open-discovery"
     case netPassthrough = "nw.net-passthrough"
     case netHost = "nw.net-host"
@@ -994,7 +1093,8 @@ public enum RelayModuleID: String, Codable, CaseIterable {
         switch self {
         case .core, .opaqueRoute, .rendezvousTransport:
             return 2
-        case .blobs, .federation, .openDiscovery, .netPassthrough, .netHost:
+        case .blobs, .federation, .federationForward, .openDiscovery,
+             .netPassthrough, .netHost:
             return 1
         }
     }
@@ -1014,11 +1114,17 @@ public enum RelayMethodID: String, Codable, CaseIterable {
     case upload
     case fetch
     case list
+    case namespace
+    case claim
+    case rotate
     case publishDHT = "publish-dht"
     case listDHT = "list-dht"
     case forward
+    case deliver
     case put
+    case bind
     case get
+    case resolve
     case has
     case release
 }
@@ -1043,10 +1149,18 @@ public struct RelayOperationBinding: Codable, Equatable, Hashable {
         .opaqueRoute: [.create, .renew, .teardown, .append, .sync, .commit],
         .rendezvousTransport: [.register, .append, .sync, .delete],
         .blobs: [.upload, .fetch],
-        .federation: [.register, .list],
+        .federation: [
+            .register,
+            .list,
+            .namespace,
+            .claim,
+            .rotate,
+            .release
+        ],
+        .federationForward: [.forward, .deliver, .get, .resolve],
         .openDiscovery: [.publishDHT, .listDHT],
         .netPassthrough: [.forward],
-        .netHost: [.put, .get, .has, .release]
+        .netHost: [.put, .bind, .get, .resolve, .has, .release]
     ]
 }
 
@@ -2272,11 +2386,23 @@ public enum RelayRequestBody: Equatable {
     case fetchAttachment(FetchAttachmentRequest)
     case registerFederationNode(FederationNodeRegistrationRequest)
     case listFederationNodes(ListFederationNodesRequest)
+    case getNoctwebNamespaceSnapshot(NoctwebNamespaceSnapshotRequestV1)
+    case claimNoctwebNamespace(NoctwebNamespaceClaimRequestV1)
+    case rotateNoctwebNamespace(NoctwebNamespaceRotationRequestV1)
+    case releaseNoctwebNamespace(NoctwebNamespaceReleaseV1)
+    case forwardOpaqueRoute(FederatedOpaqueRouteForwardRequestV1)
+    case deliverOpaqueRoute(FederatedOpaqueRouteDeliveryV1)
+    case getFederatedNetHostObject(FederatedNetHostReadRequestV1)
+    case resolveFederatedNetHostName(
+        FederatedNetHostNameReadRequestV1
+    )
     case publishDHTRecord(PublishOpenFederationDHTRecordRequest)
     case listDHTRecords(ListOpenFederationDHTRecordsRequest)
     case netPassthrough(NoctweaveNetPassthroughRequest)
     case putNetHostObject(NoctweaveNetHostPutRequest)
+    case bindNetHostName(NoctweaveNetHostNameBindingRequestV1)
     case getNetHostObject(NoctweaveNetHostObjectRequest)
+    case resolveNetHostName(NoctweaveNetHostNameRequestV1)
     case hasNetHostObject(NoctweaveNetHostObjectRequest)
     case releaseNetHostObject(NoctweaveNetHostReleaseRequest)
 
@@ -2312,6 +2438,42 @@ public enum RelayRequestBody: Equatable {
             return RelayOperationBinding(module: .federation, version: 1, method: .register)
         case .listFederationNodes:
             return RelayOperationBinding(module: .federation, version: 1, method: .list)
+        case .getNoctwebNamespaceSnapshot:
+            return RelayOperationBinding(
+                module: .federation,
+                version: 1,
+                method: .namespace
+            )
+        case .claimNoctwebNamespace:
+            return RelayOperationBinding(
+                module: .federation,
+                version: 1,
+                method: .claim
+            )
+        case .rotateNoctwebNamespace:
+            return RelayOperationBinding(
+                module: .federation,
+                version: 1,
+                method: .rotate
+            )
+        case .releaseNoctwebNamespace:
+            return RelayOperationBinding(
+                module: .federation,
+                version: 1,
+                method: .release
+            )
+        case .forwardOpaqueRoute:
+            return RelayOperationBinding(module: .federationForward, version: 1, method: .forward)
+        case .deliverOpaqueRoute:
+            return RelayOperationBinding(module: .federationForward, version: 1, method: .deliver)
+        case .getFederatedNetHostObject:
+            return RelayOperationBinding(module: .federationForward, version: 1, method: .get)
+        case .resolveFederatedNetHostName:
+            return RelayOperationBinding(
+                module: .federationForward,
+                version: 1,
+                method: .resolve
+            )
         case .publishDHTRecord:
             return RelayOperationBinding(module: .openDiscovery, version: 1, method: .publishDHT)
         case .listDHTRecords:
@@ -2320,8 +2482,20 @@ public enum RelayRequestBody: Equatable {
             return RelayOperationBinding(module: .netPassthrough, version: 1, method: .forward)
         case .putNetHostObject:
             return RelayOperationBinding(module: .netHost, version: 1, method: .put)
+        case .bindNetHostName:
+            return RelayOperationBinding(
+                module: .netHost,
+                version: 1,
+                method: .bind
+            )
         case .getNetHostObject:
             return RelayOperationBinding(module: .netHost, version: 1, method: .get)
+        case .resolveNetHostName:
+            return RelayOperationBinding(
+                module: .netHost,
+                version: 1,
+                method: .resolve
+            )
         case .hasNetHostObject:
             return RelayOperationBinding(module: .netHost, version: 1, method: .has)
         case .releaseNetHostObject:
@@ -2421,6 +2595,66 @@ public enum RelayRequestBody: Equatable {
                 from: decoder,
                 keys: ["mode", "federationName", "onlyHealthy", "maxStalenessSeconds", "requireSignedSnapshot"]
             ))
+        case (.federation, .namespace):
+            return .getNoctwebNamespaceSnapshot(try relayDecodeExact(
+                NoctwebNamespaceSnapshotRequestV1.self,
+                from: decoder,
+                keys: ["version", "federationMode", "federationName"]
+            ))
+        case (.federation, .claim):
+            return .claimNoctwebNamespace(try relayDecodeExact(
+                NoctwebNamespaceClaimRequestV1.self,
+                from: decoder,
+                keys: ["identity"]
+            ))
+        case (.federation, .rotate):
+            return .rotateNoctwebNamespace(try relayDecodeExact(
+                NoctwebNamespaceRotationRequestV1.self,
+                from: decoder,
+                keys: ["rotation", "newIdentity"]
+            ))
+        case (.federation, .release):
+            return .releaseNoctwebNamespace(try relayDecodeExact(
+                NoctwebNamespaceReleaseV1.self,
+                from: decoder,
+                keys: [
+                    "version",
+                    "suffix",
+                    "ownerRelayID",
+                    "sequence",
+                    "issuedAt",
+                    "signatureAlgorithm",
+                    "signature"
+                ]
+            ))
+        case (.federationForward, .forward):
+            return .forwardOpaqueRoute(try relayDecodeExact(
+                FederatedOpaqueRouteForwardRequestV1.self,
+                from: decoder,
+                keys: ["destinationRelayID", "destination", "append"]
+            ))
+        case (.federationForward, .deliver):
+            return .deliverOpaqueRoute(try relayDecodeExact(
+                FederatedOpaqueRouteDeliveryV1.self,
+                from: decoder,
+                keys: [
+                    "version", "deliveryID", "sourceIdentity",
+                    "destinationRelayID", "append", "issuedAt", "expiresAt",
+                    "signatureAlgorithm", "signature"
+                ]
+            ))
+        case (.federationForward, .get):
+            return .getFederatedNetHostObject(try relayDecodeExact(
+                FederatedNetHostReadRequestV1.self,
+                from: decoder,
+                keys: ["destinationRelayID", "destination", "request"]
+            ))
+        case (.federationForward, .resolve):
+            return .resolveFederatedNetHostName(try relayDecodeExact(
+                FederatedNetHostNameReadRequestV1.self,
+                from: decoder,
+                keys: ["destinationRelayID", "destination", "request"]
+            ))
         case (.openDiscovery, .publishDHT):
             return .publishDHTRecord(try relayDecodeExact(
                 PublishOpenFederationDHTRecordRequest.self,
@@ -2445,11 +2679,33 @@ public enum RelayRequestBody: Equatable {
                 from: decoder,
                 keys: ["objectID", "payload", "ttlSeconds", "releaseCapabilityDigest", "idempotencyKey"]
             ))
+        case (.netHost, .bind):
+            return .bindNetHostName(try relayDecodeExact(
+                NoctweaveNetHostNameBindingRequestV1.self,
+                from: decoder,
+                keys: [
+                    "version",
+                    "relaySuffix",
+                    "siteLabel",
+                    "objectID",
+                    "publisherID",
+                    "headID",
+                    "revision",
+                    "previousObjectID",
+                    "idempotencyKey"
+                ]
+            ))
         case (.netHost, .get):
             return .getNetHostObject(try relayDecodeExact(
                 NoctweaveNetHostObjectRequest.self,
                 from: decoder,
                 keys: ["objectID"]
+            ))
+        case (.netHost, .resolve):
+            return .resolveNetHostName(try relayDecodeExact(
+                NoctweaveNetHostNameRequestV1.self,
+                from: decoder,
+                keys: ["version", "relaySuffix", "siteLabel"]
             ))
         case (.netHost, .has):
             return .hasNetHostObject(try relayDecodeExact(
@@ -2542,6 +2798,82 @@ public enum RelayRequestBody: Equatable {
             try relayEncodeOptional(value.onlyHealthy, key: "onlyHealthy", into: &container)
             try relayEncodeOptional(value.maxStalenessSeconds, key: "maxStalenessSeconds", into: &container)
             try relayEncodeOptional(value.requireSignedSnapshot, key: "requireSignedSnapshot", into: &container)
+        case .getNoctwebNamespaceSnapshot(let value):
+            try container.encode(value.version, forKey: relayWireKey("version"))
+            try container.encode(
+                value.federationMode,
+                forKey: relayWireKey("federationMode")
+            )
+            try relayEncodeOptional(
+                value.federationName,
+                key: "federationName",
+                into: &container
+            )
+        case .claimNoctwebNamespace(let value):
+            try container.encode(
+                value.identity,
+                forKey: relayWireKey("identity")
+            )
+        case .rotateNoctwebNamespace(let value):
+            try container.encode(
+                value.rotation,
+                forKey: relayWireKey("rotation")
+            )
+            try container.encode(
+                value.newIdentity,
+                forKey: relayWireKey("newIdentity")
+            )
+        case .releaseNoctwebNamespace(let value):
+            try container.encode(value.version, forKey: relayWireKey("version"))
+            try container.encode(value.suffix, forKey: relayWireKey("suffix"))
+            try container.encode(
+                value.ownerRelayID,
+                forKey: relayWireKey("ownerRelayID")
+            )
+            try container.encode(
+                value.sequence,
+                forKey: relayWireKey("sequence")
+            )
+            try container.encode(
+                value.issuedAt,
+                forKey: relayWireKey("issuedAt")
+            )
+            try container.encode(
+                value.signatureAlgorithm,
+                forKey: relayWireKey("signatureAlgorithm")
+            )
+            try container.encode(value.signature, forKey: relayWireKey("signature"))
+        case .forwardOpaqueRoute(let value):
+            try container.encode(value.destinationRelayID, forKey: relayWireKey("destinationRelayID"))
+            try container.encode(value.destination, forKey: relayWireKey("destination"))
+            try container.encode(value.append, forKey: relayWireKey("append"))
+        case .deliverOpaqueRoute(let value):
+            try container.encode(value.version, forKey: relayWireKey("version"))
+            try container.encode(value.deliveryID, forKey: relayWireKey("deliveryID"))
+            try container.encode(value.sourceIdentity, forKey: relayWireKey("sourceIdentity"))
+            try container.encode(value.destinationRelayID, forKey: relayWireKey("destinationRelayID"))
+            try container.encode(value.append, forKey: relayWireKey("append"))
+            try container.encode(value.issuedAt, forKey: relayWireKey("issuedAt"))
+            try container.encode(value.expiresAt, forKey: relayWireKey("expiresAt"))
+            try container.encode(value.signatureAlgorithm, forKey: relayWireKey("signatureAlgorithm"))
+            try container.encode(value.signature, forKey: relayWireKey("signature"))
+        case .getFederatedNetHostObject(let value):
+            try container.encode(value.destinationRelayID, forKey: relayWireKey("destinationRelayID"))
+            try container.encode(value.destination, forKey: relayWireKey("destination"))
+            try container.encode(value.request, forKey: relayWireKey("request"))
+        case .resolveFederatedNetHostName(let value):
+            try container.encode(
+                value.destinationRelayID,
+                forKey: relayWireKey("destinationRelayID")
+            )
+            try container.encode(
+                value.destination,
+                forKey: relayWireKey("destination")
+            )
+            try container.encode(
+                value.request,
+                forKey: relayWireKey("request")
+            )
         case .publishDHTRecord(let value):
             try container.encode(value.namespace, forKey: relayWireKey("namespace"))
             try container.encode(value.record, forKey: relayWireKey("record"))
@@ -2557,8 +2889,51 @@ public enum RelayRequestBody: Equatable {
             try relayEncodeOptional(value.ttlSeconds, key: "ttlSeconds", into: &container)
             try container.encode(value.releaseCapabilityDigest, forKey: relayWireKey("releaseCapabilityDigest"))
             try container.encode(value.idempotencyKey, forKey: relayWireKey("idempotencyKey"))
+        case .bindNetHostName(let value):
+            try container.encode(value.version, forKey: relayWireKey("version"))
+            try container.encode(
+                value.relaySuffix,
+                forKey: relayWireKey("relaySuffix")
+            )
+            try container.encode(
+                value.siteLabel,
+                forKey: relayWireKey("siteLabel")
+            )
+            try container.encode(value.objectID, forKey: relayWireKey("objectID"))
+            try container.encode(
+                value.publisherID,
+                forKey: relayWireKey("publisherID")
+            )
+            try relayEncodeOptional(
+                value.headID,
+                key: "headID",
+                into: &container
+            )
+            try container.encode(
+                value.revision,
+                forKey: relayWireKey("revision")
+            )
+            try relayEncodeOptional(
+                value.previousObjectID,
+                key: "previousObjectID",
+                into: &container
+            )
+            try container.encode(
+                value.idempotencyKey,
+                forKey: relayWireKey("idempotencyKey")
+            )
         case .getNetHostObject(let value), .hasNetHostObject(let value):
             try container.encode(value.objectID, forKey: relayWireKey("objectID"))
+        case .resolveNetHostName(let value):
+            try container.encode(value.version, forKey: relayWireKey("version"))
+            try container.encode(
+                value.relaySuffix,
+                forKey: relayWireKey("relaySuffix")
+            )
+            try container.encode(
+                value.siteLabel,
+                forKey: relayWireKey("siteLabel")
+            )
         case .releaseNetHostObject(let value):
             try container.encode(value.objectID, forKey: relayWireKey("objectID"))
             try container.encode(value.releaseCapability, forKey: relayWireKey("releaseCapability"))
@@ -2664,6 +3039,88 @@ public struct RelayRequest: Codable, Equatable {
         RelayRequest(binding: requestBodyBinding(.listFederationNodes(request)), body: .listFederationNodes(request))
     }
 
+    public static func getNoctwebNamespaceSnapshotV1(
+        _ request: NoctwebNamespaceSnapshotRequestV1
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(
+                .getNoctwebNamespaceSnapshot(request)
+            ),
+            body: .getNoctwebNamespaceSnapshot(request)
+        )
+    }
+
+    public static func claimNoctwebNamespaceV1(
+        _ request: NoctwebNamespaceClaimRequestV1
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(
+                .claimNoctwebNamespace(request)
+            ),
+            body: .claimNoctwebNamespace(request)
+        )
+    }
+
+    public static func rotateNoctwebNamespaceV1(
+        _ request: NoctwebNamespaceRotationRequestV1
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(
+                .rotateNoctwebNamespace(request)
+            ),
+            body: .rotateNoctwebNamespace(request)
+        )
+    }
+
+    public static func releaseNoctwebNamespaceV1(
+        _ request: NoctwebNamespaceReleaseV1
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(
+                .releaseNoctwebNamespace(request)
+            ),
+            body: .releaseNoctwebNamespace(request)
+        )
+    }
+
+    public static func forwardOpaqueRouteV1(
+        _ request: FederatedOpaqueRouteForwardRequestV1
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(.forwardOpaqueRoute(request)),
+            body: .forwardOpaqueRoute(request)
+        )
+    }
+
+    public static func deliverOpaqueRouteV1(
+        _ request: FederatedOpaqueRouteDeliveryV1
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(.deliverOpaqueRoute(request)),
+            body: .deliverOpaqueRoute(request)
+        )
+    }
+
+    public static func getFederatedNetHostObjectV1(
+        _ request: FederatedNetHostReadRequestV1
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(.getFederatedNetHostObject(request)),
+            body: .getFederatedNetHostObject(request)
+        )
+    }
+
+    public static func resolveFederatedNetHostNameV1(
+        _ request: FederatedNetHostNameReadRequestV1
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(
+                .resolveFederatedNetHostName(request)
+            ),
+            body: .resolveFederatedNetHostName(request)
+        )
+    }
+
     public static func publishOpenFederationDHTRecord(_ request: PublishOpenFederationDHTRecordRequest) -> RelayRequest {
         RelayRequest(binding: requestBodyBinding(.publishDHTRecord(request)), body: .publishDHTRecord(request))
     }
@@ -2680,8 +3137,28 @@ public struct RelayRequest: Codable, Equatable {
         RelayRequest(binding: requestBodyBinding(.putNetHostObject(request)), body: .putNetHostObject(request))
     }
 
+    public static func bindNetHostName(
+        _ request: NoctweaveNetHostNameBindingRequestV1,
+        authToken: String? = nil
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(.bindNetHostName(request)),
+            body: .bindNetHostName(request),
+            authToken: authToken
+        )
+    }
+
     public static func getNetHostObject(_ request: NoctweaveNetHostObjectRequest) -> RelayRequest {
         RelayRequest(binding: requestBodyBinding(.getNetHostObject(request)), body: .getNetHostObject(request))
+    }
+
+    public static func resolveNetHostName(
+        _ request: NoctweaveNetHostNameRequestV1
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(.resolveNetHostName(request)),
+            body: .resolveNetHostName(request)
+        )
     }
 
     public static func hasNetHostObject(_ request: NoctweaveNetHostObjectRequest) -> RelayRequest {
@@ -2834,10 +3311,15 @@ public enum RelaySuccessBody: Equatable {
     case rendezvousSync(RendezvousRelaySyncBatchV2)
     case attachment(AttachmentChunk)
     case federationNodes(FederationNodesResponseBody)
+    case noctwebNamespaceSnapshot(NoctwebNamespaceSnapshotV1)
+    case noctwebNamespaceRecord(NoctwebNamespaceRecordV1)
     case dhtRecords([OpenFederationDHTRecord])
     case netPassthrough(NoctweaveNetPassthroughResponse)
     case netHostReceipt(NoctweaveNetHostingReceipt)
     case netHostObject(NoctweaveNetHostFetchResponse)
+    case federatedNetHostObject(FederatedNetHostObjectResponseV1)
+    case netHostNameResolution(NoctweaveNetHostNameResolutionV1)
+    case federatedNetHostNameResolution(FederatedNetHostNameResponseV1)
     case netHostPresence(NoctweaveNetHostPresence)
     case netHostRelease(NoctweaveNetHostReleaseReceipt)
 
@@ -2857,6 +3339,8 @@ public enum RelaySuccessBody: Equatable {
                 && [.create, .renew, .teardown].contains(binding.method)
         case .opaqueRouteAppend:
             return binding == RelayOperationBinding(module: .opaqueRoute, version: 2, method: .append)
+                || binding == RelayOperationBinding(module: .federationForward, version: 1, method: .forward)
+                || binding == RelayOperationBinding(module: .federationForward, version: 1, method: .deliver)
         case .opaqueRouteSync:
             return binding == RelayOperationBinding(module: .opaqueRoute, version: 2, method: .sync)
         case .opaqueRouteCommit:
@@ -2867,6 +3351,18 @@ public enum RelaySuccessBody: Equatable {
             return binding.module == .blobs && binding.version == 1 && [.upload, .fetch].contains(binding.method)
         case .federationNodes:
             return binding.module == .federation && binding.version == 1 && [.register, .list].contains(binding.method)
+        case .noctwebNamespaceSnapshot:
+            return binding == RelayOperationBinding(
+                module: .federation,
+                version: 1,
+                method: .namespace
+            )
+        case .noctwebNamespaceRecord:
+            return binding.module == .federation
+                && binding.version == 1
+                && [.claim, .rotate, .release].contains(
+                    binding.method
+                )
         case .dhtRecords:
             return binding == RelayOperationBinding(module: .openDiscovery, version: 1, method: .listDHT)
         case .netPassthrough:
@@ -2875,6 +3371,24 @@ public enum RelaySuccessBody: Equatable {
             return binding == RelayOperationBinding(module: .netHost, version: 1, method: .put)
         case .netHostObject:
             return binding == RelayOperationBinding(module: .netHost, version: 1, method: .get)
+        case .federatedNetHostObject:
+            return binding == RelayOperationBinding(module: .federationForward, version: 1, method: .get)
+        case .netHostNameResolution:
+            return binding == RelayOperationBinding(
+                module: .netHost,
+                version: 1,
+                method: .bind
+            ) || binding == RelayOperationBinding(
+                module: .netHost,
+                version: 1,
+                method: .resolve
+            )
+        case .federatedNetHostNameResolution:
+            return binding == RelayOperationBinding(
+                module: .federationForward,
+                version: 1,
+                method: .resolve
+            )
         case .netHostPresence:
             return binding == RelayOperationBinding(module: .netHost, version: 1, method: .has)
         case .netHostRelease:
@@ -2906,6 +3420,13 @@ public enum RelaySuccessBody: Equatable {
             try relayRequireExactObject(decoder, keys: ["receipt"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
             return .opaqueRouteAppend(try container.decode(OpaqueRouteAppendReceiptV2.self, forKey: relayWireKey("receipt")))
+        case (.federationForward, .forward), (.federationForward, .deliver):
+            try relayRequireExactObject(decoder, keys: ["receipt"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .opaqueRouteAppend(try container.decode(
+                OpaqueRouteAppendReceiptV2.self,
+                forKey: relayWireKey("receipt")
+            ))
         case (.opaqueRoute, .sync):
             try relayRequireExactObject(decoder, keys: ["batch"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
@@ -2933,6 +3454,32 @@ public enum RelaySuccessBody: Equatable {
                 throw relayWireError(decoder, "Federation node response is invalid")
             }
             return .federationNodes(body)
+        case (.federation, .namespace):
+            try relayRequireExactObject(
+                decoder,
+                keys: ["namespaceSnapshot"]
+            )
+            let container = try decoder.container(
+                keyedBy: RelayWireCodingKey.self
+            )
+            return .noctwebNamespaceSnapshot(try container.decode(
+                NoctwebNamespaceSnapshotV1.self,
+                forKey: relayWireKey("namespaceSnapshot")
+            ))
+        case (.federation, .claim),
+             (.federation, .rotate),
+             (.federation, .release):
+            try relayRequireExactObject(
+                decoder,
+                keys: ["namespaceRecord"]
+            )
+            let container = try decoder.container(
+                keyedBy: RelayWireCodingKey.self
+            )
+            return .noctwebNamespaceRecord(try container.decode(
+                NoctwebNamespaceRecordV1.self,
+                forKey: relayWireKey("namespaceRecord")
+            ))
         case (.openDiscovery, .listDHT):
             try relayRequireExactObject(decoder, keys: ["records"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
@@ -2958,6 +3505,39 @@ public enum RelaySuccessBody: Equatable {
                 NoctweaveNetHostFetchResponse.self,
                 forKey: relayWireKey("object")
             ))
+        case (.federationForward, .get):
+            try relayRequireExactObject(decoder, keys: ["federatedObject"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .federatedNetHostObject(try container.decode(
+                FederatedNetHostObjectResponseV1.self,
+                forKey: relayWireKey("federatedObject")
+            ))
+        case (.netHost, .bind), (.netHost, .resolve):
+            try relayRequireExactObject(
+                decoder,
+                keys: ["nameResolution"]
+            )
+            let container = try decoder.container(
+                keyedBy: RelayWireCodingKey.self
+            )
+            return .netHostNameResolution(try container.decode(
+                NoctweaveNetHostNameResolutionV1.self,
+                forKey: relayWireKey("nameResolution")
+            ))
+        case (.federationForward, .resolve):
+            try relayRequireExactObject(
+                decoder,
+                keys: ["federatedNameResolution"]
+            )
+            let container = try decoder.container(
+                keyedBy: RelayWireCodingKey.self
+            )
+            return .federatedNetHostNameResolution(
+                try container.decode(
+                    FederatedNetHostNameResponseV1.self,
+                    forKey: relayWireKey("federatedNameResolution")
+                )
+            )
         case (.netHost, .has):
             try relayRequireExactObject(decoder, keys: ["presence"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
@@ -3002,6 +3582,16 @@ public enum RelaySuccessBody: Equatable {
             }
             try container.encode(value.nodes, forKey: relayWireKey("nodes"))
             try relayEncodeOptional(value.snapshot, key: "snapshot", into: &container)
+        case .noctwebNamespaceSnapshot(let value):
+            try container.encode(
+                value,
+                forKey: relayWireKey("namespaceSnapshot")
+            )
+        case .noctwebNamespaceRecord(let value):
+            try container.encode(
+                value,
+                forKey: relayWireKey("namespaceRecord")
+            )
         case .dhtRecords(let value):
             try container.encode(value, forKey: relayWireKey("records"))
         case .netPassthrough(let value):
@@ -3010,6 +3600,18 @@ public enum RelaySuccessBody: Equatable {
             try container.encode(value, forKey: relayWireKey("receipt"))
         case .netHostObject(let value):
             try container.encode(value, forKey: relayWireKey("object"))
+        case .federatedNetHostObject(let value):
+            try container.encode(value, forKey: relayWireKey("federatedObject"))
+        case .netHostNameResolution(let value):
+            try container.encode(
+                value,
+                forKey: relayWireKey("nameResolution")
+            )
+        case .federatedNetHostNameResolution(let value):
+            try container.encode(
+                value,
+                forKey: relayWireKey("federatedNameResolution")
+            )
         case .netHostPresence(let value):
             try container.encode(value, forKey: relayWireKey("presence"))
         case .netHostRelease(let value):

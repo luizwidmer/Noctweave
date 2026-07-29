@@ -92,7 +92,7 @@ private func isValidRelayEndpointModelList(
         && Set(endpoints.map(relayEndpointModelKey)).count == endpoints.count
 }
 
-enum RelayKind: String, Codable, CaseIterable {
+enum RelayKind: String, Codable, CaseIterable, Hashable {
     case standard
     case passthrough
     case host
@@ -872,6 +872,7 @@ struct RelayInfo: Codable, Equatable {
     let federationDirectoryPublicKey: Data?
     let knownOpenPeers: [RelayEndpoint]?
     let openFederationDiscovery: OpenFederationDiscoverySupport?
+    let relayIdentity: SignedRelayIdentityClaimV1?
     let advertisedAt: Date
 
     init(
@@ -903,6 +904,7 @@ struct RelayInfo: Codable, Equatable {
         federationDirectoryPublicKey: Data? = nil,
         knownOpenPeers: [RelayEndpoint]? = nil,
         openFederationDiscovery: OpenFederationDiscoverySupport? = nil,
+        relayIdentity: SignedRelayIdentityClaimV1? = nil,
         advertisedAt: Date = Date()
     ) {
         self.kind = kind
@@ -942,6 +944,7 @@ struct RelayInfo: Codable, Equatable {
         self.federationDirectoryPublicKey = federationDirectoryPublicKey
         self.knownOpenPeers = knownOpenPeers
         self.openFederationDiscovery = openFederationDiscovery
+        self.relayIdentity = relayIdentity
         self.advertisedAt = canonicalModelDate(advertisedAt)
     }
 
@@ -960,7 +963,8 @@ struct RelayInfo: Codable, Equatable {
               mixnetTransport?.isStructurallyValid != false,
               wakeSupport?.isStructurallyValid != false,
               protocolCapabilities?.isStructurallyValid != false,
-              openFederationDiscovery?.isStructurallyValid != false else {
+              openFederationDiscovery?.isStructurallyValid != false,
+              relayIdentityIsValid else {
             return false
         }
         if let schedule = temporalBucketScheduleSeconds {
@@ -1007,6 +1011,118 @@ struct RelayInfo: Codable, Equatable {
         return true
     }
 
+    private var relayIdentityIsValid: Bool {
+        guard let relayIdentity else { return true }
+        guard let protocolCapabilities,
+              (try? relayIdentity.verifyThrowing(at: advertisedAt)) == true,
+              relayIdentity.claim.relayKind == kind,
+              relayIdentity.claim.federationMode == federation.mode,
+              relayIdentity.claim.federationName == federation.name,
+              relayIdentity.claim.capabilityDigest
+                == (try? RelayIdentityClaimV1.capabilityDigest(
+                    for: protocolCapabilities
+                )) else {
+            return false
+        }
+        return true
+    }
+
+    var authenticatedRelayID: RelayIdentityIDV1? {
+        guard let relayIdentity,
+              (try? relayIdentity.verifyThrowing(at: advertisedAt)) == true else {
+            return nil
+        }
+        return relayIdentity.claim.relayID
+    }
+
+    var authenticatedNoctwebSuffix: NoctwebRelaySuffixV1? {
+        guard authenticatedRelayID != nil else { return nil }
+        return relayIdentity?.claim.noctwebSuffix
+    }
+
+    func authenticated(
+        by keyMaterial: RelayIdentityKeyMaterialV1,
+        sequence: Int,
+        advertisedEndpoints: [RelayEndpoint],
+        noctwebSuffix: NoctwebRelaySuffixV1?,
+        hostSigningPublicKey: Data? = nil,
+        lifetime: TimeInterval = 24 * 60 * 60,
+        precomputedIdentity: SignedRelayIdentityClaimV1? = nil
+    ) throws -> RelayInfo {
+        guard let protocolCapabilities else {
+            throw RelayIdentityError.invalidPayload
+        }
+        let capabilityDigest = try RelayIdentityClaimV1.capabilityDigest(
+            for: protocolCapabilities
+        )
+        let identity: SignedRelayIdentityClaimV1
+        if let precomputedIdentity {
+            guard try precomputedIdentity.verifyThrowing(
+                at: advertisedAt
+            ),
+            precomputedIdentity.claim.relayID == keyMaterial.relayID,
+            precomputedIdentity.claim.relayKind == kind,
+            precomputedIdentity.claim.federationMode == federation.mode,
+            precomputedIdentity.claim.federationName == federation.name,
+            precomputedIdentity.claim.noctwebSuffix == noctwebSuffix,
+            precomputedIdentity.claim.hostSigningPublicKey
+                == hostSigningPublicKey,
+            precomputedIdentity.claim.capabilityDigest
+                == capabilityDigest else {
+                throw RelayIdentityError.invalidPayload
+            }
+            identity = precomputedIdentity
+        } else {
+            identity = try keyMaterial.makeSignedClaim(
+                sequence: sequence,
+                relayKind: kind,
+                federation: federation,
+                advertisedEndpoints: advertisedEndpoints,
+                noctwebSuffix: noctwebSuffix,
+                hostSigningPublicKey: hostSigningPublicKey,
+                capabilities: protocolCapabilities,
+                issuedAt: advertisedAt,
+                lifetime: lifetime
+            )
+        }
+        let result = RelayInfo(
+            kind: kind,
+            federation: federation,
+            tlsEnabled: tlsEnabled,
+            transport: transport,
+            temporalBucketSeconds: temporalBucketSeconds,
+            temporalBucketScheduleSeconds: temporalBucketScheduleSeconds,
+            attachmentDefaultTTLSeconds: attachmentDefaultTTLSeconds,
+            attachmentMaxTTLSeconds: attachmentMaxTTLSeconds,
+            attachmentsEnabled: attachmentsEnabled,
+            attachmentStorageBackend: attachmentStorageBackend,
+            hiddenRetrieval: hiddenRetrieval,
+            onionTransport: onionTransport,
+            mixnetTransport: mixnetTransport,
+            wakeSupport: wakeSupport,
+            relayName: relayName,
+            operatorNote: operatorNote,
+            softwareVersion: softwareVersion,
+            protocolCapabilities: protocolCapabilities,
+            requiresPassword: requiresPassword,
+            federationCoordinatorEndpoints: federationCoordinatorEndpoints,
+            coordinatorReportedRelayCount: coordinatorReportedRelayCount,
+            coordinatorRegistrationAuthRequired: coordinatorRegistrationAuthRequired,
+            curatedStrictPolicyEnabled: curatedStrictPolicyEnabled,
+            curatedCoordinatorQuorum: curatedCoordinatorQuorum,
+            curatedRequireSignedDirectory: curatedRequireSignedDirectory,
+            federationDirectoryPublicKey: federationDirectoryPublicKey,
+            knownOpenPeers: knownOpenPeers,
+            openFederationDiscovery: openFederationDiscovery,
+            relayIdentity: identity,
+            advertisedAt: advertisedAt
+        )
+        guard result.isStructurallyValid else {
+            throw RelayIdentityError.invalidPayload
+        }
+        return result
+    }
+
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case kind
         case federation
@@ -1036,6 +1152,7 @@ struct RelayInfo: Codable, Equatable {
         case federationDirectoryPublicKey
         case knownOpenPeers
         case openFederationDiscovery
+        case relayIdentity
         case advertisedAt
     }
 
@@ -1124,6 +1241,10 @@ struct RelayInfo: Codable, Equatable {
             OpenFederationDiscoverySupport.self,
             forKey: .openFederationDiscovery
         )
+        relayIdentity = try values.decodeIfPresent(
+            SignedRelayIdentityClaimV1.self,
+            forKey: .relayIdentity
+        )
         advertisedAt = try values.decode(Date.self, forKey: .advertisedAt)
         guard isStructurallyValid else {
             throw DecodingError.dataCorruptedError(
@@ -1170,6 +1291,7 @@ struct RelayInfo: Codable, Equatable {
         try values.encode(federationDirectoryPublicKey, forKey: .federationDirectoryPublicKey)
         try values.encode(knownOpenPeers, forKey: .knownOpenPeers)
         try values.encode(openFederationDiscovery, forKey: .openFederationDiscovery)
+        try values.encode(relayIdentity, forKey: .relayIdentity)
         try values.encode(advertisedAt, forKey: .advertisedAt)
     }
 }
@@ -1213,6 +1335,7 @@ struct RelayConfiguration: Codable, Equatable {
     var curatedCoordinatorQuorum: Int
     var curatedRequireSignedDirectory: Bool
     var advertisedEndpoint: RelayEndpoint?
+    var noctwebRelaySuffix: NoctwebRelaySuffixV1?
     var federationAllowList: [RelayEndpoint]
     var allowPrivateFederationEndpoints: Bool
     var opaqueRouteRuntimeEnabled: Bool
@@ -1254,6 +1377,7 @@ struct RelayConfiguration: Codable, Equatable {
         curatedCoordinatorQuorum: Int = 1,
         curatedRequireSignedDirectory: Bool = true,
         advertisedEndpoint: RelayEndpoint? = nil,
+        noctwebRelaySuffix: NoctwebRelaySuffixV1? = nil,
         federationAllowList: [RelayEndpoint] = [],
         allowPrivateFederationEndpoints: Bool = false,
         opaqueRouteRuntimeEnabled: Bool = true,
@@ -1317,6 +1441,7 @@ struct RelayConfiguration: Codable, Equatable {
         self.curatedCoordinatorQuorum = min(max(1, curatedCoordinatorQuorum), 16)
         self.curatedRequireSignedDirectory = curatedRequireSignedDirectory
         self.advertisedEndpoint = advertisedEndpoint
+        self.noctwebRelaySuffix = noctwebRelaySuffix
         self.federationAllowList = Array(federationAllowList.prefix(256))
         self.allowPrivateFederationEndpoints = allowPrivateFederationEndpoints
         self.opaqueRouteRuntimeEnabled = opaqueRouteRuntimeEnabled
@@ -1384,7 +1509,9 @@ struct RelayConfiguration: Codable, Equatable {
                 mixnetEnabled: advertisedMixnetTransport != nil,
                 opaqueRouteRuntimeEnabled: isOpaqueRouteRuntimeEnabled,
                 openDiscoveryEnabled: advertisedOpenFederationDiscovery?.dhtNodeEnabled == true,
-                rendezvousTransportEnabled: isRendezvousTransportEnabled
+                rendezvousTransportEnabled: isRendezvousTransportEnabled,
+                federationForwardingEnabled: kind == .standard
+                    && federation.mode != .solo
             ),
             requiresPassword: requiresPassword,
             federationCoordinatorEndpoints: federationCoordinatorEndpoints,

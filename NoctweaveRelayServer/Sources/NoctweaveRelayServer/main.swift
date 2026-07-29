@@ -880,20 +880,26 @@ guard config.relayKind.isCurrentTopologyRole else {
     print("[relay] --relay-kind must be standard, passthrough, or host")
     exit(2)
 }
-if config.relayKind != .standard, config.federationMode != .solo {
-    print("[relay] passthrough and host relays require --federation-mode solo; Noctweave Net coordination belongs to consensus")
-    exit(2)
-}
-if config.netHostEnabled, config.federationMode != .solo {
-    print("[relay] Noctweave Net hosting currently requires --federation-mode solo; non-solo hosting policy belongs to consensus")
+if config.relayKind == .passthrough, config.federationMode != .solo {
+    print("[relay] passthrough relays require --federation-mode solo")
     exit(2)
 }
 if config.relayKind == .passthrough, config.netHostEnabled {
     print("[relay] passthrough relays cannot co-locate the host capability")
     exit(2)
 }
-if config.noctwebRelaySuffix != nil, !config.netHostEnabled {
-    print("[relay] --noctweb-relay-suffix requires --net-host-enabled true or --relay-kind host")
+if let rawSuffix = config.noctwebRelaySuffix {
+    do {
+        config.noctwebRelaySuffix = ".\(try NoctwebPublisherSurface.canonicalOperatorSuffix(rawSuffix))"
+    } catch {
+        print("[relay] --noctweb-relay-suffix must be a canonical lowercase Noctweb suffix")
+        exit(2)
+    }
+}
+if config.federationMode != .solo,
+   config.relayKind != .passthrough,
+   config.noctwebRelaySuffix == nil {
+    print("[relay] federated relays require --noctweb-relay-suffix")
     exit(2)
 }
 if config.relayKind == .passthrough {
@@ -919,12 +925,6 @@ if config.netHostEnabled {
     guard let password = password?.trimmingCharacters(in: .whitespacesAndNewlines),
           password.utf8.count >= 12 else {
         print("[relay] host-capable relays require NOCTWEAVE_PUBLISHER_PASSWORD or --publisher-password")
-        exit(2)
-    }
-}
-if config.federationMode == .manual {
-    guard config.relayKind == .standard else {
-        print("[relay] manual federation requires --relay-kind standard")
         exit(2)
     }
 }
@@ -965,6 +965,50 @@ if let dataDir = config.dataDir {
 } else {
     fileURL = nil
 }
+let relayIdentityKeyMaterial: RelayIdentityKeyMaterialV1
+if let dataDir = config.dataDir {
+    let keyURL = dataDir.appendingPathComponent(
+        "relay_identity_v1.json",
+        isDirectory: false
+    )
+    do {
+        if FileManager.default.fileExists(atPath: keyURL.path) {
+            let attributes = try FileManager.default.attributesOfItem(atPath: keyURL.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular,
+                  let byteCount = (attributes[.size] as? NSNumber)?.intValue,
+                  (1...32_768).contains(byteCount) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            let encoded = try Data(contentsOf: keyURL, options: [.mappedIfSafe])
+            relayIdentityKeyMaterial = try JSONDecoder().decode(
+                RelayIdentityKeyMaterialV1.self,
+                from: encoded
+            )
+        } else {
+            let generated = try RelayIdentityKeyMaterialV1.generate()
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            try encoder.encode(generated).write(to: keyURL, options: [.atomic])
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: keyURL.path
+            )
+            relayIdentityKeyMaterial = generated
+        }
+    } catch {
+        print("[relay] Refusing to start because the persistent relay identity is unavailable or invalid.")
+        exit(2)
+    }
+} else {
+    do {
+        relayIdentityKeyMaterial = try RelayIdentityKeyMaterialV1.generate()
+        print("[relay] Warning: relay identity is ephemeral in memory-only mode.")
+    } catch {
+        print("[relay] Refusing to start because ML-DSA-65 relay identity generation is unavailable.")
+        exit(2)
+    }
+}
+let relayIdentityRuntime = RelayIdentityRuntime(keyMaterial: relayIdentityKeyMaterial)
 let attachmentBlobStore: AttachmentBlobStore?
 switch config.attachmentStorageMode {
 case .inline:
@@ -1107,6 +1151,7 @@ var relayConfiguration = RelayConfiguration(
     curatedCoordinatorQuorum: config.curatedCoordinatorQuorum,
     curatedRequireSignedDirectory: config.curatedRequireSignedDirectory,
     advertisedEndpoint: config.advertisedEndpoint,
+    noctwebRelaySuffix: config.noctwebRelaySuffix.flatMap(NoctwebRelaySuffixV1.init(rawValue:)),
     federationAllowList: config.federationAllowList,
     allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints,
     opaqueRouteRuntimeEnabled: config.opaqueRouteRuntimeEnabled,
@@ -1173,8 +1218,35 @@ if relayConfiguration.kind == .coordinator {
     }
 }
 
+if relayConfiguration.noctwebRelaySuffix != nil {
+    var identityEndpoint = relayConfiguration.advertisedEndpoint
+    if identityEndpoint == nil {
+        let identityHost = ["0.0.0.0", "::"].contains(config.host)
+            ? "127.0.0.1"
+            : config.host
+        identityEndpoint = RelayEndpoint(
+            host: identityHost,
+            port: UInt16(config.port),
+            useTLS: false,
+            transport: .tcp
+        )
+    }
+    do {
+        let identity = try relayIdentityRuntime.signedIdentity(
+            configuration: relayConfiguration,
+            advertisedEndpoints: [identityEndpoint].compactMap { $0 },
+            hostSigningPublicKey: netHostStore?.signingPublicKey
+        )
+        try store.claimNoctwebNamespace(identity)
+    } catch {
+        print("[relay] Refusing to start because the Noctweb suffix ownership claim is invalid or conflicts with durable state.")
+        exit(2)
+    }
+}
+
 let relayConfigurationStore = RelayConfigurationStore(relayConfiguration)
 let relayStartedAt = Date()
+print("[relay] Relay ID \(relayIdentityRuntime.relayID.rawValue)")
 
 let group = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
 defer { try? group.syncShutdownGracefully() }
@@ -1190,6 +1262,7 @@ let bootstrap = ServerBootstrap(group: group)
                     maxLineBytes: config.maxLineBytes,
                     localEndpoint: RelayEndpoint(host: config.host, port: UInt16(config.port)),
                     relayConfiguration: relayConfigurationStore.snapshot(),
+                    relayIdentityRuntime: relayIdentityRuntime,
                     forwardingRequestTimeoutSeconds: config.forwardingRequestTimeoutSeconds,
                     netHostStore: netHostStore,
                     passthroughAllowedEndpoints: config.passthroughAllowedEndpoints
@@ -1255,6 +1328,8 @@ do {
             "HTTP / WebSocket": config.httpPort.map { "\(config.host):\($0)" } ?? "Disabled",
             "Admin listener": "\(config.adminHost):\(adminPort)",
             "Relay kind": config.relayKind.rawValue,
+            "Relay identity": relayIdentityRuntime.relayID.rawValue,
+            "Noctweb suffix": relayConfiguration.noctwebRelaySuffix?.rawValue ?? "Unclaimed",
             "Noctweb hosting": config.netHostEnabled ? "Enabled · nw.net-host@1" : "Disabled",
             "Noctweb Publisher / Lab": config.netHostEnabled
                 ? config.httpPort.map { "http://127.0.0.1:\($0)/noctweb/" } ?? "Unavailable · HTTP listener disabled"

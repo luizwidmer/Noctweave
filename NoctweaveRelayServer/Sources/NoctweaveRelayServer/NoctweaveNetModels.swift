@@ -10,13 +10,17 @@ enum NoctweaveNetLimits {
     static let idempotencyKeyBytes = 32
     static let minimumHostRetentionSeconds = 60
     static let maximumHostRetentionSeconds = 2_592_000
+    static let maximumSiteLabelBytes = 48
+    static let maximumPublisherIDBytes = 128
+    static let maximumHeadIDBytes = 71
+    static let maximumNameResolutionLifetime: TimeInterval = 5 * 60
 }
 
-private func netCanonicalDate(_ value: Date) -> Date {
+func netCanonicalDate(_ value: Date) -> Date {
     Date(timeIntervalSince1970: floor(value.timeIntervalSince1970))
 }
 
-private func netIsCanonicalDate(_ value: Date) -> Bool {
+func netIsCanonicalDate(_ value: Date) -> Bool {
     let seconds = value.timeIntervalSince1970
     return seconds.isFinite
         && seconds >= 0
@@ -28,7 +32,7 @@ private func netHex(_ data: Data) -> String {
     data.map { String(format: "%02x", $0) }.joined()
 }
 
-private func netObjectIDIsValid(_ value: String) -> Bool {
+func netObjectIDIsValid(_ value: String) -> Bool {
     value.utf8.count == NoctweaveNetLimits.objectIDBytes * 2
         && value == value.lowercased()
         && value.unicodeScalars.allSatisfy {
