@@ -9,6 +9,7 @@ Noctweave 1.0 defines:
 - one-use post-quantum contact rendezvous;
 - unlinkable pairwise relationships;
 - typed encrypted direct events and controls;
+- experimental one-to-one call signaling and application-layer media protection;
 - opaque relay routes with ordered cursor synchronization;
 - encrypted attachments;
 - an experimental group profile;
@@ -159,7 +160,9 @@ An application event contains:
 - optional fallback and visible/silent disposition.
 
 Standard families include text, attachment, reply, replacement, reaction,
-retraction, delivery receipt, and read receipt.
+retraction, delivery receipt, and read receipt. The experimental call family is
+`org.noctweave.call/signal:1.0` and is negotiated separately from the direct-v4
+baseline.
 
 For one author relationship handle, `clientTransactionID` is unique within the
 bounded retained event log. Repeating it while retained cannot create a second
@@ -172,6 +175,30 @@ Security controls are separately authenticated and relationship-bound. Defined
 controls include session reset, resend request, route-set update, targeted
 route probe, endpoint-prekey update, and optional selective continuity. Unknown
 controls are retained as quarantined audit events and never executed.
+
+## 6A. Experimental one-to-one calls
+
+`nw.call@1` carries exact, silent call signals inside an authenticated
+direct-v4 relationship. It is enabled only when both endpoints advertise the
+experimental module and call-signal content family. The initiator creates a
+fresh call-only ML-KEM-768 key pair; the responder encapsulates to its public
+key. Both roles bind the exact NCJ-1 offer and answer into one call root, then
+derive independent initiator/responder media keys per epoch.
+
+Media payloads are independently AES-256-GCM protected and padded to one of six
+fixed buckets from 512 through 16,384 bytes. Nonces are deterministic from the
+directional epoch and sequence under a unique epoch key. Receivers require
+epoch zero first, permit only adjacent epoch movement, retain a 256-sequence
+replay window, and reject duplicate or retired frames.
+
+The signaling module is transport independent. `webRTC`, `datagram`, and
+`relayWebSocket` candidates describe adapter choices inside relationship
+encryption; they do not make a current message relay a media relay. Active
+counter state is not resumable after a process crash. Calls are one-to-one;
+group calls are outside version 1.
+
+The complete wire objects, KDF, frame layout, metadata disclosure, and failure
+rules are normative in [`call_protocol_v1.md`](call_protocol_v1.md).
 
 ## 7. Opaque routes
 

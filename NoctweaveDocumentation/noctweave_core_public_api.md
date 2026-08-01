@@ -376,6 +376,73 @@ module, cipher, content-type-major-version, and bound intersections. Use the
 manifest from each verified endpoint binding; unsupported outbound content is
 rejected before ratchet mutation.
 
+## Experimental one-to-one calls
+
+Call signaling is a silent application event. Enable it only after the product
+has wired a media transport and endpoint permission lifecycle:
+
+```swift
+let advertised = ProtocolCapabilityManifest().enablingCallV1()
+guard advertised.supportsCallV1, peerManifest.supportsCallV1 else {
+    throw CallProtocolV1Error.invalidTransition
+}
+```
+
+Create an initiator offer with a fresh call-only ML-KEM key. Store the pending
+value only through encrypted application state:
+
+```swift
+var pending = try PendingCallOfferV1.create(
+    tracks: [
+        CallTrackOfferV1(
+            trackID: 1,
+            mediaKind: .audio,
+            codecs: [.opus]
+        )
+    ],
+    candidates: [transportCandidate]
+)
+let content = try EncodedContent.callSignal(pending.offerSignal)
+```
+
+The responder selects offered parameters and performs ML-KEM encapsulation:
+
+```swift
+let accepted = try CallResponderHandshakeV1.answer(
+    offerSignal,
+    tracks: [CallTrackSelectionV1(trackID: 1, codecIdentifier: "opus")],
+    selectedCandidateID: candidateID
+)
+let responderRoot = accepted.keyMaterial
+```
+
+After receiving the answer, the initiator decapsulates it exactly once (an
+exact replay is idempotent; a competing answer is a fork):
+
+```swift
+let initiatorRoot = try pending.accept(accepted.answerSignal)
+var sender = try CallMediaSenderV1(material: initiatorRoot, role: .initiator)
+var receiver = try CallMediaReceiverV1(
+    material: responderRoot,
+    remoteRole: .responder
+)
+```
+
+`CallMediaCipherV1` accepts already encoded codec bytes, not raw camera or
+microphone objects. Its sealed output has a fixed permitted size and can be
+carried unchanged by a WebRTC, datagram, or WebSocket adapter. Do not serialize
+active sender/receiver counter state for later resumption: after losing it,
+terminate the call and create a fresh offer.
+
+NoctweaveJS exports the matching `createPendingCallOfferV1`,
+`answerCallOfferV1`, `acceptCallAnswerV1`, `CallMediaSenderV1`, and
+`CallMediaReceiverV1` APIs. Its cryptographic object must expose ML-KEM-768 and
+WebCrypto primitives; plain `WebCryptoPrimitives` intentionally fails call
+setup because WebCrypto does not provide ML-KEM.
+
+See [`call_protocol_v1.md`](call_protocol_v1.md) for the exact state machine,
+KDF, binary frame layout, and metadata limits.
+
 ## Relationship-local safety and policy
 
 ```swift

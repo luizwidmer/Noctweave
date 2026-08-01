@@ -144,6 +144,17 @@ The checked-in deterministic one-use pairing vector is:
 
 - `test_vectors/rendezvous_opaque_v2.json`
 
+## Call vector
+
+The experimental one-to-one call vector is:
+
+- `test_vectors/call_v1.json`
+
+Swift and JavaScript reconstruct the same canonical offer/answer from its
+bounded repeated-byte inputs and assert the offer digest, transcript digest,
+ML-KEM-derived root, initiator epoch-zero media key, and exact 512-byte
+AES-256-GCM ciphertext.
+
 ## Required vector coverage
 
 Release vectors must cover:
@@ -151,6 +162,8 @@ Release vectors must cover:
 - relationship endpoint bindings and signed prekeys;
 - contact introductions and pairing confirmation;
 - direct bootstrap, envelope, application event, and known controls;
+- call offer/answer, state transitions, directional epoch keys, media buckets,
+  replay rejection, and transcript/ciphertext tampering;
 - opaque route creation, packets, sync, commit, renewal, and teardown;
 - every modular relay request, success response, and error response;
 - group admissions, commits, states, welcomes, ciphertexts, and credential

@@ -67,8 +67,9 @@ The provisional 1.0-candidate relay modules are `nw.core`, `nw.opaque-route`,
 `nw.rendezvous-transport`, `nw.blobs`, and `nw.federation`. The direct client
 profile advertises provisional `nw.core` and `nw.direct` modules.
 
-The Noctweave PQ group provider, `nw.wake`, hidden retrieval, onion, mixnet, and
-`nw.open-discovery` are experimental profiles. The open-discovery methods are
-separate from the provisional `nw.federation` module. These profiles do not
-expand what “Noctweave Core” means, and their presence is not a production
-anonymity claim.
+The Noctweave PQ group provider, `nw.call`, `nw.wake`, hidden retrieval, onion,
+mixnet, and `nw.open-discovery` are experimental profiles. Call support is an
+endpoint opt-in and does not imply a call-media relay. The open-discovery
+methods are separate from the provisional `nw.federation` module. These
+profiles do not expand what “Noctweave Core” means, and their presence is not a
+production anonymity claim.

@@ -83,6 +83,7 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
         XCTAssertEqual(
             catalog.filter { $0.status == .experimental }.map(\.module),
             [
+                "nw.call",
                 "nw.groups",
                 "nw.wake",
                 "nw.open-discovery",

@@ -33,6 +33,7 @@ independent audit or formal proof.
 | SR-25 | Accepted group terminal state must not be resurrected or leave sendable work. | Atomically persist peer epochs with replay journals; retain only digest evidence for forks; clear epoch/application work on local removal or deletion; retain the exact deletion tombstone; reject conflicting deletion and later transition/commit resurrection; propagate group PQ runtime errors through throwing paths. |
 | SR-26 | Group transport authority and cursor commits must be durable and group-scoped. | Verify credential-signed route announcements; accept exact replay, a valid direct hash-chained successor, or a strictly newer signer-authorized monotonic checkpoint after missed revisions; reject same/older revisions and invalid direct successors; persist recipient snapshots, exact packets/attempts, transition/Welcome/control work, receive cursors, reassembly, effects, and quarantine before publication or relay cursor commit. Initial routes are admitted only through the authenticated group invitation bootstrap. |
 | SR-27 | Durable client state must not accept rollback or burn resurrection as a valid restart. | Bind the authoritative encrypted browser aggregate and each relationship record to independently protected last-value generations and host-computed ciphertext digests; keep the aggregate under a fixed non-protocol application slot; serialize competing writers; advance ciphertext and authority through crash-recoverable atomic coordinators; retain terminal erasure tombstones; fail closed when the embedding host lacks that facility. |
+| SR-28 | Real-time calls must not downgrade relationship authentication or reuse media nonces. | Negotiate experimental `nw.call@1` explicitly; carry signaling inside direct-v4; perform a fresh call-only ML-KEM-768 exchange; bind canonical offer/answer bytes into directional epoch keys; enforce fixed media buckets, adjacent epochs, and replay windows; terminate instead of resuming when active counter state is lost. |
 
 ## Acknowledgement semantics
 
@@ -52,6 +53,7 @@ A transport response or cursor commit must not be presented as a read receipt.
 - global network anonymity;
 - single-server cryptographic PIR;
 - RFC 9420 interoperability for the experimental PQ group provider;
+- group calls or a mandatory call-media relay;
 - guaranteed closed-app delivery without platform execution permission;
 - account recovery or restoration of burned authority.
 

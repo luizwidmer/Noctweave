@@ -28,6 +28,11 @@ JavaScript protocol client and browser integration shell, and a headless CLI.
 Relays route and store encrypted packets; message plaintext and relationship or
 group keys stay with clients.
 
+The public libraries also include an experimental one-to-one call foundation:
+direct-v4 signaling, a fresh ML-KEM-768 call handshake, and fixed-bucket
+AES-256-GCM media frames. Capture, playback, NAT traversal, and media transport
+remain application adapters rather than relay plaintext features.
+
 The relay exposes the three-role Noctweave Net topology: `standard` relays
 carry existing private traffic, `passthrough` relays provide bounded one-hop
 HTTPS forwarding, and `host` relays store content-addressed Noctweave Net
@@ -61,8 +66,9 @@ contact graphs, or plaintext.
 
 The architecture also includes immutable typed events, exact-ciphertext retry
 intents, non-destructive cursor synchronization, make-before-break route sets,
-selective relationship-only continuity, explicit group roles and policy, and a
-strict modular relay envelope. There is deliberately no device/installation
+selective relationship-only continuity, experimental one-to-one call framing,
+explicit group roles and policy, and a strict modular relay envelope. There is
+deliberately no device/installation
 registry, recovery authority, shared self-sync identity, or portable live-key
 history model. See the
 [normative 1.0 architecture](NoctweaveDocumentation/noctweave_architecture_revision_v2.md).
@@ -152,6 +158,7 @@ transport is available to integrations that supply that boundary.
 | Automate relay and messaging integration | [`noctweave-messaging-relay` skill](AgentSkills/noctweave-messaging-relay/SKILL.md) |
 | Review the 1.0 architecture | [`Noctweave 1.0 architecture`](NoctweaveDocumentation/noctweave_architecture_revision_v2.md) |
 | Review the protocol | [`Protocol specification`](NoctweaveDocumentation/noctweave_protocol_spec_v1.md) |
+| Integrate one-to-one calls | [`Experimental call protocol`](NoctweaveDocumentation/call_protocol_v1.md) |
 
 ### Relay
 
@@ -311,13 +318,14 @@ Exact versions, hashes, and supply-chain requirements are recorded in the
 ## Security Status
 
 Noctweave defines a normative 1.0 candidate. Implemented core modules remain
-provisional, the group profile remains experimental, and the project has not
-received an independent external audit.
+provisional; group and one-to-one call profiles remain experimental; the
+project has not received an independent external audit.
 
 | Implemented | Not claimed |
 | --- | --- |
 | ML-KEM/ML-DSA protocol profile | Protection from a compromised operating system |
 | End-to-end encrypted payloads and attachments | Global anonymity |
+| ML-KEM call setup and independently encrypted media frames | A bundled media relay or group calls |
 | Pairwise-scoped optional continuity and replay rejection | Formal group-protocol proof or RFC 9420 interoperability |
 | Bounded parsers, stores, and discovery inputs | Single-server cryptographic PIR |
 | Relay ciphertext-only payload storage | Guaranteed closed-app delivery |
@@ -358,6 +366,7 @@ Technical detail lives in focused documents:
 - [Wire format and test vectors](NoctweaveDocumentation/wire_format_and_test_vectors.md)
 - [Core public API](NoctweaveDocumentation/noctweave_core_public_api.md)
 - [Experimental PQ group design](NoctweaveDocumentation/group_protocol_design.md)
+- [Experimental one-to-one call protocol](NoctweaveDocumentation/call_protocol_v1.md)
 - [Federation protocol and operations](NoctweaveDocumentation/federation_protocol_and_operations.md)
 - [Relay hardening](NoctweaveDocumentation/relay_ops_hardening_guide.md)
 - [Whitepaper](NoctweaveDocumentation/noctweave_whitepaper.md)
