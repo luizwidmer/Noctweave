@@ -15,4 +15,6 @@ input, select { background: var(--shell-surface-raised); color: var(--shell-text
 .appearance-control { display: inline-flex; align-items: center; gap: 7px; color: var(--shell-muted); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .appearance-control select { width: auto; min-height: 38px; padding: 0 28px 0 10px; border-radius: 10px; }
 @media (max-width: 520px) { .appearance-control span { display: none; } main { padding-bottom: calc(64px + env(safe-area-inset-bottom)); } }
-@media (min-width: 861px) { .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 861px) and (max-width: 1200px) { .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1201px) { .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+#relayEndpoint { font-size: 15px; line-height: 1.35; word-break: normal; }
