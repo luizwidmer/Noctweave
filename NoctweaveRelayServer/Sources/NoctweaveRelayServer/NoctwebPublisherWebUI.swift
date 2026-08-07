@@ -252,7 +252,12 @@ struct NoctwebPublisherSurface {
       <div class="app-shell">
         <header class="topbar">
           <a class="brand" href="/noctweb/" aria-label="Noctweb Publisher home">
-            <span class="brand-mark" aria-hidden="true">N</span>
+            <span class="brand-mark" aria-hidden="true">
+              <svg class="brand-logo" viewBox="0 0 256 256">
+                <path class="brand-plane-upper" d="M96 32H224V176L140 134V110L96 88Z"/>
+                <path class="brand-plane-lower" d="M32 80L116 122V146L160 168V224H32Z"/>
+              </svg>
+            </span>
             <span><strong>Noctweb</strong><small>Publisher</small></span>
           </a>
           <div class="topbar-context">
@@ -308,7 +313,7 @@ struct NoctwebPublisherSurface {
                   <label>Accent color
                     <span class="color-field">
                       <input id="accentInput" type="color">
-                      <output id="accentValue">#7c6cff</output>
+                      <output id="accentValue">#c96a61</output>
                     </span>
                   </label>
                   <label>Button label<input id="buttonTextInput" maxlength="64"></label>
@@ -397,16 +402,23 @@ struct NoctwebPublisherSurface {
     private static let css = #"""
     :root {
       color-scheme: light dark;
-      --bg: #090b10;
-      --surface: #11141c;
-      --surface-2: #171b25;
-      --line: #272c39;
-      --text: #f4f5f8;
-      --muted: #989faf;
-      --accent: #7c6cff;
-      --accent-strong: #9588ff;
-      --success: #44d49b;
-      --danger: #ff7185;
+      --bg: #1b1217;
+      --surface: #2a1b21;
+      --surface-2: #38252b;
+      --line: #5a3c43;
+      --text: #faf3ea;
+      --muted: #c8adb0;
+      --accent: #c96a61;
+      --accent-strong: #ebc7af;
+      --success: #79c6a3;
+      --danger: #ff7888;
+      --button-bg: #c96a61;
+      --button-hover: #ebc7af;
+      --button-text: #1b1217;
+      --brand-upper: #faf3ea;
+      --brand-lower: #c96a61;
+      --code-bg: #120b0f;
+      --code-text: #faf3ea;
       --radius: 14px;
       --shadow: 0 22px 70px rgba(0, 0, 0, .28);
       font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -418,7 +430,7 @@ struct NoctwebPublisherSurface {
     body {
       min-width: 320px;
       background:
-        radial-gradient(circle at 15% -10%, rgba(124, 108, 255, .18), transparent 34rem),
+        radial-gradient(circle at 15% -10%, rgba(201, 106, 97, .18), transparent 34rem),
         var(--bg);
     }
     button, input, textarea, select { font: inherit; }
@@ -451,12 +463,13 @@ struct NoctwebPublisherSurface {
       place-items: center;
       width: 38px;
       height: 38px;
-      border: 1px solid rgba(255,255,255,.18);
       border-radius: 11px;
-      background: linear-gradient(145deg, #a69cff, #5b49ed);
-      box-shadow: 0 8px 24px rgba(92, 72, 237, .35);
-      font-weight: 850;
+      background: var(--surface-2);
+      box-shadow: 0 8px 24px rgba(146, 45, 53, .18);
     }
+    .brand-logo { display: block; width: 76%; height: 76%; }
+    .brand-plane-upper { fill: var(--brand-upper); }
+    .brand-plane-lower { fill: var(--brand-lower); }
     .brand strong, .brand small { display: block; line-height: 1.05; }
     .brand strong { font-size: 15px; letter-spacing: .01em; }
     .brand small { margin-top: 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .12em; }
@@ -491,12 +504,12 @@ struct NoctwebPublisherSurface {
       padding: 13px 15px;
       border: 1px solid var(--line);
       border-radius: 12px;
-      background: rgba(17,20,28,.75);
+      background: color-mix(in srgb, var(--surface) 88%, transparent);
     }
     .identity-chip span, .identity-chip strong { display: block; }
     .identity-chip span { margin-bottom: 5px; color: var(--muted); font-size: 11px; }
     .identity-chip strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-    .workspace-tabs { display: flex; gap: 4px; width: max-content; padding: 4px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; background: #0d1016; }
+    .workspace-tabs { display: flex; gap: 4px; width: max-content; padding: 4px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
     .tab, .file-tab {
       border: 0;
       background: transparent;
@@ -506,7 +519,7 @@ struct NoctwebPublisherSurface {
     }
     .tab { min-width: 92px; padding: 9px 16px; border-radius: 8px; font-size: 13px; font-weight: 650; }
     .tab:hover, .file-tab:hover { color: var(--text); }
-    .tab.active { color: var(--text); background: var(--surface-2); box-shadow: inset 0 0 0 1px rgba(255,255,255,.05); }
+    .tab.active { color: var(--text); background: var(--surface); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 72%, transparent); }
     .workspace {
       min-height: min(650px, calc(100vh - 250px));
       border: 1px solid var(--line);
@@ -522,26 +535,26 @@ struct NoctwebPublisherSurface {
     .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 28px; }
     .section-heading h2, .publication-card h2, .dialog-heading h2 { margin: 5px 0 0; font-size: 20px; letter-spacing: -.02em; }
     .save-state { color: var(--success); font-size: 11px; }
-    label { display: grid; gap: 8px; margin: 0 0 20px; color: #c6cad4; font-size: 12px; font-weight: 650; }
+    label { display: grid; gap: 8px; margin: 0 0 20px; color: var(--text); font-size: 12px; font-weight: 650; }
     input, textarea, select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 9px;
       outline: none;
-      background: #0c0f15;
+      background: var(--surface-2);
       color: var(--text);
       padding: 11px 12px;
       transition: border .15s, box-shadow .15s;
     }
     textarea { resize: vertical; line-height: 1.55; }
-    input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124,108,255,.13); }
+    input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
     .address-field { display: grid; grid-template-columns: 1fr auto; align-items: center; }
     .address-field input { border-radius: 9px 0 0 9px; }
     .address-field span { height: 100%; display: flex; align-items: center; padding: 0 12px; border: 1px solid var(--line); border-left: 0; border-radius: 0 9px 9px 0; background: var(--surface-2); color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
     .color-field { display: grid; grid-template-columns: 48px 1fr; gap: 9px; }
     .color-field input { height: 42px; padding: 5px; }
-    .color-field output { display: flex; align-items: center; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: #0c0f15; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-    .notice, .dialog-note { padding: 14px; border: 1px solid rgba(124,108,255,.25); border-radius: 10px; background: rgba(124,108,255,.07); }
+    .color-field output { display: flex; align-items: center; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    .notice, .dialog-note { padding: 14px; border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
     .notice p { margin: 7px 0 13px; color: var(--muted); font-size: 12px; line-height: 1.5; }
     .code-toolbar, .preview-toolbar {
       min-height: 55px;
@@ -551,7 +564,7 @@ struct NoctwebPublisherSurface {
       gap: 16px;
       padding: 8px 14px;
       border-bottom: 1px solid var(--line);
-      background: #0d1016;
+      background: var(--surface-2);
     }
     .code-toolbar > span { color: var(--muted); font-size: 11px; }
     .file-tabs { display: flex; gap: 3px; }
@@ -566,8 +579,8 @@ struct NoctwebPublisherSurface {
       border: 0;
       border-radius: 0;
       resize: none;
-      background: #090b10;
-      color: #d8dbea;
+      background: var(--code-bg);
+      color: var(--code-text);
       font: 13px/1.65 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       tab-size: 2;
     }
@@ -600,10 +613,10 @@ struct NoctwebPublisherSurface {
     .button { min-height: 38px; padding: 0 15px; }
     .button:hover:not(:disabled) { transform: translateY(-1px); }
     .button:disabled { opacity: .42; cursor: not-allowed; }
-    .button.primary { background: var(--accent); color: white; box-shadow: 0 9px 24px rgba(124,108,255,.22); }
-    .button.primary:hover { background: var(--accent-strong); }
+    .button.primary { background: var(--button-bg); color: var(--button-text); box-shadow: 0 9px 24px color-mix(in srgb, var(--button-bg) 24%, transparent); }
+    .button.primary:hover { background: var(--button-hover); }
     .button.secondary { border-color: var(--line); background: var(--surface-2); }
-    .button.ghost { border-color: var(--line); background: transparent; color: #c6cad4; }
+    .button.ghost { border-color: var(--line); background: transparent; color: var(--muted); }
     .button.danger { border-color: rgba(255,113,133,.3); background: rgba(255,113,133,.08); color: #ff9aa8; }
     dialog {
       width: min(500px, calc(100% - 28px));
@@ -631,7 +644,7 @@ struct NoctwebPublisherSurface {
       padding: 12px 15px;
       border: 1px solid var(--line);
       border-radius: 10px;
-      background: #171b25;
+      background: var(--surface-2);
       box-shadow: var(--shadow);
       color: var(--text);
       font-size: 12px;
@@ -651,8 +664,12 @@ struct NoctwebPublisherSurface {
       .publication-actions .button { flex: 1; }
     }
     @media (max-width: 560px) {
-      .topbar { padding: 9px 14px; }
+      .topbar { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 9px 14px; }
+      .topbar-actions { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; }
       .topbar-actions .ghost { display: none; }
+      .topbar-actions .primary { white-space: nowrap; }
+      .appearance-control { min-width: 0; }
+      .appearance-control select { width: 100%; }
       .product { width: min(100% - 20px, 1180px); padding-top: 28px; }
       .workspace-tabs { width: 100%; }
       .tab { flex: 1; min-width: 0; }
@@ -665,10 +682,10 @@ struct NoctwebPublisherSurface {
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
     }
-    :root { color-scheme: light; --shell-bg: #fffaf5; --shell-surface: #fffdf9; --shell-surface-raised: #f6eee8; --shell-border: #e6d8d0; --shell-text: #321a23; --shell-muted: #765f67; --shell-accent: #c96a61; --shell-accent-strong: #922d35; --shell-focus: #922d35; --bg: var(--shell-bg); --surface: var(--shell-surface); --surface-2: var(--shell-surface-raised); --line: var(--shell-border); --text: var(--shell-text); --muted: var(--shell-muted); --accent: var(--shell-accent); --accent-strong: var(--shell-accent-strong); }
-    :root[data-theme="dark"] { color-scheme: dark; --shell-bg: #1b1217; --shell-surface: #2a1b21; --shell-surface-raised: #38252b; --shell-border: #5a3c43; --shell-text: #faf3ea; --shell-muted: #c8adb0; --shell-accent: #c96a61; --shell-accent-strong: #ebc7af; --shell-focus: #ebc7af; --bg: var(--shell-bg); --surface: var(--shell-surface); --surface-2: var(--shell-surface-raised); --line: var(--shell-border); --text: var(--shell-text); --muted: var(--shell-muted); --accent: var(--shell-accent); --accent-strong: var(--shell-accent-strong); }
+    :root { color-scheme: light; --shell-bg: #fffaf5; --shell-surface: #fffdf9; --shell-surface-raised: #f6eee8; --shell-border: #e6d8d0; --shell-text: #321a23; --shell-muted: #765f67; --shell-accent: #c96a61; --shell-accent-strong: #922d35; --shell-focus: #922d35; --bg: var(--shell-bg); --surface: var(--shell-surface); --surface-2: var(--shell-surface-raised); --line: var(--shell-border); --text: var(--shell-text); --muted: var(--shell-muted); --accent: var(--shell-accent); --accent-strong: var(--shell-accent-strong); --button-bg: #922d35; --button-hover: #7a252c; --button-text: #faf3ea; --brand-upper: #922d35; --brand-lower: #c96a61; --code-bg: #120b0f; --code-text: #faf3ea; }
+    :root[data-theme="dark"] { color-scheme: dark; --shell-bg: #1b1217; --shell-surface: #2a1b21; --shell-surface-raised: #38252b; --shell-border: #5a3c43; --shell-text: #faf3ea; --shell-muted: #c8adb0; --shell-accent: #c96a61; --shell-accent-strong: #ebc7af; --shell-focus: #ebc7af; --bg: var(--shell-bg); --surface: var(--shell-surface); --surface-2: var(--shell-surface-raised); --line: var(--shell-border); --text: var(--shell-text); --muted: var(--shell-muted); --accent: var(--shell-accent); --accent-strong: var(--shell-accent-strong); --button-bg: #c96a61; --button-hover: #ebc7af; --button-text: #1b1217; --brand-upper: #faf3ea; --brand-lower: #c96a61; --code-bg: #120b0f; --code-text: #faf3ea; }
     :root[data-theme="system"] { color-scheme: light dark; }
-    @media (prefers-color-scheme: dark) { :root[data-theme="system"] { --shell-bg: #1b1217; --shell-surface: #2a1b21; --shell-surface-raised: #38252b; --shell-border: #5a3c43; --shell-text: #faf3ea; --shell-muted: #c8adb0; --shell-accent: #c96a61; --shell-accent-strong: #ebc7af; --shell-focus: #ebc7af; --bg: var(--shell-bg); --surface: var(--shell-surface); --surface-2: var(--shell-surface-raised); --line: var(--shell-border); --text: var(--shell-text); --muted: var(--shell-muted); --accent: var(--shell-accent); --accent-strong: var(--shell-accent-strong); } }
+    @media (prefers-color-scheme: dark) { :root[data-theme="system"] { --shell-bg: #1b1217; --shell-surface: #2a1b21; --shell-surface-raised: #38252b; --shell-border: #5a3c43; --shell-text: #faf3ea; --shell-muted: #c8adb0; --shell-accent: #c96a61; --shell-accent-strong: #ebc7af; --shell-focus: #ebc7af; --bg: var(--shell-bg); --surface: var(--shell-surface); --surface-2: var(--shell-surface-raised); --line: var(--shell-border); --text: var(--shell-text); --muted: var(--shell-muted); --accent: var(--shell-accent); --accent-strong: var(--shell-accent-strong); --button-bg: #c96a61; --button-hover: #ebc7af; --button-text: #1b1217; --brand-upper: #faf3ea; --brand-lower: #c96a61; --code-bg: #120b0f; --code-text: #faf3ea; } }
     body { background: var(--shell-bg); padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
     .topbar { border-bottom-color: var(--shell-border); background: color-mix(in srgb, var(--shell-surface) 90%, transparent); }
     .form-card, .workspace, .publication-card, dialog { background: color-mix(in srgb, var(--shell-surface) 94%, transparent); }
@@ -677,11 +694,9 @@ struct NoctwebPublisherSurface {
     .appearance-control { display: inline-flex; align-items: center; gap: 7px; margin: 0; color: var(--shell-muted); font-size: 11px; font-weight: 650; white-space: nowrap; }
     .appearance-control span { display: none; }
     .appearance-control select { width: auto; min-height: 38px; padding: 0 28px 0 10px; border-radius: 9px; }
-    .brand-mark { background: linear-gradient(145deg, #c96a61, #922d35); box-shadow: 0 8px 24px rgba(146,45,53,.28); }
-    .button.primary { background: var(--shell-accent); box-shadow: 0 9px 24px rgba(146,45,53,.22); }
-    .button.primary:hover { background: var(--shell-accent-strong); }
+    .brand-mark { box-shadow: 0 8px 24px rgba(146,45,53,.18); }
     .button.ghost { color: var(--shell-muted); }
-    @media (max-width: 560px) { .appearance-control span { display: inline; } .topbar { padding-top: calc(9px + env(safe-area-inset-top)); } .product { padding-bottom: calc(60px + env(safe-area-inset-bottom)); } }
+    @media (max-width: 560px) { .appearance-control span { display: none; } .topbar { padding-top: calc(9px + env(safe-area-inset-top)); } .product { padding-bottom: calc(60px + env(safe-area-inset-bottom)); } }
     """#
 
     private static let javascript = #"""
@@ -743,7 +758,7 @@ struct NoctwebPublisherSurface {
         title: "A quieter place on the network.",
         subtitle: "Signed by its publisher. Carried by replaceable infrastructure.",
         body: "This page is an ordinary HTML, CSS, and JavaScript bundle served through Noctweave Net. Its identity belongs to the publication—not to this relay.",
-        accent: "#7c6cff",
+        accent: "#c96a61",
         buttonText: "Learn more",
         buttonURL: "https://example.com",
         customCode: false,
@@ -806,12 +821,12 @@ struct NoctwebPublisherSurface {
           </main>`,
           css: `:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
             body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-              background: #08080d; color: #f5f4ff; }
+              background: #120b0f; color: #faf3ea; }
             .unavailable { width: min(34rem, calc(100% - 3rem)); }
-            .unavailable > p:first-child { color: #9285ff; font-weight: 800;
+            .unavailable > p:first-child { color: #c96a61; font-weight: 800;
               letter-spacing: .16em; }
             h1 { margin: .5rem 0; font-size: clamp(2rem, 7vw, 4rem); }
-            .unavailable > p:last-child { color: #aaa7b8; line-height: 1.65; }`,
+            .unavailable > p:last-child { color: #c8adb0; line-height: 1.65; }`,
           js: ""
         }, "Hosted object unavailable");
         showToast(safeMessage(error, "Hosted page is unavailable."));
@@ -955,8 +970,8 @@ struct NoctwebPublisherSurface {
     .site-shell { width: min(760px, 100%); }
     .site-kicker { color: ${project.accent}; font-size: 12px; font-weight: 800; letter-spacing: .2em; }
     h1 { margin: 12px 0; font-size: clamp(42px, 9vw, 86px); line-height: .96; letter-spacing: -.055em; }
-    .site-subtitle { max-width: 650px; color: #b5b8c4; font-size: clamp(18px, 3vw, 25px); line-height: 1.45; }
-    .site-body { max-width: 620px; margin: 34px 0; color: #d9dbe3; line-height: 1.75; }
+    .site-subtitle { max-width: 650px; color: #c8adb0; font-size: clamp(18px, 3vw, 25px); line-height: 1.45; }
+    .site-body { max-width: 620px; margin: 34px 0; color: #ebc7af; line-height: 1.75; }
     .site-button { display: inline-flex; padding: 13px 18px; border-radius: 10px; background: ${project.accent}; color: white; font-weight: 750; text-decoration: none; }`;
         project.js = `document.documentElement.dataset.noctwebReady = "true";`;
       }
