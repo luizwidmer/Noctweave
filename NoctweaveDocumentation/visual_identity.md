@@ -22,6 +22,23 @@ them without collapsing those boundaries into a shared identity.
 Do not redraw the mark from concept artwork. The SVG assets are the canonical
 geometry.
 
+## Product Marks
+
+The shared palette and geometric construction identify the family, while each
+product keeps a distinct silhouette:
+
+| Product | Mark rule |
+| --- | --- |
+| Noctweave protocol and client | Canonical two-plane Offset Veil |
+| Noctweb Browser | Two planes crossed by three complete corridor cuts |
+| Noctweb Lab | Authoring-oriented two-plane variant without Browser corridor cuts |
+| Noctweave Relay | Relay control-plane variant around a clear routing void |
+| Noct Gallery | Photo-frame and sanitization variant; never the Browser corridor mark |
+
+Do not reuse the Browser mark as the general Noctweave icon. Product variants
+may alter the internal construction, but they retain the official ivory,
+coral, wine, and plum-black palette.
+
 ## Construction
 
 The mark uses a 256-unit square. Its primary measures are:
