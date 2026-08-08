@@ -1093,6 +1093,10 @@ public enum RelayModuleID: String, Codable, CaseIterable {
     case opaqueRoute = "nw.opaque-route"
     case rendezvousTransport = "nw.rendezvous-transport"
     case blobs = "nw.blobs"
+    case realtimeRoute = "nw.realtime-route"
+    case sharedLog = "nw.shared-log"
+    case ephemeralPresence = "nw.ephemeral-presence"
+    case mediaBlobs = "nw.media-blobs"
     case federation = "nw.federation"
     case federationForward = "nw.federation-forward"
     case openDiscovery = "nw.open-discovery"
@@ -1103,8 +1107,8 @@ public enum RelayModuleID: String, Codable, CaseIterable {
         switch self {
         case .core, .opaqueRoute, .rendezvousTransport:
             return 2
-        case .blobs, .federation, .federationForward, .openDiscovery,
-             .netPassthrough, .netHost:
+        case .blobs, .realtimeRoute, .sharedLog, .ephemeralPresence, .mediaBlobs,
+             .federation, .federationForward, .openDiscovery, .netPassthrough, .netHost:
             return 1
         }
     }
@@ -1137,6 +1141,10 @@ public enum RelayMethodID: String, Codable, CaseIterable {
     case resolve
     case has
     case release
+    case subscribe
+    case unsubscribe
+    case acquire
+    case renewLease = "renew-lease"
 }
 
 public struct RelayOperationBinding: Codable, Equatable, Hashable {
@@ -1159,6 +1167,10 @@ public struct RelayOperationBinding: Codable, Equatable, Hashable {
         .opaqueRoute: [.create, .renew, .teardown, .append, .sync, .commit],
         .rendezvousTransport: [.register, .append, .sync, .delete],
         .blobs: [.upload, .fetch],
+        .realtimeRoute: [.create, .append, .subscribe, .sync, .unsubscribe],
+        .sharedLog: [.create, .append, .sync],
+        .ephemeralPresence: [.acquire, .renewLease, .release, .list],
+        .mediaBlobs: [.create, .upload, .fetch, .release],
         .federation: [
             .register,
             .list,
@@ -2392,6 +2404,22 @@ public enum RelayRequestBody: Equatable {
     case appendRendezvous(AppendRendezvousTransportV2Request)
     case syncRendezvous(SyncRendezvousTransportV2Request)
     case deleteRendezvous(DeleteRendezvousTransportV2Request)
+    case createRealtimeRoute(RealtimeRouteCreateRequestV1)
+    case appendRealtimeRoute(RealtimeRouteAppendRequestV1)
+    case subscribeRealtimeRoute(RealtimeRouteSubscribeRequestV1)
+    case syncRealtimeRoute(RealtimeRouteSyncRequestV1)
+    case unsubscribeRealtimeRoute(RealtimeRouteUnsubscribeRequestV1)
+    case createSharedLog(SharedLogCreateRequestV1)
+    case appendSharedLog(SharedLogAppendRequestV1)
+    case syncSharedLog(SharedLogSyncRequestV1)
+    case acquirePresence(PresenceLeaseAcquireRequestV1)
+    case renewPresence(PresenceLeaseRenewRequestV1)
+    case releasePresence(PresenceLeaseReleaseRequestV1)
+    case listPresence(PresenceLeaseListRequestV1)
+    case createMediaBlob(MediaBlobCreateRequestV1)
+    case uploadMediaBlob(MediaBlobUploadRequestV1)
+    case fetchMediaBlob(MediaBlobFetchRequestV1)
+    case releaseMediaBlob(MediaBlobReleaseRequestV1)
     case uploadAttachment(UploadAttachmentRequest)
     case fetchAttachment(FetchAttachmentRequest)
     case registerFederationNode(FederationNodeRegistrationRequest)
@@ -2440,6 +2468,22 @@ public enum RelayRequestBody: Equatable {
             return RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .sync)
         case .deleteRendezvous:
             return RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .delete)
+        case .createRealtimeRoute: return RelayOperationBinding(module: .realtimeRoute, version: 1, method: .create)
+        case .appendRealtimeRoute: return RelayOperationBinding(module: .realtimeRoute, version: 1, method: .append)
+        case .subscribeRealtimeRoute: return RelayOperationBinding(module: .realtimeRoute, version: 1, method: .subscribe)
+        case .syncRealtimeRoute: return RelayOperationBinding(module: .realtimeRoute, version: 1, method: .sync)
+        case .unsubscribeRealtimeRoute: return RelayOperationBinding(module: .realtimeRoute, version: 1, method: .unsubscribe)
+        case .createSharedLog: return RelayOperationBinding(module: .sharedLog, version: 1, method: .create)
+        case .appendSharedLog: return RelayOperationBinding(module: .sharedLog, version: 1, method: .append)
+        case .syncSharedLog: return RelayOperationBinding(module: .sharedLog, version: 1, method: .sync)
+        case .acquirePresence: return RelayOperationBinding(module: .ephemeralPresence, version: 1, method: .acquire)
+        case .renewPresence: return RelayOperationBinding(module: .ephemeralPresence, version: 1, method: .renewLease)
+        case .releasePresence: return RelayOperationBinding(module: .ephemeralPresence, version: 1, method: .release)
+        case .listPresence: return RelayOperationBinding(module: .ephemeralPresence, version: 1, method: .list)
+        case .createMediaBlob: return RelayOperationBinding(module: .mediaBlobs, version: 1, method: .create)
+        case .uploadMediaBlob: return RelayOperationBinding(module: .mediaBlobs, version: 1, method: .upload)
+        case .fetchMediaBlob: return RelayOperationBinding(module: .mediaBlobs, version: 1, method: .fetch)
+        case .releaseMediaBlob: return RelayOperationBinding(module: .mediaBlobs, version: 1, method: .release)
         case .uploadAttachment:
             return RelayOperationBinding(module: .blobs, version: 1, method: .upload)
         case .fetchAttachment:
@@ -2581,6 +2625,22 @@ public enum RelayRequestBody: Equatable {
                 from: decoder,
                 keys: ["routeCapability", "laneId", "deleteCapability"]
             ))
+        case (.realtimeRoute, .create): return .createRealtimeRoute(try relayDecodeSingle(RealtimeRouteCreateRequestV1.self, from: decoder, key: "request"))
+        case (.realtimeRoute, .append): return .appendRealtimeRoute(try relayDecodeSingle(RealtimeRouteAppendRequestV1.self, from: decoder, key: "request"))
+        case (.realtimeRoute, .subscribe): return .subscribeRealtimeRoute(try relayDecodeSingle(RealtimeRouteSubscribeRequestV1.self, from: decoder, key: "request"))
+        case (.realtimeRoute, .sync): return .syncRealtimeRoute(try relayDecodeSingle(RealtimeRouteSyncRequestV1.self, from: decoder, key: "request"))
+        case (.realtimeRoute, .unsubscribe): return .unsubscribeRealtimeRoute(try relayDecodeSingle(RealtimeRouteUnsubscribeRequestV1.self, from: decoder, key: "request"))
+        case (.sharedLog, .create): return .createSharedLog(try relayDecodeSingle(SharedLogCreateRequestV1.self, from: decoder, key: "request"))
+        case (.sharedLog, .append): return .appendSharedLog(try relayDecodeSingle(SharedLogAppendRequestV1.self, from: decoder, key: "request"))
+        case (.sharedLog, .sync): return .syncSharedLog(try relayDecodeSingle(SharedLogSyncRequestV1.self, from: decoder, key: "request"))
+        case (.ephemeralPresence, .acquire): return .acquirePresence(try relayDecodeSingle(PresenceLeaseAcquireRequestV1.self, from: decoder, key: "request"))
+        case (.ephemeralPresence, .renewLease): return .renewPresence(try relayDecodeSingle(PresenceLeaseRenewRequestV1.self, from: decoder, key: "request"))
+        case (.ephemeralPresence, .release): return .releasePresence(try relayDecodeSingle(PresenceLeaseReleaseRequestV1.self, from: decoder, key: "request"))
+        case (.ephemeralPresence, .list): return .listPresence(try relayDecodeSingle(PresenceLeaseListRequestV1.self, from: decoder, key: "request"))
+        case (.mediaBlobs, .create): return .createMediaBlob(try relayDecodeSingle(MediaBlobCreateRequestV1.self, from: decoder, key: "request"))
+        case (.mediaBlobs, .upload): return .uploadMediaBlob(try relayDecodeSingle(MediaBlobUploadRequestV1.self, from: decoder, key: "request"))
+        case (.mediaBlobs, .fetch): return .fetchMediaBlob(try relayDecodeSingle(MediaBlobFetchRequestV1.self, from: decoder, key: "request"))
+        case (.mediaBlobs, .release): return .releaseMediaBlob(try relayDecodeSingle(MediaBlobReleaseRequestV1.self, from: decoder, key: "request"))
         case (.blobs, .upload):
             return .uploadAttachment(try relayDecodeExact(
                 UploadAttachmentRequest.self,
@@ -2777,6 +2837,22 @@ public enum RelayRequestBody: Equatable {
             try container.encode(value.routeCapability, forKey: relayWireKey("routeCapability"))
             try container.encode(value.laneId, forKey: relayWireKey("laneId"))
             try container.encode(value.deleteCapability, forKey: relayWireKey("deleteCapability"))
+        case .createRealtimeRoute(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .appendRealtimeRoute(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .subscribeRealtimeRoute(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .syncRealtimeRoute(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .unsubscribeRealtimeRoute(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .createSharedLog(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .appendSharedLog(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .syncSharedLog(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .acquirePresence(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .renewPresence(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .releasePresence(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .listPresence(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .createMediaBlob(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .uploadMediaBlob(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .fetchMediaBlob(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .releaseMediaBlob(let value): try container.encode(value, forKey: relayWireKey("request"))
         case .uploadAttachment(let value):
             guard value.isStructurallyValid else {
                 throw relayWireError(encoder, "Attachment upload request is invalid")
@@ -3032,6 +3108,23 @@ public struct RelayRequest: Codable, Equatable {
     public static func deleteRendezvousTransportV2(_ request: DeleteRendezvousTransportV2Request) -> RelayRequest {
         RelayRequest(binding: requestBodyBinding(.deleteRendezvous(request)), body: .deleteRendezvous(request))
     }
+
+    public static func createRealtimeRouteV1(_ request: RealtimeRouteCreateRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.createRealtimeRoute(request)), body: .createRealtimeRoute(request)) }
+    public static func appendRealtimeRouteV1(_ request: RealtimeRouteAppendRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.appendRealtimeRoute(request)), body: .appendRealtimeRoute(request)) }
+    public static func subscribeRealtimeRouteV1(_ request: RealtimeRouteSubscribeRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.subscribeRealtimeRoute(request)), body: .subscribeRealtimeRoute(request)) }
+    public static func syncRealtimeRouteV1(_ request: RealtimeRouteSyncRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.syncRealtimeRoute(request)), body: .syncRealtimeRoute(request)) }
+    public static func unsubscribeRealtimeRouteV1(_ request: RealtimeRouteUnsubscribeRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.unsubscribeRealtimeRoute(request)), body: .unsubscribeRealtimeRoute(request)) }
+    public static func createSharedLogV1(_ request: SharedLogCreateRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.createSharedLog(request)), body: .createSharedLog(request)) }
+    public static func appendSharedLogV1(_ request: SharedLogAppendRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.appendSharedLog(request)), body: .appendSharedLog(request)) }
+    public static func syncSharedLogV1(_ request: SharedLogSyncRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.syncSharedLog(request)), body: .syncSharedLog(request)) }
+    public static func acquirePresenceV1(_ request: PresenceLeaseAcquireRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.acquirePresence(request)), body: .acquirePresence(request)) }
+    public static func renewPresenceV1(_ request: PresenceLeaseRenewRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.renewPresence(request)), body: .renewPresence(request)) }
+    public static func releasePresenceV1(_ request: PresenceLeaseReleaseRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.releasePresence(request)), body: .releasePresence(request)) }
+    public static func listPresenceV1(_ request: PresenceLeaseListRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.listPresence(request)), body: .listPresence(request)) }
+    public static func createMediaBlobV1(_ request: MediaBlobCreateRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.createMediaBlob(request)), body: .createMediaBlob(request)) }
+    public static func uploadMediaBlobV1(_ request: MediaBlobUploadRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.uploadMediaBlob(request)), body: .uploadMediaBlob(request)) }
+    public static func fetchMediaBlobV1(_ request: MediaBlobFetchRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.fetchMediaBlob(request)), body: .fetchMediaBlob(request)) }
+    public static func releaseMediaBlobV1(_ request: MediaBlobReleaseRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.releaseMediaBlob(request)), body: .releaseMediaBlob(request)) }
 
     public static func uploadAttachment(_ request: UploadAttachmentRequest) -> RelayRequest {
         RelayRequest(binding: requestBodyBinding(.uploadAttachment(request)), body: .uploadAttachment(request))
@@ -3319,6 +3412,17 @@ public enum RelaySuccessBody: Equatable {
     case opaqueRouteSync(OpaqueRouteSyncResponseV2)
     case opaqueRouteCommit(OpaqueRouteCommitResponseV2)
     case rendezvousSync(RendezvousRelaySyncBatchV2)
+    case realtimeRouteCreated(RealtimeRouteCreatedV1)
+    case realtimeRouteAppend(RealtimeRouteAppendReceiptV1)
+    case realtimeRouteSubscription(RealtimeRouteSubscriptionV1)
+    case realtimeRouteSync(OpaqueRelaySyncBatchV1)
+    case sharedLogCreated(SharedLogCreatedV1)
+    case sharedLogAppend(SharedLogAppendReceiptV1)
+    case sharedLogSync(OpaqueRelaySyncBatchV1)
+    case presenceLease(PresenceLeaseV1)
+    case presenceLeases([PresenceLeaseV1])
+    case mediaBlobCreated(MediaBlobCreatedV1)
+    case mediaBlobChunk(MediaBlobChunkV1)
     case attachment(AttachmentChunk)
     case federationNodes(FederationNodesResponseBody)
     case noctwebNamespaceSnapshot(NoctwebNamespaceSnapshotV1)
@@ -3341,6 +3445,9 @@ public enum RelaySuccessBody: Equatable {
                 || binding == RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .append)
                 || binding == RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .delete)
                 || binding == RelayOperationBinding(module: .openDiscovery, version: 1, method: .publishDHT)
+                || binding == RelayOperationBinding(module: .realtimeRoute, version: 1, method: .unsubscribe)
+                || binding == RelayOperationBinding(module: .ephemeralPresence, version: 1, method: .release)
+                || binding == RelayOperationBinding(module: .mediaBlobs, version: 1, method: .release)
         case .relayInfo:
             return binding == RelayOperationBinding(module: .core, version: 2, method: .info)
         case .opaqueRoute:
@@ -3357,6 +3464,30 @@ public enum RelaySuccessBody: Equatable {
             return binding == RelayOperationBinding(module: .opaqueRoute, version: 2, method: .commit)
         case .rendezvousSync:
             return binding == RelayOperationBinding(module: .rendezvousTransport, version: 2, method: .sync)
+        case .realtimeRouteCreated:
+            return binding == RelayOperationBinding(module: .realtimeRoute, version: 1, method: .create)
+        case .realtimeRouteAppend:
+            return binding == RelayOperationBinding(module: .realtimeRoute, version: 1, method: .append)
+        case .realtimeRouteSubscription:
+            return binding == RelayOperationBinding(module: .realtimeRoute, version: 1, method: .subscribe)
+        case .realtimeRouteSync:
+            return binding == RelayOperationBinding(module: .realtimeRoute, version: 1, method: .sync)
+        case .sharedLogCreated:
+            return binding == RelayOperationBinding(module: .sharedLog, version: 1, method: .create)
+        case .sharedLogAppend:
+            return binding == RelayOperationBinding(module: .sharedLog, version: 1, method: .append)
+        case .sharedLogSync:
+            return binding == RelayOperationBinding(module: .sharedLog, version: 1, method: .sync)
+        case .presenceLease:
+            return binding == RelayOperationBinding(module: .ephemeralPresence, version: 1, method: .acquire)
+                || binding == RelayOperationBinding(module: .ephemeralPresence, version: 1, method: .renewLease)
+        case .presenceLeases:
+            return binding == RelayOperationBinding(module: .ephemeralPresence, version: 1, method: .list)
+        case .mediaBlobCreated:
+            return binding == RelayOperationBinding(module: .mediaBlobs, version: 1, method: .create)
+        case .mediaBlobChunk:
+            return binding == RelayOperationBinding(module: .mediaBlobs, version: 1, method: .upload)
+                || binding == RelayOperationBinding(module: .mediaBlobs, version: 1, method: .fetch)
         case .attachment:
             return binding.module == .blobs && binding.version == 1 && [.upload, .fetch].contains(binding.method)
         case .federationNodes:
@@ -3415,7 +3546,10 @@ public enum RelaySuccessBody: Equatable {
              (.rendezvousTransport, .register),
              (.rendezvousTransport, .append),
              (.rendezvousTransport, .delete),
-             (.openDiscovery, .publishDHT):
+             (.openDiscovery, .publishDHT),
+             (.realtimeRoute, .unsubscribe),
+             (.ephemeralPresence, .release),
+             (.mediaBlobs, .release):
             try relayRequireExactObject(decoder, keys: [])
             return .empty
         case (.core, .info):
@@ -3449,6 +3583,50 @@ public enum RelaySuccessBody: Equatable {
             try relayRequireExactObject(decoder, keys: ["batch"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
             return .rendezvousSync(try container.decode(RendezvousRelaySyncBatchV2.self, forKey: relayWireKey("batch")))
+        case (.realtimeRoute, .create):
+            try relayRequireExactObject(decoder, keys: ["route"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .realtimeRouteCreated(try container.decode(RealtimeRouteCreatedV1.self, forKey: relayWireKey("route")))
+        case (.realtimeRoute, .append):
+            try relayRequireExactObject(decoder, keys: ["receipt"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .realtimeRouteAppend(try container.decode(RealtimeRouteAppendReceiptV1.self, forKey: relayWireKey("receipt")))
+        case (.realtimeRoute, .subscribe):
+            try relayRequireExactObject(decoder, keys: ["subscription"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .realtimeRouteSubscription(try container.decode(RealtimeRouteSubscriptionV1.self, forKey: relayWireKey("subscription")))
+        case (.realtimeRoute, .sync):
+            try relayRequireExactObject(decoder, keys: ["batch"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .realtimeRouteSync(try container.decode(OpaqueRelaySyncBatchV1.self, forKey: relayWireKey("batch")))
+        case (.sharedLog, .create):
+            try relayRequireExactObject(decoder, keys: ["log"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .sharedLogCreated(try container.decode(SharedLogCreatedV1.self, forKey: relayWireKey("log")))
+        case (.sharedLog, .append):
+            try relayRequireExactObject(decoder, keys: ["receipt"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .sharedLogAppend(try container.decode(SharedLogAppendReceiptV1.self, forKey: relayWireKey("receipt")))
+        case (.sharedLog, .sync):
+            try relayRequireExactObject(decoder, keys: ["batch"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .sharedLogSync(try container.decode(OpaqueRelaySyncBatchV1.self, forKey: relayWireKey("batch")))
+        case (.ephemeralPresence, .acquire), (.ephemeralPresence, .renewLease):
+            try relayRequireExactObject(decoder, keys: ["lease"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .presenceLease(try container.decode(PresenceLeaseV1.self, forKey: relayWireKey("lease")))
+        case (.ephemeralPresence, .list):
+            try relayRequireExactObject(decoder, keys: ["leases"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .presenceLeases(try container.decode([PresenceLeaseV1].self, forKey: relayWireKey("leases")))
+        case (.mediaBlobs, .create):
+            try relayRequireExactObject(decoder, keys: ["blob"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .mediaBlobCreated(try container.decode(MediaBlobCreatedV1.self, forKey: relayWireKey("blob")))
+        case (.mediaBlobs, .upload), (.mediaBlobs, .fetch):
+            try relayRequireExactObject(decoder, keys: ["chunk"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .mediaBlobChunk(try container.decode(MediaBlobChunkV1.self, forKey: relayWireKey("chunk")))
         case (.blobs, .upload), (.blobs, .fetch):
             try relayRequireExactObject(decoder, keys: ["chunk"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
@@ -3584,6 +3762,26 @@ public enum RelaySuccessBody: Equatable {
             try container.encode(value, forKey: relayWireKey("commit"))
         case .rendezvousSync(let value):
             try container.encode(value, forKey: relayWireKey("batch"))
+        case .realtimeRouteCreated(let value):
+            try container.encode(value, forKey: relayWireKey("route"))
+        case .realtimeRouteAppend(let value):
+            try container.encode(value, forKey: relayWireKey("receipt"))
+        case .realtimeRouteSubscription(let value):
+            try container.encode(value, forKey: relayWireKey("subscription"))
+        case .realtimeRouteSync(let value), .sharedLogSync(let value):
+            try container.encode(value, forKey: relayWireKey("batch"))
+        case .sharedLogCreated(let value):
+            try container.encode(value, forKey: relayWireKey("log"))
+        case .sharedLogAppend(let value):
+            try container.encode(value, forKey: relayWireKey("receipt"))
+        case .presenceLease(let value):
+            try container.encode(value, forKey: relayWireKey("lease"))
+        case .presenceLeases(let value):
+            try container.encode(value, forKey: relayWireKey("leases"))
+        case .mediaBlobCreated(let value):
+            try container.encode(value, forKey: relayWireKey("blob"))
+        case .mediaBlobChunk(let value):
+            try container.encode(value, forKey: relayWireKey("chunk"))
         case .attachment(let value):
             try container.encode(value, forKey: relayWireKey("chunk"))
         case .federationNodes(let value):
@@ -3789,6 +3987,16 @@ private func relayDecodeExact<T: Decodable>(
 ) throws -> T {
     try relayRequireExactObject(decoder, keys: keys)
     return try T(from: decoder)
+}
+
+private func relayDecodeSingle<T: Decodable>(
+    _ type: T.Type,
+    from decoder: Decoder,
+    key: String
+) throws -> T {
+    try relayRequireExactObject(decoder, keys: [key])
+    let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+    return try container.decode(T.self, forKey: relayWireKey(key))
 }
 
 private func relayEncodeOptional<T: Encodable>(

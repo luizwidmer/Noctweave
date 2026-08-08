@@ -12,6 +12,7 @@ public actor RelayStore {
     /// Keyed by a domain-separated route-capability digest. Values contain
     /// only digests of lane authorities; raw bearer material is never stored.
     private var rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:]
+    private var realtimeRuntime = RealtimeRelayRuntimeV1()
     private var attachments: [String: [AttachmentRecord]] = [:]
     private var federationNodes: [String: FederationNodeRecord] = [:]
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
@@ -76,6 +77,7 @@ public actor RelayStore {
             }
             pruneAttachments(now: Date())
             pruneFederationNodes(now: Date())
+            realtimeRuntime.prune(now: Date())
             let snapshot = currentSnapshot()
             try validateCurrentSnapshot(snapshot)
             try SQLiteRelayStateStore.saveState(snapshot, at: sqliteStoreURL(for: storeURL))
@@ -91,6 +93,92 @@ public actor RelayStore {
     /// failed attempt is consumed before an exact retry.
     func failNextPersistenceForTesting(_ count: Int = 1) {
         persistenceFailuresRemainingForTesting = max(0, count)
+    }
+
+    public func createRealtimeRouteV1(_ request: RealtimeRouteCreateRequestV1) throws -> RealtimeRouteCreatedV1 {
+        let result = try realtimeRuntime.createRoute(request)
+        try saveToDisk()
+        return result
+    }
+
+    public func appendRealtimeRouteV1(_ request: RealtimeRouteAppendRequestV1) throws -> RealtimeRouteAppendReceiptV1 {
+        let result = try realtimeRuntime.appendRoute(request)
+        try saveToDisk()
+        return result
+    }
+
+    public func subscribeRealtimeRouteV1(_ request: RealtimeRouteSubscribeRequestV1) throws -> RealtimeRouteSubscriptionV1 {
+        let result = try realtimeRuntime.subscribe(request)
+        try saveToDisk()
+        return result
+    }
+
+    public func syncRealtimeRouteV1(_ request: RealtimeRouteSyncRequestV1) throws -> OpaqueRelaySyncBatchV1 {
+        let result = try realtimeRuntime.syncRoute(request)
+        try saveToDisk()
+        return result
+    }
+
+    public func unsubscribeRealtimeRouteV1(_ request: RealtimeRouteUnsubscribeRequestV1) throws {
+        try realtimeRuntime.unsubscribe(request)
+        try saveToDisk()
+    }
+
+    public func createSharedLogV1(_ request: SharedLogCreateRequestV1) throws -> SharedLogCreatedV1 {
+        let result = try realtimeRuntime.createSharedLog(request)
+        try saveToDisk()
+        return result
+    }
+
+    public func appendSharedLogV1(_ request: SharedLogAppendRequestV1) throws -> SharedLogAppendReceiptV1 {
+        let result = try realtimeRuntime.appendSharedLog(request)
+        try saveToDisk()
+        return result
+    }
+
+    public func syncSharedLogV1(_ request: SharedLogSyncRequestV1) throws -> OpaqueRelaySyncBatchV1 {
+        let result = try realtimeRuntime.syncSharedLog(request)
+        try saveToDisk()
+        return result
+    }
+
+    public func acquirePresenceV1(_ request: PresenceLeaseAcquireRequestV1) throws -> PresenceLeaseV1 {
+        let result = try realtimeRuntime.acquirePresence(request)
+        // Presence intentionally never enters the durable snapshot.
+        return result
+    }
+
+    public func renewPresenceV1(_ request: PresenceLeaseRenewRequestV1) throws -> PresenceLeaseV1 {
+        try realtimeRuntime.renewPresence(request)
+    }
+
+    public func releasePresenceV1(_ request: PresenceLeaseReleaseRequestV1) throws {
+        try realtimeRuntime.releasePresence(request)
+    }
+
+    public func listPresenceV1(_ request: PresenceLeaseListRequestV1) throws -> [PresenceLeaseV1] {
+        try realtimeRuntime.listPresence(request)
+    }
+
+    public func createMediaBlobV1(_ request: MediaBlobCreateRequestV1) throws -> MediaBlobCreatedV1 {
+        let result = try realtimeRuntime.createMediaBlob(request)
+        try saveToDisk()
+        return result
+    }
+
+    public func uploadMediaBlobV1(_ request: MediaBlobUploadRequestV1) throws -> MediaBlobChunkV1 {
+        let result = try realtimeRuntime.uploadMediaBlob(request)
+        try saveToDisk()
+        return result
+    }
+
+    public func fetchMediaBlobV1(_ request: MediaBlobFetchRequestV1) throws -> MediaBlobChunkV1 {
+        try realtimeRuntime.fetchMediaBlob(request)
+    }
+
+    public func releaseMediaBlobV1(_ request: MediaBlobReleaseRequestV1) throws {
+        try realtimeRuntime.releaseMediaBlob(request)
+        try saveToDisk()
     }
 
     public func ingestOpenFederationDHTRecords(
@@ -699,6 +787,7 @@ public actor RelayStore {
 
     private func applySnapshot(_ snapshot: RelayStoreSnapshot) {
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
+        realtimeRuntime.state = snapshot.realtimeRuntime
         attachments = snapshot.attachments
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
@@ -709,6 +798,7 @@ public actor RelayStore {
 
     private func restoreSnapshot(_ snapshot: RelayStoreSnapshot) {
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
+        realtimeRuntime.state = snapshot.realtimeRuntime
         attachments = snapshot.attachments
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
@@ -717,6 +807,7 @@ public actor RelayStore {
     private func currentSnapshot() -> RelayStoreSnapshot {
         RelayStoreSnapshot(
             rendezvousRoutesV2: rendezvousRoutesV2,
+            realtimeRuntime: realtimeRuntime.state,
             attachments: attachments,
             federationNodes: federationNodes,
             coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys
@@ -734,6 +825,9 @@ public actor RelayStore {
 
     private func validateCurrentSnapshot(_ snapshot: RelayStoreSnapshot) throws {
         guard snapshot.rendezvousRoutesV2.count <= maxLifetimeRendezvousRoutesV2,
+              snapshot.realtimeRuntime.routes.count <= RealtimeRelayLimitsV1.maximumRealtimeRoutes,
+              snapshot.realtimeRuntime.sharedLogs.count <= RealtimeRelayLimitsV1.maximumSharedLogs,
+              snapshot.realtimeRuntime.mediaBlobs.count <= RealtimeRelayLimitsV1.maximumMediaBlobs,
               snapshot.rendezvousRoutesV2.allSatisfy({ key, record in
                   Data(base64Encoded: key)?.count == SHA256.byteCount
                       && record.isStructurallyValid
@@ -915,12 +1009,14 @@ private struct RendezvousRelayRouteRecordV2: Codable {
 
 private struct RelayStoreSnapshot: Codable {
     let rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2]
+    let realtimeRuntime: RealtimeRelayRuntimeStateV1
     let attachments: [String: [AttachmentRecord]]
     let federationNodes: [String: FederationNodeRecord]
     let coordinatorPinnedPublicKeys: [String: Data]
 
     static let empty = RelayStoreSnapshot(
         rendezvousRoutesV2: [:],
+        realtimeRuntime: RealtimeRelayRuntimeStateV1(),
         attachments: [:],
         federationNodes: [:],
         coordinatorPinnedPublicKeys: [:]
@@ -1120,6 +1216,9 @@ private enum SQLiteRelayStateStore {
         }
         return RelayStoreSnapshot(
             rendezvousRoutesV2: try loadRendezvousRoutesV2(in: db),
+            realtimeRuntime: try loadMetaValue(key: "realtime_runtime", in: db).map {
+                try decode(RealtimeRelayRuntimeStateV1.self, from: $0)
+            } ?? RealtimeRelayRuntimeStateV1(),
             attachments: try loadAttachments(in: db),
             federationNodes: try loadFederationNodes(in: db),
             coordinatorPinnedPublicKeys: try loadCoordinatorPinnedPublicKeys(in: db)
@@ -1154,6 +1253,7 @@ private enum SQLiteRelayStateStore {
             for (coordinatorKey, publicKey) in snapshot.coordinatorPinnedPublicKeys {
                 try insertCoordinatorPinnedPublicKey(coordinatorKey: coordinatorKey, publicKey: publicKey, in: db)
             }
+            try insertMeta(key: "realtime_runtime", value: encode(snapshot.realtimeRuntime), in: db)
             try insertMeta(key: currentSchemaKey, value: Data("1".utf8), in: db)
             try execute("COMMIT;", in: db)
         } catch {
@@ -1173,7 +1273,7 @@ private enum SQLiteRelayStateStore {
             let digest = try readText(statement, column: 0, in: db)
             records[digest] = try decode(
                 RendezvousRelayRouteRecordV2.self,
-                from: readBlob(statement, column: 1)
+                from: try readBlob(statement, column: 1)
             )
         }
         guard records.count <= 100_000 else {
@@ -1278,6 +1378,20 @@ private enum SQLiteRelayStateStore {
             try bindText(key, to: 1, in: statement, db: db)
             try bindBlob(value, to: 2, in: statement, db: db)
         }
+    }
+
+    private static func loadMetaValue(key: String, in db: OpaquePointer) throws -> Data? {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT value FROM \(metaTableName) WHERE key = ?1 LIMIT 1;", -1, &statement, nil) == SQLITE_OK else {
+            throw SQLiteRelayStateStoreError.prepare(lastError(in: db))
+        }
+        defer { sqlite3_finalize(statement) }
+        guard let statement else { return nil }
+        try bindText(key, to: 1, in: statement, db: db)
+        let step = sqlite3_step(statement)
+        if step == SQLITE_ROW { return try readBlob(statement, column: 0) }
+        if step == SQLITE_DONE { return nil }
+        throw SQLiteRelayStateStoreError.step(lastError(in: db))
     }
 
     private static func hasCurrentState(in db: OpaquePointer) throws -> Bool {

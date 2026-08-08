@@ -102,6 +102,14 @@ Keep configured message/line limits, route quota buckets, attachment TTLs,
 rendezvous expiry, federation record limits, and request timeouts as small as
 the product permits. Validate integer conversion and disk-pressure behavior.
 
+For the app-neutral modules, enforce the advertised capability registry at
+the edge: 512 KiB record/chunk ceilings, 256-record pages, 86,400-second
+realtime-route lifetimes, 100,000 shared-log records, 16 KiB presence payloads,
+5-to-120-second presence leases, and 32 MiB media blobs with 256 chunks and
+60-second-to-seven-day retention. Realtime routes and shared logs are not
+temporal-bucketed; do not silently apply the normal attachment bucket policy
+to them. Treat their timing as an explicit metadata tradeoff.
+
 Route sync is non-destructive but not permanent: expiry and bounded quota are
 the retention controls. The relay is not a history archive.
 
@@ -117,6 +125,14 @@ offload is enabled:
 - keep gateway/API timeouts and maximum fetch bytes bounded.
 
 Disable `nw.blobs` when attachments are not needed.
+
+`nw.media-blobs@1` is separate from `nw.blobs@1`. Enable it only when the
+application needs its create/upload/fetch/release lifecycle, keep the 32-byte
+blob capability confidential, and ensure every chunk is encrypted before it
+reaches the relay. Its metadata and chunks are durable under SQLite-backed
+operation and expire or release independently; it is not an IPFS anonymity
+feature. Presence leases are the exception: they are process-local and never
+enter the durable snapshot.
 
 ## Federation
 

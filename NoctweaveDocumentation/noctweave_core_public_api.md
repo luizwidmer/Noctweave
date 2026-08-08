@@ -103,6 +103,18 @@ Current relay information identifies exactly one topology role:
 `nw.net-passthrough@1`; a host role advertises `nw.net-host@1`. Standard
 Noctweave private delivery continues to use `nw.opaque-route@2`.
 
+Standard relays also expose the provisional app-neutral modules
+`nw.realtime-route@1`, `nw.shared-log@1`, `nw.ephemeral-presence@1`, and
+`nw.media-blobs@1` when their advertised capabilities and confidential
+transport requirements are satisfied. The corresponding `RelayRequest`
+factories and typed response bodies are available in `NoctweaveCore`. Realtime
+routes and shared logs are immediate rather than temporal-bucketed; presence
+is process-local; and media blobs are separate from legacy `nw.blobs@1`.
+Applications must keep all returned capability values secret and encrypt every
+payload before relay submission. See
+[`relay_collaboration_modules_v1.md`](relay_collaboration_modules_v1.md) for
+the exact operation fields, bounds, and persistence rules.
+
 Host uploads commit a client-generated release-capability digest and an
 idempotency key. Fetch responses contain exact bytes plus an Ed25519-signed
 `NoctweaveNetHostingReceipt`; callers must verify the receipt signature and

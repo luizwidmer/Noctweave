@@ -377,7 +377,8 @@ func requestRequiresConfidentialHTTPBridge(_ request: RelayRequest) -> Bool {
         return true
     }
     switch request.module {
-    case .opaqueRoute, .rendezvousTransport, .federationForward, .netPassthrough:
+    case .opaqueRoute, .rendezvousTransport, .federationForward, .netPassthrough,
+         .realtimeRoute, .sharedLog, .ephemeralPresence, .mediaBlobs:
         return true
     case .netHost:
         return request.method == .put || request.method == .release

@@ -121,6 +121,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
             retentionBucket: .sixHours,
             quotaBucket: .packets256
         ),
+        contentTypes: [ContentTypeCapabilityV2] = ProtocolCapabilityManifest.defaultContentTypes,
         expiresAt: Date,
         createdAt: Date = Date()
     ) throws -> PendingGroupAdmissionV2 {
@@ -138,6 +139,7 @@ public struct PendingGroupAdmissionV2: Codable, Equatable, Identifiable,
             memberHandle: memberHandle,
             groupSigningKey: signingKey,
             groupAgreementKey: agreementKey,
+            contentTypes: contentTypes,
             issuedAt: createdAt,
             expiresAt: expiresAt
         )

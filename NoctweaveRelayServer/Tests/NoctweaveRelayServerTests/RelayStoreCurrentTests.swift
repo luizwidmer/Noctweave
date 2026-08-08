@@ -304,6 +304,7 @@ final class RelayStoreCurrentTests: XCTestCase {
                 "version",
                 "rendezvousRoutesV2",
                 "opaqueRouteRuntimeV2",
+                "realtimeRuntime",
                 "attachments",
                 "federationNodes",
                 "coordinatorPinnedPublicKeys"

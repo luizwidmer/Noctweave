@@ -668,6 +668,7 @@ public actor HeadlessMessagingClient {
             retentionBucket: .sixHours,
             quotaBucket: .packets256
         ),
+        contentTypes: [ContentTypeCapabilityV2] = ProtocolCapabilityManifest.defaultContentTypes,
         createdAt: Date = Date()
     ) async throws -> HeadlessGroupCreationResultV2 {
         if !HeadlessTransactionContext.groupIDs.contains(groupID) {
@@ -678,6 +679,7 @@ public actor HeadlessMessagingClient {
                     permissions: permissions,
                     metadataDigest: metadataDigest,
                     policy: policy,
+                    contentTypes: contentTypes,
                     createdAt: createdAt
                 )
             }
@@ -693,6 +695,7 @@ public actor HeadlessMessagingClient {
             groupID: groupID,
             permissions: permissions,
             metadataDigest: metadataDigest,
+            contentTypes: contentTypes,
             createdAt: createdAt
         )
         try await withStateSaveLock {
@@ -739,6 +742,7 @@ public actor HeadlessMessagingClient {
             retentionBucket: .sixHours,
             quotaBucket: .packets256
         ),
+        contentTypes: [ContentTypeCapabilityV2] = ProtocolCapabilityManifest.defaultContentTypes,
         expiresAt: Date,
         createdAt: Date = Date()
     ) async throws -> HeadlessGroupAdmissionPreparationV2 {
@@ -749,6 +753,7 @@ public actor HeadlessMessagingClient {
                     invitationBindingDigest: invitationBindingDigest,
                     relay: relay,
                     policy: policy,
+                    contentTypes: contentTypes,
                     expiresAt: expiresAt,
                     createdAt: createdAt
                 )
@@ -767,6 +772,7 @@ public actor HeadlessMessagingClient {
             invitationBindingDigest: invitationBindingDigest,
             relay: relay,
             policy: policy,
+            contentTypes: contentTypes,
             expiresAt: expiresAt,
             createdAt: createdAt
         )
@@ -6347,6 +6353,7 @@ private func makeHeadlessGroupGenesisRecordV2(
     groupID: UUID,
     permissions: GroupPermissionPolicy,
     metadataDigest: Data?,
+    contentTypes: [ContentTypeCapabilityV2],
     createdAt: Date
 ) throws -> GroupRuntimeRecord {
     guard createdAt.timeIntervalSince1970.isFinite,
@@ -6361,6 +6368,7 @@ private func makeHeadlessGroupGenesisRecordV2(
         memberHandle: memberHandle,
         groupSigningKey: signingKey,
         groupAgreementKey: agreementKey,
+        contentTypes: contentTypes,
         issuedAt: createdAt,
         expiresAt: createdAt.addingTimeInterval(30 * 24 * 60 * 60)
     )

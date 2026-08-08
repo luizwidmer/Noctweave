@@ -41,6 +41,14 @@ use signed, quorum-verified namespace snapshots to map unique Noctweb suffixes
 to authenticated relay endpoints without making DHT or peer discovery an
 authority.
 
+Standard relays also advertise four provisional app-neutral modules for
+low-latency applications: `nw.realtime-route@1`, `nw.shared-log@1`,
+`nw.ephemeral-presence@1`, and `nw.media-blobs@1`. They accept only
+capability-authorized opaque payloads, use no configured temporal bucketing,
+and have module-specific retention and size bounds. `nw.media-blobs@1` is
+distinct from the legacy `nw.blobs@1` attachment surface. See the
+[collaboration module specification](NoctweaveDocumentation/relay_collaboration_modules_v1.md).
+
 There are no hosted accounts, developer-operated relays, or required central
 notification services. You choose where every component runs.
 
@@ -363,6 +371,7 @@ Technical detail lives in focused documents:
 - [Extension proposal and promotion process](NoctweaveDocumentation/noctweave_extension_process.md)
 - [Protocol specification](NoctweaveDocumentation/noctweave_protocol_spec_v1.md)
 - [Relay OpenAPI schema](NoctweaveDocumentation/noctweave_relay_openapi.yaml)
+- [App-neutral relay collaboration modules](NoctweaveDocumentation/relay_collaboration_modules_v1.md)
 - [Wire format and test vectors](NoctweaveDocumentation/wire_format_and_test_vectors.md)
 - [Core public API](NoctweaveDocumentation/noctweave_core_public_api.md)
 - [Experimental PQ group design](NoctweaveDocumentation/group_protocol_design.md)

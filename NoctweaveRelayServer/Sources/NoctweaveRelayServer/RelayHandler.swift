@@ -731,6 +731,70 @@ final class RelayHandler: ChannelInboundHandler {
             } catch {
                 return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error, respondingTo: request))
             }
+        case .createRealtimeRoute(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes require a standard relay and confidential transport.", code: .unavailable) }
+            do { return success(.realtimeRouteCreated(try store.createRealtimeRouteV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .appendRealtimeRoute(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes require a standard relay and confidential transport.", code: .unavailable) }
+            do { return success(.realtimeRouteAppend(try store.appendRealtimeRouteV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .subscribeRealtimeRoute(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes require a standard relay and confidential transport.", code: .unavailable) }
+            do { return success(.realtimeRouteSubscription(try store.subscribeRealtimeRouteV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .syncRealtimeRoute(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes require a standard relay and confidential transport.", code: .unavailable) }
+            do { return success(.realtimeRouteSync(try store.syncRealtimeRouteV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .unsubscribeRealtimeRoute(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes require a standard relay and confidential transport.", code: .unavailable) }
+            do { try store.unsubscribeRealtimeRouteV1(payload); return success(.empty) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .createSharedLog(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Shared logs require a standard relay and confidential transport.", code: .unavailable) }
+            do { return success(.sharedLogCreated(try store.createSharedLogV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .appendSharedLog(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Shared logs require a standard relay and confidential transport.", code: .unavailable) }
+            do { return success(.sharedLogAppend(try store.appendSharedLogV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .syncSharedLog(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Shared logs require a standard relay and confidential transport.", code: .unavailable) }
+            do { return success(.sharedLogSync(try store.syncSharedLogV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .acquirePresence(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases require a standard relay and confidential transport.", code: .unavailable) }
+            do { return success(.presenceLease(try store.acquirePresenceV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .renewPresence(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases require a standard relay and confidential transport.", code: .unavailable) }
+            do { return success(.presenceLease(try store.renewPresenceV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .releasePresence(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases require a standard relay and confidential transport.", code: .unavailable) }
+            do { try store.releasePresenceV1(payload); return success(.empty) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .listPresence(let payload):
+            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases require a standard relay and confidential transport.", code: .unavailable) }
+            do { return success(.presenceLeases(try store.listPresenceV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .createMediaBlob(let payload):
+            guard relayConfiguration.kind == .standard, relayConfiguration.attachmentsEnabled != false, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
+            do { return success(.mediaBlobCreated(try store.createMediaBlobV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .uploadMediaBlob(let payload):
+            guard relayConfiguration.kind == .standard, relayConfiguration.attachmentsEnabled != false, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
+            do { return success(.mediaBlobChunk(try store.uploadMediaBlobV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .fetchMediaBlob(let payload):
+            guard relayConfiguration.kind == .standard, relayConfiguration.attachmentsEnabled != false, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
+            do { return success(.mediaBlobChunk(try store.fetchMediaBlobV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .releaseMediaBlob(let payload):
+            guard relayConfiguration.kind == .standard, relayConfiguration.attachmentsEnabled != false, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
+            do { try store.releaseMediaBlobV1(payload); return success(.empty) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .empty:
             if request.method == .health {
                 return success(.empty)
@@ -1303,6 +1367,24 @@ final class RelayHandler: ChannelInboundHandler {
             return .error("Attachment blob backend unavailable", code: .unavailable, retryable: true, respondingTo: request)
         default:
             return .error("Store error", code: .internalFailure, retryable: true, respondingTo: request)
+        }
+    }
+
+    private func realtimeRelayErrorResponse(_ error: Error, respondingTo request: RelayRequest) -> RelayResponse {
+        guard let error = error as? RealtimeRelayRuntimeError else {
+            return .error("Realtime relay storage is unavailable", code: .unavailable, retryable: true, respondingTo: request)
+        }
+        switch error {
+        case .invalidRequest, .invalidCursor:
+            return .error("Invalid realtime relay request", respondingTo: request)
+        case .unauthorized:
+            return .error("Realtime relay capability rejected", code: .authenticationRequired, respondingTo: request)
+        case .unavailable, .expired:
+            return .error("Realtime relay resource is unavailable", code: .notFound, respondingTo: request)
+        case .conflict:
+            return .error("Realtime relay idempotency conflict", code: .conflict, respondingTo: request)
+        case .capacity:
+            return .error("Realtime relay capacity reached", code: .capacity, respondingTo: request)
         }
     }
 

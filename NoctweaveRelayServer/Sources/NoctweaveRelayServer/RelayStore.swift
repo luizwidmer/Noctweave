@@ -85,6 +85,7 @@ final class RelayStore {
     /// only digests of lane authorities; raw bearer material is never stored.
     private var rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:]
     private var opaqueRouteRuntimeV2 = OpaqueRouteRuntimeStateV2()
+    private var realtimeRuntime = RealtimeRelayRuntimeV1()
     private var attachments: [String: [AttachmentRecord]] = [:]
     private var federationNodes: [String: FederationNodeRecord] = [:]
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
@@ -177,6 +178,39 @@ final class RelayStore {
             try saveLocked()
         }
     }
+
+    func createRealtimeRouteV1(_ request: RealtimeRouteCreateRequestV1) throws -> RealtimeRouteCreatedV1 {
+        try performSync { let result = try realtimeRuntime.createRoute(request); try saveLocked(); return result }
+    }
+    func appendRealtimeRouteV1(_ request: RealtimeRouteAppendRequestV1) throws -> RealtimeRouteAppendReceiptV1 {
+        try performSync { let result = try realtimeRuntime.appendRoute(request); try saveLocked(); return result }
+    }
+    func subscribeRealtimeRouteV1(_ request: RealtimeRouteSubscribeRequestV1) throws -> RealtimeRouteSubscriptionV1 {
+        try performSync { let result = try realtimeRuntime.subscribe(request); try saveLocked(); return result }
+    }
+    func syncRealtimeRouteV1(_ request: RealtimeRouteSyncRequestV1) throws -> OpaqueRelaySyncBatchV1 {
+        try performSync { let result = try realtimeRuntime.syncRoute(request); try saveLocked(); return result }
+    }
+    func unsubscribeRealtimeRouteV1(_ request: RealtimeRouteUnsubscribeRequestV1) throws {
+        try performSync { try realtimeRuntime.unsubscribe(request); try saveLocked() }
+    }
+    func createSharedLogV1(_ request: SharedLogCreateRequestV1) throws -> SharedLogCreatedV1 {
+        try performSync { let result = try realtimeRuntime.createSharedLog(request); try saveLocked(); return result }
+    }
+    func appendSharedLogV1(_ request: SharedLogAppendRequestV1) throws -> SharedLogAppendReceiptV1 {
+        try performSync { let result = try realtimeRuntime.appendSharedLog(request); try saveLocked(); return result }
+    }
+    func syncSharedLogV1(_ request: SharedLogSyncRequestV1) throws -> OpaqueRelaySyncBatchV1 {
+        try performSync { let result = try realtimeRuntime.syncSharedLog(request); try saveLocked(); return result }
+    }
+    func acquirePresenceV1(_ request: PresenceLeaseAcquireRequestV1) throws -> PresenceLeaseV1 { try performSync { try realtimeRuntime.acquirePresence(request) } }
+    func renewPresenceV1(_ request: PresenceLeaseRenewRequestV1) throws -> PresenceLeaseV1 { try performSync { try realtimeRuntime.renewPresence(request) } }
+    func releasePresenceV1(_ request: PresenceLeaseReleaseRequestV1) throws { try performSync { try realtimeRuntime.releasePresence(request) } }
+    func listPresenceV1(_ request: PresenceLeaseListRequestV1) throws -> [PresenceLeaseV1] { try performSync { try realtimeRuntime.listPresence(request) } }
+    func createMediaBlobV1(_ request: MediaBlobCreateRequestV1) throws -> MediaBlobCreatedV1 { try performSync { let result = try realtimeRuntime.createMediaBlob(request); try saveLocked(); return result } }
+    func uploadMediaBlobV1(_ request: MediaBlobUploadRequestV1) throws -> MediaBlobChunkV1 { try performSync { let result = try realtimeRuntime.uploadMediaBlob(request); try saveLocked(); return result } }
+    func fetchMediaBlobV1(_ request: MediaBlobFetchRequestV1) throws -> MediaBlobChunkV1 { try performSync { try realtimeRuntime.fetchMediaBlob(request) } }
+    func releaseMediaBlobV1(_ request: MediaBlobReleaseRequestV1) throws { try performSync { try realtimeRuntime.releaseMediaBlob(request); try saveLocked() } }
 
     /// Deterministic persistence fault injection used by `@testable` regression
     /// tests. The counter is deliberately outside the durable snapshot so one
@@ -924,6 +958,7 @@ final class RelayStore {
     private func applySnapshot(_ snapshot: RelayStoreSnapshot) {
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
         opaqueRouteRuntimeV2 = snapshot.opaqueRouteRuntimeV2
+        realtimeRuntime.state = snapshot.realtimeRuntime
         attachments = snapshot.attachments
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
@@ -935,6 +970,7 @@ final class RelayStore {
     private func restoreSnapshot(_ snapshot: RelayStoreSnapshot) {
         rendezvousRoutesV2 = snapshot.rendezvousRoutesV2
         opaqueRouteRuntimeV2 = snapshot.opaqueRouteRuntimeV2
+        realtimeRuntime.state = snapshot.realtimeRuntime
         attachments = snapshot.attachments
         federationNodes = snapshot.federationNodes
         coordinatorPinnedPublicKeys = snapshot.coordinatorPinnedPublicKeys
@@ -944,6 +980,7 @@ final class RelayStore {
         RelayStoreSnapshot(
             rendezvousRoutesV2: rendezvousRoutesV2,
             opaqueRouteRuntimeV2: opaqueRouteRuntimeV2,
+            realtimeRuntime: realtimeRuntime.state,
             attachments: attachments,
             federationNodes: federationNodes,
             coordinatorPinnedPublicKeys: coordinatorPinnedPublicKeys
@@ -1512,6 +1549,7 @@ private struct RelayStoreSnapshot: Codable {
     let version: Int
     let rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2]
     let opaqueRouteRuntimeV2: OpaqueRouteRuntimeStateV2
+    let realtimeRuntime: RealtimeRelayRuntimeStateV1
     let attachments: [String: [AttachmentRecord]]
     let federationNodes: [String: FederationNodeRecord]
     let coordinatorPinnedPublicKeys: [String: Data]
@@ -1520,6 +1558,7 @@ private struct RelayStoreSnapshot: Codable {
         case version
         case rendezvousRoutesV2
         case opaqueRouteRuntimeV2
+        case realtimeRuntime
         case attachments
         case federationNodes
         case coordinatorPinnedPublicKeys
@@ -1529,6 +1568,7 @@ private struct RelayStoreSnapshot: Codable {
         version: schemaVersion,
         rendezvousRoutesV2: [:],
         opaqueRouteRuntimeV2: OpaqueRouteRuntimeStateV2(),
+        realtimeRuntime: RealtimeRelayRuntimeStateV1(),
         attachments: [:],
         federationNodes: [:],
         coordinatorPinnedPublicKeys: [:]
@@ -1538,6 +1578,7 @@ private struct RelayStoreSnapshot: Codable {
         version: Int = schemaVersion,
         rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2],
         opaqueRouteRuntimeV2: OpaqueRouteRuntimeStateV2,
+        realtimeRuntime: RealtimeRelayRuntimeStateV1,
         attachments: [String: [AttachmentRecord]],
         federationNodes: [String: FederationNodeRecord],
         coordinatorPinnedPublicKeys: [String: Data]
@@ -1545,6 +1586,7 @@ private struct RelayStoreSnapshot: Codable {
         self.version = version
         self.rendezvousRoutesV2 = rendezvousRoutesV2
         self.opaqueRouteRuntimeV2 = opaqueRouteRuntimeV2
+        self.realtimeRuntime = realtimeRuntime
         self.attachments = attachments
         self.federationNodes = federationNodes
         self.coordinatorPinnedPublicKeys = coordinatorPinnedPublicKeys
@@ -1583,6 +1625,7 @@ private struct RelayStoreSnapshot: Codable {
                 OpaqueRouteRuntimeStateV2.self,
                 forKey: .opaqueRouteRuntimeV2
             ),
+            realtimeRuntime: try values.decode(RealtimeRelayRuntimeStateV1.self, forKey: .realtimeRuntime),
             attachments: try values.decode(
                 [String: [AttachmentRecord]].self,
                 forKey: .attachments
@@ -1663,6 +1706,7 @@ private struct RelayStoreSnapshot: Codable {
         try values.encode(version, forKey: .version)
         try values.encode(rendezvousRoutesV2, forKey: .rendezvousRoutesV2)
         try values.encode(opaqueRouteRuntimeV2, forKey: .opaqueRouteRuntimeV2)
+        try values.encode(realtimeRuntime, forKey: .realtimeRuntime)
         try values.encode(attachments, forKey: .attachments)
         try values.encode(federationNodes, forKey: .federationNodes)
         try values.encode(coordinatorPinnedPublicKeys, forKey: .coordinatorPinnedPublicKeys)
@@ -1671,6 +1715,9 @@ private struct RelayStoreSnapshot: Codable {
     var isStructurallyValid: Bool {
         guard version == Self.schemaVersion,
               opaqueRouteRuntimeV2.isStructurallyValid,
+              realtimeRuntime.routes.count <= RealtimeRelayLimitsV1.maximumRealtimeRoutes,
+              realtimeRuntime.sharedLogs.count <= RealtimeRelayLimitsV1.maximumSharedLogs,
+              realtimeRuntime.mediaBlobs.count <= RealtimeRelayLimitsV1.maximumMediaBlobs,
               rendezvousRoutesV2.count
                 <= RelayStoreCurrentLimits.maximumRendezvousRouteRecords,
               rendezvousRoutesV2.values.lazy.filter({ $0.retiredAt == nil }).count

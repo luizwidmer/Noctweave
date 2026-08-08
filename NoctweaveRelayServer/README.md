@@ -29,6 +29,10 @@ Implemented modules:
 | `nw.opaque-route` | 2 | `create`, `renew`, `teardown`, `append`, `sync`, `commit` |
 | `nw.rendezvous-transport` | 2 | `register`, `append`, `sync`, `delete` |
 | `nw.blobs` | 1 | `upload`, `fetch` |
+| `nw.realtime-route` | 1 | `create`, `append`, `subscribe`, `sync`, `unsubscribe` |
+| `nw.shared-log` | 1 | `create`, `append`, `sync` |
+| `nw.ephemeral-presence` | 1 | `acquire`, `renew-lease`, `release`, `list` |
+| `nw.media-blobs` | 1 | `create`, `upload`, `fetch`, `release` |
 | `nw.federation` | 1 | `register`, `list`, `namespace`, `claim`, `rotate`, `release` |
 | `nw.federation-forward` | 1 | `forward`, `deliver`, `get`, `resolve` |
 | `nw.open-discovery` | 1 | `publish-dht`, `list-dht` (experimental; open discovery only) |
@@ -41,6 +45,13 @@ advertise `nw.net-host@1` with `--net-host-enabled true`; this is capability
 co-location, not a fourth topology role. `info` advertises the exact enabled
 surface. Legacy federation-era kind strings remain decode-compatible but are
 rejected for new server startup.
+
+The four app-neutral collaboration modules above are standard-relay
+capabilities and require confidential transport; they are not advertised by
+passthrough or host roles. See
+[`relay_collaboration_modules_v1.md`](../NoctweaveDocumentation/relay_collaboration_modules_v1.md)
+for exact request fields, limits, persistence behavior, capability handling,
+and the distinction between `nw.blobs@1` and `nw.media-blobs@1`.
 
 ## Build and test
 
@@ -363,6 +374,21 @@ immutable while retained:
 
 The relay persists the key and canonical body digest only to enforce this
 retry boundary. It never receives attachment plaintext or its content key.
+
+## App-neutral realtime modules
+
+`nw.realtime-route@1` and `nw.shared-log@1` store ordered opaque records;
+realtime routes are short-lived and intentionally bypass the configured
+temporal-bucket schedule. `nw.ephemeral-presence@1` stores only expiring
+process-local leases and is never included in the durable SQLite snapshot.
+`nw.media-blobs@1` is the newer bounded encrypted-chunk lifecycle for
+application media and is persisted with the relay snapshot; it is not an
+alias for the legacy `nw.blobs@1` attachment API. All payloads must already be
+encrypted by the application and all capability values must remain secret.
+
+The modules are enabled only on a standard relay, with attachments enabled for
+media blobs. Their precise bounds and operation fields are maintained in the
+[module specification](../NoctweaveDocumentation/relay_collaboration_modules_v1.md).
 
 ## Federation
 

@@ -20,6 +20,44 @@ enum OpaqueRouteRelayCapabilityLimitsV2 {
     ]
 }
 
+enum RealtimeRelayCapabilityLimitsV1 {
+    static let registry: [String: UInt64] = [
+        "maxRecordBytes": UInt64(RealtimeRelayLimitsV1.maximumRecordBytes),
+        "maxPage": UInt64(RealtimeRelayLimitsV1.maximumRecordsPerPage),
+        "maxRecords": UInt64(RealtimeRelayLimitsV1.maximumRealtimeRecords),
+        "maxLifetimeSeconds": UInt64(RealtimeRelayLimitsV1.maximumRealtimeLifetime),
+        "immediate": 1
+    ]
+}
+
+enum SharedLogRelayCapabilityLimitsV1 {
+    static let registry: [String: UInt64] = [
+        "maxRecordBytes": UInt64(RealtimeRelayLimitsV1.maximumRecordBytes),
+        "maxPage": UInt64(RealtimeRelayLimitsV1.maximumRecordsPerPage),
+        "maxRecords": UInt64(RealtimeRelayLimitsV1.maximumSharedLogRecords),
+        "maxRetentionSeconds": UInt64(RealtimeRelayLimitsV1.maximumSharedLogLifetime)
+    ]
+}
+
+enum PresenceRelayCapabilityLimitsV1 {
+    static let registry: [String: UInt64] = [
+        "maxPayloadBytes": UInt64(RealtimeRelayLimitsV1.maximumPresencePayloadBytes),
+        "minLeaseSeconds": UInt64(RealtimeRelayLimitsV1.minimumPresenceLeaseSeconds),
+        "maxLeaseSeconds": UInt64(RealtimeRelayLimitsV1.maximumPresenceLeaseSeconds)
+    ]
+}
+
+enum MediaBlobRelayCapabilityLimitsV1 {
+    static let registry: [String: UInt64] = [
+        "maxChunkBytes": UInt64(RealtimeRelayLimitsV1.maximumMediaBlobChunkBytes),
+        "maxChunks": UInt64(RealtimeRelayLimitsV1.maximumMediaBlobChunks),
+        "maxBlobBytes": UInt64(RealtimeRelayLimitsV1.maximumMediaBlobBytes),
+        "minRetentionSeconds": UInt64(RealtimeRelayLimitsV1.minimumMediaRetentionSeconds),
+        "maxRetentionSeconds": UInt64(RealtimeRelayLimitsV1.maximumMediaRetentionSeconds),
+        "requiresCapability": 1
+    ]
+}
+
 enum RelayCapabilityStatusV2: String, Codable, Equatable, CaseIterable {
     case experimental
     case provisional
@@ -293,6 +331,10 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                 )
             )
         }
+        modules.append(RelayModuleCapabilityV2(module: "nw.realtime-route", versions: [1], status: .provisional, limits: RealtimeRelayCapabilityLimitsV1.registry))
+        modules.append(RelayModuleCapabilityV2(module: "nw.shared-log", versions: [1], status: .provisional, limits: SharedLogRelayCapabilityLimitsV1.registry))
+        modules.append(RelayModuleCapabilityV2(module: "nw.ephemeral-presence", versions: [1], status: .provisional, limits: PresenceRelayCapabilityLimitsV1.registry))
+        modules.append(RelayModuleCapabilityV2(module: "nw.media-blobs", versions: [1], status: .provisional, limits: MediaBlobRelayCapabilityLimitsV1.registry))
         return RelayCapabilityManifestV2(modules: modules)
     }
 }

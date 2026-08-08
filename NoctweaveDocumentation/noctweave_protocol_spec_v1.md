@@ -11,7 +11,7 @@ Noctweave 1.0 defines:
 - typed encrypted direct events and controls;
 - experimental one-to-one call signaling and application-layer media protection;
 - opaque relay routes with ordered cursor synchronization;
-- encrypted attachments;
+- encrypted attachments and app-neutral realtime collaboration stores;
 - an experimental group profile;
 - explicit relay federation modules;
 - experimental route-scoped wake and privacy research extensions.
@@ -379,6 +379,10 @@ Current bindings are:
 | `nw.opaque-route` | 2 | provisional | `create`, `renew`, `teardown`, `append`, `sync`, `commit` |
 | `nw.rendezvous-transport` | 2 | provisional | `register`, `append`, `sync`, `delete` |
 | `nw.blobs` | 1 | provisional | `upload`, `fetch` |
+| `nw.realtime-route` | 1 | provisional | `create`, `append`, `subscribe`, `sync`, `unsubscribe` |
+| `nw.shared-log` | 1 | provisional | `create`, `append`, `sync` |
+| `nw.ephemeral-presence` | 1 | provisional | `acquire`, `renew-lease`, `release`, `list` |
+| `nw.media-blobs` | 1 | provisional | `create`, `upload`, `fetch`, `release` |
 | `nw.federation` | 1 | provisional | `register`, `list`, `namespace`, `claim`, `rotate`, `release` |
 | `nw.federation-forward` | 1 | provisional | `forward`, `deliver`, `get`, `resolve` |
 | `nw.open-discovery` | 1 | experimental | `publish-dht`, `list-dht` (advertised only when enabled) |
@@ -409,11 +413,25 @@ The direct client profile advertises provisional `nw.core` version 2 and
 The OpenAPI document defines HTTP transport details. TCP and WebSocket carry
 the same protocol objects.
 
+The four app-neutral modules are standard-relay-only and require confidential
+transport. Their exact request fields and current bounds are specified in
+[`relay_collaboration_modules_v1.md`](relay_collaboration_modules_v1.md).
+Realtime routes and shared logs bypass the relay's configured temporal-bucket
+schedule; `nw.ephemeral-presence@1` is process-local and ephemeral; and
+`nw.media-blobs@1` has its own retention policy. These modules do not replace
+or alias the legacy `nw.blobs@1` attachment module.
+
 ## 11. Attachments
 
 Attachments are encrypted client-side under a random content key. Relays store
 bounded ciphertext chunks and a ciphertext manifest. The event carries the
 descriptor and wrapped content key inside the direct or group ciphertext.
+
+The legacy `nw.blobs@1` upload/fetch surface remains distinct from
+`nw.media-blobs@1`. The latter is a generic capability-authorized encrypted
+chunk store with explicit create, upload, fetch, and release operations. See
+the module specification for its 512 KiB chunk, 256-chunk, 32 MiB total, and
+60-second-to-seven-day retention bounds.
 
 Every chunk upload includes a 32-byte idempotency key. The client persists the
 exact upload request and its domain-separated canonical body digest before

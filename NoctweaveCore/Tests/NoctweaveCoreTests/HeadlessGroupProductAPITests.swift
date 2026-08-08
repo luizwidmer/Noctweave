@@ -3,6 +3,59 @@ import XCTest
 @testable import NoctweaveCore
 
 final class HeadlessGroupProductAPITests: XCTestCase {
+    func testCustomApplicationContentCapabilityIsPreparedForCreatorsAndJoiners() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "noctweave-group-custom-content-\(UUID().uuidString)"
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let port = UInt16.random(in: 40_000...57_000)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+        let server = RelayServer(
+            store: RelayStore(),
+            opaqueRouteStore: OpaqueRouteRelayStoreV2()
+        )
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let custom = ContentTypeCapabilityV2(
+            authority: "org.example.community",
+            name: "event",
+            majorVersions: [1]
+        )
+        let capabilities = ProtocolCapabilityManifest.defaultContentTypes + [custom]
+        let owner = try await HeadlessMessagingClient.open(
+            stateStore: ClientStateStore(
+                fileURL: root.appendingPathComponent("owner.json"),
+                protection: .insecurePlaintextForTesting
+            ),
+            displayName: "owner"
+        )
+        let created = try await owner.createGroup(
+            relay: endpoint,
+            contentTypes: capabilities
+        )
+        XCTAssertTrue(created.signedState.activeCredentials.allSatisfy {
+            $0.contentTypes.contains(custom)
+        })
+
+        let joiner = try await HeadlessMessagingClient.open(
+            stateStore: ClientStateStore(
+                fileURL: root.appendingPathComponent("joiner.json"),
+                protection: .insecurePlaintextForTesting
+            ),
+            displayName: "joiner"
+        )
+        let prepared = try await joiner.prepareGroupAdmission(
+            groupID: created.groupID,
+            invitationBindingDigest: Data(repeating: 0xA9, count: 32),
+            relay: endpoint,
+            contentTypes: capabilities,
+            expiresAt: Date().addingTimeInterval(3_600)
+        )
+        XCTAssertTrue(prepared.admission.contentTypes.contains(custom))
+    }
+
     func testCreateInviteJoinSendAndMaintainWithoutManualRuntimeRecords() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "noctweave-group-product-api-\(UUID().uuidString)"

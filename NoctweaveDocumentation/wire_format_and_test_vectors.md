@@ -67,8 +67,21 @@ Implemented relay modules are:
 | `nw.opaque-route` | 2 | route lifecycle, append, sync, cursor commit |
 | `nw.rendezvous-transport` | 2 | bounded one-use contact transport |
 | `nw.blobs` | 1 | encrypted attachment chunks |
+| `nw.realtime-route` | 1 | immediate ordered opaque records for short-lived realtime state |
+| `nw.shared-log` | 1 | retained ordered opaque records |
+| `nw.ephemeral-presence` | 1 | expiring opaque presence leases |
+| `nw.media-blobs` | 1 | capability-authorized encrypted media chunks |
 | `nw.federation` | 1 | explicit operator federation operations |
 | `nw.open-discovery` | 1 | experimental bounded signed relay discovery |
+
+The four app-neutral modules use the same exact envelope and are provisional.
+They require a standard relay and confidential transport. Their operation
+objects are strictly typed in the Swift wire model; payload fields are opaque
+`Data` and are not interpreted by the relay. See
+[`relay_collaboration_modules_v1.md`](relay_collaboration_modules_v1.md) for
+the exact operation fields and bounds. Their realtime paths are immediate and
+do not use configured temporal buckets. `nw.blobs@1` remains the legacy,
+bucket-aware attachment surface.
 
 ## Pairing invitation boundary
 
