@@ -17,6 +17,7 @@ xcuserdata/
 Packages/
 Package.resolved
 .clang-module-cache/
+.swiftpm-module-cache/
 
 # Local logs and scratch output
 .research/
