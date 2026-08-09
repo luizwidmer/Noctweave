@@ -48,6 +48,10 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.css.contains("input:not([type=\"checkbox\"]),select{height:46px"))
         XCTAssertTrue(OperatorWebUI.css.contains("overflow-x:hidden"))
         XCTAssertTrue(OperatorWebUI.css.contains("flex:1 1 0;min-width:0"))
+        XCTAssertTrue(OperatorWebUI.html.contains("Three steps to a usable relay"))
+        XCTAssertTrue(OperatorWebUI.html.contains("data-jump-view=\"general\""))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("function showView(view)"))
+        XCTAssertTrue(OperatorWebUI.css.contains(".quickActions"))
     }
 
     func testOperatorShellProvidesPersistedAppearanceAndSemanticThemeTokens() {

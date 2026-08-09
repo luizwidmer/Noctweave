@@ -182,7 +182,7 @@ final class StableResponseExactModelsTests: XCTestCase {
         XCTAssertEqual(Set(object.keys), Self.relayInfoKeys)
         for key in [
             "temporalBucketScheduleSeconds", "attachmentStorageBackend",
-            "hiddenRetrieval", "onionTransport", "mixnetTransport", "wakeSupport",
+            "hiddenRetrieval", "onionTransport", "mixnetTransport", "wakeSupport", "iceService",
             "relayName", "operatorNote", "softwareVersion",
             "federationCoordinatorEndpoints", "coordinatorReportedRelayCount",
             "coordinatorRegistrationAuthRequired", "curatedStrictPolicyEnabled",
@@ -267,7 +267,7 @@ final class StableResponseExactModelsTests: XCTestCase {
         "kind", "federation", "temporalBucketSeconds", "temporalBucketScheduleSeconds",
         "attachmentDefaultTTLSeconds", "attachmentMaxTTLSeconds", "attachmentsEnabled",
         "attachmentStorageBackend", "hiddenRetrieval", "onionTransport", "mixnetTransport",
-        "wakeSupport", "relayName", "operatorNote", "softwareVersion",
+        "wakeSupport", "iceService", "relayName", "operatorNote", "softwareVersion",
         "protocolCapabilities", "requiresPassword", "tlsEnabled", "transport",
         "federationCoordinatorEndpoints", "coordinatorReportedRelayCount",
         "coordinatorRegistrationAuthRequired", "curatedStrictPolicyEnabled",
