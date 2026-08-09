@@ -218,7 +218,11 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         rendezvousTransportEnabled: Bool = false,
         federationForwardingEnabled: Bool = false,
         netHostEnabled: Bool = false,
-        iceServiceEnabled: Bool = false
+        iceServiceEnabled: Bool = false,
+        realtimeRoutesEnabled: Bool = true,
+        sharedLogsEnabled: Bool = true,
+        ephemeralPresenceEnabled: Bool = true,
+        mediaBlobsEnabled: Bool = true
     ) -> RelayCapabilityManifestV2 {
         var modules = [
             RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .provisional)
@@ -260,10 +264,18 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
                 limits: OpaqueRouteRelayCapabilityLimitsV2.registry
             )
         )
-        modules.append(RelayModuleCapabilityV2(module: "nw.realtime-route", versions: [1], status: .provisional, limits: RealtimeRelayCapabilityLimitsV1.registry))
-        modules.append(RelayModuleCapabilityV2(module: "nw.shared-log", versions: [1], status: .provisional, limits: SharedLogRelayCapabilityLimitsV1.registry))
-        modules.append(RelayModuleCapabilityV2(module: "nw.ephemeral-presence", versions: [1], status: .provisional, limits: PresenceRelayCapabilityLimitsV1.registry))
-        modules.append(RelayModuleCapabilityV2(module: "nw.media-blobs", versions: [1], status: .provisional, limits: MediaBlobRelayCapabilityLimitsV1.registry))
+        if relayKind == .standard, realtimeRoutesEnabled {
+            modules.append(RelayModuleCapabilityV2(module: "nw.realtime-route", versions: [1], status: .provisional, limits: RealtimeRelayCapabilityLimitsV1.registry))
+        }
+        if relayKind == .standard, sharedLogsEnabled {
+            modules.append(RelayModuleCapabilityV2(module: "nw.shared-log", versions: [1], status: .provisional, limits: SharedLogRelayCapabilityLimitsV1.registry))
+        }
+        if relayKind == .standard, ephemeralPresenceEnabled {
+            modules.append(RelayModuleCapabilityV2(module: "nw.ephemeral-presence", versions: [1], status: .provisional, limits: PresenceRelayCapabilityLimitsV1.registry))
+        }
+        if relayKind == .standard, mediaBlobsEnabled {
+            modules.append(RelayModuleCapabilityV2(module: "nw.media-blobs", versions: [1], status: .provisional, limits: MediaBlobRelayCapabilityLimitsV1.registry))
+        }
         if iceServiceEnabled {
             modules.append(
                 RelayModuleCapabilityV2(

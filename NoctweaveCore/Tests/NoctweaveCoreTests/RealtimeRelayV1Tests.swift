@@ -171,4 +171,39 @@ final class RealtimeRelayV1Tests: XCTestCase {
         XCTAssertTrue(encoded.contains(Data("nw.realtime-route".utf8)))
         XCTAssertTrue(encoded.contains(Data("request".utf8)))
     }
+
+    func testDisabledRealtimeRoutePolicyRejectsRuntimeRequests() async throws {
+        let configuration = RelayConfiguration(realtimeRoutesEnabled: false)
+        let server = RelayServer(
+            store: RelayStore(),
+            configuration: configuration
+        )
+        let port = UInt16.random(in: 50_100...51_000)
+        let started = expectation(description: "policy relay started")
+        server.onEvent = { event in
+            if case .started = event { started.fulfill() }
+        }
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 2)
+
+        let response = try await RelayClient(
+            endpoint: RelayEndpoint(host: "127.0.0.1", port: port)
+        ).send(.createRealtimeRouteV1(
+            RealtimeRouteCreateRequestV1(
+                routeCapability: capability(),
+                appendCapability: capability(),
+                readCapability: capability(),
+                expiresAt: Date(
+                    timeIntervalSince1970: floor(Date().timeIntervalSince1970)
+                ).addingTimeInterval(3_600)
+            )
+        ))
+
+        XCTAssertEqual(response.status, .error)
+        XCTAssertEqual(
+            response.error?.message,
+            "Realtime routes are disabled or require a standard relay and confidential transport."
+        )
+    }
 }

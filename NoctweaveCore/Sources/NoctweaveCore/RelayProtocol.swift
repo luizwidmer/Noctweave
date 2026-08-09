@@ -842,6 +842,12 @@ public struct RelayConfiguration: Codable, Equatable {
     public var mixnetTransport: MixnetTransportSupport?
     public var wakeSupport: DecentralizedWakeSupport?
     public var iceService: RelayICEServiceDescriptorV1?
+    /// Application-neutral low-latency service policy. Optional storage keeps
+    /// older encoded relay configurations compatible; nil means enabled.
+    public var realtimeRoutesEnabled: Bool?
+    public var sharedLogsEnabled: Bool?
+    public var ephemeralPresenceEnabled: Bool?
+    public var mediaBlobsEnabled: Bool?
     public var relayName: String?
     public var operatorNote: String?
     public var softwareVersion: String?
@@ -890,6 +896,10 @@ public struct RelayConfiguration: Codable, Equatable {
         mixnetTransport: MixnetTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
         iceService: RelayICEServiceDescriptorV1? = nil,
+        realtimeRoutesEnabled: Bool = true,
+        sharedLogsEnabled: Bool = true,
+        ephemeralPresenceEnabled: Bool = true,
+        mediaBlobsEnabled: Bool = true,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -948,6 +958,10 @@ public struct RelayConfiguration: Codable, Equatable {
         self.mixnetTransport = mixnetTransport
         self.wakeSupport = wakeSupport
         self.iceService = iceService?.isStructurallyValid == true ? iceService : nil
+        self.realtimeRoutesEnabled = realtimeRoutesEnabled ? nil : false
+        self.sharedLogsEnabled = sharedLogsEnabled ? nil : false
+        self.ephemeralPresenceEnabled = ephemeralPresenceEnabled ? nil : false
+        self.mediaBlobsEnabled = mediaBlobsEnabled ? nil : false
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -989,6 +1003,24 @@ public struct RelayConfiguration: Codable, Equatable {
 
     public var isNetHostEnabled: Bool {
         kind == .host || netHostEnabled == true
+    }
+
+    public var areRealtimeRoutesEnabled: Bool {
+        kind == .standard && realtimeRoutesEnabled != false
+    }
+
+    public var areSharedLogsEnabled: Bool {
+        kind == .standard && sharedLogsEnabled != false
+    }
+
+    public var isEphemeralPresenceEnabled: Bool {
+        kind == .standard && ephemeralPresenceEnabled != false
+    }
+
+    public var areMediaBlobsEnabled: Bool {
+        kind == .standard
+            && attachmentsEnabled != false
+            && mediaBlobsEnabled != false
     }
 
     public var transportConfidentiality: RelayTransportConfidentialityConfiguration {
@@ -1039,7 +1071,11 @@ public struct RelayConfiguration: Codable, Equatable {
                 rendezvousTransportEnabled: isRendezvousTransportEnabled,
                 federationForwardingEnabled: kind == .standard && federation.mode != .solo,
                 netHostEnabled: isNetHostEnabled,
-                iceServiceEnabled: iceService != nil
+                iceServiceEnabled: iceService != nil,
+                realtimeRoutesEnabled: areRealtimeRoutesEnabled,
+                sharedLogsEnabled: areSharedLogsEnabled,
+                ephemeralPresenceEnabled: isEphemeralPresenceEnabled,
+                mediaBlobsEnabled: areMediaBlobsEnabled
             ),
             requiresPassword: requiresPassword,
             tlsEnabled: advertisedTLSEnabled ?? tlsEnabled,

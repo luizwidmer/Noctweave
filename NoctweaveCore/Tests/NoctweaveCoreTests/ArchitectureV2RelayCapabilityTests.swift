@@ -27,6 +27,7 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
         )
         XCTAssertFalse(manifest.supports(module: "nw.prekeys", version: 1))
         XCTAssertFalse(manifest.modules.contains { $0.module == "nw.blobs" })
+        XCTAssertFalse(manifest.modules.contains { $0.module == "nw.media-blobs" })
         XCTAssertFalse(manifest.modules.contains { $0.module == "nw.groups" })
         XCTAssertFalse(manifest.modules.contains { $0.module == "nw.wake" })
         XCTAssertFalse(manifest.modules.contains { $0.module == "nw.open-discovery" })
@@ -36,6 +37,37 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
             from: NoctweaveCoder.encode(info, sortedKeys: true)
         )
         XCTAssertEqual(roundTrip.protocolCapabilities, manifest)
+    }
+
+    func testRealtimeServicePolicyControlsCapabilityAdvertisement() throws {
+        let configuration = RelayConfiguration(
+            realtimeRoutesEnabled: false,
+            sharedLogsEnabled: false,
+            ephemeralPresenceEnabled: false,
+            mediaBlobsEnabled: false
+        )
+        let manifest = try XCTUnwrap(
+            configuration.makeInfo().protocolCapabilities
+        )
+
+        XCTAssertFalse(configuration.areRealtimeRoutesEnabled)
+        XCTAssertFalse(configuration.areSharedLogsEnabled)
+        XCTAssertFalse(configuration.isEphemeralPresenceEnabled)
+        XCTAssertFalse(configuration.areMediaBlobsEnabled)
+        for module in [
+            "nw.realtime-route",
+            "nw.shared-log",
+            "nw.ephemeral-presence",
+            "nw.media-blobs"
+        ] {
+            XCTAssertFalse(manifest.supports(module: module, version: 1))
+        }
+
+        let defaults = RelayConfiguration()
+        XCTAssertTrue(defaults.areRealtimeRoutesEnabled)
+        XCTAssertTrue(defaults.areSharedLogsEnabled)
+        XCTAssertTrue(defaults.isEphemeralPresenceEnabled)
+        XCTAssertTrue(defaults.areMediaBlobsEnabled)
     }
 
     func testOpaqueRouteCapabilityRegistryIsCanonicalAndComplete() throws {
