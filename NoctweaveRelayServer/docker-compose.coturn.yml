@@ -1,0 +1,55 @@
+services:
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9339"
+      - --http-port
+      - "9340"
+      - --admin-port
+      - "9090"
+      - --data-dir
+      - /data
+      - --advertised-endpoint
+      - ${RELAY_PUBLIC_URL:?set RELAY_PUBLIC_URL in .env}
+      - --trusted-reverse-proxy-tls
+      - "true"
+    environment:
+      NOCTWEAVE_ADMIN_TOKEN: ${NOCTWEAVE_ADMIN_TOKEN:?set NOCTWEAVE_ADMIN_TOKEN in .env}
+      NOCTWEAVE_ICE_URLS: stun:${TURN_DOMAIN:?set TURN_DOMAIN in .env}:3478,turn:${TURN_DOMAIN}:3478?transport=udp,turn:${TURN_DOMAIN}:3478?transport=tcp
+      NOCTWEAVE_TURN_REALM: ${TURN_REALM:-noctweave}
+      NOCTWEAVE_TURN_SHARED_SECRET: ${NOCTWEAVE_TURN_SHARED_SECRET:?set NOCTWEAVE_TURN_SHARED_SECRET in .env}
+      NOCTWEAVE_TURN_CREDENTIAL_TTL_SECONDS: ${NOCTWEAVE_TURN_CREDENTIAL_TTL_SECONDS:-600}
+    volumes:
+      - relay-data:/data
+    ports:
+      - "127.0.0.1:9339:9339"
+      - "127.0.0.1:9340:9340"
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+
+  coturn:
+    image: coturn/coturn:4.15.0-r0-alpine
+    entrypoint: ["/bin/sh", "/opt/noctweave/entrypoint.sh"]
+    environment:
+      NOCTWEAVE_TURN_SHARED_SECRET: ${NOCTWEAVE_TURN_SHARED_SECRET:?set NOCTWEAVE_TURN_SHARED_SECRET in .env}
+      TURN_REALM: ${TURN_REALM:-noctweave}
+      TURN_EXTERNAL_IP: ${TURN_EXTERNAL_IP:-}
+      TURN_MIN_PORT: ${TURN_MIN_PORT:-49160}
+      TURN_MAX_PORT: ${TURN_MAX_PORT:-49200}
+    volumes:
+      - ./coturn/entrypoint.sh:/opt/noctweave/entrypoint.sh:ro
+    tmpfs:
+      - /var/lib/coturn:size=16m,mode=0700
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}:${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}/udp"
+    restart: unless-stopped
+
+volumes:
+  relay-data:

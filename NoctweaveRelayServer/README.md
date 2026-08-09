@@ -33,6 +33,7 @@ Implemented modules:
 | `nw.shared-log` | 1 | `create`, `append`, `sync` |
 | `nw.ephemeral-presence` | 1 | `acquire`, `renew-lease`, `release`, `list` |
 | `nw.media-blobs` | 1 | `create`, `upload`, `fetch`, `release` |
+| `nw.ice-service` | 1 | `acquire` |
 | `nw.federation` | 1 | `register`, `list`, `namespace`, `claim`, `rotate`, `release` |
 | `nw.federation-forward` | 1 | `forward`, `deliver`, `get`, `resolve` |
 | `nw.open-discovery` | 1 | `publish-dht`, `list-dht` (experimental; open discovery only) |
@@ -241,6 +242,44 @@ See
 [`federation_protocol_and_operations.md`](../NoctweaveDocumentation/federation_protocol_and_operations.md)
 for trust modes, quorum behavior, lifecycle rules, and security boundaries.
 
+## Calls through coturn
+
+Noctweave relays can advertise an external [coturn](https://github.com/coturn/coturn)
+service. The relay remains the authenticated control plane: `info` publishes
+canonical STUN/TURN URLs and `nw.ice-service@1 acquire` returns a short-lived
+TURN REST username and credential. coturn carries the actual UDP/TCP media
+traffic. The shared secret is never returned by the operator API or stored in
+`operator-config.json`.
+
+For a complete relay plus coturn deployment:
+
+```sh
+cd NoctweaveRelayServer
+cp .env.coturn.example .env
+openssl rand -hex 32  # copy to NOCTWEAVE_TURN_SHARED_SECRET
+docker compose --env-file .env -f docker-compose.coturn.yml up -d --build
+```
+
+Set `TURN_DOMAIN` to a public DNS name and `TURN_EXTERNAL_IP` to the public IP
+that reaches this host. Open TCP/UDP 3478 and the configured UDP relay range
+(49160–49200 by default). The relay's HTTP ports are loopback-bound for a local
+TLS reverse proxy. Ordinary HTTP proxying does not carry TURN; expose TURN
+ports directly or use a TURN-aware layer-4 deployment.
+
+For a separately managed coturn instance, configure the relay with:
+
+```sh
+export NOCTWEAVE_ICE_URLS='stun:turn.example.org:3478,turn:turn.example.org:3478?transport=udp,turn:turn.example.org:3478?transport=tcp'
+export NOCTWEAVE_TURN_REALM='noctweave'
+export NOCTWEAVE_TURN_SHARED_SECRET="$(openssl rand -hex 32)"
+```
+
+Use that exact shared secret as coturn's `static-auth-secret` with
+`use-auth-secret`. Credential acquisition is rejected over untrusted plaintext
+transport. HMAC-SHA1 is used only because the TURN REST convention requires
+it; Noctweave identities, sessions, messages, and calls retain their existing
+post-quantum and AEAD profiles.
+
 ## Docker
 
 ```sh
@@ -447,6 +486,7 @@ Prefer environment variables:
 - `NOCTWEAVE_ADMIN_TOKEN`
 - `NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN`
 - `NOCTWEAVE_COORDINATOR_SIGNING_KEY`
+- `NOCTWEAVE_TURN_SHARED_SECRET`
 
 Keep each role separate and rotate it independently.
 

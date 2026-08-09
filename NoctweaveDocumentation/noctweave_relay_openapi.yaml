@@ -80,6 +80,7 @@ components:
         - oneOf:
             - $ref: "#/components/schemas/CoreHealthRequestBinding"
             - $ref: "#/components/schemas/CoreInfoRequestBinding"
+            - $ref: "#/components/schemas/ICECredentialRequestBinding"
             - $ref: "#/components/schemas/OpaqueRouteCreateRequestBinding"
             - $ref: "#/components/schemas/OpaqueRouteRenewRequestBinding"
             - $ref: "#/components/schemas/OpaqueRouteTeardownRequestBinding"
@@ -118,6 +119,7 @@ components:
         - nw.opaque-route
         - nw.rendezvous-transport
         - nw.blobs
+        - nw.ice-service
         - nw.federation
         - nw.federation-forward
         - nw.open-discovery
@@ -125,7 +127,7 @@ components:
         - nw.net-host
     RelayMethodID:
       type: string
-      enum: [health, info, create, renew, teardown, append, sync, commit, register, delete, upload, fetch, list, namespace, claim, rotate, publish-dht, list-dht, forward, deliver, put, bind, get, resolve, has, release]
+      enum: [health, info, create, renew, teardown, append, sync, commit, register, delete, upload, fetch, list, namespace, claim, rotate, publish-dht, list-dht, forward, deliver, put, bind, get, resolve, has, release, acquire]
     RelayResponse:
       type: object
       description: |
@@ -151,6 +153,7 @@ components:
           oneOf:
             - $ref: "#/components/schemas/EmptyBody"
             - $ref: "#/components/schemas/RelayInfoSuccessBody"
+            - $ref: "#/components/schemas/ICECredentialsSuccessBody"
             - $ref: "#/components/schemas/OpaqueRouteSuccessBody"
             - $ref: "#/components/schemas/OpaqueRouteAppendSuccessBody"
             - $ref: "#/components/schemas/OpaqueRouteSyncSuccessBody"
@@ -183,6 +186,7 @@ components:
               oneOf:
                 - $ref: "#/components/schemas/EmptyBody"
                 - $ref: "#/components/schemas/RelayInfoSuccessBody"
+                - $ref: "#/components/schemas/ICECredentialsSuccessBody"
                 - $ref: "#/components/schemas/OpaqueRouteSuccessBody"
                 - $ref: "#/components/schemas/OpaqueRouteAppendSuccessBody"
                 - $ref: "#/components/schemas/OpaqueRouteSyncSuccessBody"
@@ -251,6 +255,13 @@ components:
         version: { const: 2 }
         method: { const: info }
         body: { $ref: "#/components/schemas/EmptyBody" }
+    ICECredentialRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.ice-service }
+        version: { const: 1 }
+        method: { const: acquire }
+        body: { $ref: "#/components/schemas/ICECredentialRequestBody" }
     OpaqueRouteCreateRequestBinding:
       type: object
       properties:
@@ -473,6 +484,12 @@ components:
       required: [relayInfo]
       properties:
         relayInfo: { $ref: "#/components/schemas/RelayInfo" }
+      additionalProperties: false
+    ICECredentialsSuccessBody:
+      type: object
+      required: [credentials]
+      properties:
+        credentials: { $ref: "#/components/schemas/RelayICECredentialsV1" }
       additionalProperties: false
     OpaqueRouteSuccessBody:
       type: object
@@ -1909,6 +1926,79 @@ components:
             mode: { const: longPoll }
             longPollTimeoutSeconds: { type: integer, minimum: 5, maximum: 86400 }
       additionalProperties: false
+    RelayICEServiceDescriptorV1:
+      type: object
+      required: [version, urls, credentialMode, credentialLifetimeSeconds, realm, relayOnlySupported]
+      description: |
+        Canonical STUN/TURN discovery data. URLs are sorted and unique. The
+        turn-rest mode requires at least one TURN URL, a realm, and a lifetime.
+      properties:
+        version: { type: integer, const: 1 }
+        urls:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2048
+            pattern: '^(stun|stuns|turn|turns):[^@#\s]+$'
+        credentialMode:
+          type: string
+          enum: [none, turn-rest]
+        credentialLifetimeSeconds:
+          type: [integer, "null"]
+          minimum: 60
+          maximum: 3600
+        realm:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 255
+        relayOnlySupported: { type: boolean }
+      additionalProperties: false
+    RelayICECredentialRequestV1:
+      type: object
+      required: [version, nonce, requestedLifetimeSeconds]
+      properties:
+        version: { type: integer, const: 1 }
+        nonce:
+          type: string
+          contentEncoding: base64
+          minLength: 24
+          maxLength: 24
+        requestedLifetimeSeconds:
+          type: [integer, "null"]
+          minimum: 60
+          maximum: 3600
+      additionalProperties: false
+    ICECredentialRequestBody:
+      type: object
+      required: [request]
+      properties:
+        request: { $ref: "#/components/schemas/RelayICECredentialRequestV1" }
+      additionalProperties: false
+    RelayICECredentialsV1:
+      type: object
+      required: [version, urls, username, credential, realm, issuedAt, expiresAt]
+      properties:
+        version: { type: integer, const: 1 }
+        urls:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 2048
+            pattern: '^(turn|turns):[^@#\s]+$'
+        username: { type: string, minLength: 1, maxLength: 512 }
+        credential: { type: string, minLength: 1, maxLength: 512 }
+        realm: { type: string, minLength: 1, maxLength: 255 }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+      additionalProperties: false
     OpenFederationDiscoverySupport:
       type: object
       required:
@@ -2122,6 +2212,7 @@ components:
         - onionTransport
         - mixnetTransport
         - wakeSupport
+        - iceService
         - relayName
         - operatorNote
         - softwareVersion
@@ -2196,6 +2287,10 @@ components:
         wakeSupport:
           oneOf:
             - $ref: "#/components/schemas/DecentralizedWakeSupport"
+            - type: "null"
+        iceService:
+          oneOf:
+            - $ref: "#/components/schemas/RelayICEServiceDescriptorV1"
             - type: "null"
         relayName:
           type: [string, "null"]

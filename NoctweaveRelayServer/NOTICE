@@ -5,3 +5,8 @@ Noctweave Relay Server is licensed under the GNU Affero General Public
 License, version 3 or later. See LICENSE for the complete terms.
 
 Third-party components retain their own copyright and license notices.
+
+Optional deployments reference coturn, copyright the coturn contributors,
+under its BSD 3-Clause-style license. coturn runs as a separate container and
+is not incorporated into the Noctweave relay binary.
+https://github.com/coturn/coturn

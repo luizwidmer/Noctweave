@@ -383,6 +383,7 @@ Current bindings are:
 | `nw.shared-log` | 1 | provisional | `create`, `append`, `sync` |
 | `nw.ephemeral-presence` | 1 | provisional | `acquire`, `renew-lease`, `release`, `list` |
 | `nw.media-blobs` | 1 | provisional | `create`, `upload`, `fetch`, `release` |
+| `nw.ice-service` | 1 | provisional | `acquire` |
 | `nw.federation` | 1 | provisional | `register`, `list`, `namespace`, `claim`, `rotate`, `release` |
 | `nw.federation-forward` | 1 | provisional | `forward`, `deliver`, `get`, `resolve` |
 | `nw.open-discovery` | 1 | experimental | `publish-dht`, `list-dht` (advertised only when enabled) |

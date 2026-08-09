@@ -114,6 +114,7 @@ final class RelayHandler: ChannelInboundHandler {
     private let forwardingRequestTimeoutSeconds: Int
     private let netHostStore: NoctweaveNetHostStore?
     private let passthroughAllowedEndpoints: [RelayEndpoint]
+    private let coturnCredentialIssuer: CoturnCredentialIssuer?
     private let coordinatorDirectorySigningPrivateKey: Data?
     private let coordinatorDirectoryPublicKey: Data?
     private let coordinatorHeartbeatLock = NIOLock()
@@ -128,7 +129,8 @@ final class RelayHandler: ChannelInboundHandler {
         relayIdentityRuntime: RelayIdentityRuntime,
         forwardingRequestTimeoutSeconds: Int,
         netHostStore: NoctweaveNetHostStore? = nil,
-        passthroughAllowedEndpoints: [RelayEndpoint] = []
+        passthroughAllowedEndpoints: [RelayEndpoint] = [],
+        coturnCredentialIssuer: CoturnCredentialIssuer? = nil
     ) {
         self.store = store
         self.maxMessageBytes = min(max(1_024, maxMessageBytes ?? (512 * 1024)), 8 * 1024 * 1024)
@@ -142,6 +144,7 @@ final class RelayHandler: ChannelInboundHandler {
         self.forwardingRequestTimeoutSeconds = max(1, forwardingRequestTimeoutSeconds)
         self.netHostStore = netHostStore
         self.passthroughAllowedEndpoints = Array(passthroughAllowedEndpoints.prefix(64))
+        self.coturnCredentialIssuer = coturnCredentialIssuer
         let coordinatorKeyMaterial: (privateKey: Data, publicKey: Data)?
         if relayConfiguration.kind == .coordinator {
             do {
@@ -237,6 +240,33 @@ final class RelayHandler: ChannelInboundHandler {
             return failure("Coordinator relays are directory-only and do not carry user traffic.", code: .unavailable)
         }
         switch request.body {
+        case .acquireICECredentials(let credentialRequest):
+            guard relayConfiguration.kind == .standard,
+                  let iceService = relayConfiguration.iceService,
+                  iceService.credentialMode == .turnREST,
+                  let coturnCredentialIssuer else {
+                return failure(
+                    "TURN credential service is unavailable.",
+                    code: .unavailable,
+                    retryable: true
+                )
+            }
+            let isLoopback = isLoopbackRequestSource(requestSourceKey)
+            guard relayConfiguration.effectiveTransportConfidentiality(
+                isLiteralLoopbackSource: isLoopback
+            ).permitsCapabilityTransport else {
+                return failure(
+                    "TURN credentials require TLS, a trusted reverse proxy, or literal loopback transport.",
+                    code: .authenticationRequired
+                )
+            }
+            guard let credentials = coturnCredentialIssuer.issue(
+                request: credentialRequest,
+                descriptor: iceService
+            ) else {
+                return failure("TURN credential request is invalid.")
+            }
+            return success(.iceCredentials(credentials))
         case .getNoctwebNamespaceSnapshot(let snapshotRequest):
             guard snapshotRequest.isStructurallyValid,
                   snapshotRequest.federationMode
@@ -819,6 +849,7 @@ final class RelayHandler: ChannelInboundHandler {
                     onionTransport: info.onionTransport,
                     mixnetTransport: info.mixnetTransport,
                     wakeSupport: info.wakeSupport,
+                    iceService: info.iceService,
                     relayName: info.relayName,
                     operatorNote: info.operatorNote,
                     softwareVersion: info.softwareVersion,
@@ -854,6 +885,7 @@ final class RelayHandler: ChannelInboundHandler {
                         onionTransport: info.onionTransport,
                         mixnetTransport: info.mixnetTransport,
                         wakeSupport: info.wakeSupport,
+                        iceService: info.iceService,
                         relayName: info.relayName,
                         operatorNote: info.operatorNote,
                         softwareVersion: info.softwareVersion,

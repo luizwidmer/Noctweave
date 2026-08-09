@@ -38,6 +38,9 @@ struct ServerConfig {
       --attachment-storage <mode>      inline or ipfs
       --opaque-route-runtime <bool>   Enable the direct-delivery runtime (default: true)
       --rendezvous-transport <bool>    Enable bounded one-use rendezvous transport
+      --ice-url <stun-or-turn-url>     Advertise a coturn STUN/TURN URL (repeatable)
+      --turn-realm <realm>             coturn realm advertised to clients
+      --turn-credential-ttl-seconds <n> Lifetime for issued TURN credentials
       --temporal-bucket-seconds <n>    Metadata timing bucket; 0 disables it
       --help, -h                       Show this help without starting a relay
       --version                        Print the relay software version
@@ -114,6 +117,8 @@ struct ServerConfig {
     var allowPrivateFederationEndpoints: Bool
     var opaqueRouteRuntimeEnabled: Bool
     var rendezvousTransportEnabled: Bool
+    var iceService: RelayICEServiceDescriptorV1?
+    var turnSharedSecret: String?
 
     static func parse(
         arguments: [String] = Array(CommandLine.arguments.dropFirst()),
@@ -229,6 +234,19 @@ struct ServerConfig {
         var rendezvousTransportEnabled = parseBoolFlag(
             environment["NOCTWEAVE_RENDEZVOUS_TRANSPORT"] ?? "false",
             defaultValue: false
+        )
+        var iceURLs = (environment["NOCTWEAVE_ICE_URLS"] ?? "")
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        var turnSharedSecret = environment["NOCTWEAVE_TURN_SHARED_SECRET"]
+        var turnRealm = environment["NOCTWEAVE_TURN_REALM"] ?? "noctweave"
+        var turnCredentialLifetimeSeconds = Int(
+            environment["NOCTWEAVE_TURN_CREDENTIAL_TTL_SECONDS"] ?? ""
+        ) ?? 600
+        var turnRelayOnlySupported = parseBoolFlag(
+            environment["NOCTWEAVE_TURN_RELAY_ONLY_SUPPORTED"] ?? "true",
+            defaultValue: true
         )
         var iterator = arguments.makeIterator()
         while let arg = iterator.next() {
@@ -552,6 +570,22 @@ struct ServerConfig {
                 } else {
                     rendezvousTransportEnabled = true
                 }
+            case "--ice-url":
+                if let value = iterator.next() {
+                    iceURLs.append(value.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+            case "--turn-shared-secret":
+                turnSharedSecret = iterator.next()
+            case "--turn-realm":
+                turnRealm = iterator.next() ?? turnRealm
+            case "--turn-credential-ttl-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    turnCredentialLifetimeSeconds = parsed
+                }
+            case "--turn-relay-only-supported":
+                if let value = iterator.next() {
+                    turnRelayOnlySupported = parseBoolFlag(value, defaultValue: true)
+                }
             default:
                 break
             }
@@ -639,6 +673,14 @@ struct ServerConfig {
             min(512, openFederationDHTMaxRecords)
         )
         curatedCoordinatorQuorum = min(max(curatedCoordinatorQuorum, 1), 16)
+        iceURLs = Array(Set(iceURLs.filter { !$0.isEmpty })).sorted()
+        turnSharedSecret = turnSharedSecret?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if turnSharedSecret?.isEmpty == true { turnSharedSecret = nil }
+        turnRealm = turnRealm.trimmingCharacters(in: .whitespacesAndNewlines)
+        turnCredentialLifetimeSeconds = min(
+            max(turnCredentialLifetimeSeconds, RelayICEServiceV1.minimumCredentialLifetimeSeconds),
+            RelayICEServiceV1.maximumCredentialLifetimeSeconds
+        )
         federationCoordinatorEndpoints = Array(federationCoordinatorEndpoints.prefix(16))
         federationAllowList = Array(federationAllowList.prefix(256))
         if let key = coordinatorDirectorySigningPrivateKey, key.count > 16_384 {
@@ -669,6 +711,18 @@ struct ServerConfig {
                 maxDelaySeconds: mixnetMaxDelaySeconds
             )
             : nil
+        let hasTURNURL = iceURLs.contains {
+            $0.hasPrefix("turn:") || $0.hasPrefix("turns:")
+        }
+        let iceService = iceURLs.isEmpty ? nil : RelayICEServiceDescriptorV1(
+            urls: iceURLs,
+            credentialMode: hasTURNURL && turnSharedSecret != nil ? .turnREST : .none,
+            credentialLifetimeSeconds: hasTURNURL && turnSharedSecret != nil
+                ? turnCredentialLifetimeSeconds
+                : nil,
+            realm: hasTURNURL && turnSharedSecret != nil ? turnRealm : nil,
+            relayOnlySupported: turnRelayOnlySupported
+        )
         let roleMinimumMessageBytes: Int
         switch (relayKind, netHostEnabled) {
         case (.host, _), (_, true):
@@ -746,7 +800,9 @@ struct ServerConfig {
             federationAllowList: federationAllowList,
             allowPrivateFederationEndpoints: allowPrivateFederationEndpoints,
             opaqueRouteRuntimeEnabled: opaqueRouteRuntimeEnabled,
-            rendezvousTransportEnabled: rendezvousTransportEnabled
+            rendezvousTransportEnabled: rendezvousTransportEnabled,
+            iceService: iceService,
+            turnSharedSecret: turnSharedSecret
         )
     }
 }
@@ -937,10 +993,28 @@ for (label, secret, minimum) in [
     ("relay password", config.accessPassword, 12),
     ("publisher password", config.publisherPassword, 12),
     ("coordinator registration token", config.coordinatorRegistrationToken, 16),
-    ("admin token", config.adminToken, 16)
+    ("admin token", config.adminToken, 16),
+    ("coturn shared secret", config.turnSharedSecret, 16)
 ] {
     if let secret, !secret.isEmpty, !(minimum...4_096).contains(secret.utf8.count) {
         print("[relay] \(label) must contain between \(minimum) and 4096 UTF-8 bytes")
+        exit(2)
+    }
+}
+if let iceService = config.iceService {
+    guard config.relayKind == .standard else {
+        print("[relay] coturn ICE service advertisement is supported only by standard relays")
+        exit(2)
+    }
+    guard iceService.isStructurallyValid else {
+        print("[relay] ICE URLs, TURN realm, or credential lifetime are invalid")
+        exit(2)
+    }
+    let hasTURNURL = iceService.urls.contains {
+        $0.hasPrefix("turn:") || $0.hasPrefix("turns:")
+    }
+    if hasTURNURL, config.turnSharedSecret == nil {
+        print("[relay] TURN URLs require NOCTWEAVE_TURN_SHARED_SECRET")
         exit(2)
     }
 }
@@ -1132,6 +1206,7 @@ var relayConfiguration = RelayConfiguration(
     hiddenRetrieval: config.hiddenRetrieval,
     onionTransport: config.onionTransport,
     mixnetTransport: config.mixnetTransport,
+    iceService: config.iceService,
     relayName: config.relayName,
     operatorNote: config.operatorNote,
     softwareVersion: ServerConfig.advertisedSoftwareVersion,
@@ -1156,6 +1231,9 @@ var relayConfiguration = RelayConfiguration(
     allowPrivateFederationEndpoints: config.allowPrivateFederationEndpoints,
     opaqueRouteRuntimeEnabled: config.opaqueRouteRuntimeEnabled,
     rendezvousTransportEnabled: config.rendezvousTransportEnabled
+)
+let coturnCredentialIssuer = config.turnSharedSecret.flatMap(
+    CoturnCredentialIssuer.init(sharedSecret:)
 )
 if relayConfiguration.kind == .coordinator {
     if relayConfiguration.coordinatorDirectorySigningPrivateKey == nil,
@@ -1265,7 +1343,8 @@ let bootstrap = ServerBootstrap(group: group)
                     relayIdentityRuntime: relayIdentityRuntime,
                     forwardingRequestTimeoutSeconds: config.forwardingRequestTimeoutSeconds,
                     netHostStore: netHostStore,
-                    passthroughAllowedEndpoints: config.passthroughAllowedEndpoints
+                    passthroughAllowedEndpoints: config.passthroughAllowedEndpoints,
+                    coturnCredentialIssuer: coturnCredentialIssuer
                 ))
             }
         }
@@ -1370,6 +1449,9 @@ do {
                 : "Unavailable",
             "Message ceiling": "\(config.maxMessageBytes ?? 0) bytes",
             "Direct delivery": config.opaqueRouteRuntimeEnabled ? "Opaque route v2" : "Disabled",
+            "ICE traversal": config.iceService.map {
+                "\($0.urls.count) endpoint(s) · \($0.credentialMode.rawValue)"
+            } ?? "Disabled",
             "Attachment backend": config.attachmentStorageMode.rawValue,
             "Secrets": "Environment / command line"
         ]

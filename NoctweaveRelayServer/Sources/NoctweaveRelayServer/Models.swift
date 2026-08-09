@@ -858,6 +858,7 @@ struct RelayInfo: Codable, Equatable {
     let onionTransport: OnionTransportSupport?
     let mixnetTransport: MixnetTransportSupport?
     let wakeSupport: DecentralizedWakeSupport?
+    let iceService: RelayICEServiceDescriptorV1?
     let relayName: String?
     let operatorNote: String?
     let softwareVersion: String?
@@ -890,6 +891,7 @@ struct RelayInfo: Codable, Equatable {
         onionTransport: OnionTransportSupport? = nil,
         mixnetTransport: MixnetTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
+        iceService: RelayICEServiceDescriptorV1? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -928,6 +930,7 @@ struct RelayInfo: Codable, Equatable {
         self.onionTransport = onionTransport
         self.mixnetTransport = mixnetTransport
         self.wakeSupport = wakeSupport
+        self.iceService = iceService
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -962,6 +965,7 @@ struct RelayInfo: Codable, Equatable {
               onionTransport?.isStructurallyValid != false,
               mixnetTransport?.isStructurallyValid != false,
               wakeSupport?.isStructurallyValid != false,
+              iceService?.isStructurallyValid != false,
               protocolCapabilities?.isStructurallyValid != false,
               openFederationDiscovery?.isStructurallyValid != false,
               relayIdentityIsValid else {
@@ -1100,6 +1104,7 @@ struct RelayInfo: Codable, Equatable {
             onionTransport: onionTransport,
             mixnetTransport: mixnetTransport,
             wakeSupport: wakeSupport,
+            iceService: iceService,
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
@@ -1136,6 +1141,7 @@ struct RelayInfo: Codable, Equatable {
         case onionTransport
         case mixnetTransport
         case wakeSupport
+        case iceService
         case relayName
         case operatorNote
         case softwareVersion
@@ -1194,6 +1200,10 @@ struct RelayInfo: Codable, Equatable {
         wakeSupport = try values.decodeIfPresent(
             DecentralizedWakeSupport.self,
             forKey: .wakeSupport
+        )
+        iceService = try values.decodeIfPresent(
+            RelayICEServiceDescriptorV1.self,
+            forKey: .iceService
         )
         relayName = try values.decodeIfPresent(String.self, forKey: .relayName)
         operatorNote = try values.decodeIfPresent(String.self, forKey: .operatorNote)
@@ -1272,6 +1282,7 @@ struct RelayInfo: Codable, Equatable {
         try values.encode(onionTransport, forKey: .onionTransport)
         try values.encode(mixnetTransport, forKey: .mixnetTransport)
         try values.encode(wakeSupport, forKey: .wakeSupport)
+        try values.encode(iceService, forKey: .iceService)
         try values.encode(relayName, forKey: .relayName)
         try values.encode(operatorNote, forKey: .operatorNote)
         try values.encode(softwareVersion, forKey: .softwareVersion)
@@ -1316,6 +1327,7 @@ struct RelayConfiguration: Codable, Equatable {
     var hiddenRetrieval: HiddenRetrievalSupport?
     var onionTransport: OnionTransportSupport?
     var mixnetTransport: MixnetTransportSupport?
+    var iceService: RelayICEServiceDescriptorV1?
     var relayName: String?
     var operatorNote: String?
     var softwareVersion: String?
@@ -1358,6 +1370,7 @@ struct RelayConfiguration: Codable, Equatable {
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         onionTransport: OnionTransportSupport? = nil,
         mixnetTransport: MixnetTransportSupport? = nil,
+        iceService: RelayICEServiceDescriptorV1? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -1414,6 +1427,7 @@ struct RelayConfiguration: Codable, Equatable {
         self.hiddenRetrieval = hiddenRetrieval
         self.onionTransport = onionTransport
         self.mixnetTransport = mixnetTransport
+        self.iceService = iceService?.isStructurallyValid == true ? iceService : nil
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -1497,6 +1511,7 @@ struct RelayConfiguration: Codable, Equatable {
             hiddenRetrieval: advertisedHiddenRetrieval,
             onionTransport: advertisedOnionTransport,
             mixnetTransport: advertisedMixnetTransport,
+            iceService: iceService,
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
@@ -1511,7 +1526,8 @@ struct RelayConfiguration: Codable, Equatable {
                 openDiscoveryEnabled: advertisedOpenFederationDiscovery?.dhtNodeEnabled == true,
                 rendezvousTransportEnabled: isRendezvousTransportEnabled,
                 federationForwardingEnabled: kind == .standard
-                    && federation.mode != .solo
+                    && federation.mode != .solo,
+                iceServiceEnabled: iceService != nil
             ),
             requiresPassword: requiresPassword,
             federationCoordinatorEndpoints: federationCoordinatorEndpoints,

@@ -217,7 +217,8 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         openDiscoveryEnabled: Bool = false,
         rendezvousTransportEnabled: Bool = false,
         federationForwardingEnabled: Bool = false,
-        netHostEnabled: Bool = false
+        netHostEnabled: Bool = false,
+        iceServiceEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
             RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .provisional)
@@ -263,6 +264,24 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         modules.append(RelayModuleCapabilityV2(module: "nw.shared-log", versions: [1], status: .provisional, limits: SharedLogRelayCapabilityLimitsV1.registry))
         modules.append(RelayModuleCapabilityV2(module: "nw.ephemeral-presence", versions: [1], status: .provisional, limits: PresenceRelayCapabilityLimitsV1.registry))
         modules.append(RelayModuleCapabilityV2(module: "nw.media-blobs", versions: [1], status: .provisional, limits: MediaBlobRelayCapabilityLimitsV1.registry))
+        if iceServiceEnabled {
+            modules.append(
+                RelayModuleCapabilityV2(
+                    module: "nw.ice-service",
+                    versions: [1],
+                    status: .provisional,
+                    limits: [
+                        "maxURLs": UInt64(RelayICEServiceV1.maximumURLs),
+                        "minCredentialLifetimeSeconds": UInt64(
+                            RelayICEServiceV1.minimumCredentialLifetimeSeconds
+                        ),
+                        "maxCredentialLifetimeSeconds": UInt64(
+                            RelayICEServiceV1.maximumCredentialLifetimeSeconds
+                        )
+                    ]
+                )
+            )
+        }
         modules.append(
             RelayModuleCapabilityV2(module: "nw.federation", versions: [1], status: .provisional)
         )

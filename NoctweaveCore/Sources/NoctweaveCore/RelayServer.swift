@@ -32,6 +32,7 @@ public final class RelayServer {
     private let coordinatorDirectoryCacheLock = NSLock()
     private var coordinatorDirectoryCache: [FederationNodeRecord] = []
     private let relayIdentityKeyMaterial: RelayIdentityKeyMaterialV1?
+    private let coturnCredentialIssuer: CoturnCredentialIssuerV1?
     private let relayIdentitySequenceLock = NSLock()
     private var relayIdentityClaimSequence = 0
     private var cachedRelayIdentity: SignedRelayIdentityClaimV1?
@@ -57,11 +58,13 @@ public final class RelayServer {
         opaqueRouteStore: OpaqueRouteRelayStoreV2 = OpaqueRouteRelayStoreV2(),
         configuration: RelayConfiguration = RelayConfiguration(),
         relayIdentity: RelayIdentityKeyMaterialV1? = nil,
-        noctwebHostStore: RelayNoctwebHostStore? = nil
+        noctwebHostStore: RelayNoctwebHostStore? = nil,
+        coturnCredentialIssuer: CoturnCredentialIssuerV1? = nil
     ) {
         self.store = store
         self.opaqueRouteStore = opaqueRouteStore
         self.noctwebHostStore = noctwebHostStore
+        self.coturnCredentialIssuer = coturnCredentialIssuer
         self.relayConfiguration = configuration
         self.relayIdentityKeyMaterial = relayIdentity
             ?? (try? RelayIdentityKeyMaterialV1.generate())
@@ -569,6 +572,38 @@ public final class RelayServer {
             )
         }
         switch request.body {
+        case .acquireICECredentials(let credentialRequest):
+            guard configuration.kind == .standard,
+                  let iceService = configuration.iceService,
+                  iceService.credentialMode == .turnREST,
+                  let coturnCredentialIssuer else {
+                return .error(
+                    "TURN credential service is unavailable.",
+                    code: .unavailable,
+                    retryable: true,
+                    respondingTo: request
+                )
+            }
+            guard hasConfidentialRouteTransport(sourceKey) else {
+                return .error(
+                    "TURN credentials require TLS, a trusted reverse proxy, or literal loopback transport.",
+                    code: .authenticationRequired,
+                    respondingTo: request
+                )
+            }
+            guard let credentials = coturnCredentialIssuer.issue(
+                request: credentialRequest,
+                descriptor: iceService
+            ) else {
+                return .error(
+                    "TURN credential request is invalid.",
+                    respondingTo: request
+                )
+            }
+            return .success(
+                .iceCredentials(credentials),
+                respondingTo: request
+            )
         case .getNoctwebNamespaceSnapshot(let snapshotRequest):
             guard snapshotRequest.isStructurallyValid,
                   snapshotRequest.federationMode

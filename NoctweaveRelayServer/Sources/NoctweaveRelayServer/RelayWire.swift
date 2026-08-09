@@ -14,13 +14,14 @@ enum RelayModuleID: String, Codable, CaseIterable {
     case sharedLog = "nw.shared-log"
     case ephemeralPresence = "nw.ephemeral-presence"
     case mediaBlobs = "nw.media-blobs"
+    case iceService = "nw.ice-service"
 
     var currentVersion: Int {
         switch self {
         case .core, .opaqueRoute, .rendezvousTransport: return 2
         case .blobs, .federation, .federationForward, .openDiscovery,
              .netPassthrough, .netHost, .realtimeRoute, .sharedLog,
-             .ephemeralPresence, .mediaBlobs: return 1
+             .ephemeralPresence, .mediaBlobs, .iceService: return 1
         }
     }
 }
@@ -87,7 +88,8 @@ struct RelayOperationBinding: Codable, Equatable, Hashable {
         .realtimeRoute: [.create, .append, .subscribe, .sync, .unsubscribe],
         .sharedLog: [.create, .append, .sync],
         .ephemeralPresence: [.acquire, .renewLease, .release, .list],
-        .mediaBlobs: [.create, .upload, .fetch, .release]
+        .mediaBlobs: [.create, .upload, .fetch, .release],
+        .iceService: [.acquire]
     ]
 }
 
@@ -142,6 +144,7 @@ enum RelayRequestBody: Equatable {
     case uploadMediaBlob(MediaBlobUploadRequestV1)
     case fetchMediaBlob(MediaBlobFetchRequestV1)
     case releaseMediaBlob(MediaBlobReleaseRequestV1)
+    case acquireICECredentials(RelayICECredentialRequestV1)
 
     var binding: RelayOperationBinding {
         switch self {
@@ -204,6 +207,7 @@ enum RelayRequestBody: Equatable {
         case .uploadMediaBlob: return .init(module: .mediaBlobs, version: 1, method: .upload)
         case .fetchMediaBlob: return .init(module: .mediaBlobs, version: 1, method: .fetch)
         case .releaseMediaBlob: return .init(module: .mediaBlobs, version: 1, method: .release)
+        case .acquireICECredentials: return .init(module: .iceService, version: 1, method: .acquire)
         }
     }
 
@@ -394,6 +398,8 @@ enum RelayRequestBody: Equatable {
             return .fetchMediaBlob(try relayDecodeSingle(MediaBlobFetchRequestV1.self, from: decoder, key: "request"))
         case (.mediaBlobs, .release):
             return .releaseMediaBlob(try relayDecodeSingle(MediaBlobReleaseRequestV1.self, from: decoder, key: "request"))
+        case (.iceService, .acquire):
+            return .acquireICECredentials(try relayDecodeSingle(RelayICECredentialRequestV1.self, from: decoder, key: "request"))
         default:
             throw relayWireError(decoder, "Relay binding does not identify a current request body")
         }
@@ -619,6 +625,8 @@ enum RelayRequestBody: Equatable {
             try container.encode(value, forKey: relayWireKey("request"))
         case .releaseMediaBlob(let value):
             try container.encode(value, forKey: relayWireKey("request"))
+        case .acquireICECredentials(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
         }
     }
 }
@@ -726,6 +734,7 @@ struct RelayRequest: Codable, Equatable {
     static func uploadMediaBlobV1(_ value: MediaBlobUploadRequestV1) -> RelayRequest { make(.uploadMediaBlob(value)) }
     static func fetchMediaBlobV1(_ value: MediaBlobFetchRequestV1) -> RelayRequest { make(.fetchMediaBlob(value)) }
     static func releaseMediaBlobV1(_ value: MediaBlobReleaseRequestV1) -> RelayRequest { make(.releaseMediaBlob(value)) }
+    static func acquireICECredentialsV1(_ value: RelayICECredentialRequestV1) -> RelayRequest { make(.acquireICECredentials(value)) }
 
     private static func make(_ body: RelayRequestBody) -> RelayRequest {
         .init(binding: body.binding, body: body)
@@ -853,6 +862,7 @@ enum RelaySuccessBody: Equatable {
     case presenceLeases([PresenceLeaseV1])
     case mediaBlobCreated(MediaBlobCreatedV1)
     case mediaBlobChunk(MediaBlobChunkV1)
+    case iceCredentials(RelayICECredentialsV1)
     case attachment(AttachmentChunk)
     case federationNodes(FederationNodesResponseBody)
     case noctwebNamespaceSnapshot(NoctwebNamespaceSnapshotV1)
@@ -898,6 +908,7 @@ enum RelaySuccessBody: Equatable {
         case .presenceLeases: return binding == .init(module: .ephemeralPresence, version: 1, method: .list)
         case .mediaBlobCreated: return binding == .init(module: .mediaBlobs, version: 1, method: .create)
         case .mediaBlobChunk: return binding == .init(module: .mediaBlobs, version: 1, method: .upload) || binding == .init(module: .mediaBlobs, version: 1, method: .fetch)
+        case .iceCredentials: return binding == .init(module: .iceService, version: 1, method: .acquire)
         case .attachment: return binding.module == .blobs && binding.version == 1 && [.upload, .fetch].contains(binding.method)
         case .federationNodes: return binding.module == .federation && binding.version == 1 && [.register, .list].contains(binding.method)
         case .noctwebNamespaceSnapshot:
@@ -980,6 +991,8 @@ enum RelaySuccessBody: Equatable {
             return .mediaBlobCreated(try relayDecodeSingle(MediaBlobCreatedV1.self, from: decoder, key: "blob"))
         case (.mediaBlobs, .upload), (.mediaBlobs, .fetch):
             return .mediaBlobChunk(try relayDecodeSingle(MediaBlobChunkV1.self, from: decoder, key: "chunk"))
+        case (.iceService, .acquire):
+            return .iceCredentials(try relayDecodeSingle(RelayICECredentialsV1.self, from: decoder, key: "credentials"))
         case (.blobs, .upload), (.blobs, .fetch):
             return .attachment(try relayDecodeSingle(AttachmentChunk.self, from: decoder, key: "chunk"))
         case (.federation, .register), (.federation, .list):
@@ -1084,6 +1097,7 @@ enum RelaySuccessBody: Equatable {
         case .presenceLeases(let value): try container.encode(value, forKey: relayWireKey("leases"))
         case .mediaBlobCreated(let value): try container.encode(value, forKey: relayWireKey("blob"))
         case .mediaBlobChunk(let value): try container.encode(value, forKey: relayWireKey("chunk"))
+        case .iceCredentials(let value): try container.encode(value, forKey: relayWireKey("credentials"))
         case .attachment(let value): try container.encode(value, forKey: relayWireKey("chunk"))
         case .federationNodes(let value):
             guard value.isStructurallyValid else {

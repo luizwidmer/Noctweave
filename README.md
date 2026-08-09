@@ -29,9 +29,10 @@ Relays route and store encrypted packets; message plaintext and relationship or
 group keys stay with clients.
 
 The public libraries also include an experimental one-to-one call foundation:
-direct-v4 signaling, a fresh ML-KEM-768 call handshake, and fixed-bucket
-AES-256-GCM media frames. Capture, playback, NAT traversal, and media transport
-remain application adapters rather than relay plaintext features.
+direct-v4 signaling, a fresh ML-KEM-768 call handshake, fixed-bucket
+AES-256-GCM media frames, and optional coturn discovery with short-lived TURN
+credentials. Capture, playback, and media transport remain application
+adapters rather than relay plaintext features.
 
 The relay exposes the three-role Noctweave Net topology: `standard` relays
 carry existing private traffic, `passthrough` relays provide bounded one-hop
@@ -167,6 +168,7 @@ transport is available to integrations that supply that boundary.
 | Review the 1.0 architecture | [`Noctweave 1.0 architecture`](NoctweaveDocumentation/noctweave_architecture_revision_v2.md) |
 | Review the protocol | [`Protocol specification`](NoctweaveDocumentation/noctweave_protocol_spec_v1.md) |
 | Integrate one-to-one calls | [`Experimental call protocol`](NoctweaveDocumentation/call_protocol_v1.md) |
+| Deploy STUN/TURN for calls | [`coturn traversal guide`](NoctweaveDocumentation/coturn_call_traversal.md) |
 
 ### Relay
 
@@ -376,6 +378,7 @@ Technical detail lives in focused documents:
 - [Core public API](NoctweaveDocumentation/noctweave_core_public_api.md)
 - [Experimental PQ group design](NoctweaveDocumentation/group_protocol_design.md)
 - [Experimental one-to-one call protocol](NoctweaveDocumentation/call_protocol_v1.md)
+- [coturn call traversal and deployment](NoctweaveDocumentation/coturn_call_traversal.md)
 - [Federation protocol and operations](NoctweaveDocumentation/federation_protocol_and_operations.md)
 - [Relay hardening](NoctweaveDocumentation/relay_ops_hardening_guide.md)
 - [Whitepaper](NoctweaveDocumentation/noctweave_whitepaper.md)

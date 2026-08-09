@@ -67,6 +67,10 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var allowPrivateFederationEndpoints: Bool?
     var opaqueRouteRuntimeEnabled: Bool
     var rendezvousTransportEnabled: Bool
+    var iceURLs: [String]?
+    var turnRealm: String?
+    var turnCredentialLifetimeSeconds: Int?
+    var turnRelayOnlySupported: Bool?
 
     init(configuration: RelayConfiguration, serverConfiguration: ServerConfig? = nil) {
         relayName = configuration.relayName ?? ""
@@ -120,6 +124,10 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         allowPrivateFederationEndpoints = configuration.allowPrivateFederationEndpoints
         opaqueRouteRuntimeEnabled = configuration.isOpaqueRouteRuntimeEnabled
         rendezvousTransportEnabled = configuration.isRendezvousTransportEnabled
+        iceURLs = configuration.iceService?.urls ?? []
+        turnRealm = configuration.iceService?.realm ?? "noctweave"
+        turnCredentialLifetimeSeconds = configuration.iceService?.credentialLifetimeSeconds ?? 600
+        turnRelayOnlySupported = configuration.iceService?.relayOnlySupported ?? true
     }
 
     func validatedConfiguration(from current: RelayConfiguration) throws -> RelayConfiguration {
@@ -194,6 +202,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         let hiddenRetrieval = try validatedHiddenRetrieval(current: current)
         let onionTransport = try validatedOnionTransport(current: current)
         let mixnetTransport = try validatedMixnetTransport(current: current, onionTransport: onionTransport)
+        let iceService = try validatedICEService(current: current)
         let dhtMaxRecords = openFederationDHTMaxRecords ?? current.openFederationDHTMaxRecords
         let dhtMaxPerHost = openFederationDHTMaxRecordsPerHost ?? current.openFederationDHTMaxRecordsPerHost
         let dhtMaxQuery = openFederationDHTMaxQueryRecords ?? current.openFederationDHTMaxQueryRecords
@@ -233,6 +242,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             hiddenRetrieval: hiddenRetrieval,
             onionTransport: onionTransport,
             mixnetTransport: mixnetTransport,
+            iceService: iceService,
             relayName: normalizedName.nilIfEmpty,
             operatorNote: normalizedNote.nilIfEmpty,
             softwareVersion: current.softwareVersion,
@@ -282,6 +292,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             hiddenRetrieval: config.hiddenRetrieval,
             onionTransport: config.onionTransport,
             mixnetTransport: config.mixnetTransport,
+            iceService: config.iceService,
             relayName: config.relayName,
             operatorNote: config.operatorNote,
             softwareVersion: ServerConfig.advertisedSoftwareVersion,
@@ -329,6 +340,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.hiddenRetrieval = updated.hiddenRetrieval
         config.onionTransport = updated.onionTransport
         config.mixnetTransport = updated.mixnetTransport
+        config.iceService = updated.iceService
         config.relayName = updated.relayName
         config.operatorNote = updated.operatorNote
         config.federationCoordinatorEndpoints = updated.federationCoordinatorEndpoints ?? []
@@ -441,6 +453,44 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             throw OperatorConfigurationError.invalidField("mixnet policy requires usable onion routing, fixed packets, batching, cover traffic, and delay")
         }
         return support
+    }
+
+    private func validatedICEService(
+        current: RelayConfiguration
+    ) throws -> RelayICEServiceDescriptorV1? {
+        let proposedURLs = iceURLs ?? current.iceService?.urls ?? []
+        guard !proposedURLs.isEmpty else { return nil }
+        guard current.kind == .standard,
+              let urls = RelayICEServiceV1.canonicalURLs(proposedURLs),
+              urls == proposedURLs.sorted() else {
+            throw OperatorConfigurationError.invalidField("iceURLs")
+        }
+        let hasTURN = urls.contains {
+            $0.hasPrefix("turn:") || $0.hasPrefix("turns:")
+        }
+        if hasTURN, current.iceService?.credentialMode != .turnREST {
+            throw OperatorConfigurationError.unsupportedTransition(
+                "TURN URLs require a shared coturn secret supplied when the relay starts."
+            )
+        }
+        let lifetime = turnCredentialLifetimeSeconds
+            ?? current.iceService?.credentialLifetimeSeconds
+            ?? 600
+        let realm = (turnRealm ?? current.iceService?.realm ?? "noctweave")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let descriptor = RelayICEServiceDescriptorV1(
+            urls: urls,
+            credentialMode: hasTURN ? .turnREST : .none,
+            credentialLifetimeSeconds: hasTURN ? lifetime : nil,
+            realm: hasTURN ? realm : nil,
+            relayOnlySupported: turnRelayOnlySupported
+                ?? current.iceService?.relayOnlySupported
+                ?? true
+        )
+        guard descriptor.isStructurallyValid else {
+            throw OperatorConfigurationError.invalidField("ICE/TURN service")
+        }
+        return descriptor
     }
 
     private func boundedText(_ value: String, field: String, allowEmpty: Bool) throws -> String {

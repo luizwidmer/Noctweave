@@ -12,9 +12,13 @@ ML-DSA-authenticated peer context; each call additionally performs a fresh
 ML-KEM-768 exchange before media can be accepted.
 
 This module does not define group calls, microphone/camera APIs, codecs,
-playback, NAT traversal, a notification service, or a mandatory media relay.
-Those are product or transport adapters. Current Noctweave relays do not
-advertise a call-media relay module.
+playback, a notification service, or a mandatory media relay. Those are
+product or transport adapters. A standard relay may advertise the optional
+`nw.ice-service@1` control-plane module so clients can discover STUN/TURN URLs
+and acquire short-lived TURN credentials. The advertised service is not a
+Noctweave plaintext-media module: a separate standards-compliant server such
+as coturn handles traversal, and application-layer media encryption remains
+mandatory.
 
 ## Capability negotiation
 
@@ -132,6 +136,23 @@ application-layer frame cipher.
 `relayWebSocket` is a transport vocabulary entry, not an assertion that the
 configured Noctweave message relay provides media forwarding. Clients must not
 select it from ordinary relay health/info alone.
+
+### ICE discovery and coturn
+
+When relay info contains `iceService`, a client validates the complete
+`RelayICEServiceDescriptorV1` before using any URL. Credential-free `stun:` or
+`stuns:` URLs may be passed directly to the WebRTC adapter. If
+`credentialMode` is `turn-rest`, the client sends a fresh 16-byte nonce to
+`nw.ice-service@1 acquire` over a confidential relay transport and receives a
+bounded username/password pair valid for at most one hour. Credentials are
+kept in memory for the call session and are not persisted with conversation
+state.
+
+The static TURN shared secret is operator-only and never appears in relay info,
+client state, or a call signal. Noctweave relay passwords still apply to the
+credential request when configured. See
+[`coturn_call_traversal.md`](coturn_call_traversal.md) for deployment and
+failure behavior.
 
 ## Crash, reset, and identity behavior
 

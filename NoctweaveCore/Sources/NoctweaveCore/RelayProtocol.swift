@@ -421,6 +421,7 @@ public struct RelayInfo: Codable, Equatable {
     public var onionTransport: OnionTransportSupport?
     public var mixnetTransport: MixnetTransportSupport?
     public var wakeSupport: DecentralizedWakeSupport?
+    public var iceService: RelayICEServiceDescriptorV1?
     public var relayName: String?
     public var operatorNote: String?
     public var softwareVersion: String?
@@ -453,6 +454,7 @@ public struct RelayInfo: Codable, Equatable {
         onionTransport: OnionTransportSupport? = nil,
         mixnetTransport: MixnetTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
+        iceService: RelayICEServiceDescriptorV1? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -491,6 +493,7 @@ public struct RelayInfo: Codable, Equatable {
         self.onionTransport = onionTransport
         self.mixnetTransport = mixnetTransport
         self.wakeSupport = wakeSupport
+        self.iceService = iceService
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -526,6 +529,7 @@ public struct RelayInfo: Codable, Equatable {
               onionTransport?.isStructurallyValid != false,
               mixnetTransport?.isStructurallyValid != false,
               relayIsValidWakeSupport(wakeSupport),
+              iceService?.isStructurallyValid != false,
               protocolCapabilities?.isStructurallyValid != false,
               openFederationDiscovery?.isStructurallyValid != false,
               try relayIdentityIsValid else {
@@ -677,6 +681,7 @@ public struct RelayInfo: Codable, Equatable {
         case onionTransport
         case mixnetTransport
         case wakeSupport
+        case iceService
         case relayName
         case operatorNote
         case softwareVersion
@@ -724,6 +729,10 @@ public struct RelayInfo: Codable, Equatable {
         onionTransport = try container.decodeIfPresent(OnionTransportSupport.self, forKey: .onionTransport)
         mixnetTransport = try container.decodeIfPresent(MixnetTransportSupport.self, forKey: .mixnetTransport)
         wakeSupport = try container.decodeIfPresent(DecentralizedWakeSupport.self, forKey: .wakeSupport)
+        iceService = try container.decodeIfPresent(
+            RelayICEServiceDescriptorV1.self,
+            forKey: .iceService
+        )
         relayName = try container.decodeIfPresent(String.self, forKey: .relayName)
         operatorNote = try container.decodeIfPresent(String.self, forKey: .operatorNote)
         softwareVersion = try container.decodeIfPresent(String.self, forKey: .softwareVersion)
@@ -794,6 +803,7 @@ public struct RelayInfo: Codable, Equatable {
         try container.encode(onionTransport, forKey: .onionTransport)
         try container.encode(mixnetTransport, forKey: .mixnetTransport)
         try container.encode(wakeSupport, forKey: .wakeSupport)
+        try container.encode(iceService, forKey: .iceService)
         try container.encode(relayName, forKey: .relayName)
         try container.encode(operatorNote, forKey: .operatorNote)
         try container.encode(softwareVersion, forKey: .softwareVersion)
@@ -831,6 +841,7 @@ public struct RelayConfiguration: Codable, Equatable {
     public var onionTransport: OnionTransportSupport?
     public var mixnetTransport: MixnetTransportSupport?
     public var wakeSupport: DecentralizedWakeSupport?
+    public var iceService: RelayICEServiceDescriptorV1?
     public var relayName: String?
     public var operatorNote: String?
     public var softwareVersion: String?
@@ -878,6 +889,7 @@ public struct RelayConfiguration: Codable, Equatable {
         onionTransport: OnionTransportSupport? = nil,
         mixnetTransport: MixnetTransportSupport? = nil,
         wakeSupport: DecentralizedWakeSupport? = nil,
+        iceService: RelayICEServiceDescriptorV1? = nil,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -935,6 +947,7 @@ public struct RelayConfiguration: Codable, Equatable {
         self.onionTransport = onionTransport
         self.mixnetTransport = mixnetTransport
         self.wakeSupport = wakeSupport
+        self.iceService = iceService?.isStructurallyValid == true ? iceService : nil
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -1011,6 +1024,7 @@ public struct RelayConfiguration: Codable, Equatable {
             onionTransport: advertisedOnionTransport,
             mixnetTransport: advertisedMixnetTransport,
             wakeSupport: wakeSupport,
+            iceService: iceService,
             relayName: relayName,
             operatorNote: operatorNote,
             softwareVersion: softwareVersion,
@@ -1024,7 +1038,8 @@ public struct RelayConfiguration: Codable, Equatable {
                 openDiscoveryEnabled: advertisedOpenFederationDiscovery?.dhtNodeEnabled == true,
                 rendezvousTransportEnabled: isRendezvousTransportEnabled,
                 federationForwardingEnabled: kind == .standard && federation.mode != .solo,
-                netHostEnabled: isNetHostEnabled
+                netHostEnabled: isNetHostEnabled,
+                iceServiceEnabled: iceService != nil
             ),
             requiresPassword: requiresPassword,
             tlsEnabled: advertisedTLSEnabled ?? tlsEnabled,
@@ -1097,6 +1112,7 @@ public enum RelayModuleID: String, Codable, CaseIterable {
     case sharedLog = "nw.shared-log"
     case ephemeralPresence = "nw.ephemeral-presence"
     case mediaBlobs = "nw.media-blobs"
+    case iceService = "nw.ice-service"
     case federation = "nw.federation"
     case federationForward = "nw.federation-forward"
     case openDiscovery = "nw.open-discovery"
@@ -1107,7 +1123,7 @@ public enum RelayModuleID: String, Codable, CaseIterable {
         switch self {
         case .core, .opaqueRoute, .rendezvousTransport:
             return 2
-        case .blobs, .realtimeRoute, .sharedLog, .ephemeralPresence, .mediaBlobs,
+        case .blobs, .realtimeRoute, .sharedLog, .ephemeralPresence, .mediaBlobs, .iceService,
              .federation, .federationForward, .openDiscovery, .netPassthrough, .netHost:
             return 1
         }
@@ -1171,6 +1187,7 @@ public struct RelayOperationBinding: Codable, Equatable, Hashable {
         .sharedLog: [.create, .append, .sync],
         .ephemeralPresence: [.acquire, .renewLease, .release, .list],
         .mediaBlobs: [.create, .upload, .fetch, .release],
+        .iceService: [.acquire],
         .federation: [
             .register,
             .list,
@@ -2420,6 +2437,7 @@ public enum RelayRequestBody: Equatable {
     case uploadMediaBlob(MediaBlobUploadRequestV1)
     case fetchMediaBlob(MediaBlobFetchRequestV1)
     case releaseMediaBlob(MediaBlobReleaseRequestV1)
+    case acquireICECredentials(RelayICECredentialRequestV1)
     case uploadAttachment(UploadAttachmentRequest)
     case fetchAttachment(FetchAttachmentRequest)
     case registerFederationNode(FederationNodeRegistrationRequest)
@@ -2484,6 +2502,8 @@ public enum RelayRequestBody: Equatable {
         case .uploadMediaBlob: return RelayOperationBinding(module: .mediaBlobs, version: 1, method: .upload)
         case .fetchMediaBlob: return RelayOperationBinding(module: .mediaBlobs, version: 1, method: .fetch)
         case .releaseMediaBlob: return RelayOperationBinding(module: .mediaBlobs, version: 1, method: .release)
+        case .acquireICECredentials:
+            return RelayOperationBinding(module: .iceService, version: 1, method: .acquire)
         case .uploadAttachment:
             return RelayOperationBinding(module: .blobs, version: 1, method: .upload)
         case .fetchAttachment:
@@ -2641,6 +2661,12 @@ public enum RelayRequestBody: Equatable {
         case (.mediaBlobs, .upload): return .uploadMediaBlob(try relayDecodeSingle(MediaBlobUploadRequestV1.self, from: decoder, key: "request"))
         case (.mediaBlobs, .fetch): return .fetchMediaBlob(try relayDecodeSingle(MediaBlobFetchRequestV1.self, from: decoder, key: "request"))
         case (.mediaBlobs, .release): return .releaseMediaBlob(try relayDecodeSingle(MediaBlobReleaseRequestV1.self, from: decoder, key: "request"))
+        case (.iceService, .acquire):
+            return .acquireICECredentials(try relayDecodeSingle(
+                RelayICECredentialRequestV1.self,
+                from: decoder,
+                key: "request"
+            ))
         case (.blobs, .upload):
             return .uploadAttachment(try relayDecodeExact(
                 UploadAttachmentRequest.self,
@@ -2853,6 +2879,8 @@ public enum RelayRequestBody: Equatable {
         case .uploadMediaBlob(let value): try container.encode(value, forKey: relayWireKey("request"))
         case .fetchMediaBlob(let value): try container.encode(value, forKey: relayWireKey("request"))
         case .releaseMediaBlob(let value): try container.encode(value, forKey: relayWireKey("request"))
+        case .acquireICECredentials(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
         case .uploadAttachment(let value):
             guard value.isStructurallyValid else {
                 throw relayWireError(encoder, "Attachment upload request is invalid")
@@ -3125,6 +3153,17 @@ public struct RelayRequest: Codable, Equatable {
     public static func uploadMediaBlobV1(_ request: MediaBlobUploadRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.uploadMediaBlob(request)), body: .uploadMediaBlob(request)) }
     public static func fetchMediaBlobV1(_ request: MediaBlobFetchRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.fetchMediaBlob(request)), body: .fetchMediaBlob(request)) }
     public static func releaseMediaBlobV1(_ request: MediaBlobReleaseRequestV1) -> RelayRequest { RelayRequest(binding: requestBodyBinding(.releaseMediaBlob(request)), body: .releaseMediaBlob(request)) }
+
+    public static func acquireICECredentialsV1(
+        _ request: RelayICECredentialRequestV1 = .fresh(),
+        authToken: String? = nil
+    ) -> RelayRequest {
+        RelayRequest(
+            binding: requestBodyBinding(.acquireICECredentials(request)),
+            body: .acquireICECredentials(request),
+            authToken: authToken
+        )
+    }
 
     public static func uploadAttachment(_ request: UploadAttachmentRequest) -> RelayRequest {
         RelayRequest(binding: requestBodyBinding(.uploadAttachment(request)), body: .uploadAttachment(request))
@@ -3423,6 +3462,7 @@ public enum RelaySuccessBody: Equatable {
     case presenceLeases([PresenceLeaseV1])
     case mediaBlobCreated(MediaBlobCreatedV1)
     case mediaBlobChunk(MediaBlobChunkV1)
+    case iceCredentials(RelayICECredentialsV1)
     case attachment(AttachmentChunk)
     case federationNodes(FederationNodesResponseBody)
     case noctwebNamespaceSnapshot(NoctwebNamespaceSnapshotV1)
@@ -3488,6 +3528,8 @@ public enum RelaySuccessBody: Equatable {
         case .mediaBlobChunk:
             return binding == RelayOperationBinding(module: .mediaBlobs, version: 1, method: .upload)
                 || binding == RelayOperationBinding(module: .mediaBlobs, version: 1, method: .fetch)
+        case .iceCredentials:
+            return binding == RelayOperationBinding(module: .iceService, version: 1, method: .acquire)
         case .attachment:
             return binding.module == .blobs && binding.version == 1 && [.upload, .fetch].contains(binding.method)
         case .federationNodes:
@@ -3627,6 +3669,13 @@ public enum RelaySuccessBody: Equatable {
             try relayRequireExactObject(decoder, keys: ["chunk"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
             return .mediaBlobChunk(try container.decode(MediaBlobChunkV1.self, forKey: relayWireKey("chunk")))
+        case (.iceService, .acquire):
+            try relayRequireExactObject(decoder, keys: ["credentials"])
+            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+            return .iceCredentials(try container.decode(
+                RelayICECredentialsV1.self,
+                forKey: relayWireKey("credentials")
+            ))
         case (.blobs, .upload), (.blobs, .fetch):
             try relayRequireExactObject(decoder, keys: ["chunk"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
@@ -3782,6 +3831,8 @@ public enum RelaySuccessBody: Equatable {
             try container.encode(value, forKey: relayWireKey("blob"))
         case .mediaBlobChunk(let value):
             try container.encode(value, forKey: relayWireKey("chunk"))
+        case .iceCredentials(let value):
+            try container.encode(value, forKey: relayWireKey("credentials"))
         case .attachment(let value):
             try container.encode(value, forKey: relayWireKey("chunk"))
         case .federationNodes(let value):
