@@ -20,6 +20,30 @@ advertised. HMAC-SHA1 is used only for coturn's time-limited REST credential
 convention; Noctweave identity, session, signaling, and media cryptography do
 not use SHA-1.
 
+## Native macOS relay
+
+The native Noctweave Relay app includes a minimal arm64 coturn 4.17.2 helper.
+Open **Transport** and enable **Call connectivity**. Managed mode then:
+
+- detects a reachable local address;
+- generates and stores the shared credential key in Keychain;
+- advertises STUN plus UDP and TCP TURN URLs;
+- issues only short-lived client credentials; and
+- starts and stops coturn with the relay process.
+
+LAN testing requires no separate coturn installation or account. Internet
+calls still require the displayed TCP/UDP TURN port and UDP allocation range to
+reach the Mac. Operators may override the advertised host, external NAT
+address, and ports under **Advanced call settings**, or select **External** to
+use an independently managed deployment.
+
+The generated coturn configuration is a transient startup file and is deleted
+once the helper is running. It is not backup state. If a restored managed relay
+does not retain its Keychain item, it creates a new shared secret; only
+previously issued short-lived TURN credentials are invalidated. Relay identity,
+message storage, and application media keys are independent. External coturn
+operators must restore the same shared secret in coturn and the relay.
+
 ## Docker deployment
 
 ```sh
@@ -50,8 +74,8 @@ export NOCTWEAVE_TURN_SHARED_SECRET="$(openssl rand -hex 32)"
 export NOCTWEAVE_TURN_CREDENTIAL_TTL_SECONDS=600
 ```
 
-The macOS relay app advertises and authorizes an externally managed coturn
-instance; it does not run coturn inside the application process.
+The macOS relay app's **External** mode advertises and authorizes this
+independently managed coturn instance instead of launching its bundled helper.
 
 ## Client behavior
 
