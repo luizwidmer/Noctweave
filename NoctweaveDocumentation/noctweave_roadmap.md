@@ -65,6 +65,9 @@ Completed in the architecture revision:
   with a fixed-slot aggregate anchor, per-relationship anchors, and terminal
   burn recovery supplied by the embedding host;
 - exact modular relay request/response envelopes;
+- an optional bounded Reticulum client/server sidecar that preserves exact
+  relay bytes, uses Resource transfer for larger envelopes, pins a separate
+  transport destination, and retains all Noctweave PQ and relay-identity checks;
 - persistent ML-DSA relay identities bound to role, trust domain, endpoints,
   capability digest, federation-required Noctweb suffix, and optional host
   receipt key;

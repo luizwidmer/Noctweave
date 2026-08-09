@@ -336,6 +336,17 @@ container port.
 - raw TCP: one newline-delimited request and response per connection;
 - HTTP: `POST /relay`;
 - WebSocket: connect to `/relay`, then exchange exact JSON frames.
+- optional Reticulum: a separate client/server sidecar carries the exact same
+  request and response bytes over an authenticated Reticulum Link.
+
+Reticulum support is intentionally outside the main relay process and image.
+The server bridge forwards only to one fixed HTTP(S) `/relay` endpoint; the
+client bridge exposes only a loopback HTTP endpoint, so existing Swift, CLI,
+and JavaScript clients need no wire-format changes. See the complete
+[`ReticulumBridge` guide](ReticulumBridge/README.md) and its separate upstream
+license notice. Reticulum's X25519/Ed25519 Link identity is a pinned transport
+address, not the relay's signed ML-DSA identity and not a post-quantum
+substitute.
 
 There is no separate GET health or information route. Health and information
 are `nw.core@2` requests through the normal relay transport.

@@ -18,6 +18,9 @@ Packages/
 Package.resolved
 .clang-module-cache/
 .swiftpm-module-cache/
+__pycache__/
+*.pyc
+.venv-reticulum/
 
 # Local logs and scratch output
 .research/

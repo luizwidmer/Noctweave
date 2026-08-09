@@ -1,0 +1,39 @@
+services:
+  relay:
+    build: .
+    network_mode: host
+    command:
+      - --host
+      - 127.0.0.1
+      - --port
+      - "9339"
+      - --http-port
+      - "9340"
+      - --data-dir
+      - /data
+    volumes:
+      - noctweave-relay-data:/data
+    restart: unless-stopped
+
+  reticulum-bridge:
+    build: ./ReticulumBridge
+    network_mode: host
+    depends_on:
+      - relay
+    command:
+      - server
+      - --relay-url
+      - http://127.0.0.1:9340/relay
+      - --identity
+      - /data/transport-identity
+      - --rns-config
+      - /config
+    volumes:
+      - noctweave-reticulum-config:/config
+      - noctweave-reticulum-identity:/data
+    restart: unless-stopped
+
+volumes:
+  noctweave-relay-data:
+  noctweave-reticulum-config:
+  noctweave-reticulum-identity:

@@ -387,8 +387,13 @@ Pull-only synchronization remains complete.
 
 Conversation events are independent of delivery adapters, allowing relay, LAN,
 offline file, onion, or other transports to be evaluated without changing
-application semantics. Experimental adapters are not 1.0-candidate core
-requirements.
+application semantics. The optional Reticulum profile is implemented as a
+bounded sidecar carrying exact relay envelopes between a loopback client
+endpoint and one fixed server relay endpoint. Reticulum Link requests promote
+larger bodies to Resource transfer, but its transport identity and link crypto
+do not replace Noctweave relay identity, PQ session establishment, payload
+encryption, capabilities, or replay controls. Delivery adapters remain outside
+the 1.0-candidate core requirements.
 
 ## Federation and privacy extensions
 

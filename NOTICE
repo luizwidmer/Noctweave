@@ -15,4 +15,9 @@ SPDX/header to determine the license for a file.
 - Unlisted repository files are licensed under AGPL-3.0-or-later unless a
   nearer license file or explicit notice says otherwise.
 
+The optional Reticulum bridge installs the external `rns` reference runtime,
+which is governed by the separate Reticulum License. Its required notice and
+terms are reproduced in
+`NoctweaveRelayServer/ReticulumBridge/RETICULUM_LICENSE_NOTICE.md`.
+
 Standalone native client and relay applications are distributed from their own repositories. No trademark license is granted by the source-code license.

@@ -178,6 +178,16 @@ Noctweave distinguishes local persistence, relay acceptance, peer storage, and
 peer read. Network or WebSocket acknowledgement is below those layers. A relay
 cannot truthfully assert that a peer read end-to-end encrypted content.
 
+The exact relay envelope is carrier-neutral. In addition to TCP, HTTP(S), and
+WebSocket(S), an optional sidecar can carry one request and response over an
+authenticated Reticulum Link, using Reticulum Resource transfer for larger
+envelopes. The client surface remains a loopback `POST /relay`, and the server
+surface forwards only to one fixed relay endpoint. The Reticulum destination
+hash is separately pinned transport routing material. Reticulum's X25519 and
+Ed25519 link layer is defense in depth, not a post-quantum identity or session
+substitute; all Noctweave ML-DSA, ML-KEM, AEAD, capability, correlation, and
+replay checks remain unchanged.
+
 ## 8. Groups
 
 Group state uses group-scoped handles, one active credential per member,

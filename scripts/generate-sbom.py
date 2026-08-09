@@ -41,40 +41,71 @@ def package_resolved_components():
 
 
 def docker_components():
-    path = ROOT / "NoctweaveRelayServer" / "Dockerfile"
-    text = read_text(path)
     components = []
+    paths = [
+        ROOT / "NoctweaveRelayServer" / "Dockerfile",
+        ROOT / "NoctweaveRelayServer" / "ReticulumBridge" / "Dockerfile",
+    ]
+    for path in paths:
+        if not path.exists():
+            continue
+        text = read_text(path)
+        for index, match in enumerate(
+            re.finditer(r"^FROM\s+([^\s]+)(?:\s+AS\s+([^\s]+))?", text, flags=re.MULTILINE),
+            start=1,
+        ):
+            image = match.group(1)
+            stage = match.group(2) or f"stage-{index}"
+            components.append(
+                {
+                    "type": "container-base-image",
+                    "name": image,
+                    "version": None,
+                    "revision": None,
+                    "source": "Dockerfile FROM",
+                    "stage": stage,
+                    "pinFile": str(path.relative_to(ROOT)),
+                }
+            )
 
-    for index, match in enumerate(
-        re.finditer(r"^FROM\s+([^\s]+)(?:\s+AS\s+([^\s]+))?", text, flags=re.MULTILINE),
-        start=1,
-    ):
-        image = match.group(1)
-        stage = match.group(2) or f"stage-{index}"
+        liboqs_match = re.search(r"^ARG\s+LIBOQS_VERSION=([^\s]+)", text, flags=re.MULTILINE)
+        if liboqs_match:
+            version = liboqs_match.group(1)
+            commit_match = re.search(r"^ARG\s+LIBOQS_COMMIT=([0-9a-f]{40})", text, flags=re.MULTILINE)
+            revision = commit_match.group(1) if commit_match else None
+            components.append(
+                {
+                    "type": "source-build",
+                    "name": "liboqs",
+                    "version": version,
+                    "revision": revision,
+                    "source": "https://github.com/open-quantum-safe/liboqs.git",
+                    "pinFile": str(path.relative_to(ROOT)),
+                }
+            )
+    return components
+
+
+def python_components():
+    path = ROOT / "NoctweaveRelayServer" / "ReticulumBridge" / "requirements.txt"
+    if not path.exists():
+        return []
+    components = []
+    for line in read_text(path).splitlines():
+        requirement = line.strip()
+        if not requirement or requirement.startswith("#"):
+            continue
+        match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([A-Za-z0-9_.+-]+)", requirement)
+        if match is None:
+            raise ValueError(f"Unpinned Python dependency in {path}: {requirement}")
+        name, version = match.groups()
         components.append(
             {
-                "type": "container-base-image",
-                "name": image,
-                "version": None,
-                "revision": None,
-                "source": "Dockerfile FROM",
-                "stage": stage,
-                "pinFile": str(path.relative_to(ROOT)),
-            }
-        )
-
-    liboqs_match = re.search(r"^ARG\s+LIBOQS_VERSION=([^\s]+)", text, flags=re.MULTILINE)
-    if liboqs_match:
-        version = liboqs_match.group(1)
-        commit_match = re.search(r"^ARG\s+LIBOQS_COMMIT=([0-9a-f]{40})", text, flags=re.MULTILINE)
-        revision = commit_match.group(1) if commit_match else None
-        components.append(
-            {
-                "type": "source-build",
-                "name": "liboqs",
+                "type": "python-package",
+                "name": name,
                 "version": version,
-                "revision": revision,
-                "source": "https://github.com/open-quantum-safe/liboqs.git",
+                "revision": None,
+                "source": f"https://pypi.org/project/{name}/{version}/",
                 "pinFile": str(path.relative_to(ROOT)),
             }
         )
@@ -141,6 +172,7 @@ def make_sbom():
     components.extend(workspace_components())
     components.extend(package_resolved_components())
     components.extend(docker_components())
+    components.extend(python_components())
     components.extend(vendored_components())
     return {
         "schema": "noctweave-sbom-v1",
@@ -149,6 +181,8 @@ def make_sbom():
         "inputs": [
             "NoctweaveRelayServer/Package.resolved",
             "NoctweaveRelayServer/Dockerfile",
+            "NoctweaveRelayServer/ReticulumBridge/Dockerfile",
+            "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
             "NoctweaveCore/Vendor/liboqs.xcframework",
         ],
         "components": components,
@@ -164,6 +198,8 @@ def cyclonedx_component(component):
 
     if component_type == "swift-package":
         purl = f"pkg:swift/{name}@{version}"
+    elif component_type == "python-package":
+        purl = f"pkg:pypi/{name}@{version}"
     elif component_type == "container-base-image":
         image_name, _, image_version = (name or "").partition(":")
         purl = f"pkg:docker/{image_name}@{image_version}" if image_version else f"pkg:docker/{image_name}"

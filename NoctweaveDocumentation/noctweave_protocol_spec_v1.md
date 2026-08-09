@@ -41,6 +41,22 @@ is not the authenticated representation.
 
 Every signature, KDF, MAC, and AEAD context uses a purpose-specific domain.
 
+### 2.1 Carrier independence
+
+The relay request/response envelope is carrier-neutral. Raw TCP, TLS, HTTP(S),
+WebSocket(S), and an optional Reticulum bridge carry the same bounded exact
+JSON bytes. A carrier must not rewrite authenticated fields, decrypt payloads,
+invent retries, or weaken request/response correlation.
+
+Reticulum integration is a sidecar profile: a client-side loopback HTTP bridge
+maps one request to one Reticulum Link request, and a server-side bridge maps it
+to one fixed relay `POST /relay`. Oversized Link requests use Reticulum Resource
+transfer. Reticulum destination identity and link encryption are transport
+properties only; Noctweave ML-DSA relay identity, ML-KEM relationship setup,
+AEAD payload protection, route capabilities, and replay rules remain
+mandatory. Clients must pin or authentically obtain the Reticulum destination
+hash and still verify the expected Noctweave relay identity.
+
 ## 3. Contact pairing rendezvous
 
 `RendezvousPurposeV2` has one value: `contactPairing`.

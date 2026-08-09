@@ -23,6 +23,11 @@ swift build --package-path "$RELAY_DIR"
 echo "Running relay XCTest suite and product integration coverage..."
 swift test --package-path "$RELAY_DIR"
 
+echo "Running optional Reticulum bridge unit suite..."
+python3 -m unittest discover \
+  -s "$RELAY_DIR/ReticulumBridge/tests" \
+  -p 'test_*.py'
+
 if command -v bun >/dev/null 2>&1 && [ -f "$RELAY_DIR/package.json" ]; then
   echo "Running public relay OperatorWebUI and Electrobun launcher TypeScript suite..."
   (cd "$RELAY_DIR" && bun test desktop/test)

@@ -65,6 +65,12 @@ Never add plaintext message logging, server-side decryption, implicit key escrow
 ## Relay Integration Notes
 Relay endpoints may be raw TCP, TLS TCP, HTTP, HTTPS, WebSocket, or WSS depending on operator configuration. Client integrations should parse explicit schemes and avoid guessing ports when a URL already supplies a scheme.
 
+An optional Reticulum sidecar exposes an ordinary loopback HTTP relay endpoint
+to existing integrations. Treat the Reticulum destination hash as pinned
+transport routing material and continue verifying the relay's signed ML-DSA
+identity. Never substitute Reticulum Link crypto for Noctweave's PQ session,
+payload, capability, or replay checks.
+
 Manual federation is for small operator-managed meshes. Curated federation uses allow lists and coordinator policy. Open federation uses bounded signed discovery hints and must retain public endpoint safeguards.
 
 Federation discovers and authenticates relay operators. A client may submit

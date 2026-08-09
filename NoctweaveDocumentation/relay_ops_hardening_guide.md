@@ -60,6 +60,26 @@ After deployment, verify:
 4. request/response correlation survives HTTP and WebSocket proxying;
 5. TLS validation and any configured pins work from a real client network.
 
+### Optional Reticulum carrier
+
+Run the Reticulum bridge as a separate least-privilege sidecar. Keep its relay
+upstream on loopback by default; if container networking requires a service
+hostname, allow that exact hostname explicitly and isolate the Docker network.
+Persist its transport identity with mode `0600`, back it up separately, and
+publish its destination hash through an authenticated operator channel.
+
+The destination hash prevents another Reticulum destination from impersonating
+the pinned carrier. It does not replace verification of Noctweave's signed
+ML-DSA relay identity. Reticulum Link cryptography is not post-quantum. Treat it
+as defense in depth below unchanged Noctweave encryption.
+
+Reticulum requests arrive at the relay from one loopback bridge source. Retain
+the bridge's per-Link and global rate limits, bounded key table, concurrency ceiling,
+request/response byte limits, and timeout. Do not expose the client bridge off
+loopback, enable HTTP redirects, log request bodies, or retry an uncertain
+operation in the sidecar. Reduce limits and attachment use for constrained
+radio paths.
+
 ## Secrets
 
 Use separate random values for relay access, operator access, coordinator

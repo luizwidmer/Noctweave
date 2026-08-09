@@ -90,6 +90,55 @@
       "version": "0.16.0"
     },
     {
+      "name": "python:3.13-slim",
+      "pinFile": "NoctweaveRelayServer/ReticulumBridge/Dockerfile",
+      "revision": null,
+      "source": "Dockerfile FROM",
+      "stage": "stage-1",
+      "type": "container-base-image",
+      "version": null
+    },
+    {
+      "name": "cffi",
+      "pinFile": "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
+      "revision": null,
+      "source": "https://pypi.org/project/cffi/2.1.1/",
+      "type": "python-package",
+      "version": "2.1.1"
+    },
+    {
+      "name": "cryptography",
+      "pinFile": "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
+      "revision": null,
+      "source": "https://pypi.org/project/cryptography/50.0.0/",
+      "type": "python-package",
+      "version": "50.0.0"
+    },
+    {
+      "name": "pycparser",
+      "pinFile": "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
+      "revision": null,
+      "source": "https://pypi.org/project/pycparser/3.0/",
+      "type": "python-package",
+      "version": "3.0"
+    },
+    {
+      "name": "pyserial",
+      "pinFile": "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
+      "revision": null,
+      "source": "https://pypi.org/project/pyserial/3.5/",
+      "type": "python-package",
+      "version": "3.5"
+    },
+    {
+      "name": "rns",
+      "pinFile": "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
+      "revision": null,
+      "source": "https://pypi.org/project/rns/1.4.2/",
+      "type": "python-package",
+      "version": "1.4.2"
+    },
+    {
       "fileCount": 46,
       "name": "liboqs.xcframework",
       "revision": "d573633dbe8a318a70a8b59c60a4a27d2c09d14afd2461bdad0322c24a33a59a",
@@ -102,6 +151,8 @@
   "inputs": [
     "NoctweaveRelayServer/Package.resolved",
     "NoctweaveRelayServer/Dockerfile",
+    "NoctweaveRelayServer/ReticulumBridge/Dockerfile",
+    "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
     "NoctweaveCore/Vendor/liboqs.xcframework"
   ],
   "name": "Noctweave",

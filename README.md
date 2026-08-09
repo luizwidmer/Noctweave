@@ -28,6 +28,11 @@ JavaScript protocol client and browser integration shell, and a headless CLI.
 Relays route and store encrypted packets; message plaintext and relationship or
 group keys stay with clients.
 
+An optional bounded sidecar can carry the same exact relay envelopes over
+[Reticulum](https://reticulum.network/), including its radio, serial, local
+mesh, TCP, I2P, and custom interface carriers. Noctweave's post-quantum
+identity, session, ratchet, and capability layers remain unchanged.
+
 The public libraries also include an experimental one-to-one call foundation:
 direct-v4 signaling, a fresh ML-KEM-768 call handshake, fixed-bucket
 AES-256-GCM media frames, and optional coturn discovery with short-lived TURN
@@ -161,6 +166,7 @@ transport is available to integrations that supply that boundary.
 | I want to… | Start here |
 | --- | --- |
 | Run a relay | [`NoctweaveRelayServer/`](NoctweaveRelayServer/) |
+| Carry relay traffic over Reticulum | [`ReticulumBridge`](NoctweaveRelayServer/ReticulumBridge/) |
 | Build a browser or Node client | [NoctweaveJS](https://github.com/luizwidmer/NoctweaveJS) |
 | Integrate from Swift | [`NoctweaveCore/`](NoctweaveCore/) |
 | Script personas, relationships, and messages | [`NoctweaveCLI`](NoctweaveDocumentation/noctweave_cli_usage.md) |
@@ -318,6 +324,9 @@ custom cryptographic implementations or shipping a browser runtime:
   profile.
 - [Electrobun](https://electrobun.dev/) packages the optional desktop client and
   relay launcher with native system WebViews.
+- [Reticulum](https://github.com/markqvist/Reticulum) is an optional external
+  carrier for the bounded relay sidecar. It is installed separately under the
+  non-OSI Reticulum License and is not part of the default relay image.
 - CryptoKit and WebCrypto provide symmetric cryptography where appropriate.
 - SQLite provides persistent relay storage; IPFS is an optional encrypted-blob
   offload target, not an anonymity layer.
@@ -357,6 +366,11 @@ Run the combined public checks with `scripts/run-tests.sh` and the normative
 boundary gate with `scripts/verify-whitepaper-alignment.sh`. Run release, SBOM,
 dependency, Docker, and optional container-scan checks with
 `scripts/verify-release.sh`.
+
+The Reticulum adapter's dependency-free unit tests are included in
+`scripts/run-tests.sh`. A real Reticulum installation is required only for the
+optional end-to-end carrier smoke test described in its
+[operator guide](NoctweaveRelayServer/ReticulumBridge/README.md).
 
 NoctweaveJS runs its protocol suite, desktop type-check, and package validation
 in its [own CI](https://github.com/luizwidmer/NoctweaveJS/actions). A sibling

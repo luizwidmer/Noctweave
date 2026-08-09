@@ -10,6 +10,7 @@ This document records the current software bill of materials and the minimum rel
 - `NoctweaveRelayServer`
 - `NoctweaveCLI`
 - Docker relay image
+- optional Reticulum transport bridge and its independently built image
 
 ## Cryptographic Dependencies
 
@@ -45,6 +46,13 @@ The optional source-built relay launcher uses dependencies pinned in its
 | `@resvg/resvg-js` | `2.6.2` | Renders the relay SVG icon to an alpha-preserving PNG. |
 | `png2icons` | `2.0.1` | Produces ICNS and ICO variants from the generated PNG. |
 
+## Optional Reticulum Dependency
+
+| Component | Version / pin | Purpose and license boundary |
+| --- | --- | --- |
+| `rns` | `1.4.2` | External Reticulum reference runtime used only by `NoctweaveRelayServer/ReticulumBridge`. It is not vendored and is governed by the separate non-OSI Reticulum License reproduced in the bridge notice. It does not replace Noctweave PQ cryptography. |
+| Python runtime dependencies | Exact versions in `ReticulumBridge/requirements.txt` | The bridge locks Reticulum's complete installed dependency graph so rebuilds cannot silently select newer transitive packages. Each package remains governed by its own upstream license. |
+
 ## Docker Base And Build Inputs
 
 | Item | Current value | Notes |
@@ -55,6 +63,12 @@ The optional source-built relay launcher uses dependencies pinned in its
 | Data path | `/data` | Mount as a persistent volume with restrictive permissions. |
 | Exposed raw port | `9339` | Prefer keeping raw TCP behind a reverse proxy or firewall. |
 | Optional HTTP bridge | configured by `--http-port` | Usually proxied behind TLS. |
+
+The optional Reticulum sidecar uses `python:3.13-slim` and is built separately
+from the default relay image. Building it installs the fully pinned Python
+requirements, including `rns`, and therefore accepts the upstream Reticulum
+License boundary. Do not merge it into the standard relay image or describe it
+as an AGPL dependency.
 
 For reproducible releases, pin Docker base images by digest before tagging a public build. Floating tags are acceptable during development but not for release artifacts.
 
@@ -144,6 +158,7 @@ docker image inspect noctweave-relay:<version> --format '{{.Id}}'
    - Swift Crypto
    - Open Quantum Safe `liboqs`
    - Docker base image packages
+   - Reticulum `rns` when the optional sidecar is distributed
 
 9. Review `noctweave_core_stability_policy.md` and record any source, CLI,
    wire-format, persisted-state, Docker-flag, or relay API compatibility changes

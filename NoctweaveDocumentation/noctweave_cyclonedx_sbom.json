@@ -233,6 +233,108 @@
       "version": "0.16.0"
     },
     {
+      "bom-ref": "container-base-image:python:3.13-slim:unknown:stage-1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:Dockerfile FROM"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/ReticulumBridge/Dockerfile"
+        }
+      ],
+      "name": "python:3.13-slim",
+      "purl": "pkg:docker/python@3.13-slim",
+      "type": "container",
+      "version": "unknown"
+    },
+    {
+      "bom-ref": "python-package:cffi:2.1.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pypi.org/project/cffi/2.1.1/"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/ReticulumBridge/requirements.txt"
+        }
+      ],
+      "name": "cffi",
+      "purl": "pkg:pypi/cffi@2.1.1",
+      "type": "library",
+      "version": "2.1.1"
+    },
+    {
+      "bom-ref": "python-package:cryptography:50.0.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pypi.org/project/cryptography/50.0.0/"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/ReticulumBridge/requirements.txt"
+        }
+      ],
+      "name": "cryptography",
+      "purl": "pkg:pypi/cryptography@50.0.0",
+      "type": "library",
+      "version": "50.0.0"
+    },
+    {
+      "bom-ref": "python-package:pycparser:3.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pypi.org/project/pycparser/3.0/"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/ReticulumBridge/requirements.txt"
+        }
+      ],
+      "name": "pycparser",
+      "purl": "pkg:pypi/pycparser@3.0",
+      "type": "library",
+      "version": "3.0"
+    },
+    {
+      "bom-ref": "python-package:pyserial:3.5",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pypi.org/project/pyserial/3.5/"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/ReticulumBridge/requirements.txt"
+        }
+      ],
+      "name": "pyserial",
+      "purl": "pkg:pypi/pyserial@3.5",
+      "type": "library",
+      "version": "3.5"
+    },
+    {
+      "bom-ref": "python-package:rns:1.4.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pypi.org/project/rns/1.4.2/"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/ReticulumBridge/requirements.txt"
+        }
+      ],
+      "name": "rns",
+      "purl": "pkg:pypi/rns@1.4.2",
+      "type": "library",
+      "version": "1.4.2"
+    },
+    {
       "bom-ref": "vendored-binary:liboqs.xcframework:0.16.0",
       "externalReferences": [
         {
