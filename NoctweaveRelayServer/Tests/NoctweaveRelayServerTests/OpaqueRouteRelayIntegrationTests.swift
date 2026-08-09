@@ -31,6 +31,28 @@ final class OpaqueRouteRelayIntegrationTests: XCTestCase {
         XCTAssertEqual(response.status, .error)
         XCTAssertEqual(response.error?.message, "Opaque route runtime is disabled")
     }
+
+    func testRealtimeRoutePolicyIsEnforcedByLinuxRequestPath() throws {
+        let harness = try OpaqueRouteRelayTCPHarness(
+            configuration: RelayConfiguration(realtimeRoutesEnabled: false)
+        )
+        defer { try? harness.shutdown() }
+        let response = try harness.send(
+            .createRealtimeRouteV1(
+                RealtimeRouteCreateRequestV1(
+                    routeCapability: OpaqueCapabilityV1.generate(),
+                    appendCapability: OpaqueCapabilityV1.generate(),
+                    readCapability: OpaqueCapabilityV1.generate(),
+                    expiresAt: Date().addingTimeInterval(600)
+                )
+            )
+        )
+        XCTAssertEqual(response.status, .error)
+        XCTAssertEqual(
+            response.error?.message,
+            "Realtime routes are disabled or require a standard relay and confidential transport."
+        )
+    }
 }
 
 private struct OpaqueRouteIntegrationFixture {
@@ -101,12 +123,17 @@ private final class OpaqueRouteRelayTCPHarness {
     private let host = "127.0.0.1"
     private let port: Int
 
-    init(enabled: Bool) throws {
-        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
-        let configuration = RelayConfiguration(
-            tlsEnabled: false,
-            opaqueRouteRuntimeEnabled: enabled
+    convenience init(enabled: Bool) throws {
+        try self.init(
+            configuration: RelayConfiguration(
+                tlsEnabled: false,
+                opaqueRouteRuntimeEnabled: enabled
+            )
         )
+    }
+
+    init(configuration: RelayConfiguration) throws {
+        group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let relayIdentityRuntime = RelayIdentityRuntime(
             keyMaterial: try RelayIdentityKeyMaterialV1.generate()
         )

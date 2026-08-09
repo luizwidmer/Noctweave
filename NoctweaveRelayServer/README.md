@@ -233,10 +233,11 @@ Noctweb name resolution and object fetches to the namespace-selected host.
 Client-side relationship, namespace, destination identity, host receipt,
 object digest, and publisher verification remain mandatory.
 
-The operator console shows the persistent relay ID and active suffix as
-read-only security state. Initial suffix selection is a startup operation;
-rotation and release require signed lifecycle operations and are not treated as
-ordinary live form edits.
+The operator console shows the persistent relay ID as read-only security state.
+An initial suffix or host-module change can be staged there, but activates only
+after restart because the namespace and host store are constructed at startup.
+Rotation and release of an active suffix still require signed lifecycle
+operations and are not ordinary live form edits.
 
 See
 [`federation_protocol_and_operations.md`](../NoctweaveDocumentation/federation_protocol_and_operations.md)
@@ -429,6 +430,38 @@ The modules are enabled only on a standard relay, with attachments enabled for
 media blobs. Their precise bounds and operation fields are maintained in the
 [module specification](../NoctweaveDocumentation/relay_collaboration_modules_v1.md).
 
+Each module can be independently enabled or disabled from the operator console,
+or at startup with:
+
+```sh
+NOCTWEAVE_REALTIME_ROUTES=true
+NOCTWEAVE_SHARED_LOGS=true
+NOCTWEAVE_EPHEMERAL_PRESENCE=true
+NOCTWEAVE_MEDIA_BLOBS=true
+```
+
+The same settings are available as `--realtime-routes`, `--shared-logs`,
+`--ephemeral-presence`, and `--media-blobs`. A disabled module is removed from
+the signed capability manifest and its request paths return `unavailable`; the
+switch is not presentation-only.
+
+Optional decentralized wake policy is also shared with the native relay:
+
+```sh
+NOCTWEAVE_WAKE_ENABLED=true
+NOCTWEAVE_WAKE_MODE=longPoll
+NOCTWEAVE_WAKE_MIN_POLL_SECONDS=60
+NOCTWEAVE_WAKE_MAX_POLL_SECONDS=300
+NOCTWEAVE_WAKE_JITTER_PERMILLE=250
+NOCTWEAVE_WAKE_LONG_POLL_TIMEOUT_SECONDS=60
+```
+
+Wake advertises bounded client polling guidance over opaque routes. It does not
+provide centralized push delivery or guarantee background execution.
+Command-line deployments can use `--wake-mode`, `--wake-min-poll-seconds`,
+`--wake-max-poll-seconds`, `--wake-jitter-permille`, and
+`--wake-long-poll-timeout-seconds` for the same policy.
+
 ## Federation
 
 Federation is operator-plane relay discovery and coordination only. Clients
@@ -470,6 +503,15 @@ policy persists in `operator-config.json` with restrictive permissions.
 Listener addresses, database mode, request ceilings, and secret values remain
 process-owned startup configuration. Editable policy is validated and applied
 without silently changing those boundaries.
+
+The console follows the same operator grouping as the native relay: Relay
+Profile, Delivery, NoctCord, Noctweb, Storage, Federation, and Privacy.
+Presentation, timing, attachment retention, collaboration modules, wake policy,
+and federation peer policy apply live to new requests. Attachment backend,
+Noctweb host enablement, and suffix changes are explicitly marked
+restart-controlled. Enabling Noctweb hosting at restart requires a separately
+supplied `NOCTWEAVE_PUBLISHER_PASSWORD`; secrets are never accepted by or
+returned to the browser console.
 
 ## Optional privacy advertisements
 

@@ -139,4 +139,19 @@ final class RealtimeRelayV1Tests: XCTestCase {
         )
         XCTAssertFalse(passthrough.supports(module: "nw.realtime-route", version: 1))
     }
+
+    func testEachRealtimeCapabilityCanBeDisabledIndependently() throws {
+        let manifest = try XCTUnwrap(
+            RelayConfiguration(
+                realtimeRoutesEnabled: false,
+                sharedLogsEnabled: false,
+                ephemeralPresenceEnabled: false,
+                mediaBlobsEnabled: false
+            ).makeInfo().protocolCapabilities
+        )
+        for module in ["nw.realtime-route", "nw.shared-log", "nw.ephemeral-presence", "nw.media-blobs"] {
+            XCTAssertFalse(manifest.supports(module: module, version: 1), module)
+        }
+        XCTAssertTrue(manifest.supports(module: "nw.opaque-route", version: 2))
+    }
 }

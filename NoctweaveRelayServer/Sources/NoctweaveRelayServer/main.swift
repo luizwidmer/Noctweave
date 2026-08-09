@@ -36,7 +36,16 @@ struct ServerConfig {
       --publisher-password <password>  Authorize Noctweave Net hosting writes only
       --attachments-enabled <bool>     Enable or disable attachment chunks
       --attachment-storage <mode>      inline or ipfs
-      --opaque-route-runtime <bool>   Enable the direct-delivery runtime (default: true)
+      --wake-mode <mode>               disabled, pullOnly, or longPoll
+      --wake-min-poll-seconds <n>      Minimum advertised client poll interval
+      --wake-max-poll-seconds <n>      Maximum advertised client poll interval
+      --wake-jitter-permille <n>       Poll jitter from 0 through 1000
+      --wake-long-poll-timeout-seconds <n> Advertised long-poll timeout
+      --realtime-routes <bool>         Enable low-latency signaling routes
+      --shared-logs <bool>             Enable durable encrypted shared logs
+      --ephemeral-presence <bool>      Enable short-lived presence leases
+      --media-blobs <bool>             Enable realtime encrypted media blobs
+      --opaque-route-runtime <bool>    Enable the direct-delivery runtime (default: true)
       --rendezvous-transport <bool>    Enable bounded one-use rendezvous transport
       --ice-url <stun-or-turn-url>     Advertise a coturn STUN/TURN URL (repeatable)
       --turn-realm <realm>             coturn realm advertised to clients
@@ -95,6 +104,11 @@ struct ServerConfig {
     var hiddenRetrieval: HiddenRetrievalSupport?
     var onionTransport: OnionTransportSupport?
     var mixnetTransport: MixnetTransportSupport?
+    var wakeSupport: DecentralizedWakeSupport?
+    var realtimeRoutesEnabled: Bool
+    var sharedLogsEnabled: Bool
+    var ephemeralPresenceEnabled: Bool
+    var mediaBlobsEnabled: Bool
     var relayName: String?
     var operatorNote: String?
     var accessPassword: String?
@@ -203,6 +217,36 @@ struct ServerConfig {
         var mixnetMinBatchSize = Int(environment["NOCTWEAVE_MIXNET_MIN_BATCH_SIZE"] ?? "") ?? 8
         var mixnetCoverPacketsPerBatch = Int(environment["NOCTWEAVE_MIXNET_COVER_PACKETS_PER_BATCH"] ?? "") ?? 2
         var mixnetMaxDelaySeconds = Int(environment["NOCTWEAVE_MIXNET_MAX_DELAY_SECONDS"] ?? "") ?? 120
+        let environmentWakeMode = DecentralizedWakeMode(
+            rawValue: environment["NOCTWEAVE_WAKE_MODE"] ?? ""
+        )
+        var wakeEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_WAKE_ENABLED"] ?? (environmentWakeMode == nil ? "false" : "true"),
+            defaultValue: environmentWakeMode != nil
+        )
+        var wakeMode = environmentWakeMode ?? .pullOnly
+        var wakeMinPollSeconds = Int(environment["NOCTWEAVE_WAKE_MIN_POLL_SECONDS"] ?? "") ?? 60
+        var wakeMaxPollSeconds = Int(environment["NOCTWEAVE_WAKE_MAX_POLL_SECONDS"] ?? "") ?? 300
+        var wakeJitterPermille = Int(environment["NOCTWEAVE_WAKE_JITTER_PERMILLE"] ?? "") ?? 250
+        var wakeLongPollTimeoutSeconds = Int(
+            environment["NOCTWEAVE_WAKE_LONG_POLL_TIMEOUT_SECONDS"] ?? ""
+        ) ?? 60
+        var realtimeRoutesEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_REALTIME_ROUTES"] ?? "true",
+            defaultValue: true
+        )
+        var sharedLogsEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_SHARED_LOGS"] ?? "true",
+            defaultValue: true
+        )
+        var ephemeralPresenceEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_EPHEMERAL_PRESENCE"] ?? "true",
+            defaultValue: true
+        )
+        var mediaBlobsEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_MEDIA_BLOBS"] ?? "true",
+            defaultValue: true
+        )
         var relayName: String?
         var operatorNote: String?
         var accessPassword: String? = environment["NOCTWEAVE_RELAY_PASSWORD"]
@@ -454,6 +498,52 @@ struct ServerConfig {
                     mixnetMaxDelaySeconds = parsed
                     mixnetTransportEnabled = true
                 }
+            case "--wake-mode":
+                if let value = iterator.next() {
+                    if value == "disabled" {
+                        wakeEnabled = false
+                    } else if let parsed = DecentralizedWakeMode(rawValue: value) {
+                        wakeMode = parsed
+                        wakeEnabled = true
+                    }
+                }
+            case "--wake-min-poll-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    wakeMinPollSeconds = parsed
+                    wakeEnabled = true
+                }
+            case "--wake-max-poll-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    wakeMaxPollSeconds = parsed
+                    wakeEnabled = true
+                }
+            case "--wake-jitter-permille":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    wakeJitterPermille = parsed
+                    wakeEnabled = true
+                }
+            case "--wake-long-poll-timeout-seconds":
+                if let value = iterator.next(), let parsed = Int(value) {
+                    wakeLongPollTimeoutSeconds = parsed
+                    wakeMode = .longPoll
+                    wakeEnabled = true
+                }
+            case "--realtime-routes":
+                if let value = iterator.next() {
+                    realtimeRoutesEnabled = parseBoolFlag(value, defaultValue: true)
+                }
+            case "--shared-logs":
+                if let value = iterator.next() {
+                    sharedLogsEnabled = parseBoolFlag(value, defaultValue: true)
+                }
+            case "--ephemeral-presence":
+                if let value = iterator.next() {
+                    ephemeralPresenceEnabled = parseBoolFlag(value, defaultValue: true)
+                }
+            case "--media-blobs":
+                if let value = iterator.next() {
+                    mediaBlobsEnabled = parseBoolFlag(value, defaultValue: true)
+                }
             case "--attachment-max-ttl-minutes":
                 if let value = iterator.next(), let parsed = Int(value) {
                     attachmentMaxTTLSeconds = min(max(1, parsed), 30 * 24 * 60) * 60
@@ -657,6 +747,13 @@ struct ServerConfig {
         mixnetMinBatchSize = min(max(mixnetMinBatchSize, 1), 256)
         mixnetCoverPacketsPerBatch = min(max(mixnetCoverPacketsPerBatch, 0), 256)
         mixnetMaxDelaySeconds = min(max(mixnetMaxDelaySeconds, 0), 3_600)
+        wakeMinPollSeconds = min(max(wakeMinPollSeconds, 5), DecentralizedWakeSupport.absoluteMaximumPollIntervalSeconds)
+        wakeMaxPollSeconds = min(
+            max(wakeMaxPollSeconds, wakeMinPollSeconds),
+            DecentralizedWakeSupport.absoluteMaximumPollIntervalSeconds
+        )
+        wakeJitterPermille = min(max(wakeJitterPermille, 0), 1_000)
+        wakeLongPollTimeoutSeconds = min(max(wakeLongPollTimeoutSeconds, 5), wakeMaxPollSeconds)
         coordinatorHeartbeatSeconds = min(max(coordinatorHeartbeatSeconds, 15), 3_600)
         coordinatorDirectoryMaxStalenessSeconds = min(
             max(coordinatorDirectoryMaxStalenessSeconds, coordinatorHeartbeatSeconds),
@@ -709,6 +806,15 @@ struct ServerConfig {
                 minBatchSize: mixnetMinBatchSize,
                 coverPacketsPerBatch: mixnetCoverPacketsPerBatch,
                 maxDelaySeconds: mixnetMaxDelaySeconds
+            )
+            : nil
+        let wakeSupport = wakeEnabled
+            ? DecentralizedWakeSupport(
+                mode: wakeMode,
+                minPollIntervalSeconds: wakeMinPollSeconds,
+                maxPollIntervalSeconds: wakeMaxPollSeconds,
+                jitterPermille: wakeJitterPermille,
+                longPollTimeoutSeconds: wakeMode == .longPoll ? wakeLongPollTimeoutSeconds : nil
             )
             : nil
         let hasTURNURL = iceURLs.contains {
@@ -779,6 +885,11 @@ struct ServerConfig {
             hiddenRetrieval: hiddenRetrieval,
             onionTransport: onionTransport,
             mixnetTransport: mixnetTransport,
+            wakeSupport: wakeSupport,
+            realtimeRoutesEnabled: realtimeRoutesEnabled,
+            sharedLogsEnabled: sharedLogsEnabled,
+            ephemeralPresenceEnabled: ephemeralPresenceEnabled,
+            mediaBlobsEnabled: mediaBlobsEnabled,
             relayName: relayName,
             operatorNote: operatorNote,
             accessPassword: accessPassword,
@@ -1206,7 +1317,12 @@ var relayConfiguration = RelayConfiguration(
     hiddenRetrieval: config.hiddenRetrieval,
     onionTransport: config.onionTransport,
     mixnetTransport: config.mixnetTransport,
+    wakeSupport: config.wakeSupport,
     iceService: config.iceService,
+    realtimeRoutesEnabled: config.realtimeRoutesEnabled,
+    sharedLogsEnabled: config.sharedLogsEnabled,
+    ephemeralPresenceEnabled: config.ephemeralPresenceEnabled,
+    mediaBlobsEnabled: config.mediaBlobsEnabled,
     relayName: config.relayName,
     operatorNote: config.operatorNote,
     softwareVersion: ServerConfig.advertisedSoftwareVersion,
@@ -1449,6 +1565,20 @@ do {
                 : "Unavailable",
             "Message ceiling": "\(config.maxMessageBytes ?? 0) bytes",
             "Direct delivery": config.opaqueRouteRuntimeEnabled ? "Opaque route v2" : "Disabled",
+            "Background delivery": config.wakeSupport.map {
+                "\($0.mode.rawValue) · \($0.minPollIntervalSeconds)-\($0.maxPollIntervalSeconds)s"
+            } ?? "Disabled",
+            "NoctCord realtime": (
+                config.realtimeRoutesEnabled
+                    || config.sharedLogsEnabled
+                    || config.ephemeralPresenceEnabled
+                    || config.mediaBlobsEnabled
+            ) ? [
+                config.realtimeRoutesEnabled ? "routes" : nil,
+                config.sharedLogsEnabled ? "logs" : nil,
+                config.ephemeralPresenceEnabled ? "presence" : nil,
+                config.mediaBlobsEnabled ? "media" : nil
+            ].compactMap { $0 }.joined(separator: " · ") : "Disabled",
             "ICE traversal": config.iceService.map {
                 "\($0.urls.count) endpoint(s) · \($0.credentialMode.rawValue)"
             } ?? "Disabled",

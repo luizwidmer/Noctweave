@@ -27,6 +27,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var operatorNote: String
     var advertisedEndpoint: String
     var trustedReverseProxyTLS: Bool
+    var netHostEnabled: Bool?
+    var noctwebRelaySuffix: String?
     var federationMode: String
     var federationName: String
     var federationDescription: String
@@ -54,6 +56,16 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var mixnetMinBatchSize: Int?
     var mixnetCoverPacketsPerBatch: Int?
     var mixnetMaxDelaySeconds: Int?
+    var wakeEnabled: Bool?
+    var wakeMode: String?
+    var wakeMinPollSeconds: Int?
+    var wakeMaxPollSeconds: Int?
+    var wakeJitterPermille: Int?
+    var wakeLongPollTimeoutSeconds: Int?
+    var realtimeRoutesEnabled: Bool?
+    var sharedLogsEnabled: Bool?
+    var ephemeralPresenceEnabled: Bool?
+    var mediaBlobsEnabled: Bool?
     var relayPeerExchangeLimit: Int
     var openFederationDHTEnabled: Bool
     var openFederationDHTMaxRecords: Int?
@@ -77,6 +89,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         operatorNote = configuration.operatorNote ?? ""
         advertisedEndpoint = configuration.advertisedEndpoint.map(operatorRelayEndpointString) ?? ""
         trustedReverseProxyTLS = configuration.trustedReverseProxyTLS
+        netHostEnabled = configuration.isNetHostEnabled
+        noctwebRelaySuffix = configuration.noctwebRelaySuffix?.rawValue
         federationMode = configuration.federation.mode.rawValue
         federationName = configuration.federation.name ?? ""
         federationDescription = configuration.federation.description ?? ""
@@ -108,6 +122,16 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         mixnetMinBatchSize = configuration.mixnetTransport?.minBatchSize ?? 8
         mixnetCoverPacketsPerBatch = configuration.mixnetTransport?.coverPacketsPerBatch ?? 2
         mixnetMaxDelaySeconds = configuration.mixnetTransport?.maxDelaySeconds ?? 120
+        wakeEnabled = configuration.wakeSupport != nil
+        wakeMode = configuration.wakeSupport?.mode.rawValue ?? DecentralizedWakeMode.pullOnly.rawValue
+        wakeMinPollSeconds = configuration.wakeSupport?.minPollIntervalSeconds ?? 60
+        wakeMaxPollSeconds = configuration.wakeSupport?.maxPollIntervalSeconds ?? 300
+        wakeJitterPermille = configuration.wakeSupport?.jitterPermille ?? 250
+        wakeLongPollTimeoutSeconds = configuration.wakeSupport?.longPollTimeoutSeconds ?? 60
+        realtimeRoutesEnabled = configuration.areRealtimeRoutesEnabled
+        sharedLogsEnabled = configuration.areSharedLogsEnabled
+        ephemeralPresenceEnabled = configuration.isEphemeralPresenceEnabled
+        mediaBlobsEnabled = configuration.areMediaBlobsEnabled
         relayPeerExchangeLimit = configuration.federation.mode == .open
             ? (configuration.relayPeerExchangeLimit ?? 0)
             : 0
@@ -130,7 +154,10 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         turnRelayOnlySupported = configuration.iceService?.relayOnlySupported ?? true
     }
 
-    func validatedConfiguration(from current: RelayConfiguration) throws -> RelayConfiguration {
+    func validatedConfiguration(
+        from current: RelayConfiguration,
+        applyRestartControlledSettings: Bool = false
+    ) throws -> RelayConfiguration {
         let normalizedName = try boundedText(relayName, field: "relayName", allowEmpty: true)
         let normalizedNote = try boundedText(operatorNote, field: "operatorNote", allowEmpty: true)
         let normalizedFederationName = try boundedText(federationName, field: "federationName", allowEmpty: true)
@@ -142,14 +169,33 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         guard let mode = FederationMode(rawValue: federationMode) else {
             throw OperatorConfigurationError.invalidField("federationMode")
         }
+        let proposedNetHostEnabled = current.kind == .host
+            || (netHostEnabled ?? current.isNetHostEnabled)
+        if current.kind == .passthrough, proposedNetHostEnabled {
+            throw OperatorConfigurationError.unsupportedTransition(
+                "Passthrough relays cannot enable Noctweb hosting."
+            )
+        }
+        let proposedNoctwebSuffix = try validatedNoctwebSuffix(current: current)
+        let activeNetHostEnabled = applyRestartControlledSettings
+            ? proposedNetHostEnabled
+            : current.isNetHostEnabled
+        let activeNoctwebSuffix = applyRestartControlledSettings
+            ? proposedNoctwebSuffix
+            : current.noctwebRelaySuffix
+        let activeFederationMode = !applyRestartControlledSettings
+            && mode != .solo
+            && activeNoctwebSuffix == nil
+                ? current.federation.mode
+                : mode
         if current.kind == .passthrough, mode != .solo {
             throw OperatorConfigurationError.unsupportedTransition(
                 "Passthrough relays require solo federation mode."
             )
         }
-        if mode != .solo, current.noctwebRelaySuffix == nil {
+        if mode != .solo, proposedNoctwebSuffix == nil {
             throw OperatorConfigurationError.unsupportedTransition(
-                "Federated relays require a claimed Noctweb suffix configured at startup."
+                "Federated relays require a claimed Noctweb suffix."
             )
         }
         if mode == .curated,
@@ -202,6 +248,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         let hiddenRetrieval = try validatedHiddenRetrieval(current: current)
         let onionTransport = try validatedOnionTransport(current: current)
         let mixnetTransport = try validatedMixnetTransport(current: current, onionTransport: onionTransport)
+        let wakeSupport = try validatedWakeSupport(current: current)
         let iceService = try validatedICEService(current: current)
         let dhtMaxRecords = openFederationDHTMaxRecords ?? current.openFederationDHTMaxRecords
         let dhtMaxPerHost = openFederationDHTMaxRecordsPerHost ?? current.openFederationDHTMaxRecordsPerHost
@@ -223,9 +270,9 @@ struct OperatorEditableConfiguration: Codable, Equatable {
 
         return RelayConfiguration(
             kind: current.kind,
-            netHostEnabled: current.isNetHostEnabled,
+            netHostEnabled: activeNetHostEnabled,
             federation: FederationDescriptor(
-                mode: mode,
+                mode: activeFederationMode,
                 name: normalizedFederationName.nilIfEmpty,
                 description: normalizedFederationDescription.nilIfEmpty
             ),
@@ -242,7 +289,12 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             hiddenRetrieval: hiddenRetrieval,
             onionTransport: onionTransport,
             mixnetTransport: mixnetTransport,
+            wakeSupport: wakeSupport,
             iceService: iceService,
+            realtimeRoutesEnabled: realtimeRoutesEnabled ?? current.areRealtimeRoutesEnabled,
+            sharedLogsEnabled: sharedLogsEnabled ?? current.areSharedLogsEnabled,
+            ephemeralPresenceEnabled: ephemeralPresenceEnabled ?? current.isEphemeralPresenceEnabled,
+            mediaBlobsEnabled: mediaBlobsEnabled ?? current.areMediaBlobsEnabled,
             relayName: normalizedName.nilIfEmpty,
             operatorNote: normalizedNote.nilIfEmpty,
             softwareVersion: current.softwareVersion,
@@ -252,8 +304,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             federationCoordinatorEndpoints: coordinators,
             coordinatorHeartbeatSeconds: heartbeat,
             coordinatorDirectoryMaxStalenessSeconds: staleness,
-            relayPeerExchangeLimit: mode == .open ? relayPeerExchangeLimit : 0,
-            openFederationDHTEnabled: mode == .open && openFederationDHTEnabled,
+            relayPeerExchangeLimit: activeFederationMode == .open ? relayPeerExchangeLimit : 0,
+            openFederationDHTEnabled: activeFederationMode == .open && openFederationDHTEnabled,
             openFederationDHTMaxRecords: dhtMaxRecords,
             openFederationDHTMaxRecordsPerHost: dhtMaxPerHost,
             openFederationDHTMaxQueryRecords: dhtMaxQuery,
@@ -262,8 +314,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             curatedCoordinatorQuorum: quorum,
             curatedRequireSignedDirectory: curatedRequireSignedDirectory ?? current.curatedRequireSignedDirectory,
             advertisedEndpoint: endpoint,
-            noctwebRelaySuffix: current.noctwebRelaySuffix,
-            federationAllowList: mode == .solo ? [] : allowList,
+            noctwebRelaySuffix: activeNoctwebSuffix,
+            federationAllowList: activeFederationMode == .solo ? [] : allowList,
             allowPrivateFederationEndpoints: allowPrivateFederationEndpoints ?? current.allowPrivateFederationEndpoints,
             opaqueRouteRuntimeEnabled: opaqueRouteRuntimeEnabled,
             rendezvousTransportEnabled: rendezvousTransportEnabled
@@ -292,7 +344,12 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             hiddenRetrieval: config.hiddenRetrieval,
             onionTransport: config.onionTransport,
             mixnetTransport: config.mixnetTransport,
+            wakeSupport: config.wakeSupport,
             iceService: config.iceService,
+            realtimeRoutesEnabled: config.realtimeRoutesEnabled,
+            sharedLogsEnabled: config.sharedLogsEnabled,
+            ephemeralPresenceEnabled: config.ephemeralPresenceEnabled,
+            mediaBlobsEnabled: config.mediaBlobsEnabled,
             relayName: config.relayName,
             operatorNote: config.operatorNote,
             softwareVersion: ServerConfig.advertisedSoftwareVersion,
@@ -323,7 +380,10 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             opaqueRouteRuntimeEnabled: config.opaqueRouteRuntimeEnabled,
             rendezvousTransportEnabled: config.rendezvousTransportEnabled
         )
-        let updated = try validatedConfiguration(from: current)
+        let updated = try validatedConfiguration(
+            from: current,
+            applyRestartControlledSettings: true
+        )
         config.federationMode = updated.federation.mode
         config.federationName = updated.federation.name
         config.federationDescription = updated.federation.description
@@ -340,6 +400,11 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.hiddenRetrieval = updated.hiddenRetrieval
         config.onionTransport = updated.onionTransport
         config.mixnetTransport = updated.mixnetTransport
+        config.wakeSupport = updated.wakeSupport
+        config.realtimeRoutesEnabled = updated.areRealtimeRoutesEnabled
+        config.sharedLogsEnabled = updated.areSharedLogsEnabled
+        config.ephemeralPresenceEnabled = updated.isEphemeralPresenceEnabled
+        config.mediaBlobsEnabled = updated.areMediaBlobsEnabled
         config.iceService = updated.iceService
         config.relayName = updated.relayName
         config.operatorNote = updated.operatorNote
@@ -355,6 +420,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.curatedCoordinatorQuorum = updated.curatedCoordinatorQuorum
         config.curatedRequireSignedDirectory = updated.curatedRequireSignedDirectory
         config.advertisedEndpoint = updated.advertisedEndpoint
+        config.netHostEnabled = updated.isNetHostEnabled
+        config.noctwebRelaySuffix = updated.noctwebRelaySuffix?.rawValue
         config.federationAllowList = updated.federationAllowList
         config.allowPrivateFederationEndpoints = updated.allowPrivateFederationEndpoints
         config.opaqueRouteRuntimeEnabled = updated.isOpaqueRouteRuntimeEnabled
@@ -367,7 +434,9 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             attachmentStorageMode ?? AttachmentStorageMode.inline.rawValue,
             ipfsAPIEndpoint ?? "",
             ipfsGatewayEndpoint ?? "",
-            String(ipfsTimeoutSeconds ?? 10)
+            String(ipfsTimeoutSeconds ?? 10),
+            String(netHostEnabled ?? false),
+            noctwebRelaySuffix ?? ""
         ].joined(separator: "|")
     }
 
@@ -453,6 +522,50 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             throw OperatorConfigurationError.invalidField("mixnet policy requires usable onion routing, fixed packets, batching, cover traffic, and delay")
         }
         return support
+    }
+
+    private func validatedWakeSupport(
+        current: RelayConfiguration
+    ) throws -> DecentralizedWakeSupport? {
+        guard wakeEnabled ?? (current.wakeSupport != nil) else { return nil }
+        guard let mode = DecentralizedWakeMode(
+            rawValue: wakeMode ?? current.wakeSupport?.mode.rawValue ?? DecentralizedWakeMode.pullOnly.rawValue
+        ) else {
+            throw OperatorConfigurationError.invalidField("wakeMode")
+        }
+        let minimum = wakeMinPollSeconds ?? current.wakeSupport?.minPollIntervalSeconds ?? 60
+        let maximum = wakeMaxPollSeconds ?? current.wakeSupport?.maxPollIntervalSeconds ?? 300
+        let jitter = wakeJitterPermille ?? current.wakeSupport?.jitterPermille ?? 250
+        let timeout = wakeLongPollTimeoutSeconds
+            ?? current.wakeSupport?.longPollTimeoutSeconds
+            ?? 60
+        guard (5...DecentralizedWakeSupport.absoluteMaximumPollIntervalSeconds).contains(minimum),
+              (minimum...DecentralizedWakeSupport.absoluteMaximumPollIntervalSeconds).contains(maximum),
+              (0...1_000).contains(jitter),
+              mode != .longPoll || (5...maximum).contains(timeout) else {
+            throw OperatorConfigurationError.invalidField("wake policy")
+        }
+        return DecentralizedWakeSupport(
+            mode: mode,
+            minPollIntervalSeconds: minimum,
+            maxPollIntervalSeconds: maximum,
+            jitterPermille: jitter,
+            longPollTimeoutSeconds: mode == .longPoll ? timeout : nil
+        )
+    }
+
+    private func validatedNoctwebSuffix(
+        current: RelayConfiguration
+    ) throws -> NoctwebRelaySuffixV1? {
+        guard let proposed = noctwebRelaySuffix else {
+            return current.noctwebRelaySuffix
+        }
+        let trimmed = proposed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        guard let label = try? NoctwebPublisherSurface.canonicalOperatorSuffix(trimmed) else {
+            throw OperatorConfigurationError.invalidField("noctwebRelaySuffix")
+        }
+        return NoctwebRelaySuffixV1(rawValue: ".\(label)")
     }
 
     private func validatedICEService(

@@ -1327,7 +1327,14 @@ struct RelayConfiguration: Codable, Equatable {
     var hiddenRetrieval: HiddenRetrievalSupport?
     var onionTransport: OnionTransportSupport?
     var mixnetTransport: MixnetTransportSupport?
+    var wakeSupport: DecentralizedWakeSupport?
     var iceService: RelayICEServiceDescriptorV1?
+    /// Application-neutral low-latency service policy. Optional storage keeps
+    /// existing persisted configurations compatible; nil means enabled.
+    var realtimeRoutesEnabled: Bool?
+    var sharedLogsEnabled: Bool?
+    var ephemeralPresenceEnabled: Bool?
+    var mediaBlobsEnabled: Bool?
     var relayName: String?
     var operatorNote: String?
     var softwareVersion: String?
@@ -1370,7 +1377,12 @@ struct RelayConfiguration: Codable, Equatable {
         hiddenRetrieval: HiddenRetrievalSupport? = nil,
         onionTransport: OnionTransportSupport? = nil,
         mixnetTransport: MixnetTransportSupport? = nil,
+        wakeSupport: DecentralizedWakeSupport? = nil,
         iceService: RelayICEServiceDescriptorV1? = nil,
+        realtimeRoutesEnabled: Bool = true,
+        sharedLogsEnabled: Bool = true,
+        ephemeralPresenceEnabled: Bool = true,
+        mediaBlobsEnabled: Bool = true,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -1427,7 +1439,12 @@ struct RelayConfiguration: Codable, Equatable {
         self.hiddenRetrieval = hiddenRetrieval
         self.onionTransport = onionTransport
         self.mixnetTransport = mixnetTransport
+        self.wakeSupport = wakeSupport?.isStructurallyValid == true ? wakeSupport : nil
         self.iceService = iceService?.isStructurallyValid == true ? iceService : nil
+        self.realtimeRoutesEnabled = realtimeRoutesEnabled ? nil : false
+        self.sharedLogsEnabled = sharedLogsEnabled ? nil : false
+        self.ephemeralPresenceEnabled = ephemeralPresenceEnabled ? nil : false
+        self.mediaBlobsEnabled = mediaBlobsEnabled ? nil : false
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -1474,6 +1491,24 @@ struct RelayConfiguration: Codable, Equatable {
         rendezvousTransportEnabled
     }
 
+    var areRealtimeRoutesEnabled: Bool {
+        kind == .standard && realtimeRoutesEnabled != false
+    }
+
+    var areSharedLogsEnabled: Bool {
+        kind == .standard && sharedLogsEnabled != false
+    }
+
+    var isEphemeralPresenceEnabled: Bool {
+        kind == .standard && ephemeralPresenceEnabled != false
+    }
+
+    var areMediaBlobsEnabled: Bool {
+        kind == .standard
+            && attachmentsEnabled != false
+            && mediaBlobsEnabled != false
+    }
+
     enum EffectiveTransportConfidentiality: Equatable {
         case none
         case listenerTLS
@@ -1511,6 +1546,7 @@ struct RelayConfiguration: Codable, Equatable {
             hiddenRetrieval: advertisedHiddenRetrieval,
             onionTransport: advertisedOnionTransport,
             mixnetTransport: advertisedMixnetTransport,
+            wakeSupport: wakeSupport,
             iceService: iceService,
             relayName: relayName,
             operatorNote: operatorNote,
@@ -1519,6 +1555,7 @@ struct RelayConfiguration: Codable, Equatable {
                 relayKind: kind,
                 netHostEnabled: isNetHostEnabled,
                 attachmentsEnabled: attachmentsEnabled != false,
+                wakeEnabled: wakeSupport != nil,
                 hiddenRetrievalEnabled: advertisedHiddenRetrieval != nil,
                 onionEnabled: advertisedOnionTransport != nil,
                 mixnetEnabled: advertisedMixnetTransport != nil,
@@ -1527,7 +1564,11 @@ struct RelayConfiguration: Codable, Equatable {
                 rendezvousTransportEnabled: isRendezvousTransportEnabled,
                 federationForwardingEnabled: kind == .standard
                     && federation.mode != .solo,
-                iceServiceEnabled: iceService != nil
+                iceServiceEnabled: iceService != nil,
+                realtimeRoutesEnabled: areRealtimeRoutesEnabled,
+                sharedLogsEnabled: areSharedLogsEnabled,
+                ephemeralPresenceEnabled: isEphemeralPresenceEnabled,
+                mediaBlobsEnabled: areMediaBlobsEnabled
             ),
             requiresPassword: requiresPassword,
             federationCoordinatorEndpoints: federationCoordinatorEndpoints,

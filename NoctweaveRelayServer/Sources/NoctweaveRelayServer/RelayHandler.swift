@@ -762,67 +762,67 @@ final class RelayHandler: ChannelInboundHandler {
                 return context.eventLoop.makeSucceededFuture(relayStoreErrorResponse(error, respondingTo: request))
             }
         case .createRealtimeRoute(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areRealtimeRoutesEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.realtimeRouteCreated(try store.createRealtimeRouteV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .appendRealtimeRoute(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areRealtimeRoutesEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.realtimeRouteAppend(try store.appendRealtimeRouteV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .subscribeRealtimeRoute(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areRealtimeRoutesEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.realtimeRouteSubscription(try store.subscribeRealtimeRouteV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .syncRealtimeRoute(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areRealtimeRoutesEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.realtimeRouteSync(try store.syncRealtimeRouteV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .unsubscribeRealtimeRoute(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areRealtimeRoutesEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Realtime routes are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { try store.unsubscribeRealtimeRouteV1(payload); return success(.empty) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .createSharedLog(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Shared logs require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areSharedLogsEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Shared logs are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.sharedLogCreated(try store.createSharedLogV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .appendSharedLog(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Shared logs require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areSharedLogsEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Shared logs are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.sharedLogAppend(try store.appendSharedLogV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .syncSharedLog(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Shared logs require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areSharedLogsEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Shared logs are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.sharedLogSync(try store.syncSharedLogV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .acquirePresence(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.isEphemeralPresenceEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.presenceLease(try store.acquirePresenceV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .renewPresence(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.isEphemeralPresenceEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.presenceLease(try store.renewPresenceV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .releasePresence(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.isEphemeralPresenceEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { try store.releasePresenceV1(payload); return success(.empty) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .listPresence(let payload):
-            guard relayConfiguration.kind == .standard, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases require a standard relay and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.isEphemeralPresenceEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.presenceLeases(try store.listPresenceV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .createMediaBlob(let payload):
-            guard relayConfiguration.kind == .standard, relayConfiguration.attachmentsEnabled != false, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areMediaBlobsEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs are disabled or require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
             do { return success(.mediaBlobCreated(try store.createMediaBlobV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .uploadMediaBlob(let payload):
-            guard relayConfiguration.kind == .standard, relayConfiguration.attachmentsEnabled != false, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areMediaBlobsEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs are disabled or require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
             do { return success(.mediaBlobChunk(try store.uploadMediaBlobV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .fetchMediaBlob(let payload):
-            guard relayConfiguration.kind == .standard, relayConfiguration.attachmentsEnabled != false, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areMediaBlobsEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs are disabled or require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
             do { return success(.mediaBlobChunk(try store.fetchMediaBlobV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .releaseMediaBlob(let payload):
-            guard relayConfiguration.kind == .standard, relayConfiguration.attachmentsEnabled != false, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
+            guard relayConfiguration.areMediaBlobsEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs are disabled or require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
             do { try store.releaseMediaBlobV1(payload); return success(.empty) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
         case .empty:

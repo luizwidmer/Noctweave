@@ -19,7 +19,9 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.javascript.contains("Authorization"))
         XCTAssertTrue(OperatorWebUI.html.contains("Secrets stay outside the browser"))
         XCTAssertTrue(OperatorWebUI.html.contains("IPFS API endpoint"))
-        XCTAssertTrue(OperatorWebUI.html.contains("Noctweb hosting and Publisher / Lab"))
+        XCTAssertTrue(OperatorWebUI.html.contains("Noctweb hosting"))
+        XCTAssertTrue(OperatorWebUI.html.contains("NoctCord capabilities"))
+        XCTAssertTrue(OperatorWebUI.html.contains("Decentralized wake policy"))
         XCTAssertTrue(OperatorWebUI.html.contains("id=\"relayIdentityID\""))
         XCTAssertTrue(OperatorWebUI.html.contains("id=\"relayNoctwebSuffix\""))
         XCTAssertTrue(OperatorWebUI.javascript.contains(#"s.bootstrap["Relay identity"]"#))
@@ -31,8 +33,10 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.html.contains("Onion and mixnet metadata"))
         XCTAssertTrue(OperatorWebUI.html.contains("No anonymity claim"))
         XCTAssertFalse(OperatorWebUI.html.contains("Group creation"))
-        XCTAssertFalse(OperatorWebUI.html.contains("Long poll"))
-        XCTAssertFalse(OperatorWebUI.javascript.contains("wakeLongPoll"))
+        XCTAssertTrue(OperatorWebUI.html.contains("Long poll"))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("wakeLongPollTimeoutSeconds"))
+        XCTAssertTrue(OperatorWebUI.html.contains("name=\"netHostEnabled\" type=\"checkbox\""))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("realtimeRoutesEnabled:b(\"realtimeRoutesEnabled\")"))
         XCTAssertTrue(OperatorWebUI.html.contains("Active backend:"))
         XCTAssertTrue(OperatorWebUI.html.contains("name=\"opaqueRouteRuntimeEnabled\" type=\"checkbox\""))
         XCTAssertTrue(OperatorWebUI.javascript.contains("opaqueRouteRuntimeEnabled:b(\"opaqueRouteRuntimeEnabled\")"))
@@ -120,7 +124,7 @@ final class OperatorWebUITests: XCTestCase {
             XCTAssertEqual(
                 error as? OperatorConfigurationError,
                 .unsupportedTransition(
-                    "Federated relays require a claimed Noctweb suffix configured at startup."
+                    "Federated relays require a claimed Noctweb suffix."
                 )
             )
         }
@@ -258,6 +262,93 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertEqual(serverConfig.ipfsAPIEndpoint?.absoluteString, "http://ipfs:5001")
         XCTAssertEqual(serverConfig.ipfsGatewayEndpoint?.absoluteString, "https://gateway.example.org")
         XCTAssertEqual(serverConfig.ipfsTimeoutSeconds, 20)
+    }
+
+    func testNoctwebHostingAndSuffixAreStagedUntilRestart() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = OperatorConfigurationPersistence(
+            fileURL: directory.appendingPathComponent("operator-config.json")
+        )
+        var base = makeBaseConfiguration()
+        base.netHostEnabled = false
+        base.noctwebRelaySuffix = nil
+        let configurationStore = RelayConfigurationStore(base)
+        let controlPlane = OperatorControlPlane(
+            configurationStore: configurationStore,
+            persistence: persistence,
+            relayStore: RelayStore(fileURL: nil),
+            startedAt: Date(),
+            bootstrap: [:],
+            storageDescription: "SQLite",
+            transportDescription: "TCP"
+        )
+        var editable = controlPlane.state().configuration
+        editable.netHostEnabled = true
+        editable.noctwebRelaySuffix = ".community"
+
+        let staged = try controlPlane.update(editable)
+        XCTAssertTrue(staged.status.restartRequired)
+        XCTAssertFalse(configurationStore.snapshot().isNetHostEnabled)
+        XCTAssertNil(configurationStore.snapshot().noctwebRelaySuffix)
+
+        var serverConfig = ServerConfig.parse(arguments: [], environment: [:])
+        try persistence.load()?.applyPersistedOverrides(to: &serverConfig)
+        XCTAssertTrue(serverConfig.netHostEnabled)
+        XCTAssertEqual(serverConfig.noctwebRelaySuffix, ".community")
+    }
+
+    func testRealtimeAndWakeSettingsApplyLiveAndAdvertiseAccurately() throws {
+        let base = makeBaseConfiguration()
+        var editable = OperatorEditableConfiguration(configuration: base)
+        editable.realtimeRoutesEnabled = false
+        editable.sharedLogsEnabled = false
+        editable.ephemeralPresenceEnabled = false
+        editable.mediaBlobsEnabled = false
+        editable.wakeEnabled = true
+        editable.wakeMode = DecentralizedWakeMode.longPoll.rawValue
+        editable.wakeMinPollSeconds = 15
+        editable.wakeMaxPollSeconds = 120
+        editable.wakeJitterPermille = 400
+        editable.wakeLongPollTimeoutSeconds = 45
+
+        let updated = try editable.validatedConfiguration(from: base)
+        XCTAssertFalse(updated.areRealtimeRoutesEnabled)
+        XCTAssertFalse(updated.areSharedLogsEnabled)
+        XCTAssertFalse(updated.isEphemeralPresenceEnabled)
+        XCTAssertFalse(updated.areMediaBlobsEnabled)
+        XCTAssertEqual(updated.wakeSupport?.mode, .longPoll)
+        XCTAssertEqual(updated.wakeSupport?.longPollTimeoutSeconds, 45)
+        let manifest = try XCTUnwrap(updated.makeInfo().protocolCapabilities)
+        XCTAssertTrue(manifest.supports(module: "nw.wake", version: 1))
+        for module in ["nw.realtime-route", "nw.shared-log", "nw.ephemeral-presence", "nw.media-blobs"] {
+            XCTAssertFalse(manifest.supports(module: module, version: 1), module)
+        }
+    }
+
+    func testServerConfigParsesRealtimeAndWakeEnvironment() {
+        let config = ServerConfig.parse(
+            arguments: [],
+            environment: [
+                "NOCTWEAVE_WAKE_MODE": "longPoll",
+                "NOCTWEAVE_WAKE_MIN_POLL_SECONDS": "20",
+                "NOCTWEAVE_WAKE_MAX_POLL_SECONDS": "180",
+                "NOCTWEAVE_WAKE_LONG_POLL_TIMEOUT_SECONDS": "40",
+                "NOCTWEAVE_REALTIME_ROUTES": "false",
+                "NOCTWEAVE_SHARED_LOGS": "false",
+                "NOCTWEAVE_EPHEMERAL_PRESENCE": "false",
+                "NOCTWEAVE_MEDIA_BLOBS": "false"
+            ]
+        )
+        XCTAssertEqual(config.wakeSupport?.mode, .longPoll)
+        XCTAssertEqual(config.wakeSupport?.minPollIntervalSeconds, 20)
+        XCTAssertEqual(config.wakeSupport?.maxPollIntervalSeconds, 180)
+        XCTAssertEqual(config.wakeSupport?.longPollTimeoutSeconds, 40)
+        XCTAssertFalse(config.realtimeRoutesEnabled)
+        XCTAssertFalse(config.sharedLogsEnabled)
+        XCTAssertFalse(config.ephemeralPresenceEnabled)
+        XCTAssertFalse(config.mediaBlobsEnabled)
     }
 
     func testAdvancedPrivacyAndFederationSettingsApplyLive() throws {
