@@ -191,10 +191,16 @@ final class KeychainClientStateRollbackAnchorStore:
 
     private let service: String
     private let account: String
+    private let usesDataProtectionKeychain: Bool
 
-    init(service: String, account: String) {
+    init(
+        service: String,
+        account: String,
+        usesDataProtectionKeychain: Bool = false
+    ) {
         self.service = service
         self.account = account
+        self.usesDataProtectionKeychain = usesDataProtectionKeychain
     }
 
     func load() throws -> ClientStateRollbackAnchorRecord? {
@@ -238,12 +244,18 @@ final class KeychainClientStateRollbackAnchorStore:
     }
 
     private var baseQuery: [String: Any] {
-        [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kCFBooleanFalse as Any,
         ]
+        #if os(macOS)
+        if usesDataProtectionKeychain {
+            query[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue
+        }
+        #endif
+        return query
     }
 
     private func loadUnlocked() throws -> ClientStateRollbackAnchorRecord? {
@@ -253,9 +265,17 @@ final class KeychainClientStateRollbackAnchorStore:
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else {
+        guard status == errSecSuccess,
+              let result,
+              CFGetTypeID(result) == CFDataGetTypeID() else {
             throw ClientStateRollbackAnchorError.unavailable(status: status)
         }
+        let itemData = unsafeBitCast(result, to: CFData.self)
+        let byteCount = CFDataGetLength(itemData)
+        guard byteCount > 0, let bytes = CFDataGetBytePtr(itemData) else {
+            throw ClientStateRollbackAnchorError.unavailable(status: status)
+        }
+        let data = Data(bytes: bytes, count: byteCount)
         return try NoctweaveCoder.decode(ClientStateRollbackAnchorRecord.self, from: data)
     }
 }

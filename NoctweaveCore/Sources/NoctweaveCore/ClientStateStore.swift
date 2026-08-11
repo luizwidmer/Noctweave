@@ -60,6 +60,8 @@ public actor ClientStateStore {
     private let rollbackAnchorStore: (any ClientStateRollbackAnchorStore)?
     private let legacyStoreScopeDigest: Data?
     private let legacyRollbackAnchorStore: (any ClientStateRollbackAnchorStore)?
+    private let usesDataProtectionKeychain: Bool
+    private let encryptionKeyAccount: String
 
     /// Creates a durable client-state store.
     ///
@@ -75,7 +77,8 @@ public actor ClientStateStore {
         encryptionKey: SymmetricKey? = nil,
         rollbackAnchorStore: (any ClientStateRollbackAnchorStore)? = nil,
         storageScopeIdentifier: String? = nil,
-        legacyRollbackAnchorStore: (any ClientStateRollbackAnchorStore)? = nil
+        legacyRollbackAnchorStore: (any ClientStateRollbackAnchorStore)? = nil,
+        usesDataProtectionKeychain: Bool = false
     ) {
         let standardizedURL = fileURL.standardizedFileURL.resolvingSymlinksInPath()
         let pathScopeDigest = Data(SHA256.hash(data: Data(standardizedURL.path.utf8)))
@@ -93,6 +96,10 @@ public actor ClientStateStore {
         }
         self.protection = protection
         self.suppliedEncryptionKey = encryptionKey
+        self.usesDataProtectionKeychain = usesDataProtectionKeychain
+        self.encryptionKeyAccount = storageScopeIdentifier == nil
+            ? "vault-key-v1"
+            : "vault-key-v3-\(self.storeScopeDigest.base64URLEncodedString())"
 
         if protection == .encrypted, let rollbackAnchorStore {
             self.rollbackAnchorStore = rollbackAnchorStore
@@ -113,7 +120,8 @@ public actor ClientStateStore {
             }
             self.rollbackAnchorStore = KeychainClientStateRollbackAnchorStore(
                 service: Self.secureStorageService,
-                account: "state-anchor-\(storageScopeIdentifier == nil ? "v1" : "v2")-\(accountDigest.base64URLEncodedString())"
+                account: "state-anchor-\(storageScopeIdentifier == nil ? "v1" : "v2")-\(accountDigest.base64URLEncodedString())",
+                usesDataProtectionKeychain: usesDataProtectionKeychain
             )
             if storageScopeIdentifier != nil {
                 let legacyAccountDigest = Data(SHA256.hash(
@@ -121,7 +129,8 @@ public actor ClientStateStore {
                 ))
                 self.legacyRollbackAnchorStore = KeychainClientStateRollbackAnchorStore(
                     service: Self.secureStorageService,
-                    account: "state-anchor-v1-\(legacyAccountDigest.base64URLEncodedString())"
+                    account: "state-anchor-v1-\(legacyAccountDigest.base64URLEncodedString())",
+                    usesDataProtectionKeychain: usesDataProtectionKeychain
                 )
             } else {
                 self.legacyRollbackAnchorStore = nil
@@ -956,7 +965,8 @@ public actor ClientStateStore {
         }
         return try SecureStorageKeyProvider.shared.loadOrCreateKey(
             service: Self.secureStorageService,
-            account: "vault-key-v1"
+            account: encryptionKeyAccount,
+            usesDataProtectionKeychain: usesDataProtectionKeychain
         )
     }
 

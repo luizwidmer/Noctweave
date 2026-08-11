@@ -14,8 +14,18 @@ public enum SecureStorageKeyAccessibility: Sendable {
     case afterFirstUnlockDeviceOnly
 }
 
-public enum SecureStorageKeyProviderError: Error, Equatable, Sendable {
+public enum SecureStorageKeyProviderError: Error, Equatable, LocalizedError, Sendable {
     case unavailable(status: Int32)
+    case invalidKeyMaterial
+
+    public var errorDescription: String? {
+        switch self {
+        case .unavailable(let status):
+            "Secure key storage is unavailable (status \(status))."
+        case .invalidKeyMaterial:
+            "Secure key storage returned invalid key material."
+        }
+    }
 }
 
 /// Loads each Keychain-backed symmetric key at most once per process.
@@ -30,6 +40,7 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
         let service: String
         let account: String
         let accessGroup: String?
+        let usesDataProtectionKeychain: Bool
     }
 
     private let lock = NSLock()
@@ -41,9 +52,15 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
         service: String,
         account: String,
         accessGroup: String? = nil,
-        accessibility: SecureStorageKeyAccessibility = .whenUnlockedDeviceOnly
+        accessibility: SecureStorageKeyAccessibility = .whenUnlockedDeviceOnly,
+        usesDataProtectionKeychain: Bool = false
     ) throws -> SymmetricKey {
-        let cacheKey = CacheKey(service: service, account: account, accessGroup: accessGroup)
+        let cacheKey = CacheKey(
+            service: service,
+            account: account,
+            accessGroup: accessGroup,
+            usesDataProtectionKeychain: usesDataProtectionKeychain
+        )
         lock.lock()
         defer { lock.unlock() }
         if let cached = keys[cacheKey] {
@@ -54,7 +71,8 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
             service: service,
             account: account,
             accessGroup: accessGroup,
-            accessibility: accessibility
+            accessibility: accessibility,
+            usesDataProtectionKeychain: usesDataProtectionKeychain
         )
         keys[cacheKey] = key
         return key
@@ -74,9 +92,15 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
         service: String,
         account: String,
         accessGroup: String?,
-        accessibility: SecureStorageKeyAccessibility
+        accessibility: SecureStorageKeyAccessibility,
+        usesDataProtectionKeychain: Bool
     ) throws -> SymmetricKey {
-        if let existing = try loadKey(service: service, account: account, accessGroup: accessGroup) {
+        if let existing = try loadKey(
+            service: service,
+            account: account,
+            accessGroup: accessGroup,
+            usesDataProtectionKeychain: usesDataProtectionKeychain
+        ) {
             return existing
         }
         let key = SymmetricKey(size: .bits256)
@@ -85,11 +109,17 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
             service: service,
             account: account,
             accessGroup: accessGroup,
-            accessibility: accessibility
+            accessibility: accessibility,
+            usesDataProtectionKeychain: usesDataProtectionKeychain
         )
     }
 
-    private static func loadKey(service: String, account: String, accessGroup: String?) throws -> SymmetricKey? {
+    private static func loadKey(
+        service: String,
+        account: String,
+        accessGroup: String?,
+        usesDataProtectionKeychain: Bool
+    ) throws -> SymmetricKey? {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -101,14 +131,30 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
         if let accessGroup {
             query[kSecAttrAccessGroup as String] = accessGroup
         }
+        #if os(macOS)
+        if usesDataProtectionKeychain {
+            query[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue
+        }
+        #endif
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecItemNotFound {
             return nil
         }
-        guard status == errSecSuccess, var data = item as? Data else {
+        guard status == errSecSuccess,
+              let item,
+              CFGetTypeID(item) == CFDataGetTypeID() else {
+            guard status != errSecSuccess else {
+                throw SecureStorageKeyProviderError.invalidKeyMaterial
+            }
             throw SecureStorageKeyProviderError.unavailable(status: status)
         }
+        let itemData = unsafeBitCast(item, to: CFData.self)
+        let byteCount = CFDataGetLength(itemData)
+        guard byteCount == 32, let bytes = CFDataGetBytePtr(itemData) else {
+            throw SecureStorageKeyProviderError.invalidKeyMaterial
+        }
+        var data = Data(bytes: bytes, count: byteCount)
         defer { data.secureWipeForKeyProvider() }
         return SymmetricKey(data: data)
     }
@@ -118,7 +164,8 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
         service: String,
         account: String,
         accessGroup: String?,
-        accessibility: SecureStorageKeyAccessibility
+        accessibility: SecureStorageKeyAccessibility,
+        usesDataProtectionKeychain: Bool
     ) throws -> SymmetricKey {
         var data = key.withUnsafeBytes { Data($0) }
         defer { data.secureWipeForKeyProvider() }
@@ -137,9 +184,19 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
         if let accessGroup {
             attributes[kSecAttrAccessGroup as String] = accessGroup
         }
+        #if os(macOS)
+        if usesDataProtectionKeychain {
+            attributes[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue
+        }
+        #endif
         let status = SecItemAdd(attributes as CFDictionary, nil)
         if status == errSecDuplicateItem {
-            guard let existing = try loadKey(service: service, account: account, accessGroup: accessGroup) else {
+            guard let existing = try loadKey(
+                service: service,
+                account: account,
+                accessGroup: accessGroup,
+                usesDataProtectionKeychain: usesDataProtectionKeychain
+            ) else {
                 throw SecureStorageKeyProviderError.unavailable(status: status)
             }
             return existing
