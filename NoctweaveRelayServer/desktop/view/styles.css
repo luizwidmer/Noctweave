@@ -385,6 +385,8 @@ p {
 }
 
 button {
+  appearance: none;
+  -webkit-appearance: none;
   padding: 10px 17px;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -413,7 +415,17 @@ button.primary:hover:not(:disabled) {
 
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.42;
+  border-color: color-mix(in srgb, var(--line) 72%, transparent);
+  background: color-mix(in srgb, var(--surface-raised) 54%, transparent);
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  box-shadow: none;
+  opacity: 1;
+}
+
+button.primary:disabled {
+  border-color: color-mix(in srgb, var(--line) 72%, transparent);
+  background: color-mix(in srgb, var(--accent) 20%, var(--surface));
+  color: color-mix(in srgb, var(--muted) 76%, transparent);
 }
 
 .busy button {
