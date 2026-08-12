@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from urllib.parse import quote
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +45,8 @@ def docker_components():
     components = []
     paths = [
         ROOT / "NoctweaveRelayServer" / "Dockerfile",
+        ROOT / "NoctweaveRelayServer" / "Dockerfile.caddy-l4",
+        ROOT / "NoctweaveRelayServer" / "Dockerfile.coturn",
         ROOT / "NoctweaveRelayServer" / "ReticulumBridge" / "Dockerfile",
     ]
     for path in paths:
@@ -54,14 +57,19 @@ def docker_components():
             re.finditer(r"^FROM\s+([^\s]+)(?:\s+AS\s+([^\s]+))?", text, flags=re.MULTILINE),
             start=1,
         ):
-            image = match.group(1)
+            reference = match.group(1)
+            image, separator, digest = reference.partition("@sha256:")
             stage = match.group(2) or f"stage-{index}"
+            image_name, version_separator, image_version = image.rpartition(":")
+            if not version_separator or "/" in image_version:
+                image_name = image
+                image_version = None
             components.append(
                 {
                     "type": "container-base-image",
-                    "name": image,
-                    "version": None,
-                    "revision": None,
+                    "name": image_name,
+                    "version": image_version,
+                    "revision": digest if separator else None,
                     "source": "Dockerfile FROM",
                     "stage": stage,
                     "pinFile": str(path.relative_to(ROOT)),
@@ -110,6 +118,43 @@ def python_components():
             }
         )
     return components
+
+
+def bun_components():
+    lock_path = ROOT / "NoctweaveRelayServer" / "bun.lock"
+    package_path = ROOT / "NoctweaveRelayServer" / "package.json"
+    if not lock_path.exists():
+        return []
+
+    direct_names = set()
+    if package_path.exists():
+        manifest = json.loads(read_text(package_path))
+        for field in ("dependencies", "devDependencies", "optionalDependencies"):
+            direct_names.update((manifest.get(field) or {}).keys())
+
+    quoted_json_string = r'"(?:\\.|[^"\\])*"'
+    entry_pattern = re.compile(
+        rf"^\s{{4}}({quoted_json_string}):\s*\[({quoted_json_string})",
+        flags=re.MULTILINE,
+    )
+    components = {}
+    for match in entry_pattern.finditer(read_text(lock_path)):
+        resolved = json.loads(match.group(2))
+        separator = resolved.rfind("@")
+        if separator <= 0 or separator == len(resolved) - 1:
+            raise ValueError(f"Unsupported Bun lock package identifier: {resolved}")
+        name = resolved[:separator]
+        version = resolved[separator + 1 :]
+        components[(name, version)] = {
+            "type": "npm-package",
+            "name": name,
+            "version": version,
+            "revision": None,
+            "source": f"https://www.npmjs.com/package/{quote(name, safe='@/')}/v/{quote(version, safe='.-_~')}",
+            "pinFile": str(lock_path.relative_to(ROOT)),
+            "direct": name in direct_names,
+        }
+    return [components[key] for key in sorted(components)]
 
 
 def vendored_components():
@@ -164,6 +209,11 @@ def workspace_components():
             "name": "NoctweaveRelayServer",
             "source": "NoctweaveRelayServer",
         },
+        {
+            "type": "local-source",
+            "name": "@noctweave/relay-desktop",
+            "source": "NoctweaveRelayServer/desktop",
+        },
     ]
 
 
@@ -173,6 +223,7 @@ def make_sbom():
     components.extend(package_resolved_components())
     components.extend(docker_components())
     components.extend(python_components())
+    components.extend(bun_components())
     components.extend(vendored_components())
     return {
         "schema": "noctweave-sbom-v1",
@@ -181,8 +232,12 @@ def make_sbom():
         "inputs": [
             "NoctweaveRelayServer/Package.resolved",
             "NoctweaveRelayServer/Dockerfile",
+            "NoctweaveRelayServer/Dockerfile.caddy-l4",
+            "NoctweaveRelayServer/Dockerfile.coturn",
             "NoctweaveRelayServer/ReticulumBridge/Dockerfile",
             "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
+            "NoctweaveRelayServer/package.json",
+            "NoctweaveRelayServer/bun.lock",
             "NoctweaveCore/Vendor/liboqs.xcframework",
         ],
         "components": components,
@@ -200,8 +255,11 @@ def cyclonedx_component(component):
         purl = f"pkg:swift/{name}@{version}"
     elif component_type == "python-package":
         purl = f"pkg:pypi/{name}@{version}"
+    elif component_type == "npm-package":
+        purl = f"pkg:npm/{quote(name, safe='/')}@{quote(version, safe='.-_~')}"
     elif component_type == "container-base-image":
-        image_name, _, image_version = (name or "").partition(":")
+        image_name = name or "unknown"
+        image_version = component.get("version")
         purl = f"pkg:docker/{image_name}@{image_version}" if image_version else f"pkg:docker/{image_name}"
     elif name == "liboqs":
         purl = f"pkg:github/open-quantum-safe/liboqs@{version}"

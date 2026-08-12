@@ -261,6 +261,12 @@ openssl rand -hex 32  # copy to NOCTWEAVE_TURN_SHARED_SECRET
 docker compose --env-file .env -f docker-compose.coturn.yml up -d --build
 ```
 
+The compose deployment builds the repository's digest-pinned
+`Dockerfile.coturn`, upgrades its runtime BIND packages, and runs coturn as
+`nobody:nogroup`. The relay, optional Caddy L4 proxy, and Reticulum bridge also
+use digest-pinned bases and dedicated non-root users. Re-run a current image,
+secret, and configuration scan whenever any base digest changes.
+
 Set `TURN_DOMAIN` to a public DNS name and `TURN_EXTERNAL_IP` to the public IP
 that reaches this host. Open TCP/UDP 3478 and the configured UDP relay range
 (49160–49200 by default). The relay's HTTP ports are loopback-bound for a local
@@ -351,8 +357,16 @@ substitute.
 There is no separate GET health or information route. Health and information
 are `nw.core@2` requests through the normal relay transport.
 
+HTTP relay requests require exactly one `Content-Type: application/json`
+header. Browser-originated HTTP and WebSocket requests must be same-origin;
+null, malformed, duplicate, cross-site, and loopback DNS-rebinding origins are
+rejected. Non-browser clients may omit `Origin`. The optional Reticulum client
+gateway is machine-only and rejects every browser `Origin` plus cross-site
+Fetch Metadata before forwarding exact bytes.
+
 Opaque-route and rendezvous capability operations require a confidential
-transport. Literal loopback, listener TLS, or an explicitly trusted TLS reverse
+transport over both HTTP and WebSocket. Literal loopback, the launcher's
+explicit loopback-only container bridge, or an explicitly trusted TLS reverse
 proxy satisfy that gate. When nginx, Caddy, or another proxy owns HTTPS/WSS,
 start the relay with:
 
@@ -365,6 +379,11 @@ This flag trusts the deployment boundary, not an `X-Forwarded-*` header. The
 plain backend listener must therefore be firewalled or bound so clients cannot
 bypass the trusted proxy. Leave the flag off for an exposed plaintext listener;
 capability-bearing operations then fail closed.
+
+An open-federation DHT gateway bearer token is sent only to HTTPS endpoints or
+literal loopback HTTP endpoints. The native overlay likewise follows only
+public HTTPS HTTP-relay seeds and peer hints; private, special-use, plaintext,
+and unsupported endpoints fail closed.
 
 Example:
 

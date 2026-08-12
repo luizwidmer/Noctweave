@@ -17,6 +17,9 @@ semantics.
 - Server mode accepts only one fixed `/relay` upstream. Loopback is the default;
   any container/service hostname needs an exact `--allow-upstream-host` entry.
 - Client mode binds only `127.0.0.1`. Do not expose it as a LAN or public proxy.
+- Client mode is machine-only: `POST /relay` requires exactly one
+  `application/json` media type and rejects browser `Origin` plus cross-site
+  Fetch Metadata before any Reticulum request is created.
 - Reticulum can traverse very low-bandwidth links. Large encrypted attachments
   may be impractical even though Link requests automatically use Resource
   transfer when they exceed one packet.
@@ -98,6 +101,10 @@ Build the optional sidecar independently from the main relay image:
 docker build -t noctweave-reticulum-bridge \
   NoctweaveRelayServer/ReticulumBridge
 ```
+
+The image uses a digest-pinned Alpine Python base, exact Python dependency
+versions, removes `pip` and `setuptools` after installation, and runs as the
+dedicated UID/GID 10002 user.
 
 Linux operators can use
 [`docker-compose.reticulum.yml`](../docker-compose.reticulum.yml) as a local

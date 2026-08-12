@@ -1,0 +1,5 @@
+FROM coturn/coturn:4.15.0-r0-alpine@sha256:b73dfc469b30ee62ba6c0a1824c502e24438f15e49b5f2dec81fa10315410509
+
+USER root
+RUN apk add --no-cache --upgrade bind-libs bind-tools
+USER nobody:nogroup

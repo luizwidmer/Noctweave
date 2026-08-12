@@ -38,6 +38,18 @@
       "version": "unknown"
     },
     {
+      "bom-ref": "local-source:-noctweave-relay-desktop:unknown",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:NoctweaveRelayServer/desktop"
+        }
+      ],
+      "name": "@noctweave/relay-desktop",
+      "type": "library",
+      "version": "unknown"
+    },
+    {
       "bom-ref": "swift-package:swift-asn1:1.5.1",
       "externalReferences": [
         {
@@ -130,7 +142,7 @@
       "version": "3.15.1"
     },
     {
-      "bom-ref": "swift-package:swift-nio:2.92.0",
+      "bom-ref": "swift-package:swift-nio:2.100.0",
       "externalReferences": [
         {
           "type": "distribution",
@@ -145,12 +157,12 @@
       "properties": [
         {
           "name": "noctweave:revision",
-          "value": "a1605a3303a28e14d822dec8aaa53da8a9490461"
+          "value": "57c0a08a331aaea9f5d7a932ad94ef43be942a95"
         }
       ],
-      "purl": "pkg:swift/swift-nio@2.92.0",
+      "purl": "pkg:swift/swift-nio@2.100.0",
       "type": "library",
-      "version": "2.92.0"
+      "version": "2.100.0"
     },
     {
       "bom-ref": "swift-package:swift-system:1.6.3",
@@ -176,7 +188,7 @@
       "version": "1.6.3"
     },
     {
-      "bom-ref": "container-base-image:swift:6.1-jammy:unknown:builder",
+      "bom-ref": "container-base-image:swift:6.1-jammy:builder",
       "externalReferences": [
         {
           "type": "distribution",
@@ -187,13 +199,19 @@
           "url": "file:NoctweaveRelayServer/Dockerfile"
         }
       ],
-      "name": "swift:6.1-jammy",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "cb9552a535de8d1a92373351a35ced3813791b6cca6a380bdf179ff3f3122803"
+        }
+      ],
+      "name": "swift",
       "purl": "pkg:docker/swift@6.1-jammy",
       "type": "container",
-      "version": "unknown"
+      "version": "6.1-jammy"
     },
     {
-      "bom-ref": "container-base-image:ubuntu:22.04:unknown:stage-2",
+      "bom-ref": "container-base-image:ubuntu:22.04:stage-2",
       "externalReferences": [
         {
           "type": "distribution",
@@ -204,10 +222,16 @@
           "url": "file:NoctweaveRelayServer/Dockerfile"
         }
       ],
-      "name": "ubuntu:22.04",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f"
+        }
+      ],
+      "name": "ubuntu",
       "purl": "pkg:docker/ubuntu@22.04",
       "type": "container",
-      "version": "unknown"
+      "version": "22.04"
     },
     {
       "bom-ref": "source-build:liboqs:0.16.0",
@@ -233,7 +257,76 @@
       "version": "0.16.0"
     },
     {
-      "bom-ref": "container-base-image:python:3.13-slim:unknown:stage-1",
+      "bom-ref": "container-base-image:caddy:2-builder:builder",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:Dockerfile FROM"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "198d47eaee306d4d0c38a9960c89ff2c959aa29ad51d3e2dafa3e93ac961782a"
+        }
+      ],
+      "name": "caddy",
+      "purl": "pkg:docker/caddy@2-builder",
+      "type": "container",
+      "version": "2-builder"
+    },
+    {
+      "bom-ref": "container-base-image:caddy:2:stage-2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:Dockerfile FROM"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.caddy-l4"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "844f60b64e4724a5aa8245e019dace0d3f199f7433ce6c57676cb30a920dbad9"
+        }
+      ],
+      "name": "caddy",
+      "purl": "pkg:docker/caddy@2",
+      "type": "container",
+      "version": "2"
+    },
+    {
+      "bom-ref": "container-base-image:coturn-coturn:4.15.0-r0-alpine:stage-1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "file:Dockerfile FROM"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/Dockerfile.coturn"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b73dfc469b30ee62ba6c0a1824c502e24438f15e49b5f2dec81fa10315410509"
+        }
+      ],
+      "name": "coturn/coturn",
+      "purl": "pkg:docker/coturn/coturn@4.15.0-r0-alpine",
+      "type": "container",
+      "version": "4.15.0-r0-alpine"
+    },
+    {
+      "bom-ref": "container-base-image:python:3.13-alpine:stage-1",
       "externalReferences": [
         {
           "type": "distribution",
@@ -244,10 +337,16 @@
           "url": "file:NoctweaveRelayServer/ReticulumBridge/Dockerfile"
         }
       ],
-      "name": "python:3.13-slim",
-      "purl": "pkg:docker/python@3.13-slim",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "540c7d91f98ff6880174c40e99067bf5941eb54d818a7a5e094d188b196a934d"
+        }
+      ],
+      "name": "python",
+      "purl": "pkg:docker/python@3.13-alpine",
       "type": "container",
-      "version": "unknown"
+      "version": "3.13-alpine"
     },
     {
       "bom-ref": "python-package:cffi:2.1.1",
@@ -282,6 +381,23 @@
       "purl": "pkg:pypi/cryptography@50.0.0",
       "type": "library",
       "version": "50.0.0"
+    },
+    {
+      "bom-ref": "python-package:msgpack:1.2.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://pypi.org/project/msgpack/1.2.1/"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/ReticulumBridge/requirements.txt"
+        }
+      ],
+      "name": "msgpack",
+      "purl": "pkg:pypi/msgpack@1.2.1",
+      "type": "library",
+      "version": "1.2.1"
     },
     {
       "bom-ref": "python-package:pycparser:3.0",
@@ -333,6 +449,1553 @@
       "purl": "pkg:pypi/rns@1.4.2",
       "type": "library",
       "version": "1.4.2"
+    },
+    {
+      "bom-ref": "npm-package:-babylonjs-core:7.54.3",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@babylonjs/core/v/7.54.3"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@babylonjs/core",
+      "purl": "pkg:npm/%40babylonjs/core@7.54.3",
+      "type": "library",
+      "version": "7.54.3"
+    },
+    {
+      "bom-ref": "npm-package:-dimforge-rapier3d-compat:0.12.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@dimforge/rapier3d-compat/v/0.12.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@dimforge/rapier3d-compat",
+      "purl": "pkg:npm/%40dimforge/rapier3d-compat@0.12.0",
+      "type": "library",
+      "version": "0.12.0"
+    },
+    {
+      "bom-ref": "npm-package:-malept-cross-spawn-promise:1.1.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@malept/cross-spawn-promise/v/1.1.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@malept/cross-spawn-promise",
+      "purl": "pkg:npm/%40malept/cross-spawn-promise@1.1.1",
+      "type": "library",
+      "version": "1.1.1"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js",
+      "purl": "pkg:npm/%40resvg/resvg-js@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-android-arm-eabi:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-android-arm-eabi/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-android-arm-eabi",
+      "purl": "pkg:npm/%40resvg/resvg-js-android-arm-eabi@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-android-arm64:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-android-arm64/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-android-arm64",
+      "purl": "pkg:npm/%40resvg/resvg-js-android-arm64@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-darwin-arm64:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-darwin-arm64/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-darwin-arm64",
+      "purl": "pkg:npm/%40resvg/resvg-js-darwin-arm64@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-darwin-x64:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-darwin-x64/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-darwin-x64",
+      "purl": "pkg:npm/%40resvg/resvg-js-darwin-x64@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-linux-arm-gnueabihf:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-linux-arm-gnueabihf/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-linux-arm-gnueabihf",
+      "purl": "pkg:npm/%40resvg/resvg-js-linux-arm-gnueabihf@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-linux-arm64-gnu:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-linux-arm64-gnu/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-linux-arm64-gnu",
+      "purl": "pkg:npm/%40resvg/resvg-js-linux-arm64-gnu@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-linux-arm64-musl:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-linux-arm64-musl/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-linux-arm64-musl",
+      "purl": "pkg:npm/%40resvg/resvg-js-linux-arm64-musl@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-linux-x64-gnu:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-linux-x64-gnu/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-linux-x64-gnu",
+      "purl": "pkg:npm/%40resvg/resvg-js-linux-x64-gnu@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-linux-x64-musl:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-linux-x64-musl/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-linux-x64-musl",
+      "purl": "pkg:npm/%40resvg/resvg-js-linux-x64-musl@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-win32-arm64-msvc:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-win32-arm64-msvc/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-win32-arm64-msvc",
+      "purl": "pkg:npm/%40resvg/resvg-js-win32-arm64-msvc@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-win32-ia32-msvc:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-win32-ia32-msvc/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-win32-ia32-msvc",
+      "purl": "pkg:npm/%40resvg/resvg-js-win32-ia32-msvc@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-resvg-resvg-js-win32-x64-msvc:2.6.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@resvg/resvg-js-win32-x64-msvc/v/2.6.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@resvg/resvg-js-win32-x64-msvc",
+      "purl": "pkg:npm/%40resvg/resvg-js-win32-x64-msvc@2.6.2",
+      "type": "library",
+      "version": "2.6.2"
+    },
+    {
+      "bom-ref": "npm-package:-tootallnate-quickjs-emscripten:0.23.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@tootallnate/quickjs-emscripten/v/0.23.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@tootallnate/quickjs-emscripten",
+      "purl": "pkg:npm/%40tootallnate/quickjs-emscripten@0.23.0",
+      "type": "library",
+      "version": "0.23.0"
+    },
+    {
+      "bom-ref": "npm-package:-tweenjs-tween.js:23.1.3",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@tweenjs/tween.js/v/23.1.3"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@tweenjs/tween.js",
+      "purl": "pkg:npm/%40tweenjs/tween.js@23.1.3",
+      "type": "library",
+      "version": "23.1.3"
+    },
+    {
+      "bom-ref": "npm-package:-types-bun:1.3.14",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@types/bun/v/1.3.14"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@types/bun",
+      "purl": "pkg:npm/%40types/bun@1.3.14",
+      "type": "library",
+      "version": "1.3.14"
+    },
+    {
+      "bom-ref": "npm-package:-types-node:17.0.45",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@types/node/v/17.0.45"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@types/node",
+      "purl": "pkg:npm/%40types/node@17.0.45",
+      "type": "library",
+      "version": "17.0.45"
+    },
+    {
+      "bom-ref": "npm-package:-types-node:26.1.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@types/node/v/26.1.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@types/node",
+      "purl": "pkg:npm/%40types/node@26.1.1",
+      "type": "library",
+      "version": "26.1.1"
+    },
+    {
+      "bom-ref": "npm-package:-types-stats.js:0.17.4",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@types/stats.js/v/0.17.4"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@types/stats.js",
+      "purl": "pkg:npm/%40types/stats.js@0.17.4",
+      "type": "library",
+      "version": "0.17.4"
+    },
+    {
+      "bom-ref": "npm-package:-types-three:0.185.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@types/three/v/0.185.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@types/three",
+      "purl": "pkg:npm/%40types/three@0.185.1",
+      "type": "library",
+      "version": "0.185.1"
+    },
+    {
+      "bom-ref": "npm-package:-types-webxr:0.5.24",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@types/webxr/v/0.5.24"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@types/webxr",
+      "purl": "pkg:npm/%40types/webxr@0.5.24",
+      "type": "library",
+      "version": "0.5.24"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-aix-ppc64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-aix-ppc64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-aix-ppc64",
+      "purl": "pkg:npm/%40typescript/typescript-aix-ppc64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-darwin-arm64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-darwin-arm64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-darwin-arm64",
+      "purl": "pkg:npm/%40typescript/typescript-darwin-arm64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-darwin-x64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-darwin-x64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-darwin-x64",
+      "purl": "pkg:npm/%40typescript/typescript-darwin-x64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-freebsd-arm64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-freebsd-arm64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-freebsd-arm64",
+      "purl": "pkg:npm/%40typescript/typescript-freebsd-arm64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-freebsd-x64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-freebsd-x64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-freebsd-x64",
+      "purl": "pkg:npm/%40typescript/typescript-freebsd-x64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-linux-arm:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-linux-arm/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-linux-arm",
+      "purl": "pkg:npm/%40typescript/typescript-linux-arm@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-linux-arm64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-linux-arm64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-linux-arm64",
+      "purl": "pkg:npm/%40typescript/typescript-linux-arm64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-linux-loong64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-linux-loong64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-linux-loong64",
+      "purl": "pkg:npm/%40typescript/typescript-linux-loong64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-linux-mips64el:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-linux-mips64el/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-linux-mips64el",
+      "purl": "pkg:npm/%40typescript/typescript-linux-mips64el@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-linux-ppc64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-linux-ppc64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-linux-ppc64",
+      "purl": "pkg:npm/%40typescript/typescript-linux-ppc64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-linux-riscv64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-linux-riscv64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-linux-riscv64",
+      "purl": "pkg:npm/%40typescript/typescript-linux-riscv64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-linux-s390x:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-linux-s390x/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-linux-s390x",
+      "purl": "pkg:npm/%40typescript/typescript-linux-s390x@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-linux-x64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-linux-x64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-linux-x64",
+      "purl": "pkg:npm/%40typescript/typescript-linux-x64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-netbsd-arm64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-netbsd-arm64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-netbsd-arm64",
+      "purl": "pkg:npm/%40typescript/typescript-netbsd-arm64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-netbsd-x64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-netbsd-x64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-netbsd-x64",
+      "purl": "pkg:npm/%40typescript/typescript-netbsd-x64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-openbsd-arm64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-openbsd-arm64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-openbsd-arm64",
+      "purl": "pkg:npm/%40typescript/typescript-openbsd-arm64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-openbsd-x64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-openbsd-x64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-openbsd-x64",
+      "purl": "pkg:npm/%40typescript/typescript-openbsd-x64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-sunos-x64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-sunos-x64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-sunos-x64",
+      "purl": "pkg:npm/%40typescript/typescript-sunos-x64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-win32-arm64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-win32-arm64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-win32-arm64",
+      "purl": "pkg:npm/%40typescript/typescript-win32-arm64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:-typescript-typescript-win32-x64:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/@typescript/typescript-win32-x64/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "@typescript/typescript-win32-x64",
+      "purl": "pkg:npm/%40typescript/typescript-win32-x64@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:agent-base:7.1.4",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/agent-base/v/7.1.4"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "agent-base",
+      "purl": "pkg:npm/agent-base@7.1.4",
+      "type": "library",
+      "version": "7.1.4"
+    },
+    {
+      "bom-ref": "npm-package:ast-types:0.13.4",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/ast-types/v/0.13.4"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "ast-types",
+      "purl": "pkg:npm/ast-types@0.13.4",
+      "type": "library",
+      "version": "0.13.4"
+    },
+    {
+      "bom-ref": "npm-package:basic-ftp:5.3.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/basic-ftp/v/5.3.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "basic-ftp",
+      "purl": "pkg:npm/basic-ftp@5.3.1",
+      "type": "library",
+      "version": "5.3.1"
+    },
+    {
+      "bom-ref": "npm-package:bun-types:1.3.14",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/bun-types/v/1.3.14"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "bun-types",
+      "purl": "pkg:npm/bun-types@1.3.14",
+      "type": "library",
+      "version": "1.3.14"
+    },
+    {
+      "bom-ref": "npm-package:cross-spawn:7.0.6",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/cross-spawn/v/7.0.6"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "cross-spawn",
+      "purl": "pkg:npm/cross-spawn@7.0.6",
+      "type": "library",
+      "version": "7.0.6"
+    },
+    {
+      "bom-ref": "npm-package:cross-spawn-windows-exe:1.2.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/cross-spawn-windows-exe/v/1.2.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "cross-spawn-windows-exe",
+      "purl": "pkg:npm/cross-spawn-windows-exe@1.2.0",
+      "type": "library",
+      "version": "1.2.0"
+    },
+    {
+      "bom-ref": "npm-package:data-uri-to-buffer:6.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/data-uri-to-buffer/v/6.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "data-uri-to-buffer",
+      "purl": "pkg:npm/data-uri-to-buffer@6.0.2",
+      "type": "library",
+      "version": "6.0.2"
+    },
+    {
+      "bom-ref": "npm-package:debug:4.4.3",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/debug/v/4.4.3"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "debug",
+      "purl": "pkg:npm/debug@4.4.3",
+      "type": "library",
+      "version": "4.4.3"
+    },
+    {
+      "bom-ref": "npm-package:degenerator:5.0.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/degenerator/v/5.0.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "degenerator",
+      "purl": "pkg:npm/degenerator@5.0.1",
+      "type": "library",
+      "version": "5.0.1"
+    },
+    {
+      "bom-ref": "npm-package:electrobun:1.18.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/electrobun/v/1.18.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "electrobun",
+      "purl": "pkg:npm/electrobun@1.18.1",
+      "type": "library",
+      "version": "1.18.1"
+    },
+    {
+      "bom-ref": "npm-package:escodegen:2.1.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/escodegen/v/2.1.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "escodegen",
+      "purl": "pkg:npm/escodegen@2.1.0",
+      "type": "library",
+      "version": "2.1.0"
+    },
+    {
+      "bom-ref": "npm-package:esprima:4.0.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/esprima/v/4.0.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "esprima",
+      "purl": "pkg:npm/esprima@4.0.1",
+      "type": "library",
+      "version": "4.0.1"
+    },
+    {
+      "bom-ref": "npm-package:estraverse:5.3.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/estraverse/v/5.3.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "estraverse",
+      "purl": "pkg:npm/estraverse@5.3.0",
+      "type": "library",
+      "version": "5.3.0"
+    },
+    {
+      "bom-ref": "npm-package:esutils:2.0.3",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/esutils/v/2.0.3"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "esutils",
+      "purl": "pkg:npm/esutils@2.0.3",
+      "type": "library",
+      "version": "2.0.3"
+    },
+    {
+      "bom-ref": "npm-package:fflate:0.8.3",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/fflate/v/0.8.3"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "fflate",
+      "purl": "pkg:npm/fflate@0.8.3",
+      "type": "library",
+      "version": "0.8.3"
+    },
+    {
+      "bom-ref": "npm-package:get-uri:6.0.5",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/get-uri/v/6.0.5"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "get-uri",
+      "purl": "pkg:npm/get-uri@6.0.5",
+      "type": "library",
+      "version": "6.0.5"
+    },
+    {
+      "bom-ref": "npm-package:http-proxy-agent:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/http-proxy-agent/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "http-proxy-agent",
+      "purl": "pkg:npm/http-proxy-agent@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:https-proxy-agent:7.0.6",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/https-proxy-agent/v/7.0.6"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "https-proxy-agent",
+      "purl": "pkg:npm/https-proxy-agent@7.0.6",
+      "type": "library",
+      "version": "7.0.6"
+    },
+    {
+      "bom-ref": "npm-package:ip-address:10.3.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/ip-address/v/10.3.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "ip-address",
+      "purl": "pkg:npm/ip-address@10.3.1",
+      "type": "library",
+      "version": "10.3.1"
+    },
+    {
+      "bom-ref": "npm-package:is-docker:2.2.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/is-docker/v/2.2.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "is-docker",
+      "purl": "pkg:npm/is-docker@2.2.1",
+      "type": "library",
+      "version": "2.2.1"
+    },
+    {
+      "bom-ref": "npm-package:is-wsl:2.2.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/is-wsl/v/2.2.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "is-wsl",
+      "purl": "pkg:npm/is-wsl@2.2.0",
+      "type": "library",
+      "version": "2.2.0"
+    },
+    {
+      "bom-ref": "npm-package:isexe:2.0.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/isexe/v/2.0.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "isexe",
+      "purl": "pkg:npm/isexe@2.0.0",
+      "type": "library",
+      "version": "2.0.0"
+    },
+    {
+      "bom-ref": "npm-package:lru-cache:7.18.3",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/lru-cache/v/7.18.3"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "lru-cache",
+      "purl": "pkg:npm/lru-cache@7.18.3",
+      "type": "library",
+      "version": "7.18.3"
+    },
+    {
+      "bom-ref": "npm-package:meshoptimizer:1.1.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/meshoptimizer/v/1.1.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "meshoptimizer",
+      "purl": "pkg:npm/meshoptimizer@1.1.1",
+      "type": "library",
+      "version": "1.1.1"
+    },
+    {
+      "bom-ref": "npm-package:minimist:1.2.8",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/minimist/v/1.2.8"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "minimist",
+      "purl": "pkg:npm/minimist@1.2.8",
+      "type": "library",
+      "version": "1.2.8"
+    },
+    {
+      "bom-ref": "npm-package:ms:2.1.3",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/ms/v/2.1.3"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "ms",
+      "purl": "pkg:npm/ms@2.1.3",
+      "type": "library",
+      "version": "2.1.3"
+    },
+    {
+      "bom-ref": "npm-package:netmask:2.1.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/netmask/v/2.1.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "netmask",
+      "purl": "pkg:npm/netmask@2.1.1",
+      "type": "library",
+      "version": "2.1.1"
+    },
+    {
+      "bom-ref": "npm-package:pac-proxy-agent:7.2.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/pac-proxy-agent/v/7.2.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "pac-proxy-agent",
+      "purl": "pkg:npm/pac-proxy-agent@7.2.0",
+      "type": "library",
+      "version": "7.2.0"
+    },
+    {
+      "bom-ref": "npm-package:pac-resolver:7.0.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/pac-resolver/v/7.0.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "pac-resolver",
+      "purl": "pkg:npm/pac-resolver@7.0.1",
+      "type": "library",
+      "version": "7.0.1"
+    },
+    {
+      "bom-ref": "npm-package:path-key:3.1.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/path-key/v/3.1.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "path-key",
+      "purl": "pkg:npm/path-key@3.1.1",
+      "type": "library",
+      "version": "3.1.1"
+    },
+    {
+      "bom-ref": "npm-package:png-to-ico:2.1.8",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/png-to-ico/v/2.1.8"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "png-to-ico",
+      "purl": "pkg:npm/png-to-ico@2.1.8",
+      "type": "library",
+      "version": "2.1.8"
+    },
+    {
+      "bom-ref": "npm-package:png2icons:2.0.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/png2icons/v/2.0.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "png2icons",
+      "purl": "pkg:npm/png2icons@2.0.1",
+      "type": "library",
+      "version": "2.0.1"
+    },
+    {
+      "bom-ref": "npm-package:pngjs:6.0.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/pngjs/v/6.0.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "pngjs",
+      "purl": "pkg:npm/pngjs@6.0.0",
+      "type": "library",
+      "version": "6.0.0"
+    },
+    {
+      "bom-ref": "npm-package:proxy-agent:6.5.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/proxy-agent/v/6.5.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "proxy-agent",
+      "purl": "pkg:npm/proxy-agent@6.5.0",
+      "type": "library",
+      "version": "6.5.0"
+    },
+    {
+      "bom-ref": "npm-package:proxy-from-env:1.1.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/proxy-from-env/v/1.1.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "proxy-from-env",
+      "purl": "pkg:npm/proxy-from-env@1.1.0",
+      "type": "library",
+      "version": "1.1.0"
+    },
+    {
+      "bom-ref": "npm-package:rcedit:4.0.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/rcedit/v/4.0.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "rcedit",
+      "purl": "pkg:npm/rcedit@4.0.1",
+      "type": "library",
+      "version": "4.0.1"
+    },
+    {
+      "bom-ref": "npm-package:shebang-command:2.0.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/shebang-command/v/2.0.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "shebang-command",
+      "purl": "pkg:npm/shebang-command@2.0.0",
+      "type": "library",
+      "version": "2.0.0"
+    },
+    {
+      "bom-ref": "npm-package:shebang-regex:3.0.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/shebang-regex/v/3.0.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "shebang-regex",
+      "purl": "pkg:npm/shebang-regex@3.0.0",
+      "type": "library",
+      "version": "3.0.0"
+    },
+    {
+      "bom-ref": "npm-package:smart-buffer:4.2.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/smart-buffer/v/4.2.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "smart-buffer",
+      "purl": "pkg:npm/smart-buffer@4.2.0",
+      "type": "library",
+      "version": "4.2.0"
+    },
+    {
+      "bom-ref": "npm-package:socks:2.8.9",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/socks/v/2.8.9"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "socks",
+      "purl": "pkg:npm/socks@2.8.9",
+      "type": "library",
+      "version": "2.8.9"
+    },
+    {
+      "bom-ref": "npm-package:socks-proxy-agent:8.0.5",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/socks-proxy-agent/v/8.0.5"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "socks-proxy-agent",
+      "purl": "pkg:npm/socks-proxy-agent@8.0.5",
+      "type": "library",
+      "version": "8.0.5"
+    },
+    {
+      "bom-ref": "npm-package:source-map:0.6.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/source-map/v/0.6.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "source-map",
+      "purl": "pkg:npm/source-map@0.6.1",
+      "type": "library",
+      "version": "0.6.1"
+    },
+    {
+      "bom-ref": "npm-package:three:0.165.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/three/v/0.165.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "three",
+      "purl": "pkg:npm/three@0.165.0",
+      "type": "library",
+      "version": "0.165.0"
+    },
+    {
+      "bom-ref": "npm-package:tslib:2.8.1",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/tslib/v/2.8.1"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "tslib",
+      "purl": "pkg:npm/tslib@2.8.1",
+      "type": "library",
+      "version": "2.8.1"
+    },
+    {
+      "bom-ref": "npm-package:typescript:7.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/typescript/v/7.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "typescript",
+      "purl": "pkg:npm/typescript@7.0.2",
+      "type": "library",
+      "version": "7.0.2"
+    },
+    {
+      "bom-ref": "npm-package:undici-types:8.3.0",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/undici-types/v/8.3.0"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "undici-types",
+      "purl": "pkg:npm/undici-types@8.3.0",
+      "type": "library",
+      "version": "8.3.0"
+    },
+    {
+      "bom-ref": "npm-package:which:2.0.2",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://www.npmjs.com/package/which/v/2.0.2"
+        },
+        {
+          "type": "documentation",
+          "url": "file:NoctweaveRelayServer/bun.lock"
+        }
+      ],
+      "name": "which",
+      "purl": "pkg:npm/which@2.0.2",
+      "type": "library",
+      "version": "2.0.2"
     },
     {
       "bom-ref": "vendored-binary:liboqs.xcframework:0.16.0",

@@ -4,6 +4,7 @@ import FoundationNetworking
 #endif
 
 enum OpenFederationDHTGatewayTransportError: Error, Equatable {
+    case invalidBaseURL
     case invalidURL
     case nonHTTPResponse
     case badStatus(Int)
@@ -34,9 +35,13 @@ final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTransport {
               normalizedToken.map({ $0.utf8.count <= 4_096 }) ?? true else {
             throw OpenFederationDHTGatewayTransportError.invalidConfiguration
         }
+        let effectiveToken = normalizedToken?.isEmpty == false ? normalizedToken : nil
+        guard Self.bearerTransportIsPermitted(baseURL: baseURL, authToken: effectiveToken) else {
+            throw OpenFederationDHTGatewayTransportError.invalidBaseURL
+        }
         self.baseURL = baseURL
         self.session = session ?? URLSession(configuration: .ephemeral)
-        self.authToken = normalizedToken?.isEmpty == false ? normalizedToken : nil
+        self.authToken = effectiveToken
         self.timeout = timeout
         self.maxResponseBytes = maxResponseBytes
     }
@@ -156,6 +161,32 @@ final class OpenFederationDHTHTTPGatewayTransport: OpenFederationDHTTransport {
         !namespace.isEmpty
             && namespace.utf8.count <= 128
             && namespace.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+    }
+
+    private static func bearerTransportIsPermitted(baseURL: URL, authToken: String?) -> Bool {
+        guard authToken != nil else { return true }
+        guard let components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(),
+              let host = components.host?.lowercased() else {
+            return false
+        }
+        return scheme == "https" || (scheme == "http" && isLiteralLoopbackHost(host))
+    }
+
+    private static func isLiteralLoopbackHost(_ host: String) -> Bool {
+        if host == "localhost" || host == "::1" || host == "0:0:0:0:0:0:0:1" {
+            return true
+        }
+        let octets = host.split(separator: ".", omittingEmptySubsequences: false)
+        guard octets.count == 4,
+              octets[0] == "127",
+              octets.allSatisfy({ octet in
+                  guard let value = UInt8(octet) else { return false }
+                  return String(value) == octet
+              }) else {
+            return false
+        }
+        return true
     }
 
     private struct GatewayPublishRequest: Codable {

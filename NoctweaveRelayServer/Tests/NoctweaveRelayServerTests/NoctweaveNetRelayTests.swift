@@ -33,6 +33,21 @@ final class NoctweaveNetRelayTests: XCTestCase {
         )
     }
 
+    func testNativeOpenFederationOverlayRejectsPlaintextAndPrivateEndpoints() {
+        XCTAssertTrue(OpenFederationDHTNativeOverlayTransport.isPermittedEndpoint(
+            RelayEndpoint(host: "8.8.8.8", port: 443, useTLS: true, transport: .http)
+        ))
+        XCTAssertFalse(OpenFederationDHTNativeOverlayTransport.isPermittedEndpoint(
+            RelayEndpoint(host: "127.0.0.1", port: 443, useTLS: true, transport: .http)
+        ))
+        XCTAssertFalse(OpenFederationDHTNativeOverlayTransport.isPermittedEndpoint(
+            RelayEndpoint(host: "8.8.8.8", port: 80, useTLS: false, transport: .http)
+        ))
+        XCTAssertFalse(OpenFederationDHTNativeOverlayTransport.isPermittedEndpoint(
+            RelayEndpoint(host: "8.8.8.8", port: 443, useTLS: true, transport: .websocket)
+        ))
+    }
+
     func testRoleCapabilitiesAdvertiseOnlyTheirSurface() {
         let standard = RelayCapabilityManifestV2.advertised(
             relayKind: .standard,
@@ -213,6 +228,21 @@ final class NoctweaveNetRelayTests: XCTestCase {
             host
         )
         XCTAssertTrue(requestRequiresConfidentialHTTPBridge(host))
+        XCTAssertFalse(relayRequestIsPermittedOverBridge(
+            host,
+            directSource: "203.0.113.10",
+            trustedReverseProxyTLS: false
+        ))
+        XCTAssertTrue(relayRequestIsPermittedOverBridge(
+            host,
+            directSource: "127.0.0.1",
+            trustedReverseProxyTLS: false
+        ))
+        XCTAssertTrue(relayRequestIsPermittedOverBridge(
+            host,
+            directSource: "203.0.113.10",
+            trustedReverseProxyTLS: true
+        ))
         XCTAssertFalse(requestRequiresConfidentialHTTPBridge(
             .getNetHostObject(.init(objectID: NoctweaveNetHostPutRequest.objectID(for: payload)))
         ))

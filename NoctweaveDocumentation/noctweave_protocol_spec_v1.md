@@ -48,6 +48,15 @@ WebSocket(S), and an optional Reticulum bridge carry the same bounded exact
 JSON bytes. A carrier must not rewrite authenticated fields, decrypt payloads,
 invent retries, or weaken request/response correlation.
 
+An HTTP relay carrier accepts `POST /relay` only with exactly one
+`application/json` media type. A browser-originated HTTP or WebSocket carrier
+request must be same-origin with the relay authority; null, duplicate,
+malformed, cross-site, and loopback DNS-rebinding origins fail before relay
+dispatch. Non-browser clients may omit browser origin metadata. Operations
+carrying authentication or capability authority require the same confidential
+transport predicate over HTTP and WebSocket; switching carriers must never
+bypass that predicate.
+
 Reticulum integration is a sidecar profile: a client-side loopback HTTP bridge
 maps one request to one Reticulum Link request, and a server-side bridge maps it
 to one fixed relay `POST /relay`. Oversized Link requests use Reticulum Resource
@@ -56,6 +65,8 @@ properties only; Noctweave ML-DSA relay identity, ML-KEM relationship setup,
 AEAD payload protection, route capabilities, and replay rules remain
 mandatory. Clients must pin or authentically obtain the Reticulum destination
 hash and still verify the expected Noctweave relay identity.
+The client-side loopback gateway is machine-only: it rejects browser `Origin`
+and cross-site Fetch Metadata and accepts only JSON relay posts.
 
 ## 3. Contact pairing rendezvous
 

@@ -43,8 +43,10 @@ describe("relay launcher validation", () => {
     expect(args).toContain("127.0.0.1:9340:9340");
     expect(args).toContain("127.0.0.1:9090:9090");
     expect(args).toContain(relayImage);
-    expect(args).toContain(`NOCTWEAVE_PUBLISHER_PASSWORD=${publisherPassword}`);
-    expect(args).not.toContain(`NOCTWEAVE_RELAY_PASSWORD=${publisherPassword}`);
+    expect(args).toContain("NOCTWEAVE_ADMIN_TOKEN");
+    expect(args).toContain("NOCTWEAVE_PUBLISHER_PASSWORD");
+    expect(args.join(" ")).not.toContain(token);
+    expect(args.join(" ")).not.toContain(publisherPassword);
     expect(args.slice(args.indexOf("--net-host-enabled"), args.indexOf("--net-host-enabled") + 2))
       .toEqual(["--net-host-enabled", "true"]);
     expect(args.slice(args.indexOf("--rendezvous-transport"), args.indexOf("--rendezvous-transport") + 2))
@@ -82,7 +84,7 @@ describe("relay launcher validation", () => {
       token,
       publisherPassword
     );
-    expect(args).not.toContain(`NOCTWEAVE_PUBLISHER_PASSWORD=${publisherPassword}`);
+    expect(args).not.toContain("NOCTWEAVE_PUBLISHER_PASSWORD");
     expect(args.slice(args.indexOf("--net-host-enabled"), args.indexOf("--net-host-enabled") + 2))
       .toEqual(["--net-host-enabled", "false"]);
   });
@@ -90,8 +92,13 @@ describe("relay launcher validation", () => {
 
 test("manager uses argument arrays for build, start, stop, and status", async () => {
   const commands: string[][] = [];
-  const runner = async (command: string[]): Promise<CommandResult> => {
+  const runEnvironments: Array<Record<string, string> | undefined> = [];
+  const runner = async (
+    command: string[],
+    options?: { environment?: Record<string, string> }
+  ): Promise<CommandResult> => {
     commands.push(command);
+    if (command[1] === "run") runEnvironments.push(options?.environment);
     if (command[1] === "version") return { exitCode: 0, stdout: "27.0", stderr: "" };
     if (command[1] === "inspect") return { exitCode: 0, stdout: "true", stderr: "" };
     if (command[1] === "image") return { exitCode: 0, stdout: "36fe1685870e\n", stderr: "" };
@@ -109,6 +116,12 @@ test("manager uses argument arrays for build, start, stop, and status", async ()
   await manager.stop();
   expect(status.relayHealthy).toBe(true);
   expect(commands.some((command) => command[1] === "run" && command.includes("36fe1685870e"))).toBe(true);
+  expect(commands.find((command) => command[1] === "run")?.join(" ")).not.toContain(token);
+  expect(commands.find((command) => command[1] === "run")?.join(" ")).not.toContain(publisherPassword);
+  expect(runEnvironments).toEqual([{
+    NOCTWEAVE_ADMIN_TOKEN: token,
+    NOCTWEAVE_PUBLISHER_PASSWORD: publisherPassword
+  }]);
   expect(commands.some((command) => command.join(" ").includes("rm -f"))).toBe(true);
   expect(commands.at(-1)).toEqual(["docker", "stop", "-t", "10", relayContainer]);
 });

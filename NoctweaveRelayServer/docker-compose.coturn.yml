@@ -33,7 +33,9 @@ services:
     restart: unless-stopped
 
   coturn:
-    image: coturn/coturn:4.15.0-r0-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.coturn
     entrypoint: ["/bin/sh", "/opt/noctweave/entrypoint.sh"]
     environment:
       NOCTWEAVE_TURN_SHARED_SECRET: ${NOCTWEAVE_TURN_SHARED_SECRET:?set NOCTWEAVE_TURN_SHARED_SECRET in .env}

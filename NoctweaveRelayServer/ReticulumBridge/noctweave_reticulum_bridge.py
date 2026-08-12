@@ -550,6 +550,23 @@ def make_client_gateway_handler(client: ReticulumRelayClient) -> type[http.serve
             if self.path != "/relay":
                 self._send(404, b'{"error":"not_found"}')
                 return
+            if self.headers.get_all("Origin", failobj=[]):
+                self._send(403, b'{"error":"browser_origin_not_permitted"}')
+                return
+            fetch_sites = self.headers.get_all("Sec-Fetch-Site", failobj=[])
+            if len(fetch_sites) > 1 or (
+                fetch_sites
+                and fetch_sites[0].strip().lower() == "cross-site"
+            ):
+                self._send(403, b'{"error":"cross_site_request_not_permitted"}')
+                return
+            content_types = self.headers.get_all("Content-Type", failobj=[])
+            if len(content_types) != 1 or (
+                content_types[0].split(";", 1)[0].strip().lower()
+                != "application/json"
+            ):
+                self._send(415, b'{"error":"json_content_type_required"}')
+                return
             if self.headers.get("Transfer-Encoding") is not None:
                 self._send(400, b'{"error":"transfer_encoding_not_supported"}')
                 return

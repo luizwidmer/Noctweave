@@ -35,6 +35,15 @@ func makeHTTPRelayBridgeBootstrap(
                     guard path == "/relay" else {
                         return channel.eventLoop.makeFailedFuture(NIOWebSocketUpgradeError.invalidUpgradeHeader)
                     }
+                    let configuration = relayConfigurationStore?.snapshot()
+                    guard relayBrowserOriginIsPermitted(
+                        headers: head.headers,
+                        directSource: channel.remoteAddress?.ipAddress ?? "",
+                        trustedReverseProxyTLS: configuration?.trustedReverseProxyTLS == true,
+                        trustedLocalContainerBridge: trustedLocalContainerBridge
+                    ) else {
+                        return channel.eventLoop.makeFailedFuture(NIOWebSocketUpgradeError.invalidUpgradeHeader)
+                    }
                     return channel.eventLoop.makeSucceededFuture([:])
                 },
                 upgradePipelineHandler: { channel, head in
@@ -43,7 +52,10 @@ func makeHTTPRelayBridgeBootstrap(
                             forwarder: forwarder,
                             store: store,
                             sourceKey: relayHTTPSourceKey(address: channel.remoteAddress, headers: head.headers),
-                            maxMessageBytes: maxMessageBytes
+                            maxMessageBytes: maxMessageBytes,
+                            directSource: channel.remoteAddress?.ipAddress ?? "",
+                            relayConfigurationStore: relayConfigurationStore,
+                            trustedLocalContainerBridge: trustedLocalContainerBridge
                         )
                     )
                 }
@@ -244,6 +256,27 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
             sendHTTPResponse(status: .notFound, body: Data(#"{"error":"Not found"}"#.utf8), context: context)
             return
         }
+        guard relayBrowserOriginIsPermitted(
+            headers: head.headers,
+            directSource: context.channel.remoteAddress?.ipAddress ?? "",
+            trustedReverseProxyTLS: relayConfigurationStore?.snapshot().trustedReverseProxyTLS == true,
+            trustedLocalContainerBridge: trustedLocalContainerBridge
+        ) else {
+            sendHTTPResponse(
+                status: .forbidden,
+                body: Data(#"{"error":"Cross-origin relay requests are not permitted"}"#.utf8),
+                context: context
+            )
+            return
+        }
+        guard relayRequestHasJSONContentType(head.headers) else {
+            sendHTTPResponse(
+                status: .unsupportedMediaType,
+                body: Data(#"{"error":"Content-Type must be application/json"}"#.utf8),
+                context: context
+            )
+            return
+        }
 
         let payload = requestBody.readData(length: requestBody.readableBytes) ?? Data()
         let request: RelayRequest
@@ -265,7 +298,12 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
             )
             return
         }
-        if requestRequiresConfidentialHTTPBridge(request), !confidentialTransport {
+        if !relayRequestIsPermittedOverBridge(
+            request,
+            directSource: context.channel.remoteAddress?.ipAddress ?? "",
+            trustedReverseProxyTLS: relayConfigurationStore?.snapshot().trustedReverseProxyTLS == true,
+            trustedLocalContainerBridge: trustedLocalContainerBridge
+        ) {
             sendHTTPResponse(
                 status: .ok,
                 body: encodedRelayError(
@@ -372,6 +410,108 @@ func noctwebPublisherTransportIsPermitted(
     )
 }
 
+func relayRequestHasJSONContentType(_ headers: HTTPHeaders) -> Bool {
+    let values = headers["Content-Type"]
+    guard values.count == 1 else { return false }
+    let mediaType = values[0]
+        .split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    return mediaType == "application/json"
+}
+
+func relayBrowserOriginIsPermitted(
+    headers: HTTPHeaders,
+    directSource: String,
+    trustedReverseProxyTLS: Bool,
+    trustedLocalContainerBridge: Bool = false
+) -> Bool {
+    let origins = headers["Origin"]
+    if origins.isEmpty {
+        let fetchSites = headers["Sec-Fetch-Site"]
+        return fetchSites.count <= 1
+            && fetchSites.first?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() != "cross-site"
+    }
+    guard origins.count == 1,
+          let origin = normalizedBrowserAuthority(origins[0]),
+          origin.scheme == "http" || origin.scheme == "https",
+          origin.path.isEmpty,
+          origin.query == nil,
+          origin.fragment == nil,
+          origin.user == nil,
+          origin.password == nil,
+          let originHost = origin.host?.lowercased(),
+          let originPort = effectiveBrowserPort(origin),
+          let defaultPort = defaultBrowserPort(origin.scheme),
+          headers["Host"].count == 1,
+          let host = normalizedHostAuthority(headers["Host"][0], defaultPort: defaultPort),
+          host.host == originHost,
+          host.port == originPort else {
+        return false
+    }
+
+    if trustedReverseProxyTLS, origin.scheme != "https" {
+        return false
+    }
+    let direct = directSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if !trustedReverseProxyTLS,
+       trustedLocalContainerBridge || isLoopbackRelaySource(direct) {
+        return isLoopbackBrowserHost(originHost)
+    }
+    return true
+}
+
+private func normalizedBrowserAuthority(_ value: String) -> URLComponents? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.utf8.count <= 2_048,
+          trimmed.lowercased() != "null",
+          let components = URLComponents(string: trimmed),
+          components.string == trimmed,
+          components.host?.isEmpty == false else {
+        return nil
+    }
+    return components
+}
+
+private func normalizedHostAuthority(
+    _ value: String,
+    defaultPort: Int
+) -> (host: String, port: Int)? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          trimmed.utf8.count <= 512,
+          let components = URLComponents(string: "http://\(trimmed)"),
+          components.user == nil,
+          components.password == nil,
+          components.query == nil,
+          components.fragment == nil,
+          components.path.isEmpty,
+          let host = components.host?.lowercased(),
+          !host.isEmpty else {
+        return nil
+    }
+    return (host, components.port ?? defaultPort)
+}
+
+private func effectiveBrowserPort(_ components: URLComponents) -> Int? {
+    if let port = components.port { return port }
+    return defaultBrowserPort(components.scheme)
+}
+
+private func defaultBrowserPort(_ scheme: String?) -> Int? {
+    switch scheme?.lowercased() {
+    case "http": return 80
+    case "https": return 443
+    default: return nil
+    }
+}
+
+private func isLoopbackBrowserHost(_ host: String) -> Bool {
+    host == "localhost"
+        || host.hasSuffix(".localhost")
+        || isLoopbackRelaySource(host)
+}
+
 func requestRequiresConfidentialHTTPBridge(_ request: RelayRequest) -> Bool {
     if request.authToken != nil {
         return true
@@ -385,6 +525,20 @@ func requestRequiresConfidentialHTTPBridge(_ request: RelayRequest) -> Bool {
     case .core, .blobs, .federation, .openDiscovery:
         return false
     }
+}
+
+func relayRequestIsPermittedOverBridge(
+    _ request: RelayRequest,
+    directSource: String,
+    trustedReverseProxyTLS: Bool,
+    trustedLocalContainerBridge: Bool = false
+) -> Bool {
+    !requestRequiresConfidentialHTTPBridge(request)
+        || noctwebPublisherTransportIsPermitted(
+            directSource: directSource,
+            trustedReverseProxyTLS: trustedReverseProxyTLS,
+            trustedLocalContainerBridge: trustedLocalContainerBridge
+        )
 }
 
 private func relayRequestDecodeFailureSummary(_ error: Error) -> String {
@@ -434,13 +588,27 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
     private let store: RelayStore
     private let sourceKey: String
     private let maxMessageBytes: Int
+    private let directSource: String
+    private let relayConfigurationStore: RelayConfigurationStore?
+    private let trustedLocalContainerBridge: Bool
     private var isForwarding = false
 
-    init(forwarder: LocalRelayForwarder, store: RelayStore, sourceKey: String, maxMessageBytes: Int?) {
+    init(
+        forwarder: LocalRelayForwarder,
+        store: RelayStore,
+        sourceKey: String,
+        maxMessageBytes: Int?,
+        directSource: String,
+        relayConfigurationStore: RelayConfigurationStore?,
+        trustedLocalContainerBridge: Bool
+    ) {
         self.forwarder = forwarder
         self.store = store
         self.sourceKey = sourceKey
         self.maxMessageBytes = boundedRelayRequestLimit(maxMessageBytes)
+        self.directSource = directSource
+        self.relayConfigurationStore = relayConfigurationStore
+        self.trustedLocalContainerBridge = trustedLocalContainerBridge
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -475,6 +643,24 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
                 return
             } catch {
                 context.close(promise: nil)
+                return
+            }
+            if !relayRequestIsPermittedOverBridge(
+                request,
+                directSource: directSource,
+                trustedReverseProxyTLS: relayConfigurationStore?.snapshot().trustedReverseProxyTLS == true,
+                trustedLocalContainerBridge: trustedLocalContainerBridge
+            ) {
+                send(
+                    frameType: frame.opcode,
+                    payload: encodedRelayError(
+                        for: request,
+                        message: "Relay capability operations require loopback, a trusted local container bridge, or trusted reverse-proxy TLS",
+                        code: .invalidRequest,
+                        retryable: false
+                    ),
+                    context: context
+                )
                 return
             }
             guard store.allowRelayRequest(sourceKey: sourceKey) else {

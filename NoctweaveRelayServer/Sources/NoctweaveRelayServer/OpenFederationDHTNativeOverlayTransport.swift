@@ -5,6 +5,8 @@ import FoundationNetworking
 
 enum OpenFederationDHTNativeOverlayTransportError: Error, Equatable {
     case unsupportedEndpointTransport
+    case unsafeEndpoint
+    case noUsableEndpoint
     case invalidURL
     case nonHTTPResponse
     case badStatus(Int)
@@ -34,6 +36,9 @@ final class OpenFederationDHTHTTPRelayQueryClient: OpenFederationDHTRelayQueryCl
     func send(_ request: RelayRequest, to endpoint: RelayEndpoint) async throws -> RelayResponse {
         guard endpoint.transport == .http else {
             throw OpenFederationDHTNativeOverlayTransportError.unsupportedEndpointTransport
+        }
+        guard OpenFederationDHTNativeOverlayTransport.isPermittedEndpoint(endpoint) else {
+            throw OpenFederationDHTNativeOverlayTransportError.unsafeEndpoint
         }
         guard let url = relayURL(for: endpoint) else {
             throw OpenFederationDHTNativeOverlayTransportError.invalidURL
@@ -95,13 +100,18 @@ final class OpenFederationDHTNativeOverlayTransport: OpenFederationDHTTransport 
         maxVisitedEndpoints: Int = 16,
         maxPeerHintsPerEndpoint: Int = 8
     ) {
-        self.seedEndpoints = Self.deduplicated(seedEndpoints)
+        self.seedEndpoints = Self.deduplicated(
+            seedEndpoints.filter(Self.isPermittedEndpoint)
+        )
         self.client = client
         self.maxVisitedEndpoints = max(1, maxVisitedEndpoints)
         self.maxPeerHintsPerEndpoint = max(0, maxPeerHintsPerEndpoint)
     }
 
     func publish(_ record: OpenFederationDHTRecord, namespace: String) async throws {
+        guard !seedEndpoints.isEmpty else {
+            throw OpenFederationDHTNativeOverlayTransportError.noUsableEndpoint
+        }
         let request = RelayRequest.publishOpenFederationDHTRecord(
             PublishOpenFederationDHTRecordRequest(namespace: namespace, record: record)
         )
@@ -127,6 +137,9 @@ final class OpenFederationDHTNativeOverlayTransport: OpenFederationDHTTransport 
     }
 
     func query(namespace: String, limit: Int) async throws -> [OpenFederationDHTRecord] {
+        guard !seedEndpoints.isEmpty else {
+            throw OpenFederationDHTNativeOverlayTransportError.noUsableEndpoint
+        }
         let boundedLimit = max(1, limit)
         var queue = seedEndpoints
         var visited = Set<String>()
@@ -146,6 +159,7 @@ final class OpenFederationDHTNativeOverlayTransport: OpenFederationDHTTransport 
                 if case .relayInfo(let relayInfo)? = infoResponse.successBody,
                    let hints = relayInfo.knownOpenPeers {
                     for hint in hints.prefix(maxPeerHintsPerEndpoint) {
+                        guard Self.isPermittedEndpoint(hint) else { continue }
                         let key = Self.key(for: hint)
                         if !visited.contains(key), !queue.contains(where: { Self.key(for: $0) == key }) {
                             queue.append(hint)
@@ -189,6 +203,12 @@ final class OpenFederationDHTNativeOverlayTransport: OpenFederationDHTTransport 
             result.append(endpoint)
         }
         return result
+    }
+
+    static func isPermittedEndpoint(_ endpoint: RelayEndpoint) -> Bool {
+        endpoint.transport == .http
+            && endpoint.useTLS
+            && PublicRelayEndpointPolicy.permits(endpoint)
     }
 
     private static func key(for endpoint: RelayEndpoint) -> String {

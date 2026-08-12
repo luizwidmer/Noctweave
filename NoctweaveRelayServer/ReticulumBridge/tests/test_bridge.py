@@ -255,9 +255,43 @@ class LocalGatewayTests(unittest.TestCase):
 
     def test_gateway_maps_remote_failure_without_leaking_details(self):
         self.client.error = bridge.BridgeRemoteError("remote bridge error: rate_limited")
-        status, payload = self._request("POST", "/relay", b"{}")
+        status, payload = self._request(
+            "POST", "/relay", b"{}", {"Content-Type": "application/json"}
+        )
         self.assertEqual(status, 502)
         self.assertEqual(json.loads(payload), {"error": "rate_limited"})
+
+    def test_gateway_rejects_browser_origins_and_cross_site_metadata(self):
+        status, _ = self._request(
+            "POST",
+            "/relay",
+            b"{}",
+            {
+                "Content-Type": "application/json",
+                "Origin": "https://attacker.example",
+            },
+        )
+        self.assertEqual(status, 403)
+        status, _ = self._request(
+            "POST",
+            "/relay",
+            b"{}",
+            {
+                "Content-Type": "application/json",
+                "Sec-Fetch-Site": "cross-site",
+            },
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(self.client.requests, [])
+
+    def test_gateway_requires_json_content_type(self):
+        status, _ = self._request("POST", "/relay", b"{}")
+        self.assertEqual(status, 415)
+        status, _ = self._request(
+            "POST", "/relay", b"{}", {"Content-Type": "text/plain"}
+        )
+        self.assertEqual(status, 415)
+        self.assertEqual(self.client.requests, [])
 
     def test_health_is_local_bridge_state_not_relay_health(self):
         status, payload = self._request("GET", "/bridge/health")

@@ -34,6 +34,24 @@ AGENTS.md
 *.tmp
 *.swp
 
+# Local credentials and relay state
+.env
+.env.*
+!.env.*.example
+**/.env
+**/.env.*
+!**/.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite
+*.sqlite-*
+*.db
+operator-config.json
+relay_identity_v1.json
+coordinator_directory_signing_key
+
 # Local archives and exports
 *.zip
 *.tar

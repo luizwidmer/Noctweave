@@ -17,7 +17,11 @@ export type CommandResult = {
 
 export type CommandRunner = (
   command: string[],
-  options?: { cwd?: string; timeoutMilliseconds?: number }
+  options?: {
+    cwd?: string;
+    timeoutMilliseconds?: number;
+    environment?: Record<string, string>;
+  }
 ) => Promise<CommandResult>;
 
 export type HealthProbe = (url: string) => Promise<boolean>;
@@ -88,7 +92,7 @@ export function dockerRunArguments(
   }
   const relayHost = settings.exposure === "network" ? "0.0.0.0" : "127.0.0.1";
   const hostingEnvironment = settings.noctwebHostingEnabled
-    ? ["-e", `NOCTWEAVE_PUBLISHER_PASSWORD=${publisherPassword}`]
+    ? ["-e", "NOCTWEAVE_PUBLISHER_PASSWORD"]
     : [];
   return [
     "run", "-d",
@@ -97,7 +101,7 @@ export function dockerRunArguments(
     "-p", `${relayHost}:${settings.tcpPort}:9339`,
     "-p", `${relayHost}:${settings.httpPort}:9340`,
     "-p", `127.0.0.1:${settings.adminPort}:9090`,
-    "-e", `NOCTWEAVE_ADMIN_TOKEN=${adminToken}`,
+    "-e", "NOCTWEAVE_ADMIN_TOKEN",
     "-e", "NOCTWEAVE_ADMIN_HOST=0.0.0.0",
     ...hostingEnvironment,
     "-v", `${relayVolume}:/data`,
@@ -143,10 +147,20 @@ export class DockerRelayManager {
     if (removed.exitCode !== 0 && !/No such container/iu.test(removed.stderr)) {
       ensureSuccess(removed, "Docker could not replace the previous managed relay");
     }
-    const result = await this.runner([
-      "docker",
-      ...dockerRunArguments(settings, this.adminToken, this.publisherPassword, imageReference)
-    ]);
+    const result = await this.runner(
+      [
+        "docker",
+        ...dockerRunArguments(settings, this.adminToken, this.publisherPassword, imageReference)
+      ],
+      {
+        environment: {
+          NOCTWEAVE_ADMIN_TOKEN: this.adminToken,
+          ...(settings.noctwebHostingEnabled
+            ? { NOCTWEAVE_PUBLISHER_PASSWORD: this.publisherPassword }
+            : {})
+        }
+      }
+    );
     ensureSuccess(result, "Docker could not start the relay");
     for (let attempt = 0; attempt < 20; attempt++) {
       const status = await this.status(settings);
@@ -276,11 +290,15 @@ async function probeHealth(url: string): Promise<boolean> {
 
 export async function runCommand(
   command: string[],
-  options: { cwd?: string; timeoutMilliseconds?: number } = {}
+  options: {
+    cwd?: string;
+    timeoutMilliseconds?: number;
+    environment?: Record<string, string>;
+  } = {}
 ): Promise<CommandResult> {
   const subprocess = Bun.spawn(command, {
     cwd: options.cwd,
-    env: process.env,
+    env: { ...process.env, ...options.environment },
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe"

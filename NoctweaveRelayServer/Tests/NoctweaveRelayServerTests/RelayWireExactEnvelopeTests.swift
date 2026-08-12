@@ -3,6 +3,23 @@ import XCTest
 @testable import NoctweaveRelayServer
 
 final class RelayWireExactEnvelopeTests: XCTestCase {
+    func testOpenDiscoveryGatewayNeverSendsBearerTokenOverRemoteHTTP() throws {
+        XCTAssertThrowsError(
+            try OpenFederationDHTHTTPGatewayTransport(
+                baseURL: XCTUnwrap(URL(string: "http://gateway.example.org")),
+                authToken: "gateway-token"
+            )
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTGatewayTransportError, .invalidBaseURL)
+        }
+        XCTAssertNoThrow(
+            try OpenFederationDHTHTTPGatewayTransport(
+                baseURL: XCTUnwrap(URL(string: "http://127.0.0.1:8080")),
+                authToken: "gateway-token"
+            )
+        )
+    }
+
     func testOpenDiscoveryGatewayRequiresExactEnvelopeResponse() throws {
         XCTAssertEqual(
             try OpenFederationDHTHTTPGatewayTransport.decodeQueryResponse(

@@ -52,6 +52,14 @@ Only the exact modular relay envelope is accepted. Health and information are
 Configure reverse proxies to reject oversized/slow bodies and preserve
 WebSocket frame boundaries.
 
+Preserve the bridge's request boundary: `POST /relay` requires exactly one
+`application/json` media type, browser HTTP and WebSocket traffic must be
+same-origin, and capability-bearing operations use the same confidential
+transport gate on both transports. Do not rewrite or suppress `Origin` or
+`Host` at the proxy. A trusted TLS proxy must forward the public authority as
+`Host`; plaintext, null-origin, cross-site, and loopback DNS-rebinding requests
+are rejected.
+
 After deployment, verify:
 
 1. `nw.core@2 health` through HTTPS;
@@ -80,11 +88,20 @@ loopback, enable HTTP redirects, log request bodies, or retry an uncertain
 operation in the sidecar. Reduce limits and attachment use for constrained
 radio paths.
 
+The client gateway is a machine-only loopback endpoint. It rejects browser
+`Origin` and cross-site Fetch Metadata and accepts only JSON relay posts. Do
+not put a browser CORS proxy in front of it.
+
 ## Secrets
 
 Use separate random values for relay access, operator access, coordinator
 registration, and coordinator signing. Prefer secret files or environment
 injection over shell history.
+
+The desktop launcher passes generated Docker secrets through the child
+environment and uses name-only `--env` arguments so secret values do not
+appear in the Docker client command line. Preserve that property in alternate
+launchers.
 
 Never log:
 

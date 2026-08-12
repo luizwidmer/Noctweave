@@ -1873,6 +1873,28 @@ final class NoctweaveCoreTests: XCTestCase {
         XCTAssertEqual(protocolHarness.requestCount, 1)
     }
 
+    func testOpenFederationDHTHTTPGatewayTransportNeverSendsBearerTokenOverRemoteHTTP() throws {
+        XCTAssertThrowsError(
+            try OpenFederationDHTHTTPGatewayTransport(
+                baseURL: XCTUnwrap(URL(string: "http://gateway.example.org")),
+                authToken: "gateway-token"
+            )
+        ) { error in
+            XCTAssertEqual(error as? OpenFederationDHTGatewayTransportError, .invalidBaseURL)
+        }
+        XCTAssertNoThrow(
+            try OpenFederationDHTHTTPGatewayTransport(
+                baseURL: XCTUnwrap(URL(string: "http://127.0.0.1:8080")),
+                authToken: "gateway-token"
+            )
+        )
+        XCTAssertNoThrow(
+            try OpenFederationDHTHTTPGatewayTransport(
+                baseURL: XCTUnwrap(URL(string: "http://gateway.example.org"))
+            )
+        )
+    }
+
     func testOpenFederationDHTHTTPGatewayTransportQueriesRecords() async throws {
         let namespace = OpenFederationDHTRecord.namespace(federationName: "gateway-net")
         let records = try (0..<3).map { index in

@@ -338,7 +338,10 @@ Exact versions, hashes, and supply-chain requirements are recorded in the
 
 Noctweave defines a normative 1.0 candidate. Implemented core modules remain
 provisional; group and one-to-one call profiles remain experimental; the
-project has not received an independent external audit.
+project has not received an independent external audit. The August 12, 2026
+[internal security audit and remediation report](NoctweaveDocumentation/security_audit_2026-08-12.md)
+records source findings, applied patches, validation evidence, and residual
+risk without changing that assurance label.
 
 | Implemented | Not claimed |
 | --- | --- |
