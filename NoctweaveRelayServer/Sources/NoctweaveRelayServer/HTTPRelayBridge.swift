@@ -51,7 +51,12 @@ func makeHTTPRelayBridgeBootstrap(
                         WebSocketRelayHandler(
                             forwarder: forwarder,
                             store: store,
-                            sourceKey: relayHTTPSourceKey(address: channel.remoteAddress, headers: head.headers),
+                            sourceKey: relayHTTPSourceKey(
+                                address: channel.remoteAddress,
+                                headers: head.headers,
+                                trustForwardedHeaders: relayConfigurationStore?
+                                    .snapshot().trustedReverseProxyTLS == true
+                            ),
                             maxMessageBytes: maxMessageBytes,
                             directSource: channel.remoteAddress?.ipAddress ?? "",
                             relayConfigurationStore: relayConfigurationStore,
@@ -316,7 +321,12 @@ private final class HTTPRelayHandler: ChannelInboundHandler, RemovableChannelHan
             )
             return
         }
-        let sourceKey = relayHTTPSourceKey(address: context.channel.remoteAddress, headers: head.headers)
+        let sourceKey = relayHTTPSourceKey(
+            address: context.channel.remoteAddress,
+            headers: head.headers,
+            trustForwardedHeaders: relayConfigurationStore?
+                .snapshot().trustedReverseProxyTLS == true
+        )
         guard store.allowRelayRequest(sourceKey: sourceKey) else {
             sendHTTPResponse(
                 status: .ok,
@@ -736,22 +746,44 @@ private final class WebSocketRelayHandler: ChannelInboundHandler, @unchecked Sen
     }
 }
 
-func relayHTTPSourceKey(address: SocketAddress?, headers: HTTPHeaders) -> String {
+func relayHTTPSourceKey(
+    address: SocketAddress?,
+    headers: HTTPHeaders,
+    trustForwardedHeaders: Bool = false
+) -> String {
     let direct = address?.ipAddress?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-    if isLoopbackRelaySource(direct) {
-        if let connectingIP = normalizedForwardedAddress(headers.first(name: "CF-Connecting-IP")) {
-            return connectingIP
-        }
-        if let forwarded = headers.first(name: "X-Forwarded-For")?.split(separator: ",").first,
-           let forwardedIP = normalizedForwardedAddress(String(forwarded)) {
-            return forwardedIP
-        }
+    if trustForwardedHeaders,
+       let forwarded = unambiguousForwardedSource(headers) {
+        return forwarded
     }
     if !direct.isEmpty {
         return direct
     }
     let fallback = address?.description.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
     return fallback.isEmpty ? "unknown" : fallback
+}
+
+private func unambiguousForwardedSource(_ headers: HTTPHeaders) -> String? {
+    let connectingValues = headers["CF-Connecting-IP"]
+    let forwardedValues = headers["X-Forwarded-For"]
+    guard connectingValues.count <= 1, forwardedValues.count <= 1 else {
+        return nil
+    }
+
+    let connecting = connectingValues.first.flatMap(normalizedForwardedAddress)
+    let forwarded = forwardedValues.first.flatMap { value -> String? in
+        let chain = value.split(separator: ",", omittingEmptySubsequences: false)
+        guard !chain.isEmpty, chain.count <= 32 else { return nil }
+        return normalizedForwardedAddress(String(chain[0]))
+    }
+    guard connectingValues.isEmpty || connecting != nil,
+          forwardedValues.isEmpty || forwarded != nil else {
+        return nil
+    }
+    if let connecting, let forwarded, connecting != forwarded {
+        return nil
+    }
+    return connecting ?? forwarded
 }
 
 private func normalizedForwardedAddress(_ value: String?) -> String? {

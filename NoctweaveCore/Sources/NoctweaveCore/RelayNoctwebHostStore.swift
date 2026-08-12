@@ -16,6 +16,8 @@ enum RelayNoctwebHostStoreError: Error, Equatable {
 /// them separate from private messaging state and never receives plaintext
 /// conversations or relationship keys.
 public final class RelayNoctwebHostStore: @unchecked Sendable {
+    private static let maximumIndexBytes = 32 * 1_024 * 1_024
+
     private struct Record: Codable, Equatable {
         let objectID: String
         let byteCount: UInt64
@@ -109,24 +111,29 @@ public final class RelayNoctwebHostStore: @unchecked Sendable {
     public func load() throws {
         try queue.sync {
             guard let directoryURL else { return }
-            try FileManager.default.createDirectory(
-                at: directoryURL,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
+            try SecureLocalFileIO.ensurePrivateDirectory(at: directoryURL)
             let indexURL = directoryURL.appendingPathComponent(
                 "index.json",
                 isDirectory: false
             )
-            guard FileManager.default.fileExists(
-                atPath: indexURL.path
-            ) else { return }
+            let indexData: Data
+            do {
+                indexData = try SecureLocalFileIO.readBoundedRegularFile(
+                    at: indexURL,
+                    maximumBytes: Self.maximumIndexBytes,
+                    requirePrivateOwner: true
+                )
+            } catch SecureLocalFileIOError.notFound {
+                return
+            } catch {
+                throw RelayNoctwebHostStoreError.corruptPersistence
+            }
 
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let snapshot = try decoder.decode(
                 Snapshot.self,
-                from: Data(contentsOf: indexURL)
+                from: indexData
             )
             guard snapshot.version == Snapshot.version,
                   snapshot.records.count <= maximumObjects,
@@ -422,10 +429,10 @@ public final class RelayNoctwebHostStore: @unchecked Sendable {
         objectID: String
     ) throws {
         if let url = payloadURL(objectID: objectID) {
-            try payload.write(to: url, options: [.atomic])
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: url.path
+            try SecureLocalFileIO.writeAtomicPrivateFile(
+                payload,
+                to: url,
+                maximumBytes: NoctweaveNetLimits.maximumHostObjectBytes
             )
         } else {
             memoryPayloads[objectID] = payload
@@ -434,24 +441,15 @@ public final class RelayNoctwebHostStore: @unchecked Sendable {
 
     private func loadPayloadLocked(objectID: String) throws -> Data {
         if let url = payloadURL(objectID: objectID) {
-            let values = try url.resourceValues(
-                forKeys: [
-                    .isRegularFileKey,
-                    .isSymbolicLinkKey,
-                    .fileSizeKey,
-                ]
-            )
-            guard values.isRegularFile == true,
-                  values.isSymbolicLink != true,
-                  let byteCount = values.fileSize,
-                  (1...NoctweaveNetLimits.maximumHostObjectBytes)
-                    .contains(byteCount) else {
+            do {
+                return try SecureLocalFileIO.readBoundedRegularFile(
+                    at: url,
+                    maximumBytes: NoctweaveNetLimits.maximumHostObjectBytes,
+                    requirePrivateOwner: true
+                )
+            } catch {
                 throw RelayNoctwebHostStoreError.corruptPersistence
             }
-            return try Data(
-                contentsOf: url,
-                options: [.mappedIfSafe]
-            )
         }
         guard let payload = memoryPayloads[objectID] else {
             throw RelayNoctwebHostStoreError.corruptPersistence
@@ -461,9 +459,7 @@ public final class RelayNoctwebHostStore: @unchecked Sendable {
 
     private func deletePayloadLocked(objectID: String) throws {
         if let url = payloadURL(objectID: objectID) {
-            if FileManager.default.fileExists(atPath: url.path) {
-                try FileManager.default.removeItem(at: url)
-            }
+            try SecureLocalFileIO.unlinkIfPresent(at: url)
         } else {
             memoryPayloads.removeValue(forKey: objectID)
         }
@@ -510,10 +506,13 @@ public final class RelayNoctwebHostStore: @unchecked Sendable {
             "index.json",
             isDirectory: false
         )
-        try data.write(to: url, options: [.atomic])
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: url.path
+        guard data.count <= Self.maximumIndexBytes else {
+            throw RelayNoctwebHostStoreError.capacityExceeded
+        }
+        try SecureLocalFileIO.writeAtomicPrivateFile(
+            data,
+            to: url,
+            maximumBytes: Self.maximumIndexBytes
         )
     }
 
@@ -528,7 +527,7 @@ public final class RelayNoctwebHostStore: @unchecked Sendable {
             let objectID = entry.deletingPathExtension()
                 .lastPathComponent
             if records[objectID] == nil {
-                try FileManager.default.removeItem(at: entry)
+                try SecureLocalFileIO.unlinkIfPresent(at: entry)
             }
         }
     }

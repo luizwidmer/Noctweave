@@ -80,7 +80,15 @@ public actor ClientStateStore {
         legacyRollbackAnchorStore: (any ClientStateRollbackAnchorStore)? = nil,
         usesDataProtectionKeychain: Bool = false
     ) {
-        let standardizedURL = fileURL.standardizedFileURL.resolvingSymlinksInPath()
+        // Resolve a legitimate symlinked parent (for example /var -> /private/var)
+        // without resolving the final state-file component. Resolving the full
+        // path here would turn a hostile state-file symlink into an approved
+        // target before the no-follow descriptor checks run.
+        let standardizedInput = fileURL.standardizedFileURL
+        let standardizedURL = standardizedInput
+            .deletingLastPathComponent()
+            .resolvingSymlinksInPath()
+            .appendingPathComponent(standardizedInput.lastPathComponent)
         let pathScopeDigest = Data(SHA256.hash(data: Data(standardizedURL.path.utf8)))
         self.fileURL = standardizedURL
         self.pendingFileURL = standardizedURL.appendingPathExtension("pending")
@@ -278,7 +286,7 @@ public actor ClientStateStore {
                     replacement: stagedRecord
                 )
             } catch ClientStateRollbackAnchorError.compareAndSwapFailed {
-                try? FileManager.default.removeItem(at: pendingFileURL)
+                try? SecureLocalFileIO.unlinkIfPresent(at: pendingFileURL)
                 throw ClientStateStoreError.concurrentUpdate
             }
 
@@ -621,7 +629,6 @@ public actor ClientStateStore {
             }
             if pendingExists {
                 try removeFileIfPresent(at: pendingFileURL)
-                try syncDirectory()
             }
             return .empty(anchor: nil)
         }
@@ -656,11 +663,11 @@ public actor ClientStateStore {
             if let mainEnvelope = try readEnvelopeIfPresent(from: fileURL),
                envelope(mainEnvelope, matches: pending, scopeDigest: scopeDigest),
                pendingChainIsValid(mainEnvelope, record: record) {
-                try applyPrivacyAttributes(to: fileURL)
-                try syncFile(at: fileURL)
-                try syncDirectory()
+                try SecureLocalFileIO.hardenAndSynchronizePrivateFile(
+                    at: fileURL,
+                    excludedFromBackup: true
+                )
                 try removeFileIfPresent(at: pendingFileURL)
-                try syncDirectory()
                 let committed = try ClientStateRollbackAnchorRecord(current: pending, pending: nil)
                 try finalizeRecoveredAnchor(
                     anchorStore: anchorStore,
@@ -700,7 +707,6 @@ public actor ClientStateStore {
         }
         if pendingExists {
             try removeFileIfPresent(at: pendingFileURL)
-            try syncDirectory()
         }
         return .state(envelope: mainEnvelope, anchor: current)
     }
@@ -888,75 +894,71 @@ public actor ClientStateStore {
     }
 
     private func readBoundedData(from url: URL) throws -> Data {
-        let values = try url.resourceValues(
-            forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
-        )
-        guard values.isRegularFile == true,
-              values.isSymbolicLink != true,
-              let fileSize = values.fileSize,
-              fileSize >= 0,
-              fileSize <= Self.maximumStoredBytes else {
+        do {
+            return try SecureLocalFileIO.readBoundedRegularFile(
+                at: url,
+                maximumBytes: Self.maximumStoredBytes
+            )
+        } catch SecureLocalFileIOError.tooLarge {
             throw ClientStateStoreError.stateTooLarge
+        } catch {
+            throw ClientStateStoreError.storageUnavailable
         }
-        let data = try Data(contentsOf: url)
-        guard data.count <= Self.maximumStoredBytes else {
-            throw ClientStateStoreError.stateTooLarge
-        }
-        return data
     }
 
     private func writePlaintextAtomically(_ data: Data) throws {
-        #if os(iOS)
-        try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
-        #else
-        try data.write(to: fileURL, options: [.atomic])
-        #endif
-        try applyPrivacyAttributes(to: fileURL)
-        try syncFile(at: fileURL)
-        try syncDirectory()
+        try SecureLocalFileIO.writeAtomicPrivateFile(
+            data,
+            to: fileURL,
+            maximumBytes: Self.maximumStoredBytes,
+            excludedFromBackup: true
+        )
     }
 
     private func removeStateFilesAndSync() throws {
         try removeFileIfPresent(at: pendingFileURL)
         try removeFileIfPresent(at: fileURL)
-        try syncDirectory()
     }
 
     private func removeFileIfPresent(at url: URL) throws {
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-        try FileManager.default.removeItem(at: url)
+        do {
+            try SecureLocalFileIO.unlinkIfPresent(at: url)
+        } catch {
+            throw ClientStateStoreError.storageUnavailable
+        }
     }
 
     private func writePendingFile(_ data: Data) throws {
-        try? FileManager.default.removeItem(at: pendingFileURL)
-        #if os(iOS)
-        try data.write(to: pendingFileURL, options: [.completeFileProtection])
-        #else
-        try data.write(to: pendingFileURL, options: [])
-        #endif
+        try SecureLocalFileIO.writeAtomicPrivateFile(
+            data,
+            to: pendingFileURL,
+            maximumBytes: Self.maximumStoredBytes,
+            excludedFromBackup: true
+        )
         do {
-            try applyPrivacyAttributes(to: pendingFileURL)
-            try syncFile(at: pendingFileURL)
-            try syncDirectory()
+            try SecureLocalFileIO.hardenAndSynchronizePrivateFile(
+                at: pendingFileURL,
+                excludedFromBackup: true
+            )
         } catch {
-            try? FileManager.default.removeItem(at: pendingFileURL)
+            try? SecureLocalFileIO.unlinkIfPresent(at: pendingFileURL)
             throw error
         }
     }
 
     private func replaceMainWithPendingFile() throws {
-        let result: Int32 = pendingFileURL.withUnsafeFileSystemRepresentation { source in
-            fileURL.withUnsafeFileSystemRepresentation { destination in
-                guard let source, let destination else { return -1 }
-                return rename(source, destination)
-            }
-        }
-        guard result == 0 else {
+        do {
+            try SecureLocalFileIO.replaceFile(
+                at: fileURL,
+                with: pendingFileURL
+            )
+            try SecureLocalFileIO.hardenAndSynchronizePrivateFile(
+                at: fileURL,
+                excludedFromBackup: true
+            )
+        } catch {
             throw ClientStateStoreError.storageUnavailable
         }
-        try applyPrivacyAttributes(to: fileURL)
-        try syncFile(at: fileURL)
-        try syncDirectory()
     }
 
     private func encryptionKey() throws -> SymmetricKey {
@@ -971,89 +973,60 @@ public actor ClientStateStore {
     }
 
     private func ensurePrivateDirectory() throws {
-        let directory = fileURL.deletingLastPathComponent()
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
+        do {
+            try SecureLocalFileIO.ensurePrivateDirectory(
+                at: fileURL.deletingLastPathComponent()
             )
-        }
-        let descriptor: Int32 = directory.withUnsafeFileSystemRepresentation { path in
-            guard let path else { return -1 }
-            return open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
-        }
-        guard descriptor >= 0 else {
+        } catch {
             throw ClientStateStoreError.storageUnavailable
         }
-        defer { _ = close(descriptor) }
-
-        var status = stat()
-        guard fstat(descriptor, &status) == 0,
-              status.st_uid == geteuid(),
-              (status.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR),
-              (status.st_mode & mode_t(S_IWGRP | S_IWOTH)) == 0 else {
-            throw ClientStateStoreError.storageUnavailable
-        }
-    }
-
-    private func applyPrivacyAttributes(to url: URL) throws {
-        #if canImport(Darwin)
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        var mutableURL = url
-        try mutableURL.setResourceValues(values)
-        #endif
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: url.path
-        )
     }
 
     private func withExclusiveFileLock<T>(_ body: () throws -> T) throws -> T {
-        let descriptor: Int32 = lockFileURL.withUnsafeFileSystemRepresentation { path in
-            guard let path else { return -1 }
-            return open(path, O_CREAT | O_RDWR | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        let directory: Int32 = lockFileURL.deletingLastPathComponent()
+            .withUnsafeFileSystemRepresentation { path in
+                guard let path else { return -1 }
+                return open(
+                    path,
+                    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+                )
+            }
+        guard directory >= 0 else {
+            throw ClientStateStoreError.storageUnavailable
+        }
+        defer { _ = close(directory) }
+        let name = lockFileURL.lastPathComponent
+        guard !name.isEmpty, name != ".", name != "..", !name.contains("/") else {
+            throw ClientStateStoreError.storageUnavailable
+        }
+        let descriptor: Int32 = name.withCString { filename in
+            openat(
+                directory,
+                filename,
+                O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR
+            )
         }
         guard descriptor >= 0 else {
             throw ClientStateStoreError.storageUnavailable
         }
         defer { _ = close(descriptor) }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              (status.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              status.st_uid == geteuid(),
+              fchmod(descriptor, mode_t(0o600)) == 0 else {
+            throw ClientStateStoreError.storageUnavailable
+        }
         guard flock(descriptor, LOCK_EX) == 0 else {
             throw ClientStateStoreError.storageUnavailable
         }
         defer { _ = flock(descriptor, LOCK_UN) }
-        try? applyPrivacyAttributes(to: lockFileURL)
+        try? SecureLocalFileIO.hardenAndSynchronizePrivateFile(
+            at: lockFileURL,
+            excludedFromBackup: true
+        )
         return try body()
-    }
-
-    private func syncFile(at url: URL) throws {
-        let descriptor: Int32 = url.withUnsafeFileSystemRepresentation { path in
-            guard let path else { return -1 }
-            return open(path, O_RDONLY | O_NOFOLLOW)
-        }
-        guard descriptor >= 0 else {
-            throw ClientStateStoreError.storageUnavailable
-        }
-        defer { _ = close(descriptor) }
-        guard fsync(descriptor) == 0 else {
-            throw ClientStateStoreError.storageUnavailable
-        }
-    }
-
-    private func syncDirectory() throws {
-        let directory = fileURL.deletingLastPathComponent()
-        let descriptor: Int32 = directory.withUnsafeFileSystemRepresentation { path in
-            guard let path else { return -1 }
-            return open(path, O_RDONLY)
-        }
-        guard descriptor >= 0 else {
-            throw ClientStateStoreError.storageUnavailable
-        }
-        defer { _ = close(descriptor) }
-        guard fsync(descriptor) == 0 else {
-            throw ClientStateStoreError.storageUnavailable
-        }
     }
 }
 

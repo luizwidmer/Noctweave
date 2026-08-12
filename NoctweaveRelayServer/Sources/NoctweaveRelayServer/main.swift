@@ -1137,11 +1137,7 @@ if config.adminPort != nil,
 let fileURL: URL?
 if let dataDir = config.dataDir {
     do {
-        try FileManager.default.createDirectory(
-            at: dataDir,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
+        try RelayServerSecureFileIO.ensurePrivateDirectory(at: dataDir)
     } catch {
         print("[relay] Unable to prepare the configured data directory.")
         exit(2)
@@ -1158,13 +1154,10 @@ if let dataDir = config.dataDir {
     )
     do {
         if FileManager.default.fileExists(atPath: keyURL.path) {
-            let attributes = try FileManager.default.attributesOfItem(atPath: keyURL.path)
-            guard attributes[.type] as? FileAttributeType == .typeRegular,
-                  let byteCount = (attributes[.size] as? NSNumber)?.intValue,
-                  (1...32_768).contains(byteCount) else {
-                throw CocoaError(.fileReadCorruptFile)
-            }
-            let encoded = try Data(contentsOf: keyURL, options: [.mappedIfSafe])
+            let encoded = try RelayServerSecureFileIO.read(
+                from: keyURL,
+                maximumBytes: 32_768
+            )
             relayIdentityKeyMaterial = try JSONDecoder().decode(
                 RelayIdentityKeyMaterialV1.self,
                 from: encoded
@@ -1173,10 +1166,10 @@ if let dataDir = config.dataDir {
             let generated = try RelayIdentityKeyMaterialV1.generate()
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-            try encoder.encode(generated).write(to: keyURL, options: [.atomic])
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: keyURL.path
+            try RelayServerSecureFileIO.writePrivate(
+                encoder.encode(generated),
+                to: keyURL,
+                maximumBytes: 32_768
             )
             relayIdentityKeyMaterial = generated
         }
@@ -1223,7 +1216,10 @@ if config.netHostEnabled {
         )
         do {
             if FileManager.default.fileExists(atPath: keyURL.path) {
-                let keyData = try Data(contentsOf: keyURL)
+                let keyData = try RelayServerSecureFileIO.read(
+                    from: keyURL,
+                    maximumBytes: 32
+                )
                 guard keyData.count == 32 else {
                     throw NoctweaveNetHostStoreError.corruptPersistence
                 }
@@ -1232,10 +1228,10 @@ if config.netHostEnabled {
                 )
             } else {
                 signingPrivateKey = Curve25519.Signing.PrivateKey()
-                try signingPrivateKey.rawRepresentation.write(to: keyURL, options: [.atomic])
-                try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o600],
-                    ofItemAtPath: keyURL.path
+                try RelayServerSecureFileIO.writePrivate(
+                    signingPrivateKey.rawRepresentation,
+                    to: keyURL,
+                    maximumBytes: 32
                 )
             }
         } catch {
@@ -1358,17 +1354,10 @@ if relayConfiguration.kind == .coordinator {
         let existing: Data?
         if FileManager.default.fileExists(atPath: keyURL.path) {
             do {
-                let attributes = try FileManager.default.attributesOfItem(atPath: keyURL.path)
-                guard attributes[.type] as? FileAttributeType == .typeRegular,
-                      let byteCount = (attributes[.size] as? NSNumber)?.intValue,
-                      (1...16_384).contains(byteCount) else {
-                    throw CocoaError(.fileReadCorruptFile)
-                }
-                let data = try Data(contentsOf: keyURL)
-                guard data.count <= 16_384 else {
-                    throw CocoaError(.fileReadTooLarge)
-                }
-                existing = data
+                existing = try RelayServerSecureFileIO.read(
+                    from: keyURL,
+                    maximumBytes: 16_384
+                )
             } catch {
                 print("[relay] Refusing to replace an unreadable coordinator signing key file.")
                 exit(2)
@@ -1385,10 +1374,10 @@ if relayConfiguration.kind == .coordinator {
         }
         if existing != normalized {
             do {
-                try normalized.write(to: keyURL, options: [.atomic])
-                try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o600],
-                    ofItemAtPath: keyURL.path
+                try RelayServerSecureFileIO.writePrivate(
+                    normalized,
+                    to: keyURL,
+                    maximumBytes: 16_384
                 )
             } catch {
                 print("[relay] Unable to persist the coordinator signing key securely.")

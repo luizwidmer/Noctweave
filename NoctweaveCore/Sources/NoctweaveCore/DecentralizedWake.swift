@@ -699,44 +699,26 @@ public actor DecentralizedPrefetchBatchStore {
             throw DecentralizedPrefetchError.batchTooLarge
         }
 
-        let directory = fileURL.deletingLastPathComponent()
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-        }
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: directory.path
+        try SecureLocalFileIO.writeAtomicPrivateFile(
+            encodedStored,
+            to: fileURL,
+            maximumBytes: Self.maximumStoredBytes
         )
-        #if os(iOS)
-        try encodedStored.write(to: fileURL, options: [.atomic, .completeFileProtection])
-        #else
-        try encodedStored.write(to: fileURL, options: [.atomic])
-        #endif
-        do {
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: fileURL.path
-            )
-        } catch {
-            try? FileManager.default.removeItem(at: fileURL)
-            throw error
-        }
     }
 
     public func load() throws -> DecentralizedPrefetchBatch? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
-        guard values.isRegularFile == true,
-              let fileSize = values.fileSize,
-              fileSize >= 0,
-              fileSize <= Self.maximumStoredBytes else {
+        let loaded: Data
+        do {
+            loaded = try SecureLocalFileIO.readBoundedRegularFile(
+                at: fileURL,
+                maximumBytes: Self.maximumStoredBytes,
+                requirePrivateOwner: true
+            )
+        } catch {
             throw DecentralizedPrefetchError.invalidStoredBatch
         }
-        var encodedStored = try Data(contentsOf: fileURL)
+        var encodedStored = loaded
         defer { encodedStored.secureWipe() }
         guard encodedStored.count <= Self.maximumStoredBytes,
               let stored = try? NoctweaveCoder.decode(
@@ -762,35 +744,17 @@ public actor DecentralizedPrefetchBatchStore {
     }
 
     public func remove() throws {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
-        Self.bestEffortOverwriteFile(at: fileURL)
-        try FileManager.default.removeItem(at: fileURL)
+        do {
+            try SecureLocalFileIO.unlinkIfPresent(at: fileURL)
+        } catch {
+            throw DecentralizedPrefetchError.invalidStoredBatch
+        }
     }
 
     private static func isValid(_ batch: DecentralizedPrefetchBatch) -> Bool {
         batch.isStructurallyValid
     }
 
-    private static func bestEffortOverwriteFile(at url: URL) {
-        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-              values.isRegularFile == true,
-              let fileSize = values.fileSize,
-              fileSize > 0,
-              let handle = try? FileHandle(forWritingTo: url) else {
-            return
-        }
-        defer { try? handle.close() }
-        handle.seek(toFileOffset: 0)
-        let chunkSize = 64 * 1_024
-        let zeros = Data(repeating: 0, count: min(chunkSize, fileSize))
-        var remaining = fileSize
-        while remaining > 0 {
-            let writeCount = min(chunkSize, remaining)
-            handle.write(Data(zeros.prefix(writeCount)))
-            remaining -= writeCount
-        }
-        handle.synchronizeFile()
-    }
 }
 
 private struct DecentralizedPrefetchStoredBatch: Codable, Equatable {

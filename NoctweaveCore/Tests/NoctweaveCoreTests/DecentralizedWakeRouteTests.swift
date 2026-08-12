@@ -303,6 +303,33 @@ final class DecentralizedWakeRouteTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
     }
 
+    func testBatchRemovalUnlinksSymlinkWithoutOverwritingTarget() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noctweave-route-prefetch-remove-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let victimURL = directory.appendingPathComponent("victim.bin")
+        let sentinel = Data("unrelated local data".utf8)
+        try sentinel.write(to: victimURL)
+        let batchURL = directory.appendingPathComponent("batch.json")
+        try FileManager.default.createSymbolicLink(
+            at: batchURL,
+            withDestinationURL: victimURL
+        )
+        let store = try DecentralizedPrefetchBatchStore(
+            fileURL: batchURL,
+            protectionKey: Data(repeating: 0x77, count: 32)
+        )
+
+        try await store.remove()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: batchURL.path))
+        XCTAssertEqual(try Data(contentsOf: victimURL), sentinel)
+    }
+
     func testRelayInfoRoundTripPreservesWakeSupport() throws {
         let support = DecentralizedWakeSupport(
             mode: .longPoll,

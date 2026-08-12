@@ -203,6 +203,49 @@ final class NoctweaveNetRelayTests: XCTestCase {
         )
     }
 
+    func testNativeHostStoreRejectsSymlinkedCapsulePayload() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "noctweave-native-host-symlink-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let payload = Data("expected hosted capsule".utf8)
+        let objectID = NoctweaveNetHostPutRequest.objectID(for: payload)
+        let store = try RelayNoctwebHostStore(
+            directoryURL: directory,
+            signingPrivateKeyData:
+                RelayNoctwebHostStore.generateSigningPrivateKey()
+        )
+        try store.load()
+        _ = try store.put(
+            NoctweaveNetHostPutRequest(
+                objectID: objectID,
+                payload: payload,
+                ttlSeconds: 3_600,
+                releaseCapabilityDigest: Data(repeating: 0x31, count: 32),
+                idempotencyKey: Data(repeating: 0x32, count: 32)
+            ),
+            now: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+
+        let capsuleURL = directory.appendingPathComponent("\(objectID).capsule")
+        try FileManager.default.removeItem(at: capsuleURL)
+        let victimURL = directory.appendingPathComponent("victim.txt")
+        try Data("unrelated readable file".utf8).write(to: victimURL)
+        try FileManager.default.createSymbolicLink(
+            at: capsuleURL,
+            withDestinationURL: victimURL
+        )
+
+        XCTAssertThrowsError(
+            try store.fetch(
+                NoctweaveNetHostObjectRequest(objectID: objectID),
+                now: Date(timeIntervalSince1970: 1_800_000_001)
+            )
+        )
+    }
+
     func testNativeHostStorePrunesExpiredNameBindings() throws {
         let store = try RelayNoctwebHostStore(
             directoryURL: nil,

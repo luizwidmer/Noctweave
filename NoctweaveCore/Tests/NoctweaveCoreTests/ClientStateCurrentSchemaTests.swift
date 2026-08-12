@@ -249,6 +249,63 @@ final class ClientStateCurrentSchemaTests: XCTestCase {
         }
     }
 
+    func testClientStateStoreNeverFollowsFinalStateSymlink() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let victimURL = directory.appendingPathComponent("victim.txt")
+        let sentinel = Data("must remain unchanged".utf8)
+        try sentinel.write(to: victimURL)
+        let stateURL = directory.appendingPathComponent("state.json")
+        try FileManager.default.createSymbolicLink(
+            at: stateURL,
+            withDestinationURL: victimURL
+        )
+
+        let store = ClientStateStore(
+            fileURL: stateURL,
+            protection: .insecurePlaintextForTesting
+        )
+        let state = try makeState(displayName: "Symlink-safe state")
+        do {
+            try await store.save(state, replacing: nil)
+            XCTFail("An existing final-component state symlink must fail closed")
+        } catch {
+            XCTAssertEqual(error as? ClientStateStoreError, .storageUnavailable)
+        }
+
+        XCTAssertEqual(try Data(contentsOf: victimURL), sentinel)
+        try FileManager.default.removeItem(at: stateURL)
+        try await store.save(state, replacing: nil)
+        #if canImport(Darwin)
+        let resourceValues = try stateURL.resourceValues(
+            forKeys: [.isExcludedFromBackupKey]
+        )
+        XCTAssertEqual(resourceValues.isExcludedFromBackup, true)
+        #endif
+        let loaded = try await store.load()
+        XCTAssertEqual(loaded, state)
+
+        let aliasURL = directory.appendingPathComponent("state-alias.json")
+        try FileManager.default.createSymbolicLink(
+            at: aliasURL,
+            withDestinationURL: stateURL
+        )
+        let aliasStore = ClientStateStore(
+            fileURL: aliasURL,
+            protection: .insecurePlaintextForTesting
+        )
+        do {
+            _ = try await aliasStore.load()
+            XCTFail("A final-component state symlink must not be followed")
+        } catch {
+            // Expected: descriptor-based loading rejects the symlink.
+        }
+    }
+
     func testPlaintextStoreRoundTripsCurrentStateAndRejectsIncompleteState() async throws {
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

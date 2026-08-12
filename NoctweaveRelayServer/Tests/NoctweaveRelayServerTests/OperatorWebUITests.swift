@@ -213,6 +213,42 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     }
 
+    func testOperatorPersistenceNeverFollowsFinalSymlink() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let victimURL = directory.appendingPathComponent("victim.txt")
+        let sentinel = Data("must remain unchanged".utf8)
+        try sentinel.write(to: victimURL)
+        let fileURL = directory.appendingPathComponent("operator-config.json")
+        try FileManager.default.createSymbolicLink(
+            at: fileURL,
+            withDestinationURL: victimURL
+        )
+        let persistence = OperatorConfigurationPersistence(fileURL: fileURL)
+        let editable = OperatorEditableConfiguration(
+            configuration: makeBaseConfiguration()
+        )
+
+        try persistence.save(editable)
+
+        XCTAssertEqual(try Data(contentsOf: victimURL), sentinel)
+        XCTAssertEqual(try persistence.load(), editable)
+
+        let aliasURL = directory.appendingPathComponent("operator-alias.json")
+        try FileManager.default.createSymbolicLink(
+            at: aliasURL,
+            withDestinationURL: fileURL
+        )
+        XCTAssertThrowsError(
+            try OperatorConfigurationPersistence(fileURL: aliasURL).load()
+        )
+    }
+
     func testOperatorConfigurationRejectsDuplicateSemanticJSONFields() throws {
         let editable = OperatorEditableConfiguration(configuration: makeBaseConfiguration())
         let encoded = try JSONEncoder().encode(editable)

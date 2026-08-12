@@ -51,5 +51,7 @@ USER noctweave:noctweave
 EXPOSE 9339 9340 9090
 ENV NOCTWEAVE_RELAY_PORT=9339
 ENV NOCTWEAVE_ADMIN_HOST=0.0.0.0
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/${NOCTWEAVE_RELAY_PORT:-9339}"]
 ENTRYPOINT ["/usr/local/bin/noctweave-relay"]
 CMD ["--host", "0.0.0.0", "--port", "9339", "--data-dir", "/data"]

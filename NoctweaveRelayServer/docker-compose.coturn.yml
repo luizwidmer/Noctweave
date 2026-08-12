@@ -30,6 +30,14 @@ services:
       - "127.0.0.1:9339:9339"
       - "127.0.0.1:9340:9340"
       - "127.0.0.1:9090:9090"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     restart: unless-stopped
 
   coturn:
@@ -47,10 +55,17 @@ services:
       - ./coturn/entrypoint.sh:/opt/noctweave/entrypoint.sh:ro
     tmpfs:
       - /var/lib/coturn:size=16m,mode=0700
+      - /tmp:size=16m,mode=0700
     ports:
       - "3478:3478/tcp"
       - "3478:3478/udp"
       - "${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}:${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}/udp"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     restart: unless-stopped
 
 volumes:

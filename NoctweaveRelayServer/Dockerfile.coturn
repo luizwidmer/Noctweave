@@ -3,3 +3,5 @@ FROM coturn/coturn:4.15.0-r0-alpine@sha256:b73dfc469b30ee62ba6c0a1824c502e24438f
 USER root
 RUN apk add --no-cache --upgrade bind-libs bind-tools
 USER nobody:nogroup
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD ["sh", "-c", "test \"$(cat /proc/1/comm)\" = turnserver"]

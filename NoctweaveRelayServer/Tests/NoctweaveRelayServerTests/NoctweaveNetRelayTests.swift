@@ -211,6 +211,42 @@ final class NoctweaveNetRelayTests: XCTestCase {
         )
     }
 
+    func testHostStoreRejectsSymlinkedCapsulePayload() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let payload = Data("expected relay capsule".utf8)
+        let request = NoctweaveNetHostPutRequest(
+            objectID: NoctweaveNetHostPutRequest.objectID(for: payload),
+            payload: payload,
+            ttlSeconds: 3_600,
+            releaseCapabilityDigest: Data(repeating: 0x61, count: 32),
+            idempotencyKey: Data(repeating: 0x62, count: 32)
+        )
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = NoctweaveNetHostStore(
+            directoryURL: root,
+            signingPrivateKey: Curve25519.Signing.PrivateKey()
+        )
+        try store.load()
+        _ = try store.put(request, now: now)
+
+        let capsuleURL = root.appendingPathComponent("\(request.objectID).capsule")
+        try FileManager.default.removeItem(at: capsuleURL)
+        let victimURL = root.appendingPathComponent("victim.txt")
+        try Data("unrelated readable file".utf8).write(to: victimURL)
+        try FileManager.default.createSymbolicLink(
+            at: capsuleURL,
+            withDestinationURL: victimURL
+        )
+
+        XCTAssertThrowsError(
+            try store.fetch(.init(objectID: request.objectID), now: now)
+        )
+    }
+
     func testHostAndPassthroughWireBindingsRoundTripExactly() throws {
         let payload = Data("capsule".utf8)
         let host = RelayRequest.putNetHostObject(

@@ -11,6 +11,8 @@ enum NoctweaveNetHostStoreError: Error, Equatable {
 }
 
 final class NoctweaveNetHostStore {
+    private static let maximumIndexBytes = 32 * 1_024 * 1_024
+
     private struct Record: Codable, Equatable {
         let objectID: String
         let byteCount: UInt64
@@ -83,16 +85,19 @@ final class NoctweaveNetHostStore {
             guard let directoryURL else {
                 return
             }
-            try FileManager.default.createDirectory(
-                at: directoryURL,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
+            try RelayServerSecureFileIO.ensurePrivateDirectory(at: directoryURL)
             let indexURL = directoryURL.appendingPathComponent("index.json", isDirectory: false)
-            guard FileManager.default.fileExists(atPath: indexURL.path) else {
+            let data: Data
+            do {
+                data = try RelayServerSecureFileIO.read(
+                    from: indexURL,
+                    maximumBytes: Self.maximumIndexBytes
+                )
+            } catch RelayServerSecureFileIOError.notFound {
                 return
+            } catch {
+                throw NoctweaveNetHostStoreError.corruptPersistence
             }
-            let data = try Data(contentsOf: indexURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             let snapshot = try decoder.decode(Snapshot.self, from: data)
@@ -346,10 +351,10 @@ final class NoctweaveNetHostStore {
 
     private func storePayloadLocked(_ payload: Data, objectID: String) throws {
         if let url = payloadURL(objectID: objectID) {
-            try payload.write(to: url, options: [.atomic])
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: url.path
+            try RelayServerSecureFileIO.writePrivate(
+                payload,
+                to: url,
+                maximumBytes: NoctweaveNetLimits.maximumHostObjectBytes
             )
         } else {
             memoryPayloads[objectID] = payload
@@ -358,13 +363,14 @@ final class NoctweaveNetHostStore {
 
     private func loadPayloadLocked(objectID: String) throws -> Data {
         if let url = payloadURL(objectID: objectID) {
-            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-            guard attributes[.type] as? FileAttributeType == .typeRegular,
-                  let byteCount = (attributes[.size] as? NSNumber)?.intValue,
-                  (1...NoctweaveNetLimits.maximumHostObjectBytes).contains(byteCount) else {
+            do {
+                return try RelayServerSecureFileIO.read(
+                    from: url,
+                    maximumBytes: NoctweaveNetLimits.maximumHostObjectBytes
+                )
+            } catch {
                 throw NoctweaveNetHostStoreError.corruptPersistence
             }
-            return try Data(contentsOf: url, options: [.mappedIfSafe])
         }
         guard let payload = memoryPayloads[objectID] else {
             throw NoctweaveNetHostStoreError.corruptPersistence
@@ -374,9 +380,7 @@ final class NoctweaveNetHostStore {
 
     private func deletePayloadLocked(objectID: String) throws {
         if let url = payloadURL(objectID: objectID) {
-            if FileManager.default.fileExists(atPath: url.path) {
-                try FileManager.default.removeItem(at: url)
-            }
+            try RelayServerSecureFileIO.unlinkIfPresent(at: url)
         } else {
             memoryPayloads.removeValue(forKey: objectID)
         }
@@ -410,11 +414,14 @@ final class NoctweaveNetHostStore {
                 names: names
             )
         )
+        guard data.count <= Self.maximumIndexBytes else {
+            throw NoctweaveNetHostStoreError.capacityExceeded
+        }
         let url = directoryURL.appendingPathComponent("index.json", isDirectory: false)
-        try data.write(to: url, options: [.atomic])
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o600],
-            ofItemAtPath: url.path
+        try RelayServerSecureFileIO.writePrivate(
+            data,
+            to: url,
+            maximumBytes: Self.maximumIndexBytes
         )
     }
 
@@ -430,7 +437,7 @@ final class NoctweaveNetHostStore {
         for entry in entries where entry.pathExtension == "capsule" {
             let objectID = entry.deletingPathExtension().lastPathComponent
             if records[objectID] == nil {
-                try FileManager.default.removeItem(at: entry)
+                try RelayServerSecureFileIO.unlinkIfPresent(at: entry)
             }
         }
     }

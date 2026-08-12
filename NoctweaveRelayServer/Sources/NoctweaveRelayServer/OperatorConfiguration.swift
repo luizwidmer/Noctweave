@@ -667,13 +667,10 @@ struct OperatorConfigurationPersistence {
         guard let fileURL, FileManager.default.fileExists(atPath: fileURL.path) else {
             return nil
         }
-        let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-        guard attributes[.type] as? FileAttributeType == .typeRegular,
-              let byteCount = (attributes[.size] as? NSNumber)?.intValue,
-              (1...128 * 1_024).contains(byteCount) else {
-            throw OperatorConfigurationError.invalidField("persisted operator configuration")
-        }
-        let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+        let data = try RelayServerSecureFileIO.read(
+            from: fileURL,
+            maximumBytes: 128 * 1_024
+        )
         return try decodeOperatorJSON(OperatorEditableConfiguration.self, from: data)
     }
 
@@ -685,8 +682,11 @@ struct OperatorConfigurationPersistence {
         guard data.count <= 128 * 1_024 else {
             throw OperatorConfigurationError.invalidField("persisted operator configuration")
         }
-        try data.write(to: fileURL, options: [.atomic])
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        try RelayServerSecureFileIO.writePrivate(
+            data,
+            to: fileURL,
+            maximumBytes: 128 * 1_024
+        )
     }
 }
 

@@ -13,6 +13,14 @@ services:
       - /data
     volumes:
       - noctweave-relay-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     restart: unless-stopped
 
   reticulum-bridge:
@@ -31,6 +39,14 @@ services:
     volumes:
       - noctweave-reticulum-config:/config
       - noctweave-reticulum-identity:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
     restart: unless-stopped
 
 volumes:

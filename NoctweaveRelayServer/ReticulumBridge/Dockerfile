@@ -16,4 +16,6 @@ COPY RETICULUM_LICENSE_NOTICE.md /usr/share/doc/noctweave-reticulum-bridge/RETIC
 USER noctweave:noctweave
 WORKDIR /app
 VOLUME ["/config", "/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9341/bridge/health', timeout=2).read(1024)"]
 ENTRYPOINT ["python", "/app/noctweave_reticulum_bridge.py"]

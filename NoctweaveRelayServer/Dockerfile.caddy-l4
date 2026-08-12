@@ -12,3 +12,5 @@ RUN apk add --no-cache --upgrade c-ares curl libcurl \
     && chown -R noctweave-caddy:noctweave-caddy /config /data
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 USER noctweave-caddy:noctweave-caddy
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["curl", "--fail", "--silent", "--show-error", "http://127.0.0.1:2019/config/"]

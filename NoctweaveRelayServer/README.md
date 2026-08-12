@@ -375,10 +375,14 @@ start the relay with:
 --trusted-reverse-proxy-tls true
 ```
 
-This flag trusts the deployment boundary, not an `X-Forwarded-*` header. The
-plain backend listener must therefore be firewalled or bound so clients cannot
-bypass the trusted proxy. Leave the flag off for an exposed plaintext listener;
-capability-bearing operations then fail closed.
+This flag trusts the deployment boundary, not the mere presence of an
+`X-Forwarded-*` header. The plain backend listener must therefore be firewalled
+or bound so clients cannot bypass the trusted proxy. In this mode the relay may
+use one canonical, non-conflicting `X-Forwarded-For` or `CF-Connecting-IP`
+address for rate-limit attribution; duplicate, malformed, or conflicting
+values fall back to the proxy address. Leave the flag off for an exposed
+plaintext listener; forwarded headers are then ignored and capability-bearing
+operations fail closed.
 
 An open-federation DHT gateway bearer token is sent only to HTTPS endpoints or
 literal loopback HTTP endpoints. The native overlay likewise follows only
