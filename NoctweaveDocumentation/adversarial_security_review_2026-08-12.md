@@ -2,7 +2,7 @@
 
 Date: August 12, 2026  
 Assessment: second-pass malicious-code-path review  
-Disposition: all findings in this pass patched and validated; changes remain uncommitted
+Disposition: all findings in this pass patched, validated, committed, and pushed
 
 ## Relationship to the first audit
 
@@ -501,12 +501,19 @@ caveat, not a security finding.
 ## Release disposition
 
 The adversarial patch set passes the available source, application, dependency,
-container, and runtime checks. It is suitable for code review, but it is not
-committed or pushed. Before a coordinated release:
+container, and runtime checks. The reviewed changes are published on each
+repository's `main` branch:
 
-1. review and commit each modified repository;
-2. publish the Core/relay commit first;
-3. advance downstream exact revision pins to that published audit commit where
-   applicable;
-4. rerun current release-time source/image/SBOM/secret gates;
-5. build, sign, notarize, and verify the final distributable applications.
+| Repository | Published commit |
+| --- | --- |
+| Noctweave Core and relay | `41a874fc68dc87898f7406b23d290b308364442b` |
+| Standalone NoctweaveJS | `14f6077fa761b4b80be42d051c6e468b91ae61e6` |
+| Native Messaging | `4255007ca958270ebef400ed3a285aafac5d198d` |
+| Noctweb Browser and Lab | `bf950a80cc60830fbe03b2e79dbd5ffc9a7b3a13` |
+| NoctBoard revision pin | `0f3958a2ead359fbf1edc8743e72f20bd157bce3` |
+| NoctCord revision pin | `6ba039764bee8f7893d71bfdfd9420e3c5746f6d` |
+
+Noctweb, NoctBoard, and NoctCord manifests and resolved locks now pin the
+published Core/relay security commit exactly. Before a coordinated release,
+rerun current source/image/SBOM/secret gates and build, sign, notarize, and
+verify the final distributable applications.
