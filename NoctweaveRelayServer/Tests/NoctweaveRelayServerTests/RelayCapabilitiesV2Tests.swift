@@ -87,6 +87,28 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         )
     }
 
+    func testNoctwebDataCapabilityIsExperimentalBoundedAndFeatureGated() throws {
+        let enabled = RelayConfiguration(
+            netHostEnabled: true,
+            noctwebDataEnabled: true
+        ).makeInfo()
+        let manifest = try XCTUnwrap(enabled.protocolCapabilities)
+        let capability = try XCTUnwrap(
+            manifest.modules.first { $0.module == NoctwebDataV1.module }
+        )
+        XCTAssertEqual(capability.status, .experimental)
+        XCTAssertEqual(capability.versions, [1])
+        XCTAssertEqual(capability.limits, NoctwebDataV1.capabilityLimits)
+
+        let hostingOnly = RelayConfiguration(netHostEnabled: true).makeInfo()
+        XCTAssertFalse(
+            try XCTUnwrap(hostingOnly.protocolCapabilities).supports(
+                module: NoctwebDataV1.module,
+                version: 1
+            )
+        )
+    }
+
     func testDefaultRelayDoesNotAdvertiseUnavailableModules() throws {
         let info = RelayConfiguration().makeInfo()
         let manifest = try XCTUnwrap(info.protocolCapabilities)

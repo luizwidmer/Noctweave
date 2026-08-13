@@ -55,6 +55,13 @@ and have module-specific retention and size bounds. `nw.media-blobs@1` is
 distinct from the legacy `nw.blobs@1` attachment surface. See the
 [collaboration module specification](NoctweaveDocumentation/relay_collaboration_modules_v1.md).
 
+Host-capable relays may additionally enable `nw.noctweb-data@1`, a bounded
+origin-scoped document service for stateful Noctweb sites. It supports public
+catalogs and signed per-site accounts for carts, profiles, and orders without
+exposing arbitrary SQL, server-side code, relay credentials, or global user
+identities to page JavaScript. See the
+[Noctweb data service specification](NoctweaveDocumentation/noctweb_data_service_v1.md).
+
 There are no hosted accounts, developer-operated relays, or required central
 notification services. You choose where every component runs.
 
@@ -168,6 +175,7 @@ transport is available to integrations that supply that boundary.
 | Run a relay | [`NoctweaveRelayServer/`](NoctweaveRelayServer/) |
 | Carry relay traffic over Reticulum | [`ReticulumBridge`](NoctweaveRelayServer/ReticulumBridge/) |
 | Build a browser or Node client | [NoctweaveJS](https://github.com/luizwidmer/NoctweaveJS) |
+| Build a stateful Noctweb site | [`nw.noctweb-data@1`](NoctweaveDocumentation/noctweb_data_service_v1.md) |
 | Integrate from Swift | [`NoctweaveCore/`](NoctweaveCore/) |
 | Script personas, relationships, and messages | [`NoctweaveCLI`](NoctweaveDocumentation/noctweave_cli_usage.md) |
 | Automate relay and messaging integration | [`noctweave-messaging-relay` skill](AgentSkills/noctweave-messaging-relay/SKILL.md) |

@@ -112,6 +112,12 @@ components:
             - $ref: "#/components/schemas/NetHostResolveRequestBinding"
             - $ref: "#/components/schemas/NetHostHasRequestBinding"
             - $ref: "#/components/schemas/NetHostReleaseRequestBinding"
+            - $ref: "#/components/schemas/NoctwebDataCreateRequestBinding"
+            - $ref: "#/components/schemas/NoctwebDataRegisterRequestBinding"
+            - $ref: "#/components/schemas/NoctwebDataPutRequestBinding"
+            - $ref: "#/components/schemas/NoctwebDataGetRequestBinding"
+            - $ref: "#/components/schemas/NoctwebDataListRequestBinding"
+            - $ref: "#/components/schemas/NoctwebDataDeleteRequestBinding"
     RelayModuleID:
       type: string
       enum:
@@ -125,6 +131,7 @@ components:
         - nw.open-discovery
         - nw.net-passthrough
         - nw.net-host
+        - nw.noctweb-data
     RelayMethodID:
       type: string
       enum: [health, info, create, renew, teardown, append, sync, commit, register, delete, upload, fetch, list, namespace, claim, rotate, publish-dht, list-dht, forward, deliver, put, bind, get, resolve, has, release, acquire]
@@ -172,6 +179,11 @@ components:
             - $ref: "#/components/schemas/FederatedNetHostNameResolutionSuccessBody"
             - $ref: "#/components/schemas/NetHostPresenceSuccessBody"
             - $ref: "#/components/schemas/NetHostReleaseSuccessBody"
+            - $ref: "#/components/schemas/NoctwebDataDatabaseSuccessBody"
+            - $ref: "#/components/schemas/NoctwebDataAccountSuccessBody"
+            - $ref: "#/components/schemas/NoctwebDataRecordSuccessBody"
+            - $ref: "#/components/schemas/NoctwebDataRecordsSuccessBody"
+            - $ref: "#/components/schemas/NoctwebDataDeleteSuccessBody"
             - type: "null"
         error:
           oneOf:
@@ -205,6 +217,11 @@ components:
                 - $ref: "#/components/schemas/FederatedNetHostNameResolutionSuccessBody"
                 - $ref: "#/components/schemas/NetHostPresenceSuccessBody"
                 - $ref: "#/components/schemas/NetHostReleaseSuccessBody"
+                - $ref: "#/components/schemas/NoctwebDataDatabaseSuccessBody"
+                - $ref: "#/components/schemas/NoctwebDataAccountSuccessBody"
+                - $ref: "#/components/schemas/NoctwebDataRecordSuccessBody"
+                - $ref: "#/components/schemas/NoctwebDataRecordsSuccessBody"
+                - $ref: "#/components/schemas/NoctwebDataDeleteSuccessBody"
             error:
               type: "null"
         - properties:
@@ -479,6 +496,48 @@ components:
         version: { const: 1 }
         method: { const: release }
         body: { $ref: "#/components/schemas/NoctweaveNetHostReleaseRequest" }
+    NoctwebDataCreateRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.noctweb-data }
+        version: { const: 1 }
+        method: { const: create }
+        body: { $ref: "#/components/schemas/NoctwebDataDatabaseCreateRequestBody" }
+    NoctwebDataRegisterRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.noctweb-data }
+        version: { const: 1 }
+        method: { const: register }
+        body: { $ref: "#/components/schemas/NoctwebDataAccountRegisterRequestBody" }
+    NoctwebDataPutRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.noctweb-data }
+        version: { const: 1 }
+        method: { const: put }
+        body: { $ref: "#/components/schemas/NoctwebDataRecordPutRequestBody" }
+    NoctwebDataGetRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.noctweb-data }
+        version: { const: 1 }
+        method: { const: get }
+        body: { $ref: "#/components/schemas/NoctwebDataRecordGetRequestBody" }
+    NoctwebDataListRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.noctweb-data }
+        version: { const: 1 }
+        method: { const: list }
+        body: { $ref: "#/components/schemas/NoctwebDataRecordListRequestBody" }
+    NoctwebDataDeleteRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.noctweb-data }
+        version: { const: 1 }
+        method: { const: delete }
+        body: { $ref: "#/components/schemas/NoctwebDataRecordDeleteRequestBody" }
     RelayInfoSuccessBody:
       type: object
       required: [relayInfo]
@@ -614,6 +673,288 @@ components:
       required: [release]
       properties:
         release: { $ref: "#/components/schemas/NoctweaveNetHostReleaseReceipt" }
+      additionalProperties: false
+    NoctwebDataDatabaseSuccessBody:
+      type: object
+      required: [database]
+      properties:
+        database: { $ref: "#/components/schemas/NoctwebDataDatabaseReceiptV1" }
+      additionalProperties: false
+    NoctwebDataAccountSuccessBody:
+      type: object
+      required: [account]
+      properties:
+        account: { $ref: "#/components/schemas/NoctwebDataAccountReceiptV1" }
+      additionalProperties: false
+    NoctwebDataRecordSuccessBody:
+      type: object
+      required: [record]
+      properties:
+        record: { $ref: "#/components/schemas/NoctwebDataRecordV1" }
+      additionalProperties: false
+    NoctwebDataRecordsSuccessBody:
+      type: object
+      required: [records]
+      properties:
+        records: { $ref: "#/components/schemas/NoctwebDataRecordListV1" }
+      additionalProperties: false
+    NoctwebDataDeleteSuccessBody:
+      type: object
+      required: [deletion]
+      properties:
+        deletion: { $ref: "#/components/schemas/NoctwebDataDeleteReceiptV1" }
+      additionalProperties: false
+    NoctwebDataDatabaseCreateRequestBody:
+      type: object
+      required: [request]
+      properties:
+        request: { $ref: "#/components/schemas/NoctwebDataDatabaseCreateRequestV1" }
+      additionalProperties: false
+    NoctwebDataAccountRegisterRequestBody:
+      type: object
+      required: [request]
+      properties:
+        request: { $ref: "#/components/schemas/NoctwebDataAccountRegisterRequestV1" }
+      additionalProperties: false
+    NoctwebDataRecordPutRequestBody:
+      type: object
+      required: [request]
+      properties:
+        request: { $ref: "#/components/schemas/NoctwebDataRecordPutRequestV1" }
+      additionalProperties: false
+    NoctwebDataRecordGetRequestBody:
+      type: object
+      required: [request]
+      properties:
+        request: { $ref: "#/components/schemas/NoctwebDataRecordGetRequestV1" }
+      additionalProperties: false
+    NoctwebDataRecordListRequestBody:
+      type: object
+      required: [request]
+      properties:
+        request: { $ref: "#/components/schemas/NoctwebDataRecordListRequestV1" }
+      additionalProperties: false
+    NoctwebDataRecordDeleteRequestBody:
+      type: object
+      required: [request]
+      properties:
+        request: { $ref: "#/components/schemas/NoctwebDataRecordDeleteRequestV1" }
+      additionalProperties: false
+    NoctwebDataOriginV1:
+      type: object
+      required: [version, relaySuffix, siteLabel, publisherID, publisherSigningPublicKey]
+      properties:
+        version: { type: integer, const: 1 }
+        relaySuffix: { $ref: "#/components/schemas/NoctwebRelaySuffixV1" }
+        siteLabel:
+          type: string
+          pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+        publisherID:
+          type: string
+          pattern: "^nwpub1_[0-9a-f]{64}$"
+        publisherSigningPublicKey:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+      additionalProperties: false
+    NoctwebDataCollectionV1:
+      type: object
+      required: [name, readPolicy, writePolicy]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z0-9](?:[a-z0-9-]{0,46}[a-z0-9])?$"
+        readPolicy:
+          type: string
+          enum: [public, owner, owner-or-publisher]
+        writePolicy:
+          type: string
+          enum: [publisher, owner, owner-or-publisher]
+      additionalProperties: false
+    NoctwebDataAuthorizationV1:
+      type: object
+      required: [actorKind, actorID, nonce, signature]
+      properties:
+        actorKind:
+          type: string
+          enum: [publisher, account]
+        actorID:
+          type: string
+          pattern: "^(?:nwpub1_|nwa1_)[0-9a-f]{64}$"
+        nonce:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        signature:
+          type: string
+          contentEncoding: base64
+          minLength: 88
+          maxLength: 4412
+          description: Ed25519 for publisher actors; ML-DSA-65 for account actors.
+      additionalProperties: false
+    NoctwebDataDatabaseCreateRequestV1:
+      type: object
+      required: [origin, collections, idempotencyKey, signature]
+      properties:
+        origin: { $ref: "#/components/schemas/NoctwebDataOriginV1" }
+        collections:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: { $ref: "#/components/schemas/NoctwebDataCollectionV1" }
+          description: Unique collection names sorted in ascending byte order.
+        idempotencyKey:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        signature:
+          type: string
+          contentEncoding: base64
+          minLength: 88
+          maxLength: 88
+      additionalProperties: false
+    NoctwebDataAccountRegisterRequestV1:
+      type: object
+      required: [databaseID, accountID, accountSigningPublicKey, idempotencyKey, signature]
+      properties:
+        databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
+        accountID: { type: string, pattern: "^nwa1_[0-9a-f]{64}$" }
+        accountSigningPublicKey:
+          type: string
+          contentEncoding: base64
+          minLength: 2604
+          maxLength: 2604
+        idempotencyKey:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        signature:
+          type: string
+          contentEncoding: base64
+          minLength: 4412
+          maxLength: 4412
+      additionalProperties: false
+    NoctwebDataRecordPutRequestV1:
+      type: object
+      required: [databaseID, collection, recordID, payload, expectedRevision, idempotencyKey, authorization]
+      properties:
+        databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
+        collection: { type: string, minLength: 1, maxLength: 48 }
+        recordID: { type: string, minLength: 1, maxLength: 96 }
+        ownerAccountID: { type: string, pattern: "^nwa1_[0-9a-f]{64}$" }
+        payload:
+          type: string
+          contentEncoding: base64
+          minLength: 4
+          maxLength: 87384
+        expectedRevision:
+          type: integer
+          format: uint64
+          minimum: 0
+        idempotencyKey:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        authorization: { $ref: "#/components/schemas/NoctwebDataAuthorizationV1" }
+      additionalProperties: false
+    NoctwebDataRecordGetRequestV1:
+      type: object
+      required: [databaseID, collection, recordID]
+      properties:
+        databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
+        collection: { type: string, minLength: 1, maxLength: 48 }
+        recordID: { type: string, minLength: 1, maxLength: 96 }
+        authorization: { $ref: "#/components/schemas/NoctwebDataAuthorizationV1" }
+      additionalProperties: false
+    NoctwebDataRecordListRequestV1:
+      type: object
+      required: [databaseID, collection, limit]
+      properties:
+        databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
+        collection: { type: string, minLength: 1, maxLength: 48 }
+        afterRecordID: { type: string, minLength: 1, maxLength: 96 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        authorization: { $ref: "#/components/schemas/NoctwebDataAuthorizationV1" }
+      additionalProperties: false
+    NoctwebDataRecordDeleteRequestV1:
+      type: object
+      required: [databaseID, collection, recordID, expectedRevision, idempotencyKey, authorization]
+      properties:
+        databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
+        collection: { type: string, minLength: 1, maxLength: 48 }
+        recordID: { type: string, minLength: 1, maxLength: 96 }
+        expectedRevision:
+          type: integer
+          format: uint64
+          minimum: 1
+        idempotencyKey:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        authorization: { $ref: "#/components/schemas/NoctwebDataAuthorizationV1" }
+      additionalProperties: false
+    NoctwebDataDatabaseReceiptV1:
+      type: object
+      required: [databaseID, created]
+      properties:
+        databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
+        created: { type: boolean }
+      additionalProperties: false
+    NoctwebDataAccountReceiptV1:
+      type: object
+      required: [databaseID, accountID, created]
+      properties:
+        databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
+        accountID: { type: string, pattern: "^nwa1_[0-9a-f]{64}$" }
+        created: { type: boolean }
+      additionalProperties: false
+    NoctwebDataRecordV1:
+      type: object
+      required: [databaseID, collection, recordID, payload, revision, createdAt, updatedAt]
+      properties:
+        databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
+        collection: { type: string, minLength: 1, maxLength: 48 }
+        recordID: { type: string, minLength: 1, maxLength: 96 }
+        ownerAccountID: { type: string, pattern: "^nwa1_[0-9a-f]{64}$" }
+        payload:
+          type: string
+          contentEncoding: base64
+          minLength: 4
+          maxLength: 87384
+        revision:
+          type: integer
+          format: uint64
+          minimum: 1
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      additionalProperties: false
+    NoctwebDataRecordListV1:
+      type: object
+      required: [records]
+      properties:
+        records:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/NoctwebDataRecordV1" }
+        nextCursor: { type: string, minLength: 1, maxLength: 96 }
+      additionalProperties: false
+    NoctwebDataDeleteReceiptV1:
+      type: object
+      required: [databaseID, collection, recordID, deletedRevision]
+      properties:
+        databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
+        collection: { type: string, minLength: 1, maxLength: 48 }
+        recordID: { type: string, minLength: 1, maxLength: 96 }
+        deletedRevision:
+          type: integer
+          format: uint64
+          minimum: 1
       additionalProperties: false
     NoctweaveNetPassthroughRequest:
       type: object
@@ -765,13 +1106,8 @@ components:
           pattern: "^nwr1[0-9a-f]{64}$"
       additionalProperties: false
     NoctwebRelaySuffixV1:
-      type: object
-      required: [rawValue]
-      properties:
-        rawValue:
-          type: string
-          pattern: "^\\.[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])?$"
-      additionalProperties: false
+      type: string
+      pattern: "^\\.[a-z0-9](?:[a-z0-9-]{0,60}[a-z0-9])?$"
     RelayIdentityClaimV1:
       type: object
       required:

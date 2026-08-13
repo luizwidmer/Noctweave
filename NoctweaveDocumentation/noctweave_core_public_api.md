@@ -115,6 +115,14 @@ payload before relay submission. See
 [`relay_collaboration_modules_v1.md`](relay_collaboration_modules_v1.md) for
 the exact operation fields, bounds, and persistence rules.
 
+Host-capable relays may opt into experimental `nw.noctweb-data@1`. Swift
+integrations use `NoctwebData*V1` request and receipt models,
+`RelayNoctwebDataStore`, and the corresponding typed `RelayRequest` factories.
+The module exposes bounded document operations rather than SQL and requires
+confidential transport. Its origin, publisher, visitor-account, policy, and
+metadata boundaries are specified in
+[`noctweb_data_service_v1.md`](noctweb_data_service_v1.md).
+
 Host uploads commit a client-generated release-capability digest and an
 idempotency key. Fetch responses contain exact bytes plus an Ed25519-signed
 `NoctweaveNetHostingReceipt`; callers must verify the receipt signature and
@@ -122,9 +130,9 @@ object digest before using the bytes.
 
 `NoctweaveCore` provides these exact client and wire models. The operational
 passthrough and host runtimes live in the public Linux/Docker
-`NoctweaveRelayServer`; the smaller embedded `NoctweaveCore.RelayServer`
-refuses to start in those roles and returns `unavailable` for those request
-types.
+`NoctweaveRelayServer`. The embedded `NoctweaveCore.RelayServer` enables host
+and site-data operations only when its application supplies explicit bounded
+`RelayNoctwebHostStore` and `RelayNoctwebDataStore` instances.
 
 Before pairing, verify the exact relay surface that the selected path needs:
 

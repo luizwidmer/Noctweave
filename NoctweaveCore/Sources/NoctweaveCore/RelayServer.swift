@@ -21,6 +21,7 @@ public final class RelayServer {
     private let store: RelayStore
     private let opaqueRouteStore: OpaqueRouteRelayStoreV2
     private let noctwebHostStore: RelayNoctwebHostStore?
+    private let noctwebDataStore: RelayNoctwebDataStore?
     private let noctwebNamespaceRuntime =
         NoctwebNamespaceRuntimeV1()
     private var listener: NWListener?
@@ -59,11 +60,13 @@ public final class RelayServer {
         configuration: RelayConfiguration = RelayConfiguration(),
         relayIdentity: RelayIdentityKeyMaterialV1? = nil,
         noctwebHostStore: RelayNoctwebHostStore? = nil,
+        noctwebDataStore: RelayNoctwebDataStore? = nil,
         coturnCredentialIssuer: CoturnCredentialIssuerV1? = nil
     ) {
         self.store = store
         self.opaqueRouteStore = opaqueRouteStore
         self.noctwebHostStore = noctwebHostStore
+        self.noctwebDataStore = noctwebDataStore
         self.coturnCredentialIssuer = coturnCredentialIssuer
         self.relayConfiguration = configuration
         self.relayIdentityKeyMaterial = relayIdentity
@@ -125,7 +128,9 @@ public final class RelayServer {
         let configuration = configuration
         guard configuration.kind != .passthrough,
               !configuration.isNetHostEnabled
-                || noctwebHostStore != nil else {
+                || noctwebHostStore != nil,
+              !configuration.isNoctwebDataEnabled
+                || noctwebDataStore != nil else {
             // Passthrough requires the Linux forwarding runtime. Hosting
             // requires an explicitly supplied bounded native host store.
             throw RelayNetworkError.connectionFailed
@@ -1619,6 +1624,199 @@ public final class RelayServer {
                     respondingTo: request
                 )
             }
+        case .createNoctwebDatabase(let create):
+            guard configuration.isNoctwebDataEnabled,
+                  let noctwebDataStore else {
+                return .error(
+                    "This relay does not provide Noctweb site data.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            guard hasConfidentialRouteTransport(sourceKey) else {
+                return .error(
+                    "Noctweb site data requires confidential transport.",
+                    code: .authenticationRequired,
+                    respondingTo: request
+                )
+            }
+            do {
+                return .success(
+                    .noctwebDatabase(try noctwebDataStore.createDatabase(create)),
+                    respondingTo: request
+                )
+            } catch {
+                return noctwebDataErrorResponse(error, respondingTo: request)
+            }
+        case .registerNoctwebAccount(let registration):
+            guard configuration.isNoctwebDataEnabled,
+                  let noctwebDataStore else {
+                return .error(
+                    "This relay does not provide Noctweb site data.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            guard hasConfidentialRouteTransport(sourceKey) else {
+                return .error(
+                    "Noctweb site data requires confidential transport.",
+                    code: .authenticationRequired,
+                    respondingTo: request
+                )
+            }
+            do {
+                return .success(
+                    .noctwebAccount(try noctwebDataStore.registerAccount(registration)),
+                    respondingTo: request
+                )
+            } catch {
+                return noctwebDataErrorResponse(error, respondingTo: request)
+            }
+        case .putNoctwebRecord(let put):
+            guard configuration.isNoctwebDataEnabled,
+                  let noctwebDataStore else {
+                return .error(
+                    "This relay does not provide Noctweb site data.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            guard hasConfidentialRouteTransport(sourceKey) else {
+                return .error(
+                    "Noctweb site data requires confidential transport.",
+                    code: .authenticationRequired,
+                    respondingTo: request
+                )
+            }
+            do {
+                return .success(
+                    .noctwebRecord(try noctwebDataStore.putRecord(put)),
+                    respondingTo: request
+                )
+            } catch {
+                return noctwebDataErrorResponse(error, respondingTo: request)
+            }
+        case .getNoctwebRecord(let get):
+            guard configuration.isNoctwebDataEnabled,
+                  let noctwebDataStore else {
+                return .error(
+                    "This relay does not provide Noctweb site data.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            guard hasConfidentialRouteTransport(sourceKey) else {
+                return .error(
+                    "Noctweb site data requires confidential transport.",
+                    code: .authenticationRequired,
+                    respondingTo: request
+                )
+            }
+            do {
+                return .success(
+                    .noctwebRecord(try noctwebDataStore.getRecord(get)),
+                    respondingTo: request
+                )
+            } catch {
+                return noctwebDataErrorResponse(error, respondingTo: request)
+            }
+        case .listNoctwebRecords(let list):
+            guard configuration.isNoctwebDataEnabled,
+                  let noctwebDataStore else {
+                return .error(
+                    "This relay does not provide Noctweb site data.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            guard hasConfidentialRouteTransport(sourceKey) else {
+                return .error(
+                    "Noctweb site data requires confidential transport.",
+                    code: .authenticationRequired,
+                    respondingTo: request
+                )
+            }
+            do {
+                return .success(
+                    .noctwebRecords(try noctwebDataStore.listRecords(list)),
+                    respondingTo: request
+                )
+            } catch {
+                return noctwebDataErrorResponse(error, respondingTo: request)
+            }
+        case .deleteNoctwebRecord(let deletion):
+            guard configuration.isNoctwebDataEnabled,
+                  let noctwebDataStore else {
+                return .error(
+                    "This relay does not provide Noctweb site data.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
+            guard hasConfidentialRouteTransport(sourceKey) else {
+                return .error(
+                    "Noctweb site data requires confidential transport.",
+                    code: .authenticationRequired,
+                    respondingTo: request
+                )
+            }
+            do {
+                return .success(
+                    .noctwebDelete(try noctwebDataStore.deleteRecord(deletion)),
+                    respondingTo: request
+                )
+            } catch {
+                return noctwebDataErrorResponse(error, respondingTo: request)
+            }
+        }
+    }
+
+    private func noctwebDataErrorResponse(
+        _ error: Error,
+        respondingTo request: RelayRequest
+    ) -> RelayResponse {
+        guard let error = error as? RelayNoctwebDataStoreError else {
+            return .error(
+                "Noctweb site data storage failed.",
+                code: .internalFailure,
+                retryable: true,
+                respondingTo: request
+            )
+        }
+        switch error {
+        case .invalidRequest:
+            return .error("Invalid Noctweb site data request.", respondingTo: request)
+        case .databaseUnavailable, .collectionUnavailable, .accountUnavailable:
+            return .error(
+                "Noctweb site data resource was not found.",
+                code: .notFound,
+                respondingTo: request
+            )
+        case .authenticationRequired, .unauthorized:
+            return .error(
+                "Noctweb site data authorization was rejected.",
+                code: .authenticationRequired,
+                respondingTo: request
+            )
+        case .conflict:
+            return .error(
+                "Noctweb site data revision or idempotency conflict.",
+                code: .conflict,
+                respondingTo: request
+            )
+        case .capacityExceeded:
+            return .error(
+                "Noctweb site data capacity reached.",
+                code: .capacity,
+                respondingTo: request
+            )
+        case .corruptPersistence:
+            return .error(
+                "Noctweb site data persistence is unavailable.",
+                code: .unavailable,
+                retryable: true,
+                respondingTo: request
+            )
         }
     }
 
@@ -2129,6 +2327,7 @@ public final class RelayServer {
 
     private func requiresAuthentication(for binding: RelayOperationBinding) -> Bool {
         if binding.module == .core
+            || binding.module == .noctwebData
             || (binding.module == .federation
                 && [
                     .register,

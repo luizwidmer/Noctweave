@@ -119,6 +119,7 @@ final class ArchitectureV2RelayCapabilityTests: XCTestCase {
                 "nw.groups",
                 "nw.wake",
                 "nw.open-discovery",
+                "nw.noctweb-data",
                 "nw.privacy.hidden-retrieval",
                 "nw.privacy.onion",
                 "nw.privacy.mixnet"

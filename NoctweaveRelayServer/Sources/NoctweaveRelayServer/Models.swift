@@ -1312,6 +1312,8 @@ struct RelayConfiguration: Codable, Equatable {
     /// A standard relay may opt into the host module without changing its
     /// primary topology role. Dedicated host relays always enable it.
     var netHostEnabled: Bool?
+    /// Optional origin-scoped document service for hosted Noctweb sites.
+    var noctwebDataEnabled: Bool?
     var federation: FederationDescriptor
     /// TLS on the local listener, not TLS terminated by a trusted proxy.
     var tlsEnabled: Bool?
@@ -1363,6 +1365,7 @@ struct RelayConfiguration: Codable, Equatable {
     init(
         kind: RelayKind = .standard,
         netHostEnabled: Bool = false,
+        noctwebDataEnabled: Bool = false,
         federation: FederationDescriptor = FederationDescriptor(mode: .solo),
         tlsEnabled: Bool? = nil,
         advertisedTLSEnabled: Bool? = nil,
@@ -1410,6 +1413,7 @@ struct RelayConfiguration: Codable, Equatable {
     ) {
         self.kind = kind
         self.netHostEnabled = kind == .host || netHostEnabled
+        self.noctwebDataEnabled = noctwebDataEnabled && (kind == .host || netHostEnabled) ? true : nil
         self.federation = federation
         self.tlsEnabled = tlsEnabled
         self.advertisedTLSEnabled = advertisedTLSEnabled
@@ -1487,6 +1491,10 @@ struct RelayConfiguration: Codable, Equatable {
         kind == .host || netHostEnabled == true
     }
 
+    var isNoctwebDataEnabled: Bool {
+        isNetHostEnabled && noctwebDataEnabled == true
+    }
+
     var isRendezvousTransportEnabled: Bool {
         rendezvousTransportEnabled
     }
@@ -1554,6 +1562,7 @@ struct RelayConfiguration: Codable, Equatable {
             protocolCapabilities: .advertised(
                 relayKind: kind,
                 netHostEnabled: isNetHostEnabled,
+                noctwebDataEnabled: isNoctwebDataEnabled,
                 attachmentsEnabled: attachmentsEnabled != false,
                 wakeEnabled: wakeSupport != nil,
                 hiddenRetrievalEnabled: advertisedHiddenRetrieval != nil,

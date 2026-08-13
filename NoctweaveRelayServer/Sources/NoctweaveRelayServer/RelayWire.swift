@@ -10,6 +10,7 @@ enum RelayModuleID: String, Codable, CaseIterable {
     case openDiscovery = "nw.open-discovery"
     case netPassthrough = "nw.net-passthrough"
     case netHost = "nw.net-host"
+    case noctwebData = "nw.noctweb-data"
     case realtimeRoute = "nw.realtime-route"
     case sharedLog = "nw.shared-log"
     case ephemeralPresence = "nw.ephemeral-presence"
@@ -20,7 +21,7 @@ enum RelayModuleID: String, Codable, CaseIterable {
         switch self {
         case .core, .opaqueRoute, .rendezvousTransport: return 2
         case .blobs, .federation, .federationForward, .openDiscovery,
-             .netPassthrough, .netHost, .realtimeRoute, .sharedLog,
+             .netPassthrough, .netHost, .noctwebData, .realtimeRoute, .sharedLog,
              .ephemeralPresence, .mediaBlobs, .iceService: return 1
         }
     }
@@ -85,6 +86,7 @@ struct RelayOperationBinding: Codable, Equatable, Hashable {
         .openDiscovery: [.publishDHT, .listDHT],
         .netPassthrough: [.forward],
         .netHost: [.put, .bind, .get, .resolve, .has, .release],
+        .noctwebData: [.create, .register, .put, .get, .list, .delete],
         .realtimeRoute: [.create, .append, .subscribe, .sync, .unsubscribe],
         .sharedLog: [.create, .append, .sync],
         .ephemeralPresence: [.acquire, .renewLease, .release, .list],
@@ -128,6 +130,12 @@ enum RelayRequestBody: Equatable {
     case resolveNetHostName(NoctweaveNetHostNameRequestV1)
     case hasNetHostObject(NoctweaveNetHostObjectRequest)
     case releaseNetHostObject(NoctweaveNetHostReleaseRequest)
+    case createNoctwebDatabase(NoctwebDataDatabaseCreateRequestV1)
+    case registerNoctwebAccount(NoctwebDataAccountRegisterRequestV1)
+    case putNoctwebRecord(NoctwebDataRecordPutRequestV1)
+    case getNoctwebRecord(NoctwebDataRecordGetRequestV1)
+    case listNoctwebRecords(NoctwebDataRecordListRequestV1)
+    case deleteNoctwebRecord(NoctwebDataRecordDeleteRequestV1)
     case createRealtimeRoute(RealtimeRouteCreateRequestV1)
     case appendRealtimeRoute(RealtimeRouteAppendRequestV1)
     case subscribeRealtimeRoute(RealtimeRouteSubscribeRequestV1)
@@ -191,6 +199,12 @@ enum RelayRequestBody: Equatable {
             return .init(module: .netHost, version: 1, method: .resolve)
         case .hasNetHostObject: return .init(module: .netHost, version: 1, method: .has)
         case .releaseNetHostObject: return .init(module: .netHost, version: 1, method: .release)
+        case .createNoctwebDatabase: return .init(module: .noctwebData, version: 1, method: .create)
+        case .registerNoctwebAccount: return .init(module: .noctwebData, version: 1, method: .register)
+        case .putNoctwebRecord: return .init(module: .noctwebData, version: 1, method: .put)
+        case .getNoctwebRecord: return .init(module: .noctwebData, version: 1, method: .get)
+        case .listNoctwebRecords: return .init(module: .noctwebData, version: 1, method: .list)
+        case .deleteNoctwebRecord: return .init(module: .noctwebData, version: 1, method: .delete)
         case .createRealtimeRoute: return .init(module: .realtimeRoute, version: 1, method: .create)
         case .appendRealtimeRoute: return .init(module: .realtimeRoute, version: 1, method: .append)
         case .subscribeRealtimeRoute: return .init(module: .realtimeRoute, version: 1, method: .subscribe)
@@ -366,6 +380,18 @@ enum RelayRequestBody: Equatable {
                 from: decoder,
                 keys: ["objectID", "releaseCapability"]
             ))
+        case (.noctwebData, .create):
+            return .createNoctwebDatabase(try relayDecodeSingle(NoctwebDataDatabaseCreateRequestV1.self, from: decoder, key: "request"))
+        case (.noctwebData, .register):
+            return .registerNoctwebAccount(try relayDecodeSingle(NoctwebDataAccountRegisterRequestV1.self, from: decoder, key: "request"))
+        case (.noctwebData, .put):
+            return .putNoctwebRecord(try relayDecodeSingle(NoctwebDataRecordPutRequestV1.self, from: decoder, key: "request"))
+        case (.noctwebData, .get):
+            return .getNoctwebRecord(try relayDecodeSingle(NoctwebDataRecordGetRequestV1.self, from: decoder, key: "request"))
+        case (.noctwebData, .list):
+            return .listNoctwebRecords(try relayDecodeSingle(NoctwebDataRecordListRequestV1.self, from: decoder, key: "request"))
+        case (.noctwebData, .delete):
+            return .deleteNoctwebRecord(try relayDecodeSingle(NoctwebDataRecordDeleteRequestV1.self, from: decoder, key: "request"))
         case (.realtimeRoute, .create):
             return .createRealtimeRoute(try relayDecodeSingle(RealtimeRouteCreateRequestV1.self, from: decoder, key: "request"))
         case (.realtimeRoute, .append):
@@ -593,6 +619,18 @@ enum RelayRequestBody: Equatable {
         case .releaseNetHostObject(let value):
             try container.encode(value.objectID, forKey: relayWireKey("objectID"))
             try container.encode(value.releaseCapability, forKey: relayWireKey("releaseCapability"))
+        case .createNoctwebDatabase(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
+        case .registerNoctwebAccount(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
+        case .putNoctwebRecord(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
+        case .getNoctwebRecord(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
+        case .listNoctwebRecords(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
+        case .deleteNoctwebRecord(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
         case .createRealtimeRoute(let value):
             try container.encode(value, forKey: relayWireKey("request"))
         case .appendRealtimeRoute(let value):
@@ -718,6 +756,12 @@ struct RelayRequest: Codable, Equatable {
     }
     static func hasNetHostObject(_ value: NoctweaveNetHostObjectRequest) -> RelayRequest { make(.hasNetHostObject(value)) }
     static func releaseNetHostObject(_ value: NoctweaveNetHostReleaseRequest) -> RelayRequest { make(.releaseNetHostObject(value)) }
+    static func createNoctwebDatabaseV1(_ value: NoctwebDataDatabaseCreateRequestV1) -> RelayRequest { make(.createNoctwebDatabase(value)) }
+    static func registerNoctwebAccountV1(_ value: NoctwebDataAccountRegisterRequestV1) -> RelayRequest { make(.registerNoctwebAccount(value)) }
+    static func putNoctwebRecordV1(_ value: NoctwebDataRecordPutRequestV1) -> RelayRequest { make(.putNoctwebRecord(value)) }
+    static func getNoctwebRecordV1(_ value: NoctwebDataRecordGetRequestV1) -> RelayRequest { make(.getNoctwebRecord(value)) }
+    static func listNoctwebRecordsV1(_ value: NoctwebDataRecordListRequestV1) -> RelayRequest { make(.listNoctwebRecords(value)) }
+    static func deleteNoctwebRecordV1(_ value: NoctwebDataRecordDeleteRequestV1) -> RelayRequest { make(.deleteNoctwebRecord(value)) }
     static func createRealtimeRouteV1(_ value: RealtimeRouteCreateRequestV1) -> RelayRequest { make(.createRealtimeRoute(value)) }
     static func appendRealtimeRouteV1(_ value: RealtimeRouteAppendRequestV1) -> RelayRequest { make(.appendRealtimeRoute(value)) }
     static func subscribeRealtimeRouteV1(_ value: RealtimeRouteSubscribeRequestV1) -> RelayRequest { make(.subscribeRealtimeRoute(value)) }
@@ -876,6 +920,11 @@ enum RelaySuccessBody: Equatable {
     case federatedNetHostNameResolution(FederatedNetHostNameResponseV1)
     case netHostPresence(NoctweaveNetHostPresence)
     case netHostRelease(NoctweaveNetHostReleaseReceipt)
+    case noctwebDatabase(NoctwebDataDatabaseReceiptV1)
+    case noctwebAccount(NoctwebDataAccountReceiptV1)
+    case noctwebRecord(NoctwebDataRecordV1)
+    case noctwebRecords(NoctwebDataRecordListV1)
+    case noctwebDelete(NoctwebDataDeleteReceiptV1)
 
     func supports(_ binding: RelayOperationBinding) -> Bool {
         switch self {
@@ -947,6 +996,11 @@ enum RelaySuccessBody: Equatable {
             )
         case .netHostPresence: return binding == .init(module: .netHost, version: 1, method: .has)
         case .netHostRelease: return binding == .init(module: .netHost, version: 1, method: .release)
+        case .noctwebDatabase: return binding == .init(module: .noctwebData, version: 1, method: .create)
+        case .noctwebAccount: return binding == .init(module: .noctwebData, version: 1, method: .register)
+        case .noctwebRecord: return binding.module == .noctwebData && binding.version == 1 && [.put, .get].contains(binding.method)
+        case .noctwebRecords: return binding == .init(module: .noctwebData, version: 1, method: .list)
+        case .noctwebDelete: return binding == .init(module: .noctwebData, version: 1, method: .delete)
         }
     }
 
@@ -1072,6 +1126,16 @@ enum RelaySuccessBody: Equatable {
                 from: decoder,
                 key: "release"
             ))
+        case (.noctwebData, .create):
+            return .noctwebDatabase(try relayDecodeSingle(NoctwebDataDatabaseReceiptV1.self, from: decoder, key: "database"))
+        case (.noctwebData, .register):
+            return .noctwebAccount(try relayDecodeSingle(NoctwebDataAccountReceiptV1.self, from: decoder, key: "account"))
+        case (.noctwebData, .put), (.noctwebData, .get):
+            return .noctwebRecord(try relayDecodeSingle(NoctwebDataRecordV1.self, from: decoder, key: "record"))
+        case (.noctwebData, .list):
+            return .noctwebRecords(try relayDecodeSingle(NoctwebDataRecordListV1.self, from: decoder, key: "records"))
+        case (.noctwebData, .delete):
+            return .noctwebDelete(try relayDecodeSingle(NoctwebDataDeleteReceiptV1.self, from: decoder, key: "deletion"))
         default:
             throw relayWireError(decoder, "Relay operation has no success body")
         }
@@ -1133,6 +1197,11 @@ enum RelaySuccessBody: Equatable {
             )
         case .netHostPresence(let value): try container.encode(value, forKey: relayWireKey("presence"))
         case .netHostRelease(let value): try container.encode(value, forKey: relayWireKey("release"))
+        case .noctwebDatabase(let value): try container.encode(value, forKey: relayWireKey("database"))
+        case .noctwebAccount(let value): try container.encode(value, forKey: relayWireKey("account"))
+        case .noctwebRecord(let value): try container.encode(value, forKey: relayWireKey("record"))
+        case .noctwebRecords(let value): try container.encode(value, forKey: relayWireKey("records"))
+        case .noctwebDelete(let value): try container.encode(value, forKey: relayWireKey("deletion"))
         }
     }
 }

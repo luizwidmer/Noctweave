@@ -28,6 +28,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var advertisedEndpoint: String
     var trustedReverseProxyTLS: Bool
     var netHostEnabled: Bool?
+    var noctwebDataEnabled: Bool?
     var noctwebRelaySuffix: String?
     var federationMode: String
     var federationName: String
@@ -90,6 +91,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         advertisedEndpoint = configuration.advertisedEndpoint.map(operatorRelayEndpointString) ?? ""
         trustedReverseProxyTLS = configuration.trustedReverseProxyTLS
         netHostEnabled = configuration.isNetHostEnabled
+        noctwebDataEnabled = configuration.isNoctwebDataEnabled
         noctwebRelaySuffix = configuration.noctwebRelaySuffix?.rawValue
         federationMode = configuration.federation.mode.rawValue
         federationName = configuration.federation.name ?? ""
@@ -171,15 +173,25 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         }
         let proposedNetHostEnabled = current.kind == .host
             || (netHostEnabled ?? current.isNetHostEnabled)
+        let proposedNoctwebDataEnabled = noctwebDataEnabled
+            ?? current.isNoctwebDataEnabled
         if current.kind == .passthrough, proposedNetHostEnabled {
             throw OperatorConfigurationError.unsupportedTransition(
                 "Passthrough relays cannot enable Noctweb hosting."
+            )
+        }
+        if proposedNoctwebDataEnabled && !proposedNetHostEnabled {
+            throw OperatorConfigurationError.unsupportedTransition(
+                "Noctweb data storage requires Noctweb hosting."
             )
         }
         let proposedNoctwebSuffix = try validatedNoctwebSuffix(current: current)
         let activeNetHostEnabled = applyRestartControlledSettings
             ? proposedNetHostEnabled
             : current.isNetHostEnabled
+        let activeNoctwebDataEnabled = applyRestartControlledSettings
+            ? proposedNoctwebDataEnabled
+            : current.isNoctwebDataEnabled
         let activeNoctwebSuffix = applyRestartControlledSettings
             ? proposedNoctwebSuffix
             : current.noctwebRelaySuffix
@@ -271,6 +283,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         return RelayConfiguration(
             kind: current.kind,
             netHostEnabled: activeNetHostEnabled,
+            noctwebDataEnabled: activeNoctwebDataEnabled,
             federation: FederationDescriptor(
                 mode: activeFederationMode,
                 name: normalizedFederationName.nilIfEmpty,
@@ -326,6 +339,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         let current = RelayConfiguration(
             kind: config.relayKind,
             netHostEnabled: config.netHostEnabled,
+            noctwebDataEnabled: config.noctwebDataEnabled,
             federation: FederationDescriptor(
                 mode: config.federationMode,
                 name: config.federationName,
@@ -421,6 +435,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.curatedRequireSignedDirectory = updated.curatedRequireSignedDirectory
         config.advertisedEndpoint = updated.advertisedEndpoint
         config.netHostEnabled = updated.isNetHostEnabled
+        config.noctwebDataEnabled = updated.isNoctwebDataEnabled
         config.noctwebRelaySuffix = updated.noctwebRelaySuffix?.rawValue
         config.federationAllowList = updated.federationAllowList
         config.allowPrivateFederationEndpoints = updated.allowPrivateFederationEndpoints
@@ -436,6 +451,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             ipfsGatewayEndpoint ?? "",
             String(ipfsTimeoutSeconds ?? 10),
             String(netHostEnabled ?? false),
+            String(noctwebDataEnabled ?? false),
             noctwebRelaySuffix ?? ""
         ].joined(separator: "|")
     }

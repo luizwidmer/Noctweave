@@ -39,6 +39,7 @@ Implemented modules:
 | `nw.open-discovery` | 1 | `publish-dht`, `list-dht` (experimental; open discovery only) |
 | `nw.net-passthrough` | 1 | `forward` |
 | `nw.net-host` | 1 | `put`, `bind`, `get`, `resolve`, `has`, `release` |
+| `nw.noctweb-data` | 1 | `create`, `register`, `put`, `get`, `list`, `delete` |
 
 Every process selects one primary current role with `--relay-kind standard`,
 `--relay-kind passthrough`, or `--relay-kind host`. A standard relay may also
@@ -82,7 +83,8 @@ binding a listener.
 
 Use `--memory-only` only for disposable development. Normal operation stores
 route lifecycle, ordered packets/cursors, rendezvous frames, encrypted blob
-metadata, and federation records in `relay_store.sqlite`.
+metadata, federation records, and enabled Noctweb site-data snapshots in
+`relay_store.sqlite`.
 
 Host-capable relays additionally store exact Noctweave Net object bytes under
 `/data/net-host`, a bounded metadata index, and a stable Ed25519 receipt key.
@@ -179,6 +181,35 @@ for a write request and is not embedded in or persisted by the app.
 Every hosted revision keeps its independently encrypted release capability in
 bounded local history, so **Unhost all copies** can release older revisions as
 well as the current one.
+
+### Noctweb site data
+
+An operator can opt a host-capable relay into bounded stateful-site storage:
+
+```sh
+NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
+  --host 127.0.0.1 \
+  --relay-kind standard \
+  --net-host-enabled true \
+  --noctweb-data-enabled true \
+  --noctweb-relay-suffix .atelier \
+  --http-port 9340 \
+  --data-dir /data
+```
+
+The equivalent environment flag is `NOCTWEAVE_NOCTWEB_DATA_ENABLED=true`.
+The module is disabled unless Noctweb hosting is enabled. Remote operations
+require TLS, HTTPS/WSS, or an explicitly trusted TLS-terminating reverse proxy;
+literal loopback remains available for local development.
+
+`nw.noctweb-data@1` provides finite document collections, cursor listing,
+compare-and-swap revisions, and idempotent mutation retries. A publisher's
+Ed25519 site authority creates the schema. Visitors use fresh per-origin
+ML-DSA-65 account authorities; pages never receive those private keys, relay
+passwords, or unrestricted database access. Public records are visible to the
+relay. Applications must encrypt private fields before submission when relay
+confidentiality is required. See the
+[full service and threat model](../NoctweaveDocumentation/noctweb_data_service_v1.md).
 
 Set `--noctweb-relay-suffix .example` (or
 `NOCTWEAVE_NOCTWEB_RELAY_SUFFIX`) to choose the human-facing relay namespace

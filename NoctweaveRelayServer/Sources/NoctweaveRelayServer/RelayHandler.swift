@@ -113,6 +113,7 @@ final class RelayHandler: ChannelInboundHandler {
     private let relayIdentityRuntime: RelayIdentityRuntime
     private let forwardingRequestTimeoutSeconds: Int
     private let netHostStore: NoctweaveNetHostStore?
+    private let noctwebDataStore: RelayNoctwebDataStore?
     private let passthroughAllowedEndpoints: [RelayEndpoint]
     private let coturnCredentialIssuer: CoturnCredentialIssuer?
     private let coordinatorDirectorySigningPrivateKey: Data?
@@ -129,6 +130,7 @@ final class RelayHandler: ChannelInboundHandler {
         relayIdentityRuntime: RelayIdentityRuntime,
         forwardingRequestTimeoutSeconds: Int,
         netHostStore: NoctweaveNetHostStore? = nil,
+        noctwebDataStore: RelayNoctwebDataStore? = nil,
         passthroughAllowedEndpoints: [RelayEndpoint] = [],
         coturnCredentialIssuer: CoturnCredentialIssuer? = nil
     ) {
@@ -143,6 +145,7 @@ final class RelayHandler: ChannelInboundHandler {
         self.relayIdentityRuntime = relayIdentityRuntime
         self.forwardingRequestTimeoutSeconds = max(1, forwardingRequestTimeoutSeconds)
         self.netHostStore = netHostStore
+        self.noctwebDataStore = noctwebDataStore
         self.passthroughAllowedEndpoints = Array(passthroughAllowedEndpoints.prefix(64))
         self.coturnCredentialIssuer = coturnCredentialIssuer
         let coordinatorKeyMaterial: (privateKey: Data, publicKey: Data)?
@@ -1362,6 +1365,85 @@ final class RelayHandler: ChannelInboundHandler {
             } catch {
                 return failure("Host object could not be released.", code: .internalFailure, retryable: true)
             }
+        case .createNoctwebDatabase(let create):
+            guard relayConfiguration.isNoctwebDataEnabled, let noctwebDataStore else {
+                return failure("This relay does not provide Noctweb data storage.", code: .unavailable)
+            }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure("Noctweb data operations require confidential transport.", code: .authenticationRequired)
+            }
+            do { return success(.noctwebDatabase(try noctwebDataStore.createDatabase(create))) }
+            catch { return context.eventLoop.makeSucceededFuture(noctwebDataErrorResponse(error, respondingTo: request)) }
+        case .registerNoctwebAccount(let registration):
+            guard relayConfiguration.isNoctwebDataEnabled, let noctwebDataStore else {
+                return failure("This relay does not provide Noctweb data storage.", code: .unavailable)
+            }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure("Noctweb data operations require confidential transport.", code: .authenticationRequired)
+            }
+            do { return success(.noctwebAccount(try noctwebDataStore.registerAccount(registration))) }
+            catch { return context.eventLoop.makeSucceededFuture(noctwebDataErrorResponse(error, respondingTo: request)) }
+        case .putNoctwebRecord(let put):
+            guard relayConfiguration.isNoctwebDataEnabled, let noctwebDataStore else {
+                return failure("This relay does not provide Noctweb data storage.", code: .unavailable)
+            }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure("Noctweb data operations require confidential transport.", code: .authenticationRequired)
+            }
+            do { return success(.noctwebRecord(try noctwebDataStore.putRecord(put))) }
+            catch { return context.eventLoop.makeSucceededFuture(noctwebDataErrorResponse(error, respondingTo: request)) }
+        case .getNoctwebRecord(let get):
+            guard relayConfiguration.isNoctwebDataEnabled, let noctwebDataStore else {
+                return failure("This relay does not provide Noctweb data storage.", code: .unavailable)
+            }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure("Noctweb data operations require confidential transport.", code: .authenticationRequired)
+            }
+            do { return success(.noctwebRecord(try noctwebDataStore.getRecord(get))) }
+            catch { return context.eventLoop.makeSucceededFuture(noctwebDataErrorResponse(error, respondingTo: request)) }
+        case .listNoctwebRecords(let list):
+            guard relayConfiguration.isNoctwebDataEnabled, let noctwebDataStore else {
+                return failure("This relay does not provide Noctweb data storage.", code: .unavailable)
+            }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure("Noctweb data operations require confidential transport.", code: .authenticationRequired)
+            }
+            do { return success(.noctwebRecords(try noctwebDataStore.listRecords(list))) }
+            catch { return context.eventLoop.makeSucceededFuture(noctwebDataErrorResponse(error, respondingTo: request)) }
+        case .deleteNoctwebRecord(let delete):
+            guard relayConfiguration.isNoctwebDataEnabled, let noctwebDataStore else {
+                return failure("This relay does not provide Noctweb data storage.", code: .unavailable)
+            }
+            guard hasConfidentialTransport(requestSourceKey) else {
+                return failure("Noctweb data operations require confidential transport.", code: .authenticationRequired)
+            }
+            do { return success(.noctwebDelete(try noctwebDataStore.deleteRecord(delete))) }
+            catch { return context.eventLoop.makeSucceededFuture(noctwebDataErrorResponse(error, respondingTo: request)) }
+        }
+    }
+
+    private func noctwebDataErrorResponse(_ error: Error, respondingTo request: RelayRequest) -> RelayResponse {
+        if error is RetryableRelayLocalError {
+            return .error("Post-quantum verification is temporarily unavailable.", code: .unavailable, retryable: true, respondingTo: request)
+        }
+        guard let error = error as? RelayNoctwebDataStoreError else {
+            return .error("Noctweb data storage is unavailable.", code: .internalFailure, retryable: true, respondingTo: request)
+        }
+        switch error {
+        case .invalidRequest:
+            return .error("Invalid Noctweb data request.", respondingTo: request)
+        case .databaseUnavailable, .collectionUnavailable, .accountUnavailable:
+            return .error("Noctweb data resource not found.", code: .notFound, respondingTo: request)
+        case .authenticationRequired:
+            return .error("Noctweb data signature rejected.", code: .authenticationRequired, respondingTo: request)
+        case .unauthorized:
+            return .error("Noctweb data policy rejected this operation.", code: .authenticationRequired, respondingTo: request)
+        case .conflict:
+            return .error("Noctweb data revision or idempotency conflict.", code: .conflict, respondingTo: request)
+        case .capacityExceeded:
+            return .error("Noctweb data capacity reached.", code: .capacity, respondingTo: request)
+        case .corruptPersistence:
+            return .error("Noctweb data persistence is unavailable.", code: .internalFailure, retryable: true, respondingTo: request)
         }
     }
 
@@ -2429,6 +2511,12 @@ final class RelayHandler: ChannelInboundHandler {
     }
 
     private func requiresAuthentication(for binding: RelayOperationBinding) -> Bool {
+        if binding.module == .noctwebData {
+            // The module verifies origin-scoped publisher or account
+            // signatures over each operation; relay passwords are never
+            // exposed to hosted pages.
+            return false
+        }
         if binding.module == .netHost,
            [.get, .resolve, .has].contains(binding.method) {
             return false
@@ -2455,6 +2543,10 @@ final class RelayHandler: ChannelInboundHandler {
         }
         if binding.module == .netHost {
             return relayConfiguration.isNetHostEnabled && netHostStore != nil
+        }
+        if binding.module == .noctwebData {
+            return relayConfiguration.isNoctwebDataEnabled
+                && noctwebDataStore != nil
         }
         if binding.module == .federation,
            [.namespace, .claim, .rotate, .release].contains(

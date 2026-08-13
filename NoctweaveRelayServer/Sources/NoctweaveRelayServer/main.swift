@@ -26,6 +26,7 @@ struct ServerConfig {
       --relay-kind <role>              standard, passthrough, or host
       --passthrough-allow-endpoint <https-url> Repeatable passthrough destination
       --net-host-enabled <bool>        Let a standard relay also host Noctweave Net objects
+      --noctweb-data-enabled <bool>    Enable bounded origin-scoped Noctweb databases
       --net-host-default-ttl-seconds <n> Default host object retention
       --noctweb-relay-suffix <label>   Optional public relay namespace suffix
       --federation-mode <mode>         solo, manual, curated, or open
@@ -81,6 +82,7 @@ struct ServerConfig {
     var relayKind: RelayKind
     var passthroughAllowedEndpoints: [RelayEndpoint]
     var netHostEnabled: Bool
+    var noctwebDataEnabled: Bool
     var netHostDefaultTTLSeconds: Int
     var netHostMaximumObjects: Int
     var netHostMaximumTotalBytes: UInt64
@@ -157,6 +159,10 @@ struct ServerConfig {
         }
         var netHostEnabled = parseBoolFlag(
             environment["NOCTWEAVE_NET_HOST_ENABLED"] ?? "false",
+            defaultValue: false
+        )
+        var noctwebDataEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_NOCTWEB_DATA_ENABLED"] ?? "false",
             defaultValue: false
         )
         var netHostDefaultTTLSeconds = Int(
@@ -342,6 +348,10 @@ struct ServerConfig {
             case "--net-host-enabled":
                 if let value = iterator.next() {
                     netHostEnabled = parseBoolFlag(value, defaultValue: netHostEnabled)
+                }
+            case "--noctweb-data-enabled":
+                if let value = iterator.next() {
+                    noctwebDataEnabled = parseBoolFlag(value, defaultValue: noctwebDataEnabled)
                 }
             case "--net-host-default-ttl-seconds":
                 if let value = iterator.next(), let parsed = Int(value) {
@@ -718,6 +728,9 @@ struct ServerConfig {
         if relayKind == .host {
             netHostEnabled = true
         }
+        if !netHostEnabled {
+            noctwebDataEnabled = false
+        }
         let normalizedNoctwebRelaySuffix = noctwebRelaySuffix?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         noctwebRelaySuffix = normalizedNoctwebRelaySuffix?.isEmpty == false
@@ -862,6 +875,7 @@ struct ServerConfig {
             relayKind: relayKind,
             passthroughAllowedEndpoints: passthroughAllowedEndpoints,
             netHostEnabled: netHostEnabled,
+            noctwebDataEnabled: noctwebDataEnabled,
             netHostDefaultTTLSeconds: netHostDefaultTTLSeconds,
             netHostMaximumObjects: netHostMaximumObjects,
             netHostMaximumTotalBytes: netHostMaximumTotalBytes,
@@ -1053,6 +1067,10 @@ if config.relayKind == .passthrough, config.federationMode != .solo {
 }
 if config.relayKind == .passthrough, config.netHostEnabled {
     print("[relay] passthrough relays cannot co-locate the host capability")
+    exit(2)
+}
+if config.noctwebDataEnabled && !config.netHostEnabled {
+    print("[relay] --noctweb-data-enabled requires --net-host-enabled")
     exit(2)
 }
 if let rawSuffix = config.noctwebRelaySuffix {
@@ -1259,6 +1277,21 @@ if config.netHostEnabled {
 } else {
     netHostStore = nil
 }
+let noctwebDataStore: RelayNoctwebDataStore?
+if config.noctwebDataEnabled {
+    let dataStore = RelayNoctwebDataStore(
+        fileURL: fileURL
+    )
+    do {
+        try dataStore.load()
+    } catch {
+        print("[relay] Refusing to start because the Noctweb data store is invalid.")
+        exit(2)
+    }
+    noctwebDataStore = dataStore
+} else {
+    noctwebDataStore = nil
+}
 let noctwebPublisherSurface: NoctwebPublisherSurface?
 if let netHostStore {
     do {
@@ -1295,6 +1328,7 @@ let effectiveAdvertiseTLS: Bool? = advertisedEndpointTLS
 var relayConfiguration = RelayConfiguration(
     kind: config.relayKind,
     netHostEnabled: config.netHostEnabled,
+    noctwebDataEnabled: config.noctwebDataEnabled,
     federation: FederationDescriptor(
         mode: config.federationMode,
         name: config.federationName,
@@ -1448,6 +1482,7 @@ let bootstrap = ServerBootstrap(group: group)
                     relayIdentityRuntime: relayIdentityRuntime,
                     forwardingRequestTimeoutSeconds: config.forwardingRequestTimeoutSeconds,
                     netHostStore: netHostStore,
+                    noctwebDataStore: noctwebDataStore,
                     passthroughAllowedEndpoints: config.passthroughAllowedEndpoints,
                     coturnCredentialIssuer: coturnCredentialIssuer
                 ))
@@ -1549,6 +1584,7 @@ do {
             "Relay identity": relayIdentityRuntime.relayID.rawValue,
             "Noctweb suffix": relayConfiguration.noctwebRelaySuffix?.rawValue ?? "Unclaimed",
             "Noctweb hosting": config.netHostEnabled ? "Enabled · nw.net-host@1" : "Disabled",
+            "Noctweb data": config.noctwebDataEnabled ? "Enabled · nw.noctweb-data@1" : "Disabled",
             "Noctweb Publisher / Lab": config.netHostEnabled
                 ? config.httpPort.map { "http://127.0.0.1:\($0)/noctweb/" } ?? "Unavailable · HTTP listener disabled"
                 : "Unavailable",

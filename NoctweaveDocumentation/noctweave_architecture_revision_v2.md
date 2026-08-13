@@ -350,12 +350,15 @@ Provisional 1.0-candidate relay modules are deliberately small:
 - `nw.net-passthrough` — one authenticated, bounded HTTPS exchange to an exact
   operator-allowlisted public Noctweave endpoint;
 - `nw.net-host` — bounded content-addressed object hosting with signed storage
-  receipts and capability-protected release.
+  receipts and capability-protected release;
+- `nw.noctweb-data` — optional bounded origin-scoped document collections with
+  publisher-defined policy and unlinkable per-origin visitor accounts.
 
 The current relay topology has exactly three operator-selectable roles.
 `standard` retains the existing messaging and optional federation surface.
 `passthrough` advertises only `nw.core@2` and `nw.net-passthrough@1`. `host`
-advertises only `nw.core@2` and `nw.net-host@1`. Passthrough and host roles run
+advertises `nw.core@2`, `nw.net-host@1`, and optionally the operator-enabled
+`nw.noctweb-data@1`. Passthrough and host roles run
 in `solo` federation mode; Noctweave Net publication coordination belongs to a
 separate consensus adapter rather than relay federation.
 
@@ -363,7 +366,9 @@ Experimental relay modules are separately advertised only when their runtime
 is explicitly enabled:
 
 - `nw.open-discovery` — experimental signed open-relay discovery, advertised
-  only when its runtime is enabled.
+  only when its runtime is enabled;
+- `nw.noctweb-data` — experimental stateful-site storage, advertised only by
+  a host-capable relay whose operator explicitly enables it.
 
 `nw.direct` is a provisional client-to-client capability, not relay plaintext
 logic. A module is not advertised until its exact runtime exists. The public

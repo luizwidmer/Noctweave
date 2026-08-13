@@ -218,6 +218,7 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         rendezvousTransportEnabled: Bool = false,
         federationForwardingEnabled: Bool = false,
         netHostEnabled: Bool = false,
+        noctwebDataEnabled: Bool = false,
         iceServiceEnabled: Bool = false,
         realtimeRoutesEnabled: Bool = true,
         sharedLogsEnabled: Bool = true,
@@ -254,6 +255,16 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
                     ]
                 )
             )
+            if noctwebDataEnabled {
+                modules.append(
+                    RelayModuleCapabilityV2(
+                        module: NoctwebDataV1.module,
+                        versions: [1],
+                        status: .experimental,
+                        limits: NoctwebDataV1.capabilityLimits
+                    )
+                )
+            }
             return RelayCapabilityManifestV2(modules: modules)
         }
         modules.append(
@@ -327,6 +338,16 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
                             NoctweaveNetLimits.maximumHostRetentionSeconds
                         ),
                     ]
+                )
+            )
+        }
+        if netHostEnabled && noctwebDataEnabled {
+            modules.append(
+                RelayModuleCapabilityV2(
+                    module: NoctwebDataV1.module,
+                    versions: [1],
+                    status: .experimental,
+                    limits: NoctwebDataV1.capabilityLimits
                 )
             )
         }

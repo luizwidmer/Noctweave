@@ -204,6 +204,7 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
     static func advertised(
         relayKind: RelayKind = .standard,
         netHostEnabled: Bool = false,
+        noctwebDataEnabled: Bool = false,
         attachmentsEnabled: Bool,
         wakeEnabled: Bool = false,
         hiddenRetrievalEnabled: Bool,
@@ -249,6 +250,16 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                     ]
                 )
             )
+            if noctwebDataEnabled {
+                modules.append(
+                    RelayModuleCapabilityV2(
+                        module: NoctwebDataV1.module,
+                        versions: [1],
+                        status: .experimental,
+                        limits: NoctwebDataV1.capabilityLimits
+                    )
+                )
+            }
             return RelayCapabilityManifestV2(modules: modules)
         }
         modules.append(
@@ -278,6 +289,16 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                         "maxObjectBytes": UInt64(NoctweaveNetLimits.maximumHostObjectBytes),
                         "maxRetentionSeconds": UInt64(NoctweaveNetLimits.maximumHostRetentionSeconds)
                     ]
+                )
+            )
+        }
+        if netHostEnabled && noctwebDataEnabled {
+            modules.append(
+                RelayModuleCapabilityV2(
+                    module: NoctwebDataV1.module,
+                    versions: [1],
+                    status: .experimental,
+                    limits: NoctwebDataV1.capabilityLimits
                 )
             )
         }

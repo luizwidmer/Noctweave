@@ -416,6 +416,7 @@ Current bindings are:
 | `nw.open-discovery` | 1 | experimental | `publish-dht`, `list-dht` (advertised only when enabled) |
 | `nw.net-passthrough` | 1 | provisional | `forward` |
 | `nw.net-host` | 1 | provisional | `put`, `bind`, `get`, `resolve`, `has`, `release` |
+| `nw.noctweb-data` | 1 | experimental | `create`, `register`, `put`, `get`, `list`, `delete` |
 
 Both relay implementations advertise the exact same canonical
 `nw.opaque-route@2` limit registry:
@@ -448,6 +449,12 @@ Realtime routes and shared logs bypass the relay's configured temporal-bucket
 schedule; `nw.ephemeral-presence@1` is process-local and ephemeral; and
 `nw.media-blobs@1` has its own retention policy. These modules do not replace
 or alias the legacy `nw.blobs@1` attachment module.
+
+Host-capable relays may separately advertise `nw.noctweb-data@1`. It provides
+bounded origin-scoped document collections and per-origin ML-DSA visitor
+accounts; it is not an SQL, global-login, or server-side execution service.
+Exact operations, policies, limits, and metadata exposure are specified in
+[`noctweb_data_service_v1.md`](noctweb_data_service_v1.md).
 
 ## 11. Attachments
 

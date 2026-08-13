@@ -36,6 +36,9 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.html.contains("Long poll"))
         XCTAssertTrue(OperatorWebUI.javascript.contains("wakeLongPollTimeoutSeconds"))
         XCTAssertTrue(OperatorWebUI.html.contains("name=\"netHostEnabled\" type=\"checkbox\""))
+        XCTAssertTrue(OperatorWebUI.html.contains("name=\"noctwebDataEnabled\" type=\"checkbox\""))
+        XCTAssertTrue(OperatorWebUI.html.contains("nw.noctweb-data@1"))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("noctwebDataEnabled:b(\"noctwebDataEnabled\")"))
         XCTAssertTrue(OperatorWebUI.javascript.contains("realtimeRoutesEnabled:b(\"realtimeRoutesEnabled\")"))
         XCTAssertTrue(OperatorWebUI.html.contains("Active backend:"))
         XCTAssertTrue(OperatorWebUI.html.contains("name=\"opaqueRouteRuntimeEnabled\" type=\"checkbox\""))
@@ -120,6 +123,32 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(updated.isNetHostEnabled)
         XCTAssertEqual(updated.federation.mode, .manual)
         XCTAssertEqual(updated.noctwebRelaySuffix?.rawValue, ".relaytest")
+    }
+
+    func testOperatorConfigurationStagesNoctwebDataOnlyWithHosting() throws {
+        let base = makeBaseConfiguration()
+        var invalid = OperatorEditableConfiguration(configuration: base)
+        invalid.noctwebDataEnabled = true
+        invalid.netHostEnabled = false
+        XCTAssertThrowsError(try invalid.validatedConfiguration(
+            from: base,
+            applyRestartControlledSettings: true
+        )) { error in
+            XCTAssertEqual(
+                error as? OperatorConfigurationError,
+                .unsupportedTransition("Noctweb data storage requires Noctweb hosting.")
+            )
+        }
+
+        var enabled = OperatorEditableConfiguration(configuration: base)
+        enabled.netHostEnabled = true
+        enabled.noctwebDataEnabled = true
+        let updated = try enabled.validatedConfiguration(
+            from: base,
+            applyRestartControlledSettings: true
+        )
+        XCTAssertTrue(updated.isNetHostEnabled)
+        XCTAssertTrue(updated.isNoctwebDataEnabled)
     }
 
     func testOperatorConfigurationRequiresSuffixBeforeJoiningFederation() throws {
