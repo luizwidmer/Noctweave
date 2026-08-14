@@ -221,8 +221,9 @@ gate running.
 and review visibility.
 
 **Patch.** CI is restored with read-only repository permissions, branch-scoped
-concurrency, a 20-minute timeout, immutable action commit pins, a frozen Bun
-install, all protocol tests, desktop type-checking, and an npm package dry run.
+concurrency, a 20-minute timeout, immutable pins to the current official
+Node-24 action releases, a frozen Bun install, all protocol tests, desktop
+type-checking, and an npm package dry run.
 
 ### NW-DATA-009 - SQLite final-component substitution
 
@@ -449,7 +450,7 @@ ceiling remains unchanged.
 | Linux relay full suite | 133/133 passed |
 | Reticulum bridge | 19/19 passed |
 | Relay desktop launcher | 9/9 passed |
-| Standalone NoctweaveJS | 206/206 passed; type-check and package dry run passed |
+| Standalone NoctweaveJS | 206/206 passed; type-check and package dry run passed locally and in GitHub Actions run `31763806799` |
 | JavaScript dependency audit | Frozen install unchanged; live Bun audit found no vulnerabilities |
 | Docker relay integration | Default-off denial, explicit opt-in encrypted CRUD, owner isolation, provenance, deletion, and restart passed |
 | Final Docker image | Docker Scout: 0 fixable Critical/High/Medium/Low; full scan 0 Critical, 0 High, 2 vendor-unfixed Medium, 8 vendor-unfixed Low |
@@ -515,5 +516,5 @@ report does not claim an unpublished commit.
 | Repository | Published remediation revision |
 | --- | --- |
 | Noctweave Core and Linux relay | `a9837d3b8bc26dc91c70e3dd4741699f5eb97d39` |
-| Standalone NoctweaveJS | `3093a04cd3c589ea7e3e4a5938a8cfc51173e836` |
+| Standalone NoctweaveJS | `2606007cac470ea5f34757f5be0e1ee004f1e3c5` |
 | Native Noctweave Relay | `df2810def89eac066ed045186ca32e53dc701d22` |
