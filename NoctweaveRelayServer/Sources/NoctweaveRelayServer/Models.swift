@@ -1314,6 +1314,8 @@ struct RelayConfiguration: Codable, Equatable {
     var netHostEnabled: Bool?
     /// Optional origin-scoped document service for hosted Noctweb sites.
     var noctwebDataEnabled: Bool?
+    /// Privileged, default-off allocation gate for new site databases.
+    var noctwebDataDatabaseCreationEnabled: Bool?
     var federation: FederationDescriptor
     /// TLS on the local listener, not TLS terminated by a trusted proxy.
     var tlsEnabled: Bool?
@@ -1366,6 +1368,7 @@ struct RelayConfiguration: Codable, Equatable {
         kind: RelayKind = .standard,
         netHostEnabled: Bool = false,
         noctwebDataEnabled: Bool = false,
+        noctwebDataDatabaseCreationEnabled: Bool = false,
         federation: FederationDescriptor = FederationDescriptor(mode: .solo),
         tlsEnabled: Bool? = nil,
         advertisedTLSEnabled: Bool? = nil,
@@ -1414,6 +1417,10 @@ struct RelayConfiguration: Codable, Equatable {
         self.kind = kind
         self.netHostEnabled = kind == .host || netHostEnabled
         self.noctwebDataEnabled = noctwebDataEnabled && (kind == .host || netHostEnabled) ? true : nil
+        self.noctwebDataDatabaseCreationEnabled =
+            noctwebDataDatabaseCreationEnabled && self.noctwebDataEnabled == true
+                ? true
+                : nil
         self.federation = federation
         self.tlsEnabled = tlsEnabled
         self.advertisedTLSEnabled = advertisedTLSEnabled
@@ -1495,6 +1502,10 @@ struct RelayConfiguration: Codable, Equatable {
         isNetHostEnabled && noctwebDataEnabled == true
     }
 
+    var isNoctwebDataDatabaseCreationEnabled: Bool {
+        isNoctwebDataEnabled && noctwebDataDatabaseCreationEnabled == true
+    }
+
     var isRendezvousTransportEnabled: Bool {
         rendezvousTransportEnabled
     }
@@ -1563,6 +1574,8 @@ struct RelayConfiguration: Codable, Equatable {
                 relayKind: kind,
                 netHostEnabled: isNetHostEnabled,
                 noctwebDataEnabled: isNoctwebDataEnabled,
+                noctwebDataDatabaseCreationEnabled:
+                    isNoctwebDataDatabaseCreationEnabled,
                 attachmentsEnabled: attachmentsEnabled != false,
                 wakeEnabled: wakeSupport != nil,
                 hiddenRetrievalEnabled: advertisedHiddenRetrieval != nil,

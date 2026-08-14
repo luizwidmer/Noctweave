@@ -205,6 +205,7 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
         relayKind: RelayKind = .standard,
         netHostEnabled: Bool = false,
         noctwebDataEnabled: Bool = false,
+        noctwebDataDatabaseCreationEnabled: Bool = false,
         attachmentsEnabled: Bool,
         wakeEnabled: Bool = false,
         hiddenRetrievalEnabled: Bool,
@@ -256,7 +257,10 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                         module: NoctwebDataV1.module,
                         versions: [1],
                         status: .experimental,
-                        limits: NoctwebDataV1.capabilityLimits
+                        limits: NoctwebDataV1.advertisedCapabilityLimits(
+                            databaseCreationEnabled:
+                                noctwebDataDatabaseCreationEnabled
+                        )
                     )
                 )
             }
@@ -298,7 +302,10 @@ struct RelayCapabilityManifestV2: Codable, Equatable {
                     module: NoctwebDataV1.module,
                     versions: [1],
                     status: .experimental,
-                    limits: NoctwebDataV1.capabilityLimits
+                    limits: NoctwebDataV1.advertisedCapabilityLimits(
+                        databaseCreationEnabled:
+                            noctwebDataDatabaseCreationEnabled
+                    )
                 )
             )
         }

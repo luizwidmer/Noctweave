@@ -880,6 +880,10 @@ public struct RelayConfiguration: Codable, Equatable {
     public var netHostEnabled: Bool?
     /// Enables the bounded origin-scoped Noctweb document service.
     public var noctwebDataEnabled: Bool?
+    /// Allows privileged publishers to create new Noctweb databases. This is
+    /// deliberately independent from serving existing databases and defaults
+    /// off so enabling the data module does not open a global allocation API.
+    public var noctwebDataDatabaseCreationEnabled: Bool?
     public var federationAllowList: [RelayEndpoint]
     public var allowPrivateFederationEndpoints: Bool
     public var rendezvousTransportEnabled: Bool?
@@ -929,6 +933,7 @@ public struct RelayConfiguration: Codable, Equatable {
         noctwebRelaySuffix: NoctwebRelaySuffixV1? = nil,
         netHostEnabled: Bool = false,
         noctwebDataEnabled: Bool = false,
+        noctwebDataDatabaseCreationEnabled: Bool = false,
         federationAllowList: [RelayEndpoint] = [],
         allowPrivateFederationEndpoints: Bool = false,
         rendezvousTransportEnabled: Bool = false
@@ -996,6 +1001,10 @@ public struct RelayConfiguration: Codable, Equatable {
         self.noctwebRelaySuffix = noctwebRelaySuffix
         self.netHostEnabled = kind == .host || netHostEnabled ? true : nil
         self.noctwebDataEnabled = noctwebDataEnabled && (kind == .host || netHostEnabled) ? true : nil
+        self.noctwebDataDatabaseCreationEnabled =
+            noctwebDataDatabaseCreationEnabled && self.noctwebDataEnabled == true
+                ? true
+                : nil
         self.federationAllowList = Array(federationAllowList.prefix(256))
         self.allowPrivateFederationEndpoints = allowPrivateFederationEndpoints
         self.rendezvousTransportEnabled = rendezvousTransportEnabled ? true : nil
@@ -1011,6 +1020,10 @@ public struct RelayConfiguration: Codable, Equatable {
 
     public var isNoctwebDataEnabled: Bool {
         isNetHostEnabled && noctwebDataEnabled == true
+    }
+
+    public var isNoctwebDataDatabaseCreationEnabled: Bool {
+        isNoctwebDataEnabled && noctwebDataDatabaseCreationEnabled == true
     }
 
     public var areRealtimeRoutesEnabled: Bool {
@@ -1080,6 +1093,8 @@ public struct RelayConfiguration: Codable, Equatable {
                 federationForwardingEnabled: kind == .standard && federation.mode != .solo,
                 netHostEnabled: isNetHostEnabled,
                 noctwebDataEnabled: isNoctwebDataEnabled,
+                noctwebDataDatabaseCreationEnabled:
+                    isNoctwebDataDatabaseCreationEnabled,
                 iceServiceEnabled: iceService != nil,
                 realtimeRoutesEnabled: areRealtimeRoutesEnabled,
                 sharedLogsEnabled: areSharedLogsEnabled,
@@ -4158,6 +4173,67 @@ public struct RelayResponse: Codable, Equatable {
 
     public func isResponse(to request: RelayRequest) -> Bool {
         requestID == request.requestID && binding == request.binding
+    }
+
+    public func isSemanticallyBound(to request: RelayRequest) -> Bool {
+        guard isResponse(to: request) else { return false }
+        guard status == .success else { return true }
+        switch (request.body, successBody) {
+        case (.createNoctwebDatabase(let submitted), .noctwebDatabase(let receipt)):
+            return receipt.isStructurallyValid
+                && receipt.databaseID == submitted.databaseID
+        case (.registerNoctwebAccount(let submitted), .noctwebAccount(let receipt)):
+            return receipt.isStructurallyValid
+                && receipt.databaseID == submitted.databaseID
+                && receipt.accountID == submitted.accountID
+        case (.putNoctwebRecord(let submitted), .noctwebRecord(let record)):
+            return record.isStructurallyValid
+                && record.databaseID == submitted.databaseID
+                && record.collection == submitted.collection
+                && record.recordID == submitted.recordID
+                && record.ownerAccountID == submitted.ownerAccountID
+                && record.payload == submitted.payload
+                && record.revision == submitted.expectedRevision + 1
+                && record.provenance.actorKind == submitted.authorization.actorKind
+                && record.provenance.actorID == submitted.authorization.actorID
+                && record.provenance.authorizationNonce == submitted.authorization.nonce
+                && record.provenance.authorizationExpiresAt == submitted.authorization.expiresAt
+                && record.provenance.idempotencyKey == submitted.idempotencyKey
+                && record.provenance.expectedRevision == submitted.expectedRevision
+                && record.provenance.signature == submitted.authorization.signature
+        case (.getNoctwebRecord(let submitted), .noctwebRecord(let record)):
+            return record.isStructurallyValid
+                && record.databaseID == submitted.databaseID
+                && record.collection == submitted.collection
+                && record.recordID == submitted.recordID
+                && record.ownerAccountID == submitted.ownerAccountID
+        case (.listNoctwebRecords(let submitted), .noctwebRecords(let list)):
+            return list.isStructurallyValid
+                && list.records.count <= submitted.limit
+                && list.records.allSatisfy {
+                    $0.databaseID == submitted.databaseID
+                        && $0.collection == submitted.collection
+                        && $0.ownerAccountID == submitted.ownerAccountID
+                        && (submitted.afterRecordID == nil
+                            || $0.recordID > submitted.afterRecordID!)
+                }
+        case (.deleteNoctwebRecord(let submitted), .noctwebDelete(let receipt)):
+            return receipt.isStructurallyValid
+                && receipt.databaseID == submitted.databaseID
+                && receipt.collection == submitted.collection
+                && receipt.recordID == submitted.recordID
+                && receipt.ownerAccountID == submitted.ownerAccountID
+                && receipt.deletedRevision == submitted.expectedRevision
+        case (.createNoctwebDatabase, _),
+             (.registerNoctwebAccount, _),
+             (.putNoctwebRecord, _),
+             (.getNoctwebRecord, _),
+             (.listNoctwebRecords, _),
+             (.deleteNoctwebRecord, _):
+            return false
+        default:
+            return true
+        }
     }
 
     public init(from decoder: Decoder) throws {

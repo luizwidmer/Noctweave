@@ -774,7 +774,7 @@ components:
       additionalProperties: false
     NoctwebDataAuthorizationV1:
       type: object
-      required: [actorKind, actorID, nonce, signature]
+      required: [actorKind, actorID, nonce, expiresAt, signature]
       properties:
         actorKind:
           type: string
@@ -787,6 +787,10 @@ components:
           contentEncoding: base64
           minLength: 44
           maxLength: 44
+        expiresAt:
+          type: string
+          format: date-time
+          description: Signed whole-second expiry, no more than five minutes after relay receipt.
         signature:
           type: string
           contentEncoding: base64
@@ -796,8 +800,9 @@ components:
       additionalProperties: false
     NoctwebDataDatabaseCreateRequestV1:
       type: object
-      required: [origin, collections, idempotencyKey, signature]
+      required: [databaseID, origin, collections, idempotencyKey, signature]
       properties:
+        databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
         origin: { $ref: "#/components/schemas/NoctwebDataOriginV1" }
         collections:
           type: array
@@ -851,6 +856,7 @@ components:
           contentEncoding: base64
           minLength: 4
           maxLength: 87384
+          description: Canonical NoctwebDataEncryptedPayloadV1 bytes; plaintext is rejected.
         expectedRevision:
           type: integer
           format: uint64
@@ -869,6 +875,7 @@ components:
         databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
         collection: { type: string, minLength: 1, maxLength: 48 }
         recordID: { type: string, minLength: 1, maxLength: 96 }
+        ownerAccountID: { type: string, pattern: "^nwa1_[0-9a-f]{64}$" }
         authorization: { $ref: "#/components/schemas/NoctwebDataAuthorizationV1" }
       additionalProperties: false
     NoctwebDataRecordListRequestV1:
@@ -878,7 +885,8 @@ components:
         databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
         collection: { type: string, minLength: 1, maxLength: 48 }
         afterRecordID: { type: string, minLength: 1, maxLength: 96 }
-        limit: { type: integer, minimum: 1, maximum: 100 }
+        ownerAccountID: { type: string, pattern: "^nwa1_[0-9a-f]{64}$" }
+        limit: { type: integer, minimum: 1, maximum: 8 }
         authorization: { $ref: "#/components/schemas/NoctwebDataAuthorizationV1" }
       additionalProperties: false
     NoctwebDataRecordDeleteRequestV1:
@@ -888,6 +896,7 @@ components:
         databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
         collection: { type: string, minLength: 1, maxLength: 48 }
         recordID: { type: string, minLength: 1, maxLength: 96 }
+        ownerAccountID: { type: string, pattern: "^nwa1_[0-9a-f]{64}$" }
         expectedRevision:
           type: integer
           format: uint64
@@ -916,7 +925,7 @@ components:
       additionalProperties: false
     NoctwebDataRecordV1:
       type: object
-      required: [databaseID, collection, recordID, payload, revision, createdAt, updatedAt]
+      required: [databaseID, collection, recordID, payload, revision, createdAt, updatedAt, provenance]
       properties:
         databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
         collection: { type: string, minLength: 1, maxLength: 48 }
@@ -927,12 +936,66 @@ components:
           contentEncoding: base64
           minLength: 4
           maxLength: 87384
+          description: Canonical NoctwebDataEncryptedPayloadV1 bytes.
         revision:
           type: integer
           format: uint64
           minimum: 1
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
+        provenance: { $ref: "#/components/schemas/NoctwebDataRecordProvenanceV1" }
+      additionalProperties: false
+    NoctwebDataEncryptedPayloadV1:
+      type: object
+      required: [version, algorithm, keyID, nonce, ciphertext]
+      properties:
+        version: { type: integer, const: 1 }
+        algorithm: { type: string, const: AES-256-GCM }
+        keyID:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        nonce:
+          type: string
+          contentEncoding: base64
+          minLength: 16
+          maxLength: 16
+        ciphertext:
+          type: string
+          contentEncoding: base64
+          minLength: 24
+          maxLength: 87384
+      additionalProperties: false
+      description: Canonical JSON encoded into the record payload; AAD binds database, collection, record, owner, revision, and key ID.
+    NoctwebDataRecordProvenanceV1:
+      type: object
+      required: [actorKind, actorID, actorSigningPublicKey, authorizationNonce, authorizationExpiresAt, idempotencyKey, expectedRevision, signature]
+      properties:
+        actorKind: { type: string, enum: [publisher, account] }
+        actorID: { type: string, pattern: "^(?:nwpub1_|nwa1_)[0-9a-f]{64}$" }
+        actorSigningPublicKey:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 2604
+        authorizationNonce:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        authorizationExpiresAt: { type: string, format: date-time }
+        idempotencyKey:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        expectedRevision: { type: integer, format: uint64, minimum: 0 }
+        signature:
+          type: string
+          contentEncoding: base64
+          minLength: 88
+          maxLength: 4412
       additionalProperties: false
     NoctwebDataRecordListV1:
       type: object
@@ -951,6 +1014,7 @@ components:
         databaseID: { type: string, pattern: "^nwdb1_[0-9a-f]{64}$" }
         collection: { type: string, minLength: 1, maxLength: 48 }
         recordID: { type: string, minLength: 1, maxLength: 96 }
+        ownerAccountID: { type: string, pattern: "^nwa1_[0-9a-f]{64}$" }
         deletedRevision:
           type: integer
           format: uint64

@@ -119,8 +119,12 @@ Host-capable relays may opt into experimental `nw.noctweb-data@1`. Swift
 integrations use `NoctwebData*V1` request and receipt models,
 `RelayNoctwebDataStore`, and the corresponding typed `RelayRequest` factories.
 The module exposes bounded document operations rather than SQL and requires
-confidential transport. Its origin, publisher, visitor-account, policy, and
-metadata boundaries are specified in
+confidential transport. Record payloads must be canonical AES-256-GCM
+ciphertext, returned records retain verifiable author provenance, signed reads
+expire, and account requests use an explicit owner namespace. Database
+creation is a separately configured, default-off relay capability; creation
+and account registration also require the relay publisher/access password.
+Its origin, publisher, visitor-account, policy, and metadata boundaries are specified in
 [`noctweb_data_service_v1.md`](noctweb_data_service_v1.md).
 
 Host uploads commit a client-generated release-capability digest and an

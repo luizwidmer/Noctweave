@@ -291,7 +291,8 @@ public struct RelayClient {
                 details: "Relay returned an invalid current-protocol response (\(data.count) bytes)."
             )
         }
-        guard decoded.isResponse(to: request) else {
+        guard decoded.isResponse(to: request),
+              decoded.isSemanticallyBound(to: request) else {
             throw RelayClientResponseError.invalidPayload(
                 details: "Relay response binding does not match the submitted request."
             )

@@ -233,6 +233,77 @@ enum RelayServerSecureFileIO {
         }
     }
 
+    static func withPreparedPrivateSQLiteFile<T>(
+        at url: URL,
+        _ body: (String) throws -> T
+    ) throws -> T {
+        let directoryURL = url.deletingLastPathComponent()
+        try ensurePrivateDirectory(at: directoryURL)
+        let directory: Int32 = directoryURL.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return -1 }
+            return open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+        }
+        guard directory >= 0 else { throw RelayServerSecureFileIOError.unsafeDirectory }
+        defer { _ = close(directory) }
+        let resolvedDirectoryPath: String? = directoryURL.withUnsafeFileSystemRepresentation { path in
+            guard let path, let resolved = realpath(path, nil) else { return nil }
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        guard let resolvedDirectoryPath else {
+            throw RelayServerSecureFileIOError.unsafeDirectory
+        }
+        let resolvedDirectoryURL = URL(
+            fileURLWithPath: resolvedDirectoryPath,
+            isDirectory: true
+        )
+        var pinnedDirectory = stat()
+        var resolvedDirectory = stat()
+        let resolvedDirectoryResult: Int32 = resolvedDirectoryURL.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return -1 }
+            return stat(path, &resolvedDirectory)
+        }
+        guard fstat(directory, &pinnedDirectory) == 0,
+              resolvedDirectoryResult == 0,
+              pinnedDirectory.st_dev == resolvedDirectory.st_dev,
+              pinnedDirectory.st_ino == resolvedDirectory.st_ino else {
+            throw RelayServerSecureFileIOError.unsafeDirectory
+        }
+        let name = url.lastPathComponent
+        guard isSafeFilename(name) else { throw RelayServerSecureFileIOError.inaccessible }
+        let descriptor: Int32 = name.withCString { filename in
+            openat(directory, filename, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
+        }
+        guard descriptor >= 0 else { throw RelayServerSecureFileIOError.inaccessible }
+        defer { _ = close(descriptor) }
+        var expected = stat()
+        guard fstat(descriptor, &expected) == 0,
+              (expected.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              expected.st_uid == geteuid(),
+              fchmod(descriptor, mode_t(0o600)) == 0 else {
+            throw RelayServerSecureFileIOError.notRegular
+        }
+        let sqlitePath = resolvedDirectoryURL.appendingPathComponent(name).path
+        let result = try body(sqlitePath)
+        var descriptorAfter = stat()
+        var anchoredAfter = stat()
+        let anchorResult: Int32 = name.withCString { filename in
+            fstatat(directory, filename, &anchoredAfter, AT_SYMLINK_NOFOLLOW)
+        }
+        guard fstat(descriptor, &descriptorAfter) == 0,
+              anchorResult == 0,
+              expected.st_dev == descriptorAfter.st_dev,
+              expected.st_ino == descriptorAfter.st_ino,
+              expected.st_dev == anchoredAfter.st_dev,
+              expected.st_ino == anchoredAfter.st_ino,
+              (anchoredAfter.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              anchoredAfter.st_uid == geteuid(),
+              (anchoredAfter.st_mode & mode_t(0o077)) == 0 else {
+            throw RelayServerSecureFileIOError.inaccessible
+        }
+        return result
+    }
+
     private static func isSafeFilename(_ value: String) -> Bool {
         !value.isEmpty && value != "." && value != ".." && !value.contains("/")
     }

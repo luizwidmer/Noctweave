@@ -37,8 +37,10 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.javascript.contains("wakeLongPollTimeoutSeconds"))
         XCTAssertTrue(OperatorWebUI.html.contains("name=\"netHostEnabled\" type=\"checkbox\""))
         XCTAssertTrue(OperatorWebUI.html.contains("name=\"noctwebDataEnabled\" type=\"checkbox\""))
+        XCTAssertTrue(OperatorWebUI.html.contains("name=\"noctwebDataDatabaseCreationEnabled\" type=\"checkbox\""))
         XCTAssertTrue(OperatorWebUI.html.contains("nw.noctweb-data@1"))
         XCTAssertTrue(OperatorWebUI.javascript.contains("noctwebDataEnabled:b(\"noctwebDataEnabled\")"))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("noctwebDataDatabaseCreationEnabled:b(\"noctwebDataDatabaseCreationEnabled\")"))
         XCTAssertTrue(OperatorWebUI.javascript.contains("realtimeRoutesEnabled:b(\"realtimeRoutesEnabled\")"))
         XCTAssertTrue(OperatorWebUI.html.contains("Active backend:"))
         XCTAssertTrue(OperatorWebUI.html.contains("name=\"opaqueRouteRuntimeEnabled\" type=\"checkbox\""))
@@ -149,6 +151,35 @@ final class OperatorWebUITests: XCTestCase {
         )
         XCTAssertTrue(updated.isNetHostEnabled)
         XCTAssertTrue(updated.isNoctwebDataEnabled)
+        XCTAssertFalse(updated.isNoctwebDataDatabaseCreationEnabled)
+
+        var creationWithoutPassword = enabled
+        creationWithoutPassword.noctwebDataDatabaseCreationEnabled = true
+        XCTAssertThrowsError(try creationWithoutPassword.validatedConfiguration(
+            from: base,
+            applyRestartControlledSettings: true
+        )) { error in
+            XCTAssertEqual(
+                error as? OperatorConfigurationError,
+                .unsupportedTransition(
+                    "Noctweb database creation requires an operator-supplied publisher or access password."
+                )
+            )
+        }
+
+        var passwordProtected = base
+        passwordProtected.publisherPassword = "publisher-secret"
+        var creationEnabled = OperatorEditableConfiguration(
+            configuration: passwordProtected
+        )
+        creationEnabled.netHostEnabled = true
+        creationEnabled.noctwebDataEnabled = true
+        creationEnabled.noctwebDataDatabaseCreationEnabled = true
+        let provisioned = try creationEnabled.validatedConfiguration(
+            from: passwordProtected,
+            applyRestartControlledSettings: true
+        )
+        XCTAssertTrue(provisioned.isNoctwebDataDatabaseCreationEnabled)
     }
 
     func testOperatorConfigurationRequiresSuffixBeforeJoiningFederation() throws {
@@ -370,6 +401,41 @@ final class OperatorWebUITests: XCTestCase {
         try persistence.load()?.applyPersistedOverrides(to: &serverConfig)
         XCTAssertTrue(serverConfig.netHostEnabled)
         XCTAssertEqual(serverConfig.noctwebRelaySuffix, ".community")
+    }
+
+    func testDatabaseCreationGateAppliesLiveWhenDataServiceIsActive() throws {
+        var base = makeBaseConfiguration()
+        base.netHostEnabled = true
+        base.noctwebDataEnabled = true
+        base.noctwebDataDatabaseCreationEnabled = false
+        base.publisherPassword = "publisher-secret"
+        let configurationStore = RelayConfigurationStore(base)
+        let controlPlane = OperatorControlPlane(
+            configurationStore: configurationStore,
+            persistence: OperatorConfigurationPersistence(fileURL: nil),
+            relayStore: RelayStore(fileURL: nil),
+            startedAt: Date(),
+            bootstrap: [:],
+            storageDescription: "SQLite",
+            transportDescription: "TCP"
+        )
+        var editable = controlPlane.state().configuration
+        editable.noctwebDataDatabaseCreationEnabled = true
+
+        let enabled = try controlPlane.update(editable)
+        XCTAssertFalse(enabled.status.restartRequired)
+        XCTAssertTrue(
+            configurationStore.snapshot()
+                .isNoctwebDataDatabaseCreationEnabled
+        )
+
+        editable.noctwebDataDatabaseCreationEnabled = false
+        let disabled = try controlPlane.update(editable)
+        XCTAssertFalse(disabled.status.restartRequired)
+        XCTAssertFalse(
+            configurationStore.snapshot()
+                .isNoctwebDataDatabaseCreationEnabled
+        )
     }
 
     func testRealtimeAndWakeSettingsApplyLiveAndAdvertiseAccurately() throws {

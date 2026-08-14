@@ -192,23 +192,32 @@ NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
   --relay-kind standard \
   --net-host-enabled true \
   --noctweb-data-enabled true \
+  --noctweb-data-database-creation-enabled true \
+  --publisher-password 'operator-managed-secret' \
   --noctweb-relay-suffix .atelier \
   --http-port 9340 \
   --data-dir /data
 ```
 
-The equivalent environment flag is `NOCTWEAVE_NOCTWEB_DATA_ENABLED=true`.
-The module is disabled unless Noctweb hosting is enabled. Remote operations
-require TLS, HTTPS/WSS, or an explicitly trusted TLS-terminating reverse proxy;
-literal loopback remains available for local development.
+The equivalent feature flags are `NOCTWEAVE_NOCTWEB_DATA_ENABLED=true` and
+`NOCTWEAVE_NOCTWEB_DATA_DATABASE_CREATION_ENABLED=true`. Database creation is
+separately default-off and fails closed without `NOCTWEAVE_PUBLISHER_PASSWORD`
+or the access-password fallback. Account registration is password-admitted as
+well. Disable the creation flag after provisioning if further databases are
+not expected. Gate changes and password rotations apply to every subsequent
+request, including traffic on already-open raw TCP connections. The module is
+disabled unless Noctweb hosting is enabled. Remote
+operations require TLS, HTTPS/WSS, or an explicitly trusted TLS-terminating
+reverse proxy; literal loopback remains available for local development.
 
 `nw.noctweb-data@1` provides finite document collections, cursor listing,
 compare-and-swap revisions, and idempotent mutation retries. A publisher's
 Ed25519 site authority creates the schema. Visitors use fresh per-origin
 ML-DSA-65 account authorities; pages never receive those private keys, relay
-passwords, or unrestricted database access. Public records are visible to the
-relay. Applications must encrypt private fields before submission when relay
-confidentiality is required. See the
+passwords, or unrestricted database access. All record payloads must be
+canonical AES-256-GCM ciphertext, and every returned revision retains
+client-verifiable author provenance. The relay still observes routing metadata,
+sizes, timing, pseudonyms, and revisions. See the
 [full service and threat model](../NoctweaveDocumentation/noctweb_data_service_v1.md).
 
 Set `--noctweb-relay-suffix .example` (or
@@ -574,9 +583,12 @@ Profile, Delivery, NoctCord, Noctweb, Storage, Federation, and Privacy.
 Presentation, timing, attachment retention, collaboration modules, wake policy,
 and federation peer policy apply live to new requests. Attachment backend,
 Noctweb host enablement, and suffix changes are explicitly marked
-restart-controlled. Enabling Noctweb hosting at restart requires a separately
-supplied `NOCTWEAVE_PUBLISHER_PASSWORD`; secrets are never accepted by or
-returned to the browser console.
+restart-controlled. When the site data service is already active, its separate
+database-creation gate applies live to the next request; this permits immediate
+shutdown without restarting or preserving old TCP authority. Enabling Noctweb
+hosting at restart requires a separately supplied
+`NOCTWEAVE_PUBLISHER_PASSWORD`; secrets are never accepted by or returned to
+the browser console.
 
 ## Optional privacy advertisements
 

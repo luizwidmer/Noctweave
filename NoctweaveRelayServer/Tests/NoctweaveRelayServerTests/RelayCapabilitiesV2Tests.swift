@@ -98,7 +98,21 @@ final class RelayCapabilitiesV2Tests: XCTestCase {
         )
         XCTAssertEqual(capability.status, .experimental)
         XCTAssertEqual(capability.versions, [1])
-        XCTAssertEqual(capability.limits, NoctwebDataV1.capabilityLimits)
+        XCTAssertEqual(
+            capability.limits,
+            NoctwebDataV1.advertisedCapabilityLimits(databaseCreationEnabled: false)
+        )
+
+        let creationEnabled = RelayConfiguration(
+            netHostEnabled: true,
+            noctwebDataEnabled: true,
+            noctwebDataDatabaseCreationEnabled: true
+        ).makeInfo()
+        XCTAssertEqual(
+            creationEnabled.protocolCapabilities?.modules
+                .first { $0.module == NoctwebDataV1.module }?.limits,
+            NoctwebDataV1.advertisedCapabilityLimits(databaseCreationEnabled: true)
+        )
 
         let hostingOnly = RelayConfiguration(netHostEnabled: true).makeInfo()
         XCTAssertFalse(

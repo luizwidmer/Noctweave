@@ -560,8 +560,23 @@ public final class RelayServer {
                 respondingTo: request
             )
         }
+        if request.binding.module == .noctwebData,
+           [.create, .register].contains(request.binding.method),
+           !hasConfidentialRouteTransport(sourceKey) {
+            // Never compare an operator password received over a plaintext
+            // allocation channel. Besides exposing the credential in transit,
+            // checking it first would create a correct-password oracle.
+            return .error(
+                "Noctweb allocation requires confidential transport.",
+                code: .authenticationRequired,
+                respondingTo: request
+            )
+        }
         if requiresAuthentication(for: request.binding),
-           let authFailure = validateAuthentication(token: request.authToken) {
+           let authFailure = validateAuthentication(
+               token: request.authToken,
+               binding: request.binding
+           ) {
             return .error(
                 authFailure,
                 code: .authenticationRequired,
@@ -1633,6 +1648,13 @@ public final class RelayServer {
                     respondingTo: request
                 )
             }
+            guard configuration.isNoctwebDataDatabaseCreationEnabled else {
+                return .error(
+                    "This relay does not allow remote Noctweb database creation.",
+                    code: .unavailable,
+                    respondingTo: request
+                )
+            }
             guard hasConfidentialRouteTransport(sourceKey) else {
                 return .error(
                     "Noctweb site data requires confidential transport.",
@@ -2326,8 +2348,10 @@ public final class RelayServer {
     }
 
     private func requiresAuthentication(for binding: RelayOperationBinding) -> Bool {
+        if binding.module == .noctwebData {
+            return binding.method == .create || binding.method == .register
+        }
         if binding.module == .core
-            || binding.module == .noctwebData
             || (binding.module == .federation
                 && [
                     .register,
@@ -2362,10 +2386,15 @@ public final class RelayServer {
                 ].contains(binding.method))
     }
 
-    private func validateAuthentication(token: String?) -> String? {
+    private func validateAuthentication(
+        token: String?,
+        binding: RelayOperationBinding
+    ) -> String? {
         let expected = configuration.accessPassword?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !expected.isEmpty else {
-            return nil
+            return binding.module == .noctwebData
+                ? "Noctweb allocation is disabled until an operator password is configured."
+                : nil
         }
         guard expected.utf8.count <= 4_096,
               let token,

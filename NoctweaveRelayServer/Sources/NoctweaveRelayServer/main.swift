@@ -27,6 +27,8 @@ struct ServerConfig {
       --passthrough-allow-endpoint <https-url> Repeatable passthrough destination
       --net-host-enabled <bool>        Let a standard relay also host Noctweave Net objects
       --noctweb-data-enabled <bool>    Enable bounded origin-scoped Noctweb databases
+      --noctweb-data-database-creation-enabled <bool>
+                                      Allow password-authenticated database creation (default: false)
       --net-host-default-ttl-seconds <n> Default host object retention
       --noctweb-relay-suffix <label>   Optional public relay namespace suffix
       --federation-mode <mode>         solo, manual, curated, or open
@@ -34,7 +36,7 @@ struct ServerConfig {
       --trusted-reverse-proxy-tls <bool> Trust TLS terminated before this raw listener
       --trusted-local-container-bridge <bool> Trust a container port published only to host loopback
       --access-password <password>     Require relay client authentication
-      --publisher-password <password>  Authorize Noctweave Net hosting writes only
+      --publisher-password <password>  Authorize hosting writes and Noctweb allocations
       --attachments-enabled <bool>     Enable or disable attachment chunks
       --attachment-storage <mode>      inline or ipfs
       --wake-mode <mode>               disabled, pullOnly, or longPoll
@@ -83,6 +85,7 @@ struct ServerConfig {
     var passthroughAllowedEndpoints: [RelayEndpoint]
     var netHostEnabled: Bool
     var noctwebDataEnabled: Bool
+    var noctwebDataDatabaseCreationEnabled: Bool
     var netHostDefaultTTLSeconds: Int
     var netHostMaximumObjects: Int
     var netHostMaximumTotalBytes: UInt64
@@ -163,6 +166,10 @@ struct ServerConfig {
         )
         var noctwebDataEnabled = parseBoolFlag(
             environment["NOCTWEAVE_NOCTWEB_DATA_ENABLED"] ?? "false",
+            defaultValue: false
+        )
+        var noctwebDataDatabaseCreationEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_NOCTWEB_DATA_DATABASE_CREATION_ENABLED"] ?? "false",
             defaultValue: false
         )
         var netHostDefaultTTLSeconds = Int(
@@ -352,6 +359,13 @@ struct ServerConfig {
             case "--noctweb-data-enabled":
                 if let value = iterator.next() {
                     noctwebDataEnabled = parseBoolFlag(value, defaultValue: noctwebDataEnabled)
+                }
+            case "--noctweb-data-database-creation-enabled":
+                if let value = iterator.next() {
+                    noctwebDataDatabaseCreationEnabled = parseBoolFlag(
+                        value,
+                        defaultValue: noctwebDataDatabaseCreationEnabled
+                    )
                 }
             case "--net-host-default-ttl-seconds":
                 if let value = iterator.next(), let parsed = Int(value) {
@@ -731,6 +745,9 @@ struct ServerConfig {
         if !netHostEnabled {
             noctwebDataEnabled = false
         }
+        if !noctwebDataEnabled {
+            noctwebDataDatabaseCreationEnabled = false
+        }
         let normalizedNoctwebRelaySuffix = noctwebRelaySuffix?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         noctwebRelaySuffix = normalizedNoctwebRelaySuffix?.isEmpty == false
@@ -876,6 +893,8 @@ struct ServerConfig {
             passthroughAllowedEndpoints: passthroughAllowedEndpoints,
             netHostEnabled: netHostEnabled,
             noctwebDataEnabled: noctwebDataEnabled,
+            noctwebDataDatabaseCreationEnabled:
+                noctwebDataDatabaseCreationEnabled,
             netHostDefaultTTLSeconds: netHostDefaultTTLSeconds,
             netHostMaximumObjects: netHostMaximumObjects,
             netHostMaximumTotalBytes: netHostMaximumTotalBytes,
@@ -1073,6 +1092,16 @@ if config.noctwebDataEnabled && !config.netHostEnabled {
     print("[relay] --noctweb-data-enabled requires --net-host-enabled")
     exit(2)
 }
+if config.noctwebDataDatabaseCreationEnabled {
+    let publisherPassword = config.publisherPassword?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let accessPassword = config.accessPassword?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    if publisherPassword.isEmpty && accessPassword.isEmpty {
+        print("[relay] --noctweb-data-database-creation-enabled requires --publisher-password or --access-password")
+        exit(2)
+    }
+}
 if let rawSuffix = config.noctwebRelaySuffix {
     do {
         config.noctwebRelaySuffix = ".\(try NoctwebPublisherSurface.canonicalOperatorSuffix(rawSuffix))"
@@ -1109,7 +1138,7 @@ if config.netHostEnabled {
     let password = config.publisherPassword ?? config.accessPassword
     guard let password = password?.trimmingCharacters(in: .whitespacesAndNewlines),
           password.utf8.count >= 12 else {
-        print("[relay] host-capable relays require NOCTWEAVE_PUBLISHER_PASSWORD or --publisher-password")
+        print("[relay] host-capable relays require a publisher password or access-password fallback")
         exit(2)
     }
 }
@@ -1277,21 +1306,6 @@ if config.netHostEnabled {
 } else {
     netHostStore = nil
 }
-let noctwebDataStore: RelayNoctwebDataStore?
-if config.noctwebDataEnabled {
-    let dataStore = RelayNoctwebDataStore(
-        fileURL: fileURL
-    )
-    do {
-        try dataStore.load()
-    } catch {
-        print("[relay] Refusing to start because the Noctweb data store is invalid.")
-        exit(2)
-    }
-    noctwebDataStore = dataStore
-} else {
-    noctwebDataStore = nil
-}
 let noctwebPublisherSurface: NoctwebPublisherSurface?
 if let netHostStore {
     do {
@@ -1318,6 +1332,22 @@ do {
     print("[relay] Refusing to start because the persisted store could not be opened.")
     exit(2)
 }
+// The primary store owns creation and migration of the shared SQLite file.
+// Feature tables must only be opened after that schema marker exists; doing
+// this in the opposite order makes a fresh persistent relay look corrupt.
+let noctwebDataStore: RelayNoctwebDataStore?
+if config.noctwebDataEnabled {
+    let dataStore = RelayNoctwebDataStore(fileURL: fileURL)
+    do {
+        try dataStore.load()
+    } catch {
+        print("[relay] Refusing to start because the Noctweb data store is invalid.")
+        exit(2)
+    }
+    noctwebDataStore = dataStore
+} else {
+    noctwebDataStore = nil
+}
 
 let advertisedEndpointTLS = config.advertisedEndpoint?.useTLS ?? false
 if config.advertiseTLS == true && !advertisedEndpointTLS {
@@ -1329,6 +1359,8 @@ var relayConfiguration = RelayConfiguration(
     kind: config.relayKind,
     netHostEnabled: config.netHostEnabled,
     noctwebDataEnabled: config.noctwebDataEnabled,
+    noctwebDataDatabaseCreationEnabled:
+        config.noctwebDataDatabaseCreationEnabled,
     federation: FederationDescriptor(
         mode: config.federationMode,
         name: config.federationName,
@@ -1479,6 +1511,7 @@ let bootstrap = ServerBootstrap(group: group)
                     maxLineBytes: config.maxLineBytes,
                     localEndpoint: RelayEndpoint(host: config.host, port: UInt16(config.port)),
                     relayConfiguration: relayConfigurationStore.snapshot(),
+                    relayConfigurationStore: relayConfigurationStore,
                     relayIdentityRuntime: relayIdentityRuntime,
                     forwardingRequestTimeoutSeconds: config.forwardingRequestTimeoutSeconds,
                     netHostStore: netHostStore,
@@ -1585,6 +1618,9 @@ do {
             "Noctweb suffix": relayConfiguration.noctwebRelaySuffix?.rawValue ?? "Unclaimed",
             "Noctweb hosting": config.netHostEnabled ? "Enabled · nw.net-host@1" : "Disabled",
             "Noctweb data": config.noctwebDataEnabled ? "Enabled · nw.noctweb-data@1" : "Disabled",
+            "Noctweb DB creation": config.noctwebDataDatabaseCreationEnabled
+                ? "Enabled · password required"
+                : "Disabled",
             "Noctweb Publisher / Lab": config.netHostEnabled
                 ? config.httpPort.map { "http://127.0.0.1:\($0)/noctweb/" } ?? "Unavailable · HTTP listener disabled"
                 : "Unavailable",

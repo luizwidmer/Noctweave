@@ -29,6 +29,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var trustedReverseProxyTLS: Bool
     var netHostEnabled: Bool?
     var noctwebDataEnabled: Bool?
+    var noctwebDataDatabaseCreationEnabled: Bool?
     var noctwebRelaySuffix: String?
     var federationMode: String
     var federationName: String
@@ -92,6 +93,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         trustedReverseProxyTLS = configuration.trustedReverseProxyTLS
         netHostEnabled = configuration.isNetHostEnabled
         noctwebDataEnabled = configuration.isNoctwebDataEnabled
+        noctwebDataDatabaseCreationEnabled =
+            configuration.isNoctwebDataDatabaseCreationEnabled
         noctwebRelaySuffix = configuration.noctwebRelaySuffix?.rawValue
         federationMode = configuration.federation.mode.rawValue
         federationName = configuration.federation.name ?? ""
@@ -175,6 +178,9 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             || (netHostEnabled ?? current.isNetHostEnabled)
         let proposedNoctwebDataEnabled = noctwebDataEnabled
             ?? current.isNoctwebDataEnabled
+        let proposedNoctwebDataDatabaseCreationEnabled =
+            noctwebDataDatabaseCreationEnabled
+                ?? current.isNoctwebDataDatabaseCreationEnabled
         if current.kind == .passthrough, proposedNetHostEnabled {
             throw OperatorConfigurationError.unsupportedTransition(
                 "Passthrough relays cannot enable Noctweb hosting."
@@ -185,6 +191,22 @@ struct OperatorEditableConfiguration: Codable, Equatable {
                 "Noctweb data storage requires Noctweb hosting."
             )
         }
+        if proposedNoctwebDataDatabaseCreationEnabled {
+            guard proposedNoctwebDataEnabled else {
+                throw OperatorConfigurationError.unsupportedTransition(
+                    "Noctweb database creation requires the site data service."
+                )
+            }
+            let publisherPassword = current.publisherPassword?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let accessPassword = current.accessPassword?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !publisherPassword.isEmpty || !accessPassword.isEmpty else {
+                throw OperatorConfigurationError.unsupportedTransition(
+                    "Noctweb database creation requires an operator-supplied publisher or access password."
+                )
+            }
+        }
         let proposedNoctwebSuffix = try validatedNoctwebSuffix(current: current)
         let activeNetHostEnabled = applyRestartControlledSettings
             ? proposedNetHostEnabled
@@ -192,6 +214,12 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         let activeNoctwebDataEnabled = applyRestartControlledSettings
             ? proposedNoctwebDataEnabled
             : current.isNoctwebDataEnabled
+        // Provisioning is an incident-response gate, not service wiring. Apply
+        // it live when the backing data service is already active; enabling the
+        // service itself remains restart-controlled.
+        let activeNoctwebDataDatabaseCreationEnabled =
+            proposedNoctwebDataDatabaseCreationEnabled
+                && activeNoctwebDataEnabled
         let activeNoctwebSuffix = applyRestartControlledSettings
             ? proposedNoctwebSuffix
             : current.noctwebRelaySuffix
@@ -284,6 +312,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             kind: current.kind,
             netHostEnabled: activeNetHostEnabled,
             noctwebDataEnabled: activeNoctwebDataEnabled,
+            noctwebDataDatabaseCreationEnabled:
+                activeNoctwebDataDatabaseCreationEnabled,
             federation: FederationDescriptor(
                 mode: activeFederationMode,
                 name: normalizedFederationName.nilIfEmpty,
@@ -340,6 +370,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             kind: config.relayKind,
             netHostEnabled: config.netHostEnabled,
             noctwebDataEnabled: config.noctwebDataEnabled,
+            noctwebDataDatabaseCreationEnabled:
+                config.noctwebDataDatabaseCreationEnabled,
             federation: FederationDescriptor(
                 mode: config.federationMode,
                 name: config.federationName,
@@ -436,6 +468,8 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.advertisedEndpoint = updated.advertisedEndpoint
         config.netHostEnabled = updated.isNetHostEnabled
         config.noctwebDataEnabled = updated.isNoctwebDataEnabled
+        config.noctwebDataDatabaseCreationEnabled =
+            updated.isNoctwebDataDatabaseCreationEnabled
         config.noctwebRelaySuffix = updated.noctwebRelaySuffix?.rawValue
         config.federationAllowList = updated.federationAllowList
         config.allowPrivateFederationEndpoints = updated.allowPrivateFederationEndpoints

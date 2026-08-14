@@ -219,6 +219,7 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         federationForwardingEnabled: Bool = false,
         netHostEnabled: Bool = false,
         noctwebDataEnabled: Bool = false,
+        noctwebDataDatabaseCreationEnabled: Bool = false,
         iceServiceEnabled: Bool = false,
         realtimeRoutesEnabled: Bool = true,
         sharedLogsEnabled: Bool = true,
@@ -261,7 +262,10 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
                         module: NoctwebDataV1.module,
                         versions: [1],
                         status: .experimental,
-                        limits: NoctwebDataV1.capabilityLimits
+                        limits: NoctwebDataV1.advertisedCapabilityLimits(
+                            databaseCreationEnabled:
+                                noctwebDataDatabaseCreationEnabled
+                        )
                     )
                 )
             }
@@ -347,7 +351,10 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
                     module: NoctwebDataV1.module,
                     versions: [1],
                     status: .experimental,
-                    limits: NoctwebDataV1.capabilityLimits
+                    limits: NoctwebDataV1.advertisedCapabilityLimits(
+                        databaseCreationEnabled:
+                            noctwebDataDatabaseCreationEnabled
+                    )
                 )
             )
         }

@@ -14,6 +14,11 @@ public enum RelayNoctwebDataStoreError: Error, Equatable {
     case corruptPersistence
 }
 
+private func noctwebDataReplayDateIsCanonical(_ value: Date) -> Bool {
+    let seconds = value.timeIntervalSince1970
+    return seconds.isFinite && seconds >= 0 && floor(seconds) == seconds
+}
+
 public final class RelayNoctwebDataStore: @unchecked Sendable {
     private struct MutationReplay: Codable, Equatable {
         enum Kind: String, Codable { case put, delete }
@@ -21,9 +26,11 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
         let fingerprint: Data
         let record: NoctwebDataRecordV1?
         let deleteReceipt: NoctwebDataDeleteReceiptV1?
+        let createdAt: Date
 
         var isStructurallyValid: Bool {
             fingerprint.count == 32
+                && noctwebDataReplayDateIsCanonical(createdAt)
                 && ((kind == .put && record?.isStructurallyValid == true && deleteReceipt == nil)
                     || (kind == .delete && record == nil && deleteReceipt != nil))
         }
@@ -50,30 +57,33 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
                         )
                 }
                 && records.count <= NoctwebDataV1.maximumRecordsPerDatabase
-                && records.allSatisfy { $0.key == Self.recordKey($0.value.collection, $0.value.recordID) && $0.value.databaseID == origin.databaseID && $0.value.isStructurallyValid }
-                && records.values.reduce(0, { $0 + $1.payload.count }) <= NoctwebDataV1.maximumDatabaseBytes
-                && mutationReplays.count <= RelayNoctwebDataStore.maximumMutationReplays
+                && records.allSatisfy { $0.key == Self.recordKey($0.value.collection, $0.value.ownerAccountID, $0.value.recordID) && $0.value.databaseID == origin.databaseID && $0.value.isStructurallyValid }
+                && records.values.reduce(0, {
+                    $0 + RelayNoctwebDataStore.recordStorageBytes($1)
+                }) <= NoctwebDataV1.maximumDatabaseBytes
+                && mutationReplays.count <= NoctwebDataV1.maximumMutationReplayEntries
+                && RelayNoctwebDataStore.replayBytes(mutationReplays)
+                    <= NoctwebDataV1.maximumMutationReplayBytes
                 && mutationReplays.values.allSatisfy(\.isStructurallyValid)
         }
 
-        static func recordKey(_ collection: String, _ recordID: String) -> String { collection + "\u{0}" + recordID }
+        static func recordKey(_ collection: String, _ owner: String?, _ recordID: String) -> String {
+            collection + "\u{0}" + (owner ?? "") + "\u{0}" + recordID
+        }
     }
 
-    private struct Snapshot: Codable {
-        static let version = 1
-        let version: Int
-        var databases: [String: DatabaseState]
-    }
-
-    private static let maximumDatabases = 256
-    private static let maximumMutationReplays = 50_000
-    private static let maximumSnapshotBytes = 128 * 1_024 * 1_024
-    private static let tableName = "noctweb_data_service_v1"
+    // The raw quota includes record/provenance bytes. JSON/Base64 persistence
+    // needs bounded headroom for encoding plus replay and account registries.
+    private static let maximumPersistedDatabaseBytes = 128 * 1_024 * 1_024
+    private static let tableName = "noctweb_data_databases_v2"
+    private static let legacyTableName = "noctweb_data_service_v1"
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     private let queue = DispatchQueue(label: "noctweave.noctweb.data-store")
     private let fileURL: URL?
     private var databases: [String: DatabaseState] = [:]
+    private var encodedBytesByDatabase: [String: Int] = [:]
+    private var consumedReadAuthorizations: [String: Date] = [:]
 
     public init(fileURL: URL? = nil) { self.fileURL = fileURL }
 
@@ -84,35 +94,54 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
             try openDatabase(at: fileURL, into: &database)
             defer { sqlite3_close(database) }
             guard let database else { throw RelayNoctwebDataStoreError.corruptPersistence }
+            guard try !legacySnapshotExists(in: database) else {
+                throw RelayNoctwebDataStoreError.corruptPersistence
+            }
             try ensureTable(in: database)
-            let sql = "SELECT snapshot FROM \(Self.tableName) WHERE singleton = 1;"
+            let sql = "SELECT database_id, state FROM \(Self.tableName) ORDER BY database_id ASC;"
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
                   let statement else { throw RelayNoctwebDataStoreError.corruptPersistence }
             defer { sqlite3_finalize(statement) }
-            switch sqlite3_step(statement) {
-            case SQLITE_DONE:
-                return
-            case SQLITE_ROW:
-                break
-            default:
-                throw RelayNoctwebDataStoreError.corruptPersistence
-            }
-            let count = Int(sqlite3_column_bytes(statement, 0))
-            guard count > 0,
-                  count <= Self.maximumSnapshotBytes,
-                  let bytes = sqlite3_column_blob(statement, 0) else {
-                throw RelayNoctwebDataStoreError.corruptPersistence
-            }
-            let data = Data(bytes: bytes, count: count)
+            var loaded: [String: DatabaseState] = [:]
+            var loadedEncodedBytes: [String: Int] = [:]
+            var loadedTotalBytes = 0
             let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
-            let snapshot = try decoder.decode(Snapshot.self, from: data)
-            guard snapshot.version == Snapshot.version,
-                  snapshot.databases.count <= Self.maximumDatabases,
-                  snapshot.databases.allSatisfy({ $0.key == $0.value.origin.databaseID && $0.value.isStructurallyValid }) else {
-                throw RelayNoctwebDataStoreError.corruptPersistence
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { break }
+                guard step == SQLITE_ROW,
+                      loaded.count < NoctwebDataV1.maximumDatabases,
+                      let rawID = sqlite3_column_text(statement, 0),
+                      let databaseID = String(
+                        validatingUTF8: UnsafeRawPointer(rawID)
+                            .assumingMemoryBound(to: CChar.self)
+                      ) else {
+                    throw RelayNoctwebDataStoreError.corruptPersistence
+                }
+                let count = Int(sqlite3_column_bytes(statement, 1))
+                guard count > 0,
+                      count <= Self.maximumPersistedDatabaseBytes,
+                      count <= NoctwebDataV1.maximumTotalDataBytes - loadedTotalBytes,
+                      let bytes = sqlite3_column_blob(statement, 1) else {
+                    throw RelayNoctwebDataStoreError.corruptPersistence
+                }
+                loadedTotalBytes += count
+                var state = try decoder.decode(
+                    DatabaseState.self,
+                    from: Data(bytes: bytes, count: count)
+                )
+                pruneMutationReplays(in: &state, now: canonicalDate(Date()))
+                guard databaseID == state.origin.databaseID,
+                      Self.mutationReplayBoundsAreValid(state.mutationReplays),
+                      state.isStructurallyValid,
+                      loaded.updateValue(state, forKey: databaseID) == nil,
+                      loadedEncodedBytes.updateValue(count, forKey: databaseID) == nil else {
+                    throw RelayNoctwebDataStoreError.corruptPersistence
+                }
             }
-            databases = snapshot.databases
+            databases = loaded
+            encodedBytesByDatabase = loadedEncodedBytes
         }
     }
 
@@ -125,14 +154,20 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
                       Array(existing.collections.values).sorted(by: { $0.name < $1.name }) == request.collections else { throw RelayNoctwebDataStoreError.conflict }
                 return NoctwebDataDatabaseReceiptV1(databaseID: databaseID, created: false)
             }
-            guard databases.count < Self.maximumDatabases else { throw RelayNoctwebDataStoreError.capacityExceeded }
+            guard databases.count < NoctwebDataV1.maximumDatabases else { throw RelayNoctwebDataStoreError.capacityExceeded }
+            let publisherDatabaseCount = databases.values.reduce(into: 0) { count, database in
+                if database.origin.publisherID == request.origin.publisherID { count += 1 }
+            }
+            guard publisherDatabaseCount < NoctwebDataV1.maximumDatabasesPerPublisher else {
+                throw RelayNoctwebDataStoreError.capacityExceeded
+            }
             let previous = databases
             databases[databaseID] = DatabaseState(
                 origin: request.origin,
                 collections: Dictionary(uniqueKeysWithValues: request.collections.map { ($0.name, $0) }),
                 accounts: [:], records: [:], mutationReplays: [:]
             )
-            do { try saveLocked() } catch { databases = previous; throw error }
+            do { try saveDatabaseLocked(databaseID) } catch { databases = previous; throw error }
             return NoctwebDataDatabaseReceiptV1(databaseID: databaseID, created: true)
         }
     }
@@ -150,7 +185,7 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
             database.accounts[request.accountID] = request.accountSigningPublicKey
             let previous = databases[request.databaseID]
             databases[request.databaseID] = database
-            do { try saveLocked() } catch { databases[request.databaseID] = previous; throw error }
+            do { try saveDatabaseLocked(request.databaseID) } catch { databases[request.databaseID] = previous; throw error }
             return NoctwebDataAccountReceiptV1(databaseID: request.databaseID, accountID: request.accountID, created: true)
         }
     }
@@ -160,60 +195,172 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
             guard request.isStructurallyValid else { throw RelayNoctwebDataStoreError.invalidRequest }
             guard var database = databases[request.databaseID] else { throw RelayNoctwebDataStoreError.databaseUnavailable }
             guard let policy = database.collections[request.collection] else { throw RelayNoctwebDataStoreError.collectionUnavailable }
+            let timestamp = canonicalDate(now)
+            pruneMutationReplays(in: &database, now: timestamp)
             let replayKey = hex(request.idempotencyKey)
             let fingerprint = mutationFingerprint(NoctwebDataTranscriptV1.putRecord(request), request.authorization.signature)
+            try verify(
+                request.authorization,
+                transcript: NoctwebDataTranscriptV1.putRecord(request),
+                in: database,
+                now: timestamp
+            )
             if let replay = database.mutationReplays[replayKey] {
                 guard replay.kind == .put, replay.fingerprint == fingerprint, let record = replay.record else { throw RelayNoctwebDataStoreError.conflict }
                 return record
             }
-            try verify(request.authorization, transcript: NoctwebDataTranscriptV1.putRecord(request), in: database)
-            let key = DatabaseState.recordKey(request.collection, request.recordID)
+            let key = DatabaseState.recordKey(
+                request.collection,
+                request.ownerAccountID,
+                request.recordID
+            )
             let existing = database.records[key]
             guard (existing == nil && request.expectedRevision == 0)
                     || existing?.revision == request.expectedRevision else { throw RelayNoctwebDataStoreError.conflict }
+            guard policy.readPolicy != .owner
+                    || request.ownerAccountID != nil else {
+                throw RelayNoctwebDataStoreError.unauthorized
+            }
             try authorizeWrite(policy.writePolicy, authorization: request.authorization, requestedOwner: request.ownerAccountID, existingOwner: existing?.ownerAccountID, database: database)
             if existing == nil {
                 guard database.records.count < NoctwebDataV1.maximumRecordsPerDatabase else { throw RelayNoctwebDataStoreError.capacityExceeded }
             }
-            let currentBytes = database.records.values.reduce(0) { $0 + $1.payload.count }
-            let replacedBytes = existing?.payload.count ?? 0
-            guard currentBytes - replacedBytes + request.payload.count <= NoctwebDataV1.maximumDatabaseBytes else { throw RelayNoctwebDataStoreError.capacityExceeded }
-            guard database.mutationReplays.count < Self.maximumMutationReplays else { throw RelayNoctwebDataStoreError.capacityExceeded }
-            let timestamp = canonicalDate(now)
+            let actorSigningPublicKey = try signingPublicKey(
+                for: request.authorization,
+                in: database
+            )
+            let provenance = NoctwebDataRecordProvenanceV1(
+                actorKind: request.authorization.actorKind,
+                actorID: request.authorization.actorID,
+                actorSigningPublicKey: actorSigningPublicKey,
+                authorizationNonce: request.authorization.nonce,
+                authorizationExpiresAt: request.authorization.expiresAt,
+                idempotencyKey: request.idempotencyKey,
+                expectedRevision: request.expectedRevision,
+                signature: request.authorization.signature
+            )
             let record = NoctwebDataRecordV1(
                 databaseID: request.databaseID, collection: request.collection, recordID: request.recordID,
                 ownerAccountID: request.ownerAccountID, payload: request.payload,
-                revision: (existing?.revision ?? 0) + 1, createdAt: existing?.createdAt ?? timestamp, updatedAt: timestamp
+                revision: (existing?.revision ?? 0) + 1,
+                createdAt: existing?.createdAt ?? timestamp,
+                updatedAt: timestamp,
+                provenance: provenance
             )
             guard record.isStructurallyValid else { throw RelayNoctwebDataStoreError.invalidRequest }
+            let currentBytes = database.records.values.reduce(0) {
+                $0 + Self.recordStorageBytes($1)
+            }
+            let replacedBytes = existing.map(Self.recordStorageBytes) ?? 0
+            let recordBytes = Self.recordStorageBytes(record)
+            guard currentBytes - replacedBytes + recordBytes
+                    <= NoctwebDataV1.maximumDatabaseBytes else {
+                throw RelayNoctwebDataStoreError.capacityExceeded
+            }
+            if let owner = request.ownerAccountID {
+                let ownerRecords = database.records.values.filter {
+                    $0.ownerAccountID == owner
+                }
+                let ownerBytes = ownerRecords.reduce(0) {
+                    $0 + Self.recordStorageBytes($1)
+                }
+                guard ownerRecords.count - (existing == nil ? 0 : 1) + 1
+                        <= NoctwebDataV1.maximumRecordsPerOwner,
+                      ownerBytes - replacedBytes + recordBytes
+                        <= NoctwebDataV1.maximumBytesPerOwner else {
+                    throw RelayNoctwebDataStoreError.capacityExceeded
+                }
+            }
             database.records[key] = record
-            database.mutationReplays[replayKey] = MutationReplay(kind: .put, fingerprint: fingerprint, record: record, deleteReceipt: nil)
+            database.mutationReplays[replayKey] = MutationReplay(
+                kind: .put,
+                fingerprint: fingerprint,
+                record: record,
+                deleteReceipt: nil,
+                createdAt: timestamp
+            )
+            guard Self.mutationReplayBoundsAreValid(database.mutationReplays) else {
+                throw RelayNoctwebDataStoreError.capacityExceeded
+            }
             let previous = databases[request.databaseID]; databases[request.databaseID] = database
-            do { try saveLocked() } catch { databases[request.databaseID] = previous; throw error }
+            do { try saveDatabaseLocked(request.databaseID) } catch { databases[request.databaseID] = previous; throw error }
             return record
         }
     }
 
-    public func getRecord(_ request: NoctwebDataRecordGetRequestV1) throws -> NoctwebDataRecordV1 {
+    public func getRecord(
+        _ request: NoctwebDataRecordGetRequestV1,
+        now: Date = Date()
+    ) throws -> NoctwebDataRecordV1 {
         try queue.sync {
             guard request.isStructurallyValid else { throw RelayNoctwebDataStoreError.invalidRequest }
             guard let database = databases[request.databaseID] else { throw RelayNoctwebDataStoreError.databaseUnavailable }
             guard let policy = database.collections[request.collection] else { throw RelayNoctwebDataStoreError.collectionUnavailable }
-            guard let record = database.records[DatabaseState.recordKey(request.collection, request.recordID)] else { throw RelayNoctwebDataStoreError.databaseUnavailable }
-            if let authorization = request.authorization { try verify(authorization, transcript: NoctwebDataTranscriptV1.getRecord(request), in: database) }
+            let timestamp = canonicalDate(now)
+            if let authorization = request.authorization {
+                try verify(
+                    authorization,
+                    transcript: NoctwebDataTranscriptV1.getRecord(request),
+                    in: database,
+                    now: timestamp
+                )
+                try consumeReadAuthorization(
+                    authorization,
+                    databaseID: request.databaseID,
+                    now: timestamp
+                )
+            }
+            let owner = try resolvedReadOwner(
+                policy.readPolicy,
+                requestedOwner: request.ownerAccountID,
+                authorization: request.authorization,
+                database: database
+            )
+            guard let record = database.records[DatabaseState.recordKey(
+                request.collection,
+                owner,
+                request.recordID
+            )] else { throw RelayNoctwebDataStoreError.databaseUnavailable }
             try authorizeRead(policy.readPolicy, authorization: request.authorization, owner: record.ownerAccountID, database: database)
             return record
         }
     }
 
-    public func listRecords(_ request: NoctwebDataRecordListRequestV1) throws -> NoctwebDataRecordListV1 {
+    public func listRecords(
+        _ request: NoctwebDataRecordListRequestV1,
+        now: Date = Date()
+    ) throws -> NoctwebDataRecordListV1 {
         try queue.sync {
             guard request.isStructurallyValid else { throw RelayNoctwebDataStoreError.invalidRequest }
             guard let database = databases[request.databaseID] else { throw RelayNoctwebDataStoreError.databaseUnavailable }
             guard let policy = database.collections[request.collection] else { throw RelayNoctwebDataStoreError.collectionUnavailable }
-            if let authorization = request.authorization { try verify(authorization, transcript: NoctwebDataTranscriptV1.listRecords(request), in: database) }
+            let timestamp = canonicalDate(now)
+            if let authorization = request.authorization {
+                try verify(
+                    authorization,
+                    transcript: NoctwebDataTranscriptV1.listRecords(request),
+                    in: database,
+                    now: timestamp
+                )
+                try consumeReadAuthorization(
+                    authorization,
+                    databaseID: request.databaseID,
+                    now: timestamp
+                )
+            }
+            let owner = try resolvedReadOwner(
+                policy.readPolicy,
+                requestedOwner: request.ownerAccountID,
+                authorization: request.authorization,
+                database: database
+            )
             let candidates = database.records.values
-                .filter { $0.collection == request.collection && (request.afterRecordID == nil || $0.recordID > request.afterRecordID!) }
+                .filter {
+                    $0.collection == request.collection
+                        && $0.ownerAccountID == owner
+                        && (request.afterRecordID == nil
+                            || $0.recordID > request.afterRecordID!)
+                }
                 .sorted { $0.recordID < $1.recordID }
                 .filter { (try? authorizeRead(policy.readPolicy, authorization: request.authorization, owner: $0.ownerAccountID, database: database)) != nil }
             let selected = Array(candidates.prefix(request.limit))
@@ -222,32 +369,81 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
         }
     }
 
-    public func deleteRecord(_ request: NoctwebDataRecordDeleteRequestV1) throws -> NoctwebDataDeleteReceiptV1 {
+    public func deleteRecord(
+        _ request: NoctwebDataRecordDeleteRequestV1,
+        now: Date = Date()
+    ) throws -> NoctwebDataDeleteReceiptV1 {
         try queue.sync {
             guard request.isStructurallyValid else { throw RelayNoctwebDataStoreError.invalidRequest }
             guard var database = databases[request.databaseID] else { throw RelayNoctwebDataStoreError.databaseUnavailable }
             guard let policy = database.collections[request.collection] else { throw RelayNoctwebDataStoreError.collectionUnavailable }
+            let timestamp = canonicalDate(now)
+            pruneMutationReplays(in: &database, now: timestamp)
             let replayKey = hex(request.idempotencyKey)
             let fingerprint = mutationFingerprint(NoctwebDataTranscriptV1.deleteRecord(request), request.authorization.signature)
+            try verify(
+                request.authorization,
+                transcript: NoctwebDataTranscriptV1.deleteRecord(request),
+                in: database,
+                now: timestamp
+            )
             if let replay = database.mutationReplays[replayKey] {
                 guard replay.kind == .delete, replay.fingerprint == fingerprint, let receipt = replay.deleteReceipt else { throw RelayNoctwebDataStoreError.conflict }
                 return receipt
             }
-            try verify(request.authorization, transcript: NoctwebDataTranscriptV1.deleteRecord(request), in: database)
-            let key = DatabaseState.recordKey(request.collection, request.recordID)
+            let owner = try resolvedWriteOwner(
+                policy.writePolicy,
+                requestedOwner: request.ownerAccountID,
+                authorization: request.authorization,
+                database: database
+            )
+            let key = DatabaseState.recordKey(
+                request.collection,
+                owner,
+                request.recordID
+            )
             guard let record = database.records[key], record.revision == request.expectedRevision else { throw RelayNoctwebDataStoreError.conflict }
             try authorizeWrite(policy.writePolicy, authorization: request.authorization, requestedOwner: record.ownerAccountID, existingOwner: record.ownerAccountID, database: database)
-            guard database.mutationReplays.count < Self.maximumMutationReplays else { throw RelayNoctwebDataStoreError.capacityExceeded }
-            let receipt = NoctwebDataDeleteReceiptV1(databaseID: request.databaseID, collection: request.collection, recordID: request.recordID, deletedRevision: record.revision)
+            let receipt = NoctwebDataDeleteReceiptV1(
+                databaseID: request.databaseID,
+                collection: request.collection,
+                recordID: request.recordID,
+                ownerAccountID: record.ownerAccountID,
+                deletedRevision: record.revision
+            )
             database.records.removeValue(forKey: key)
-            database.mutationReplays[replayKey] = MutationReplay(kind: .delete, fingerprint: fingerprint, record: nil, deleteReceipt: receipt)
+            database.mutationReplays[replayKey] = MutationReplay(
+                kind: .delete,
+                fingerprint: fingerprint,
+                record: nil,
+                deleteReceipt: receipt,
+                createdAt: timestamp
+            )
+            guard Self.mutationReplayBoundsAreValid(database.mutationReplays) else {
+                throw RelayNoctwebDataStoreError.capacityExceeded
+            }
             let previous = databases[request.databaseID]; databases[request.databaseID] = database
-            do { try saveLocked() } catch { databases[request.databaseID] = previous; throw error }
+            do { try saveDatabaseLocked(request.databaseID) } catch { databases[request.databaseID] = previous; throw error }
             return receipt
         }
     }
 
-    private func verify(_ authorization: NoctwebDataAuthorizationV1, transcript: Data, in database: DatabaseState) throws {
+    private func verify(
+        _ authorization: NoctwebDataAuthorizationV1,
+        transcript: Data,
+        in database: DatabaseState,
+        now: Date
+    ) throws {
+        let earliestAccepted = now.addingTimeInterval(
+            -TimeInterval(NoctwebDataV1.authorizationClockSkewSeconds)
+        )
+        let latestAccepted = now.addingTimeInterval(
+            TimeInterval(NoctwebDataV1.maximumAuthorizationLifetimeSeconds)
+        )
+        guard authorization.expiresAt >= earliestAccepted,
+              authorization.expiresAt <= latestAccepted else {
+            throw RelayNoctwebDataStoreError.authenticationRequired
+        }
         switch authorization.actorKind {
         case .publisher:
             guard authorization.actorID == database.origin.publisherID,
@@ -256,6 +452,109 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
         case .account:
             guard let key = database.accounts[authorization.actorID] else { throw RelayNoctwebDataStoreError.accountUnavailable }
             guard try SigningKeyPair.verifyThrowing(signature: authorization.signature, data: transcript, publicKeyData: key) else { throw RelayNoctwebDataStoreError.authenticationRequired }
+        }
+    }
+
+    private func signingPublicKey(
+        for authorization: NoctwebDataAuthorizationV1,
+        in database: DatabaseState
+    ) throws -> Data {
+        switch authorization.actorKind {
+        case .publisher:
+            guard authorization.actorID == database.origin.publisherID else {
+                throw RelayNoctwebDataStoreError.authenticationRequired
+            }
+            return database.origin.publisherSigningPublicKey
+        case .account:
+            guard let key = database.accounts[authorization.actorID] else {
+                throw RelayNoctwebDataStoreError.accountUnavailable
+            }
+            return key
+        }
+    }
+
+    private func consumeReadAuthorization(
+        _ authorization: NoctwebDataAuthorizationV1,
+        databaseID: String,
+        now: Date
+    ) throws {
+        consumedReadAuthorizations = consumedReadAuthorizations.filter { $0.value >= now }
+        let scope = databaseID + "\u{0}" + authorization.actorID + "\u{0}"
+        let key = scope + hex(authorization.nonce)
+        guard consumedReadAuthorizations[key] == nil else {
+            throw RelayNoctwebDataStoreError.authenticationRequired
+        }
+        guard consumedReadAuthorizations.count < 65_536,
+              consumedReadAuthorizations.keys.lazy.filter({
+                  $0.hasPrefix(scope)
+              }).prefix(513).count < 512 else {
+            throw RelayNoctwebDataStoreError.capacityExceeded
+        }
+        consumedReadAuthorizations[key] = authorization.expiresAt.addingTimeInterval(
+            TimeInterval(NoctwebDataV1.authorizationClockSkewSeconds)
+        )
+    }
+
+    private func resolvedReadOwner(
+        _ policy: NoctwebDataReadPolicyV1,
+        requestedOwner: String?,
+        authorization: NoctwebDataAuthorizationV1?,
+        database: DatabaseState
+    ) throws -> String? {
+        switch policy {
+        case .publicRead:
+            return requestedOwner
+        case .owner:
+            guard authorization?.actorKind == .account,
+                  requestedOwner == nil || requestedOwner == authorization?.actorID else {
+                throw RelayNoctwebDataStoreError.unauthorized
+            }
+            return authorization?.actorID
+        case .ownerOrPublisher:
+            if authorization?.actorKind == .account {
+                guard requestedOwner == nil || requestedOwner == authorization?.actorID else {
+                    throw RelayNoctwebDataStoreError.unauthorized
+                }
+                return authorization?.actorID
+            }
+            guard authorization?.actorKind == .publisher,
+                  authorization?.actorID == database.origin.publisherID else {
+                throw RelayNoctwebDataStoreError.unauthorized
+            }
+            return requestedOwner
+        }
+    }
+
+    private func resolvedWriteOwner(
+        _ policy: NoctwebDataWritePolicyV1,
+        requestedOwner: String?,
+        authorization: NoctwebDataAuthorizationV1,
+        database: DatabaseState
+    ) throws -> String? {
+        switch policy {
+        case .publisher:
+            guard authorization.actorKind == .publisher,
+                  authorization.actorID == database.origin.publisherID else {
+                throw RelayNoctwebDataStoreError.unauthorized
+            }
+            return requestedOwner
+        case .owner:
+            guard authorization.actorKind == .account,
+                  requestedOwner == nil || requestedOwner == authorization.actorID else {
+                throw RelayNoctwebDataStoreError.unauthorized
+            }
+            return authorization.actorID
+        case .ownerOrPublisher:
+            if authorization.actorKind == .account {
+                guard requestedOwner == nil || requestedOwner == authorization.actorID else {
+                    throw RelayNoctwebDataStoreError.unauthorized
+                }
+                return authorization.actorID
+            }
+            guard authorization.actorID == database.origin.publisherID else {
+                throw RelayNoctwebDataStoreError.unauthorized
+            }
+            return requestedOwner
         }
     }
 
@@ -284,31 +583,99 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
         }
     }
 
-    private func saveLocked() throws {
-        guard let fileURL else { return }
-        let snapshot = Snapshot(version: Snapshot.version, databases: databases)
-        guard snapshot.databases.allSatisfy({ $0.value.isStructurallyValid }) else { throw RelayNoctwebDataStoreError.corruptPersistence }
+    private func pruneMutationReplays(
+        in database: inout DatabaseState,
+        now: Date
+    ) {
+        let cutoff = now.addingTimeInterval(
+            -TimeInterval(NoctwebDataV1.mutationReplayLifetimeSeconds)
+        )
+        database.mutationReplays = database.mutationReplays.filter {
+            $0.value.createdAt >= cutoff
+        }
+    }
+
+    private static func mutationReplayBoundsAreValid(
+        _ replays: [String: MutationReplay]
+    ) -> Bool {
+        replays.count <= NoctwebDataV1.maximumMutationReplayEntries
+            && replayBytes(replays) <= NoctwebDataV1.maximumMutationReplayBytes
+    }
+
+    private static func replayBytes(
+        _ replays: [String: MutationReplay]
+    ) -> Int {
+        replays.reduce(0) { total, entry in
+            total + entry.key.utf8.count + 128
+                + (entry.value.record.map(recordStorageBytes(_:)) ?? 0)
+                + (entry.value.deleteReceipt.map(deleteReceiptStorageBytes(_:)) ?? 0)
+        }
+    }
+
+    private static func deleteReceiptStorageBytes(
+        _ receipt: NoctwebDataDeleteReceiptV1
+    ) -> Int {
+        receipt.databaseID.utf8.count
+            + receipt.collection.utf8.count
+            + receipt.recordID.utf8.count
+            + (receipt.ownerAccountID?.utf8.count ?? 0)
+            + 64
+    }
+
+    private static func recordStorageBytes(_ record: NoctwebDataRecordV1) -> Int {
+        record.databaseID.utf8.count
+            + record.collection.utf8.count
+            + record.recordID.utf8.count
+            + (record.ownerAccountID?.utf8.count ?? 0)
+            + record.payload.count
+            + record.provenance.actorID.utf8.count
+            + record.provenance.actorSigningPublicKey.count
+            + record.provenance.authorizationNonce.count
+            + record.provenance.idempotencyKey.count
+            + record.provenance.signature.count
+            + 256
+    }
+
+    private func saveDatabaseLocked(_ databaseID: String) throws {
+        guard let state = databases[databaseID], state.isStructurallyValid else {
+            throw RelayNoctwebDataStoreError.corruptPersistence
+        }
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
-        let data = try encoder.encode(snapshot)
-        guard data.count <= Self.maximumSnapshotBytes else { throw RelayNoctwebDataStoreError.capacityExceeded }
+        let data = try encoder.encode(state)
+        guard data.count <= Self.maximumPersistedDatabaseBytes else { throw RelayNoctwebDataStoreError.capacityExceeded }
+        let replacedBytes = encodedBytesByDatabase[databaseID] ?? 0
+        let otherBytes = encodedBytesByDatabase.values.reduce(0, +) - replacedBytes
+        guard data.count <= NoctwebDataV1.maximumTotalDataBytes - otherBytes else {
+            throw RelayNoctwebDataStoreError.capacityExceeded
+        }
+        guard let fileURL else {
+            encodedBytesByDatabase[databaseID] = data.count
+            return
+        }
         var database: OpaquePointer?
         try openDatabase(at: fileURL, into: &database)
         defer { sqlite3_close(database) }
         guard let database else { throw RelayNoctwebDataStoreError.corruptPersistence }
+        guard try !legacySnapshotExists(in: database) else {
+            throw RelayNoctwebDataStoreError.corruptPersistence
+        }
         try ensureTable(in: database)
         let sql = """
-        INSERT INTO \(Self.tableName) (singleton, snapshot)
-        VALUES (1, ?)
-        ON CONFLICT(singleton) DO UPDATE SET snapshot = excluded.snapshot;
+        INSERT INTO \(Self.tableName) (database_id, state)
+        VALUES (?, ?)
+        ON CONFLICT(database_id) DO UPDATE SET state = excluded.state;
         """
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK,
               let statement else { throw RelayNoctwebDataStoreError.corruptPersistence }
         defer { sqlite3_finalize(statement) }
+        guard sqlite3_bind_text(statement, 1, databaseID, -1, Self.transient) == SQLITE_OK else {
+            throw RelayNoctwebDataStoreError.corruptPersistence
+        }
         let bindResult = data.withUnsafeBytes { bytes in
             sqlite3_bind_blob(
                 statement,
-                1,
+                2,
                 bytes.baseAddress,
                 Int32(data.count),
                 Self.transient
@@ -318,20 +685,23 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
               sqlite3_step(statement) == SQLITE_DONE else {
             throw RelayNoctwebDataStoreError.corruptPersistence
         }
+        encodedBytesByDatabase[databaseID] = data.count
     }
 
     private func openDatabase(
         at url: URL,
         into database: inout OpaquePointer?
     ) throws {
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
-        let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
-        guard sqlite3_open_v2(url.path, &database, flags, nil) == SQLITE_OK,
-              database != nil else {
+        let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE
+            | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW
+        do {
+            try SecureLocalFileIO.withPreparedPrivateSQLiteFile(at: url) { path in
+                guard sqlite3_open_v2(path, &database, flags, nil) == SQLITE_OK,
+                      database != nil else {
+                    throw RelayNoctwebDataStoreError.corruptPersistence
+                }
+            }
+        } catch {
             if let opened = database { sqlite3_close(opened) }
             database = nil
             throw RelayNoctwebDataStoreError.corruptPersistence
@@ -342,13 +712,56 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
     private func ensureTable(in database: OpaquePointer) throws {
         let sql = """
         CREATE TABLE IF NOT EXISTS \(Self.tableName) (
-            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-            snapshot BLOB NOT NULL
+            database_id TEXT PRIMARY KEY NOT NULL,
+            state BLOB NOT NULL
         );
         """
         guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
             throw RelayNoctwebDataStoreError.corruptPersistence
         }
+    }
+
+    /// Version 1 persisted relay-visible plaintext and did not retain a proof
+    /// of who authored each record. There is no safe automatic migration: the
+    /// relay does not possess the application encryption keys needed to
+    /// transform that data. Refuse a non-empty legacy snapshot instead of
+    /// silently discarding it or serving it under the hardened protocol.
+    private func legacySnapshotExists(in database: OpaquePointer) throws -> Bool {
+        let tableSQL = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1;"
+        var tableStatement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, tableSQL, -1, &tableStatement, nil) == SQLITE_OK,
+              let tableStatement else {
+            throw RelayNoctwebDataStoreError.corruptPersistence
+        }
+        defer { sqlite3_finalize(tableStatement) }
+        guard sqlite3_bind_text(
+            tableStatement,
+            1,
+            Self.legacyTableName,
+            -1,
+            Self.transient
+        ) == SQLITE_OK else {
+            throw RelayNoctwebDataStoreError.corruptPersistence
+        }
+        let tableStep = sqlite3_step(tableStatement)
+        if tableStep == SQLITE_DONE { return false }
+        guard tableStep == SQLITE_ROW else {
+            throw RelayNoctwebDataStoreError.corruptPersistence
+        }
+
+        let snapshotSQL = "SELECT 1 FROM \(Self.legacyTableName) WHERE singleton = 1 AND length(snapshot) > 0 LIMIT 1;"
+        var snapshotStatement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, snapshotSQL, -1, &snapshotStatement, nil) == SQLITE_OK,
+              let snapshotStatement else {
+            throw RelayNoctwebDataStoreError.corruptPersistence
+        }
+        defer { sqlite3_finalize(snapshotStatement) }
+        let snapshotStep = sqlite3_step(snapshotStatement)
+        if snapshotStep == SQLITE_ROW { return true }
+        guard snapshotStep == SQLITE_DONE else {
+            throw RelayNoctwebDataStoreError.corruptPersistence
+        }
+        return false
     }
 
     private func canonicalDate(_ value: Date) -> Date { Date(timeIntervalSince1970: floor(value.timeIntervalSince1970)) }

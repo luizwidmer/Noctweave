@@ -9,8 +9,10 @@ It is not a general SQL service, a server-side JavaScript runtime, or a global
 Noctweave account system.
 
 The module is disabled unless the relay operator enables Noctweb hosting and
-the data service. A relay advertises the exact service limits in its signed
-capability manifest.
+the data service. Serving an already-provisioned database and creating a new
+database are separate controls: remote creation is disabled by default. A
+relay advertises the exact service limits and its current creation policy in
+its signed capability manifest.
 
 ## Authority model
 
@@ -43,9 +45,22 @@ Collections declare one read policy and one write policy:
 - `publisher`: only the publisher may write.
 
 Every private read and every mutation is signed over the complete request,
-including a fresh nonce. Writes use compare-and-swap revisions. A revision of
-zero means create-only; later writes and deletes must name the current
-revision. Idempotency keys make exact retries safe.
+including a fresh nonce and a whole-second expiry. Authorizations last two
+minutes by default, may never exceed five minutes at relay receipt, and a
+signed private-read nonce is accepted only once per running relay process.
+Account requests must name their exact owner namespace, so different accounts
+may safely use the same application record identifier. Writes use
+compare-and-swap revisions. A revision of zero means create-only; later writes
+and deletes must name the current revision. A bounded five-minute-plus-skew
+idempotency window makes exact retries safe without creating an unbounded
+replay ledger. The relay applies backpressure rather than evicting a still-valid
+entry, so filling the bound cannot make a captured mutation replayable.
+
+Owner namespace and read policy are independent coordinates. A public-read
+request may name an owner namespace without a signature, allowing publisher-
+or account-authored owner-scoped records to be intentionally public. Omitting
+the owner selects the collection's unowned namespace. Private policies still
+require a signed actor authorized for the exact requested owner.
 
 ## Browser boundary
 
@@ -61,13 +76,29 @@ page.
 Publisher tooling may create databases and publisher-authorized records, but
 publisher authority is not made available to hosted page code.
 
-## Confidentiality and metadata
+## Confidentiality, integrity, and metadata
 
 TLS protects transport to the relay but does not make the relay a trusted
-application server. Public catalog payloads may intentionally be plaintext.
-Private fields should be encrypted by the application before submission when
-the relay must not learn them. The relay necessarily observes the database,
-collection, record size, access timing, account pseudonym, and policy decision.
+application server. Every record payload is mandatory canonical
+`AES-256-GCM` ciphertext; plaintext record submissions are rejected. The
+authenticated additional data binds the database, collection, record ID,
+owner namespace, revision, and application key ID. Encryption keys remain in
+the Browser/native application boundary and are never sent to the relay.
+
+Every returned record also retains the exact publisher or ML-DSA account
+authorization that created that revision, including the signer public key,
+nonce, expiry, idempotency key, expected revision, and signature. Clients must
+verify this provenance and the collection write policy before decrypting. This
+detects a relay operator changing record coordinates, ownership, ciphertext,
+revision, or authorship. A relay can still withhold a newer valid revision or
+deny service; applications requiring rollback detection must retain a trusted
+local revision anchor or use an application transparency mechanism.
+`createdAt` and `updatedAt` are relay observations, not fields covered by the
+author signature; applications must not use them as a trusted ordering or
+freshness authority.
+
+The relay necessarily observes the database, collection, record and ciphertext
+size, access timing, account pseudonym, revision, and policy decision.
 
 The service does not claim PIR, anonymous accounts, payment privacy, fraud
 prevention, inventory transactions, or regulatory compliance. Payment card
@@ -76,11 +107,21 @@ data and high-value secrets must not be stored directly through this module.
 ## Mandatory bounds
 
 Implementations reject unknown fields and enforce operator-advertised ceilings
-for databases, collections, accounts, records, record bytes, page size, total
-database bytes, and request rate. Record listing is cursor-based and supports
-no arbitrary predicates, joins, regular expressions, or user-provided query
-plans. These restrictions keep work predictable and prevent a hosted page from
-turning the relay into a general-purpose compute service.
+for global databases, databases per publisher, collections, accounts, records,
+records and bytes per owner, record bytes, page size, per-database bytes,
+relay-wide encoded data bytes, idempotency entries, and request rate. Record listing is cursor-based and
+supports no arbitrary predicates, joins, regular expressions, or user-provided
+query plans. Persistent state is isolated into one bounded SQLite row per
+database, and the Linux server moves its serialization work off the network
+event loop. These restrictions keep work predictable and prevent one tenant or
+hosted page from turning the relay into a general-purpose compute service.
+
+Database, owner, replay, and relay-wide byte ceilings charge the complete durable record:
+the encrypted payload plus record coordinates, timestamps, and retained
+authorization provenance. They are not ciphertext-only budgets.
+The page ceiling is eight records so a worst-case encoded page, including
+Base64 expansion and ML-DSA provenance, fits the default Swift client response
+budget; larger result sets use the authenticated cursor.
 
 ## Relay operations
 
@@ -90,17 +131,19 @@ field:
 
 | Method | Authority | Result |
 | --- | --- | --- |
-| `create` | publisher | database receipt |
-| `register` | new ML-DSA account | account receipt |
+| `create` | publisher signature + operator publisher/access password + creation gate | database receipt |
+| `register` | new ML-DSA account signature + operator publisher/access password | account receipt |
 | `put` | collection policy | record with new revision |
 | `get` | collection policy | one record |
 | `list` | collection policy | bounded page plus cursor |
 | `delete` | collection policy | deletion receipt |
 
-The relay password is not part of this protocol. Each request carries its own
-origin-scoped cryptographic authorization. The service is accepted only over a
-confidential route: TLS, HTTPS/WSS, an operator-declared trusted reverse proxy,
-or literal loopback for development.
+The common relay envelope carries the operator password only for the two
+allocation operations. It is never included in the inner signed request,
+persisted as application data, or exposed to hosted pages. Record operations
+use only origin-scoped cryptographic authorization. The service is accepted
+only over a confidential route: TLS, HTTPS/WSS, an operator-declared trusted
+reverse proxy, or literal loopback for development.
 
 ## Operator configuration
 
@@ -112,12 +155,39 @@ The Linux relay requires both hosting flags:
 --noctweb-relay-suffix .example
 ```
 
-Use `NOCTWEAVE_NOCTWEB_DATA_ENABLED=true` in container deployments. Disk mode
-stores the bounded data-service snapshot transactionally in the
-`noctweb_data_service_v1` table of `relay_store.sqlite`; memory-only mode loses
-all site data at process exit. The macOS relay exposes the same opt-in switch
-under Noctweb settings. Capability discovery reports the exact limits before a
+This serves existing databases but does not permit new ones. A provisioning
+window additionally requires both an explicit creation gate and an operator
+secret:
+
+```sh
+--noctweb-data-database-creation-enabled true \
+--publisher-password 'operator-managed-secret'
+```
+
+Container deployments use `NOCTWEAVE_NOCTWEB_DATA_ENABLED=true`,
+`NOCTWEAVE_NOCTWEB_DATA_DATABASE_CREATION_ENABLED=true`, and preferably
+`NOCTWEAVE_PUBLISHER_PASSWORD`. The access password is an accepted fallback.
+Disable the creation flag after provisioning if no more databases are needed.
+Gate changes and password rotations are read from the live operator
+configuration for every request, including requests on already-open raw TCP
+connections.
+Account registration is also operator-admitted to prevent unauthenticated key
+generation from exhausting the database account quota; the native host or
+publisher provisioning flow registers an account before injecting its page
+capability.
+
+Disk mode stores one bounded database state per row in the
+`noctweb_data_databases_v2` table of `relay_store.sqlite`; memory-only mode
+loses all site data at process exit. The macOS relay exposes the same opt-in
+and separate default-off creation switch under Noctweb settings. Capability
+discovery reports `databaseCreationEnabled` and the exact limits before a
 Browser exposes the page API.
+
+The insecure v1 snapshot format could contain relay-visible plaintext and no
+retained author proof. A non-empty `noctweb_data_service_v1` snapshot therefore
+fails closed on startup. Export and decrypt it with the old trusted application,
+then re-provision and re-encrypt through the hardened client; the relay cannot
+safely migrate it because it does not possess application encryption keys.
 
 ## Application accounts
 
