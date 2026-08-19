@@ -63,7 +63,8 @@ public enum PresenceRelayCapabilityLimitsV1 {
     public static let registry: [String: UInt64] = [
         "maxPayloadBytes": UInt64(RealtimeRelayLimitsV1.maximumPresencePayloadBytes),
         "minLeaseSeconds": UInt64(RealtimeRelayLimitsV1.minimumPresenceLeaseSeconds),
-        "maxLeaseSeconds": UInt64(RealtimeRelayLimitsV1.maximumPresenceLeaseSeconds)
+        "maxLeaseSeconds": UInt64(RealtimeRelayLimitsV1.maximumPresenceLeaseSeconds),
+        "maxLeases": UInt64(RealtimeRelayLimitsV1.maximumPresenceLeases)
     ]
 }
 
@@ -224,7 +225,8 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         realtimeRoutesEnabled: Bool = true,
         sharedLogsEnabled: Bool = true,
         ephemeralPresenceEnabled: Bool = true,
-        mediaBlobsEnabled: Bool = true
+        mediaBlobsEnabled: Bool = true,
+        pairingLobbyEnabled: Bool = false
     ) -> RelayCapabilityManifestV2 {
         var modules = [
             RelayModuleCapabilityV2(module: "nw.core", versions: [2], status: .provisional)
@@ -290,6 +292,14 @@ public struct RelayCapabilityManifestV2: Codable, Equatable {
         }
         if relayKind == .standard, mediaBlobsEnabled {
             modules.append(RelayModuleCapabilityV2(module: "nw.media-blobs", versions: [1], status: .provisional, limits: MediaBlobRelayCapabilityLimitsV1.registry))
+        }
+        if relayKind == .standard, pairingLobbyEnabled, realtimeRoutesEnabled {
+            modules.append(RelayModuleCapabilityV2(
+                module: "nw.pairing-lobby",
+                versions: [1],
+                status: .experimental,
+                limits: PairingLobbyRelayLimitsV1.advertisedRegistry
+            ))
         }
         if iceServiceEnabled {
             modules.append(

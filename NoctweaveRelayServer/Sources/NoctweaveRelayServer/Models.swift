@@ -1339,6 +1339,9 @@ struct RelayConfiguration: Codable, Equatable {
     var sharedLogsEnabled: Bool?
     var ephemeralPresenceEnabled: Bool?
     var mediaBlobsEnabled: Bool?
+    /// Default-off process-local same-relay pairing directory. Realtime routes
+    /// must also remain enabled for encrypted request and invitation transfer.
+    var pairingLobbyEnabled: Bool?
     var relayName: String?
     var operatorNote: String?
     var softwareVersion: String?
@@ -1389,6 +1392,7 @@ struct RelayConfiguration: Codable, Equatable {
         sharedLogsEnabled: Bool = true,
         ephemeralPresenceEnabled: Bool = true,
         mediaBlobsEnabled: Bool = true,
+        pairingLobbyEnabled: Bool = false,
         relayName: String? = nil,
         operatorNote: String? = nil,
         softwareVersion: String? = nil,
@@ -1456,6 +1460,7 @@ struct RelayConfiguration: Codable, Equatable {
         self.sharedLogsEnabled = sharedLogsEnabled ? nil : false
         self.ephemeralPresenceEnabled = ephemeralPresenceEnabled ? nil : false
         self.mediaBlobsEnabled = mediaBlobsEnabled ? nil : false
+        self.pairingLobbyEnabled = pairingLobbyEnabled ? true : nil
         self.relayName = relayName
         self.operatorNote = operatorNote
         self.softwareVersion = softwareVersion
@@ -1528,6 +1533,12 @@ struct RelayConfiguration: Codable, Equatable {
             && mediaBlobsEnabled != false
     }
 
+    var isPairingLobbyEnabled: Bool {
+        kind == .standard
+            && pairingLobbyEnabled == true
+            && areRealtimeRoutesEnabled
+    }
+
     enum EffectiveTransportConfidentiality: Equatable {
         case none
         case listenerTLS
@@ -1590,7 +1601,8 @@ struct RelayConfiguration: Codable, Equatable {
                 realtimeRoutesEnabled: areRealtimeRoutesEnabled,
                 sharedLogsEnabled: areSharedLogsEnabled,
                 ephemeralPresenceEnabled: isEphemeralPresenceEnabled,
-                mediaBlobsEnabled: areMediaBlobsEnabled
+                mediaBlobsEnabled: areMediaBlobsEnabled,
+                pairingLobbyEnabled: isPairingLobbyEnabled
             ),
             requiresPassword: requiresPassword,
             federationCoordinatorEndpoints: federationCoordinatorEndpoints,

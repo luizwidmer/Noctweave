@@ -52,6 +52,27 @@ final class RelayPairingPreflightTests: XCTestCase {
         XCTAssertEqual(directReadiness.requirement, .opaqueRouteOnly)
     }
 
+    func testPairingLobbyRequirementIsDefaultOffAndExplicitlyAdvertised() async throws {
+        let disabled = RelayConfiguration(rendezvousTransportEnabled: true).makeInfo()
+        XCTAssertThrowsError(try RelayPairingPreflight.validate(
+            endpoint: RelayEndpoint(host: "127.0.0.1", port: 9340),
+            relayInfo: disabled,
+            authToken: nil,
+            requirement: .pairingLobby
+        )) { XCTAssertEqual($0 as? RelayPairingPreflightError, .pairingLobbyUnsupported) }
+
+        let enabled = RelayConfiguration(
+            pairingLobbyEnabled: true,
+            rendezvousTransportEnabled: true
+        ).makeInfo()
+        XCTAssertNoThrow(try RelayPairingPreflight.validate(
+            endpoint: RelayEndpoint(host: "127.0.0.1", port: 9340),
+            relayInfo: enabled,
+            authToken: nil,
+            requirement: .pairingLobby
+        ))
+    }
+
     func testPasswordProtectedRelayChecksCredentialsWithTemporaryProbe() async throws {
         let server = RelayServer(
             store: RelayStore(),

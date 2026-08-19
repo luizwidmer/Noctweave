@@ -33,6 +33,7 @@ Implemented modules:
 | `nw.shared-log` | 1 | `create`, `append`, `sync` |
 | `nw.ephemeral-presence` | 1 | `acquire`, `renew-lease`, `release`, `list` |
 | `nw.media-blobs` | 1 | `create`, `upload`, `fetch`, `release` |
+| `nw.pairing-lobby` | 1 | `acquire`, `release`, `list` (experimental; default off) |
 | `nw.ice-service` | 1 | `acquire` |
 | `nw.federation` | 1 | `register`, `list`, `namespace`, `claim`, `rotate`, `release` |
 | `nw.federation-forward` | 1 | `forward`, `deliver`, `get`, `resolve` |
@@ -54,6 +55,10 @@ passthrough or host roles. See
 [`relay_collaboration_modules_v1.md`](../NoctweaveDocumentation/relay_collaboration_modules_v1.md)
 for exact request fields, limits, persistence behavior, capability handling,
 and the distinction between `nw.blobs@1` and `nw.media-blobs@1`.
+
+The pairing lobby is a separate standard-relay discovery module. It requires
+realtime routes and confidential transport and is never enabled implicitly.
+See [`pairing_lobby_v1.md`](../NoctweaveDocumentation/pairing_lobby_v1.md).
 
 ## Build and test
 
@@ -462,6 +467,28 @@ It does not learn the relationship introduction carried inside the encrypted
 rendezvous. It is only for pairwise contact establishment; it does not perform
 endpoint enrollment, group invitation, route rollover, or history transfer.
 
+## Same-relay pairing discovery
+
+Enable the optional lobby only when users should be able to discover other
+currently visible clients on this relay:
+
+```sh
+--pairing-lobby true \
+--realtime-routes true \
+--rendezvous-transport true
+```
+
+The equivalent environment variable is
+`NOCTWEAVE_PAIRING_LOBBY=true`. The default is `false`. The module is removed
+from relay info and its operations return `unavailable` when disabled.
+
+Listings contain fresh session-only public keys and disposable route
+capabilities, not persona names or relationship material. They expire within
+120 seconds, are process-local, and are publicly enumerable to clients allowed
+to use the relay. Use relay access authentication and deployment rate limits
+on untrusted networks. Exact bounds and metadata exposure are documented in
+the [pairing lobby specification](../NoctweaveDocumentation/pairing_lobby_v1.md).
+
 ## Encrypted blobs
 
 `nw.blobs` stores only encrypted attachment chunks. Disable it with:
@@ -512,6 +539,7 @@ NOCTWEAVE_REALTIME_ROUTES=true
 NOCTWEAVE_SHARED_LOGS=true
 NOCTWEAVE_EPHEMERAL_PRESENCE=true
 NOCTWEAVE_MEDIA_BLOBS=true
+NOCTWEAVE_PAIRING_LOBBY=false
 ```
 
 The same settings are available as `--realtime-routes`, `--shared-logs`,

@@ -17,6 +17,11 @@ The module identifiers and versions are:
 | `nw.ephemeral-presence` | 1 | standard | `acquire`, `renew-lease`, `release`, `list` |
 | `nw.media-blobs` | 1 | standard, with attachments enabled | `create`, `upload`, `fetch`, `release` |
 
+Same-relay contact discovery is intentionally specified separately as the
+default-off experimental `nw.pairing-lobby@1` module. It depends on realtime
+routes but is not a fifth general collaboration store. See
+[`pairing_lobby_v1.md`](pairing_lobby_v1.md).
+
 All four modules require the relay's confidential-transport gate. They are
 not available on `passthrough` or `host` topology roles. The relay validates
 capability proofs, structural bounds, cursors, idempotency, and expiry; it

@@ -15,6 +15,7 @@ enum RelayModuleID: String, Codable, CaseIterable {
     case sharedLog = "nw.shared-log"
     case ephemeralPresence = "nw.ephemeral-presence"
     case mediaBlobs = "nw.media-blobs"
+    case pairingLobby = "nw.pairing-lobby"
     case iceService = "nw.ice-service"
 
     var currentVersion: Int {
@@ -22,7 +23,7 @@ enum RelayModuleID: String, Codable, CaseIterable {
         case .core, .opaqueRoute, .rendezvousTransport: return 2
         case .blobs, .federation, .federationForward, .openDiscovery,
              .netPassthrough, .netHost, .noctwebData, .realtimeRoute, .sharedLog,
-             .ephemeralPresence, .mediaBlobs, .iceService: return 1
+             .ephemeralPresence, .mediaBlobs, .pairingLobby, .iceService: return 1
         }
     }
 }
@@ -91,6 +92,7 @@ struct RelayOperationBinding: Codable, Equatable, Hashable {
         .sharedLog: [.create, .append, .sync],
         .ephemeralPresence: [.acquire, .renewLease, .release, .list],
         .mediaBlobs: [.create, .upload, .fetch, .release],
+        .pairingLobby: [.acquire, .release, .list],
         .iceService: [.acquire]
     ]
 }
@@ -148,6 +150,9 @@ enum RelayRequestBody: Equatable {
     case renewPresence(PresenceLeaseRenewRequestV1)
     case releasePresence(PresenceLeaseReleaseRequestV1)
     case listPresence(PresenceLeaseListRequestV1)
+    case acquirePairingLobby(PairingLobbyAcquireRequestV1)
+    case releasePairingLobby(PairingLobbyReleaseRequestV1)
+    case listPairingLobby(PairingLobbyListRequestV1)
     case createMediaBlob(MediaBlobCreateRequestV1)
     case uploadMediaBlob(MediaBlobUploadRequestV1)
     case fetchMediaBlob(MediaBlobFetchRequestV1)
@@ -217,6 +222,9 @@ enum RelayRequestBody: Equatable {
         case .renewPresence: return .init(module: .ephemeralPresence, version: 1, method: .renewLease)
         case .releasePresence: return .init(module: .ephemeralPresence, version: 1, method: .release)
         case .listPresence: return .init(module: .ephemeralPresence, version: 1, method: .list)
+        case .acquirePairingLobby: return .init(module: .pairingLobby, version: 1, method: .acquire)
+        case .releasePairingLobby: return .init(module: .pairingLobby, version: 1, method: .release)
+        case .listPairingLobby: return .init(module: .pairingLobby, version: 1, method: .list)
         case .createMediaBlob: return .init(module: .mediaBlobs, version: 1, method: .create)
         case .uploadMediaBlob: return .init(module: .mediaBlobs, version: 1, method: .upload)
         case .fetchMediaBlob: return .init(module: .mediaBlobs, version: 1, method: .fetch)
@@ -416,6 +424,12 @@ enum RelayRequestBody: Equatable {
             return .releasePresence(try relayDecodeSingle(PresenceLeaseReleaseRequestV1.self, from: decoder, key: "request"))
         case (.ephemeralPresence, .list):
             return .listPresence(try relayDecodeSingle(PresenceLeaseListRequestV1.self, from: decoder, key: "request"))
+        case (.pairingLobby, .acquire):
+            return .acquirePairingLobby(try relayDecodeSingle(PairingLobbyAcquireRequestV1.self, from: decoder, key: "request"))
+        case (.pairingLobby, .release):
+            return .releasePairingLobby(try relayDecodeSingle(PairingLobbyReleaseRequestV1.self, from: decoder, key: "request"))
+        case (.pairingLobby, .list):
+            return .listPairingLobby(try relayDecodeSingle(PairingLobbyListRequestV1.self, from: decoder, key: "request"))
         case (.mediaBlobs, .create):
             return .createMediaBlob(try relayDecodeSingle(MediaBlobCreateRequestV1.self, from: decoder, key: "request"))
         case (.mediaBlobs, .upload):
@@ -655,6 +669,12 @@ enum RelayRequestBody: Equatable {
             try container.encode(value, forKey: relayWireKey("request"))
         case .listPresence(let value):
             try container.encode(value, forKey: relayWireKey("request"))
+        case .acquirePairingLobby(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
+        case .releasePairingLobby(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
+        case .listPairingLobby(let value):
+            try container.encode(value, forKey: relayWireKey("request"))
         case .createMediaBlob(let value):
             try container.encode(value, forKey: relayWireKey("request"))
         case .uploadMediaBlob(let value):
@@ -774,6 +794,9 @@ struct RelayRequest: Codable, Equatable {
     static func renewPresenceV1(_ value: PresenceLeaseRenewRequestV1) -> RelayRequest { make(.renewPresence(value)) }
     static func releasePresenceV1(_ value: PresenceLeaseReleaseRequestV1) -> RelayRequest { make(.releasePresence(value)) }
     static func listPresenceV1(_ value: PresenceLeaseListRequestV1) -> RelayRequest { make(.listPresence(value)) }
+    static func acquirePairingLobbyV1(_ value: PairingLobbyAcquireRequestV1) -> RelayRequest { make(.acquirePairingLobby(value)) }
+    static func releasePairingLobbyV1(_ value: PairingLobbyReleaseRequestV1) -> RelayRequest { make(.releasePairingLobby(value)) }
+    static func listPairingLobbyV1(_ value: PairingLobbyListRequestV1 = .init()) -> RelayRequest { make(.listPairingLobby(value)) }
     static func createMediaBlobV1(_ value: MediaBlobCreateRequestV1) -> RelayRequest { make(.createMediaBlob(value)) }
     static func uploadMediaBlobV1(_ value: MediaBlobUploadRequestV1) -> RelayRequest { make(.uploadMediaBlob(value)) }
     static func fetchMediaBlobV1(_ value: MediaBlobFetchRequestV1) -> RelayRequest { make(.fetchMediaBlob(value)) }
@@ -904,6 +927,8 @@ enum RelaySuccessBody: Equatable {
     case sharedLogSync(OpaqueRelaySyncBatchV1)
     case presenceLease(PresenceLeaseV1)
     case presenceLeases([PresenceLeaseV1])
+    case pairingLobbyLease(PairingLobbyLeaseV1)
+    case pairingLobbyListings([PairingLobbyLeaseV1])
     case mediaBlobCreated(MediaBlobCreatedV1)
     case mediaBlobChunk(MediaBlobChunkV1)
     case iceCredentials(RelayICECredentialsV1)
@@ -936,6 +961,7 @@ enum RelaySuccessBody: Equatable {
                 || binding == .init(module: .openDiscovery, version: 1, method: .publishDHT)
                 || binding == .init(module: .realtimeRoute, version: 1, method: .unsubscribe)
                 || binding == .init(module: .ephemeralPresence, version: 1, method: .release)
+                || binding == .init(module: .pairingLobby, version: 1, method: .release)
                 || binding == .init(module: .mediaBlobs, version: 1, method: .release)
         case .relayInfo: return binding == .init(module: .core, version: 2, method: .info)
         case .opaqueRoute: return binding.module == .opaqueRoute && binding.version == 2 && [.create, .renew, .teardown].contains(binding.method)
@@ -955,6 +981,8 @@ enum RelaySuccessBody: Equatable {
         case .sharedLogSync: return binding == .init(module: .sharedLog, version: 1, method: .sync)
         case .presenceLease: return binding == .init(module: .ephemeralPresence, version: 1, method: .acquire) || binding == .init(module: .ephemeralPresence, version: 1, method: .renewLease)
         case .presenceLeases: return binding == .init(module: .ephemeralPresence, version: 1, method: .list)
+        case .pairingLobbyLease: return binding == .init(module: .pairingLobby, version: 1, method: .acquire)
+        case .pairingLobbyListings: return binding == .init(module: .pairingLobby, version: 1, method: .list)
         case .mediaBlobCreated: return binding == .init(module: .mediaBlobs, version: 1, method: .create)
         case .mediaBlobChunk: return binding == .init(module: .mediaBlobs, version: 1, method: .upload) || binding == .init(module: .mediaBlobs, version: 1, method: .fetch)
         case .iceCredentials: return binding == .init(module: .iceService, version: 1, method: .acquire)
@@ -1006,7 +1034,7 @@ enum RelaySuccessBody: Equatable {
 
     static func decode(for binding: RelayOperationBinding, from decoder: Decoder) throws -> RelaySuccessBody {
         switch (binding.module, binding.method) {
-        case (.core, .health), (.rendezvousTransport, .register), (.rendezvousTransport, .append), (.rendezvousTransport, .delete), (.openDiscovery, .publishDHT), (.realtimeRoute, .unsubscribe), (.ephemeralPresence, .release), (.mediaBlobs, .release):
+        case (.core, .health), (.rendezvousTransport, .register), (.rendezvousTransport, .append), (.rendezvousTransport, .delete), (.openDiscovery, .publishDHT), (.realtimeRoute, .unsubscribe), (.ephemeralPresence, .release), (.pairingLobby, .release), (.mediaBlobs, .release):
             try relayRequireExactObject(decoder, keys: [])
             return .empty
         case (.core, .info):
@@ -1041,6 +1069,15 @@ enum RelaySuccessBody: Equatable {
             return .presenceLease(try relayDecodeSingle(PresenceLeaseV1.self, from: decoder, key: "lease"))
         case (.ephemeralPresence, .list):
             return .presenceLeases(try relayDecodeSingle([PresenceLeaseV1].self, from: decoder, key: "leases"))
+        case (.pairingLobby, .acquire):
+            return .pairingLobbyLease(try relayDecodeSingle(PairingLobbyLeaseV1.self, from: decoder, key: "listing"))
+        case (.pairingLobby, .list):
+            let listings = try relayDecodeSingle([PairingLobbyLeaseV1].self, from: decoder, key: "listings")
+            guard listings.count <= PairingLobbyRelayLimitsV1.maximumListings,
+                  listings.allSatisfy(\.isStructurallyValid) else {
+                throw relayWireError(decoder, "Pairing lobby listing response is invalid")
+            }
+            return .pairingLobbyListings(listings)
         case (.mediaBlobs, .create):
             return .mediaBlobCreated(try relayDecodeSingle(MediaBlobCreatedV1.self, from: decoder, key: "blob"))
         case (.mediaBlobs, .upload), (.mediaBlobs, .fetch):
@@ -1159,6 +1196,13 @@ enum RelaySuccessBody: Equatable {
         case .sharedLogAppend(let value): try container.encode(value, forKey: relayWireKey("receipt"))
         case .presenceLease(let value): try container.encode(value, forKey: relayWireKey("lease"))
         case .presenceLeases(let value): try container.encode(value, forKey: relayWireKey("leases"))
+        case .pairingLobbyLease(let value): try container.encode(value, forKey: relayWireKey("listing"))
+        case .pairingLobbyListings(let value):
+            guard value.count <= PairingLobbyRelayLimitsV1.maximumListings,
+                  value.allSatisfy(\.isStructurallyValid) else {
+                throw relayWireError(encoder, "Pairing lobby listing response is invalid")
+            }
+            try container.encode(value, forKey: relayWireKey("listings"))
         case .mediaBlobCreated(let value): try container.encode(value, forKey: relayWireKey("blob"))
         case .mediaBlobChunk(let value): try container.encode(value, forKey: relayWireKey("chunk"))
         case .iceCredentials(let value): try container.encode(value, forKey: relayWireKey("credentials"))

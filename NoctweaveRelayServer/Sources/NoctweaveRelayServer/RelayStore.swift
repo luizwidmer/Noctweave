@@ -86,6 +86,7 @@ final class RelayStore {
     private var rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:]
     private var opaqueRouteRuntimeV2 = OpaqueRouteRuntimeStateV2()
     private var realtimeRuntime = RealtimeRelayRuntimeV1()
+    private var pairingLobbyRuntime = PairingLobbyRelayRuntimeV1()
     private var attachments: [String: [AttachmentRecord]] = [:]
     private var federationNodes: [String: FederationNodeRecord] = [:]
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
@@ -207,6 +208,9 @@ final class RelayStore {
     func renewPresenceV1(_ request: PresenceLeaseRenewRequestV1) throws -> PresenceLeaseV1 { try performSync { try realtimeRuntime.renewPresence(request) } }
     func releasePresenceV1(_ request: PresenceLeaseReleaseRequestV1) throws { try performSync { try realtimeRuntime.releasePresence(request) } }
     func listPresenceV1(_ request: PresenceLeaseListRequestV1) throws -> [PresenceLeaseV1] { try performSync { try realtimeRuntime.listPresence(request) } }
+    func acquirePairingLobbyV1(_ request: PairingLobbyAcquireRequestV1) throws -> PairingLobbyLeaseV1 { try performSync { try pairingLobbyRuntime.acquire(request) } }
+    func releasePairingLobbyV1(_ request: PairingLobbyReleaseRequestV1) throws { try performSync { try pairingLobbyRuntime.release(request) } }
+    func listPairingLobbyV1(_ request: PairingLobbyListRequestV1) -> [PairingLobbyLeaseV1] { performSync { pairingLobbyRuntime.list(request) } }
     func createMediaBlobV1(_ request: MediaBlobCreateRequestV1) throws -> MediaBlobCreatedV1 { try performSync { let result = try realtimeRuntime.createMediaBlob(request); try saveLocked(); return result } }
     func uploadMediaBlobV1(_ request: MediaBlobUploadRequestV1) throws -> MediaBlobChunkV1 { try performSync { let result = try realtimeRuntime.uploadMediaBlob(request); try saveLocked(); return result } }
     func fetchMediaBlobV1(_ request: MediaBlobFetchRequestV1) throws -> MediaBlobChunkV1 { try performSync { try realtimeRuntime.fetchMediaBlob(request) } }

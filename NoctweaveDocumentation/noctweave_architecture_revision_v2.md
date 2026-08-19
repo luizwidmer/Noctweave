@@ -369,6 +369,9 @@ is explicitly enabled:
   only when its runtime is enabled;
 - `nw.noctweb-data` — experimental stateful-site storage, advertised only by
   a host-capable relay whose operator explicitly enables it.
+- `nw.pairing-lobby` — experimental process-local same-relay contact
+  discovery, advertised only when a standard-relay operator explicitly enables
+  it together with realtime routes.
 
 `nw.direct` is a provisional client-to-client capability, not relay plaintext
 logic. A module is not advertised until its exact runtime exists. The public

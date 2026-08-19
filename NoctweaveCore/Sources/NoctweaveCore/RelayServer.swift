@@ -1066,6 +1066,26 @@ public final class RelayServer {
             }
             do { return .success(.presenceLeases(try await store.listPresenceV1(payload)), respondingTo: request) }
             catch { return realtimeRelayErrorResponse(error, respondingTo: request) }
+        case .acquirePairingLobby(let payload):
+            guard configuration.isPairingLobbyEnabled,
+                  hasConfidentialRouteTransport(sourceKey) else {
+                return .error("The pairing lobby is disabled or requires a standard relay, realtime routes, and confidential transport.", code: .unavailable, respondingTo: request)
+            }
+            do { return .success(.pairingLobbyLease(try await store.acquirePairingLobbyV1(payload)), respondingTo: request) }
+            catch { return realtimeRelayErrorResponse(error, respondingTo: request) }
+        case .releasePairingLobby(let payload):
+            guard configuration.isPairingLobbyEnabled,
+                  hasConfidentialRouteTransport(sourceKey) else {
+                return .error("The pairing lobby is disabled or requires a standard relay, realtime routes, and confidential transport.", code: .unavailable, respondingTo: request)
+            }
+            do { try await store.releasePairingLobbyV1(payload); return .success(.empty, respondingTo: request) }
+            catch { return realtimeRelayErrorResponse(error, respondingTo: request) }
+        case .listPairingLobby(let payload):
+            guard configuration.isPairingLobbyEnabled,
+                  hasConfidentialRouteTransport(sourceKey) else {
+                return .error("The pairing lobby is disabled or requires a standard relay, realtime routes, and confidential transport.", code: .unavailable, respondingTo: request)
+            }
+            return .success(.pairingLobbyListings(await store.listPairingLobbyV1(payload)), respondingTo: request)
         case .createMediaBlob(let payload):
             guard configuration.areMediaBlobsEnabled,
                   hasConfidentialRouteTransport(sourceKey) else {

@@ -38,6 +38,7 @@ independent audit or formal proof.
 | SR-30 | Browser-addressable relay bridges must not become cross-origin capability or transport-downgrade surfaces. | Require same-origin browser requests and an exact JSON media type; reject null, duplicate, malformed, cross-site, and DNS-rebinding-style loopback origins; apply the same confidential-operation gate to HTTP and WebSocket; keep machine clients without browser origin metadata interoperable. |
 | SR-31 | Open-discovery egress must not expose credentials or reach private infrastructure. | Send bearer credentials only over HTTPS or literal loopback HTTP; accept native-overlay seeds and peer hints only when they are public HTTPS relay endpoints; reject redirects, private/special-use destinations, plaintext hints, and unsupported transports. |
 | SR-32 | Release dependency evidence must cover every shipped build surface. | Inventory exact Swift, Python, Bun/npm, Docker, and vendored cryptographic inputs in native and CycloneDX SBOMs; keep lockfiles immutable; audit the resolved graph; block known vulnerable security floors and unexpected pin drift. |
+| SR-33 | Easier pairing must not create a relay identity directory or expose the invitation. | Keep same-relay discovery default-off, process-local, confidential-transport-only, and bounded to two minutes; publish only fresh signed session keys and disposable capabilities; encrypt requests, decisions, and the one-use pairing link; require explicit approval and offer a human badge comparison. |
 
 ## Acknowledgement semantics
 

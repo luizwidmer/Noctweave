@@ -48,6 +48,7 @@ struct ServerConfig {
       --shared-logs <bool>             Enable durable encrypted shared logs
       --ephemeral-presence <bool>      Enable short-lived presence leases
       --media-blobs <bool>             Enable realtime encrypted media blobs
+      --pairing-lobby <bool>           Enable same-relay pairing discovery (default: false)
       --opaque-route-runtime <bool>    Enable the direct-delivery runtime (default: true)
       --rendezvous-transport <bool>    Enable bounded one-use rendezvous transport
       --ice-url <stun-or-turn-url>     Advertise a coturn STUN/TURN URL (repeatable)
@@ -114,6 +115,7 @@ struct ServerConfig {
     var sharedLogsEnabled: Bool
     var ephemeralPresenceEnabled: Bool
     var mediaBlobsEnabled: Bool
+    var pairingLobbyEnabled: Bool
     var relayName: String?
     var operatorNote: String?
     var accessPassword: String?
@@ -259,6 +261,10 @@ struct ServerConfig {
         var mediaBlobsEnabled = parseBoolFlag(
             environment["NOCTWEAVE_MEDIA_BLOBS"] ?? "true",
             defaultValue: true
+        )
+        var pairingLobbyEnabled = parseBoolFlag(
+            environment["NOCTWEAVE_PAIRING_LOBBY"] ?? "false",
+            defaultValue: false
         )
         var relayName: String?
         var operatorNote: String?
@@ -567,6 +573,10 @@ struct ServerConfig {
             case "--media-blobs":
                 if let value = iterator.next() {
                     mediaBlobsEnabled = parseBoolFlag(value, defaultValue: true)
+                }
+            case "--pairing-lobby":
+                if let value = iterator.next() {
+                    pairingLobbyEnabled = parseBoolFlag(value, defaultValue: false)
                 }
             case "--attachment-max-ttl-minutes":
                 if let value = iterator.next(), let parsed = Int(value) {
@@ -923,6 +933,7 @@ struct ServerConfig {
             sharedLogsEnabled: sharedLogsEnabled,
             ephemeralPresenceEnabled: ephemeralPresenceEnabled,
             mediaBlobsEnabled: mediaBlobsEnabled,
+            pairingLobbyEnabled: pairingLobbyEnabled,
             relayName: relayName,
             operatorNote: operatorNote,
             accessPassword: accessPassword,
@@ -1385,6 +1396,7 @@ var relayConfiguration = RelayConfiguration(
     sharedLogsEnabled: config.sharedLogsEnabled,
     ephemeralPresenceEnabled: config.ephemeralPresenceEnabled,
     mediaBlobsEnabled: config.mediaBlobsEnabled,
+    pairingLobbyEnabled: config.pairingLobbyEnabled,
     relayName: config.relayName,
     operatorNote: config.operatorNote,
     softwareVersion: ServerConfig.advertisedSoftwareVersion,
@@ -1634,11 +1646,13 @@ do {
                     || config.sharedLogsEnabled
                     || config.ephemeralPresenceEnabled
                     || config.mediaBlobsEnabled
+                    || config.pairingLobbyEnabled
             ) ? [
                 config.realtimeRoutesEnabled ? "routes" : nil,
                 config.sharedLogsEnabled ? "logs" : nil,
                 config.ephemeralPresenceEnabled ? "presence" : nil,
-                config.mediaBlobsEnabled ? "media" : nil
+                config.mediaBlobsEnabled ? "media" : nil,
+                config.pairingLobbyEnabled ? "pairing lobby" : nil
             ].compactMap { $0 }.joined(separator: " · ") : "Disabled",
             "ICE traversal": config.iceService.map {
                 "\($0.urls.count) endpoint(s) · \($0.credentialMode.rawValue)"

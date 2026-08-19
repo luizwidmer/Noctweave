@@ -864,6 +864,17 @@ final class RelayHandler: ChannelInboundHandler {
             guard relayConfiguration.isEphemeralPresenceEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Presence leases are disabled or require a standard relay and confidential transport.", code: .unavailable) }
             do { return success(.presenceLeases(try store.listPresenceV1(payload))) }
             catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .acquirePairingLobby(let payload):
+            guard relayConfiguration.isPairingLobbyEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("The pairing lobby is disabled or requires a standard relay, realtime routes, and confidential transport.", code: .unavailable) }
+            do { return success(.pairingLobbyLease(try store.acquirePairingLobbyV1(payload))) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .releasePairingLobby(let payload):
+            guard relayConfiguration.isPairingLobbyEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("The pairing lobby is disabled or requires a standard relay, realtime routes, and confidential transport.", code: .unavailable) }
+            do { try store.releasePairingLobbyV1(payload); return success(.empty) }
+            catch { return context.eventLoop.makeSucceededFuture(realtimeRelayErrorResponse(error, respondingTo: request)) }
+        case .listPairingLobby(let payload):
+            guard relayConfiguration.isPairingLobbyEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("The pairing lobby is disabled or requires a standard relay, realtime routes, and confidential transport.", code: .unavailable) }
+            return success(.pairingLobbyListings(store.listPairingLobbyV1(payload)))
         case .createMediaBlob(let payload):
             guard relayConfiguration.areMediaBlobsEnabled, hasConfidentialTransport(requestSourceKey) else { return failure("Media blobs are disabled or require enabled attachments, a standard relay, and confidential transport.", code: .unavailable) }
             do { return success(.mediaBlobCreated(try store.createMediaBlobV1(payload))) }

@@ -13,6 +13,7 @@ public actor RelayStore {
     /// only digests of lane authorities; raw bearer material is never stored.
     private var rendezvousRoutesV2: [String: RendezvousRelayRouteRecordV2] = [:]
     private var realtimeRuntime = RealtimeRelayRuntimeV1()
+    private var pairingLobbyRuntime = PairingLobbyRelayRuntimeV1()
     private var attachments: [String: [AttachmentRecord]] = [:]
     private var federationNodes: [String: FederationNodeRecord] = [:]
     private var coordinatorPinnedPublicKeys: [String: Data] = [:]
@@ -158,6 +159,24 @@ public actor RelayStore {
 
     public func listPresenceV1(_ request: PresenceLeaseListRequestV1) throws -> [PresenceLeaseV1] {
         try realtimeRuntime.listPresence(request)
+    }
+
+    public func acquirePairingLobbyV1(
+        _ request: PairingLobbyAcquireRequestV1
+    ) throws -> PairingLobbyLeaseV1 {
+        try pairingLobbyRuntime.acquire(request)
+    }
+
+    public func releasePairingLobbyV1(
+        _ request: PairingLobbyReleaseRequestV1
+    ) throws {
+        try pairingLobbyRuntime.release(request)
+    }
+
+    public func listPairingLobbyV1(
+        _ request: PairingLobbyListRequestV1
+    ) -> [PairingLobbyLeaseV1] {
+        pairingLobbyRuntime.list(request)
     }
 
     public func createMediaBlobV1(_ request: MediaBlobCreateRequestV1) throws -> MediaBlobCreatedV1 {

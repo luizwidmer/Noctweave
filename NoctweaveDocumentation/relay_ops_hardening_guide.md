@@ -147,6 +147,15 @@ realtime-route lifetimes, 100,000 shared-log records, 16 KiB presence payloads,
 temporal-bucketed; do not silently apply the normal attachment bucket policy
 to them. Treat their timing as an explicit metadata tradeoff.
 
+Keep `nw.pairing-lobby@1` disabled unless same-relay discovery is a deliberate
+product feature. When enabled it requires realtime routes, exposes an
+enumerable set of at most 32 opaque 12 KiB announcements, and retains each
+entry only in process memory for 30 to 120 seconds. Prefer an access password
+and edge rate limits on public relays. The relay still observes listing,
+request, and response timing, and an authorized hostile client can consume
+bounded lobby or realtime-route capacity. Do not log listings, lease secrets,
+route capabilities, encrypted requests, or encrypted pairing links.
+
 Route sync is non-destructive but not permanent: expiry and bounded quota are
 the retention controls. The relay is not a history archive.
 

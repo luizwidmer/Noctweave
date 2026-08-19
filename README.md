@@ -55,6 +55,13 @@ and have module-specific retention and size bounds. `nw.media-blobs@1` is
 distinct from the legacy `nw.blobs@1` attachment surface. See the
 [collaboration module specification](NoctweaveDocumentation/relay_collaboration_modules_v1.md).
 
+Operators may separately enable the experimental, default-off
+`nw.pairing-lobby@1` module. Two clients on that relay can compare a short
+badge, request contact, approve, and transfer the ordinary one-use pairing link
+inside a fresh PQ-encrypted disposable route. Listings contain no persona or
+relationship identity and expire within two minutes. See the
+[same-relay pairing specification](NoctweaveDocumentation/pairing_lobby_v1.md).
+
 Host-capable relays may additionally enable `nw.noctweb-data@1`, a bounded
 origin-scoped document service for stateful Noctweb sites. It supports public
 catalogs and signed per-site accounts for carts, profiles, and orders without
@@ -84,6 +91,12 @@ relay rendezvous or carry the same authenticated transcript directly by QR or
 password-protected files. Relays see capability-authorized opaque packets,
 ordered route positions, and bounded retention—not accounts, global user IDs,
 contact graphs, or plaintext.
+
+When explicitly enabled by an operator, same-relay discovery can remove the
+manual invitation handoff. It publishes only fresh session keys and disposable
+request capabilities, requires explicit approval, and then feeds the unchanged
+one-use rendezvous flow. It does not publish persona labels or create relay
+accounts.
 
 The architecture also includes immutable typed events, exact-ciphertext retry
 intents, non-destructive cursor synchronization, make-before-break route sets,
@@ -182,6 +195,7 @@ transport is available to integrations that supply that boundary.
 | Review the 1.0 architecture | [`Noctweave 1.0 architecture`](NoctweaveDocumentation/noctweave_architecture_revision_v2.md) |
 | Review the protocol | [`Protocol specification`](NoctweaveDocumentation/noctweave_protocol_spec_v1.md) |
 | Integrate one-to-one calls | [`Experimental call protocol`](NoctweaveDocumentation/call_protocol_v1.md) |
+| Add same-relay pairing discovery | [`Pairing lobby v1`](NoctweaveDocumentation/pairing_lobby_v1.md) |
 | Deploy STUN/TURN for calls | [`coturn traversal guide`](NoctweaveDocumentation/coturn_call_traversal.md) |
 
 ### Relay

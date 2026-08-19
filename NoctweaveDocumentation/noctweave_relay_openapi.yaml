@@ -91,6 +91,9 @@ components:
             - $ref: "#/components/schemas/RendezvousAppendRequestBinding"
             - $ref: "#/components/schemas/RendezvousSyncRequestBinding"
             - $ref: "#/components/schemas/RendezvousDeleteRequestBinding"
+            - $ref: "#/components/schemas/PairingLobbyAcquireRequestBinding"
+            - $ref: "#/components/schemas/PairingLobbyReleaseRequestBinding"
+            - $ref: "#/components/schemas/PairingLobbyListRequestBinding"
             - $ref: "#/components/schemas/BlobUploadRequestBinding"
             - $ref: "#/components/schemas/BlobFetchRequestBinding"
             - $ref: "#/components/schemas/FederationRegisterRequestBinding"
@@ -124,6 +127,7 @@ components:
         - nw.core
         - nw.opaque-route
         - nw.rendezvous-transport
+        - nw.pairing-lobby
         - nw.blobs
         - nw.ice-service
         - nw.federation
@@ -166,6 +170,8 @@ components:
             - $ref: "#/components/schemas/OpaqueRouteSyncSuccessBody"
             - $ref: "#/components/schemas/OpaqueRouteCommitSuccessBody"
             - $ref: "#/components/schemas/RendezvousSyncSuccessBody"
+            - $ref: "#/components/schemas/PairingLobbyLeaseSuccessBody"
+            - $ref: "#/components/schemas/PairingLobbyListingsSuccessBody"
             - $ref: "#/components/schemas/AttachmentSuccessBody"
             - $ref: "#/components/schemas/FederationNodesSuccessBody"
             - $ref: "#/components/schemas/NoctwebNamespaceSnapshotSuccessBody"
@@ -204,6 +210,8 @@ components:
                 - $ref: "#/components/schemas/OpaqueRouteSyncSuccessBody"
                 - $ref: "#/components/schemas/OpaqueRouteCommitSuccessBody"
                 - $ref: "#/components/schemas/RendezvousSyncSuccessBody"
+                - $ref: "#/components/schemas/PairingLobbyLeaseSuccessBody"
+                - $ref: "#/components/schemas/PairingLobbyListingsSuccessBody"
                 - $ref: "#/components/schemas/AttachmentSuccessBody"
                 - $ref: "#/components/schemas/FederationNodesSuccessBody"
                 - $ref: "#/components/schemas/NoctwebNamespaceSnapshotSuccessBody"
@@ -349,6 +357,27 @@ components:
         version: { const: 2 }
         method: { const: delete }
         body: { $ref: "#/components/schemas/DeleteRendezvousTransportV2Request" }
+    PairingLobbyAcquireRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.pairing-lobby }
+        version: { const: 1 }
+        method: { const: acquire }
+        body: { $ref: "#/components/schemas/PairingLobbyAcquireRequestBodyV1" }
+    PairingLobbyReleaseRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.pairing-lobby }
+        version: { const: 1 }
+        method: { const: release }
+        body: { $ref: "#/components/schemas/PairingLobbyReleaseRequestBodyV1" }
+    PairingLobbyListRequestBinding:
+      type: object
+      properties:
+        module: { const: nw.pairing-lobby }
+        version: { const: 1 }
+        method: { const: list }
+        body: { $ref: "#/components/schemas/PairingLobbyListRequestBodyV1" }
     BlobUploadRequestBinding:
       type: object
       properties:
@@ -579,6 +608,99 @@ components:
       required: [batch]
       properties:
         batch: { $ref: "#/components/schemas/RendezvousRelaySyncBatchV2" }
+      additionalProperties: false
+    PairingLobbyLeaseSuccessBody:
+      type: object
+      required: [listing]
+      properties:
+        listing: { $ref: "#/components/schemas/PairingLobbyLeaseV1" }
+      additionalProperties: false
+    PairingLobbyListingsSuccessBody:
+      type: object
+      required: [listings]
+      properties:
+        listings:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/PairingLobbyLeaseV1" }
+      additionalProperties: false
+    PairingLobbyAcquireRequestBodyV1:
+      type: object
+      required: [request]
+      properties:
+        request: { $ref: "#/components/schemas/PairingLobbyAcquireRequestV1" }
+      additionalProperties: false
+    PairingLobbyReleaseRequestBodyV1:
+      type: object
+      required: [request]
+      properties:
+        request: { $ref: "#/components/schemas/PairingLobbyReleaseRequestV1" }
+      additionalProperties: false
+    PairingLobbyListRequestBodyV1:
+      type: object
+      required: [request]
+      properties:
+        request:
+          type: object
+          maxProperties: 0
+          additionalProperties: false
+      additionalProperties: false
+    PairingLobbyAcquireRequestV1:
+      type: object
+      required: [leaseID, leaseCapability, announcement, ttlSeconds]
+      properties:
+        leaseID:
+          type: string
+          contentEncoding: base64
+          minLength: 24
+          maxLength: 24
+        leaseCapability:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+        announcement:
+          type: string
+          contentEncoding: base64
+          minLength: 4
+          maxLength: 16384
+        ttlSeconds:
+          type: integer
+          minimum: 30
+          maximum: 120
+      additionalProperties: false
+    PairingLobbyReleaseRequestV1:
+      type: object
+      required: [leaseID, leaseCapability]
+      properties:
+        leaseID:
+          type: string
+          contentEncoding: base64
+          minLength: 24
+          maxLength: 24
+        leaseCapability:
+          type: string
+          contentEncoding: base64
+          minLength: 44
+          maxLength: 44
+      additionalProperties: false
+    PairingLobbyLeaseV1:
+      type: object
+      required: [leaseID, announcement, expiresAt]
+      properties:
+        leaseID:
+          type: string
+          contentEncoding: base64
+          minLength: 24
+          maxLength: 24
+        announcement:
+          type: string
+          contentEncoding: base64
+          minLength: 4
+          maxLength: 16384
+        expiresAt:
+          type: string
+          format: date-time
       additionalProperties: false
     AttachmentSuccessBody:
       type: object

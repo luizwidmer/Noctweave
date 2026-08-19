@@ -9,6 +9,7 @@ public enum RelayPairingPreflightError: Error, Equatable, LocalizedError {
     case coordinatorUnsupported
     case opaqueRouteUnsupported
     case rendezvousTransportUnsupported
+    case pairingLobbyUnsupported
     case authenticationRequired
     case opaqueRouteProbeRejected(String)
     case invalidOpaqueRouteProbeResponse
@@ -33,6 +34,8 @@ public enum RelayPairingPreflightError: Error, Equatable, LocalizedError {
             return "This relay does not advertise the opaque-route service required for conversations."
         case .rendezvousTransportUnsupported:
             return "This relay does not allow one-use pairing rendezvous. The operator must enable nw.rendezvous-transport v2."
+        case .pairingLobbyUnsupported:
+            return "This relay has not enabled its default-off same-relay pairing lobby and realtime routes."
         case .authenticationRequired:
             return "This relay requires its access password before pairing can be checked."
         case .opaqueRouteProbeRejected(let message):
@@ -54,6 +57,10 @@ public enum RelayPairingRequirement: String, Equatable, Sendable {
 
     /// Both participants use one relay's bounded one-use rendezvous lanes.
     case rendezvous
+
+    /// The relay exposes a short-lived, explicit opt-in discovery window and
+    /// disposable encrypted approval routes before normal rendezvous pairing.
+    case pairingLobby
 }
 
 public struct RelayPairingReadiness: Equatable {
@@ -121,7 +128,7 @@ public enum RelayPairingPreflight {
 
         if performRuntimeProbe {
             try await verifyOpaqueRouteRuntime(client: client, timeout: timeout)
-            if requirement == .rendezvous {
+            if requirement == .rendezvous || requirement == .pairingLobby {
                 try await verifyRendezvousRuntime(client: client, timeout: timeout)
             }
         }
@@ -150,12 +157,24 @@ public enum RelayPairingPreflight {
         ) == true else {
             throw RelayPairingPreflightError.opaqueRouteUnsupported
         }
-        if requirement == .rendezvous {
+        if requirement == .rendezvous || requirement == .pairingLobby {
             guard relayInfo.protocolCapabilities?.supports(
                 module: "nw.rendezvous-transport",
                 version: 2
             ) == true else {
                 throw RelayPairingPreflightError.rendezvousTransportUnsupported
+            }
+        }
+        if requirement == .pairingLobby {
+            guard relayInfo.protocolCapabilities?.supports(
+                module: "nw.realtime-route",
+                version: 1
+            ) == true,
+            relayInfo.protocolCapabilities?.supports(
+                module: "nw.pairing-lobby",
+                version: 1
+            ) == true else {
+                throw RelayPairingPreflightError.pairingLobbyUnsupported
             }
         }
         if relayInfo.requiresPassword == true,

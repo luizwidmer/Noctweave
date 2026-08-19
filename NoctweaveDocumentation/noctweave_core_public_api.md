@@ -115,6 +115,14 @@ payload before relay submission. See
 [`relay_collaboration_modules_v1.md`](relay_collaboration_modules_v1.md) for
 the exact operation fields, bounds, and persistence rules.
 
+The experimental `nw.pairing-lobby@1` module is independently default-off.
+`PairingLobbyHostSessionV1` and `PairingLobbyRequesterSessionV1` generate fresh
+session-only PQ authorities, verify short comparison badges, and exchange an
+ordinary one-use pairing link over disposable encrypted realtime routes.
+`RelayPairingPreflight` accepts `.pairingLobby` to require lobby, realtime,
+rendezvous, and opaque-route readiness before showing the shortcut. See
+[`pairing_lobby_v1.md`](pairing_lobby_v1.md).
+
 Host-capable relays may opt into experimental `nw.noctweb-data@1`. Swift
 integrations use `NoctwebData*V1` request and receipt models,
 `RelayNoctwebDataStore`, and the corresponding typed `RelayRequest` factories.
@@ -150,6 +158,11 @@ let relayPairing = try await RelayPairingPreflight.check(
 let directPairing = try await RelayPairingPreflight.check(
     client: relayClient,
     requirement: .opaqueRouteOnly
+)
+
+let sameRelayPairing = try await RelayPairingPreflight.check(
+    client: relayClient,
+    requirement: .pairingLobby
 )
 ```
 

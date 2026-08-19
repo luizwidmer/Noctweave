@@ -68,6 +68,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
     var sharedLogsEnabled: Bool?
     var ephemeralPresenceEnabled: Bool?
     var mediaBlobsEnabled: Bool?
+    var pairingLobbyEnabled: Bool?
     var relayPeerExchangeLimit: Int
     var openFederationDHTEnabled: Bool
     var openFederationDHTMaxRecords: Int?
@@ -137,6 +138,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         sharedLogsEnabled = configuration.areSharedLogsEnabled
         ephemeralPresenceEnabled = configuration.isEphemeralPresenceEnabled
         mediaBlobsEnabled = configuration.areMediaBlobsEnabled
+        pairingLobbyEnabled = configuration.isPairingLobbyEnabled
         relayPeerExchangeLimit = configuration.federation.mode == .open
             ? (configuration.relayPeerExchangeLimit ?? 0)
             : 0
@@ -338,6 +340,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             sharedLogsEnabled: sharedLogsEnabled ?? current.areSharedLogsEnabled,
             ephemeralPresenceEnabled: ephemeralPresenceEnabled ?? current.isEphemeralPresenceEnabled,
             mediaBlobsEnabled: mediaBlobsEnabled ?? current.areMediaBlobsEnabled,
+            pairingLobbyEnabled: pairingLobbyEnabled ?? current.isPairingLobbyEnabled,
             relayName: normalizedName.nilIfEmpty,
             operatorNote: normalizedNote.nilIfEmpty,
             softwareVersion: current.softwareVersion,
@@ -396,6 +399,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
             sharedLogsEnabled: config.sharedLogsEnabled,
             ephemeralPresenceEnabled: config.ephemeralPresenceEnabled,
             mediaBlobsEnabled: config.mediaBlobsEnabled,
+            pairingLobbyEnabled: config.pairingLobbyEnabled,
             relayName: config.relayName,
             operatorNote: config.operatorNote,
             softwareVersion: ServerConfig.advertisedSoftwareVersion,
@@ -451,6 +455,7 @@ struct OperatorEditableConfiguration: Codable, Equatable {
         config.sharedLogsEnabled = updated.areSharedLogsEnabled
         config.ephemeralPresenceEnabled = updated.isEphemeralPresenceEnabled
         config.mediaBlobsEnabled = updated.areMediaBlobsEnabled
+        config.pairingLobbyEnabled = updated.isPairingLobbyEnabled
         config.iceService = updated.iceService
         config.relayName = updated.relayName
         config.operatorNote = updated.operatorNote

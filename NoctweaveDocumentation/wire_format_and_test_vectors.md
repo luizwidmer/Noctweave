@@ -71,6 +71,7 @@ Implemented relay modules are:
 | `nw.shared-log` | 1 | retained ordered opaque records |
 | `nw.ephemeral-presence` | 1 | expiring opaque presence leases |
 | `nw.media-blobs` | 1 | capability-authorized encrypted media chunks |
+| `nw.pairing-lobby` | 1 | default-off, process-local same-relay pairing discovery |
 | `nw.federation` | 1 | explicit operator federation operations |
 | `nw.open-discovery` | 1 | experimental bounded signed relay discovery |
 
@@ -82,6 +83,12 @@ objects are strictly typed in the Swift wire model; payload fields are opaque
 the exact operation fields and bounds. Their realtime paths are immediate and
 do not use configured temporal buckets. `nw.blobs@1` remains the legacy,
 bucket-aware attachment surface.
+
+`nw.pairing-lobby@1` uses `acquire`, `release`, and `list`. Its listing bytes
+are opaque to the relay and contain only fresh session public keys and
+disposable capabilities. The cross-language badge vector is
+`Acorn Harbor · 788982` for 1,952 signing-public-key bytes of `0x41`. See
+[`pairing_lobby_v1.md`](pairing_lobby_v1.md) for exact fields and bounds.
 
 ## Pairing invitation boundary
 

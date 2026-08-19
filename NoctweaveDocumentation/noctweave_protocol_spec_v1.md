@@ -410,6 +410,7 @@ Current bindings are:
 | `nw.shared-log` | 1 | provisional | `create`, `append`, `sync` |
 | `nw.ephemeral-presence` | 1 | provisional | `acquire`, `renew-lease`, `release`, `list` |
 | `nw.media-blobs` | 1 | provisional | `create`, `upload`, `fetch`, `release` |
+| `nw.pairing-lobby` | 1 | experimental | `acquire`, `release`, `list` (advertised only when explicitly enabled) |
 | `nw.ice-service` | 1 | provisional | `acquire` |
 | `nw.federation` | 1 | provisional | `register`, `list`, `namespace`, `claim`, `rotate`, `release` |
 | `nw.federation-forward` | 1 | provisional | `forward`, `deliver`, `get`, `resolve` |
@@ -449,6 +450,16 @@ Realtime routes and shared logs bypass the relay's configured temporal-bucket
 schedule; `nw.ephemeral-presence@1` is process-local and ephemeral; and
 `nw.media-blobs@1` has its own retention policy. These modules do not replace
 or alias the legacy `nw.blobs@1` attachment module.
+
+`nw.pairing-lobby@1` is a separate default-off, standard-relay-only discovery
+surface. It stores at most 32 opaque, process-local announcements for 30 to
+120 seconds and requires both confidential transport and
+`nw.realtime-route@1`. Client announcements and requests use fresh ML-DSA-65
+and ML-KEM-768 material; an accepted response carries the ordinary one-use
+pairing link only inside PQ-encrypted disposable routes. It creates no account
+or persistent directory. Exact fields, human verification, metadata exposure,
+and denial-of-service limits are specified in
+[`pairing_lobby_v1.md`](pairing_lobby_v1.md).
 
 Host-capable relays may separately advertise `nw.noctweb-data@1`. It provides
 bounded origin-scoped document collections and per-origin ML-DSA visitor
