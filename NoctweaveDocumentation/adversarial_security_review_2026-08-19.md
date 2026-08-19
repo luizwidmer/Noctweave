@@ -4,9 +4,9 @@ Date: August 19, 2026
 
 Assessment: source-assisted malicious-input and attack-surface review
 
-Disposition: all eight confirmed findings in this pass are patched locally and
-verified; one previously documented experimental-federation limitation remains
-mitigated rather than eliminated
+Disposition: all eight confirmed findings in this pass are patched, verified,
+and published; one previously documented experimental-federation limitation
+remains mitigated rather than eliminated
 
 ## Executive summary
 
@@ -19,7 +19,7 @@ It also reviewed the recent Noctweave, NoctweaveJS, and native-relay commits
 requested for this assessment.
 
 Eight new findings were confirmed: four Medium and four Low. All eight are
-fixed in the current working trees. No new Critical or High finding was
+fixed on the published `main` branches. No new Critical or High finding was
 confirmed. The database-creation feature is independently configured,
 default-off, and password-gated; enabling ordinary site-data service does not
 enable provisioning.
@@ -397,19 +397,27 @@ application build was checked separately.
    Core external live-TLS test and the Browser and Lab live-host tests require
    operator-supplied endpoints. All local, simulated, container, and in-process
    counterparts ran.
-6. **Restored NoctBoard workflows have local evidence only until publication.**
-   Their exact commands passed locally, but GitHub cannot execute uncommitted
-   workflows.
-7. **Publication is intentionally pending.** This pass has not committed or
-   pushed the local patches. Release baselines and downstream dependency pins
-   should advance only after the complete patch set is intentionally committed
-   and published.
+6. **Hosted NoctBoard CI is separate release evidence.** The restored workflows
+   are published at `cc63991`. Their exact commands passed locally; the hosted
+   run should also be reviewed after GitHub Actions completes.
+
+## Publication revisions
+
+| Repository | Published `main` revision |
+| --- | --- |
+| Noctweave | `de1a64514d5f80692e54941b2067c58673ad8a7b` |
+| Native Messaging | `d642451c901ba1a83b076310dcb97040d61d22b0` |
+| Noctweb | `ce59c736152833dd2c5dc9561536bf627070c9a5` |
+| NoctBoard | `cc639913f0844e3d500808b392e87bb0e2f05e36` |
+| NoctCord | `9af41942b8a4e1001b0b83a4055b9bb4ed4644f5` |
+
+Standalone NoctweaveJS, native Relay, and NoctGallery required no source patch
+in this pass and remain at their reviewed baselines.
 
 ## Release disposition
 
-All eight newly confirmed code/configuration findings are patched and their
-regressions pass. The patch set is suitable for an intentional security commit
-after reviewing this report and the final repository diff. The known
-experimental-federation limitation and external operational items above must
-remain visible in release notes; they must not be represented as fixed by this
-source pass.
+All eight newly confirmed code/configuration findings are patched, their
+regressions pass, and the changes are published on the repositories' `main`
+branches at the revisions above. The known experimental-federation limitation
+and external operational items above must remain visible in release notes;
+they must not be represented as fixed by this source pass.
