@@ -65,7 +65,7 @@ only the direct packages listed above.
 | Item | Current value | Notes |
 | --- | --- | --- |
 | Relay build image | `swift:6.1-jammy@sha256:cb9552…` | Immutable builder stage with compiler and package tooling. |
-| Relay runtime image | `ubuntu:22.04@sha256:3b0681…` | Immutable minimal runtime with the relay binary and required shared libraries. |
+| Relay runtime image | `ubuntu:22.04@sha256:a8cdd2…` | Immutable minimal runtime with the relay binary and required shared libraries. |
 | Reticulum runtime | `python:3.13-alpine@sha256:540c7d…` | Alpine runtime; Python packaging tools are removed after exact dependency installation. |
 | Caddy builder/runtime | `caddy:2-builder@sha256:198d47…`, `caddy:2@sha256:844f60…` | Builds exact Caddy 2.11.4 and caddy-l4 0.1.2 with patched Go dependency floors. |
 | Coturn runtime | `coturn/coturn:4.15.0-r0-alpine@sha256:b73dfc…` | Exact image with patched BIND packages installed before dropping to `nobody`. |

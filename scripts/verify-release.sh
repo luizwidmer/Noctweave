@@ -118,6 +118,40 @@ scripts/generate-sbom.py \
 diff -u "$SBOM_PATH" "$GENERATED_SBOM_PATH"
 diff -u "$CYCLONEDX_SBOM_PATH" "$GENERATED_CYCLONEDX_SBOM_PATH"
 
+echo "Checking documented container pins against the SBOM..."
+python3 - <<'PY' "$SBOM_PATH" "$ROOT_DIR/NoctweaveDocumentation/dependency_sbom_and_release_policy.md"
+import json
+import pathlib
+import sys
+
+sbom_path, policy_path = sys.argv[1:]
+with open(sbom_path, encoding="utf-8") as handle:
+    payload = json.load(handle)
+policy = pathlib.Path(policy_path).read_text(encoding="utf-8")
+
+runtime = next(
+    (
+        component
+        for component in payload.get("components", [])
+        if component.get("type") == "container-base-image"
+        and component.get("pinFile") == "NoctweaveRelayServer/Dockerfile"
+        and component.get("stage") == "stage-2"
+    ),
+    None,
+)
+if runtime is None:
+    raise SystemExit("SBOM must inventory the relay runtime container image")
+version = runtime.get("version")
+revision = runtime.get("revision")
+if not version or not revision or len(revision) != 64:
+    raise SystemExit("Relay runtime SBOM pin must include a version and SHA-256 digest")
+documented_pin = f"`{runtime['name']}:{version}@sha256:{revision[:6]}…`"
+if documented_pin not in policy:
+    raise SystemExit(
+        "Dependency policy relay runtime pin is stale; expected " + documented_pin
+    )
+PY
+
 echo "Validating SBOM JSON..."
 python3 -m json.tool "$SBOM_PATH" >/dev/null
 python3 -m json.tool "$CYCLONEDX_SBOM_PATH" >/dev/null

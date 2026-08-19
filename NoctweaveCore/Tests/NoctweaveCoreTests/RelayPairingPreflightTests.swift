@@ -4,18 +4,12 @@ import XCTest
 
 final class RelayPairingPreflightTests: XCTestCase {
     func testCompatibleLoopbackRelayPassesFunctionalPairingProbe() async throws {
-        let port = UInt16.random(in: 50_100...51_000)
         let server = RelayServer(
             store: RelayStore(),
             configuration: RelayConfiguration(rendezvousTransportEnabled: true)
         )
-        let started = expectation(description: "relay started")
-        server.onEvent = { event in
-            if case .started = event { started.fulfill() }
-        }
-        try server.start(host: "127.0.0.1", port: port)
+        let port = try await startOnEphemeralLoopbackPort(server)
         defer { server.stop() }
-        await fulfillment(of: [started], timeout: 2)
 
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
         let readiness = try await RelayPairingPreflight.check(
@@ -31,15 +25,9 @@ final class RelayPairingPreflightTests: XCTestCase {
     }
 
     func testOnlineRelayWithoutPairingCapabilityIsRejectedBeforeUse() async throws {
-        let port = UInt16.random(in: 51_100...52_000)
         let server = RelayServer(store: RelayStore())
-        let started = expectation(description: "relay started")
-        server.onEvent = { event in
-            if case .started = event { started.fulfill() }
-        }
-        try server.start(host: "127.0.0.1", port: port)
+        let port = try await startOnEphemeralLoopbackPort(server)
         defer { server.stop() }
-        await fulfillment(of: [started], timeout: 2)
 
         do {
             _ = try await RelayPairingPreflight.check(
@@ -65,7 +53,6 @@ final class RelayPairingPreflightTests: XCTestCase {
     }
 
     func testPasswordProtectedRelayChecksCredentialsWithTemporaryProbe() async throws {
-        let port = UInt16.random(in: 52_100...53_000)
         let server = RelayServer(
             store: RelayStore(),
             configuration: RelayConfiguration(
@@ -73,13 +60,8 @@ final class RelayPairingPreflightTests: XCTestCase {
                 rendezvousTransportEnabled: true
             )
         )
-        let started = expectation(description: "relay started")
-        server.onEvent = { event in
-            if case .started = event { started.fulfill() }
-        }
-        try server.start(host: "127.0.0.1", port: port)
+        let port = try await startOnEphemeralLoopbackPort(server)
         defer { server.stop() }
-        await fulfillment(of: [started], timeout: 2)
         let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
 
         do {
@@ -97,6 +79,20 @@ final class RelayPairingPreflightTests: XCTestCase {
                 authToken: "correct horse battery staple"
             )
         )
+    }
+
+    private func startOnEphemeralLoopbackPort(_ server: RelayServer) async throws -> UInt16 {
+        let started = expectation(description: "relay started")
+        var boundPort: UInt16?
+        server.onEvent = { event in
+            if case .started(let port) = event {
+                boundPort = port
+                started.fulfill()
+            }
+        }
+        try server.start(host: "127.0.0.1", port: 0)
+        await fulfillment(of: [started], timeout: 5)
+        return try XCTUnwrap(boundPort)
     }
 
     func testRemotePlaintextRelayIsRejectedWithoutNetworkAccess() async throws {
