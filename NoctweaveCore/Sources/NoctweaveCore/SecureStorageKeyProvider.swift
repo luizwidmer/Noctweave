@@ -1,5 +1,8 @@
 import CryptoKit
 import Foundation
+#if os(macOS) && canImport(LocalAuthentication)
+import LocalAuthentication
+#endif
 #if canImport(Darwin)
 import Darwin
 #elseif canImport(Glibc)
@@ -30,9 +33,9 @@ public enum SecureStorageKeyProviderError: Error, Equatable, LocalizedError, Sen
 
 /// Loads each Keychain-backed symmetric key at most once per process.
 ///
-/// Keychain authorization may display UI on macOS. Keeping the resulting
-/// `SymmetricKey` in process memory prevents routine state, attachment, and
-/// thread operations from repeatedly asking the user to authorize the same item.
+/// Keychain reads fail closed rather than opening authentication UI during app
+/// startup. Keeping the resulting `SymmetricKey` in process memory also avoids
+/// repeated Keychain calls during routine state, attachment, and thread work.
 public final class SecureStorageKeyProvider: @unchecked Sendable {
     public static let shared = SecureStorageKeyProvider()
 
@@ -135,6 +138,13 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
         if usesDataProtectionKeychain {
             query[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue
         }
+        // Storage keys are loaded from asynchronous app startup paths. Never
+        // allow an obsolete item ACL to turn this API into an unbounded hidden
+        // authentication prompt; callers surface the fail-closed error.
+        let authenticationContext = LAContext()
+        authenticationContext.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = authenticationContext
+        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
         #endif
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)

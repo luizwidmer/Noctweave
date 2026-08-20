@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS) && canImport(LocalAuthentication)
+import LocalAuthentication
+#endif
 #if canImport(Security)
 import Security
 #endif
@@ -262,6 +265,15 @@ final class KeychainClientStateRollbackAnchorStore:
         var query = baseQuery
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         query[kSecReturnData as String] = true
+        #if os(macOS)
+        // Client-state open is an unattended startup boundary. A stale ACL
+        // from a differently signed development build must fail closed instead
+        // of leaving the app indefinitely blocked behind Keychain UI.
+        let authenticationContext = LAContext()
+        authenticationContext.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = authenticationContext
+        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
+        #endif
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
