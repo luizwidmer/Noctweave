@@ -8,6 +8,7 @@ enum RelayICEServiceV1 {
     static let minimumCredentialLifetimeSeconds = 60
     static let maximumCredentialLifetimeSeconds = 3_600
     static let requestNonceBytes = 16
+    static let maximumCanonicalUnixTimestamp: TimeInterval = 9_007_199_254_740_991
 
     static func isValidURL(_ value: String) -> Bool {
         guard !value.isEmpty,
@@ -278,7 +279,10 @@ struct RelayICECredentialsV1: Codable, Equatable {
 
     private static func isCanonicalDate(_ value: Date) -> Bool {
         let interval = value.timeIntervalSince1970
-        return interval.isFinite && interval >= 0 && floor(interval) == interval
+        return interval.isFinite
+            && interval >= 0
+            && interval <= RelayICEServiceV1.maximumCanonicalUnixTimestamp
+            && floor(interval) == interval
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -342,9 +346,17 @@ struct CoturnCredentialIssuer {
               let realm = descriptor.realm else { return nil }
         let requested = request.requestedLifetimeSeconds ?? configuredLifetime
         let lifetime = min(configuredLifetime, requested)
-        let issuedAt = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970))
-        let expiresAt = issuedAt.addingTimeInterval(TimeInterval(lifetime))
-        let expiry = Int(expiresAt.timeIntervalSince1970)
+        let issuedTimestamp = floor(now.timeIntervalSince1970)
+        let expiresTimestamp = issuedTimestamp + TimeInterval(lifetime)
+        guard issuedTimestamp.isFinite,
+              expiresTimestamp.isFinite,
+              issuedTimestamp >= 0,
+              expiresTimestamp <= RelayICEServiceV1.maximumCanonicalUnixTimestamp else {
+            return nil
+        }
+        let issuedAt = Date(timeIntervalSince1970: issuedTimestamp)
+        let expiresAt = Date(timeIntervalSince1970: expiresTimestamp)
+        let expiry = Int64(expiresTimestamp)
         let opaque = request.nonce.base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")

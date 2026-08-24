@@ -48,6 +48,15 @@ final class PairingLobbyRelayV1Tests: XCTestCase {
         )
         let lease = try runtime.acquire(acquire, now: now)
         XCTAssertEqual(try runtime.acquire(acquire, now: now), lease)
+        XCTAssertThrowsError(try runtime.acquire(
+            PairingLobbyAcquireRequestV1(
+                leaseID: leaseID,
+                leaseCapability: capability,
+                announcement: acquire.announcement,
+                ttlSeconds: 31
+            ),
+            now: now
+        )) { XCTAssertEqual($0 as? RealtimeRelayRuntimeError, .conflict) }
         XCTAssertThrowsError(try runtime.release(
             PairingLobbyReleaseRequestV1(
                 leaseID: leaseID,

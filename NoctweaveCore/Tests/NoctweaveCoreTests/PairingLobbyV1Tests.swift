@@ -12,6 +12,31 @@ final class PairingLobbyV1Tests: XCTestCase {
         XCTAssertEqual(badge.comparisonCode, "788982")
     }
 
+    func testMalformedPublicAnnouncementTranscriptFailsClosedWithoutTrapping() {
+        let malformed = PairingLobbyAnnouncementV1(
+            listingID: UUID(),
+            requestRouteCapability: Data(repeating: 1, count: 32),
+            requestAppendCapability: Data(repeating: 2, count: 32),
+            agreementPublicKey: Data(
+                repeating: 3,
+                count: PairingLobbyV1.mlKEM768PublicKeyBytes
+            ),
+            signingPublicKey: Data(
+                repeating: 4,
+                count: PairingLobbyV1.mlDSA65PublicKeyBytes
+            ),
+            createdAt: Date(timeIntervalSince1970: .nan),
+            expiresAt: Date(timeIntervalSince1970: .infinity),
+            signature: Data(
+                repeating: 5,
+                count: PairingLobbyV1.mlDSA65SignatureBytes
+            )
+        )
+
+        XCTAssertFalse(malformed.isStructurallyValid)
+        XCTAssertEqual(malformed.digest.count, 32)
+    }
+
     func testCapabilityIsDefaultOffAndRequiresRealtimeRoutes() throws {
         let defaultManifest = try XCTUnwrap(
             RelayConfiguration().makeInfo().protocolCapabilities
@@ -119,6 +144,15 @@ final class PairingLobbyV1Tests: XCTestCase {
         )
         let first = try runtime.acquire(acquire, now: now)
         XCTAssertEqual(try runtime.acquire(acquire, now: now), first)
+        XCTAssertThrowsError(try runtime.acquire(
+            PairingLobbyAcquireRequestV1(
+                leaseID: leaseID,
+                leaseCapability: capability,
+                announcement: acquire.announcement,
+                ttlSeconds: 31
+            ),
+            now: now
+        )) { XCTAssertEqual($0 as? RealtimeRelayRuntimeError, .conflict) }
         XCTAssertEqual(runtime.list(PairingLobbyListRequestV1(), now: now), [first])
         XCTAssertThrowsError(try runtime.release(
             PairingLobbyReleaseRequestV1(

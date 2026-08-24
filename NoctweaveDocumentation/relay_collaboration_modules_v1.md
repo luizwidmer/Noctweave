@@ -69,9 +69,10 @@ returns `sequence` and `recordID`; and `subscribe` returns a generated
 `expiresAt`.
 
 The implementation bounds a payload at 512 KiB, a sync page at 256 records,
-and a route lifetime at 86,400 seconds. A route retains at most 4,096 records.
+and a route lifetime at 86,400 seconds. A route retains at most 4,096 records
+and 256 live subscriptions; a relay retains at most 4,096 realtime routes.
 The capability registry reports `maxRecordBytes`, `maxPage`, `maxRecords`,
-`maxLifetimeSeconds`, and `immediate: 1`.
+`maxRoutes`, `maxSubscriptions`, `maxLifetimeSeconds`, and `immediate: 1`.
 
 Routes and their ordered records are included in the durable relay snapshot
 when disk persistence is enabled. `--memory-only` makes them process-local.
@@ -91,8 +92,9 @@ batch.
 
 The default retention is 2,592,000 seconds (30 days); accepted retention is
 60 through 2,592,000 seconds. Payloads are limited to 512 KiB, sync pages to
-256 records, and a log to 100,000 records. The capability registry reports
-`maxRecordBytes`, `maxPage`, `maxRecords`, and `maxRetentionSeconds`.
+256 records, a log to 100,000 records, and a relay to 4,096 logs. The
+capability registry reports `maxRecordBytes`, `maxPage`, `maxRecords`,
+`maxLogs`, and `maxRetentionSeconds`.
 
 Records are pruned by the configured per-log retention interval and bounded
 record count. Logs and records are included in the durable relay snapshot;
@@ -109,7 +111,8 @@ lease ID, opaque payload, and expiry time.
 
 The scope is at most 64 bytes, the lease ID is 16 non-zero bytes, payloads are
 at most 16 KiB, and a lease lasts from 5 to 120 seconds. The capability
-registry reports `maxPayloadBytes`, `minLeaseSeconds`, and `maxLeaseSeconds`.
+registry reports `maxPayloadBytes`, `minLeaseSeconds`, `maxLeaseSeconds`, and
+the relay-wide `maxLeases` bound.
 Expired leases are pruned. Presence is intentionally process-local and is not
 written to the durable relay snapshot, including when other modules use disk
 persistence.
@@ -131,11 +134,12 @@ capability, chunk count, and `expiresAt`; `upload` and `fetch` return the blob
 ID, chunk index, and opaque payload.
 
 The implementation limits each chunk to 512 KiB, a blob to 256 chunks and
-32 MiB total, and retention to 60 through 604,800 seconds (seven days).
+32 MiB total, a relay to 4,096 blobs, and retention to 60 through 604,800
+seconds (seven days).
 `chunkCount` must be at least one; each upload index must be below it. Exact
 retries with the same idempotency key and payload return the original chunk;
 conflicting reuse is rejected. The capability registry reports
-`maxChunkBytes`, `maxChunks`, `maxBlobBytes`, `minRetentionSeconds`,
+`maxChunkBytes`, `maxChunks`, `maxBlobBytes`, `maxBlobs`, `minRetentionSeconds`,
 `maxRetentionSeconds`, and `requiresCapability: 1`.
 
 Blob metadata and encrypted chunks are included in the durable relay snapshot

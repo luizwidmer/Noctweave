@@ -38,9 +38,12 @@ Run exactly one current role per process:
   restrictive permissions, back up its signing key with its index and object
   files, and monitor object count, bytes, expiry, and disk pressure.
 
-Passthrough and host roles require federation mode `solo`. Their `info`
-manifests must not advertise opaque routes, rendezvous, blobs, federation,
-open discovery, or experimental privacy modules.
+Passthrough requires federation mode `solo`; its `info` manifest must not
+advertise opaque routes, rendezvous, blobs, federation, open discovery, or
+experimental privacy modules. A dedicated `host` process advertises only its
+hosting and eligible federation surfaces. A password-protected host or
+host-capable standard relay may use `manual`, `curated`, or `open` federation
+when its explicit suffix, public endpoint, and mode policy are configured.
 
 A passthrough relay is not an open proxy or anonymity service. A host relay is
 not a publisher, consensus participant, code executor, or plaintext processor.
@@ -143,7 +146,9 @@ For the app-neutral modules, enforce the advertised capability registry at
 the edge: 512 KiB record/chunk ceilings, 256-record pages, 86,400-second
 realtime-route lifetimes, 100,000 shared-log records, 16 KiB presence payloads,
 5-to-120-second presence leases, and 32 MiB media blobs with 256 chunks and
-60-second-to-seven-day retention. Realtime routes and shared logs are not
+60-second-to-seven-day retention. Also enforce 256 subscriptions per realtime
+route and relay-wide limits of 4,096 realtime routes, shared logs, presence
+leases, and media blobs. Realtime routes and shared logs are not
 temporal-bucketed; do not silently apply the normal attachment bucket policy
 to them. Treat their timing as an explicit metadata tradeoff.
 

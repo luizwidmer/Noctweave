@@ -59,10 +59,14 @@ final class OperatorControlPlane: @unchecked Sendable {
     }
 
     private func makeState(now: Date) -> OperatorStateResponse {
+        let elapsed = now.timeIntervalSince(startedAt)
+        let uptimeSeconds = elapsed.isFinite && elapsed > 0
+            ? Int(exactly: floor(elapsed)) ?? Int.max
+            : 0
         return OperatorStateResponse(
             status: OperatorServerStatus(
                 softwareVersion: ServerConfig.advertisedSoftwareVersion,
-                uptimeSeconds: max(0, Int(now.timeIntervalSince(startedAt))),
+                uptimeSeconds: uptimeSeconds,
                 storage: storageDescription,
                 transport: transportDescription,
                 persistenceEnabled: persistence.isAvailable,

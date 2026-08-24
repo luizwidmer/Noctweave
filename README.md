@@ -402,6 +402,27 @@ in its [own CI](https://github.com/luizwidmer/NoctweaveJS/actions). A sibling
 checkout is detected automatically by `scripts/run-tests.sh` for local
 cross-repository verification.
 
+Native app tests can be run without unlocking a developer signing certificate
+or granting an ad-hoc macOS UI runner access to production app containers or
+Keychain items:
+
+```sh
+scripts/run-native-app-tests.sh          # relay and client
+scripts/run-native-app-tests.sh relay    # relay only
+scripts/run-native-app-tests.sh client   # client only
+```
+
+The script uses Xcode's ad-hoc **Sign to Run Locally** identity. Each relay run
+uses a fresh test-only bundle identifier and keeps secrets in process-local
+memory, so it cannot claim a production sandbox or Keychain item. Client UI
+tests reuse the first existing iPhone simulator, whose container and Keychain
+are isolated from the Mac login Keychain; the script never creates or resets a
+simulator. Set `NOCTWEAVE_IOS_TEST_DEVICE_ID` to select another existing
+iPhone. The client
+fixture never updates production widget/app-group state. Production Keychain
+reads remain fail-closed and suppress authentication UI during unattended
+startup.
+
 ## Documentation
 
 - [Identity philosophy and external-feature filter](NoctweaveDocumentation/noctweave_identity_philosophy.md)

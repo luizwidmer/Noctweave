@@ -566,10 +566,12 @@ Command-line deployments can use `--wake-mode`, `--wake-min-poll-seconds`,
 
 ## Federation
 
-Federation is operator-plane relay discovery and coordination only. Clients
-obtain relay endpoints from relationship-encrypted peer route sets and submit
-ciphertext directly to the selected opaque route. A relay does not receive a
-user message for forwarding to another relay.
+Federation is operator-plane relay discovery and coordination. Clients obtain
+relay endpoints from relationship-encrypted peer route sets and normally
+submit ciphertext directly to the selected opaque route. As a bounded
+alternative, a standard home relay may receive the unchanged encrypted opaque
+append and perform exactly one authenticated `nw.federation-forward@1` hop; it
+never receives relationship keys or message plaintext.
 
 Modes are explicit and must not be mixed:
 

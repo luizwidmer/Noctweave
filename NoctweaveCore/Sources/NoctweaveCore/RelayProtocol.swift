@@ -2747,25 +2747,25 @@ public enum RelayRequestBody: Equatable {
                 from: decoder,
                 keys: ["routeCapability", "laneId", "deleteCapability"]
             ))
-        case (.realtimeRoute, .create): return .createRealtimeRoute(try relayDecodeSingle(RealtimeRouteCreateRequestV1.self, from: decoder, key: "request"))
-        case (.realtimeRoute, .append): return .appendRealtimeRoute(try relayDecodeSingle(RealtimeRouteAppendRequestV1.self, from: decoder, key: "request"))
-        case (.realtimeRoute, .subscribe): return .subscribeRealtimeRoute(try relayDecodeSingle(RealtimeRouteSubscribeRequestV1.self, from: decoder, key: "request"))
-        case (.realtimeRoute, .sync): return .syncRealtimeRoute(try relayDecodeSingle(RealtimeRouteSyncRequestV1.self, from: decoder, key: "request"))
-        case (.realtimeRoute, .unsubscribe): return .unsubscribeRealtimeRoute(try relayDecodeSingle(RealtimeRouteUnsubscribeRequestV1.self, from: decoder, key: "request"))
-        case (.sharedLog, .create): return .createSharedLog(try relayDecodeSingle(SharedLogCreateRequestV1.self, from: decoder, key: "request"))
-        case (.sharedLog, .append): return .appendSharedLog(try relayDecodeSingle(SharedLogAppendRequestV1.self, from: decoder, key: "request"))
-        case (.sharedLog, .sync): return .syncSharedLog(try relayDecodeSingle(SharedLogSyncRequestV1.self, from: decoder, key: "request"))
-        case (.ephemeralPresence, .acquire): return .acquirePresence(try relayDecodeSingle(PresenceLeaseAcquireRequestV1.self, from: decoder, key: "request"))
-        case (.ephemeralPresence, .renewLease): return .renewPresence(try relayDecodeSingle(PresenceLeaseRenewRequestV1.self, from: decoder, key: "request"))
-        case (.ephemeralPresence, .release): return .releasePresence(try relayDecodeSingle(PresenceLeaseReleaseRequestV1.self, from: decoder, key: "request"))
-        case (.ephemeralPresence, .list): return .listPresence(try relayDecodeSingle(PresenceLeaseListRequestV1.self, from: decoder, key: "request"))
+        case (.realtimeRoute, .create): return .createRealtimeRoute(try relayDecodeSingle(RealtimeRouteCreateRequestV1.self, from: decoder, key: "request", nestedKeys: ["routeCapability", "appendCapability", "readCapability", "expiresAt"]))
+        case (.realtimeRoute, .append): return .appendRealtimeRoute(try relayDecodeSingle(RealtimeRouteAppendRequestV1.self, from: decoder, key: "request", nestedKeys: ["routeCapability", "appendCapability", "recordID", "payload"]))
+        case (.realtimeRoute, .subscribe): return .subscribeRealtimeRoute(try relayDecodeSingle(RealtimeRouteSubscribeRequestV1.self, from: decoder, key: "request", nestedKeys: ["routeCapability", "readCapability", "afterSequence"]))
+        case (.realtimeRoute, .sync): return .syncRealtimeRoute(try relayDecodeSingle(RealtimeRouteSyncRequestV1.self, from: decoder, key: "request", nestedKeys: ["routeCapability", "subscriptionCapability", "afterSequence", "maxRecords"]))
+        case (.realtimeRoute, .unsubscribe): return .unsubscribeRealtimeRoute(try relayDecodeSingle(RealtimeRouteUnsubscribeRequestV1.self, from: decoder, key: "request", nestedKeys: ["routeCapability", "subscriptionCapability"]))
+        case (.sharedLog, .create): return .createSharedLog(try relayDecodeSingle(SharedLogCreateRequestV1.self, from: decoder, key: "request", nestedKeys: ["logCapability", "appendCapability", "readCapability", "retentionSeconds", "maxRecords"]))
+        case (.sharedLog, .append): return .appendSharedLog(try relayDecodeSingle(SharedLogAppendRequestV1.self, from: decoder, key: "request", nestedKeys: ["logCapability", "appendCapability", "recordID", "payload"]))
+        case (.sharedLog, .sync): return .syncSharedLog(try relayDecodeSingle(SharedLogSyncRequestV1.self, from: decoder, key: "request", nestedKeys: ["logCapability", "readCapability", "afterSequence", "maxRecords"]))
+        case (.ephemeralPresence, .acquire): return .acquirePresence(try relayDecodeSingle(PresenceLeaseAcquireRequestV1.self, from: decoder, key: "request", nestedKeys: ["scope", "scopeCapability", "leaseID", "leaseCapability", "payload", "ttlSeconds"]))
+        case (.ephemeralPresence, .renewLease): return .renewPresence(try relayDecodeSingle(PresenceLeaseRenewRequestV1.self, from: decoder, key: "request", nestedKeys: ["scope", "scopeCapability", "leaseID", "leaseCapability", "payload", "ttlSeconds"]))
+        case (.ephemeralPresence, .release): return .releasePresence(try relayDecodeSingle(PresenceLeaseReleaseRequestV1.self, from: decoder, key: "request", nestedKeys: ["scope", "scopeCapability", "leaseID", "leaseCapability"]))
+        case (.ephemeralPresence, .list): return .listPresence(try relayDecodeSingle(PresenceLeaseListRequestV1.self, from: decoder, key: "request", nestedKeys: ["scope", "scopeCapability"]))
         case (.pairingLobby, .acquire): return .acquirePairingLobby(try relayDecodeSingle(PairingLobbyAcquireRequestV1.self, from: decoder, key: "request"))
         case (.pairingLobby, .release): return .releasePairingLobby(try relayDecodeSingle(PairingLobbyReleaseRequestV1.self, from: decoder, key: "request"))
         case (.pairingLobby, .list): return .listPairingLobby(try relayDecodeSingle(PairingLobbyListRequestV1.self, from: decoder, key: "request"))
-        case (.mediaBlobs, .create): return .createMediaBlob(try relayDecodeSingle(MediaBlobCreateRequestV1.self, from: decoder, key: "request"))
-        case (.mediaBlobs, .upload): return .uploadMediaBlob(try relayDecodeSingle(MediaBlobUploadRequestV1.self, from: decoder, key: "request"))
-        case (.mediaBlobs, .fetch): return .fetchMediaBlob(try relayDecodeSingle(MediaBlobFetchRequestV1.self, from: decoder, key: "request"))
-        case (.mediaBlobs, .release): return .releaseMediaBlob(try relayDecodeSingle(MediaBlobReleaseRequestV1.self, from: decoder, key: "request"))
+        case (.mediaBlobs, .create): return .createMediaBlob(try relayDecodeSingle(MediaBlobCreateRequestV1.self, from: decoder, key: "request", nestedKeys: ["blobID", "blobCapability", "chunkCount", "ttlSeconds"]))
+        case (.mediaBlobs, .upload): return .uploadMediaBlob(try relayDecodeSingle(MediaBlobUploadRequestV1.self, from: decoder, key: "request", nestedKeys: ["blobID", "blobCapability", "chunkIndex", "payload", "idempotencyKey"]))
+        case (.mediaBlobs, .fetch): return .fetchMediaBlob(try relayDecodeSingle(MediaBlobFetchRequestV1.self, from: decoder, key: "request", nestedKeys: ["blobID", "blobCapability", "chunkIndex"]))
+        case (.mediaBlobs, .release): return .releaseMediaBlob(try relayDecodeSingle(MediaBlobReleaseRequestV1.self, from: decoder, key: "request", nestedKeys: ["blobID", "blobCapability"]))
         case (.iceService, .acquire):
             return .acquireICECredentials(try relayDecodeSingle(
                 RelayICECredentialRequestV1.self,
@@ -3864,41 +3864,33 @@ public enum RelaySuccessBody: Equatable {
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
             return .rendezvousSync(try container.decode(RendezvousRelaySyncBatchV2.self, forKey: relayWireKey("batch")))
         case (.realtimeRoute, .create):
-            try relayRequireExactObject(decoder, keys: ["route"])
-            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .realtimeRouteCreated(try container.decode(RealtimeRouteCreatedV1.self, forKey: relayWireKey("route")))
+            return .realtimeRouteCreated(try relayDecodeSingle(RealtimeRouteCreatedV1.self, from: decoder, key: "route", nestedKeys: ["routeCapability", "appendCapability", "readCapability", "expiresAt"]))
         case (.realtimeRoute, .append):
-            try relayRequireExactObject(decoder, keys: ["receipt"])
-            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .realtimeRouteAppend(try container.decode(RealtimeRouteAppendReceiptV1.self, forKey: relayWireKey("receipt")))
+            return .realtimeRouteAppend(try relayDecodeSingle(RealtimeRouteAppendReceiptV1.self, from: decoder, key: "receipt", nestedKeys: ["sequence", "recordID"]))
         case (.realtimeRoute, .subscribe):
-            try relayRequireExactObject(decoder, keys: ["subscription"])
-            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .realtimeRouteSubscription(try container.decode(RealtimeRouteSubscriptionV1.self, forKey: relayWireKey("subscription")))
+            return .realtimeRouteSubscription(try relayDecodeSingle(RealtimeRouteSubscriptionV1.self, from: decoder, key: "subscription", nestedKeys: ["subscriptionCapability", "routeCapability", "nextSequence", "expiresAt"]))
         case (.realtimeRoute, .sync):
             try relayRequireExactObject(decoder, keys: ["batch"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
             return .realtimeRouteSync(try container.decode(OpaqueRelaySyncBatchV1.self, forKey: relayWireKey("batch")))
         case (.sharedLog, .create):
-            try relayRequireExactObject(decoder, keys: ["log"])
-            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .sharedLogCreated(try container.decode(SharedLogCreatedV1.self, forKey: relayWireKey("log")))
+            return .sharedLogCreated(try relayDecodeSingle(SharedLogCreatedV1.self, from: decoder, key: "log", nestedKeys: ["logCapability", "appendCapability", "readCapability", "retentionSeconds"]))
         case (.sharedLog, .append):
-            try relayRequireExactObject(decoder, keys: ["receipt"])
-            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .sharedLogAppend(try container.decode(SharedLogAppendReceiptV1.self, forKey: relayWireKey("receipt")))
+            return .sharedLogAppend(try relayDecodeSingle(SharedLogAppendReceiptV1.self, from: decoder, key: "receipt", nestedKeys: ["sequence", "recordID"]))
         case (.sharedLog, .sync):
             try relayRequireExactObject(decoder, keys: ["batch"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
             return .sharedLogSync(try container.decode(OpaqueRelaySyncBatchV1.self, forKey: relayWireKey("batch")))
         case (.ephemeralPresence, .acquire), (.ephemeralPresence, .renewLease):
-            try relayRequireExactObject(decoder, keys: ["lease"])
-            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .presenceLease(try container.decode(PresenceLeaseV1.self, forKey: relayWireKey("lease")))
+            return .presenceLease(try relayDecodeSingle(PresenceLeaseV1.self, from: decoder, key: "lease", nestedKeys: ["leaseID", "payload", "expiresAt"]))
         case (.ephemeralPresence, .list):
             try relayRequireExactObject(decoder, keys: ["leases"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .presenceLeases(try container.decode([PresenceLeaseV1].self, forKey: relayWireKey("leases")))
+            let leases = try container.decode([PresenceLeaseV1].self, forKey: relayWireKey("leases"))
+            guard leases.count <= RealtimeRelayLimitsV1.maximumPresenceLeases else {
+                throw relayWireError(decoder, "Presence lease response exceeds the current bound")
+            }
+            return .presenceLeases(leases)
         case (.pairingLobby, .acquire):
             try relayRequireExactObject(decoder, keys: ["listing"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
@@ -3919,13 +3911,9 @@ public enum RelaySuccessBody: Equatable {
             }
             return .pairingLobbyListings(listings)
         case (.mediaBlobs, .create):
-            try relayRequireExactObject(decoder, keys: ["blob"])
-            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .mediaBlobCreated(try container.decode(MediaBlobCreatedV1.self, forKey: relayWireKey("blob")))
+            return .mediaBlobCreated(try relayDecodeSingle(MediaBlobCreatedV1.self, from: decoder, key: "blob", nestedKeys: ["blobID", "blobCapability", "chunkCount", "expiresAt"]))
         case (.mediaBlobs, .upload), (.mediaBlobs, .fetch):
-            try relayRequireExactObject(decoder, keys: ["chunk"])
-            let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
-            return .mediaBlobChunk(try container.decode(MediaBlobChunkV1.self, forKey: relayWireKey("chunk")))
+            return .mediaBlobChunk(try relayDecodeSingle(MediaBlobChunkV1.self, from: decoder, key: "chunk", nestedKeys: ["blobID", "chunkIndex", "payload"]))
         case (.iceService, .acquire):
             try relayRequireExactObject(decoder, keys: ["credentials"])
             let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
@@ -4189,6 +4177,28 @@ public enum RelaySuccessBody: Equatable {
     }
 }
 
+private func relaySyncBatch(
+    _ batch: OpaqueRelaySyncBatchV1,
+    isBoundTo afterSequence: UInt64,
+    maximumRecords: Int
+) -> Bool {
+    guard batch.isStructurallyValid,
+          maximumRecords > 0,
+          maximumRecords <= RealtimeRelayLimitsV1.maximumRecordsPerPage,
+          batch.records.count <= maximumRecords,
+          afterSequence <= batch.highWatermark,
+          afterSequence >= batch.retentionFloor - 1,
+          batch.nextSequence >= afterSequence else {
+        return false
+    }
+    guard let first = batch.records.first else {
+        return batch.nextSequence == afterSequence
+    }
+    return afterSequence < UInt64.max
+        && first.sequence == afterSequence + 1
+        && batch.records.last?.sequence == batch.nextSequence
+}
+
 public struct RelayResponse: Codable, Equatable {
     public let requestID: UUID
     public let module: RelayModuleID
@@ -4244,6 +4254,89 @@ public struct RelayResponse: Codable, Equatable {
         guard isResponse(to: request) else { return false }
         guard status == .success else { return true }
         switch (request.body, successBody) {
+        case (.createRealtimeRoute(let submitted), .realtimeRouteCreated(let route)):
+            return route.isStructurallyValid
+                && route.routeCapability == submitted.routeCapability
+                && route.appendCapability == submitted.appendCapability
+                && route.readCapability == submitted.readCapability
+                && route.expiresAt == submitted.expiresAt
+        case (.appendRealtimeRoute(let submitted), .realtimeRouteAppend(let receipt)):
+            return receipt.sequence > 0 && receipt.recordID == submitted.recordID
+        case (.subscribeRealtimeRoute(let submitted), .realtimeRouteSubscription(let subscription)):
+            return OpaqueCapabilityV1.isValid(subscription.subscriptionCapability)
+                && subscription.subscriptionCapability != submitted.routeCapability
+                && subscription.subscriptionCapability != submitted.readCapability
+                && subscription.routeCapability == submitted.routeCapability
+                && subscription.nextSequence == submitted.afterSequence
+                && relayIsCanonicalTimestamp(subscription.expiresAt)
+        case (.syncRealtimeRoute(let submitted), .realtimeRouteSync(let batch)):
+            return relaySyncBatch(
+                batch,
+                isBoundTo: submitted.afterSequence,
+                maximumRecords: submitted.maxRecords
+            )
+        case (.unsubscribeRealtimeRoute, .empty):
+            return true
+        case (.createSharedLog(let submitted), .sharedLogCreated(let log)):
+            return OpaqueCapabilityV1.isValid(log.logCapability)
+                && OpaqueCapabilityV1.isValid(log.appendCapability)
+                && OpaqueCapabilityV1.isValid(log.readCapability)
+                && Set([log.logCapability, log.appendCapability, log.readCapability]).count == 3
+                && log.logCapability == submitted.logCapability
+                && log.appendCapability == submitted.appendCapability
+                && log.readCapability == submitted.readCapability
+                && log.retentionSeconds == submitted.retentionSeconds
+        case (.appendSharedLog(let submitted), .sharedLogAppend(let receipt)):
+            return receipt.sequence > 0 && receipt.recordID == submitted.recordID
+        case (.syncSharedLog(let submitted), .sharedLogSync(let batch)):
+            return relaySyncBatch(
+                batch,
+                isBoundTo: submitted.afterSequence,
+                maximumRecords: submitted.maxRecords
+            )
+        case (.acquirePresence(let submitted), .presenceLease(let lease)):
+            return lease.isStructurallyValid
+                && lease.leaseID == submitted.leaseID
+                && lease.payload == submitted.payload
+        case (.renewPresence(let submitted), .presenceLease(let lease)):
+            return lease.isStructurallyValid
+                && lease.leaseID == submitted.leaseID
+                && lease.payload == submitted.payload
+        case (.releasePresence, .empty):
+            return true
+        case (.listPresence, .presenceLeases(let leases)):
+            return leases.count <= RealtimeRelayLimitsV1.maximumPresenceLeases
+                && leases.allSatisfy(\.isStructurallyValid)
+                && Set(leases.map(\.leaseID)).count == leases.count
+        case (.acquirePairingLobby(let submitted), .pairingLobbyLease(let lease)):
+            return lease.isStructurallyValid
+                && lease.leaseID == submitted.leaseID
+                && lease.announcement == submitted.announcement
+        case (.releasePairingLobby, .empty):
+            return true
+        case (.listPairingLobby, .pairingLobbyListings(let listings)):
+            return listings.count <= PairingLobbyRelayLimitsV1.maximumListings
+                && listings.allSatisfy(\.isStructurallyValid)
+                && Set(listings.map(\.leaseID)).count == listings.count
+        case (.createMediaBlob(let submitted), .mediaBlobCreated(let blob)):
+            return blob.blobID == submitted.blobID
+                && blob.blobCapability == submitted.blobCapability
+                && OpaqueCapabilityV1.isValid(blob.blobCapability)
+                && blob.chunkCount == submitted.chunkCount
+                && relayIsCanonicalTimestamp(blob.expiresAt)
+        case (.uploadMediaBlob(let submitted), .mediaBlobChunk(let chunk)):
+            return chunk.blobID == submitted.blobID
+                && chunk.chunkIndex == submitted.chunkIndex
+                && chunk.payload == submitted.payload
+                && !chunk.payload.isEmpty
+                && chunk.payload.count <= RealtimeRelayLimitsV1.maximumMediaBlobChunkBytes
+        case (.fetchMediaBlob(let submitted), .mediaBlobChunk(let chunk)):
+            return chunk.blobID == submitted.blobID
+                && chunk.chunkIndex == submitted.chunkIndex
+                && !chunk.payload.isEmpty
+                && chunk.payload.count <= RealtimeRelayLimitsV1.maximumMediaBlobChunkBytes
+        case (.releaseMediaBlob, .empty):
+            return true
         case (.createNoctwebDatabase(let submitted), .noctwebDatabase(let receipt)):
             return receipt.isStructurallyValid
                 && receipt.databaseID == submitted.databaseID
@@ -4258,6 +4351,7 @@ public struct RelayResponse: Codable, Equatable {
                 && record.recordID == submitted.recordID
                 && record.ownerAccountID == submitted.ownerAccountID
                 && record.payload == submitted.payload
+                && submitted.expectedRevision < UInt64.max
                 && record.revision == submitted.expectedRevision + 1
                 && record.provenance.actorKind == submitted.authorization.actorKind
                 && record.provenance.actorID == submitted.authorization.actorID
@@ -4414,10 +4508,20 @@ private func relayDecodeExact<T: Decodable>(
 private func relayDecodeSingle<T: Decodable>(
     _ type: T.Type,
     from decoder: Decoder,
-    key: String
+    key: String,
+    nestedKeys: Set<String>? = nil
 ) throws -> T {
     try relayRequireExactObject(decoder, keys: [key])
     let container = try decoder.container(keyedBy: RelayWireCodingKey.self)
+    if let nestedKeys {
+        let nested = try container.nestedContainer(
+            keyedBy: RelayWireCodingKey.self,
+            forKey: relayWireKey(key)
+        )
+        guard Set(nested.allKeys.map(\.stringValue)) == nestedKeys else {
+            throw relayWireError(decoder, "Nested relay object fields do not match the current protocol exactly")
+        }
+    }
     return try container.decode(T.self, forKey: relayWireKey(key))
 }
 

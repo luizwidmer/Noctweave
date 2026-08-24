@@ -4,6 +4,46 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ArchitectureV2GroupBoundaryTests: XCTestCase {
+    func testCommitVerificationRejectsExhaustedEpochWithoutOverflow() throws {
+        let fixture = try makeGenesis()
+        let commit = try SignedGroupCommitV2.create(
+            operation: .updateMetadata,
+            currentState: fixture.state,
+            proposedMembers: fixture.state.members,
+            proposedCredentials: fixture.state.memberCredentials,
+            proposedPermissions: fixture.state.permissions,
+            proposedMetadataDigest: bytes(0x11),
+            authorCredentialHandle: fixture.ownerLeaf.credentialHandle,
+            providerCommitDigest: bytes(0x12),
+            idempotencyKey: bytes(0x13),
+            signingKey: fixture.ownerKey,
+            createdAt: fixture.state.signedAt.addingTimeInterval(1)
+        )
+        let exhausted = SignedGroupStateV2(
+            profile: fixture.state.profile,
+            cipherSuite: fixture.state.cipherSuite,
+            groupId: fixture.state.groupId,
+            epoch: .max,
+            previousTranscriptHash: fixture.state.confirmedTranscriptHash,
+            members: fixture.state.members,
+            memberCredentials: fixture.state.memberCredentials,
+            permissions: fixture.state.permissions,
+            metadataDigest: fixture.state.metadataDigest,
+            authorCredentialHandle: fixture.state.authorCredentialHandle,
+            commitDigest: fixture.state.commitDigest,
+            confirmedTranscriptHash: fixture.state.confirmedTranscriptHash,
+            signedAt: fixture.state.signedAt,
+            signature: fixture.state.signature
+        )
+
+        XCTAssertThrowsError(try commit.verifiedTransition(
+            from: exhausted,
+            observedAt: commit.createdAt
+        )) { error in
+            XCTAssertEqual(error as? SignedGroupV2Error, .staleEpoch)
+        }
+    }
+
     func testAdmissionProjectionCommitsOnlyGroupScopedMaterial() throws {
         let fixture = try makeGenesis()
         let newMember = GroupMemberV2(

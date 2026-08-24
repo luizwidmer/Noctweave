@@ -859,6 +859,7 @@ public struct SignedGroupCommitV2: Codable, Equatable, Identifiable {
         if let admissionProjection {
             try requireGroupCredentialAlgorithms(admissionProjection)
         }
+        guard currentState.epoch < UInt64.max else { throw SignedGroupV2Error.staleEpoch }
         guard currentState.isStructurallyValid else { throw SignedGroupV2Error.invalidStructure }
         guard profile == currentState.profile,
               cipherSuite == currentState.cipherSuite,

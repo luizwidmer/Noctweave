@@ -11,6 +11,7 @@ public enum RelayICEServiceV1 {
     public static let minimumCredentialLifetimeSeconds = 60
     public static let maximumCredentialLifetimeSeconds = 3_600
     public static let requestNonceBytes = 16
+    static let maximumCanonicalUnixTimestamp: TimeInterval = 9_007_199_254_740_991
 
     public static func isValidURL(_ value: String) -> Bool {
         guard !value.isEmpty,
@@ -321,13 +322,21 @@ public struct CoturnCredentialIssuerV1: Sendable {
             configuredLifetime,
             request.requestedLifetimeSeconds ?? configuredLifetime
         )
-        let issuedAt = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970))
-        let expiresAt = issuedAt.addingTimeInterval(TimeInterval(lifetime))
+        let issuedTimestamp = floor(now.timeIntervalSince1970)
+        let expiresTimestamp = issuedTimestamp + TimeInterval(lifetime)
+        guard issuedTimestamp.isFinite,
+              expiresTimestamp.isFinite,
+              issuedTimestamp >= 0,
+              expiresTimestamp <= RelayICEServiceV1.maximumCanonicalUnixTimestamp else {
+            return nil
+        }
+        let issuedAt = Date(timeIntervalSince1970: issuedTimestamp)
+        let expiresAt = Date(timeIntervalSince1970: expiresTimestamp)
         let opaque = request.nonce.base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: "=", with: "")
-        let username = "\(Int(expiresAt.timeIntervalSince1970)):\(opaque)"
+        let username = "\(Int64(expiresTimestamp)):\(opaque)"
         let authenticationCode = HMAC<Insecure.SHA1>.authenticationCode(
             for: Data(username.utf8),
             using: SymmetricKey(data: sharedSecret)
@@ -398,7 +407,10 @@ public struct RelayICECredentialsV1: Codable, Equatable, Sendable {
 
     private static func isCanonicalDate(_ value: Date) -> Bool {
         let interval = value.timeIntervalSince1970
-        return interval.isFinite && interval >= 0 && floor(interval) == interval
+        return interval.isFinite
+            && interval >= 0
+            && interval <= RelayICEServiceV1.maximumCanonicalUnixTimestamp
+            && floor(interval) == interval
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {

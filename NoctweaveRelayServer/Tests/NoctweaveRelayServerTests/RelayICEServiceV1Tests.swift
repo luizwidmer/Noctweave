@@ -56,6 +56,27 @@ final class RelayICEServiceV1Tests: XCTestCase {
         XCTAssertEqual(credentials.expiresAt.timeIntervalSince(credentials.issuedAt), 600)
     }
 
+    func testLinuxCredentialIssuerRejectsUnrepresentableTimestamps() throws {
+        let issuer = try XCTUnwrap(CoturnCredentialIssuer(
+            sharedSecret: "0123456789abcdef0123456789abcdef"
+        ))
+        let request = RelayICECredentialRequestV1(
+            nonce: Data(0...15),
+            requestedLifetimeSeconds: 600
+        )
+
+        XCTAssertNil(issuer.issue(
+            request: request,
+            descriptor: descriptor,
+            now: Date(timeIntervalSince1970: -1)
+        ))
+        XCTAssertNil(issuer.issue(
+            request: request,
+            descriptor: descriptor,
+            now: Date(timeIntervalSince1970: .greatestFiniteMagnitude)
+        ))
+    }
+
     func testICEWireBindingIsExactAndCapabilityIsFeatureGated() throws {
         let body = RelayICECredentialRequestV1(
             nonce: Data(0...15),

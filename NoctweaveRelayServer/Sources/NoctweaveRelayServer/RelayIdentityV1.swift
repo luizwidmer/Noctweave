@@ -561,6 +561,12 @@ final class RelayIdentityRuntime: @unchecked Sendable {
         hostSigningPublicKey: Data?,
         at date: Date = Date()
     ) throws -> SignedRelayIdentityClaimV1 {
+        let wallClockTimestamp = floor(date.timeIntervalSince1970)
+        guard wallClockTimestamp.isFinite,
+              wallClockTimestamp >= 0,
+              wallClockTimestamp <= Double(RelayIdentityV1.maximumSequence) else {
+            throw RelayIdentityError.invalidPayload
+        }
         guard let capabilities = configuration.makeInfo(now: date).protocolCapabilities else {
             throw RelayIdentityError.invalidPayload
         }
@@ -587,11 +593,11 @@ final class RelayIdentityRuntime: @unchecked Sendable {
             ) {
             return cachedIdentity
         }
-        let wallClock = max(0, Int(floor(date.timeIntervalSince1970)))
-        sequence = max(
-            wallClock,
-            min(sequence + 1, RelayIdentityV1.maximumSequence)
-        )
+        guard sequence < RelayIdentityV1.maximumSequence else {
+            throw RelayIdentityError.invalidPayload
+        }
+        let wallClock = Int(wallClockTimestamp)
+        sequence = max(wallClock, sequence + 1)
         let identity = try keyMaterial.makeSignedClaim(
             sequence: sequence,
             relayKind: configuration.kind,

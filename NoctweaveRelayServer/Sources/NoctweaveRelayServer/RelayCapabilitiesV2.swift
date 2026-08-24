@@ -25,6 +25,8 @@ enum RealtimeRelayCapabilityLimitsV1 {
         "maxRecordBytes": UInt64(RealtimeRelayLimitsV1.maximumRecordBytes),
         "maxPage": UInt64(RealtimeRelayLimitsV1.maximumRecordsPerPage),
         "maxRecords": UInt64(RealtimeRelayLimitsV1.maximumRealtimeRecords),
+        "maxRoutes": UInt64(RealtimeRelayLimitsV1.maximumRealtimeRoutes),
+        "maxSubscriptions": UInt64(RealtimeRelayLimitsV1.maximumRealtimeSubscriptionsPerRoute),
         "maxLifetimeSeconds": UInt64(RealtimeRelayLimitsV1.maximumRealtimeLifetime),
         "immediate": 1
     ]
@@ -35,6 +37,7 @@ enum SharedLogRelayCapabilityLimitsV1 {
         "maxRecordBytes": UInt64(RealtimeRelayLimitsV1.maximumRecordBytes),
         "maxPage": UInt64(RealtimeRelayLimitsV1.maximumRecordsPerPage),
         "maxRecords": UInt64(RealtimeRelayLimitsV1.maximumSharedLogRecords),
+        "maxLogs": UInt64(RealtimeRelayLimitsV1.maximumSharedLogs),
         "maxRetentionSeconds": UInt64(RealtimeRelayLimitsV1.maximumSharedLogLifetime)
     ]
 }
@@ -53,6 +56,7 @@ enum MediaBlobRelayCapabilityLimitsV1 {
         "maxChunkBytes": UInt64(RealtimeRelayLimitsV1.maximumMediaBlobChunkBytes),
         "maxChunks": UInt64(RealtimeRelayLimitsV1.maximumMediaBlobChunks),
         "maxBlobBytes": UInt64(RealtimeRelayLimitsV1.maximumMediaBlobBytes),
+        "maxBlobs": UInt64(RealtimeRelayLimitsV1.maximumMediaBlobs),
         "minRetentionSeconds": UInt64(RealtimeRelayLimitsV1.minimumMediaRetentionSeconds),
         "maxRetentionSeconds": UInt64(RealtimeRelayLimitsV1.maximumMediaRetentionSeconds),
         "requiresCapability": 1

@@ -1878,6 +1878,12 @@ public final class RelayServer {
     private func makeCurrentSignedRelayIdentity(
         at date: Date = Date()
     ) throws -> SignedRelayIdentityClaimV1 {
+        let wallClockTimestamp = floor(date.timeIntervalSince1970)
+        guard wallClockTimestamp.isFinite,
+              wallClockTimestamp >= 0,
+              wallClockTimestamp <= Double(RelayIdentityV1.maximumSequence) else {
+            throw RelayNetworkError.invalidResponse
+        }
         let configuration = configuration
         let endpoints = advertisedIdentityEndpoints(configuration: configuration)
         guard !endpoints.isEmpty,
@@ -1911,14 +1917,11 @@ public final class RelayServer {
             == endpoints.map(endpointKey).sorted() {
             return cachedRelayIdentity
         }
-        let wallClock = max(0, Int(floor(date.timeIntervalSince1970)))
-        relayIdentityClaimSequence = max(
-            wallClock,
-            min(
-                relayIdentityClaimSequence + 1,
-                RelayIdentityV1.maximumSequence
-            )
-        )
+        guard relayIdentityClaimSequence < RelayIdentityV1.maximumSequence else {
+            throw RelayNetworkError.invalidResponse
+        }
+        let wallClock = Int(wallClockTimestamp)
+        relayIdentityClaimSequence = max(wallClock, relayIdentityClaimSequence + 1)
         let identity = try keyMaterial.makeSignedClaim(
             sequence: relayIdentityClaimSequence,
             relayKind: configuration.kind,

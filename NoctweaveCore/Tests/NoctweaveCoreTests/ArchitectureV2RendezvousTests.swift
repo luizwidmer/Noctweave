@@ -3,6 +3,19 @@ import XCTest
 @testable import NoctweaveCore
 
 final class ArchitectureV2RendezvousTests: XCTestCase {
+    func testMalformedOpenTranscriptFailsClosedWithoutTrapping() {
+        let malformed = RendezvousOpenV2(
+            purpose: .contactPairing,
+            offerDigest: Data(repeating: 1, count: 32),
+            kemCiphertext: Data(repeating: 2, count: 32),
+            tokenProof: Data(repeating: 3, count: 32),
+            openedAt: Date(timeIntervalSince1970: .nan)
+        )
+
+        XCTAssertFalse(malformed.isStructurallyValid)
+        XCTAssertEqual(malformed.transcriptDigest.count, 32)
+    }
+
     func testPublicOfferIsPrivacyBoundedAndContactPairingOnly() throws {
         let createdAt = Date(timeIntervalSince1970: 10_000)
         let capability = try RendezvousTransportCapabilityV2.generate(

@@ -1704,10 +1704,13 @@ private struct CommandRunner {
                   case .rendezvousSync(let batch)? = response.successBody else {
                 throw CLIError("Relay rejected the rendezvous synchronization request.")
             }
-            guard batch.frames.first?.sequence == nil
-                    || batch.frames.first?.sequence == cursor + 1,
+            let beginsAfterCursor = batch.frames.first.map {
+                cursor < UInt64.max && $0.sequence == cursor + 1
+            } ?? true
+            guard beginsAfterCursor,
                   zip(batch.frames, batch.frames.dropFirst()).allSatisfy({ pair in
-                      pair.1.sequence == pair.0.sequence + 1
+                      pair.0.sequence < UInt64.max
+                          && pair.1.sequence == pair.0.sequence + 1
                   }) else {
                 throw CLIError("Relay returned non-contiguous rendezvous frames.")
             }

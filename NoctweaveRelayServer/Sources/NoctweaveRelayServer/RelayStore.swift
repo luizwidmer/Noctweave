@@ -1192,7 +1192,7 @@ final class RelayStore {
         input.append(0)
         var version = UInt64(request.version).bigEndian
         withUnsafeBytes(of: &version) { input.append(contentsOf: $0) }
-        var expiry = UInt64(request.expiresAt.timeIntervalSince1970).bigEndian
+        var expiry = (UInt64(exactly: request.expiresAt.timeIntervalSince1970) ?? 0).bigEndian
         withUnsafeBytes(of: &expiry) { input.append(contentsOf: $0) }
         input.append(request.routeCapability.rawValue)
         for lane in request.lanes.sorted(by: {
@@ -1719,9 +1719,7 @@ private struct RelayStoreSnapshot: Codable {
     var isStructurallyValid: Bool {
         guard version == Self.schemaVersion,
               opaqueRouteRuntimeV2.isStructurallyValid,
-              realtimeRuntime.routes.count <= RealtimeRelayLimitsV1.maximumRealtimeRoutes,
-              realtimeRuntime.sharedLogs.count <= RealtimeRelayLimitsV1.maximumSharedLogs,
-              realtimeRuntime.mediaBlobs.count <= RealtimeRelayLimitsV1.maximumMediaBlobs,
+              realtimeRuntime.isStructurallyValid,
               rendezvousRoutesV2.count
                 <= RelayStoreCurrentLimits.maximumRendezvousRouteRecords,
               rendezvousRoutesV2.values.lazy.filter({ $0.retiredAt == nil }).count

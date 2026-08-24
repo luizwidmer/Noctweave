@@ -257,6 +257,7 @@ public struct PairingLobbyLeaseV1: Codable, Equatable {
 private struct PairingLobbyStoredLeaseV1 {
     let capabilityDigest: Data
     let announcement: Data
+    let ttlSeconds: Int
     let expiresAt: Date
 }
 
@@ -276,7 +277,8 @@ struct PairingLobbyRelayRuntimeV1 {
         let key = request.leaseID.base64EncodedString()
         if let existing = leases[key] {
             guard existing.capabilityDigest == capabilityDigest(request.leaseCapability),
-                  existing.announcement == request.announcement else {
+                  existing.announcement == request.announcement,
+                  existing.ttlSeconds == request.ttlSeconds else {
                 throw RealtimeRelayRuntimeError.conflict
             }
             return PairingLobbyLeaseV1(
@@ -294,6 +296,7 @@ struct PairingLobbyRelayRuntimeV1 {
         leases[key] = PairingLobbyStoredLeaseV1(
             capabilityDigest: capabilityDigest(request.leaseCapability),
             announcement: request.announcement,
+            ttlSeconds: request.ttlSeconds,
             expiresAt: expiresAt
         )
         return PairingLobbyLeaseV1(

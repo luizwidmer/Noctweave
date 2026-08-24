@@ -1210,7 +1210,8 @@ public struct RendezvousSessionV2 {
 private enum RendezvousCanonicalV2 {
     static func isCanonicalTimestamp(_ date: Date) -> Bool {
         let seconds = date.timeIntervalSince1970
-        return seconds.isFinite && seconds >= 0 && floor(seconds) == seconds
+        return seconds <= 9_007_199_254_740_991
+            && UInt64(exactly: seconds) != nil
     }
 
     static func validateOfferUse(
@@ -1351,7 +1352,7 @@ private enum RendezvousCanonicalV2 {
     }
 
     private static func append(timestamp: Date, to data: inout Data) {
-        append(UInt64(timestamp.timeIntervalSince1970), to: &data)
+        append(UInt64(exactly: timestamp.timeIntervalSince1970) ?? 0, to: &data)
     }
 
     private static func append(_ value: UInt16, to data: inout Data) {

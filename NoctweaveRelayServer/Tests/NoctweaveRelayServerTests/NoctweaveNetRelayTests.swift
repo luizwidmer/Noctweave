@@ -7,6 +7,21 @@ import XCTest
 @testable import NoctweaveRelayServer
 
 final class NoctweaveNetRelayTests: XCTestCase {
+    func testMalformedHostingReceiptTranscriptFailsClosedWithoutTrapping() {
+        let payload = Data("invalid receipt".utf8)
+        let receipt = NoctweaveNetHostingReceipt(
+            objectID: NoctweaveNetHostPutRequest.objectID(for: payload),
+            byteCount: UInt64(payload.count),
+            storedAt: Date(timeIntervalSince1970: .nan),
+            expiresAt: Date(timeIntervalSince1970: .infinity),
+            signingPublicKey: Data(repeating: 1, count: 32),
+            signature: Data(repeating: 2, count: 64)
+        )
+
+        XCTAssertFalse(receipt.isStructurallyValid)
+        XCTAssertFalse(receipt.signingPayload.isEmpty)
+    }
+
     func testCurrentRelayTopologyContainsExactlyThreeRoles() {
         XCTAssertEqual(RelayKind.allCases, [.standard, .passthrough, .host])
         XCTAssertFalse(RelayKind.coordinator.isCurrentTopologyRole)

@@ -494,9 +494,9 @@ public struct NoctweaveNetHostingReceipt: Codable, Equatable {
         data.append(Data(objectID.utf8))
         var bytes = byteCount.bigEndian
         withUnsafeBytes(of: &bytes) { data.append(contentsOf: $0) }
-        var stored = UInt64(storedAt.timeIntervalSince1970).bigEndian
+        var stored = (UInt64(exactly: storedAt.timeIntervalSince1970) ?? 0).bigEndian
         withUnsafeBytes(of: &stored) { data.append(contentsOf: $0) }
-        var expires = UInt64(expiresAt.timeIntervalSince1970).bigEndian
+        var expires = (UInt64(exactly: expiresAt.timeIntervalSince1970) ?? 0).bigEndian
         withUnsafeBytes(of: &expires) { data.append(contentsOf: $0) }
         return data
     }

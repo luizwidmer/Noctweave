@@ -844,9 +844,7 @@ public actor RelayStore {
 
     private func validateCurrentSnapshot(_ snapshot: RelayStoreSnapshot) throws {
         guard snapshot.rendezvousRoutesV2.count <= maxLifetimeRendezvousRoutesV2,
-              snapshot.realtimeRuntime.routes.count <= RealtimeRelayLimitsV1.maximumRealtimeRoutes,
-              snapshot.realtimeRuntime.sharedLogs.count <= RealtimeRelayLimitsV1.maximumSharedLogs,
-              snapshot.realtimeRuntime.mediaBlobs.count <= RealtimeRelayLimitsV1.maximumMediaBlobs,
+              snapshot.realtimeRuntime.isStructurallyValid,
               snapshot.rendezvousRoutesV2.allSatisfy({ key, record in
                   Data(base64Encoded: key)?.count == SHA256.byteCount
                       && record.isStructurallyValid
@@ -898,7 +896,7 @@ public actor RelayStore {
         input.append(0)
         var version = UInt64(request.version).bigEndian
         withUnsafeBytes(of: &version) { input.append(contentsOf: $0) }
-        var expiry = UInt64(request.expiresAt.timeIntervalSince1970).bigEndian
+        var expiry = (UInt64(exactly: request.expiresAt.timeIntervalSince1970) ?? 0).bigEndian
         withUnsafeBytes(of: &expiry) { input.append(contentsOf: $0) }
         input.append(request.routeCapability.rawValue)
         for lane in request.lanes.sorted(by: {

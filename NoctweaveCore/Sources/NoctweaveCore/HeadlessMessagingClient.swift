@@ -3178,11 +3178,10 @@ public actor HeadlessMessagingClient {
         )
         if publication.pendingDeliveryCount == 0,
            publication.failedDeliveryCount == 0 {
-            var relationship = try self.relationship(prepared.prepared.relationshipID)
-            relationship.pendingAttachmentUploads.removeAll {
-                $0.request.attachmentId == descriptor.id
-            }
-            try await commitRelationship(relationship)
+            try await finalizeDeliveredDirectAttachmentUploads(
+                relationshipID: prepared.prepared.relationshipID,
+                at: date
+            )
         }
         return HeadlessSendResult(
             event: prepared.prepared.event,
@@ -3208,7 +3207,7 @@ public actor HeadlessMessagingClient {
             return false
         }
         let intent = relationship.protocolIntents[intentIndex]
-        if intent.state == .finalized { return true }
+        if intent.state == .finalized || intent.state == .committed { return true }
         guard !activeBlobIntentIDs.contains(intent.id) else { return false }
         activeBlobIntentIDs.insert(intent.id)
         defer { activeBlobIntentIDs.remove(intent.id) }
@@ -3263,14 +3262,14 @@ public actor HeadlessMessagingClient {
             to: .committed,
             attemptId: attemptID,
             at: transitionAt
-        ), let finalized = committed.advancing(
-            to: .finalized,
-            attemptId: attemptID,
-            at: transitionAt
         ) else {
             throw HeadlessMessagingClientError.invalidState
         }
-        relationship.protocolIntents[currentIndex] = finalized
+        // The encrypted upload request remains crash-retryable until the
+        // descriptor event is accepted. A finalized upload intent may not
+        // retain that request, so stop at committed and finalize both records
+        // atomically after descriptor delivery.
+        relationship.protocolIntents[currentIndex] = committed
         // Keep the exact encrypted request until the descriptor event is
         // accepted. This closes the crash window between the final chunk and
         // descriptor publication.
@@ -3382,8 +3381,29 @@ public actor HeadlessMessagingClient {
                   $0.kind == .uploadBlob
                       && $0.targetIdentifier
                         == Data(uploadID.uuidString.lowercased().utf8)
-              }) else {
+        }) else {
             throw HeadlessMessagingClientError.invalidState
+        }
+        if intent.state == .committed,
+           relationship.events.contains(where: { event in
+               guard event.authorEndpointHandle == relationship.localEndpointHandle,
+                     event.content.type == .attachment,
+                     let descriptor = try? NoctweaveCoder.decode(
+                         AttachmentDescriptor.self,
+                         from: event.content.payload
+                     ) else {
+                   return false
+               }
+               return descriptor.id == pending.request.attachmentId
+           }) {
+            return HeadlessBlobUploadResult(
+                relationshipID: relationshipID,
+                uploadID: uploadID,
+                attachmentID: pending.request.attachmentId,
+                chunkIndex: pending.request.chunkIndex,
+                state: .committed,
+                accepted: true
+            )
         }
         guard !activeBlobIntentIDs.contains(intent.id) else {
             return HeadlessBlobUploadResult(
@@ -3508,6 +3528,10 @@ public actor HeadlessMessagingClient {
                 )
             }
         }
+        try await finalizeDeliveredDirectAttachmentUploads(
+            relationshipID: relationshipID,
+            at: date
+        )
         let ids = try relationship(relationshipID).pendingAttachmentUploads.map(\.id)
         var results: [HeadlessBlobUploadResult] = []
         for uploadID in ids {
@@ -3518,6 +3542,55 @@ public actor HeadlessMessagingClient {
             ))
         }
         return results
+    }
+
+    private func finalizeDeliveredDirectAttachmentUploads(
+        relationshipID: UUID,
+        at date: Date
+    ) async throws {
+        var relationship = try relationship(relationshipID)
+        var finalizedUploadIDs = Set<UUID>()
+
+        for pending in relationship.pendingAttachmentUploads {
+            guard let event = relationship.events.first(where: { event in
+                guard event.authorEndpointHandle == relationship.localEndpointHandle,
+                      event.content.type == .attachment,
+                      let descriptor = try? NoctweaveCoder.decode(
+                          AttachmentDescriptor.self,
+                          from: event.content.payload
+                      ) else {
+                    return false
+                }
+                return descriptor.id == pending.request.attachmentId
+            }), relationship.deliveryStates.contains(where: {
+                $0.eventId == event.id && $0.state != .locallyPersisted
+            }), !relationship.pendingDeliveries.contains(where: {
+                $0.logicalEventID == event.id
+            }), let intentIndex = relationship.protocolIntents.firstIndex(where: {
+                $0.id == pending.id && $0.kind == .uploadBlob
+            }) else {
+                continue
+            }
+
+            let intent = relationship.protocolIntents[intentIndex]
+            guard intent.state == .committed,
+                  let attemptID = intent.lastAttemptId,
+                  let finalized = intent.advancing(
+                      to: .finalized,
+                      attemptId: attemptID,
+                      at: max(date, intent.updatedAt)
+                  ) else {
+                continue
+            }
+            relationship.protocolIntents[intentIndex] = finalized
+            finalizedUploadIDs.insert(pending.id)
+        }
+
+        guard !finalizedUploadIDs.isEmpty else { return }
+        relationship.pendingAttachmentUploads.removeAll {
+            finalizedUploadIDs.contains($0.id)
+        }
+        try await commitRelationship(relationship)
     }
 
     public func discardFailedAttachmentUpload(
@@ -4131,10 +4204,15 @@ public actor HeadlessMessagingClient {
         guard try relationship(relationshipID).localPolicy.consent != .blocked else {
             throw HeadlessMessagingClientError.relationshipBlocked
         }
-        return try await publishPendingDeliveries(
+        let accepted = try await publishPendingDeliveries(
             relationshipID: relationshipID,
             at: date
         )
+        try await finalizeDeliveredDirectAttachmentUploads(
+            relationshipID: relationshipID,
+            at: date
+        )
+        return accepted
     }
 
     /// Explicitly erases a terminal failed exact outbox artifact. Failed

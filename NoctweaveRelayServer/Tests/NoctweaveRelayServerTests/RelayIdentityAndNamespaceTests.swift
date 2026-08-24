@@ -44,6 +44,25 @@ final class RelayIdentityAndNamespaceTests: XCTestCase {
         )
     }
 
+    func testRelayIdentityRuntimeRejectsUnrepresentableTimestamp() throws {
+        let runtime = RelayIdentityRuntime(
+            keyMaterial: try RelayIdentityKeyMaterialV1.generate()
+        )
+        let configuration = RelayConfiguration(
+            federation: federation,
+            advertisedEndpoint: endpoint
+        )
+
+        XCTAssertThrowsError(try runtime.signedIdentity(
+            configuration: configuration,
+            advertisedEndpoints: [endpoint],
+            hostSigningPublicKey: nil,
+            at: Date(timeIntervalSince1970: .greatestFiniteMagnitude)
+        )) {
+            XCTAssertEqual($0 as? RelayIdentityError, .invalidPayload)
+        }
+    }
+
     func testDuplicateAndExpiredClaimsNeverReleaseOwnership() throws {
         let owner = try RelayIdentityKeyMaterialV1.generate()
         let attacker = try RelayIdentityKeyMaterialV1.generate()

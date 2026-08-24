@@ -3,6 +3,29 @@ import XCTest
 @testable import NoctweaveCore
 
 final class NoctwebDataV1Tests: XCTestCase {
+    func testMalformedAuthorizationTranscriptFailsClosedWithoutTrapping() {
+        let authorization = NoctwebDataAuthorizationV1(
+            actorKind: .publisher,
+            actorID: "nwpub1_" + String(repeating: "a", count: 64),
+            nonce: Data(repeating: 1, count: NoctwebDataV1.nonceBytes),
+            expiresAt: Date(timeIntervalSince1970: .nan),
+            signature: Data(
+                repeating: 2,
+                count: NoctwebDataV1.publisherSignatureBytes
+            )
+        )
+        let request = NoctwebDataRecordGetRequestV1(
+            databaseID: "nwdb1_" + String(repeating: "b", count: 64),
+            collection: "records",
+            recordID: "item",
+            authorization: authorization
+        )
+
+        XCTAssertFalse(authorization.isStructurallyValid)
+        XCTAssertFalse(request.isStructurallyValid)
+        XCTAssertFalse(NoctwebDataTranscriptV1.getRecord(request).isEmpty)
+    }
+
     func testDatabaseCreationIsSeparatelyDefaultOff() {
         let serving = RelayConfiguration(
             kind: .standard,
@@ -129,6 +152,39 @@ final class NoctwebDataV1Tests: XCTestCase {
             try NoctweaveCoder.encode(response).count,
             RelayClientPolicy.defaultMaximumResponseBytes
         )
+    }
+
+    func testRecordValidationRejectsExhaustedRevisionWithoutOverflowing() throws {
+        let databaseID = "nwdb1_" + String(repeating: "a", count: 64)
+        let payload = try noctwebDataEncodeEncryptedPayload(.init(
+            keyID: Data(repeating: 1, count: NoctwebDataV1.payloadKeyIDBytes),
+            nonce: Data(repeating: 2, count: NoctwebDataV1.payloadNonceBytes),
+            ciphertext: Data(repeating: 3, count: 17)
+        ))
+        let provenance = NoctwebDataRecordProvenanceV1(
+            actorKind: .publisher,
+            actorID: "nwpub1_" + String(repeating: "b", count: 64),
+            actorSigningPublicKey: Data(repeating: 3, count: NoctwebDataV1.publisherPublicKeyBytes),
+            authorizationNonce: Data(repeating: 4, count: NoctwebDataV1.nonceBytes),
+            authorizationExpiresAt: Date(timeIntervalSince1970: 2),
+            idempotencyKey: Data(repeating: 5, count: NoctwebDataV1.idempotencyKeyBytes),
+            expectedRevision: .max,
+            signature: Data(repeating: 6, count: NoctwebDataV1.publisherSignatureBytes)
+        )
+        let record = NoctwebDataRecordV1(
+            databaseID: databaseID,
+            collection: "items",
+            recordID: "one",
+            ownerAccountID: nil,
+            payload: payload,
+            revision: .max,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1),
+            provenance: provenance
+        )
+        XCTAssertFalse(provenance.isStructurallyValid)
+        XCTAssertFalse(record.isStructurallyValid)
+        XCTAssertThrowsError(try NoctweaveCoder.encode(record))
     }
 
     func testPublisherAndOriginScopedAccountPoliciesCASAndPersistence() throws {

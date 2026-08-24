@@ -67,6 +67,27 @@ final class RelayICEServiceV1Tests: XCTestCase {
         XCTAssertNil(CoturnCredentialIssuerV1(sharedSecret: "too-short"))
     }
 
+    func testCredentialIssuerRejectsUnrepresentableTimestamps() throws {
+        let issuer = try XCTUnwrap(CoturnCredentialIssuerV1(
+            sharedSecret: "0123456789abcdef0123456789abcdef"
+        ))
+        let request = RelayICECredentialRequestV1(
+            nonce: Data(0...15),
+            requestedLifetimeSeconds: 600
+        )
+
+        XCTAssertNil(issuer.issue(
+            request: request,
+            descriptor: descriptor,
+            now: Date(timeIntervalSince1970: -1)
+        ))
+        XCTAssertNil(issuer.issue(
+            request: request,
+            descriptor: descriptor,
+            now: Date(timeIntervalSince1970: .greatestFiniteMagnitude)
+        ))
+    }
+
     func testRelayAdvertisesAndServesICECredentialsOverLoopback() async throws {
         let configuration = RelayConfiguration(iceService: descriptor)
         let info = configuration.makeInfo(now: Date(timeIntervalSince1970: 1_700_000_000))

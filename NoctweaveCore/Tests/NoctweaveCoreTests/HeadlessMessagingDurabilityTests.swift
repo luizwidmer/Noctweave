@@ -491,6 +491,39 @@ final class HeadlessMessagingDurabilityTests: XCTestCase {
         XCTAssertTrue(secondRetry.isEmpty)
     }
 
+    func testDirectAttachmentSuccessfulBlobUploadRetainsCommittedIntentUntilDescriptorDelivery() async throws {
+        let port = UInt16.random(in: 47_000...48_999)
+        let relay = RelayEndpoint(host: "127.0.0.1", port: port, transport: .tcp)
+        let harness = try makeHarness(
+            label: #function,
+            relationship: makeRelationship(peerRelay: relay)
+        )
+        defer { try? FileManager.default.removeItem(at: harness.directory) }
+        let server = RelayServer(store: RelayStore())
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        try await Task.sleep(nanoseconds: 250_000_000)
+
+        _ = try await harness.client.sendAttachment(
+            Data("first-attempt upload succeeds".utf8),
+            mimeType: "text/plain",
+            relay: relay,
+            relationshipID: harness.relationshipID,
+            eventID: UUID(uuidString: "39000000-0000-4000-8000-000000000011")!,
+            clientTransactionID: UUID(uuidString: "39000000-0000-4000-8000-000000000012")!,
+            sentAt: origin.addingTimeInterval(180)
+        )
+
+        let relationship = try await harness.client.relationship(harness.relationshipID)
+        let pending = try XCTUnwrap(relationship.pendingAttachmentUploads.first)
+        let intent = try XCTUnwrap(relationship.protocolIntents.first {
+            $0.id == pending.id && $0.kind == .uploadBlob
+        })
+        XCTAssertEqual(intent.state, .committed)
+        XCTAssertEqual(intent.attemptCount, 1)
+        XCTAssertTrue(try relationship.isStructurallyValidThrowing)
+    }
+
     func testConcurrentPrepareSendOnOneRelationshipRetainsBothAndRatchetState() async throws {
         let harness = try makeHarness(label: #function)
         defer { try? FileManager.default.removeItem(at: harness.directory) }

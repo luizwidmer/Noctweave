@@ -773,6 +773,7 @@ public struct NoctwebDataRecordV1: Codable, Equatable {
             && noctwebDataDateIsCanonical(createdAt) && noctwebDataDateIsCanonical(updatedAt) && updatedAt >= createdAt
             && noctwebDataEncryptedPayload(from: payload) != nil
             && provenance.isStructurallyValid
+            && provenance.expectedRevision < UInt64.max
             && provenance.expectedRevision + 1 == revision
             && (provenance.actorKind != .account
                 || ownerAccountID == provenance.actorID)
@@ -1017,7 +1018,7 @@ public enum NoctwebDataTranscriptV1 {
     private static func append(_ value: String?, to data: inout Data) { data.append(value == nil ? 0 : 1); if let value { append(value, to: &data) } }
     private static func append(_ value: Data, to data: inout Data) { append(UInt64(value.count), to: &data); data.append(value) }
     private static func append(_ value: Date, to data: inout Data) {
-        append(UInt64(value.timeIntervalSince1970), to: &data)
+        append(UInt64(exactly: value.timeIntervalSince1970) ?? 0, to: &data)
     }
     private static func append(_ value: UInt64, to data: inout Data) { var bigEndian = value.bigEndian; Swift.withUnsafeBytes(of: &bigEndian) { data.append(contentsOf: $0) } }
 }
@@ -1080,7 +1081,10 @@ private func noctwebDataDatabaseIDIsValid(_ value: String) -> Bool { noctwebData
 private func noctwebDataAccountIDIsValid(_ value: String) -> Bool { noctwebDataDigestIDIsValid(value, prefix: "nwa1_") }
 private func noctwebDataActorIDIsValid(_ value: String, kind: NoctwebDataActorKindV1) -> Bool { kind == .publisher ? noctwebDataDigestIDIsValid(value, prefix: "nwpub1_") : noctwebDataAccountIDIsValid(value) }
 private func noctwebDataDigestIDIsValid(_ value: String, prefix: String) -> Bool { value.hasPrefix(prefix) && value.utf8.count == prefix.utf8.count + 64 && value.dropFirst(prefix.count).utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) } }
-private func noctwebDataDateIsCanonical(_ date: Date) -> Bool { let value = date.timeIntervalSince1970; return value.isFinite && value >= 0 && floor(value) == value }
+private func noctwebDataDateIsCanonical(_ date: Date) -> Bool {
+    let value = date.timeIntervalSince1970
+    return value <= 9_007_199_254_740_991 && UInt64(exactly: value) != nil
+}
 
 private struct NoctwebDataCodingKey: CodingKey { let stringValue: String; let intValue: Int?; init?(stringValue: String) { self.stringValue = stringValue; intValue = nil }; init?(intValue: Int) { stringValue = String(intValue); self.intValue = intValue } }
 private func noctwebDataRequireExact<Key: CodingKey & CaseIterable>(_ decoder: Decoder, _ type: Key.Type) throws where Key.AllCases: Collection {

@@ -93,11 +93,12 @@ private func pairingLobbyCanonicalDate(_ value: Date) -> Date {
 
 private func pairingLobbyDateIsCanonical(_ value: Date) -> Bool {
     let seconds = value.timeIntervalSince1970
-    return seconds.isFinite && seconds >= 0 && floor(seconds) == seconds
+    return seconds <= 9_007_199_254_740_991
+        && UInt64(exactly: seconds) != nil
 }
 
 private func pairingLobbyDateSeconds(_ value: Date) -> UInt64 {
-    UInt64(value.timeIntervalSince1970)
+    UInt64(exactly: value.timeIntervalSince1970) ?? 0
 }
 
 private func pairingLobbyUUIDBytes(_ value: UUID) -> Data {
