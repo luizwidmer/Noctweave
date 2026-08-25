@@ -7,8 +7,8 @@ let package = Package(
         .macOS(.v13)
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.100.0"),
-        .package(url: "https://github.com/apple/swift-crypto.git", exact: "3.15.1")
+        .package(url: "https://github.com/apple/swift-nio.git", exact: "2.101.0"),
+        .package(url: "https://github.com/apple/swift-crypto.git", exact: "4.5.1")
     ],
     targets: [
         .systemLibrary(

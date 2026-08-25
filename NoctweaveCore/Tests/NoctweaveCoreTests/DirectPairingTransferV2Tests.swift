@@ -202,6 +202,144 @@ final class DirectPairingTransferV2Tests: XCTestCase {
         )
     }
 
+    func testLiveBuiltAppExchangeHarness() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["NOCTWEAVE_RUN_LIVE_APP_SCENARIO"] == "1" else {
+            throw XCTSkip("The built-app exchange harness is opt-in.")
+        }
+        let rootPath = try XCTUnwrap(environment["NOCTWEAVE_LIVE_APP_ROOT"])
+        let port = try XCTUnwrap(UInt16(environment["NOCTWEAVE_LIVE_APP_PORT"] ?? ""))
+        let root = URL(fileURLWithPath: rootPath, isDirectory: true).standardizedFileURL
+        let senderDirectory = root.appendingPathComponent("sender", isDirectory: true)
+        let receiverDirectory = root.appendingPathComponent("receiver", isDirectory: true)
+        let senderStateURL = senderDirectory.appendingPathComponent("state.json")
+        let receiverStateURL = receiverDirectory.appendingPathComponent("state.json")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: senderStateURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: receiverStateURL.path))
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: root.path
+        )
+
+        let server = RelayServer(
+            store: RelayStore(),
+            opaqueRouteStore: OpaqueRouteRelayStoreV2()
+        )
+        let started = expectation(description: "live app relay started")
+        server.onEvent = { event in
+            if case .started = event { started.fulfill() }
+        }
+        try server.start(host: "127.0.0.1", port: port)
+        defer { server.stop() }
+        await fulfillment(of: [started], timeout: 5)
+        let endpoint = RelayEndpoint(host: "127.0.0.1", port: port)
+
+        let sender = try await makeClient(
+            name: "Sender",
+            directory: senderDirectory,
+            completeOnboarding: true
+        )
+        let receiver = try await makeClient(
+            name: "Receiver",
+            directory: receiverDirectory,
+            completeOnboarding: true
+        )
+        let now = NoctweaveRendezvousV2.canonicalTimestamp(Date())
+        let senderPending = try await sender.prepareContactParticipant(
+            relay: endpoint,
+            relationshipPseudonym: "Sender",
+            createdAt: now
+        )
+        let senderParticipant = try await sender.activateContactParticipant(senderPending)
+        let receiverPending = try await receiver.prepareContactParticipant(
+            relay: endpoint,
+            relationshipPseudonym: "Receiver",
+            createdAt: now
+        )
+        let receiverParticipant = try await receiver.activateContactParticipant(receiverPending)
+
+        var offer = try await sender.makeContactPairingInvitation(
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(300)
+        )
+        let invitation = offer.invitation
+        let responderStart = try ContactPairingResponderFlowV2.begin(
+            invitation: invitation,
+            participant: receiverParticipant,
+            at: now.addingTimeInterval(1)
+        )
+        var responderFlow = responderStart.flow
+        var ledger = RendezvousRedemptionLedgerV2()
+        let offererStart = try ContactPairingOffererFlowV2.begin(
+            pendingOffer: &offer.pending,
+            invitation: invitation,
+            participant: senderParticipant,
+            openRequest: responderStart.openRequest,
+            acceptanceFrame: responderStart.acceptanceFrame,
+            ledger: &ledger,
+            at: now.addingTimeInterval(2)
+        )
+        var offererFlow = offererStart.flow
+        let responderConfirmation = try responderFlow.receiveOffer(
+            offererStart.offerFrame,
+            at: now.addingTimeInterval(3)
+        )
+        let offererCompletion = try offererFlow.receiveConfirmation(
+            responderConfirmation,
+            at: now.addingTimeInterval(4)
+        )
+        let receiverRelationship = try responderFlow.receiveConfirmation(
+            offererCompletion.confirmationFrame,
+            at: now.addingTimeInterval(5)
+        )
+
+        let senderScope = await sender.mintActivePersonaScopeToken()
+        try await sender.addRelationship(
+            offererCompletion.relationship,
+            consent: .accepted,
+            personaScope: senderScope
+        )
+        let receiverScope = await receiver.mintActivePersonaScopeToken()
+        try await receiver.addRelationship(
+            receiverRelationship,
+            consent: .accepted,
+            personaScope: receiverScope
+        )
+
+        let proofText = "Noctweave attachment proof \(UUID().uuidString.lowercased())\n"
+        let proofURL = root.appendingPathComponent("attachment-proof.txt")
+        try Data(proofText.utf8).write(to: proofURL, options: .atomic)
+        let readyURL = root.appendingPathComponent("ready.json")
+        let metadata: [String: Any] = [
+            "relayPort": Int(port),
+            "relationshipID": offererCompletion.relationship.id.uuidString,
+            "senderState": senderStateURL.path,
+            "receiverState": receiverStateURL.path,
+            "attachmentPath": proofURL.path,
+            "attachmentText": proofText.trimmingCharacters(in: .newlines),
+        ]
+        let readyData = try JSONSerialization.data(
+            withJSONObject: metadata,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try readyData.write(to: readyURL, options: .atomic)
+        FileHandle.standardError.write(
+            Data("[NoctweaveLiveApp] ready \(readyURL.path)\n".utf8)
+        )
+
+        let stopURL = root.appendingPathComponent("stop")
+        let deadline = Date().addingTimeInterval(15 * 60)
+        while Date() < deadline,
+              !FileManager.default.fileExists(atPath: stopURL.path) {
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: stopURL.path),
+            "The built-app exchange harness timed out before its stop marker arrived."
+        )
+    }
+
     func testDirectCarrierRejectsUnknownFields() throws {
         let offer = try ContactPairingHandshakeV2.makeOffer(
             createdAt: origin,
@@ -252,9 +390,16 @@ final class DirectPairingTransferV2Tests: XCTestCase {
 
     private func makeClient(
         name: String,
-        directory: URL
+        directory: URL,
+        completeOnboarding: Bool = false
     ) async throws -> HeadlessMessagingClient {
-        let state = try ClientState(displayName: name, createdAt: origin)
+        var state = try ClientState(displayName: name, createdAt: origin)
+        if completeOnboarding {
+            try state.completeOnboarding(
+                privacyPolicyAccepted: true,
+                termsOfUseAccepted: true
+            )
+        }
         let store = ClientStateStore(
             fileURL: directory.appendingPathComponent("state.json"),
             protection: .insecurePlaintextForTesting

@@ -236,18 +236,29 @@ import sys
 
 manifest = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 if not re.search(
-    r'swift-nio\.git",\s*exact:\s*"2\.100\.0"',
+    r'swift-nio\.git",\s*exact:\s*"2\.101\.0"',
     manifest,
 ):
-    raise SystemExit("SwiftNIO must retain the 2.100.0 security floor")
+    raise SystemExit("SwiftNIO must retain the 2.101.0 security floor")
+if not re.search(
+    r'swift-crypto\.git",\s*exact:\s*"4\.5\.1"',
+    manifest,
+):
+    raise SystemExit("Swift Crypto must retain the 4.5.1 security floor")
 
 resolved = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
 nio = next(
     (pin for pin in resolved.get("pins", []) if pin.get("identity") == "swift-nio"),
     None,
 )
-if not nio or nio.get("state", {}).get("version") != "2.100.0":
-    raise SystemExit("Package.resolved must retain SwiftNIO 2.100.0")
+if not nio or nio.get("state", {}).get("version") != "2.101.0":
+    raise SystemExit("Package.resolved must retain SwiftNIO 2.101.0")
+crypto = next(
+    (pin for pin in resolved.get("pins", []) if pin.get("identity") == "swift-crypto"),
+    None,
+)
+if not crypto or crypto.get("state", {}).get("version") != "4.5.1":
+    raise SystemExit("Package.resolved must retain Swift Crypto 4.5.1")
 PY
 
 echo "Running Linux relay test suite..."
