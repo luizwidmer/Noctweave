@@ -17,7 +17,7 @@
       <a href="#overview" class="active"><span>◌</span> Overview</a>
       <a href="#setup"><span>◇</span> Local setup</a>
       <a href="#operator"><span>⌁</span> Operator console</a>
-      <a href="#logs"><span>≡</span> Logs</a>
+      <a href="#diagnostics" id="diagnosticsLink"><span>≡</span> Diagnostics</a>
     </nav>
     <div class="railStatus"><span id="statusDot" class="statusDot"></span><span id="statusLabel">Checking relay</span></div>
   </aside>
@@ -40,31 +40,41 @@
       <article><span>Noctweb</span><strong id="noctwebState">—</strong></article>
     </section>
 
-    <section id="setup" class="panel">
-      <div class="sectionHeader"><div><span class="eyebrow">LOCAL BUILD</span><h2>Runtime setup</h2><p>The application uses fixed Docker commands and a persistent named volume.</p></div><button id="buildImage">Build from source</button></div>
-      <form id="relayForm">
-        <label class="wide">Relay name<input name="relayName" maxlength="80" required></label>
-        <label>Exposure<select name="exposure"><option value="local">This computer only</option><option value="network">LAN / host network</option></select></label>
-        <label>Raw TCP port<input name="tcpPort" type="number" min="1024" max="65535" required></label>
-        <label>HTTP / WebSocket port<input name="httpPort" type="number" min="1024" max="65535" required></label>
-        <label>Operator port<input name="adminPort" type="number" min="1024" max="65535" required></label>
-        <label class="check wide"><input name="noctwebHostingEnabled" type="checkbox"> Enable Noctweb hosting and Publisher / Lab</label>
-        <label class="check"><input name="rendezvousTransportEnabled" type="checkbox"> Enable rendezvous transport</label>
-        <label class="check"><input name="trustedReverseProxyTLS" type="checkbox"> Trust reverse-proxy TLS (does not enable local TLS)</label>
-      </form>
-      <div class="warning"><strong>Noctweb hosting is explicit.</strong><span>A solo standard relay can advertise <code>nw.net-host@1</code> and serve its built-in Publisher / Lab at <code>/noctweb/</code>. The generated publisher password is separate from the operator token.</span></div>
-      <div class="warning"><strong>Docker access is powerful.</strong><span>This app can create and stop only its named relay container. Build from source you have reviewed, and do not expose the operator port publicly.</span></div>
-    </section>
+    <details id="setup" class="panel setupPanel" open>
+      <summary><span><span class="eyebrow">LOCAL BUILD</span><strong>Runtime setup</strong><small id="setupSummary">Configure this relay</small></span><span class="disclosureHint">Show settings</span></summary>
+      <div class="detailsBody">
+        <div class="sectionHeader"><div><h2>Basic setup</h2><p>Choose how this relay is named and who can reach it.</p></div><button id="buildImage">Build from source</button></div>
+        <form id="relayForm">
+          <label>Relay name<input name="relayName" maxlength="80" required></label>
+          <label>Exposure<select name="exposure"><option value="local">This computer only</option><option value="network">LAN / host network</option></select></label>
+          <label class="check wide"><input name="noctwebHostingEnabled" type="checkbox"> Enable Noctweb hosting and Publisher / Lab</label>
+          <details class="advancedSetup wide">
+            <summary><span><strong>Advanced setup</strong><small>Ports, rendezvous, and reverse-proxy trust</small></span></summary>
+            <div class="advancedGrid">
+              <label>Raw TCP port<input name="tcpPort" type="number" min="1024" max="65535" required></label>
+              <label>HTTP / WebSocket port<input name="httpPort" type="number" min="1024" max="65535" required></label>
+              <label>Operator port<input name="adminPort" type="number" min="1024" max="65535" required></label>
+              <label class="check"><input name="rendezvousTransportEnabled" type="checkbox"> Enable rendezvous transport</label>
+              <label class="check wide"><input name="trustedReverseProxyTLS" type="checkbox"> Trust reverse-proxy TLS (does not enable local TLS)</label>
+            </div>
+          </details>
+        </form>
+        <details class="setupHelp">
+          <summary>Hosting and Docker safety</summary>
+          <div class="helpGrid"><div><strong>Noctweb hosting is explicit.</strong><span>A solo standard relay can advertise <code>nw.net-host@1</code> and serve Publisher / Lab. Its publisher password is separate from the operator token.</span></div><div><strong>Docker access is powerful.</strong><span>This app manages only its named relay container. Build reviewed source, and never expose the operator port publicly.</span></div></div>
+        </details>
+      </div>
+    </details>
 
     <section id="operator" class="panel split">
-      <div><span class="eyebrow">CONTROL PLANE</span><h2>Operator console</h2><p>The complete relay configuration remains in the authenticated WebUI served by the relay. Its port is always bound to loopback.</p></div>
-      <div class="stack"><button id="openConsole" class="primary">Open local console</button><button id="copyToken">Copy operator token</button><button id="openPublisher">Open Publisher / Lab</button><button id="copyPublisherPassword">Copy publisher password</button></div>
+      <div><span class="eyebrow">CONTROL PLANE</span><h2>Operator console</h2><p>Manage the running relay in its authenticated local console. The operator port remains bound to loopback.</p></div>
+      <div class="stack"><button id="openConsole" class="primary">Open local console</button><button id="openPublisher">Open Publisher / Lab</button><details class="credentialMenu"><summary>Credentials</summary><div><button id="copyToken">Copy operator token</button><button id="copyPublisherPassword">Copy publisher password</button></div></details></div>
     </section>
 
-    <section id="logs" class="panel">
-      <div class="sectionHeader"><div><span class="eyebrow">DIAGNOSTICS</span><h2>Recent relay logs</h2><p>Output is bounded to the latest container lines and excludes the generated operator token.</p></div><button id="refreshLogs">Refresh</button></div>
-      <pre id="logs">Select Refresh after starting the relay.</pre>
-    </section>
+    <details id="diagnostics" class="panel diagnosticsPanel">
+      <summary><span><span class="eyebrow">DIAGNOSTICS</span><strong>Recent relay logs</strong><small>Open only when troubleshooting</small></span><span class="disclosureHint">Show logs</span></summary>
+      <div class="detailsBody"><div class="sectionHeader"><p>Output is bounded to the latest container lines and excludes the generated operator token.</p><button id="refreshLogs">Refresh</button></div><pre id="logOutput">Open diagnostics after starting the relay.</pre></div>
+    </details>
 
     <section class="note"><strong>The relay keeps running when this window closes.</strong><span>Stop it here or with Docker. Relay state remains in the <code>noctweave-relay-data</code> volume until you explicitly remove that volume.</span></section>
   </main>

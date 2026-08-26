@@ -265,8 +265,13 @@ struct NoctwebPublisherSurface {
             <span id="relayLabel">Connecting to relay…</span>
           </div>
           <div class="topbar-actions">
-            <label class="appearance-control" for="appearanceSelect"><span>Appearance</span><select id="appearanceSelect" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-            <button class="button ghost" id="resetButton" type="button">Reset draft</button>
+            <details class="workspace-menu">
+              <summary class="menu-trigger" aria-label="Publisher menu">More</summary>
+              <div class="workspace-menu-popover">
+                <label class="appearance-control" for="appearanceSelect"><span>Appearance</span><select id="appearanceSelect" aria-label="Appearance"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+                <button class="button danger" id="resetButton" type="button">Reset local draft…</button>
+              </div>
+            </details>
             <button class="button primary" id="hostButton" type="button">Host revision</button>
           </div>
         </header>
@@ -275,13 +280,10 @@ struct NoctwebPublisherSurface {
           <section class="project-heading" aria-labelledby="projectTitle">
             <div>
               <p class="eyebrow">Publication workspace</p>
-              <h1 id="projectTitle">Build a page that belongs to its publisher.</h1>
-              <p class="muted">Design visually or edit browser-ready HTML, CSS, and JavaScript. The relay stores signed bytes; it never owns or executes the site.</p>
+              <h1 id="projectTitle">Noctweb Publisher</h1>
+              <p class="muted">Design, preview, and host a signed site revision.</p>
             </div>
-            <div class="identity-chip" id="identityChip">
-              <span>Publisher identity</span>
-              <strong id="publisherShort">Preparing…</strong>
-            </div>
+            <details class="identity-chip" id="identityChip"><summary><span>Publisher verified</span><strong id="publisherShort">Preparing…</strong></summary><p>The active publisher scope stays in this browser. The relay stores signed bytes; hosting is not ownership or finality.</p></details>
           </section>
 
           <nav class="workspace-tabs" aria-label="Publisher workspace">
@@ -316,8 +318,8 @@ struct NoctwebPublisherSurface {
                       <output id="accentValue">#c96a61</output>
                     </span>
                   </label>
-                  <label>Button label<input id="buttonTextInput" maxlength="64"></label>
-                  <label>Button destination<input id="buttonURLInput" maxlength="400" placeholder="https://example.com"></label>
+                  <label class="cta-toggle"><input id="ctaEnabledInput" type="checkbox"> Add a call-to-action button</label>
+                  <div id="ctaFields" hidden><label>Button label<input id="buttonTextInput" maxlength="64"></label><label>Button destination<input id="buttonURLInput" maxlength="400" placeholder="https://example.com"></label></div>
                   <div class="notice" id="customCodeNotice" hidden>
                     <strong>Custom code is active.</strong>
                     <p>Design changes will not overwrite it. Apply the design template when you want to replace the source files.</p>
@@ -351,7 +353,7 @@ struct NoctwebPublisherSurface {
             </div>
           </section>
 
-          <section class="publication-card" aria-labelledby="hostedHeading">
+          <section class="publication-card" id="publicationCard" aria-labelledby="hostedHeading" hidden>
             <div>
               <p class="eyebrow">Current relay copy</p>
               <h2 id="hostedHeading">Not hosted yet</h2>
@@ -426,6 +428,7 @@ struct NoctwebPublisherSurface {
       color: var(--text);
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html, body { margin: 0; min-height: 100%; background: var(--bg); }
     body {
       min-width: 320px;
@@ -484,9 +487,9 @@ struct NoctwebPublisherSurface {
     .connection-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 4px rgba(68,212,155,.1); }
     .topbar-actions { display: flex; justify-content: flex-end; gap: 9px; }
     .product {
-      width: min(1180px, calc(100% - 36px));
+      width: min(1480px, calc(100% - 36px));
       margin: 0 auto;
-      padding: clamp(30px, 5vw, 64px) 0 60px;
+      padding: clamp(24px, 4vw, 48px) 0 60px;
     }
     .project-heading {
       display: flex;
@@ -495,7 +498,7 @@ struct NoctwebPublisherSurface {
       gap: 36px;
       margin-bottom: 28px;
     }
-    .project-heading h1 { max-width: 720px; margin: 7px 0 10px; font-size: clamp(28px, 4vw, 46px); line-height: 1.06; letter-spacing: -.035em; }
+    .project-heading h1 { max-width: 720px; margin: 7px 0 8px; font-size: clamp(27px, 3vw, 38px); line-height: 1.06; letter-spacing: -.035em; }
     .project-heading .muted { max-width: 700px; margin: 0; }
     .eyebrow { margin: 0; color: var(--accent-strong); font-size: 11px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
     .muted { color: var(--muted); line-height: 1.55; }
@@ -506,9 +509,20 @@ struct NoctwebPublisherSurface {
       border-radius: 12px;
       background: color-mix(in srgb, var(--surface) 88%, transparent);
     }
+    .identity-chip summary { cursor: pointer; list-style: none; }
+    .identity-chip summary::-webkit-details-marker { display: none; }
     .identity-chip span, .identity-chip strong { display: block; }
     .identity-chip span { margin-bottom: 5px; color: var(--muted); font-size: 11px; }
     .identity-chip strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    .identity-chip p { max-width: 340px; margin: 12px 0 0; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .workspace-menu { position: relative; }
+    .workspace-menu > summary { list-style: none; }
+    .workspace-menu > summary::-webkit-details-marker { display: none; }
+    .menu-trigger { min-height: 38px; display: inline-flex; align-items: center; padding: 0 15px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 700; }
+    .workspace-menu-popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 20; width: 230px; display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+    .workspace-menu-popover .appearance-control { display: grid; gap: 7px; }
+    .workspace-menu-popover .appearance-control span { display: block; }
+    .workspace-menu-popover .appearance-control select, .workspace-menu-popover .button { width: 100%; }
     .workspace-tabs { display: flex; gap: 4px; width: max-content; padding: 4px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
     .tab, .file-tab {
       border: 0;
@@ -536,6 +550,8 @@ struct NoctwebPublisherSurface {
     .section-heading h2, .publication-card h2, .dialog-heading h2 { margin: 5px 0 0; font-size: 20px; letter-spacing: -.02em; }
     .save-state { color: var(--success); font-size: 11px; }
     label { display: grid; gap: 8px; margin: 0 0 20px; color: var(--text); font-size: 12px; font-weight: 650; }
+    .cta-toggle { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); }
+    .cta-toggle input { width: auto; margin: 0; accent-color: var(--accent); }
     input, textarea, select {
       width: 100%;
       border: 1px solid var(--line);
@@ -670,7 +686,7 @@ struct NoctwebPublisherSurface {
       .topbar-actions .primary { white-space: nowrap; }
       .appearance-control { min-width: 0; }
       .appearance-control select { width: 100%; }
-      .product { width: min(100% - 20px, 1180px); padding-top: 28px; }
+      .product { width: min(100% - 20px, 1480px); padding-top: 28px; }
       .workspace-tabs { width: 100%; }
       .tab { flex: 1; min-width: 0; }
       .form-card { padding: 22px 17px; }
@@ -717,9 +733,9 @@ struct NoctwebPublisherSurface {
       const elements = Object.fromEntries([
         "relayLabel", "publisherShort", "identityChip", "siteLabel", "suffixText",
         "titleInput", "subtitleInput", "bodyInput", "accentInput", "accentValue",
-        "buttonTextInput", "buttonURLInput", "customCodeNotice", "applyDesignButton",
+        "ctaEnabledInput", "ctaFields", "buttonTextInput", "buttonURLInput", "customCodeNotice", "applyDesignButton",
         "saveState", "codeEditor", "previewAddress", "verificationState", "previewFrame",
-        "refreshPreviewButton", "resetButton", "hostButton", "hostedHeading",
+        "refreshPreviewButton", "resetButton", "hostButton", "publicationCard", "hostedHeading",
         "hostedDetail", "copyLinkButton", "unhostButton", "hostDialog", "hostForm",
         "dialogTitle", "dialogDescription", "passwordInput", "retentionField",
         "retentionInput", "dialogError", "dialogSubmit", "toast", "appearanceSelect"
@@ -759,6 +775,7 @@ struct NoctwebPublisherSurface {
         subtitle: "Signed by its publisher. Carried by replaceable infrastructure.",
         body: "This page is an ordinary HTML, CSS, and JavaScript bundle served through Noctweave Net. Its identity belongs to the publication—not to this relay.",
         accent: "#c96a61",
+        ctaEnabled: false,
         buttonText: "Learn more",
         buttonURL: "https://example.com",
         customCode: false,
@@ -777,6 +794,9 @@ struct NoctwebPublisherSurface {
           config = await fetchConfig();
           database = await openDatabase();
           project = await readRecord("projects", PROJECT_KEY) || defaultProject();
+          if (typeof project.ctaEnabled !== "boolean") {
+            project.ctaEnabled = Boolean(project.buttonText || project.buttonURL);
+          }
           if (!project.html || !project.css || !project.js) generateSource();
           identity = await loadOrCreateIdentity(project.publicationID);
           hostedCopies = normalizeHostingLedger(
@@ -863,6 +883,13 @@ struct NoctwebPublisherSurface {
           ["bodyInput", "body"], ["accentInput", "accent"], ["buttonTextInput", "buttonText"],
           ["buttonURLInput", "buttonURL"]
         ];
+        elements.ctaEnabledInput.addEventListener("change", () => {
+          project.ctaEnabled = elements.ctaEnabledInput.checked;
+          elements.ctaFields.hidden = !project.ctaEnabled;
+          if (!project.customCode) generateSource();
+          scheduleSave();
+          updatePreview();
+        });
         fields.forEach(([id, key]) => {
           elements[id].addEventListener("input", () => {
             project[key] = key === "siteLabel"
@@ -924,6 +951,8 @@ struct NoctwebPublisherSurface {
         elements.subtitleInput.value = project.subtitle;
         elements.bodyInput.value = project.body;
         elements.accentInput.value = project.accent;
+        elements.ctaEnabledInput.checked = project.ctaEnabled;
+        elements.ctaFields.hidden = !project.ctaEnabled;
         elements.buttonTextInput.value = project.buttonText;
         elements.buttonURLInput.value = project.buttonURL;
         elements.customCodeNotice.hidden = !project.customCode;
@@ -941,7 +970,7 @@ struct NoctwebPublisherSurface {
         const title = escapeHTML(project.title);
         const subtitle = escapeHTML(project.subtitle);
         const body = escapeHTML(project.body).replaceAll("\n", "<br>");
-        const button = safeHTTPURL(project.buttonURL)
+        const button = project.ctaEnabled && safeHTTPURL(project.buttonURL)
           ? `<a class="site-button" href="${escapeAttribute(project.buttonURL)}" target="_blank" rel="noreferrer">${escapeHTML(project.buttonText)}</a>`
           : "";
         project.html = `<main class="site-shell">
@@ -1480,7 +1509,9 @@ struct NoctwebPublisherSurface {
 
       function updateHostingUI() {
         const hosted = Boolean(currentHosted);
+        elements.publicationCard.hidden = !hosted;
         elements.copyLinkButton.disabled = !currentHostedVerified;
+        elements.copyLinkButton.hidden = !currentHostedVerified;
         elements.unhostButton.disabled = !hosted;
         elements.unhostButton.textContent = hostedCopies.length > 1
           ? `Unhost all ${hostedCopies.length} copies`

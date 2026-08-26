@@ -237,8 +237,7 @@ nav a span {
 }
 
 main {
-  width: calc(100% - 264px);
-  max-width: 1540px;
+  width: auto;
   margin-left: 264px;
   padding: 36px clamp(28px, 5vw, 72px) 64px;
 }
@@ -328,6 +327,55 @@ p {
 .panel {
   margin-bottom: 18px;
   padding: 28px;
+}
+
+details > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.setupPanel > summary,
+.diagnosticsPanel > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.setupPanel > summary > span:first-child,
+.diagnosticsPanel > summary > span:first-child,
+.advancedSetup > summary > span {
+  display: grid;
+  gap: 5px;
+}
+
+.setupPanel > summary strong,
+.diagnosticsPanel > summary strong {
+  font-size: 22px;
+}
+
+summary small,
+.disclosureHint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.disclosureHint::before {
+  content: "＋ ";
+}
+
+details[open] > summary .disclosureHint::before {
+  content: "− ";
+}
+
+.detailsBody {
+  margin-top: 26px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
 }
 
 .hero,
@@ -437,6 +485,73 @@ form {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 17px;
   margin: 24px 0;
+}
+
+.advancedSetup,
+.setupHelp,
+.credentialMenu {
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--surface-raised) 58%, transparent);
+}
+
+.advancedSetup > summary,
+.setupHelp > summary,
+.credentialMenu > summary {
+  padding: 14px 16px;
+  font-weight: 750;
+}
+
+.advancedSetup > summary::after,
+.setupHelp > summary::after,
+.credentialMenu > summary::after {
+  content: "›";
+  float: right;
+  color: var(--muted);
+}
+
+.advancedSetup[open] > summary::after,
+.setupHelp[open] > summary::after,
+.credentialMenu[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+.advancedGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 17px;
+  padding: 2px 16px 16px;
+}
+
+.setupHelp {
+  margin-top: 12px;
+}
+
+.helpGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding: 0 16px 16px;
+}
+
+.helpGrid > div {
+  display: grid;
+  gap: 6px;
+}
+
+.helpGrid span {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.credentialMenu > div {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.credentialMenu button {
+  width: 100%;
 }
 
 label {
@@ -657,7 +772,9 @@ pre {
   }
 
   .metrics,
-  form {
+  form,
+  .advancedGrid,
+  .helpGrid {
     grid-template-columns: 1fr;
   }
 

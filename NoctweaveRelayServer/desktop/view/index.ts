@@ -26,6 +26,9 @@ const tokenButton = $("#copyToken") as HTMLButtonElement;
 const publisherButton = $("#openPublisher") as HTMLButtonElement;
 const publisherPasswordButton = $("#copyPublisherPassword") as HTMLButtonElement;
 const logsButton = $("#refreshLogs") as HTMLButtonElement;
+const setupPanel = $("#setup") as HTMLDetailsElement;
+const diagnosticsPanel = $("#diagnostics") as HTMLDetailsElement;
+const diagnosticsLink = $("#diagnosticsLink") as HTMLAnchorElement;
 const appearanceSelect = $("#appearanceSelect") as HTMLSelectElement;
 const appearanceKey = "noctweave.desktop.appearance";
 let currentStatus: RelayLauncherStatus | undefined;
@@ -70,6 +73,7 @@ function fillSettings(settings: RelayLauncherSettings): void {
 }
 
 function render(status: RelayLauncherStatus, preserveForm = false): void {
+  const firstRender = currentStatus === undefined;
   currentStatus = status;
   if (!preserveForm) fillSettings(status.settings);
   const running = status.containerState === "running";
@@ -78,6 +82,7 @@ function render(status: RelayLauncherStatus, preserveForm = false): void {
   $("#relayState").textContent = status.relayHealthy ? "Online" : running ? "Starting" : "Stopped";
   $("#relayEndpoint").textContent = status.relayEndpoint;
   $("#noctwebState").textContent = status.publisherURL ? "Host + Lab" : "Disabled";
+  $("#setupSummary").textContent = status.imageReady ? "Configured · open to change runtime settings" : "Build and configure this relay";
   $("#statusDetail").textContent = activityMessage?.text ?? status.detail;
   $("#statusDetail").classList.toggle("errorText", activityMessage?.isError === true);
   $("#statusDot").className = `statusDot ${status.relayHealthy ? "online" : running ? "waiting" : ""}`;
@@ -89,6 +94,10 @@ function render(status: RelayLauncherStatus, preserveForm = false): void {
   tokenButton.disabled = busy || !status.relayHealthy;
   publisherButton.disabled = busy || !status.relayHealthy || status.publisherURL === null;
   publisherPasswordButton.disabled = busy || !status.relayHealthy || status.publisherURL === null;
+  publisherButton.hidden = status.publisherURL === null;
+  publisherPasswordButton.hidden = status.publisherURL === null;
+  if (firstRender) setupPanel.open = !status.imageReady;
+  if (activityMessage?.isError) diagnosticsPanel.open = true;
 }
 
 function setBusy(value: boolean, label?: string): void {
@@ -153,11 +162,15 @@ publisherPasswordButton.addEventListener("click", async () => {
 });
 logsButton.addEventListener("click", async () => {
   try {
-    $("#logs").textContent = await desktop.rpc!.request.getLogs({});
+    $("#logOutput").textContent = await desktop.rpc!.request.getLogs({});
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not read relay logs.", true);
   }
 });
+diagnosticsPanel.addEventListener("toggle", () => {
+  if (diagnosticsPanel.open && currentStatus?.containerState === "running") logsButton.click();
+});
+diagnosticsLink.addEventListener("click", () => { diagnosticsPanel.open = true; });
 
 async function refresh(preserveForm = true): Promise<void> {
   if (busy) return;
