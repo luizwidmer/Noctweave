@@ -1,0 +1,16 @@
+{
+  "launcher": {
+    "exitCode": 0,
+    "response": {
+      "body": {},
+      "version": 2,
+      "module": "nw.core",
+      "status": "success",
+      "requestID": "71A7A357-08E7-47DB-95B6-CEAAD38D1DEB",
+      "error": null,
+      "method": "health"
+    }
+  },
+  "nativeStopped51339": true,
+  "launcherStopped50340": true
+}

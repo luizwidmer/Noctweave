@@ -1,0 +1,10 @@
+[
+  {
+    "name": "gitleaks",
+    "exit_code": 1
+  },
+  {
+    "name": "trivy-source",
+    "exit_code": 0
+  }
+]

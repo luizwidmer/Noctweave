@@ -1,0 +1,125 @@
+{
+  "removedTaskPaths": [
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/native-builds",
+      "allocatedKiBBeforeRemoval": 1397924
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/gallery-builds",
+      "allocatedKiBBeforeRemoval": 222508
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/apps",
+      "allocatedKiBBeforeRemoval": 369360
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/launcher-fixture",
+      "allocatedKiBBeforeRemoval": 79728
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/launcher-state",
+      "allocatedKiBBeforeRemoval": 4
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/native-live",
+      "allocatedKiBBeforeRemoval": 97844
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/noctcord-live",
+      "allocatedKiBBeforeRemoval": 520
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/noctcord-live-final",
+      "allocatedKiBBeforeRemoval": 520
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/live-relay",
+      "allocatedKiBBeforeRemoval": 1012
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/source-snapshot",
+      "allocatedKiBBeforeRemoval": 14512
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/trivy-cache",
+      "allocatedKiBBeforeRemoval": 1327248
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/tools",
+      "allocatedKiBBeforeRemoval": 178476
+    },
+    {
+      "path": "<PROJECTS>/PICCP Project/NoctweaveJS/build/dev-macos-arm64/NoctweaveJS UI Test Audit September-dev.app",
+      "allocatedKiBBeforeRemoval": 74908
+    },
+    {
+      "path": "/private/tmp/noctweavejs-ui-test-audit-20260907",
+      "allocatedKiBBeforeRemoval": 320
+    }
+  ],
+  "stoppedServices": [
+    {
+      "port": 25173,
+      "pid": 29451,
+      "process": "node NoctweaveJS/examples/browser-client/server.js"
+    },
+    {
+      "port": 29340,
+      "pid": 31788,
+      "process": "NoctweaveRelayServer/.build/debug/NoctweaveRelayServer --host 127.0.0.1 --port 19339 --http-port 29340 --admin-host 127.0.0.1 --admin-port 19090 --data-dir .runtime/audit-2026-09-07/live-relay --relay-name Local Audit Relay --net-host-enabled true --noctweb-relay-suffix audit --rendezvous-transport true --pairing-lobby true --realtime-routes true --shared-logs true --ephemeral-presence true --media-blobs true --temporal-bucket-seconds 0"
+    }
+  ],
+  "notes": [
+    "Original simulator devices, user application data and unrelated Docker images/volumes are preserved.",
+    "Selected screenshots, test summaries, scanner findings and source-log hashes were exported before build cleanup.",
+    "Retained small isolated macOS test-profile containers, simulator app state and the clearly labeled synthetic simulator photo; no pre-existing app state was erased.",
+    "Shared SwiftPM, Docker builder and pre-existing runtime caches were not globally pruned. Full audit logs and harness source scripts remain in the ignored runtime folder."
+  ],
+  "removedDockerContainers": [
+    "noctweave-audit-launcher-20260907",
+    "noctweave-codex-audit-20260907",
+    "noctweave-audit-shutdown-20260907"
+  ],
+  "removedDockerVolumes": [
+    "noctweave-audit-launcher-data-20260907",
+    "noctweave-audit-shutdown-data-20260907"
+  ],
+  "removedDockerImageTags": [
+    "noctweave-relay:codex-audit-20260907",
+    "noctweave-relay:codex-audit-final-20260907",
+    "noctweave-relay:codex-audit-shutdown-20260907"
+  ],
+  "portsClosed": {
+    "19339": true,
+    "29340": true,
+    "19090": true,
+    "25173": true,
+    "29339": true,
+    "39339": true,
+    "49339": true,
+    "49340": true,
+    "49090": true,
+    "50339": true,
+    "50340": true,
+    "50090": true,
+    "51339": true,
+    "52339": true,
+    "52340": true
+  },
+  "simulators": [
+    {
+      "name": "iPhone 17",
+      "udid": "[REDACTED_IPHONE_SIMULATOR_ID]",
+      "state": "Shutdown"
+    },
+    {
+      "name": "iPad mini (A17 Pro)",
+      "udid": "[REDACTED_IPAD_SIMULATOR_ID]",
+      "state": "Shutdown"
+    }
+  ],
+  "remainingTaskAppProcesses": [],
+  "stoppedTestAppPIDs": [
+    36516
+  ]
+}

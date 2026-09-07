@@ -1576,7 +1576,7 @@ do {
         }
     defer { namespaceAnnouncementTask.cancel() }
 
-    var closeFutures: [EventLoopFuture<Void>] = [rawChannel.closeFuture]
+    var listeningChannels: [Channel] = [rawChannel]
 
     if let httpPort = config.httpPort {
         if httpPort == config.port {
@@ -1613,7 +1613,7 @@ do {
         if noctwebPublisherSurface != nil {
             print("[relay] Noctweb Publisher available on \(httpAddress) path=/noctweb/ for direct loopback, an explicitly trusted local container bridge, or trusted reverse-proxy TLS")
         }
-        closeFutures.append(httpChannel.closeFuture)
+        listeningChannels.append(httpChannel)
     }
 
     if let adminPort = config.adminPort, let adminToken = config.adminToken {
@@ -1681,10 +1681,31 @@ do {
         let adminChannel = try adminBootstrap.bind(host: config.adminHost, port: adminPort).wait()
         let adminAddress = adminChannel.localAddress?.description ?? "unknown"
         print("[relay] Operator Web UI listening on \(adminAddress) path=/admin/")
-        closeFutures.append(adminChannel.closeFuture)
+        listeningChannels.append(adminChannel)
     }
 
-    try EventLoopFuture.andAllSucceed(closeFutures, on: group.next()).wait()
+    // A container's PID 1 does not receive the usual default termination
+    // behavior. Handle operator shutdown explicitly so Docker need not escalate
+    // to SIGKILL and the event-loop shutdown below can run.
+    let channelsToClose = listeningChannels
+    let signalQueue = DispatchQueue(label: "noctweave.relay.shutdown")
+    let shutdownSignals = [SIGTERM, SIGINT].map { signalNumber in
+        signal(signalNumber, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: signalQueue)
+        source.setEventHandler {
+            for channel in channelsToClose {
+                channel.close(promise: nil)
+            }
+        }
+        source.resume()
+        return source
+    }
+    defer { shutdownSignals.forEach { $0.cancel() } }
+
+    try EventLoopFuture.andAllSucceed(
+        listeningChannels.map(\.closeFuture),
+        on: group.next()
+    ).wait()
 } catch {
     print("[relay] Server error: \(error)")
     exit(1)

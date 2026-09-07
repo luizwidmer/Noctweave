@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { fileURLToPath } from "node:url";
 
 import {
   DockerRelayManager,
@@ -105,16 +106,19 @@ test("manager uses argument arrays for build, start, stop, and status", async ()
     return { exitCode: 0, stdout: relayContainer, stderr: "" };
   };
   const manager = new DockerRelayManager(
-    new URL("../../", import.meta.url).pathname,
+    fileURLToPath(new URL("../../", import.meta.url)),
     token,
     publisherPassword,
     runner,
     async () => true
   );
+  await manager.buildImage();
   await manager.start(settings);
   const status = await manager.status(settings);
   await manager.stop();
   expect(status.relayHealthy).toBe(true);
+  expect(commands.find((command) => command[1] === "build")).toContain("--no-cache");
+  expect(commands.find((command) => command[1] === "build")).toContain("--pull");
   expect(commands.some((command) => command[1] === "run" && command.includes("36fe1685870e"))).toBe(true);
   expect(commands.find((command) => command[1] === "run")?.join(" ")).not.toContain(token);
   expect(commands.find((command) => command[1] === "run")?.join(" ")).not.toContain(publisherPassword);
@@ -124,6 +128,20 @@ test("manager uses argument arrays for build, start, stop, and status", async ()
   }]);
   expect(commands.some((command) => command.join(" ").includes("rm -f"))).toBe(true);
   expect(commands.at(-1)).toEqual(["docker", "stop", "-t", "10", relayContainer]);
+});
+
+test("invalid settings or credentials never remove a running relay", async () => {
+  const commands: string[][] = [];
+  const runner = async (command: string[]): Promise<CommandResult> => {
+    commands.push(command);
+    return { exitCode: 0, stdout: "36fe1685870e\n", stderr: "" };
+  };
+  const manager = new DockerRelayManager("", token, publisherPassword, runner);
+  await expect(manager.start({ ...settings, tcpPort: 80 })).rejects.toThrow("1024 through 65535");
+  expect(commands).toHaveLength(0);
+  const invalidCredentials = new DockerRelayManager("", "invalid", publisherPassword, runner);
+  await expect(invalidCredentials.start(settings)).rejects.toThrow("operator token");
+  expect(commands.some((command) => command[1] === "rm")).toBe(false);
 });
 
 test("manager surfaces an immediate relay bind failure", async () => {

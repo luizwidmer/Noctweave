@@ -1,0 +1,181 @@
+Build complete! (0.31s)
+Build complete! (0.47s)
+Test Suite 'ArchitectureV2GroupBoundaryTests' passed at 2026-09-07 14:41:21.304.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.964 (0.966) seconds
+Test Suite 'ArchitectureV2OpaqueRouteTests' passed at 2026-09-07 14:41:21.442.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.136 (0.138) seconds
+Test Suite 'ArchitectureV2RelayCapabilityTests' passed at 2026-09-07 14:41:21.590.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.146 (0.149) seconds
+Test Suite 'ArchitectureV2RelayWireTests' passed at 2026-09-07 14:41:22.011.
+Test Suite 'ArchitectureV2RendezvousTests' passed at 2026-09-07 14:41:22.097.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.083 (0.086) seconds
+Test Suite 'ArchitectureV2SharedVectorConformanceTests' passed at 2026-09-07 14:41:22.118.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.019 (0.021) seconds
+Test Suite 'ArchitectureV2SignedGroupTests' passed at 2026-09-07 14:41:44.658.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 22.521 (22.540) seconds
+Test Suite 'AttachmentDownloadJournalTests' passed at 2026-09-07 14:41:44.671.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.013 (0.013) seconds
+Test Suite 'CallProtocolV1Tests' passed at 2026-09-07 14:41:44.779.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.106 (0.108) seconds
+Test Suite 'CanonicalJSONV1Tests' passed at 2026-09-07 14:41:44.789.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.009 (0.010) seconds
+Test Suite 'ClientStateCurrentSchemaTests' passed at 2026-09-07 14:41:45.507.
+	 Executed 28 tests, with 0 failures (0 unexpected) in 0.711 (0.719) seconds
+Test Suite 'CodingPreflightTests' passed at 2026-09-07 14:41:45.519.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.010 (0.011) seconds
+Test Suite 'ContactPairingV2Tests' passed at 2026-09-07 14:42:01.016.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 15.490 (15.497) seconds
+Test Suite 'ConversationEventStrictTests' passed at 2026-09-07 14:42:04.878.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 3.860 (3.862) seconds
+Test Suite 'DecentralizedWakeRouteTests' passed at 2026-09-07 14:42:05.082.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.203 (0.204) seconds
+Test Suite 'DirectPairingTransferV2Tests' passed at 2026-09-07 14:42:23.235.
+	 Executed 4 tests, with 1 test skipped and 0 failures (0 unexpected) in 18.152 (18.152) seconds
+Test Suite 'EndpointPrekeyRotationTests' passed at 2026-09-07 14:42:23.812.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.576 (0.577) seconds
+Test Suite 'EnvelopeWireVectorTests' passed at 2026-09-07 14:42:23.874.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.060 (0.062) seconds
+Test Suite 'FederationForwardingV1Tests' passed at 2026-09-07 14:42:41.804.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 17.928 (17.930) seconds
+Test Suite 'GroupCryptoErrorPropagationTests' passed at 2026-09-07 14:42:41.807.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'GroupOpaqueRouteInboundTests' passed at 2026-09-07 14:58:05.388.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 923.548 (923.582) seconds
+Test Suite 'GroupPolicyTests' passed at 2026-09-07 14:58:05.390.
+Test Suite 'GroupScopedHandleStrictTests' passed at 2026-09-07 14:58:05.393.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'HeadlessCurrentArchitectureTests' passed at 2026-09-07 14:58:05.526.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.132 (0.133) seconds
+Test Suite 'HeadlessGroupAdmissionTests' passed at 2026-09-07 14:58:14.429.
+Test Suite 'HeadlessGroupOpaqueTransportTests' passed at 2026-09-07 14:59:18.409.
+Test Suite 'HeadlessGroupProductAPITests' passed at 2026-09-07 15:02:39.793.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 201.382 (201.384) seconds
+Test Suite 'HeadlessMessagingDurabilityTests' passed at 2026-09-07 15:04:42.413.
+	 Executed 33 tests, with 0 failures (0 unexpected) in 122.612 (122.620) seconds
+Test Suite 'HeadlessOpaqueRouteSyncDurabilityTests' passed at 2026-09-07 15:08:40.172.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 237.756 (237.759) seconds
+Test Suite 'LocalSettingsPersistenceTests' passed at 2026-09-07 15:08:42.351.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 2.178 (2.179) seconds
+Test Suite 'ManualFederationPeerTests' passed at 2026-09-07 15:08:42.496.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.145 (0.145) seconds
+Test Suite 'MessageProjectionStrictTests' passed at 2026-09-07 15:08:42.532.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.034 (0.035) seconds
+Test Suite 'NoctweaveCoreTests' passed at 2026-09-07 15:08:46.012.
+	 Executed 106 tests, with 1 test skipped and 0 failures (0 unexpected) in 3.464 (3.480) seconds
+Test Suite 'NoctweaveNetRelayTests' passed at 2026-09-07 15:08:46.034.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.021 (0.022) seconds
+Test Suite 'NoctweaveOriginNamespaceTests' passed at 2026-09-07 15:08:46.035.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'NoctweavePQGroupRuntimeV2Tests' passed at 2026-09-07 15:10:54.459.
+	 Executed 25 tests, with 0 failures (0 unexpected) in 128.420 (128.424) seconds
+Test Suite 'NoctwebDataV1Tests' passed at 2026-09-07 15:10:54.516.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.056 (0.057) seconds
+Test Suite 'NoctwebNamespaceConsensusV1Tests' passed at 2026-09-07 15:10:54.735.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.218 (0.219) seconds
+Test Suite 'OpaqueRouteCrossLanguageVectorTests' passed at 2026-09-07 15:10:54.741.
+Test Suite 'OpaqueRoutePacketV2Tests' passed at 2026-09-07 15:10:54.825.
+	 Executed 13 tests, with 0 failures (0 unexpected) in 0.083 (0.084) seconds
+Test Suite 'OpaqueRouteRelayStoreV2Tests' passed at 2026-09-07 15:10:55.016.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.190 (0.191) seconds
+Test Suite 'PairingLobbyV1Tests' passed at 2026-09-07 15:10:55.072.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.055 (0.056) seconds
+Test Suite 'PairwiseOpaqueRouteV2Tests' passed at 2026-09-07 15:10:55.306.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.233 (0.234) seconds
+Test Suite 'PairwiseRelationshipQuarantineV2Tests' passed at 2026-09-07 15:10:57.358.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 2.051 (2.052) seconds
+Test Suite 'PairwiseRouteSetV2Tests' passed at 2026-09-07 15:10:57.410.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.052 (0.052) seconds
+Test Suite 'PasswordProtectedPairingPackageV1Tests' passed at 2026-09-07 15:10:58.464.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 1.053 (1.054) seconds
+Test Suite 'PersonaScopeFreshnessTests' passed at 2026-09-07 15:11:01.102.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 2.636 (2.638) seconds
+Test Suite 'ProtocolIntentDurabilityTests' passed at 2026-09-07 15:11:05.443.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 4.339 (4.340) seconds
+Test Suite 'RealtimeRelayV1Tests' passed at 2026-09-07 15:11:05.469.
+	 Executed 16 tests, with 0 failures (0 unexpected) in 0.025 (0.027) seconds
+Test Suite 'RelayEndpointParserTests' passed at 2026-09-07 15:11:05.477.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.006 (0.007) seconds
+Test Suite 'RelayICEServiceV1Tests' passed at 2026-09-07 15:11:05.643.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.166 (0.166) seconds
+Test Suite 'RelayIdentityV1Tests' passed at 2026-09-07 15:11:05.684.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.040 (0.041) seconds
+Test Suite 'RelayPairingPreflightTests' passed at 2026-09-07 15:11:05.835.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.150 (0.151) seconds
+Test Suite 'RelayStorePersistenceAtomicityTests' passed at 2026-09-07 15:11:05.849.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.014 (0.014) seconds
+Test Suite 'RelaySuccessObjectExactnessTests' passed at 2026-09-07 15:11:05.863.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.014 (0.014) seconds
+Test Suite 'RelayWireExactEnvelopeTests' passed at 2026-09-07 15:11:05.868.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.004 (0.005) seconds
+Test Suite 'RendezvousRelayTransportTests' passed at 2026-09-07 15:11:05.954.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.085 (0.086) seconds
+Test Suite 'StableRequestWireBoundaryTests' passed at 2026-09-07 15:11:05.963.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.008 (0.009) seconds
+Test Suite 'StrictCryptographicStateTests' passed at 2026-09-07 15:11:05.971.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.008 (0.008) seconds
+Test Suite 'StrictCurrentProtocolTests' passed at 2026-09-07 15:11:05.972.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'TransportConfidentialityTests' passed at 2026-09-07 15:11:05.973.
+Test Suite 'WirePayloadV2Tests' passed at 2026-09-07 15:11:06.071.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.097 (0.098) seconds
+Test Suite 'NoctweaveCorePackageTests.xctest' passed at 2026-09-07 15:11:06.071.
+	 Executed 527 tests, with 2 tests skipped and 0 failures (0 unexpected) in 1785.579 (1785.733) seconds
+Test Suite 'All tests' passed at 2026-09-07 15:11:06.071.
+	 Executed 527 tests, with 2 tests skipped and 0 failures (0 unexpected) in 1785.579 (1785.736) seconds
+Build complete! (15.41s)
+Build complete! (4.41s)
+Test Suite 'AttachmentBlobStoreExactJSONTests' passed at 2026-09-07 15:11:32.764.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'HTTPRelayBridgeSecurityTests' passed at 2026-09-07 15:11:32.766.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'NoctweaveNetRelayTests' passed at 2026-09-07 15:11:34.377.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 1.609 (1.611) seconds
+Test Suite 'NoctweaveOriginNamespaceTests' passed at 2026-09-07 15:11:34.377.
+Test Suite 'NoctwebDataStoreTests' passed at 2026-09-07 15:11:34.407.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.029 (0.030) seconds
+Test Suite 'NoctwebPublisherWebUITests' passed at 2026-09-07 15:11:34.448.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.040 (0.040) seconds
+Test Suite 'OpaqueRouteCrossLanguageVectorTests' passed at 2026-09-07 15:11:34.450.
+Test Suite 'OpaqueRouteRelayIntegrationTests' passed at 2026-09-07 15:11:34.461.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.011 (0.011) seconds
+Test Suite 'OpaqueRouteRuntimeV2Tests' passed at 2026-09-07 15:11:34.544.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.082 (0.083) seconds
+Test Suite 'OpenFederationDHTErrorBoundaryTests' passed at 2026-09-07 15:11:34.546.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'OperatorWebUITests' passed at 2026-09-07 15:11:34.597.
+	 Executed 20 tests, with 0 failures (0 unexpected) in 0.049 (0.051) seconds
+Test Suite 'PairingLobbyRelayV1Tests' passed at 2026-09-07 15:11:34.600.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'RealtimeRelayV1Tests' passed at 2026-09-07 15:11:34.610.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 0.008 (0.010) seconds
+Test Suite 'RelayCapabilitiesV2Tests' passed at 2026-09-07 15:11:34.613.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'RelayICEServiceV1Tests' passed at 2026-09-07 15:11:34.617.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.004 (0.004) seconds
+Test Suite 'RelayIdentityAndNamespaceTests' passed at 2026-09-07 15:11:34.675.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.058 (0.058) seconds
+Test Suite 'RelayStoreCurrentTests' passed at 2026-09-07 15:11:35.561.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.885 (0.886) seconds
+Test Suite 'RelayWireExactEnvelopeTests' passed at 2026-09-07 15:11:35.573.
+	 Executed 13 tests, with 0 failures (0 unexpected) in 0.011 (0.012) seconds
+Test Suite 'RelayWireStructuralBoundaryTests' passed at 2026-09-07 15:11:35.580.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.007 (0.007) seconds
+Test Suite 'RendezvousRelayTransportTests' passed at 2026-09-07 15:11:35.600.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.020 (0.020) seconds
+Test Suite 'StableModelBoundsTests' passed at 2026-09-07 15:11:35.631.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.030 (0.031) seconds
+Test Suite 'StableResponseExactModelsTests' passed at 2026-09-07 15:11:35.642.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.011 (0.011) seconds
+Test Suite 'NoctweaveRelayServerPackageTests.xctest' passed at 2026-09-07 15:11:35.642.
+	 Executed 150 tests, with 0 failures (0 unexpected) in 2.867 (2.881) seconds
+Test Suite 'All tests' passed at 2026-09-07 15:11:35.642.
+	 Executed 150 tests, with 0 failures (0 unexpected) in 2.867 (2.882) seconds
+Ran 19 tests in 4.050s
+ 12 pass
+ 0 fail
+Ran 12 tests across 3 files. [146.00ms]
+ℹ tests 220
+ℹ pass 220
+ℹ fail 0
+ℹ skipped 0
+Tests complete.

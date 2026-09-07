@@ -97,7 +97,7 @@ final class NoctwebPublisherWebUITests: XCTestCase {
         XCTAssertFalse(html.contains(#"href="http"#))
         XCTAssertEqual(
             page.headers["Content-Security-Policy"],
-            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; worker-src 'none'; manifest-src 'none'"
+            "default-src 'none'; script-src 'self'; style-src 'self' data:; img-src 'self' data: blob:; connect-src 'self'; frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; worker-src 'none'; manifest-src 'none'"
         )
         XCTAssertEqual(page.headers["X-Frame-Options"], "DENY")
     }
@@ -151,7 +151,12 @@ final class NoctwebPublisherWebUITests: XCTestCase {
         ] {
             XCTAssertTrue(script.contains(expected), "Missing \(expected)")
         }
-        XCTAssertTrue(html.contains(#"sandbox="allow-scripts""#))
+        XCTAssertTrue(html.contains(#"sandbox="""#))
+        XCTAssertFalse(html.contains("allow-scripts"))
+        XCTAssertTrue(html.contains("HTML and CSS preview"))
+        XCTAssertTrue(script.contains("script-src 'none'"))
+        XCTAssertTrue(script.contains("elements.previewFrame.src = documentURL"))
+        XCTAssertFalse(script.contains("elements.previewFrame.srcdoc"))
         XCTAssertTrue(html.contains("Hosted is not finalized"))
         XCTAssertTrue(html.contains("compiled React compatible"))
         XCTAssertTrue(html.contains("class=\"brand-logo\""))

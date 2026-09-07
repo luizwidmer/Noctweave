@@ -179,7 +179,7 @@ same-origin Page Publisher at `/noctweb/` only to direct loopback clients or
 through an operator-declared trusted TLS reverse proxy. This secure-context
 boundary is required because browser publisher keys use WebCrypto and write
 requests carry the relay password. The Publisher provides a focused
-Design/Code/Preview workflow, local autosave, sandboxed active-content
+Design/Code/Preview workflow, local autosave, sandboxed HTML and CSS
 preview, browser-held publication signing identity, and direct
 `nw.net-host@1` upload/release operations. The relay password is entered only
 for a write request and is not embedded in or persisted by the app.
@@ -235,6 +235,11 @@ The publisher supports ordinary HTML, CSS, and JavaScript, including
 browser-ready compiled React bundles. The relay never builds or executes a
 site. A visitor retrieves exact hosted bytes, verifies publisher integrity,
 and runs active content only in a sandbox without the relay origin.
+The web editor's preview disables JavaScript because ordinary browser iframes
+cannot portably deny every network API to arbitrary scripts. Hosting preserves
+the JavaScript unchanged; use Noctweb Browser or Noctweb Lab to preview it with
+the native renderer's network isolation. Preview styles load from local data URLs
+without relaxing the editor's script policy or granting the frame its origin.
 
 The UI reports a revision as **Hosted**, not publisher-finalized. Publication
 content and head continuity remain signed by the publisher. In a federation,
@@ -335,7 +340,7 @@ post-quantum and AEAD profiles.
 ## Docker
 
 ```sh
-docker build -t noctweave-relay NoctweaveRelayServer
+docker build --pull --no-cache -t noctweave-relay NoctweaveRelayServer
 
 docker run --rm --name noctweave-relay \
   -p 9339:9339 \
@@ -351,8 +356,18 @@ docker run --rm --name noctweave-relay \
   --data-dir /data
 ```
 
+Use a fresh build for deployment so cached package-install layers do not retain
+outdated operating-system packages. The desktop launcher's Build action uses the
+same refresh flags. Scan the resulting image; a successful build does not imply
+that every upstream advisory has a fix.
+
 The multi-stage image runs as an unprivileged user and pins the reviewed
 liboqs source commit. Mount `/data` persistently.
+
+The relay handles `SIGTERM` and `SIGINT` by closing its listeners and shutting
+down its event loops. `docker stop` can therefore terminate the relay without
+waiting for a forced kill. Clients should retry interrupted requests; this is
+not an application-level drain or delivery acknowledgement.
 
 ### Desktop Docker launcher
 

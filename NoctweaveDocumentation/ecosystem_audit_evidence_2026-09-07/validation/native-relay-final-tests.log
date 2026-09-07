@@ -1,0 +1,14 @@
+Test Suite 'ManagedCoturnConfigurationTests' passed at 2026-09-07 17:02:03.398.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.396 (0.398) seconds
+Test Suite 'NoctweaveAppearanceTests' passed at 2026-09-07 17:02:03.401.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'OpaqueRouteSnapshotVaultTests' passed at 2026-09-07 17:02:03.407.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.006 (0.006) seconds
+Test Suite 'RelayRuntimePolicyTests' passed at 2026-09-07 17:02:03.410.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'Noctweave RelayTests.xctest' passed at 2026-09-07 17:02:03.410.
+	 Executed 15 tests, with 0 failures (0 unexpected) in 0.405 (0.410) seconds
+Test Suite 'All tests' passed at 2026-09-07 17:02:03.410.
+	 Executed 15 tests, with 0 failures (0 unexpected) in 0.405 (0.411) seconds
+** TEST SUCCEEDED **
+Native app tests complete. No developer signing identity was used.

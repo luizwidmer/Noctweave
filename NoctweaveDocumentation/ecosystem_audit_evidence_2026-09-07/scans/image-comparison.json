@@ -1,0 +1,28 @@
+[
+  {
+    "image": "noctweave-relay:codex-audit-20260907",
+    "digest": [
+      "noctweave-relay@sha256:a59eb0cf11148124a1278071def78f515f2228e3ccdb508352515d5ef366d70e"
+    ],
+    "packageFindings": 83,
+    "uniqueCVEs": 40,
+    "severities": {
+      "MEDIUM": 52,
+      "LOW": 31
+    },
+    "findingsWithFixedVersion": 62
+  },
+  {
+    "image": "noctweave-relay:codex-audit-shutdown-20260907",
+    "digest": [
+      "noctweave-relay@sha256:4cc77ebb7ec9996c0965c6ae73d1f9aa1759a33d6ad085652c3acc147def64dd"
+    ],
+    "packageFindings": 21,
+    "uniqueCVEs": 11,
+    "severities": {
+      "LOW": 16,
+      "MEDIUM": 5
+    },
+    "findingsWithFixedVersion": 0
+  }
+]

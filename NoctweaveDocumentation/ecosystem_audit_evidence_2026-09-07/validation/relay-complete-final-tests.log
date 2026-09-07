@@ -1,0 +1,46 @@
+Test Suite 'AttachmentBlobStoreExactJSONTests' passed at 2026-09-07 17:38:19.653.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'HTTPRelayBridgeSecurityTests' passed at 2026-09-07 17:38:19.654.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'NoctweaveNetRelayTests' passed at 2026-09-07 17:38:21.081.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 1.426 (1.427) seconds
+Test Suite 'NoctweaveOriginNamespaceTests' passed at 2026-09-07 17:38:21.081.
+Test Suite 'NoctwebDataStoreTests' passed at 2026-09-07 17:38:21.096.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.014 (0.014) seconds
+Test Suite 'NoctwebPublisherWebUITests' passed at 2026-09-07 17:38:21.119.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.023 (0.023) seconds
+Test Suite 'OpaqueRouteCrossLanguageVectorTests' passed at 2026-09-07 17:38:21.120.
+Test Suite 'OpaqueRouteRelayIntegrationTests' passed at 2026-09-07 17:38:21.127.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.007 (0.007) seconds
+Test Suite 'OpaqueRouteRuntimeV2Tests' passed at 2026-09-07 17:38:21.170.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 0.042 (0.042) seconds
+Test Suite 'OpenFederationDHTErrorBoundaryTests' passed at 2026-09-07 17:38:21.171.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'OperatorWebUITests' passed at 2026-09-07 17:38:21.194.
+	 Executed 20 tests, with 0 failures (0 unexpected) in 0.023 (0.024) seconds
+Test Suite 'PairingLobbyRelayV1Tests' passed at 2026-09-07 17:38:21.196.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'RealtimeRelayV1Tests' passed at 2026-09-07 17:38:21.200.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 0.004 (0.004) seconds
+Test Suite 'RelayCapabilitiesV2Tests' passed at 2026-09-07 17:38:21.202.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'RelayICEServiceV1Tests' passed at 2026-09-07 17:38:21.204.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'RelayIdentityAndNamespaceTests' passed at 2026-09-07 17:38:21.233.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.029 (0.030) seconds
+Test Suite 'RelayStoreCurrentTests' passed at 2026-09-07 17:38:21.692.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.459 (0.459) seconds
+Test Suite 'RelayWireExactEnvelopeTests' passed at 2026-09-07 17:38:21.699.
+	 Executed 13 tests, with 0 failures (0 unexpected) in 0.006 (0.007) seconds
+Test Suite 'RelayWireStructuralBoundaryTests' passed at 2026-09-07 17:38:21.703.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.003 (0.004) seconds
+Test Suite 'RendezvousRelayTransportTests' passed at 2026-09-07 17:38:21.714.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.011 (0.011) seconds
+Test Suite 'StableModelBoundsTests' passed at 2026-09-07 17:38:21.730.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.016 (0.016) seconds
+Test Suite 'StableResponseExactModelsTests' passed at 2026-09-07 17:38:21.735.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.005 (0.005) seconds
+Test Suite 'NoctweaveRelayServerPackageTests.xctest' passed at 2026-09-07 17:38:21.735.
+	 Executed 150 tests, with 0 failures (0 unexpected) in 2.078 (2.085) seconds
+Test Suite 'All tests' passed at 2026-09-07 17:38:21.735.
+	 Executed 150 tests, with 0 failures (0 unexpected) in 2.078 (2.086) seconds

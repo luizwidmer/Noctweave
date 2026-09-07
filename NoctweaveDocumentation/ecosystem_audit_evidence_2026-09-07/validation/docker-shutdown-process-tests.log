@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "image": "noctweave-relay:codex-audit-shutdown-20260907",
+  "digest": [
+    "noctweave-relay@sha256:4cc77ebb7ec9996c0965c6ae73d1f9aa1759a33d6ad085652c3acc147def64dd"
+  ],
+  "identityRetainedAcrossRestart": true,
+  "runs": [
+    {
+      "cycle": 1,
+      "seconds": 0.154,
+      "exitCode": 0,
+      "oomKilled": false
+    },
+    {
+      "cycle": 2,
+      "seconds": 0.115,
+      "exitCode": 0,
+      "oomKilled": false
+    }
+  ]
+}

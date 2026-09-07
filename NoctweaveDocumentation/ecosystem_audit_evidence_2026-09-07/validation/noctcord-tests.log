@@ -1,0 +1,19 @@
+Build complete! (23.53s)
+Test Suite 'NoctCordAppModelTests' passed at 2026-09-07 14:32:08.296.
+	 Executed 18 tests, with 0 failures (0 unexpected) in 0.036 (0.037) seconds
+Test Suite 'NoctCordAttachmentSanitizerTests' passed at 2026-09-07 14:32:08.303.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.007 (0.007) seconds
+Test Suite 'NoctCordAttachmentTransferTests' passed at 2026-09-07 14:32:08.717.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.413 (0.413) seconds
+Test Suite 'NoctCordCoreTests' passed at 2026-09-07 14:32:08.749.
+	 Executed 33 tests, with 0 failures (0 unexpected) in 0.030 (0.032) seconds
+Test Suite 'NoctCordIdentityVaultTests' passed at 2026-09-07 14:32:08.775.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.027 (0.027) seconds
+Test Suite 'NoctCordMediaTests' passed at 2026-09-07 14:32:09.284.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.508 (0.508) seconds
+Test Suite 'NoctCordTransportIntegrationTests' failed at 2026-09-07 14:52:50.927.
+	 Executed 8 tests, with 1 test skipped and 1 failure (1 unexpected) in 1241.641 (1241.643) seconds
+Test Suite 'NoctCordPackageTests.xctest' failed at 2026-09-07 14:52:50.927.
+	 Executed 78 tests, with 1 test skipped and 1 failure (1 unexpected) in 1242.661 (1242.667) seconds
+Test Suite 'All tests' failed at 2026-09-07 14:52:50.927.
+	 Executed 78 tests, with 1 test skipped and 1 failure (1 unexpected) in 1242.661 (1242.668) seconds

@@ -1,0 +1,168 @@
+{
+  "SchemaVersion": 2,
+  "Trivy": {
+    "Version": "0.74.0"
+  },
+  "ReportID": "01a07d99-e73d-7e1d-86d9-24e23cb3097e",
+  "CreatedAt": "2026-09-07T17:40:33.341925-03:00",
+  "ArtifactName": "<PROJECTS>/PICCP Project/.runtime/audit-2026-09-07/source-snapshot",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "NoctCord/Package.resolved",
+      "Class": "lang-pkgs",
+      "Type": "swift",
+      "Packages": [
+        {
+          "ID": "github.com/stasel/WebRTC@151.0.0",
+          "Name": "github.com/stasel/WebRTC",
+          "Identifier": {
+            "PURL": "pkg:swift/github.com/stasel/WebRTC@151.0.0",
+            "UID": "c932ae1293fccc92"
+          },
+          "Version": "151.0.0",
+          "Locations": [
+            {
+              "StartLine": 12,
+              "EndLine": 20
+            }
+          ],
+          "AnalyzedBy": "swift"
+        }
+      ]
+    },
+    {
+      "Target": "PICCP Project/NoctweaveRelayServer/ReticulumBridge/requirements.txt",
+      "Class": "lang-pkgs",
+      "Type": "pip",
+      "Packages": [
+        {
+          "Name": "cffi",
+          "Identifier": {
+            "PURL": "pkg:pypi/cffi@2.1.1",
+            "UID": "6c46ddab5d26a6fb"
+          },
+          "Version": "2.1.1",
+          "Locations": [
+            {
+              "StartLine": 1,
+              "EndLine": 1
+            }
+          ],
+          "AnalyzedBy": "pip"
+        },
+        {
+          "Name": "cryptography",
+          "Identifier": {
+            "PURL": "pkg:pypi/cryptography@50.0.0",
+            "UID": "422c9fb53a8927d9"
+          },
+          "Version": "50.0.0",
+          "Locations": [
+            {
+              "StartLine": 2,
+              "EndLine": 2
+            }
+          ],
+          "AnalyzedBy": "pip"
+        },
+        {
+          "Name": "msgpack",
+          "Identifier": {
+            "PURL": "pkg:pypi/msgpack@1.2.1",
+            "UID": "547eb99fad50a568"
+          },
+          "Version": "1.2.1",
+          "Locations": [
+            {
+              "StartLine": 3,
+              "EndLine": 3
+            }
+          ],
+          "AnalyzedBy": "pip"
+        },
+        {
+          "Name": "pycparser",
+          "Identifier": {
+            "PURL": "pkg:pypi/pycparser@3.0",
+            "UID": "ed38023a49a88137"
+          },
+          "Version": "3.0",
+          "Locations": [
+            {
+              "StartLine": 4,
+              "EndLine": 4
+            }
+          ],
+          "AnalyzedBy": "pip"
+        },
+        {
+          "Name": "pyserial",
+          "Identifier": {
+            "PURL": "pkg:pypi/pyserial@3.5",
+            "UID": "140bb172243e3316"
+          },
+          "Version": "3.5",
+          "Locations": [
+            {
+              "StartLine": 5,
+              "EndLine": 5
+            }
+          ],
+          "AnalyzedBy": "pip"
+        },
+        {
+          "Name": "rns",
+          "Identifier": {
+            "PURL": "pkg:pypi/rns@1.4.2",
+            "UID": "454526121897fcde"
+          },
+          "Version": "1.4.2",
+          "Locations": [
+            {
+              "StartLine": 6,
+              "EndLine": 6
+            }
+          ],
+          "AnalyzedBy": "pip"
+        }
+      ]
+    },
+    {
+      "Target": "PICCP Project/NoctweaveRelayServer/Dockerfile",
+      "Class": "config",
+      "Type": "dockerfile",
+      "MisconfSummary": {
+        "Successes": 27,
+        "Failures": 0
+      }
+    },
+    {
+      "Target": "PICCP Project/NoctweaveRelayServer/Dockerfile.caddy-l4",
+      "Class": "config",
+      "Type": "dockerfile",
+      "MisconfSummary": {
+        "Successes": 27,
+        "Failures": 0
+      }
+    },
+    {
+      "Target": "PICCP Project/NoctweaveRelayServer/Dockerfile.coturn",
+      "Class": "config",
+      "Type": "dockerfile",
+      "MisconfSummary": {
+        "Successes": 27,
+        "Failures": 0
+      }
+    },
+    {
+      "Target": "PICCP Project/NoctweaveRelayServer/ReticulumBridge/Dockerfile",
+      "Class": "config",
+      "Type": "dockerfile",
+      "MisconfSummary": {
+        "Successes": 27,
+        "Failures": 0
+      }
+    }
+  ]
+}

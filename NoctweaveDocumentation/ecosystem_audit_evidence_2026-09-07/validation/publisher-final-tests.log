@@ -1,0 +1,7 @@
+Build complete! (5.39s)
+Test Suite 'NoctwebPublisherWebUITests' passed at 2026-09-07 15:47:31.911.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.040 (0.041) seconds
+Test Suite 'NoctweaveRelayServerPackageTests.xctest' passed at 2026-09-07 15:47:31.911.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.040 (0.041) seconds
+Test Suite 'Selected tests' passed at 2026-09-07 15:47:31.911.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.040 (0.042) seconds

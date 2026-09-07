@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "identityRetainedAcrossRestart": true,
+  "runs": [
+    {
+      "signal": "SIGTERM",
+      "exitCode": 0,
+      "seconds": 0.002,
+      "allListenersClosed": true
+    },
+    {
+      "signal": "SIGINT",
+      "exitCode": 0,
+      "seconds": 0.005,
+      "allListenersClosed": true
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "health": {
+    "exitCode": 0,
+    "status": "success",
+    "module": "nw.core",
+    "version": 2
+  },
+  "info": {
+    "exitCode": 0,
+    "status": "success",
+    "module": "nw.core",
+    "version": 2,
+    "transport": "tcp",
+    "tlsEnabled": false,
+    "kind": "standard",
+    "federation": {
+      "name": null,
+      "mode": "solo",
+      "description": null
+    },
+    "softwareVersion": "Noctweave Relay 1.0.5 (7)",
+    "temporalBucketSeconds": 300
+  },
+  "stoppedPortClosed": true
+}

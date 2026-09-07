@@ -1,0 +1,226 @@
+[
+  {
+    "surface": "native",
+    "check": "valid health",
+    "status": 200,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject wrong content type",
+    "status": 415,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject duplicate content type",
+    "status": 415,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject hostile browser origin",
+    "status": 403,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject opaque browser origin",
+    "status": 403,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject ambiguous JSON",
+    "status": 400,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject truncated JSON",
+    "status": 400,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "separate admin from client bridge",
+    "status": 404,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject absent admin token",
+    "status": 401,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject wrong admin token",
+    "status": 401,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject duplicate admin token",
+    "status": 401,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "accept exact admin token",
+    "status": 200,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject malformed admin write",
+    "status": 400,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "reject unauthenticated CORS preflight",
+    "status": 401,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "bound admin body size",
+    "status": 413,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "native",
+    "check": "publisher traversal rejected",
+    "status": 404,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "valid health",
+    "status": 200,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject wrong content type",
+    "status": 415,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject duplicate content type",
+    "status": 415,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject hostile browser origin",
+    "status": 403,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject opaque browser origin",
+    "status": 403,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject ambiguous JSON",
+    "status": 400,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject truncated JSON",
+    "status": 400,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "separate admin from client bridge",
+    "status": 404,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject absent admin token",
+    "status": 401,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject wrong admin token",
+    "status": 401,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject duplicate admin token",
+    "status": 401,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "accept exact admin token",
+    "status": 200,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject malformed admin write",
+    "status": 400,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "reject unauthenticated CORS preflight",
+    "status": 401,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "bound admin body size",
+    "status": 413,
+    "passed": true,
+    "allowsCrossOrigin": null
+  },
+  {
+    "surface": "docker",
+    "check": "publisher traversal rejected",
+    "status": 404,
+    "passed": true,
+    "allowsCrossOrigin": null
+  }
+]

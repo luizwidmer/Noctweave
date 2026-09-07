@@ -1,0 +1,46 @@
+{
+  "devicesAndConfigurations" : [
+    {
+      "device" : {
+        "architecture" : "arm64",
+        "deviceId" : "[REDACTED_MAC_DEVICE_ID]",
+        "deviceName" : "My Mac",
+        "modelName" : "MacBook Air",
+        "osBuildNumber" : "25G83",
+        "osVersion" : "26.6.2",
+        "platform" : "macOS"
+      },
+      "expectedFailures" : 0,
+      "failedTests" : 0,
+      "passedTests" : 15,
+      "skippedTests" : 0,
+      "testPlanConfiguration" : {
+        "configurationId" : "1",
+        "configurationName" : "Test Scheme Action"
+      }
+    }
+  ],
+  "environmentDescription" : "Noctweave Relay · Built with macOS 26.6.2",
+  "expectedFailures" : 0,
+  "failedTests" : 0,
+  "finishTime" : 1788811323.705,
+  "passedTests" : 15,
+  "result" : "Passed",
+  "skippedTests" : 0,
+  "startTime" : 1788811301.942,
+  "statistics" : [
+
+  ],
+  "testFailures" : [
+
+  ],
+  "title" : "Test - Noctweave Relay",
+  "topInsights" : [
+    {
+      "category" : "Longest Test Runs",
+      "impact" : "96% of duration",
+      "text" : "1 longest test run with outlier durations exceeding 0.32s (three standard deviations)"
+    }
+  ],
+  "totalTestCount" : 15
+}

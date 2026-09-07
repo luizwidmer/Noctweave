@@ -1,0 +1,205 @@
+[
+  {
+    "check": "core",
+    "tests": 527,
+    "skipped": 2,
+    "failures": 0,
+    "note": "Full rerun after one transient storageUnavailable failure; Core and CLI build plus CLI acceptance also pass.",
+    "log": "public-tests-rerun.log",
+    "sourceLogSHA256": "8b44977382e229980559f02592543184173dac186e724d2aabd702e167108cb9"
+  },
+  {
+    "check": "linux-relay",
+    "tests": 150,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Final complete 150-test suite passes after preview and shutdown changes.",
+    "log": "relay-complete-final-tests.log",
+    "sourceLogSHA256": "6c100d8412037033202a3251543810a7cfd7c7c6993278df900fbfc8a17edabf"
+  },
+  {
+    "check": "js-protocol-and-storage",
+    "tests": 220,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Node test suite and desktop TypeScript check pass.",
+    "log": "public-tests-rerun.log",
+    "sourceLogSHA256": "8b44977382e229980559f02592543184173dac186e724d2aabd702e167108cb9"
+  },
+  {
+    "check": "reticulum-bridge",
+    "tests": 19,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Python unittest suite.",
+    "log": "public-tests-rerun.log",
+    "sourceLogSHA256": "8b44977382e229980559f02592543184173dac186e724d2aabd702e167108cb9"
+  },
+  {
+    "check": "docker-launcher",
+    "tests": 12,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Final suite after packaging assertions updated; final TypeScript check and bundled-source inspection pass.",
+    "log": "launcher-complete-final-tests.log",
+    "sourceLogSHA256": "980a79d19f8e1065255e822f944ae4439253912d595e2d3f6e71e8439ffbe48b"
+  },
+  {
+    "check": "publisher-preview",
+    "tests": 7,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Final CSP, sandbox, and preview regression suite; also inspected in Chrome.",
+    "log": "publisher-final-tests.log",
+    "sourceLogSHA256": "1687347237e006df9e202bcee9e527761d27875b116a60d0eaefa791e3d33302"
+  },
+  {
+    "check": "native-macos-client",
+    "tests": 8,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Final full XCTest UI suite, including receipt filtering.",
+    "log": "client-macos-complete-final.log",
+    "sourceLogSHA256": "f28701ee34539ab8feebfa169c649e73539740b131e4f44204ea5ecfc2ec1c26"
+  },
+  {
+    "check": "native-ios-client",
+    "tests": 8,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Final full XCTest UI suite on existing iPhone 17 simulator.",
+    "log": "client-ios-final-tests.log",
+    "sourceLogSHA256": "0cbc585fbfac32b101cd532be6262dae32fb6a454ebdf5edc903c43d2de236dc"
+  },
+  {
+    "check": "native-relay",
+    "tests": 15,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Final Debug app with isolated bundle ID and volatile XCTest secrets.",
+    "log": "native-relay-final-tests.log",
+    "sourceLogSHA256": "f5bbdf118bbcbe7b6d1c638d2af243cdc4d74172e04a4f5794bf1d1592288584"
+  },
+  {
+    "check": "gallery",
+    "tests": 10,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Existing iPad mini simulator; final copy-only build also passes.",
+    "log": "gallery-tests-ipad.log",
+    "sourceLogSHA256": "b754b6ac57ba199b7c3c3bce9179894977e5a45f0773d6dfef63a7fc94e58487"
+  },
+  {
+    "check": "noctboard",
+    "tests": 34,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Full Release suite with relay integration enabled after timestamp repair.",
+    "log": "noctboard-release-tests.log",
+    "sourceLogSHA256": "0d942f668718a674383ae6b40067387c42654e4e7d2b63aa45cc5b0fb99f3a68"
+  },
+  {
+    "check": "noctboard-import-surface",
+    "tests": 6,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Focused audit import/model coverage after folder-access edit; does not prove OS folder grant.",
+    "log": "board-folder-access-tests.log",
+    "sourceLogSHA256": "af4815c855a0d984134c56555ef60a92edef525965c86d535cec0ef1d5f1ec64"
+  },
+  {
+    "check": "noctcord-initial",
+    "tests": 78,
+    "skipped": 1,
+    "failures": 1,
+    "note": "Initial full suite: 76 passed, one skipped, one stale-timestamp test failed.",
+    "log": "noctcord-tests.log",
+    "sourceLogSHA256": "53f4a2bb6b4d92379d3e1ee84fbece0a91e8b71bbeae7c4a60905f245edbb81e"
+  },
+  {
+    "check": "noctcord-repaired-test",
+    "tests": 1,
+    "skipped": 0,
+    "failures": 0,
+    "note": "The previously failing three-member integration test passes after using fresh canonical admission timestamps. Full suite not rerun.",
+    "log": "noctcord-three-member-retest.log",
+    "sourceLogSHA256": "df1eb881aca73118d2cad441ddb0914252f04b767afd06243228157f93f716de"
+  },
+  {
+    "check": "noctweb-browser",
+    "tests": 28,
+    "skipped": 1,
+    "failures": 0,
+    "note": "One opt-in live environment test skipped; actual app relay connection and fail-closed name verification inspected.",
+    "log": "noctweb-browser-tests.log",
+    "sourceLogSHA256": "7a26e44b408348d19a8bab6a593188c88052d5e1fd89063b7b1e779f120f34fc"
+  },
+  {
+    "check": "noctweb-lab",
+    "tests": 70,
+    "skipped": 2,
+    "failures": 0,
+    "note": "Two environment-gated cases skipped in baseline run; dedicated live-host run below.",
+    "log": "noctweb-lab-tests.log",
+    "sourceLogSHA256": "d261a3be21aff7071af5c2682274115e6f94c293909b9add7726112f34444d89"
+  },
+  {
+    "check": "noctweb-lab-live",
+    "tests": 3,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Live host relay tests enabled against disposable local relay.",
+    "log": "lab-live-host-tests.log",
+    "sourceLogSHA256": "af3c54ab255c3fb0035a13e58f9ee963812a9f689e3d699549af04db35b4289a"
+  },
+  {
+    "check": "noctweb-shared-ui",
+    "tests": 2,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Shared native UI package.",
+    "log": "noctweb-ui-tests.log",
+    "sourceLogSHA256": "a870a980f14a84435e156b1e28e326b23c895ead8c79df0ebaf0e48ea759d1b5"
+  },
+  {
+    "check": "native-live-harness",
+    "tests": 1,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Live relay and fresh pairwise state backing the actual two-app message/attachment/restart exercise; plaintext isolated test state, not production Keychain.",
+    "log": "native-live-harness.log",
+    "sourceLogSHA256": "f2225b7b25be0261372ce9da24ada1d26300dc5b285bd5eebbfde8ad0ccc2ada"
+  },
+  {
+    "check": "noctcord-live-harness",
+    "tests": 1,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Completed second live session with two actual sandboxed apps and decrypted image opening.",
+    "log": "noctcord-live-final.log",
+    "sourceLogSHA256": "1f6897227c93b431865cd765855ac408213c9226efe6cb6213a2f862c6c8f8ed"
+  },
+  {
+    "check": "noctweb-browser-live",
+    "tests": 1,
+    "skipped": 0,
+    "failures": 0,
+    "note": "Previously skipped live-host test enabled; fetched and reverified a native Lab publication against the running relay. Uses existing compiled test bundle.",
+    "log": "browser-live-host-final.log",
+    "sourceLogSHA256": "732fd61011348dea253789c8d5e58703e272148052c83137d0a41bebcaf70aef"
+  },
+  {
+    "check": "relay-process-lifecycle",
+    "runs": 2,
+    "failures": 0,
+    "note": "SIGTERM and SIGINT, open client, all listener ports closed, normal process exit and persisted relay identity.",
+    "log": "relay-shutdown-process-tests.log"
+  },
+  {
+    "check": "docker-process-lifecycle",
+    "runs": 2,
+    "failures": 0,
+    "note": "Two Docker stop/start cycles on final image: exit 0 in 0.154 and 0.115 seconds; identity persists.",
+    "log": "docker-shutdown-process-tests.log"
+  }
+]

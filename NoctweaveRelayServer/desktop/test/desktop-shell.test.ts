@@ -17,8 +17,10 @@ test("relay desktop packages source and keeps Docker and admin boundaries explic
   expect((config.match(/bundleCEF:\s*false/g) ?? []).length).toBe(3);
   expect((config.match(/desktop\/scripts\/install-mac-icon\.ts/g) ?? []).length).toBe(1);
   expect(backend).toMatch(/DockerRelayManager/);
-  expect(backend).toMatch(/PATHS\.RESOURCES_FOLDER, "relay-source"/);
-  expect(wrapper).toMatch(/"Sources", "Tests"/);
+  expect(backend).toMatch(/PATHS\.RESOURCES_FOLDER, "app", "relay-source"/);
+  for (const source of ["Dockerfile", "Package.swift", "Package.resolved", "Sources", "Tests"]) {
+    expect(config).toContain(`"${source}": "relay-source/${source}"`);
+  }
   expect(wrapper).toMatch(/relay-icon\.icns/);
   expect(backend).toMatch(/clipboardWriteText/);
   expect(backend).toContain("publisherPassword");

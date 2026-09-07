@@ -23,6 +23,9 @@ swift build --package-path "$RELAY_DIR"
 echo "Running relay XCTest suite and product integration coverage..."
 swift test --package-path "$RELAY_DIR"
 
+echo "Running relay process shutdown and restart checks..."
+python3 "$RELAY_DIR/scripts/test-shutdown.py" "$RELAY_DIR/.build/debug/NoctweaveRelayServer"
+
 echo "Running optional Reticulum bridge unit suite..."
 python3 -m unittest discover \
   -s "$RELAY_DIR/ReticulumBridge/tests" \

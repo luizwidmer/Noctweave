@@ -1,0 +1,49 @@
+FILE: gallery-fixture.jpg
+{
+    ColorModel = RGB;
+    Depth = 8;
+    PixelHeight = 1800;
+    PixelWidth = 2400;
+    ProfileName = "Rec. ITU-R BT.2020-1";
+    "{Exif}" =     {
+        PixelXDimension = 2400;
+        PixelYDimension = 1800;
+    };
+    "{GPS}" =     {
+        Latitude = 1;
+        LatitudeRef = N;
+        Longitude = 1;
+        LongitudeRef = E;
+    };
+    "{JFIF}" =     {
+        DensityUnit = 0;
+        JFIFVersion =         (
+            1,
+            0,
+            1
+        );
+        XDensity = 72;
+        YDensity = 72;
+    };
+    "{TIFF}" =     {
+        Artist = "Synthetic fixture";
+        Make = "Audit Camera";
+    };
+}
+FILE: shared-80dba1f3-4d20-4ed3-8754-067e5000755d.heic
+{
+    ColorModel = RGB;
+    Depth = 8;
+    Headroom = 1;
+    Orientation = 1;
+    PixelHeight = 1800;
+    PixelWidth = 2400;
+    PrimaryImage = 1;
+    ProfileName = "sRGB IEC61966-2.1";
+    "{TIFF}" =     {
+        Orientation = 1;
+        TileLength = 512;
+        TileWidth = 512;
+    };
+}
+PASS: GPS, camera, and artist metadata removed; file mode 0600

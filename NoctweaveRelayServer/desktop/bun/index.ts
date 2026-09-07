@@ -5,7 +5,7 @@ import type { RelayDesktopRPC, RelayLauncherSettings } from "../rpc.js";
 import { DockerRelayManager, validateSettings } from "./docker-relay.js";
 import { LauncherStore } from "./launcher-store.js";
 
-const sourceDirectory = join(PATHS.RESOURCES_FOLDER, "relay-source");
+const sourceDirectory = join(PATHS.RESOURCES_FOLDER, "app", "relay-source");
 const store = new LauncherStore();
 let state = await store.load();
 let manager = new DockerRelayManager(

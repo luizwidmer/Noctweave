@@ -17,6 +17,11 @@ export default {
       }
     },
     copy: {
+      "Dockerfile": "relay-source/Dockerfile",
+      "Package.swift": "relay-source/Package.swift",
+      "Package.resolved": "relay-source/Package.resolved",
+      "Sources": "relay-source/Sources",
+      "Tests": "relay-source/Tests",
       "desktop/view/index.html": "views/mainview/index.html",
       "desktop/view/styles.css": "views/mainview/styles.css"
     },

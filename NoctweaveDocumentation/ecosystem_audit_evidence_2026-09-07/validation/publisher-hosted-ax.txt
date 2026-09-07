@@ -1,0 +1,22 @@
+Window: "Noctweb Publisher", App: Google Chrome.
+0 standard window Noctweb Publisher - Google Chrome, URL: 127.0.0.1:29340/noctweb/, Secondary Actions: Raise
+	1 container Noctweb Publisher - Google Chrome, URL: 127.0.0.1:29340/noctweb/
+				14 HTML content Noctweb Publisher, URL: 127.0.0.1:29340/noctweb/
+						16 link Description: Noctweb Publisher home, Value: 127.0.0.1:29340/noctweb/
+						18 disclosure triangle Description: Publisher menu, Help: More
+						22 container Noctweb Publisher
+							24 heading Noctweb Publisher, Value: 1
+								25 text Noctweb Publisher
+								28 disclosure triangle Publisher verified nwpub1_e5193…42c1f75f
+									29 text Publisher verified
+						31 container Publisher workspace
+						35 text noct://audit-chrome-september.audit/
+						38 text HTML and CSS preview. Open the hosted revision in Noctweb Browser to run JavaScript.
+						39 container Sandboxed HTML and CSS preview
+									43 heading A verified audit publication, Value: 1
+										44 text A verified audit publication
+						46 container Hosted · receipt and presence verified
+							48 heading Hosted · receipt and presence verified, Value: 2
+								49 text Hosted · receipt and presence verified
+							50 text noct://audit-chrome-september.audit/ · object ce4d4cfbdfdc…e7a3f5ef. 1 revision is tracked at this relay; this is not consensus finality.
+					67 tab (selected, settable, boolean) Description: Noctweb Publisher - Memory usage - 89.4 MB, Value: on

@@ -132,26 +132,28 @@ export class DockerRelayManager {
   async buildImage(): Promise<void> {
     await access(`${this.sourceDirectory}/Dockerfile`);
     const result = await this.runner(
-      ["docker", "build", "--progress=plain", "-t", relayImage, this.sourceDirectory],
+      // Cached apt layers can retain fixed vulnerabilities indefinitely.
+      ["docker", "build", "--pull", "--no-cache", "--progress=plain", "-t", relayImage, this.sourceDirectory],
       { timeoutMilliseconds: 30 * 60 * 1000 }
     );
     ensureSuccess(result, "Docker could not build the relay image");
   }
 
-  async start(settings: RelayLauncherSettings): Promise<void> {
+  async start(settingsInput: RelayLauncherSettings): Promise<void> {
+    const settings = validateSettings(settingsInput);
     const imageReference = await this.localImageReference();
     if (!imageReference) {
       throw new Error("Build the relay image from source before starting it.");
     }
+    const runArguments = dockerRunArguments(
+      settings, this.adminToken, this.publisherPassword, imageReference
+    );
     const removed = await this.runner(["docker", "rm", "-f", relayContainer]);
     if (removed.exitCode !== 0 && !/No such container/iu.test(removed.stderr)) {
       ensureSuccess(removed, "Docker could not replace the previous managed relay");
     }
     const result = await this.runner(
-      [
-        "docker",
-        ...dockerRunArguments(settings, this.adminToken, this.publisherPassword, imageReference)
-      ],
+      ["docker", ...runArguments],
       {
         environment: {
           NOCTWEAVE_ADMIN_TOKEN: this.adminToken,

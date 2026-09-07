@@ -1,5 +1,6 @@
-import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomBytes, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { chmod, lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -20,12 +21,15 @@ type DecodedLauncherState = {
   settings?: RelayLauncherSettings;
 };
 
+const maximumStateBytes = 64 * 1024;
+
 export class LauncherStore {
   constructor(private readonly fileURL = launcherStatePath()) {}
 
   async load(): Promise<StoredLauncherState> {
+    await this.prepareDirectory();
     try {
-      const decoded = JSON.parse(await readFile(this.fileURL, "utf8")) as DecodedLauncherState;
+      const decoded = JSON.parse(await this.readState()) as DecodedLauncherState;
       const adminToken = decoded.adminToken;
       if (!adminToken || !isToken(adminToken) || !decoded.settings) {
         throw new Error("invalid launcher state");
@@ -73,11 +77,60 @@ export class LauncherStore {
     if (!isToken(validated.adminToken) || !isToken(validated.publisherPassword)) {
       throw new Error("Refusing to persist invalid relay credentials.");
     }
-    await mkdir(dirname(this.fileURL), { recursive: true, mode: 0o700 });
-    const temporary = `${this.fileURL}.${process.pid}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(validated, null, 2)}\n`, { mode: 0o600 });
-    await chmod(temporary, 0o600);
-    await rename(temporary, this.fileURL);
+    const bytes = Buffer.from(`${JSON.stringify(validated, null, 2)}\n`, "utf8");
+    if (bytes.byteLength > maximumStateBytes) throw new Error("Launcher state exceeds its size limit.");
+    await this.prepareDirectory();
+    const temporary = `${this.fileURL}.${randomUUID()}.tmp`;
+    // Exclusive creation must happen before writing any credential bytes.
+    const handle = await open(temporary, "wx", 0o600);
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+      await handle.close();
+      await rename(temporary, this.fileURL);
+    } finally {
+      await handle.close();
+      await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
+    }
+  }
+
+  private async prepareDirectory(): Promise<void> {
+    const directory = dirname(this.fileURL);
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const status = await lstat(directory);
+    if (!status.isDirectory() || (process.getuid && status.uid !== process.getuid())) {
+      throw new Error("Launcher state requires a private directory owned by the current user.");
+    }
+    await chmod(directory, 0o700);
+  }
+
+  private async readState(): Promise<string> {
+    // lstat also rejects symlinks on platforms without O_NOFOLLOW.
+    if (!(await lstat(this.fileURL)).isFile()) throw new Error("Launcher state must be a regular file.");
+    const handle = await open(this.fileURL,
+      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    try {
+      const status = await handle.stat();
+      if (!status.isFile() || status.nlink !== 1 || status.size > maximumStateBytes
+          || (process.getuid && status.uid !== process.getuid())) {
+        throw new Error("Launcher state is unsafe or exceeds its size limit.");
+      }
+      await handle.chmod(0o600);
+      // Bound allocation even if another process grows the file after stat.
+      const bytes = Buffer.alloc(maximumStateBytes + 1);
+      let count = 0;
+      while (count < bytes.length) {
+        const { bytesRead } = await handle.read(bytes, count, bytes.length - count, null);
+        if (bytesRead === 0) break;
+        count += bytesRead;
+      }
+      if (count > maximumStateBytes) throw new Error("Launcher state exceeds its size limit.");
+      return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, count));
+    } finally {
+      await handle.close();
+    }
   }
 }
 

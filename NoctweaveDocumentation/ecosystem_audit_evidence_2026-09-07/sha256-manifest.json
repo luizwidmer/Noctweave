@@ -1,0 +1,307 @@
+[
+  {
+    "path": "cleanup.json",
+    "bytes": 4301,
+    "sha256": "a16e4de1493e93b052659d07188d0ffa2d1ccff012a1fa1f6359f896eebf8799"
+  },
+  {
+    "path": "publication-notes.md",
+    "bytes": 1230,
+    "sha256": "d416cc52a5d830a929fb92a33b596438443f4f9efaac3ec7331f9e1f5bb1b789"
+  },
+  {
+    "path": "repository-state.json",
+    "bytes": 7538,
+    "sha256": "0d7ce7ecbbb4373e1f46df524190e714f6334da11fb7680be8df7e3a751744c7"
+  },
+  {
+    "path": "scans/gitleaks.json",
+    "bytes": 41050,
+    "sha256": "0d476fe1e85fdf0080383c36e60ef70f2ec34952dd9e2091944af59345e33fd7"
+  },
+  {
+    "path": "scans/image-comparison.json",
+    "bytes": 666,
+    "sha256": "732a1c4207701cfcaba3d13e7cc449cf7ed3668ad315d8faabec12da8e0eeea8"
+  },
+  {
+    "path": "scans/scan-inventory.json",
+    "bytes": 120222,
+    "sha256": "d5749567b7fde66cdd88a795c616bfa7fe4f33d26d82737f856631ee1a5e6e87"
+  },
+  {
+    "path": "scans/scanner-provenance.json",
+    "bytes": 673,
+    "sha256": "e7a93e88353b1a12fe85b00c8d820aeab2c9ca88687ead188ee57abb3adc5b4f"
+  },
+  {
+    "path": "scans/scanner-results.json",
+    "bytes": 111,
+    "sha256": "843a3531001085dee5e283b1cbdd984b2563e49741490a58b188a3d905bac405"
+  },
+  {
+    "path": "scans/secret-scan-triage.json",
+    "bytes": 11248,
+    "sha256": "8f55fd1a4e5fdf5b465f8ec20220c6bc97d3b02531a31c70047801bb8d4fc23f"
+  },
+  {
+    "path": "scans/trivy-relay-image-final.json",
+    "bytes": 433353,
+    "sha256": "084d4e259f454429291cf6573fefb1ee6797ffa126ddc66f8c3ff1e1d8b96a0d"
+  },
+  {
+    "path": "scans/trivy-source.json",
+    "bytes": 4086,
+    "sha256": "5bd62be00990eaba09685dd4e2613280742e437c2f66043174385ac57b935114"
+  },
+  {
+    "path": "screenshots/docker-launcher-online.png",
+    "bytes": 99745,
+    "sha256": "ba96987446e38badaaebc2c1b1e9022c95d35ba56f2e524d5adbe9abf73bd46b"
+  },
+  {
+    "path": "screenshots/gallery-final-photo.png",
+    "bytes": 59863,
+    "sha256": "d6f5f593f8a0727a2e9267c3574a086101ab82f731375974452093df27bae968"
+  },
+  {
+    "path": "screenshots/js-restored-conversation.png",
+    "bytes": 100708,
+    "sha256": "8a86be9f689eab89718f87fb8e4cfe6225f3863095bfb510e9ddb60227e7252e"
+  },
+  {
+    "path": "screenshots/lab-hosted.png",
+    "bytes": 86599,
+    "sha256": "2e8369fe133d80b78990a244c5874828049e36cfea1b8c12d292ec75af6d33f7"
+  },
+  {
+    "path": "screenshots/native-iphone-pairing-final.png",
+    "bytes": 57829,
+    "sha256": "1d79ee4d3698de8ae720d88af1793afbe9f581ee5e8d288efadf9dbf992d4575"
+  },
+  {
+    "path": "screenshots/native-iphone-settings.png",
+    "bytes": 2411537,
+    "sha256": "60a317726231cff1f47168ab313f41f28867ec060fcbcdc5abffc5ab0aa16123"
+  },
+  {
+    "path": "screenshots/native-relay-running-before-layout.png",
+    "bytes": 71517,
+    "sha256": "1d0e3fc2c0aa6bd88f94820c4789784479cac2ea4e6c9a92d61a20138a7af414"
+  },
+  {
+    "path": "screenshots/native-relay-running-final.png",
+    "bytes": 71212,
+    "sha256": "f5712cba3a551484a2997bab7bfbb607072322cac4cb102b017344cd8b5b1abf"
+  },
+  {
+    "path": "screenshots/noctcord-received-image.png",
+    "bytes": 25762,
+    "sha256": "333f60920afcc918c01f8c7880a8b97eb60c7e3e8dbbb2c832738ed56c271ded"
+  },
+  {
+    "path": "test-matrix.json",
+    "bytes": 7309,
+    "sha256": "60cd5a1569aeed00f53e992062aa6f9709d0853ed7ccde976b10141e31790c19"
+  },
+  {
+    "path": "validation/board-audit.jsonl",
+    "bytes": 1587,
+    "sha256": "e312aff4e9585198e213bd936987958bdbe84d33fe7f450aec341d0bc9dfc766"
+  },
+  {
+    "path": "validation/board-created.json",
+    "bytes": 726,
+    "sha256": "f96496375ba968ece920bf4aa074cf8e59a72f2b0ee2a95d1ce24949020466be"
+  },
+  {
+    "path": "validation/board-export-audit.json",
+    "bytes": 149,
+    "sha256": "2d3acc8331a05a639d56a712b6c7a2fb9f3d397fc1281ee6b002b0a62c6fca9c"
+  },
+  {
+    "path": "validation/board-folder-access-tests.log",
+    "bytes": 469,
+    "sha256": "a0111247c5c3723ee2ee4a01225eb6c7356a555a18be5b20c5adb22ca47545c5"
+  },
+  {
+    "path": "validation/board-inspect-audit.json",
+    "bytes": 536,
+    "sha256": "5d1cade4650707d7803091f2b5a08f583704078674becfbf46520c1303449854"
+  },
+  {
+    "path": "validation/board-post-message.json",
+    "bytes": 306,
+    "sha256": "568777dbad68a5a455c8bf425921ea9e9cfb6a868e9383f033cb3d492cf09122"
+  },
+  {
+    "path": "validation/board-sync.json",
+    "bytes": 2593,
+    "sha256": "994b30d03920f52f8fb967c6359d08bd3f6c8cdcb449b1bafd6791707613af3c"
+  },
+  {
+    "path": "validation/browser-live-host-final.log",
+    "bytes": 1428,
+    "sha256": "732fd61011348dea253789c8d5e58703e272148052c83137d0a41bebcaf70aef"
+  },
+  {
+    "path": "validation/client-ios-final-tests.log",
+    "bytes": 531,
+    "sha256": "1795f31601d5b038d4b16fd8a9c72f61f410f67802d6da2facb7e6ec405ba3a3"
+  },
+  {
+    "path": "validation/client-ios-xcresult-summary.json",
+    "bytes": 978,
+    "sha256": "f783a6a7a931742bc26134ebdbc57bbe370fbaffdf68d4131b3e7397a36badf9"
+  },
+  {
+    "path": "validation/client-macos-complete-final.log",
+    "bytes": 456,
+    "sha256": "7735ec74f77741340dfb1bbb6116c752918e6f03711b37a9e71b41f288a4c62b"
+  },
+  {
+    "path": "validation/client-macos-xcresult-summary.json",
+    "bytes": 957,
+    "sha256": "c3313779c4adcea3071736cf468d5c82366e92817b6ed04e8f057e32f93952a1"
+  },
+  {
+    "path": "validation/docker-js-route-smoke.log",
+    "bytes": 201,
+    "sha256": "deae5dcc09d8ee6b2509b90ddba62fab187e5d4ea0108b30eaf19d33f69948c3"
+  },
+  {
+    "path": "validation/docker-shutdown-process-tests.log",
+    "bytes": 453,
+    "sha256": "649309b6243b7271f305fe9a6fc81ab45a03b14e791dc710695be412af43c6b0"
+  },
+  {
+    "path": "validation/docker-shutdown-results.json",
+    "bytes": 453,
+    "sha256": "649309b6243b7271f305fe9a6fc81ab45a03b14e791dc710695be412af43c6b0"
+  },
+  {
+    "path": "validation/gallery-real-export.log",
+    "bytes": 1064,
+    "sha256": "f12c28153533b4e690efd89f26fd0b4d39fd6b4e8ac2a82f8672fd729990af3c"
+  },
+  {
+    "path": "validation/gallery-tests-ipad.log",
+    "bytes": 21,
+    "sha256": "e6ca12cae9f5f3505f1f0a937e3b5b8a32ab342bf5d88d5b52fb483f7b4aed08"
+  },
+  {
+    "path": "validation/gallery-xcresult-summary.json",
+    "bytes": 981,
+    "sha256": "4c57ae6e3dd0f75bd8e330dc77bc28d58728b56bc68d7c5e81c6aa2c2c7b8a2a"
+  },
+  {
+    "path": "validation/lab-live-host-tests.log",
+    "bytes": 462,
+    "sha256": "c0498d5f30a7fdc9093896ab1a76104a3b271e5fc3c2d08cd0f0a2f26cb3801f"
+  },
+  {
+    "path": "validation/launcher-complete-final-tests.log",
+    "bytes": 57,
+    "sha256": "1cb38978f7e3776542de914f586a31f33b201ef8eef06ec72782cc3899fa41e0"
+  },
+  {
+    "path": "validation/live-http-probes.json",
+    "bytes": 4669,
+    "sha256": "58454d14fa0189c5340b192bef76ee894d4f2ee28e51242a0a4845861b7fb2f1"
+  },
+  {
+    "path": "validation/live-launcher-lifecycle.json",
+    "bytes": 326,
+    "sha256": "cecc465f1709586bbedcf3959f34c90182b3972de1b6bc1e0997e099c4e10cab"
+  },
+  {
+    "path": "validation/live-websocket-smoke.log",
+    "bytes": 18,
+    "sha256": "26bf0ac665986533e8aa13edbabedf469553d72f3116e26cf9d44311f851a835"
+  },
+  {
+    "path": "validation/native-live-harness.log",
+    "bytes": 221,
+    "sha256": "21e71a3ae9720d5620be0eb73fc1165d4daf631e105df0a01955640b5faa3981"
+  },
+  {
+    "path": "validation/native-relay-final-tests.log",
+    "bytes": 983,
+    "sha256": "1a73cd433ce681f83744b426dea72099995f0de03d14060881c46ebc6d756156"
+  },
+  {
+    "path": "validation/native-relay-live-final.json",
+    "bytes": 494,
+    "sha256": "4c36decd7716c3ae0c891aa718141178a2d43e449bd4b54936929819c4359ede"
+  },
+  {
+    "path": "validation/native-relay-xcresult-summary.json",
+    "bytes": 1148,
+    "sha256": "b014df2eb90daaefad1c1489d01f1252921242bd53408c95767f6da4c02ee584"
+  },
+  {
+    "path": "validation/noctboard-release-tests.log",
+    "bytes": 782,
+    "sha256": "faf625d42d35fc1d75eaf537c1715eba7eefc0f365f3a05de306a4054d6ea90f"
+  },
+  {
+    "path": "validation/noctcord-live-final.log",
+    "bytes": 246,
+    "sha256": "c5b6d0dbb22e2d0db94db0e2aa5c00e4bb5eaf9fc77dbda90bb7cd09324f1ac7"
+  },
+  {
+    "path": "validation/noctcord-tests.log",
+    "bytes": 1441,
+    "sha256": "8a938e91fb486ada0959b26aa764190f1c0b409c0cc99b147f3ece2699ae445c"
+  },
+  {
+    "path": "validation/noctcord-three-member-retest.log",
+    "bytes": 246,
+    "sha256": "eeb704a7fe50badee5341600efffb261390ad13f7668ad89e3ab6a735adb0060"
+  },
+  {
+    "path": "validation/noctweb-browser-tests.log",
+    "bytes": 740,
+    "sha256": "5f540326f5dc3aca614b2b2d482155822a2489884503f5d70c65483db1ebc3cb"
+  },
+  {
+    "path": "validation/noctweb-lab-tests.log",
+    "bytes": 1019,
+    "sha256": "57af1e53894fbf317c9d20fd9f455c73ee29e99307b349be2e9d4f2a154e1ee2"
+  },
+  {
+    "path": "validation/noctweb-ui-tests.log",
+    "bytes": 450,
+    "sha256": "d89827f1b4fa0b0304449d96e46cc2a7bdf45ffc1dce3aa18d51039801b3bd98"
+  },
+  {
+    "path": "validation/public-tests-rerun.log",
+    "bytes": 13161,
+    "sha256": "2e7e2b5dae455b2d5055c548e524eb762fd241dbe4f2c010e3c99a1cbb4aab37"
+  },
+  {
+    "path": "validation/publisher-final-tests.log",
+    "bytes": 478,
+    "sha256": "bb1ea755fe0dd1f68bb3dc769088e1207cba33ced477a677feb164fb87f622a7"
+  },
+  {
+    "path": "validation/publisher-hosted-ax.txt",
+    "bytes": 1476,
+    "sha256": "a37fdcb31a11c92d963d754aa78bcf26790493da0566cf879c77e06b87f154d0"
+  },
+  {
+    "path": "validation/relay-complete-final-tests.log",
+    "bytes": 3492,
+    "sha256": "2a485fc4ec20c337c40e735d124e62284db1ad5a695dfe6fc93fae2d9ab0a29a"
+  },
+  {
+    "path": "validation/relay-shutdown-process-tests.log",
+    "bytes": 313,
+    "sha256": "b81c1524f1ed188911ce0584aff08bc677f4148edc4454e531c7c0a752cb2329"
+  },
+  {
+    "path": "validation/shutdown-comparison.json",
+    "bytes": 740,
+    "sha256": "3baa23822d528cf5c9cf203f9c80d0c38d7e41ae012053b51d638a088b104653"
+  }
+]

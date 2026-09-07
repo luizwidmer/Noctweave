@@ -181,7 +181,7 @@ struct NoctwebPublisherSurface {
     private static let publisherCSP = [
         "default-src 'none'",
         "script-src 'self'",
-        "style-src 'self'",
+        "style-src 'self' data:",
         "img-src 'self' data: blob:",
         "connect-src 'self'",
         "frame-src blob:",
@@ -349,7 +349,8 @@ struct NoctwebPublisherSurface {
                 </div>
                 <button class="button secondary" id="refreshPreviewButton" type="button">Refresh preview</button>
               </div>
-              <iframe id="previewFrame" title="Sandboxed Noctweb page preview" sandbox="allow-scripts"></iframe>
+              <p class="preview-note">HTML and CSS preview. Open the hosted revision in Noctweb Browser to run JavaScript.</p>
+              <iframe id="previewFrame" title="Sandboxed HTML and CSS preview" sandbox=""></iframe>
             </div>
           </section>
 
@@ -604,6 +605,7 @@ struct NoctwebPublisherSurface {
     .preview-toolbar > div { display: grid; gap: 4px; min-width: 0; }
     .preview-toolbar strong { overflow: hidden; text-overflow: ellipsis; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
     .preview-toolbar span { color: var(--muted); font-size: 11px; }
+    .preview-note { margin: 0; padding: 12px 20px; color: var(--muted); font-size: 12px; line-height: 1.5; }
     #previewFrame { width: 100%; flex: 1; min-height: 580px; border: 0; background: #fff; }
     .publication-card {
       display: flex;
@@ -1008,18 +1010,24 @@ struct NoctwebPublisherSurface {
       function updatePreview(files = project, verification = "Local draft · sandboxed") {
         for (const url of previewURLs) URL.revokeObjectURL(url);
         previewURLs = [];
-        const cssURL = URL.createObjectURL(new Blob([files.css || ""], { type: "text/css" }));
-        const jsURL = URL.createObjectURL(new Blob([files.js || ""], { type: "text/javascript" }));
-        previewURLs.push(cssURL, jsURL);
+        // Data URLs remain readable from an opaque sandbox origin. Parent-owned
+        // blob subresources are blocked by browser storage partitioning.
+        const cssURL = `data:text/css;base64,${toBase64(new TextEncoder().encode(files.css || ""))}`;
         const parsed = new DOMParser().parseFromString(files.html || "", "text/html");
         const markup = parsed.body?.innerHTML || "";
         const childCSP = [
           "default-src 'none'", "img-src data: blob:", "media-src data: blob:",
-          "font-src data:", "style-src blob: 'unsafe-inline'", "script-src blob:",
+          "font-src data:", "style-src data:", "script-src 'none'",
           "connect-src 'none'", "frame-src 'none'", "object-src 'none'",
           "base-uri 'none'", "form-action 'none'"
         ].join("; ");
-        elements.previewFrame.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${escapeAttribute(childCSP)}"><link rel="stylesheet" href="${cssURL}"></head><body>${markup}<script src="${jsURL}"><\/script></body></html>`;
+        // A browser iframe cannot portably deny every network API to arbitrary
+        // JavaScript. Keep this preview script-free; hosting retains app.js.
+        const previewHTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${escapeAttribute(childCSP)}"><link rel="stylesheet" href="${cssURL}"></head><body>${markup}</body></html>`;
+        const documentURL = URL.createObjectURL(new Blob([previewHTML], { type: "text/html" }));
+        previewURLs.push(documentURL);
+        // Match the parent's blob-only frame policy. srcdoc is an about: URL.
+        elements.previewFrame.src = documentURL;
         elements.verificationState.textContent = verification;
       }
 

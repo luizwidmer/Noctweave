@@ -1,0 +1,8 @@
+Relay: http://127.0.0.1:49340
+Health: {}
+Info: Docker Audit Relay
+Created opaque route: active
+Enqueued packets: 1
+Synced packets: 1
+Committed opaque route sequence: 1
+Tore down opaque route: tornDown

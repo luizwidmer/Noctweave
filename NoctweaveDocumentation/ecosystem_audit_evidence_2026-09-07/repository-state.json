@@ -1,0 +1,207 @@
+[
+  {
+    "repository": "PICCP Project",
+    "path": "<PROJECTS>/PICCP Project",
+    "head": "4140099036a44a996f4a107f6d8c175c9d914e58",
+    "branch": "main",
+    "changedTrackedFiles": [
+      {
+        "path": "NoctweaveRelayServer/README.md",
+        "sha256": "c925bb74e7fde21b3d56ec7e846759b2f60f7aa34710257ddc5edfd49b7ec633"
+      },
+      {
+        "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/NoctwebPublisherWebUI.swift",
+        "sha256": "4c16ff1a7fb4046cfb7b24dd977ec74c1b2dbdbf86e0594e3ad82714167764f9"
+      },
+      {
+        "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OperatorWebUI.swift",
+        "sha256": "9021b0388f04352f7aecc3952f224acad84af6d8ab712ab1df6da8989d08a157"
+      },
+      {
+        "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/main.swift",
+        "sha256": "9d4e26744a2afac13627f06f2f23a8290daa9a34698f9874966a218251d17a05"
+      },
+      {
+        "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/NoctwebPublisherWebUITests.swift",
+        "sha256": "2fd3f3e97436434bc898b052b6de8f74f9106280d6bed580306e336904d81201"
+      },
+      {
+        "path": "NoctweaveRelayServer/desktop/bun/docker-relay.ts",
+        "sha256": "c55a81762d360a992c594d7e4baf8207e3070c3af49cb90d84e23d87a38da9b0"
+      },
+      {
+        "path": "NoctweaveRelayServer/desktop/bun/index.ts",
+        "sha256": "32d640e9ffd884ab683cd1f2d2bebd9daa5e4bb2874d2e1ca4cbb8e841b53378"
+      },
+      {
+        "path": "NoctweaveRelayServer/desktop/bun/launcher-store.ts",
+        "sha256": "74907fb79cba870dccf3a0551295f848045ab75cec40266b3b8933310ffa987e"
+      },
+      {
+        "path": "NoctweaveRelayServer/desktop/scripts/install-mac-icon.ts",
+        "sha256": "ad7ce2b59644c4e05ccb96c804e03eb9c125f4121be8bc6cc32a1edbcb27520f"
+      },
+      {
+        "path": "NoctweaveRelayServer/desktop/test/desktop-shell.test.ts",
+        "sha256": "2603ae48815fa2bf9cbd23f686f3296f1a60eb1a74310b137a46d5b150a995cf"
+      },
+      {
+        "path": "NoctweaveRelayServer/desktop/test/docker-relay.test.ts",
+        "sha256": "e839e2c8772ee24ed67e6ce1c9d972459d89f1fa3a66cb010a34544770d28769"
+      },
+      {
+        "path": "NoctweaveRelayServer/desktop/test/launcher-store.test.ts",
+        "sha256": "35275daad875a4faa3ac2707a61e28fffeb7953a7a81fbe3849e8afd304e7789"
+      },
+      {
+        "path": "NoctweaveRelayServer/electrobun.config.ts",
+        "sha256": "190645b35ac74d91bf2198dee3cc872917a20d2f30a22b2053a716d31dcb3852"
+      },
+      {
+        "path": "scripts/run-tests.sh",
+        "sha256": "cb9620890b1eb59cae34d4770671fbfff469a1de803449b35f4cf5f5437f752e"
+      }
+    ],
+    "diffCheckExitCode": 0,
+    "newAuditSourceFiles": [
+      {
+        "path": "NoctweaveRelayServer/scripts/test-shutdown.py",
+        "sha256": "bb4e69af75ca1209663735320f0dffb0af4462aece7d025209da98d671fefd7f"
+      }
+    ]
+  },
+  {
+    "repository": "NoctweaveJS",
+    "path": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "head": "787d7e264557d83e1ec55935cd397ce48b823030",
+    "branch": "main",
+    "changedTrackedFiles": [],
+    "diffCheckExitCode": 0
+  },
+  {
+    "repository": "Noctweave Messaging Client",
+    "path": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "head": "e5868575aadbf6ac9339c32c8754fba51d81f645",
+    "branch": "main",
+    "changedTrackedFiles": [
+      {
+        "path": "Noctweave Messaging Client.xcodeproj/xcuserdata/luiz.xcuserdatad/xcschemes/xcschememanagement.plist",
+        "sha256": "aadd08fe3f444e688dc5aadc4002eaf5ad6a7c94148a15dbeb2b1d10f2bb8d47"
+      },
+      {
+        "path": "Noctweave Messaging Client/ClientViewModel.swift",
+        "sha256": "72d6f7d48785f914adf7d20f930d32cf4923d11a8c302258f4a7f00d55565b22"
+      },
+      {
+        "path": "Noctweave Messaging Client/MatureClientShell.swift",
+        "sha256": "17377a67a3928ad245c0fdb168455c63d5261d70b514ea48da6042297809bc15"
+      },
+      {
+        "path": "Noctweave Messaging Client/PairingSheet.swift",
+        "sha256": "5735398d7334fd0628b827ad38ba784d9c2ef137d46b28d12ed2e2e81ff8bacf"
+      },
+      {
+        "path": "Noctweave Messaging ClientUITests/NoctweaveUITests.swift",
+        "sha256": "48a357fc1e99bd1e2186df98f71edf5ab879fefabe2a782b98b218d321ce3bde"
+      },
+      {
+        "path": "Noctweave Messaging ClientUITests_iOS/NoctweaveUITests_iOS.swift",
+        "sha256": "89c0537bb6182b3fd32a1f42ce90efd369ca45db1bb80b7ca5166fb2e7c84009"
+      },
+      {
+        "path": "README.md",
+        "sha256": "dfd16e09551a52846374577416435eee18a190bd249e8a1e54bee38e798cf3ad"
+      }
+    ],
+    "diffCheckExitCode": 0
+  },
+  {
+    "repository": "Noctweave Relay",
+    "path": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "head": "68d9ce2f947b4608d583c73849d53a78f35ad585",
+    "branch": "main",
+    "changedTrackedFiles": [
+      {
+        "path": "Noctweave Relay/ContentView.swift",
+        "sha256": "8c8f59ed1dfa620228232686c7515b6a7e8a6b9f20528f4a98e98e0dbb2bd3ec"
+      }
+    ],
+    "diffCheckExitCode": 0
+  },
+  {
+    "repository": "noctweave-net",
+    "path": "<PROJECTS>/noctweave-net",
+    "head": "ca1f3dc9a60a08ed9a78a3d77a0d8f8e1e866b5f",
+    "branch": "main",
+    "changedTrackedFiles": [
+      {
+        "path": "apps/noctweb-lab/Sources/NoctwebLab/NoctwebLabApp.swift",
+        "sha256": "b1cad5e838696bf666ffd61c9f3f7f3e6fc585161d1c4ba4c7fb6f16463e2bac"
+      }
+    ],
+    "diffCheckExitCode": 0
+  },
+  {
+    "repository": "NoctCord",
+    "path": "<PROJECTS>/NoctCord",
+    "head": "9265f720a550ad222baa3af3eeca11b02acd98e6",
+    "branch": "main",
+    "changedTrackedFiles": [
+      {
+        "path": "Tests/NoctCordUITests/NoctCordTransportIntegrationTests.swift",
+        "sha256": "a0e6e55fb30a2f051dae5e3cf4b58dc17d7551e95c09b8f41e70928a407e958a"
+      }
+    ],
+    "diffCheckExitCode": 0
+  },
+  {
+    "repository": "NoctBoard",
+    "path": "<PROJECTS>/NoctBoard",
+    "head": "1b089422e6347505dddef7cd60c3ca9f00d7c1ae",
+    "branch": "main",
+    "changedTrackedFiles": [
+      {
+        "path": "README.md",
+        "sha256": "5de15c126d3483beacedfa42571628b347e6e6bc79d16200eca354e32e0aca81"
+      },
+      {
+        "path": "Sources/NoctBoardUI/NoctBoardAuditConsole.swift",
+        "sha256": "5945b3a2ebdd41815f1f9c9627cad3fd89d598600b32367bfba3dccd5aafccf3"
+      },
+      {
+        "path": "Tests/NoctBoardTransportTests/NoctBoardTransportIntegrationTests.swift",
+        "sha256": "71b4f6fd4825eb52b5bb608798a548ae84f2eb4d29b3dbacd5583816adda17a1"
+      }
+    ],
+    "diffCheckExitCode": 0
+  },
+  {
+    "repository": "NoctGallery",
+    "path": "<PROJECTS>/NoctGallery",
+    "head": "fbc3095e1f9d87b1962512f3619a566ba09198f5",
+    "branch": "main",
+    "changedTrackedFiles": [
+      {
+        "path": "NoctGallery/Services/TemporaryExportStore.swift",
+        "sha256": "801134f4cc3171b521576491dc944447172d0175a3a2e1540c1a283d73ad39f1"
+      },
+      {
+        "path": "NoctGallery/ViewModels/GalleryViewModel.swift",
+        "sha256": "d967d87a994a004f8034085e3edb5e3f429b816f39d36afaa7d5af54f09fb11b"
+      },
+      {
+        "path": "NoctGallery/Views/GalleryView.swift",
+        "sha256": "49fd1d948108d22f92baf7f983b3799831d5b0d300b731789183085863a12349"
+      },
+      {
+        "path": "NoctGallery/Views/RootView.swift",
+        "sha256": "5fecd963845e3ca47a283b7afb5b4ad662e701a7b264acc6f4ad07ee617e6906"
+      },
+      {
+        "path": "NoctGalleryTests/TemporaryExportStoreTests.swift",
+        "sha256": "16e787651fadab69906b84b0023b250b06ce24fca9c1fb8a498c1619c6291de3"
+      }
+    ],
+    "diffCheckExitCode": 0
+  }
+]

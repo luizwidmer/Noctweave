@@ -1,0 +1,4217 @@
+[
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": ".gitignore",
+    "bytes": 1070
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "AgentGuides/AGENTS.md.example",
+    "bytes": 5243
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "AgentSkills/noctweave-messaging-relay/SKILL.md",
+    "bytes": 2905
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "AgentSkills/noctweave-messaging-relay/agents/openai.yaml",
+    "bytes": 240
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "AgentSkills/noctweave-messaging-relay/references/messaging-cli.md",
+    "bytes": 7756
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "AgentSkills/noctweave-messaging-relay/references/relay-operations.md",
+    "bytes": 2952
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "COMMERCIAL-LICENSE.md",
+    "bytes": 1046
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "CONTRIBUTING.md",
+    "bytes": 2258
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "LICENSE",
+    "bytes": 794
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NOTICE",
+    "bytes": 1154
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/COMMERCIAL-LICENSE.md",
+    "bytes": 692
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/LICENSE",
+    "bytes": 34520
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/NOTICE",
+    "bytes": 328
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Package.swift",
+    "bytes": 725
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCLI/LICENSE",
+    "bytes": 200
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCLI/main.swift",
+    "bytes": 126864
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/AppLockPINV2.swift",
+    "bytes": 4253
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/ArchitectureV2.swift",
+    "bytes": 35019
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/AsyncOperationGate.swift",
+    "bytes": 1260
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/Attachment.swift",
+    "bytes": 14144
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/AttachmentBlobStore.swift",
+    "bytes": 1179
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/BoundedURLSessionLoader.swift",
+    "bytes": 7550
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/CallProtocolV1.swift",
+    "bytes": 59295
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/ClientState.swift",
+    "bytes": 55177
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/ClientStateRollbackAnchor.swift",
+    "bytes": 11705
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/ClientStateStore.swift",
+    "bytes": 45593
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/Coding.swift",
+    "bytes": 18240
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/ContactPairingV2.swift",
+    "bytes": 34508
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/Conversation.swift",
+    "bytes": 7980
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/ConversationEvent.swift",
+    "bytes": 28053
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/Crypto.swift",
+    "bytes": 21938
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/DataSecurity.swift",
+    "bytes": 759
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/DecentralizedWake.swift",
+    "bytes": 41108
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/DirectPairingTransferV2.swift",
+    "bytes": 8302
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/Envelope.swift",
+    "bytes": 29928
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/FederationDirectorySignature.swift",
+    "bytes": 4679
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/FederationForwardingV1.swift",
+    "bytes": 16292
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupArchitectureV2.swift",
+    "bytes": 27945
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupArchitectureV2Signed.swift",
+    "bytes": 105094
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupConversationEventV2.swift",
+    "bytes": 6656
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupEpochTransitionV2.swift",
+    "bytes": 9848
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupExchangeLinkV1.swift",
+    "bytes": 10415
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupOpaqueRouteFanoutV2.swift",
+    "bytes": 17314
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupOpaqueRouteInboundV2.swift",
+    "bytes": 58553
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupOpaqueRouteTransportV2.swift",
+    "bytes": 66813
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupPeerEpochConvergenceV2.swift",
+    "bytes": 16787
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupRouteSetAnnouncementV2.swift",
+    "bytes": 22634
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupRuntimeDeletionV2.swift",
+    "bytes": 11108
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/GroupRuntimeV2.swift",
+    "bytes": 112839
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/HeadlessMessagingClient.swift",
+    "bytes": 272203
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/HiddenRetrieval.swift",
+    "bytes": 37341
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/LocalPersonaScopeToken.swift",
+    "bytes": 720
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/Message.swift",
+    "bytes": 6057
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/MessageEngine.swift",
+    "bytes": 25205
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/MetadataMinimizer.swift",
+    "bytes": 483
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/MixnetTransport.swift",
+    "bytes": 40877
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/NoctweaveNetModels.swift",
+    "bytes": 39807
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/NoctweavePQGroupExperimentalProviderV2.swift",
+    "bytes": 60610
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/NoctwebDataV1.swift",
+    "bytes": 57113
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/NoctwebNamespaceConsensusV1.swift",
+    "bytes": 32902
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/OnionTransport.swift",
+    "bytes": 13039
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/OpaqueRoutePacketV2.swift",
+    "bytes": 56767
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/OpaqueRouteRelayStoreV2.swift",
+    "bytes": 69778
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/OpaqueRouteV2.swift",
+    "bytes": 87412
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/OpenFederationDHTDiscovery.swift",
+    "bytes": 11901
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/OpenFederationDHTGatewayTransport.swift",
+    "bytes": 9206
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/OpenFederationDHTRecord.swift",
+    "bytes": 8129
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PaddedMessagePlaintext.swift",
+    "bytes": 3722
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PairingLobbyRelayV1.swift",
+    "bytes": 12758
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PairingLobbyV1.swift",
+    "bytes": 52987
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PairwiseIdentityV2.swift",
+    "bytes": 17091
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PairwiseOpaqueRouteV2.swift",
+    "bytes": 41243
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PairwiseRelationshipV2.swift",
+    "bytes": 85430
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PairwiseRouteSetV2.swift",
+    "bytes": 20580
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PasswordProtectedPairingPackageV1.swift",
+    "bytes": 6510
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PendingGroupAdmissionV2.swift",
+    "bytes": 27373
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PersonaProfileV1.swift",
+    "bytes": 16510
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/Prekeys.swift",
+    "bytes": 27128
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/ProtocolIntentV2.swift",
+    "bytes": 13324
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/PublicRelayEndpointPolicy.swift",
+    "bytes": 5467
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/QRCodeTransfer.swift",
+    "bytes": 5817
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/Ratchet.swift",
+    "bytes": 6063
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RatchetRecoveryPolicy.swift",
+    "bytes": 717
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RealtimeRelayV1.swift",
+    "bytes": 58744
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelationshipAuthorityV2.swift",
+    "bytes": 4827
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelationshipEndpointV2.swift",
+    "bytes": 37319
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelationshipSafetyNumberV2.swift",
+    "bytes": 1951
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayCapabilitiesV2.swift",
+    "bytes": 18732
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayClient.swift",
+    "bytes": 17706
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayEndpointParser.swift",
+    "bytes": 8710
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayICEServiceV1.swift",
+    "bytes": 18570
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayIdentityV1.swift",
+    "bytes": 22339
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayNetwork.swift",
+    "bytes": 10429
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayNoctwebDataStore.swift",
+    "bytes": 37904
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayNoctwebHostStore.swift",
+    "bytes": 20171
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayPairingPreflight.swift",
+    "bytes": 13700
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayProtocol.swift",
+    "bytes": 213531
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
+    "bytes": 139629
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RelayStore.swift",
+    "bytes": 65907
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RendezvousRelayAdapterV2.swift",
+    "bytes": 15409
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/RendezvousV2.swift",
+    "bytes": 51979
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/ResendRequest.swift",
+    "bytes": 1003
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/SecureLocalFileIO.swift",
+    "bytes": 20541
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/SecureStorageKeyProvider.swift",
+    "bytes": 8253
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/ServerDiscovery.swift",
+    "bytes": 10233
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/SessionReset.swift",
+    "bytes": 195
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/TransportConfidentiality.swift",
+    "bytes": 1415
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Sources/NoctweaveCore/WirePayloadV2.swift",
+    "bytes": 36069
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ArchitectureV2GroupBoundaryTests.swift",
+    "bytes": 14326
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ArchitectureV2OpaqueRouteTests.swift",
+    "bytes": 21062
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ArchitectureV2RelayCapabilityTests.swift",
+    "bytes": 9683
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ArchitectureV2RelayWireTests.swift",
+    "bytes": 5883
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ArchitectureV2RendezvousTests.swift",
+    "bytes": 23947
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ArchitectureV2SharedVectorConformanceTests.swift",
+    "bytes": 11063
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ArchitectureV2SignedGroupTests.swift",
+    "bytes": 48155
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/AttachmentDownloadJournalTests.swift",
+    "bytes": 3281
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/CallProtocolV1Tests.swift",
+    "bytes": 18706
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/CanonicalJSONV1Tests.swift",
+    "bytes": 2396
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ClientStateCurrentSchemaTests.swift",
+    "bytes": 43703
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/CodingPreflightTests.swift",
+    "bytes": 4012
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ContactPairingV2Tests.swift",
+    "bytes": 22499
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ConversationEventStrictTests.swift",
+    "bytes": 14566
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/DecentralizedWakeRouteTests.swift",
+    "bytes": 17970
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/DirectPairingTransferV2Tests.swift",
+    "bytes": 17181
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/EndpointPrekeyRotationTests.swift",
+    "bytes": 11436
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/EnvelopeWireVectorTests.swift",
+    "bytes": 7206
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/FederationForwardingV1Tests.swift",
+    "bytes": 17322
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/GroupCryptoErrorPropagationTests.swift",
+    "bytes": 1952
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/GroupOpaqueRouteInboundTests.swift",
+    "bytes": 30146
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/GroupPolicyTests.swift",
+    "bytes": 589
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/GroupScopedHandleStrictTests.swift",
+    "bytes": 1998
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/HeadlessCurrentArchitectureTests.swift",
+    "bytes": 3187
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/HeadlessGroupAdmissionTests.swift",
+    "bytes": 11423
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/HeadlessGroupOpaqueTransportTests.swift",
+    "bytes": 12001
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/HeadlessGroupProductAPITests.swift",
+    "bytes": 7469
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/HeadlessMessagingDurabilityTests.swift",
+    "bytes": 83472
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/HeadlessOpaqueRouteSyncDurabilityTests.swift",
+    "bytes": 46182
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/LocalSettingsPersistenceTests.swift",
+    "bytes": 4369
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ManualFederationPeerTests.swift",
+    "bytes": 10654
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/MessageProjectionStrictTests.swift",
+    "bytes": 11042
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/NoctweaveCoreTests.swift",
+    "bytes": 159824
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/NoctweaveNetRelayTests.swift",
+    "bytes": 14773
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/NoctweaveOriginNamespaceTests.swift",
+    "bytes": 1575
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/NoctweavePQGroupRuntimeV2Tests.swift",
+    "bytes": 96932
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/NoctwebDataV1Tests.swift",
+    "bytes": 32781
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/NoctwebNamespaceConsensusV1Tests.swift",
+    "bytes": 11334
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/OpaqueRouteCrossLanguageVectorTests.swift",
+    "bytes": 2214
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/OpaqueRoutePacketV2Tests.swift",
+    "bytes": 42194
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/OpaqueRouteRelayStoreV2Tests.swift",
+    "bytes": 39207
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/PairingLobbyV1Tests.swift",
+    "bytes": 8522
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/PairwiseOpaqueRouteV2Tests.swift",
+    "bytes": 11784
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/PairwiseRelationshipQuarantineV2Tests.swift",
+    "bytes": 10705
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/PairwiseRouteSetV2Tests.swift",
+    "bytes": 9746
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/PasswordProtectedPairingPackageV1Tests.swift",
+    "bytes": 2719
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/PersonaScopeFreshnessTests.swift",
+    "bytes": 9398
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/ProtocolIntentDurabilityTests.swift",
+    "bytes": 23391
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/RealtimeRelayV1Tests.swift",
+    "bytes": 26213
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/RelayEndpointParserTests.swift",
+    "bytes": 4575
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/RelayICEServiceV1Tests.swift",
+    "bytes": 5225
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/RelayIdentityV1Tests.swift",
+    "bytes": 6031
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/RelayPairingPreflightTests.swift",
+    "bytes": 5167
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/RelayStorePersistenceAtomicityTests.swift",
+    "bytes": 7838
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/RelaySuccessObjectExactnessTests.swift",
+    "bytes": 10155
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/RelayWireExactEnvelopeTests.swift",
+    "bytes": 9946
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/RendezvousRelayTransportTests.swift",
+    "bytes": 23780
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/StableRequestWireBoundaryTests.swift",
+    "bytes": 12913
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/StrictCryptographicStateTests.swift",
+    "bytes": 3788
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/StrictCurrentProtocolTests.swift",
+    "bytes": 1141
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/StrictEnvelopeTestFixtures.swift",
+    "bytes": 2368
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/TransportConfidentialityTests.swift",
+    "bytes": 686
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Tests/NoctweaveCoreTests/WirePayloadV2Tests.swift",
+    "bytes": 12923
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/Info.plist",
+    "bytes": 1596
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/module.modulemap",
+    "bytes": 63
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/aes_ops.h",
+    "bytes": 3417
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/common.h",
+    "bytes": 10690
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/kem.h",
+    "bytes": 16518
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/kem_ml_kem.h",
+    "bytes": 3065
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/oqs.h",
+    "bytes": 535
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/oqsconfig.h",
+    "bytes": 29820
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/rand.h",
+    "bytes": 2030
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/sha2_ops.h",
+    "bytes": 4865
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/sha3_ops.h",
+    "bytes": 7529
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/sha3x4_ops.h",
+    "bytes": 4701
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/sig.h",
+    "bytes": 47255
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/sig_ml_dsa.h",
+    "bytes": 3284
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64-simulator/Headers/oqs/sig_stfl.h",
+    "bytes": 35467
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/module.modulemap",
+    "bytes": 63
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/aes_ops.h",
+    "bytes": 3417
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/common.h",
+    "bytes": 10690
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/kem.h",
+    "bytes": 16518
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/kem_ml_kem.h",
+    "bytes": 3065
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/oqs.h",
+    "bytes": 535
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/oqsconfig.h",
+    "bytes": 29820
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/rand.h",
+    "bytes": 2030
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/sha2_ops.h",
+    "bytes": 4865
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/sha3_ops.h",
+    "bytes": 7529
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/sha3x4_ops.h",
+    "bytes": 4701
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/sig.h",
+    "bytes": 47255
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/sig_ml_dsa.h",
+    "bytes": 3284
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/ios-arm64/Headers/oqs/sig_stfl.h",
+    "bytes": 35467
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/module.modulemap",
+    "bytes": 63
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/aes_ops.h",
+    "bytes": 3417
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/common.h",
+    "bytes": 10690
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/kem.h",
+    "bytes": 16518
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/kem_ml_kem.h",
+    "bytes": 3065
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/oqs.h",
+    "bytes": 535
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/oqsconfig.h",
+    "bytes": 29799
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/rand.h",
+    "bytes": 2030
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/sha2_ops.h",
+    "bytes": 4865
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/sha3_ops.h",
+    "bytes": 7529
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/sha3x4_ops.h",
+    "bytes": 4701
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/sig.h",
+    "bytes": 47255
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/sig_ml_dsa.h",
+    "bytes": 3284
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveCore/Vendor/liboqs.xcframework/macos-arm64/Headers/oqs/sig_stfl.h",
+    "bytes": 35467
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/LICENSE",
+    "bytes": 360
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/adversarial_security_review_2026-08-12.md",
+    "bytes": 27501
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/adversarial_security_review_2026-08-13.md",
+    "bytes": 28499
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/adversarial_security_review_2026-08-19.md",
+    "bytes": 23747
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/architecture_revision_status_report_2026-07-18.md",
+    "bytes": 35782
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/call_protocol_v1.md",
+    "bytes": 7705
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/coturn_call_traversal.md",
+    "bytes": 4674
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/decentralized_wake_plan.md",
+    "bytes": 4660
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/dependency_sbom_and_release_policy.md",
+    "bytes": 10585
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/federation_protocol_and_operations.md",
+    "bytes": 7176
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/group_protocol_design.md",
+    "bytes": 8172
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_architecture_revision_v2.md",
+    "bytes": 23998
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_cli_usage.md",
+    "bytes": 12788
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_core_public_api.md",
+    "bytes": 30988
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_core_stability_policy.md",
+    "bytes": 1832
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_cyclonedx_sbom.json",
+    "bytes": 57541
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_extension_process.md",
+    "bytes": 3386
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_identity_philosophy.md",
+    "bytes": 3900
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_protocol_spec_v1.md",
+    "bytes": 32088
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_relay_openapi.yaml",
+    "bytes": 103719
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_roadmap.md",
+    "bytes": 8966
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_sbom.json",
+    "bytes": 31939
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweave_whitepaper.md",
+    "bytes": 15678
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/noctweb_data_service_v1.md",
+    "bytes": 10338
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/open_federation_discovery_research.md",
+    "bytes": 11877
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/pairing_lobby_v1.md",
+    "bytes": 5979
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/relay_collaboration_modules_v1.md",
+    "bytes": 9068
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/relay_ops_hardening_guide.md",
+    "bytes": 11640
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/security_audit_2026-08-12.md",
+    "bytes": 24688
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/security_audit_2026-08-25.md",
+    "bytes": 10104
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/security_requirements.md",
+    "bytes": 10807
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/test_vectors/call_v1.json",
+    "bytes": 1744
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/test_vectors/canonical_json_v1.json",
+    "bytes": 1754
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/test_vectors/direct_v4_root_session_v1.json",
+    "bytes": 1354
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/test_vectors/opaque_route_packet_v2.json",
+    "bytes": 6484
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/test_vectors/rendezvous_opaque_v2.json",
+    "bytes": 1321
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/ui_change_report_2026-08-26.md",
+    "bytes": 16092
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/visual_design_system.md",
+    "bytes": 2526
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/visual_identity.md",
+    "bytes": 4496
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveDocumentation/wire_format_and_test_vectors.md",
+    "bytes": 8490
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/.dockerignore",
+    "bytes": 123
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/.env.coturn.example",
+    "bytes": 332
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/.env.letsencrypt.example",
+    "bytes": 118
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Caddyfile.layer4",
+    "bytes": 264
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Dockerfile",
+    "bytes": 2459
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Dockerfile.caddy-l4",
+    "bytes": 926
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Dockerfile.coturn",
+    "bytes": 332
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/LICENSE",
+    "bytes": 34506
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/NOTICE",
+    "bytes": 503
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Package.swift",
+    "bytes": 1466
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/README.md",
+    "bytes": 29529
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/ReticulumBridge/Dockerfile",
+    "bytes": 1124
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/ReticulumBridge/README.md",
+    "bytes": 4917
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/ReticulumBridge/RETICULUM_LICENSE_NOTICE.md",
+    "bytes": 1902
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/ReticulumBridge/noctweave_reticulum_bridge.py",
+    "bytes": 29155
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
+    "bytes": 88
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/ReticulumBridge/tests/test_bridge.py",
+    "bytes": 11327
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/CSQLite/module.modulemap",
+    "bytes": 80
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/CSQLite/shim.h",
+    "bytes": 21
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/AttachmentBlobStore.swift",
+    "bytes": 11775
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/BoundedURLSessionLoader.swift",
+    "bytes": 6285
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/FederationDirectorySignature.swift",
+    "bytes": 5179
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/FederationForwardingV1.swift",
+    "bytes": 13341
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/HTTPRelayBridge.swift",
+    "bytes": 34418
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/LineCodec.swift",
+    "bytes": 2473
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/Models.swift",
+    "bytes": 116763
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/NoctweaveNetHostStore.swift",
+    "bytes": 17903
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/NoctweaveNetModels.swift",
+    "bytes": 20115
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/NoctweaveNetNameModels.swift",
+    "bytes": 15499
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/NoctwebDataStore.swift",
+    "bytes": 35587
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/NoctwebDataV1.swift",
+    "bytes": 51767
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/NoctwebNamespaceLedgerV1.swift",
+    "bytes": 30813
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/NoctwebNamespaceSQLiteStore.swift",
+    "bytes": 5160
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/NoctwebPublisherWebUI.swift",
+    "bytes": 82568
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OQSSignatureVerifier.swift",
+    "bytes": 10130
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OpaqueRouteRuntimeV2.swift",
+    "bytes": 141137
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OpenFederationDHTDiscovery.swift",
+    "bytes": 10987
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OpenFederationDHTGatewayTransport.swift",
+    "bytes": 9139
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OpenFederationDHTNativeOverlayTransport.swift",
+    "bytes": 8485
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OpenFederationDHTRecord.swift",
+    "bytes": 8074
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OperatorConfiguration.swift",
+    "bytes": 42934
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OperatorHTTPServer.swift",
+    "bytes": 14632
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OperatorWebUI.swift",
+    "bytes": 59530
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/PairingLobbyRelayV1.swift",
+    "bytes": 11744
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/PublicRelayEndpointPolicy.swift",
+    "bytes": 5003
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RealtimeRelayV1.swift",
+    "bytes": 45031
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayCanonicalJSON.swift",
+    "bytes": 5287
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayCapabilitiesV2.swift",
+    "bytes": 16970
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
+    "bytes": 135422
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayICEServiceV1.swift",
+    "bytes": 16609
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayIdentityV1.swift",
+    "bytes": 24515
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayServerSecureFileIO.swift",
+    "bytes": 13856
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayStore.swift",
+    "bytes": 83588
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayWire.swift",
+    "bytes": 92482
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Sources/NoctweaveRelayServer/main.swift",
+    "bytes": 79217
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/AttachmentBlobStoreExactJSONTests.swift",
+    "bytes": 2933
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/HTTPRelayBridgeSecurityTests.swift",
+    "bytes": 5608
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/NoctweaveNetRelayTests.swift",
+    "bytes": 35507
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/NoctweaveOriginNamespaceTests.swift",
+    "bytes": 391
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/NoctwebDataStoreTests.swift",
+    "bytes": 25227
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/NoctwebPublisherWebUITests.swift",
+    "bytes": 10963
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/OpaqueRouteCrossLanguageVectorTests.swift",
+    "bytes": 1838
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/OpaqueRouteRelayIntegrationTests.swift",
+    "bytes": 10256
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/OpaqueRouteRuntimeV2Tests.swift",
+    "bytes": 29886
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/OpenFederationDHTErrorBoundaryTests.swift",
+    "bytes": 2760
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/OperatorWebUITests.swift",
+    "bytes": 28871
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/PairingLobbyRelayV1Tests.swift",
+    "bytes": 5108
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/RealtimeRelayV1Tests.swift",
+    "bytes": 20417
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/RelayCapabilitiesV2Tests.swift",
+    "bytes": 6478
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/RelayICEServiceV1Tests.swift",
+    "bytes": 5565
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/RelayIdentityAndNamespaceTests.swift",
+    "bytes": 7081
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/RelayStoreCurrentTests.swift",
+    "bytes": 31708
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/RelayWireExactEnvelopeTests.swift",
+    "bytes": 13920
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/RelayWireStructuralBoundaryTests.swift",
+    "bytes": 5538
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/RendezvousRelayTransportTests.swift",
+    "bytes": 28716
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/StableModelBoundsTests.swift",
+    "bytes": 10803
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/StableResponseExactModelsTests.swift",
+    "bytes": 14507
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/bun.lock",
+    "bytes": 20719
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/coturn/entrypoint.sh",
+    "bytes": 891
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/assets/relay-icon.svg",
+    "bytes": 955
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/bun/docker-relay.ts",
+    "bytes": 11958
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/bun/index.ts",
+    "bytes": 2340
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/bun/launcher-store.ts",
+    "bytes": 5636
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/rpc.ts",
+    "bytes": 1577
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/scripts/generate-icons.ts",
+    "bytes": 885
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/scripts/install-mac-icon.ts",
+    "bytes": 604
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/test/desktop-shell.test.ts",
+    "bytes": 3261
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/test/docker-relay.test.ts",
+    "bytes": 7222
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/test/launcher-store.test.ts",
+    "bytes": 2760
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/view/index.html",
+    "bytes": 6396
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/view/index.ts",
+    "bytes": 8602
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/desktop/view/styles.css",
+    "bytes": 15037
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/docker-compose.coturn.yml",
+    "bytes": 2171
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/docker-compose.letsencrypt.yml",
+    "bytes": 1637
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/docker-compose.reticulum.yml",
+    "bytes": 1090
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/electrobun.config.ts",
+    "bytes": 1220
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/package.json",
+    "bytes": 821
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/tsconfig.json",
+    "bytes": 376
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "Package.swift",
+    "bytes": 1411
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "README.md",
+    "bytes": 22151
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveArchitecture.svg",
+    "bytes": 6312
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveFeatureMap.svg",
+    "bytes": 5200
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveIcon.svg",
+    "bytes": 750
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveIdentitySystem.svg",
+    "bytes": 8371
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveLogo.svg",
+    "bytes": 1385
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveMark.svg",
+    "bytes": 403
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveMarkMonochrome.svg",
+    "bytes": 318
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveMarkReverse.svg",
+    "bytes": 329
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveMessageFlow.svg",
+    "bytes": 4360
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveRelayIcon.svg",
+    "bytes": 957
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "docs/assets/NoctweaveWordmark.svg",
+    "bytes": 1059
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/build-liboqs-xcframework.sh",
+    "bytes": 2958
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/generate-sbom.py",
+    "bytes": 12800
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/liboqs-module.modulemap",
+    "bytes": 63
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/liboqs-runtime.sh",
+    "bytes": 1556
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/liboqs-version.sh",
+    "bytes": 102
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/run-native-app-tests.sh",
+    "bytes": 2744
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/run-relay.sh",
+    "bytes": 781
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/run-tests.sh",
+    "bytes": 1856
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/test-cli.sh",
+    "bytes": 1582
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/verify-release.sh",
+    "bytes": 11242
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "scripts/verify-whitepaper-alignment.sh",
+    "bytes": 2000
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project",
+    "path": "NoctweaveRelayServer/scripts/test-shutdown.py",
+    "bytes": 4526
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": ".github/workflows/ci.yml",
+    "bytes": 1007
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": ".gitignore",
+    "bytes": 119
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "CONTRIBUTING.md",
+    "bytes": 1030
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "LICENSE",
+    "bytes": 9073
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "NOTICE",
+    "bytes": 443
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "README.md",
+    "bytes": 27197
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "bun.lock",
+    "bytes": 20355
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/app.js",
+    "bytes": 74587
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/assets/noctweave-mark.svg",
+    "bytes": 216
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/browser-security-profile.js",
+    "bytes": 14104
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/groups.css",
+    "bytes": 831
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/groups.html",
+    "bytes": 6707
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/groups.js",
+    "bytes": 16594
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/index.html",
+    "bytes": 16648
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/index.js",
+    "bytes": 19
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/messaging-service.js",
+    "bytes": 89787
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/styles.css",
+    "bytes": 28263
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "client/theme.js",
+    "bytes": 1885
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/assets/app-icon.svg",
+    "bytes": 842
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/bun/application.ts",
+    "bytes": 2690
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/bun/attachment-export.ts",
+    "bytes": 8668
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/bun/index.ts",
+    "bytes": 262
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/bun/relationship-state-store.d.ts",
+    "bytes": 2597
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/bun/relationship-state-store.js",
+    "bytes": 34992
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/bun/relay-proxy.js",
+    "bytes": 3285
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/bun/ui-test-file-vault.ts",
+    "bytes": 1784
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/bun/ui-test-index.ts",
+    "bytes": 1468
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/rpc.ts",
+    "bytes": 2542
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/scripts/generate-icons.ts",
+    "bytes": 852
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/scripts/install-mac-icon.ts",
+    "bytes": 1235
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/ui-test-bun/index.ts",
+    "bytes": 192
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/view/index.ts",
+    "bytes": 2656
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "desktop/view/relationship-state-anchor.ts",
+    "bytes": 9117
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "electrobun.config.ts",
+    "bytes": 1817
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "examples/LICENSE",
+    "bytes": 1068
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "examples/browser-client/app.js",
+    "bytes": 184
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "examples/browser-client/assets/noctweave-mark.svg",
+    "bytes": 216
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "examples/browser-client/group-companion.js",
+    "bytes": 7592
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "examples/browser-client/index.html",
+    "bytes": 373
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "examples/browser-client/server.js",
+    "bytes": 10981
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "examples/browser-client/styles.css",
+    "bytes": 146
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "package.json",
+    "bytes": 1829
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "scripts/build-oqs-wasm.sh",
+    "bytes": 3048
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "scripts/generate-call-v1-vector.js",
+    "bytes": 3408
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "scripts/liboqs-version.sh",
+    "bytes": 102
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "scripts/noctweb-data-smoke.js",
+    "bytes": 3726
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "scripts/pairing-lobby-smoke.js",
+    "bytes": 5993
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "scripts/relay-smoke.js",
+    "bytes": 4908
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/architecture-v2.js",
+    "bytes": 37701
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/attachment-v1.js",
+    "bytes": 11995
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/browser-pairing-service.js",
+    "bytes": 20475
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/call-v1.js",
+    "bytes": 40745
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/client.js",
+    "bytes": 6399
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/contact-pairing-v2.js",
+    "bytes": 47435
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/crypto/direct-v4.js",
+    "bytes": 30832
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/crypto/noctweave-crypto-suite.js",
+    "bytes": 1567
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/crypto/noctweave-native-message.js",
+    "bytes": 55413
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/crypto/noctweave-wire.js",
+    "bytes": 14443
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/crypto/oqs-wasm-adapter.js",
+    "bytes": 12157
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/crypto/swift-canonical.js",
+    "bytes": 3804
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/crypto/webcrypto.js",
+    "bytes": 3949
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/durable-pairwise-messaging-v2.js",
+    "bytes": 126291
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/endpoint.js",
+    "bytes": 5147
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/index.js",
+    "bytes": 6459
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/noctweave-net-host-v1.js",
+    "bytes": 11374
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/noctweb-data-v1.js",
+    "bytes": 52283
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/opaque-route-packet-v2.js",
+    "bytes": 41021
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/opaque-route-relay-v2.js",
+    "bytes": 26141
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/opaque-route-v2.js",
+    "bytes": 36918
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/pairing-link-v1.js",
+    "bytes": 3440
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/pairing-lobby-v1.js",
+    "bytes": 35899
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/pairwise-opaque-route-v2.js",
+    "bytes": 56588
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/private-v2.js",
+    "bytes": 6760
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/realtime-relay-v1.js",
+    "bytes": 10205
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/relationship-control-v2.js",
+    "bytes": 15679
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/relationship-local-policy-v2.js",
+    "bytes": 2594
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/relay-client.js",
+    "bytes": 23895
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/rendezvous-relay-v2.js",
+    "bytes": 24413
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/rendezvous-v2.js",
+    "bytes": 29076
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/requests.js",
+    "bytes": 53423
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/storage.js",
+    "bytes": 17959
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "src/strict-json.js",
+    "bytes": 6736
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test-support/contact-pairing-conformance.js",
+    "bytes": 2830
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/architecture-v2.test.js",
+    "bytes": 18529
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/browser-application-vault.test.js",
+    "bytes": 9672
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/browser-client-shell.test.js",
+    "bytes": 12873
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/browser-layout.test.js",
+    "bytes": 3474
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/browser-messaging-service.test.js",
+    "bytes": 26808
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/browser-pairing-service.test.js",
+    "bytes": 13863
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/browser-production-client.dom.test.js",
+    "bytes": 9847
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/browser-theme.dom.test.js",
+    "bytes": 3552
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/call-v1.test.js",
+    "bytes": 13785
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/canonical-json-v1.test.js",
+    "bytes": 1549
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/contact-pairing-v2.test.js",
+    "bytes": 4214
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/desktop-application-vault-integration.test.js",
+    "bytes": 3245
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/desktop-attachment-export.test.js",
+    "bytes": 4297
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/desktop-relationship-state-store.test.js",
+    "bytes": 16370
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/desktop-relay-proxy.test.js",
+    "bytes": 2076
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/desktop-shell.test.js",
+    "bytes": 3943
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/direct-v4-root-session-vector.test.js",
+    "bytes": 2961
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/direct-v4.test.js",
+    "bytes": 14910
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/durable-pairwise-messaging-v2.test.js",
+    "bytes": 63418
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/endpoint.test.js",
+    "bytes": 2503
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/fixtures/client-shell-preview.html",
+    "bytes": 2548
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/fixtures/native-liboqs-profile.json",
+    "bytes": 396
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/fixtures/protocol/LICENSE",
+    "bytes": 360
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/fixtures/protocol/call_v1.json",
+    "bytes": 1744
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/fixtures/protocol/canonical_json_v1.json",
+    "bytes": 1754
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/fixtures/protocol/direct_v4_root_session_v1.json",
+    "bytes": 1354
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/fixtures/protocol/opaque_route_packet_v2.json",
+    "bytes": 6484
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/fixtures/protocol/rendezvous_opaque_v2.json",
+    "bytes": 1321
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/group-client-ux.test.js",
+    "bytes": 1301
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/group-companion.test.js",
+    "bytes": 2843
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/noctweave-net-host-v1.test.js",
+    "bytes": 7699
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/noctweave-wire.test.js",
+    "bytes": 6723
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/noctweb-data-v1.test.js",
+    "bytes": 16769
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/opaque-route-durability-v2.test.js",
+    "bytes": 12931
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/opaque-route-packet-v2.test.js",
+    "bytes": 22946
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/opaque-route-v2.test.js",
+    "bytes": 10479
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/oqs-wasm-adapter.test.js",
+    "bytes": 6695
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/oqs-wasm-real.test.js",
+    "bytes": 836
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/pairing-link-v1.test.js",
+    "bytes": 1959
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/pairing-lobby-v1.test.js",
+    "bytes": 6420
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/pairwise-opaque-route-v2.test.js",
+    "bytes": 26598
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/profile-vault.test.js",
+    "bytes": 905
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/relationship-control-v2.test.js",
+    "bytes": 9152
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/relationship-local-policy-v2.test.js",
+    "bytes": 1628
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/relay-client.test.js",
+    "bytes": 40760
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/rendezvous-relay-v2.test.js",
+    "bytes": 13485
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/rendezvous-v2.test.js",
+    "bytes": 8662
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/storage.test.js",
+    "bytes": 5929
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/strict-json.test.js",
+    "bytes": 2752
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/ui-test-file-vault.test.js",
+    "bytes": 1163
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "test/webcrypto.test.js",
+    "bytes": 1111
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "tsconfig.json",
+    "bytes": 419
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "wasm/dist/noctweave_oqs.js",
+    "bytes": 11172
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/NoctweaveJS",
+    "path": "wasm/noctweave_oqs_shim.c",
+    "bytes": 6741
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "BrandAssets/NoctweaveClientAppIcon.svg",
+    "bytes": 716
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "BrandAssets/NoctweaveClientAppIconDark.svg",
+    "bytes": 724
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "BrandAssets/NoctweaveClientAppIconTinted.svg",
+    "bytes": 483
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "LICENSE",
+    "bytes": 34513
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client.xcodeproj/project.pbxproj",
+    "bytes": 33478
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client.xcodeproj/project.xcworkspace/contents.xcworkspacedata",
+    "bytes": 135
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client.xcodeproj/xcshareddata/xcschemes/Noctweave.xcscheme",
+    "bytes": 3289
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client.xcodeproj/xcshareddata/xcschemes/NoctweaveUITests.xcscheme",
+    "bytes": 4357
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client.xcodeproj/xcshareddata/xcschemes/NoctweaveUITests_iOS.xcscheme",
+    "bytes": 4373
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client.xcodeproj/xcuserdata/luiz.xcuserdatad/xcschemes/xcschememanagement.plist",
+    "bytes": 709
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/AdaptiveControls.swift",
+    "bytes": 4973
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/AppLockView.swift",
+    "bytes": 8910
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Assets.xcassets/AccentColor.colorset/Contents.json",
+    "bytes": 329
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Assets.xcassets/AppIcon.appiconset/Contents.json",
+    "bytes": 1952
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Assets.xcassets/ChatDoodlesPhone.imageset/Contents.json",
+    "bytes": 180
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Assets.xcassets/ChatDoodlesPhoneDark.imageset/Contents.json",
+    "bytes": 185
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Assets.xcassets/ChatDoodlesTablet.imageset/Contents.json",
+    "bytes": 181
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Assets.xcassets/ChatDoodlesTabletDark.imageset/Contents.json",
+    "bytes": 186
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Assets.xcassets/Contents.json",
+    "bytes": 63
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Assets.xcassets/NoctweaveIcon.imageset/Contents.json",
+    "bytes": 232
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Assets.xcassets/NoctweaveIcon.imageset/NoctweaveIcon.svg",
+    "bytes": 750
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/AttachmentSanitizer.swift",
+    "bytes": 24394
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/ClientLegalDocumentsView.swift",
+    "bytes": 3130
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/ClientViewModel.swift",
+    "bytes": 169882
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/ContentView.swift",
+    "bytes": 36829
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/GlassStyles.swift",
+    "bytes": 18416
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/GroupExchangeDocument.swift",
+    "bytes": 3534
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/GroupExchangeLinks.swift",
+    "bytes": 174
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/MatureClientShell.swift",
+    "bytes": 131493
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/MatureSettingsView.swift",
+    "bytes": 43789
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Noctweave Messaging Client.entitlements",
+    "bytes": 479
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/Noctweave-iOS.entitlements",
+    "bytes": 421
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/NoctweaveApp.swift",
+    "bytes": 969
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/NoctweaveAppDelegate.swift",
+    "bytes": 2546
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/NoctweaveIOSAppDelegate.swift",
+    "bytes": 341
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/NoctweavePalette.swift",
+    "bytes": 537
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/NoctweaveTopBar.swift",
+    "bytes": 3212
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/NoctweaveTrafficLights.swift",
+    "bytes": 9236
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/NoctweaveUITestRuntime.swift",
+    "bytes": 1723
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/NotificationManager.swift",
+    "bytes": 1203
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/OpaqueRoutePrefetchBridge.swift",
+    "bytes": 9667
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/PairingInvitationDocument.swift",
+    "bytes": 4618
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/PairingSheet.swift",
+    "bytes": 61894
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/PinEntryComponents.swift",
+    "bytes": 2723
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/PinSetupView.swift",
+    "bytes": 3947
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/PlatformModalPresentation.swift",
+    "bytes": 900
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/QRCodeScannerView.swift",
+    "bytes": 9063
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/QRCodeView.swift",
+    "bytes": 2669
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/RelayEditorView.swift",
+    "bytes": 20186
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/ScreenProtectionMonitor.swift",
+    "bytes": 5129
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/SecureCameraCaptureView.swift",
+    "bytes": 8427
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/SecureContainer.swift",
+    "bytes": 10511
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/SecureRegularFileIO.swift",
+    "bytes": 11598
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/ShareSheet.swift",
+    "bytes": 983
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/SystemCameraPickerView.swift",
+    "bytes": 1611
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/ThemeSupport.swift",
+    "bytes": 23820
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging Client/VoiceRecorderSheetView.swift",
+    "bytes": 13105
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging ClientUITests/NoctweaveUITests.swift",
+    "bytes": 11370
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Messaging ClientUITests_iOS/NoctweaveUITests_iOS.swift",
+    "bytes": 11068
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Sync Activity/Info.plist",
+    "bytes": 965
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Sync Activity/Noctweave Sync Activity.entitlements",
+    "bytes": 421
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Sync Activity/NoctweaveSyncActivityWidget.swift",
+    "bytes": 16662
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Sync Activity/NoctweaveSyncWidgetSnapshot.swift",
+    "bytes": 667
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave Sync Activity/NoctweaveWidgetFetchIntent.swift",
+    "bytes": 15987
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Noctweave-App-Info.plist",
+    "bytes": 1465
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "README.md",
+    "bytes": 3749
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "SanitizerTests/AttachmentSanitizerSmokeTests.swift",
+    "bytes": 15392
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Messaging Client",
+    "path": "Scripts/run_attachment_sanitizer_tests.sh",
+    "bytes": 430
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "BrandAssets/NoctweaveRelayAppIcon.svg",
+    "bytes": 988
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Info.plist",
+    "bytes": 1231
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "LICENSE",
+    "bytes": 34505
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay.xcodeproj/project.pbxproj",
+    "bytes": 20068
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay.xcodeproj/project.xcworkspace/contents.xcworkspacedata",
+    "bytes": 135
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay.xcodeproj/xcshareddata/xcschemes/Noctweave Relay.xcscheme",
+    "bytes": 4355
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay.xcodeproj/xcuserdata/luiz.xcuserdatad/xcschemes/xcschememanagement.plist",
+    "bytes": 350
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/Assets.xcassets/AccentColor.colorset/Contents.json",
+    "bytes": 329
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/Assets.xcassets/AppIcon.appiconset/Contents.json",
+    "bytes": 1300
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/Assets.xcassets/Contents.json",
+    "bytes": 63
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/ContentView.swift",
+    "bytes": 137636
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/ManagedCoturn.bundle/Contents/Info.plist",
+    "bytes": 791
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/ManagedCoturn.bundle/Contents/Resources/LICENSE",
+    "bytes": 1532
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/ManagedCoturn.bundle/Contents/_CodeSignature/CodeResources",
+    "bytes": 2436
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/ManagedCoturn.entitlements",
+    "bytes": 300
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/ManagedCoturnService.swift",
+    "bytes": 13462
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/NoctweavePalette.swift",
+    "bytes": 2618
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/NoctweaveRelayApp.swift",
+    "bytes": 967
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/RelayRuntimePolicy.swift",
+    "bytes": 1848
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/RelaySecureFileIO.swift",
+    "bytes": 6692
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave Relay/ServerViewModel.swift",
+    "bytes": 150710
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave RelayTests/ManagedCoturnConfigurationTests.swift",
+    "bytes": 4579
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave RelayTests/NoctweaveAppearanceTests.swift",
+    "bytes": 854
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave RelayTests/OpaqueRouteSnapshotVaultTests.swift",
+    "bytes": 2600
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "Noctweave RelayTests/RelayRuntimePolicyTests.swift",
+    "bytes": 1914
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "README.md",
+    "bytes": 5118
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "RELAY_OPERATIONS.md",
+    "bytes": 11032
+  },
+  {
+    "repository": "<PROJECTS>/PICCP Project/Noctweave Relay",
+    "path": "THIRD-PARTY-NOTICES.md",
+    "bytes": 568
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": ".github/pull_request_template.md",
+    "bytes": 365
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": ".gitignore",
+    "bytes": 108
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "CONTRIBUTING.md",
+    "bytes": 1063
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "LICENSE",
+    "bytes": 34517
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NOTICE",
+    "bytes": 368
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery.xcodeproj/project.pbxproj",
+    "bytes": 15419
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery.xcodeproj/xcshareddata/xcschemes/NoctGallery.xcscheme",
+    "bytes": 3371
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Assets.xcassets/AccentColor.colorset/Contents.json",
+    "bytes": 329
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Assets.xcassets/AppIcon.appiconset/Contents.json",
+    "bytes": 222
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Assets.xcassets/Contents.json",
+    "bytes": 63
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/BrandAssets/NoctGalleryAppIcon.svg",
+    "bytes": 1295
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Design/NoctGalleryTheme.swift",
+    "bytes": 6986
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Info.plist",
+    "bytes": 1725
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Models/PhotoAssetRecord.swift",
+    "bytes": 1447
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/NoctGalleryApp.swift",
+    "bytes": 240
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/PrivacyInfo.xcprivacy",
+    "bytes": 694
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Services/ImageSanitizer.swift",
+    "bytes": 12105
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Services/MetadataForge.swift",
+    "bytes": 3985
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Services/PhotoLibraryService.swift",
+    "bytes": 5605
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Services/TemporaryExportStore.swift",
+    "bytes": 3003
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/ViewModels/GalleryViewModel.swift",
+    "bytes": 5477
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Views/AssetDetailView.swift",
+    "bytes": 7246
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Views/GallerySettingsView.swift",
+    "bytes": 4239
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Views/GalleryView.swift",
+    "bytes": 4423
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Views/RootView.swift",
+    "bytes": 5799
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Views/SharePrivacyView.swift",
+    "bytes": 3119
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGallery/Views/ShareSheet.swift",
+    "bytes": 584
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGalleryTests/ImageSanitizerTests.swift",
+    "bytes": 6179
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGalleryTests/MetadataForgeTests.swift",
+    "bytes": 1452
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "NoctGalleryTests/TemporaryExportStoreTests.swift",
+    "bytes": 5384
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "README.md",
+    "bytes": 2694
+  },
+  {
+    "repository": "<PROJECTS>/NoctGallery",
+    "path": "SECURITY.md",
+    "bytes": 1607
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": ".github/pull_request_template.md",
+    "bytes": 414
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": ".gitignore",
+    "bytes": 117
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "CONTRIBUTING.md",
+    "bytes": 1209
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "LICENSE",
+    "bytes": 34511
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "NOTICE",
+    "bytes": 357
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Package.resolved",
+    "bytes": 621
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Package.swift",
+    "bytes": 3131
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "README.md",
+    "bytes": 13451
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Resources/NoctCordApp-Info.plist",
+    "bytes": 1346
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Resources/NoctCordApp.entitlements",
+    "bytes": 509
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "SECURITY.md",
+    "bytes": 1003
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Scripts/build-macos-app.sh",
+    "bytes": 2146
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Scripts/render-app-icon.swift",
+    "bytes": 5730
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordApp/NoctCordApplication.swift",
+    "bytes": 2247
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordCore/NoctCordBots.swift",
+    "bytes": 9035
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordCore/NoctCordCodec.swift",
+    "bytes": 3868
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordCore/NoctCordCommunityInvitation.swift",
+    "bytes": 10481
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordCore/NoctCordCompactCodec.swift",
+    "bytes": 14448
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordCore/NoctCordEvent.swift",
+    "bytes": 27428
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordCore/NoctCordIdentity.swift",
+    "bytes": 8367
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordCore/NoctCordProjection.swift",
+    "bytes": 35963
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordCore/NoctCordRealtime.swift",
+    "bytes": 10970
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordCore/NoctCordRelaySupport.swift",
+    "bytes": 5394
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordDemo/main.swift",
+    "bytes": 2005
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordMedia/NoctCordInMemoryMediaDriver.swift",
+    "bytes": 7412
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordMedia/NoctCordMediaDriver.swift",
+    "bytes": 13393
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordMedia/NoctCordMediaPermissions.swift",
+    "bytes": 1749
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordMedia/NoctCordMediaRemoteVideo.swift",
+    "bytes": 3081
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordMedia/NoctCordMediaRemoteVideoView.swift",
+    "bytes": 6532
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordMedia/NoctCordMediaSignaling.swift",
+    "bytes": 7428
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordMedia/NoctCordMediaTypes.swift",
+    "bytes": 15351
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordMedia/NoctCordRawWebRTC.swift",
+    "bytes": 33427
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordMedia/NoctCordScreenShareSources.swift",
+    "bytes": 3057
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordMedia/NoctCordWebRTCAdapter.swift",
+    "bytes": 1769
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordAppModel.swift",
+    "bytes": 91832
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordAttachmentSanitizer.swift",
+    "bytes": 14617
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordAttachmentTransfer.swift",
+    "bytes": 15072
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordBotHost.swift",
+    "bytes": 3376
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordCallSignalCrypto.swift",
+    "bytes": 5318
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordCommunityOnboarding.swift",
+    "bytes": 27564
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordCommunitySettings.swift",
+    "bytes": 37358
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordComponents.swift",
+    "bytes": 55370
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordIdentityVault.swift",
+    "bytes": 6597
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordPrivacyProtection.swift",
+    "bytes": 2375
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordRealtimeSignalEnvelope.swift",
+    "bytes": 4615
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordRelayMediaSignalingSink.swift",
+    "bytes": 1347
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordRootView.swift",
+    "bytes": 43415
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordSecureFileIO.swift",
+    "bytes": 11639
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordTheme.swift",
+    "bytes": 7221
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordTransportCoordinator.swift",
+    "bytes": 64964
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Sources/NoctCordUI/NoctCordUserSettings.swift",
+    "bytes": 21386
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Tests/NoctCordCoreTests/NoctCordCoreTests.swift",
+    "bytes": 49373
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Tests/NoctCordMediaTests/NoctCordMediaTests.swift",
+    "bytes": 21453
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Tests/NoctCordUITests/NoctCordAppModelTests.swift",
+    "bytes": 11538
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Tests/NoctCordUITests/NoctCordAttachmentSanitizerTests.swift",
+    "bytes": 4802
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Tests/NoctCordUITests/NoctCordAttachmentTransferTests.swift",
+    "bytes": 3036
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Tests/NoctCordUITests/NoctCordIdentityVaultTests.swift",
+    "bytes": 4303
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "Tests/NoctCordUITests/NoctCordTransportIntegrationTests.swift",
+    "bytes": 37025
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "docs/adr/0001-application-boundary.md",
+    "bytes": 2980
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "docs/adr/0002-relay-hosting-and-noctweb-discovery.md",
+    "bytes": 5060
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "docs/identity.md",
+    "bytes": 2209
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "docs/media-and-calls.md",
+    "bytes": 7327
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "docs/onboarding.md",
+    "bytes": 4228
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "docs/relay-extension.md",
+    "bytes": 5958
+  },
+  {
+    "repository": "<PROJECTS>/NoctCord",
+    "path": "docs/roles-channels-and-bots.md",
+    "bytes": 4928
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": ".gitattributes",
+    "bytes": 169
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": ".github/CODEOWNERS",
+    "bytes": 14
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
+    "bytes": 1608
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": ".github/ISSUE_TEMPLATE/config.yml",
+    "bytes": 259
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
+    "bytes": 1161
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": ".github/pull_request_template.md",
+    "bytes": 321
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": ".gitignore",
+    "bytes": 369
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "AgentGuides/AGENTS.md.example",
+    "bytes": 1986
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "CHANGELOG.md",
+    "bytes": 1282
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "CONTRIBUTING.md",
+    "bytes": 1118
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "LICENSE",
+    "bytes": 34523
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "NOTICE",
+    "bytes": 500
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Package.resolved",
+    "bytes": 361
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Package.swift",
+    "bytes": 3406
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Packaging/Info.plist",
+    "bytes": 965
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Packaging/NoctBoardApp.entitlements",
+    "bytes": 384
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "README.md",
+    "bytes": 17336
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "SECURITY.md",
+    "bytes": 4334
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "SUPPORT.md",
+    "bytes": 848
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Scripts/build-macos-app.sh",
+    "bytes": 1489
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Scripts/verify.sh",
+    "bytes": 1709
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardApp/NoctBoardApp.swift",
+    "bytes": 337
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardCLI/NoctBoardCLI.swift",
+    "bytes": 77731
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardCore/NoctBoardAudit.swift",
+    "bytes": 7032
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardCore/NoctBoardModel.swift",
+    "bytes": 31263
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardCore/NoctBoardProjection.swift",
+    "bytes": 22559
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardDemo/NoctBoardDemo.swift",
+    "bytes": 5116
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardTransport/NoctBoardAdmissionStateStore.swift",
+    "bytes": 35724
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardTransport/NoctBoardClient.swift",
+    "bytes": 131928
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardUI/NoctBoardAuditConsole.swift",
+    "bytes": 49306
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardUI/NoctBoardDemoFixture.swift",
+    "bytes": 6698
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Sources/NoctBoardUI/NoctBoardImportedAudit.swift",
+    "bytes": 16116
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Tests/NoctBoardAuditSurfaceTests/NoctBoardAuditSurfaceTests.swift",
+    "bytes": 8338
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Tests/NoctBoardCoreTests/NoctBoardCoreTests.swift",
+    "bytes": 26106
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "Tests/NoctBoardTransportTests/NoctBoardTransportIntegrationTests.swift",
+    "bytes": 59607
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "docs/adr/0001-noctweave-application-boundary.md",
+    "bytes": 527
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "docs/adr/0002-one-board-one-group.md",
+    "bytes": 750
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "docs/adr/0003-local-audit-before-transparency-service.md",
+    "bytes": 995
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "docs/architecture.md",
+    "bytes": 9204
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "docs/audit-model.md",
+    "bytes": 5771
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "docs/protocol-v1.md",
+    "bytes": 11835
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "docs/publishing.md",
+    "bytes": 4644
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "docs/research/2026-08-08-agent-swarm-board.md",
+    "bytes": 3225
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "docs/threat-model.md",
+    "bytes": 5847
+  },
+  {
+    "repository": "<PROJECTS>/NoctBoard",
+    "path": "fixtures/v1/README.md",
+    "bytes": 644
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": ".gitignore",
+    "bytes": 90
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "AGENTS.md",
+    "bytes": 1472
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "LICENSE",
+    "bytes": 34008
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "README.md",
+    "bytes": 17667
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "ROADMAP.md",
+    "bytes": 5856
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "SECURITY.md",
+    "bytes": 6471
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Package.resolved",
+    "bytes": 361
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Package.swift",
+    "bytes": 2225
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Packaging/Info.plist",
+    "bytes": 2906
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Packaging/NoctwebBrowser.entitlements",
+    "bytes": 383
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Packaging/NoctwebBrowserIcon.svg",
+    "bytes": 1388
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/README.md",
+    "bytes": 3657
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+    "bytes": 33410
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserWindowView.swift",
+    "bytes": 39925
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowser/DevelopmentNoctwebResolver.swift",
+    "bytes": 7674
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+    "bytes": 18346
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowser/NoctwebBrowserApp.swift",
+    "bytes": 7937
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowser/VerifiedWebsiteView.swift",
+    "bytes": 17809
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowserCore/BrowserError.swift",
+    "bytes": 1590
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowserCore/BrowserModels.swift",
+    "bytes": 4278
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowserCore/BrowserSession.swift",
+    "bytes": 8507
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowserCore/NetworkProfile.swift",
+    "bytes": 12305
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowserCore/NoctwebAccessDescriptor.swift",
+    "bytes": 5089
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowserCore/NoctwebNavigationURL.swift",
+    "bytes": 9475
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowserCore/Resolver.swift",
+    "bytes": 18138
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowserCore/RoutePolicy.swift",
+    "bytes": 3194
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Sources/NoctwebBrowserCore/WebsiteBundle.swift",
+    "bytes": 6984
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/DesignSystemTests.swift",
+    "bytes": 861
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/NoctwebBrowserAppTests.swift",
+    "bytes": 14710
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/Tests/NoctwebBrowserCoreTests/NoctwebBrowserCoreTests.swift",
+    "bytes": 21154
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-browser/scripts/package-app.sh",
+    "bytes": 1541
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/.gitignore",
+    "bytes": 51
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Package.resolved",
+    "bytes": 361
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Package.swift",
+    "bytes": 1934
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Packaging/Info.plist",
+    "bytes": 1207
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Packaging/NoctwebLab.entitlements",
+    "bytes": 614
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Packaging/NoctwebLabIcon.svg",
+    "bytes": 492
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/README.md",
+    "bytes": 9840
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Models/AppModel.swift",
+    "bytes": 98247
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Models/ProductModels.swift",
+    "bytes": 18433
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Models/WebsiteProjectBuilder.swift",
+    "bytes": 19574
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/NoctwebLabApp.swift",
+    "bytes": 2261
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/Components.swift",
+    "bytes": 14280
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/ContentView.swift",
+    "bytes": 9346
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/InspectorView.swift",
+    "bytes": 7063
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/NetworkView.swift",
+    "bytes": 8400
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/OverviewView.swift",
+    "bytes": 6025
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/RuntimeView.swift",
+    "bytes": 12281
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/SettingsView.swift",
+    "bytes": 4621
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/SitesView.swift",
+    "bytes": 19418
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/TestRunsView.swift",
+    "bytes": 7980
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/VerifiedWebsiteWebView.swift",
+    "bytes": 18459
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLab/Views/WebsiteProjectEditorView.swift",
+    "bytes": 46456
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/CanonicalJSON.swift",
+    "bytes": 7266
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/HostRelayClient.swift",
+    "bytes": 25373
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/HostedPublication.swift",
+    "bytes": 6026
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/LabEngine.swift",
+    "bytes": 20504
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/Models.swift",
+    "bytes": 24103
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/NoctwebAddress.swift",
+    "bytes": 7199
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/NoctwebSecureFileIO.swift",
+    "bytes": 9331
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/PublisherIdentity.swift",
+    "bytes": 17035
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/RelayNetwork.swift",
+    "bytes": 16246
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/RoutePolicy.swift",
+    "bytes": 3662
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/WebsiteBundle.swift",
+    "bytes": 5897
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Sources/NoctwebLabCore/WorkspaceRepository.swift",
+    "bytes": 3044
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Tests/NoctwebLabAppTests/AppModelTests.swift",
+    "bytes": 30527
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Tests/NoctwebLabAppTests/DesignSystemTests.swift",
+    "bytes": 1142
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Tests/NoctwebLabAppTests/VerifiedWebsiteWebViewTests.swift",
+    "bytes": 12815
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Tests/NoctwebLabCoreTests/LiveHostRelayTests.swift",
+    "bytes": 5315
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/Tests/NoctwebLabCoreTests/NoctwebLabCoreTests.swift",
+    "bytes": 56151
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-lab/scripts/package-app.sh",
+    "bytes": 1497
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-ui/Package.swift",
+    "bytes": 347
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-ui/Sources/NoctwebUI/NoctwebUI.swift",
+    "bytes": 12842
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "apps/noctweb-ui/Tests/NoctwebUITests/NoctwebUITests.swift",
+    "bytes": 1028
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0001-noctweave-transport-boundary.md",
+    "bytes": 1184
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0002-three-relay-roles.md",
+    "bytes": 1844
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0003-noctweb-browser-and-lab.md",
+    "bytes": 3907
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0004-publication-scoped-publisher-identity.md",
+    "bytes": 4027
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0005-native-noctweb-lab.md",
+    "bytes": 2802
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0006-relay-scoped-noctweb-namespace.md",
+    "bytes": 4940
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0007-hierarchical-retrieval-policy.md",
+    "bytes": 4175
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0008-relay-hosted-noctweb-publisher.md",
+    "bytes": 5879
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0009-native-noctweb-browser-access.md",
+    "bytes": 4921
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0010-connect-noctweb-lab-to-host-relays.md",
+    "bytes": 1983
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/adr/0011-authenticated-federation-namespace.md",
+    "bytes": 3937
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/architecture.md",
+    "bytes": 14166
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/consensus-boundary.md",
+    "bytes": 6904
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/noctweave-integration.md",
+    "bytes": 8723
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/noctweb-access.md",
+    "bytes": 10276
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "docs/relay-topology.md",
+    "bytes": 10041
+  },
+  {
+    "repository": "<PROJECTS>/noctweave-net",
+    "path": "spec/README.md",
+    "bytes": 5956
+  }
+]

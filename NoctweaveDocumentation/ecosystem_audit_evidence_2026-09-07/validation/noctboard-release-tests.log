@@ -1,0 +1,11 @@
+Build complete! (163.58s)
+Test Suite 'NoctBoardAuditSurfaceTests' passed at 2026-09-07 15:29:02.625.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.010 (0.011) seconds
+Test Suite 'NoctBoardCoreTests' passed at 2026-09-07 15:29:02.655.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 0.029 (0.030) seconds
+Test Suite 'NoctBoardTransportIntegrationTests' passed at 2026-09-07 15:44:55.179.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 952.523 (952.524) seconds
+Test Suite 'NoctBoardPackageTests.xctest' passed at 2026-09-07 15:44:55.179.
+	 Executed 34 tests, with 0 failures (0 unexpected) in 952.562 (952.565) seconds
+Test Suite 'All tests' passed at 2026-09-07 15:44:55.179.
+	 Executed 34 tests, with 0 failures (0 unexpected) in 952.562 (952.566) seconds
