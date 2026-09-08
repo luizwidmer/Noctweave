@@ -1,0 +1,141 @@
+{
+  "recorded_at": "2026-09-08T00:10:36.177019+00:00",
+  "scope": "macOS welcome card and direct/group conversation layout correction",
+  "source": {
+    "path": "Noctweave Messaging Client/Noctweave Messaging Client/MatureClientShell.swift",
+    "sha256": "3d9be4ed1c239da41420edc694b0b3ed4da5cf99873f4730c5aea29e4fdeb039",
+    "git_head": "b22097bd362e69057eb6b0342b3a8d808d4ca340",
+    "uncommitted": true
+  },
+  "validation": {
+    "platform": "macOS arm64",
+    "macos_build": "passed",
+    "macos_ui_tests": {
+      "passed": 3,
+      "failed": 0,
+      "tests": [
+        "testMatureShellRestoresProductNavigation",
+        "testTopHeaderIsInsetInsteadOfRenderingAsAFullWidthSlab",
+        "testDeliveryReceiptsDoNotReplaceTheMessagePreviewOrCreateBubbles"
+      ]
+    },
+    "visual_review": "Disposable ready/product fixtures; local one-member group; regular and compact windows; light and dark direct chat. Welcome and group captures use the final corrected build. Direct-chat captures precede the separate welcome centering change.",
+    "results_directory": ".runtime/chat-layout-2026-09-07",
+    "production_signing": "not assessed",
+    "ios_retest": "not performed for this macOS correction"
+  },
+  "cleanup": {
+    "time": "2026-09-08T00:09:58.530971+00:00",
+    "review_app_closed": true,
+    "test_app_closed": true,
+    "loopback_relay_stopped": true,
+    "derived_data_removed": true,
+    "review_app_retained_for_reopening": true
+  },
+  "screenshots": [
+    {
+      "file": "mac-chat-after.jpg",
+      "pixels": [
+        1269,
+        768
+      ],
+      "sha256": "2ba01fca9630372a5532d99dd746e0600ecdcbf8bf20699ff8e3f2f110912dd1"
+    },
+    {
+      "file": "mac-chat-before.jpg",
+      "pixels": [
+        1120,
+        720
+      ],
+      "sha256": "35222bba2188a6e67b7f830a59cd65be3db5ae041c3c2e20a5aff0bf7464417a"
+    },
+    {
+      "file": "mac-chat-compact-after.jpg",
+      "pixels": [
+        860,
+        592
+      ],
+      "sha256": "e77c4435ce5b52569931e604896fec27151d34fe6fe19d42660f5667bac6bb34"
+    },
+    {
+      "file": "mac-chat-light-compact-after.jpg",
+      "pixels": [
+        860,
+        592
+      ],
+      "sha256": "e70909ffbed6ae5e4dbe391486ea03c15a1dcd88f6f53fbf55c9d5514a80d8fb"
+    },
+    {
+      "file": "mac-chat-light-regular-after.jpg",
+      "pixels": [
+        1120,
+        720
+      ],
+      "sha256": "4d45d752efe473b6a091a4374e68f0513013ecc5f556eee026a06610702f05a2"
+    },
+    {
+      "file": "mac-chat-multiline-after.jpg",
+      "pixels": [
+        860,
+        592
+      ],
+      "sha256": "a8cb7738f4942b468c940d2c4277bcf88a9d0180cd093800e2a5636fa616117c"
+    },
+    {
+      "file": "mac-chat-wide-before.jpg",
+      "pixels": [
+        1269,
+        768
+      ],
+      "sha256": "d59e869ded5d8d0e4cb6c3eb4c422ab8bb458cf53e84183d928c74d2f45666b0"
+    },
+    {
+      "file": "mac-group-empty-compact-after.jpg",
+      "pixels": [
+        860,
+        592
+      ],
+      "sha256": "fdb634825eb447f2880be0275177f0acc7d1432668dbeb15d1f7f19a39c57d55"
+    },
+    {
+      "file": "mac-group-message-compact-after.jpg",
+      "pixels": [
+        860,
+        592
+      ],
+      "sha256": "f65955e0f271ea82a153f503669708b485bd6b766367b054385bbb6a933cce9f"
+    },
+    {
+      "file": "mac-group-message-regular-after.jpg",
+      "pixels": [
+        1120,
+        720
+      ],
+      "sha256": "d9c09b2f73312f8e19e597f6719dca83bd6b7cfeb4d3c6cbe3083b7ae2a50c9a"
+    },
+    {
+      "file": "mac-welcome-before.jpg",
+      "pixels": [
+        1120,
+        720
+      ],
+      "sha256": "69b3b8c652cba9b876836d01c388d27837527afece953adcc7cba2647a75344c"
+    },
+    {
+      "file": "mac-welcome-compact-after.jpg",
+      "pixels": [
+        860,
+        592
+      ],
+      "sha256": "2590fb79beb25b90a6121c9ef30caa1a04f2006394bcbd99372a778b4c417cff"
+    },
+    {
+      "file": "mac-welcome-regular-after.jpg",
+      "pixels": [
+        1120,
+        720
+      ],
+      "sha256": "0090a5bddc04b4f01a1b79a9f5f5b3a99d3f2d464ef638c2f86d4d415dd450e2"
+    }
+  ]
+}

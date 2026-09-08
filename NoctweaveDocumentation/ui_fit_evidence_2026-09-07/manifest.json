@@ -1,0 +1,452 @@
+[
+  {
+    "app": "Noctweave client",
+    "title": "Mac pairing before",
+    "file": "client-pairing-before.png",
+    "sha256": "89c33255aa0e6db6eea25e04754bad0d8d66a09f9ff91de4f1a4f5cbf8dfed1e"
+  },
+  {
+    "app": "Noctweave client",
+    "title": "Mac pairing after",
+    "file": "client-pairing-after.png",
+    "sha256": "5cc0fad5805ef2e485ac0e01da96bc5aaa7d61cffedf928a815d2aa517d2ef51"
+  },
+  {
+    "app": "Noctweave client",
+    "title": "iPad rail before",
+    "file": "ipad-client-chats-before.png",
+    "sha256": "42b539e1fe8502de2ae68e0b7ece5ad196f3f4ccc5debfd7c5cd57901df87746"
+  },
+  {
+    "app": "Noctweave client",
+    "title": "iPad rail after",
+    "file": "ipad-client-chats-after.png",
+    "sha256": "e11414b88ac892918c36034bcfe99009875a9b9d272e9386ebd2170524e5af23"
+  },
+  {
+    "app": "Noctweave client",
+    "title": "iPad landscape after",
+    "file": "ipad-client-landscape-after.png",
+    "sha256": "5873761236dde64fe588e1d035030206897e0ac6d85712ee775ec77c3e4ab258"
+  },
+  {
+    "app": "Noctweave client",
+    "title": "iPad You landscape after",
+    "file": "ipad-client-you-landscape-after.png",
+    "sha256": "81493a6db6c117729473e4fd81caf7a19cd1fb98fa674a50c2d152b3ae32bb0c"
+  },
+  {
+    "app": "Noctweave client",
+    "title": "iPhone pairing reviewed",
+    "file": "iphone-client-pairing-before.png",
+    "sha256": "504c2ae16190d0103b6d4f31ad25bed21f34326d1c9620f4f73c4446a0d227a1"
+  },
+  {
+    "app": "Noctweave client",
+    "title": "iPhone settings reviewed",
+    "file": "iphone-client-settings-before.png",
+    "sha256": "a0b5fc07f0bad07d1029f46549b00e26f3d0a1bd20493e46df0b8db73ee78fad"
+  },
+  {
+    "app": "Noctweave client",
+    "title": "Mac settings reviewed",
+    "file": "client-settings-min-before.png",
+    "sha256": "964560102f19a131d0b74baecb1c7573ea04f3e1827fea7024fda95c747997e4"
+  },
+  {
+    "app": "Noctweave client",
+    "title": "Mac light appearance reviewed",
+    "file": "client-appearance-light-before.png",
+    "sha256": "586c40e55130e690145632b41359bda99cd47b79319f7b856089381a5b60d08c"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Mobile onboarding before",
+    "file": "js-onboarding-mobile-before.png",
+    "sha256": "068712f87a5a63f4d9caf92c06c19b8a39cf8c9c9f5eade8daa770b5f03f9433"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Mobile onboarding after, scrolled",
+    "file": "js-onboarding-mobile-scrolled-after.png",
+    "sha256": "64431120aa265b52b7761178bf87dba14f18479498f7a4f93fab378688f32fc4"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Mobile chat before",
+    "file": "js-chats-mobile-before.png",
+    "sha256": "9fc349364a0d122c7bb8d7cd64929223d33d030786caa45b9a1c22a994b54cb0"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Mobile chat after",
+    "file": "js-chats-mobile-after.png",
+    "sha256": "8c4733a8fdecd5fcf44ba1bdcd70cb9d80fca8891bb26ac386a5cacf769e2b52"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Expanded mobile composer after, scrolled",
+    "file": "js-chats-expanded-scrolled-after.png",
+    "sha256": "2cc105b145449991235faeb7b78d188f844658bd56202efa71896880db320d0c"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Desktop client after",
+    "file": "js-desktop-chats-after.png",
+    "sha256": "4b20413ade8217d76d5606bf329487921e0c25887261b592bf68ea6d1e60142a"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Desktop expanded composer after, scrolled",
+    "file": "js-desktop-expanded-scrolled-after.png",
+    "sha256": "deaffd8db235ebd23b0abf474a4c31a8aec37ca487f9584a0307bea40d9ad22a"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Mobile group setup before",
+    "file": "js-groups-mobile-before.png",
+    "sha256": "b8c9e8541084e793818352674f840cd1fc4bdde4eaea810727c62f7b84d108f6"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Loaded group workspace after",
+    "file": "groups-workspace-mobile-after.png",
+    "sha256": "7d372c44f0bd0512d3a1dc3fc8f53b8aa50ada9adcc24e437c9b83ced5446b08"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Loaded group workspace at 320 pixels",
+    "file": "groups-workspace-small-after.png",
+    "sha256": "01c3e02246ed536e0cbc080ff14d8e0744870d22cc057cfeade89ba0851a912c"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Desktop group workspace after",
+    "file": "groups-workspace-desktop-after.png",
+    "sha256": "6b1c71cd483b8d60768226c7fc07ed35de170ec96ad2c417f240ceb7b16bad4e"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Dark onboarding after",
+    "file": "js-onboarding-dark-after.png",
+    "sha256": "0bc0cb1c9ad54c21615801e1092b69f3e5f258b2099f8942581603040498f4e2"
+  },
+  {
+    "app": "NoctweaveJS",
+    "title": "Mobile pairing after",
+    "file": "js-pairing-mobile-after.png",
+    "sha256": "8b8d99f826208e80a35330112bcb6e99153caffe4b136bac0ecfe98b66c09f72"
+  },
+  {
+    "app": "NoctCord",
+    "title": "Compact conversation before",
+    "file": "cord-conversation-min-before.png",
+    "sha256": "9628fefc36a786768f684013a6fe8c0434091bb31f307073fb572ee899fc89b3"
+  },
+  {
+    "app": "NoctCord",
+    "title": "Compact search after",
+    "file": "cord-search-min-after.png",
+    "sha256": "2f738b63f6cf5258442126b18ae2473bedaa4216abaa9efa8523645cad7b6f58"
+  },
+  {
+    "app": "NoctCord",
+    "title": "Compact members after",
+    "file": "cord-members-min-after.png",
+    "sha256": "7f033317a504341ac0d664c51cf6c48f9120f8b15f678b02fbb1428fdbe9e4b7"
+  },
+  {
+    "app": "NoctCord",
+    "title": "Privacy controls before",
+    "file": "cord-privacy-before.png",
+    "sha256": "3ed8c589673bbbefea0802436027dd60b526ed9e22d828694b5127cf8f55987e"
+  },
+  {
+    "app": "NoctCord",
+    "title": "Privacy controls after",
+    "file": "cord-privacy-after.png",
+    "sha256": "dac5576c24d1cfd7f763a635ff077c39255aef4d8b47738150f11ba2750c58ff"
+  },
+  {
+    "app": "NoctCord",
+    "title": "Capture protection check",
+    "file": "cord-members-protected-after.png",
+    "sha256": "bc824059a8a7759dddd5e0078e66bef42b22ddc845fa8f36279a63f8c35bf663"
+  },
+  {
+    "app": "NoctCord",
+    "title": "Voice workspace reviewed",
+    "file": "cord-voice-before.png",
+    "sha256": "bd6671ae9f14188d96a4f59f276a9317f1219128b9cc3b1790dd3d6f9b2f3cc0"
+  },
+  {
+    "app": "NoctGallery",
+    "title": "iPhone grid before",
+    "file": "iphone-gallery-before.png",
+    "sha256": "e091d9eb7d25b7fdceb1738d6ce45eea54a8868da2c416d5a70743f0a96a7a19"
+  },
+  {
+    "app": "NoctGallery",
+    "title": "iPhone grid after",
+    "file": "iphone-gallery-after.png",
+    "sha256": "27bbf552bfbb8bebee0836f2ca55b7e70002ff5cd8052b940c7492e2562530aa"
+  },
+  {
+    "app": "NoctGallery",
+    "title": "iPhone photo after",
+    "file": "iphone-gallery-photo-after.png",
+    "sha256": "55386ab118653a98ead767dd45288be15073198c54f6ab72a7fed4f0039ef5b9"
+  },
+  {
+    "app": "NoctGallery",
+    "title": "iPad grid after",
+    "file": "ipad-gallery-after.png",
+    "sha256": "251837de267bbdf430ae9df75b0cc2c76f2951bf0a8cfd940582b350b2fa7000"
+  },
+  {
+    "app": "NoctGallery",
+    "title": "iPad photo after",
+    "file": "ipad-gallery-photo-after.png",
+    "sha256": "ec73b22a3e4a880f73dca846a081070eb19f1b551047746cc8943c668791d89a"
+  },
+  {
+    "app": "NoctGallery",
+    "title": "iPad landscape photo reviewed",
+    "file": "ipad-gallery-landscape-after.png",
+    "sha256": "07d9df9917d277020f02ebbe32501442d1988e1add3f20e52bcc27af005d0c3e"
+  },
+  {
+    "app": "NoctGallery",
+    "title": "iPad landscape settings reviewed",
+    "file": "ipad-gallery-settings-landscape-after.png",
+    "sha256": "eb7b43d43d8b7b45ffd4146ec53074f63f86416be376b5a8fe4b8c3fab04edff"
+  },
+  {
+    "app": "NoctGallery",
+    "title": "iPhone advanced sharing reviewed",
+    "file": "iphone-gallery-advanced-before.png",
+    "sha256": "0e0cbb9f5d646ea5e5e412a3c324e335cf017aa955826d2cecd212f6d451413e"
+  },
+  {
+    "app": "NoctBoard",
+    "title": "Source chooser before",
+    "file": "board-entry-before.png",
+    "sha256": "bc1988b8d18f980cc0eb4da3cf063d68330e95cea7d4031dca75734ff72ada28"
+  },
+  {
+    "app": "NoctBoard",
+    "title": "Source chooser after",
+    "file": "board-entry-after.png",
+    "sha256": "3661d1bbc3f366a3301efb5253a0a537496d6767fb0b49ea553760115732d0fe"
+  },
+  {
+    "app": "NoctBoard",
+    "title": "State file form before",
+    "file": "board-open-sheet-before.png",
+    "sha256": "b7151b0f80eaf67f2d37bbcab96a0265647d37a201da2498be45ce5e7d43663b"
+  },
+  {
+    "app": "NoctBoard",
+    "title": "State file form after",
+    "file": "board-open-sheet-after.png",
+    "sha256": "84e20107222bdb17ac64b8c189b96d4a0930a0e6774115eb1eab59ba32060e82"
+  },
+  {
+    "app": "NoctBoard",
+    "title": "Redacted export import reviewed",
+    "file": "board-import-before.png",
+    "sha256": "c40bc25bf896030ba7ada578f1d032889f748417fe9a027dae8538854aa7f672"
+  },
+  {
+    "app": "Native relay",
+    "title": "Overview reviewed",
+    "file": "relay-overview-before.png",
+    "sha256": "2e4d922986ee7d0648aae71babbe892f32ff147d45ca2e069a8523696208ecdf"
+  },
+  {
+    "app": "Native relay",
+    "title": "Relay profile reviewed",
+    "file": "relay-profile-before.png",
+    "sha256": "16e231033836f3173a7f9b26a4b7641df7f62ecff8dade8ecc45ae2492e230c7"
+  },
+  {
+    "app": "Native relay",
+    "title": "Storage reviewed",
+    "file": "relay-storage-before.png",
+    "sha256": "e54881f54c81f2d28e2bcb10b7cb59061c0d9afdcfe7b47b3d55b8e8a9977e9b"
+  },
+  {
+    "app": "Native relay",
+    "title": "NoctCord reviewed",
+    "file": "relay-cord-before.png",
+    "sha256": "1502be4c76db1820050057d09e144baa80b5826f2aee89dad402b9642ba9fb88"
+  },
+  {
+    "app": "Native relay",
+    "title": "Noctweb reviewed",
+    "file": "relay-noctweb-before.png",
+    "sha256": "9c388a94855d13b573a3232ca90b2d021453f860b679eb1855e8ff08c146ceb0"
+  },
+  {
+    "app": "Native relay",
+    "title": "Transport reviewed",
+    "file": "relay-transport-before.png",
+    "sha256": "2af114d1b9d3af0c8d0dbc23ae9601a4aa444b3d4b4659ad9e43b4ed89a4d196"
+  },
+  {
+    "app": "Native relay",
+    "title": "Settings-save follow-up",
+    "file": "relay-logs-before.png",
+    "sha256": "9b3f708267a0bec8ef0ef155ace02cb3c80598de6ab7578466bcd2c352da3cf6"
+  },
+  {
+    "app": "Native relay",
+    "title": "Light appearance reviewed",
+    "file": "relay-light-before.png",
+    "sha256": "2f28359f3e9c38d8e82d1af10c0c767d88342884ec8ee5f707b903cf1249dbc4"
+  },
+  {
+    "app": "Relay desktop launcher",
+    "title": "Compact setup before",
+    "file": "launcher-advanced-before.png",
+    "sha256": "4a3e9f21da55f325ee9768e093696aada45b9a637c89addf162c6720a59798b8"
+  },
+  {
+    "app": "Relay desktop launcher",
+    "title": "Compact setup after",
+    "file": "launcher-setup-after.png",
+    "sha256": "d9f3a193efae8f86fcd320b7def4c36f235eba4f5845edc8b2cf4c2edd6d4c11"
+  },
+  {
+    "app": "Relay desktop launcher",
+    "title": "Compact overview after",
+    "file": "launcher-overview-min-after.png",
+    "sha256": "50c7eb6cdf7d7c8dace38b68a2fe6c1d76b0c85ea5bf09aa2a50b07e28196379"
+  },
+  {
+    "app": "Noctweb Browser and Lab",
+    "title": "Browser start reviewed",
+    "file": "browser-entry-before.png",
+    "sha256": "5fe4e436c987a3b1ba169aa221a1321f0de12d522aaecc1a02927bb440fdcdcc"
+  },
+  {
+    "app": "Noctweb Browser and Lab",
+    "title": "Browser relay selection reviewed",
+    "file": "browser-relay-min-before.png",
+    "sha256": "84d18693c79da3c5b50b8ebae9cf6e22e5b45304e870fa29051996eeebc7d3be"
+  },
+  {
+    "app": "Noctweb Browser and Lab",
+    "title": "Browser sidebar and error reviewed",
+    "file": "browser-sidebar-error-min-before.png",
+    "sha256": "5c61ffac92dc0b697874d6c37d3301f28a76d4668b6f51a1adb6388339362aa5"
+  },
+  {
+    "app": "Noctweb Browser and Lab",
+    "title": "Lab design reviewed",
+    "file": "lab-design-min-before.png",
+    "sha256": "6f1bf19b944fa1274bd29a7926374b20625e5bd4e55ee2ca4c717323a43d673b"
+  },
+  {
+    "app": "Noctweb Browser and Lab",
+    "title": "Lab code reviewed",
+    "file": "lab-code-min-before.png",
+    "sha256": "2e5f95c9e7bd7a04cd2417e4154bd5771a3a14d19630aed4330598c7370694a4"
+  },
+  {
+    "app": "Noctweb Browser and Lab",
+    "title": "Lab block editor reviewed",
+    "file": "lab-edit-block-before.png",
+    "sha256": "c49bcf2890e33d8214e93463960c06f70e8959c8fdf25405618fda0c9ad1060f"
+  },
+  {
+    "app": "Noctweb Browser and Lab",
+    "title": "Lab settings reviewed",
+    "file": "lab-settings-min-before.png",
+    "sha256": "de3eebce6fc3c8b5def42387ac5225ffd892d007bfd2d9f3c44ab05a28b296de"
+  },
+  {
+    "app": "Noctweb Browser and Lab",
+    "title": "Lab light settings reviewed",
+    "file": "lab-settings-light-before.png",
+    "sha256": "dcd218939f5b5db4acfe788a16a586017d314cb90a4e38d3c1b040810905d5fc"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Operator desktop overview reviewed",
+    "file": "operator-Overview-desktop.png",
+    "sha256": "03222186c8a51c0399c2057efc6bc2ea6e4219607f5d5e6ece8c79932bef1cd0"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Operator mobile overview reviewed",
+    "file": "operator-Overview-mobile.png",
+    "sha256": "b2d7d6da6fc06c1a945672785537d3b8e95f784a29871f4d7e155473dfa7ee4f"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Operator mobile profile reviewed",
+    "file": "operator-Relay-Profile-mobile.png",
+    "sha256": "81c11002ff2e46f0c491ec9c2ca814ff88332b1578d26c476f39d74eecb15e12"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Operator mobile delivery reviewed",
+    "file": "operator-Delivery-mobile.png",
+    "sha256": "55fa2473fe2c8c0789e27dad47e65e06f4c8147783399900abebaeb1bffe4e4e"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Operator mobile NoctCord reviewed",
+    "file": "operator-NoctCord-mobile.png",
+    "sha256": "8ed9bca0674ae89e14bb01a5ea94b47abeffe54d052708d8a4a44feaf0b2b913"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Operator mobile Noctweb reviewed",
+    "file": "operator-Noctweb-mobile.png",
+    "sha256": "1dc9d899132a18732b71d8fea2de3de1ae18442479024ee34bf16058184182b5"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Operator mobile storage reviewed",
+    "file": "operator-Storage-mobile.png",
+    "sha256": "12146a969bf5cd0959848792592d8302342f7828059eba4ffe7feb6779625318"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Operator mobile federation reviewed",
+    "file": "operator-Federation-mobile.png",
+    "sha256": "f3990332ebd984eab6b8b81c7f820d312d788ae7f61afce16e09d6610da3c9a7"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Operator mobile privacy research reviewed",
+    "file": "operator-Privacy-research-mobile.png",
+    "sha256": "5a2f4b80697c2e4c965c74002e917555e29ed10a301c748d563b87fd9bec6ce6"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Publisher mobile design reviewed",
+    "file": "publisher-design-mobile.png",
+    "sha256": "e26f98f9ae2913fe5c415a150a79187a341fb2ec8a06dbe8d4e8c8821fff3076"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Publisher mobile code reviewed",
+    "file": "publisher-code-mobile.png",
+    "sha256": "0f5552976c9d01f681a528410e039d65c330b7452ba00b76d1215102236a172a"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Publisher mobile preview reviewed",
+    "file": "publisher-preview-mobile.png",
+    "sha256": "90bedf43a94544269fad45ca62825ab8dec0d57f90efe61523f3b0aabc25fbf0"
+  },
+  {
+    "app": "Web operator and Publisher",
+    "title": "Example browser client reviewed",
+    "file": "browser-example-mobile.png",
+    "sha256": "0bb7dbea437e7906ef10f435cec2d512410680a07f5d8b798751bc9f418d36d4"
+  }
+]

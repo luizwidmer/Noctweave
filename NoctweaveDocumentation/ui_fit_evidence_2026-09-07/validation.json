@@ -1,0 +1,361 @@
+{
+  "date": "2026-09-07",
+  "buildsAndTests": [
+    {
+      "log": "client-macos-final-build.log",
+      "logSHA256": "440d3330c739d6b84dde8c7c34add376021ea6fc66983d018557aab14ae6a6ce",
+      "result": "passed",
+      "commandPreamble": [
+        "Command line invocation:",
+        "    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project \"Noctweave Messaging Client.xcodeproj\" -scheme Noctweave -configuration Debug -destination platform=macOS,arch=arm64 -derivedDataPath \"/Users/luiz/Desktop/Projects/PICCP Project/.runtime/ui-fit-2026-09-07/builds/client-macos\" CODE_SIGNING_ALLOWED=NO build",
+        "",
+        "Build settings from command line:",
+        "    CODE_SIGNING_ALLOWED = NO",
+        "",
+        "Resolve Package Graph",
+        ""
+      ],
+      "proof": [
+        "** BUILD SUCCEEDED **"
+      ]
+    },
+    {
+      "log": "client-ios-final-build.log",
+      "logSHA256": "fab422edc778346e16edd1ae273ddd34b96f7684f490ec31f888c25c47a50b4b",
+      "result": "passed",
+      "commandPreamble": [
+        "Command line invocation:",
+        "    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project \"Noctweave Messaging Client.xcodeproj\" -scheme Noctweave -configuration Debug -destination \"platform=iOS Simulator,id=F5B21531-AED7-4E8B-B98C-2C09C53DA09C\" -derivedDataPath \"/Users/luiz/Desktop/Projects/PICCP Project/.runtime/ui-fit-2026-09-07/builds/client-ios\" CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES ARCHS=arm64 build",
+        "",
+        "Build settings from command line:",
+        "    ARCHS = arm64",
+        "    CODE_SIGNING_ALLOWED = NO",
+        "    ONLY_ACTIVE_ARCH = YES",
+        ""
+      ],
+      "proof": [
+        "** BUILD SUCCEEDED **"
+      ]
+    },
+    {
+      "log": "relay-macos-baseline-build.log",
+      "logSHA256": "e1952a46580c4e0a25d694b9d4b745a5bd36e2de74efdccb579bcb1c796af975",
+      "result": "passed",
+      "commandPreamble": [
+        "Command line invocation:",
+        "    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project \"Noctweave Relay.xcodeproj\" -scheme \"Noctweave Relay\" -configuration Debug -destination platform=macOS,arch=arm64 -derivedDataPath \"/Users/luiz/Desktop/Projects/PICCP Project/.runtime/ui-fit-2026-09-07/builds/relay-macos\" CODE_SIGNING_ALLOWED=NO build",
+        "",
+        "Build settings from command line:",
+        "    CODE_SIGNING_ALLOWED = NO",
+        "",
+        "Resolve Package Graph",
+        ""
+      ],
+      "proof": [
+        "** BUILD SUCCEEDED **"
+      ]
+    },
+    {
+      "log": "gallery-ios-polish-build.log",
+      "logSHA256": "731fe78693d5db2f36ac30e1d34ef3a50223dfc6fb4a37e0abaca3851d113578",
+      "result": "passed",
+      "commandPreamble": [
+        "Command line invocation:",
+        "    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project NoctGallery.xcodeproj -scheme NoctGallery -configuration Debug -destination \"generic/platform=iOS Simulator\" -derivedDataPath \"/Users/luiz/Desktop/Projects/PICCP Project/.runtime/ui-fit-2026-09-07/builds/gallery-ios\" CODE_SIGNING_ALLOWED=NO build",
+        "",
+        "Build settings from command line:",
+        "    CODE_SIGNING_ALLOWED = NO",
+        "",
+        "ComputePackagePrebuildTargetDependencyGraph",
+        ""
+      ],
+      "proof": [
+        "** BUILD SUCCEEDED **"
+      ]
+    },
+    {
+      "log": "board-final-build.log",
+      "logSHA256": "297030d1f13c95b88f01a831fad7d5ab51f6564973dae1d8ea15c61abb50187b",
+      "result": "passed",
+      "commandPreamble": [
+        "Building for debugging...",
+        "[0/3] Write swift-version--58304C5D6DBC2206.txt",
+        "[1/4] Write sources",
+        "[3/6] Compiling NoctBoardUI NoctBoardAuditConsole.swift",
+        "[4/6] Emitting module NoctBoardUI",
+        "[5/9] Emitting module NoctBoardApp",
+        "[6/9] Compiling NoctBoardApp NoctBoardApp.swift",
+        "[6/9] Write Objects.LinkFileList"
+      ],
+      "proof": [
+        "Building for debugging...",
+        "[0/3] Write swift-version--58304C5D6DBC2206.txt",
+        "[1/4] Write sources",
+        "[3/6] Compiling NoctBoardUI NoctBoardAuditConsole.swift",
+        "[4/6] Emitting module NoctBoardUI",
+        "[5/9] Emitting module NoctBoardApp",
+        "[6/9] Compiling NoctBoardApp NoctBoardApp.swift",
+        "[6/9] Write Objects.LinkFileList",
+        "[7/9] Linking NoctBoardApp",
+        "[8/9] Applying NoctBoardApp",
+        "Build of product 'NoctBoardApp' complete! (3.36s)"
+      ]
+    },
+    {
+      "log": "cord-final-verified-build.log",
+      "logSHA256": "6c835b8cf570f995624313e2b36ace0bfc9445a28ae2ef06087b565782c8fefc",
+      "result": "passed",
+      "commandPreamble": [
+        "Building for debugging...",
+        "[0/3] Write swift-version--58304C5D6DBC2206.txt",
+        "[1/4] Write sources",
+        "[3/6] Emitting module NoctCordUI",
+        "[4/6] Compiling NoctCordUI NoctCordComponents.swift",
+        "[5/7] Compiling NoctCordUI NoctCordRootView.swift",
+        "[6/9] Emitting module NoctCordApp",
+        "[6/9] Write Objects.LinkFileList"
+      ],
+      "proof": [
+        "Building for debugging...",
+        "[0/3] Write swift-version--58304C5D6DBC2206.txt",
+        "[1/4] Write sources",
+        "[3/6] Emitting module NoctCordUI",
+        "[4/6] Compiling NoctCordUI NoctCordComponents.swift",
+        "[5/7] Compiling NoctCordUI NoctCordRootView.swift",
+        "[6/9] Emitting module NoctCordApp",
+        "[6/9] Write Objects.LinkFileList",
+        "[7/9] Linking NoctCordApp",
+        "[8/9] Applying NoctCordApp",
+        "Build of product 'NoctCordApp' complete! (4.37s)"
+      ]
+    },
+    {
+      "log": "browser-baseline-build.log",
+      "logSHA256": "7c44d8e158b9dde763a9b3c52d979aa89bc6de3804bbec1a827a61a750444934",
+      "result": "passed",
+      "commandPreamble": [
+        "Removing https://github.com/luizwidmer/Noctweave.git",
+        "[0/1] Planning build",
+        "Building for debugging...",
+        "[0/3] Write swift-version--58304C5D6DBC2206.txt",
+        "Build of product 'NoctwebBrowser' complete! (1.40s)"
+      ],
+      "proof": [
+        "Removing https://github.com/luizwidmer/Noctweave.git",
+        "[0/1] Planning build",
+        "Building for debugging...",
+        "[0/3] Write swift-version--58304C5D6DBC2206.txt",
+        "Build of product 'NoctwebBrowser' complete! (1.40s)"
+      ]
+    },
+    {
+      "log": "lab-baseline-build.log",
+      "logSHA256": "5ac6ebb5984a9348d0cf67dc7790d63be0b9e3829f2ea41a42cf41534ae56320",
+      "result": "passed",
+      "commandPreamble": [
+        "Removing https://github.com/luizwidmer/Noctweave.git",
+        "[0/1] Planning build",
+        "Building for debugging...",
+        "[0/3] Write swift-version--58304C5D6DBC2206.txt",
+        "[2/4] Emitting module NoctweaveCore",
+        "[3/6] Emitting module NoctwebUI",
+        "[4/6] Emitting module NoctwebLabCore",
+        "[5/7] Emitting module NoctwebLab"
+      ],
+      "proof": [
+        "Removing https://github.com/luizwidmer/Noctweave.git",
+        "[0/1] Planning build",
+        "Building for debugging...",
+        "[0/3] Write swift-version--58304C5D6DBC2206.txt",
+        "[2/4] Emitting module NoctweaveCore",
+        "[3/6] Emitting module NoctwebUI",
+        "[4/6] Emitting module NoctwebLabCore",
+        "[5/7] Emitting module NoctwebLab",
+        "Build of product 'NoctwebLab' complete! (3.27s)"
+      ]
+    },
+    {
+      "log": "relay-current-build.log",
+      "logSHA256": "d74ab90a38eb64655159a1a475aa7c9a07a486c79a148311846d1bfa1b6e09e7",
+      "result": "passed",
+      "commandPreamble": [
+        "[0/1] Planning build",
+        "Building for debugging...",
+        "[0/3] Write swift-version--58304C5D6DBC2206.txt",
+        "[2/6] Emitting module _NIOBase64",
+        "[3/6] Emitting module _NIODataStructures",
+        "[4/6] Emitting module NIOConcurrencyHelpers",
+        "[5/7] Emitting module NIOCore",
+        "[6/9] Emitting module NIOEmbedded"
+      ],
+      "proof": [
+        "[3/6] Emitting module _NIODataStructures",
+        "[4/6] Emitting module NIOConcurrencyHelpers",
+        "[5/7] Emitting module NIOCore",
+        "[6/9] Emitting module NIOEmbedded",
+        "[7/9] Emitting module NIOPosix",
+        "[8/10] Emitting module NIO",
+        "[9/11] Emitting module NIOFoundationEssentialsCompat",
+        "[10/12] Emitting module NIOFoundationCompat",
+        "[11/13] Emitting module NIOHTTP1",
+        "[12/14] Emitting module NIOWebSocket",
+        "[13/15] Emitting module NoctweaveRelayServer",
+        "Build of product 'NoctweaveRelayServer' complete! (9.01s)"
+      ]
+    },
+    {
+      "log": "js-final-typecheck.log",
+      "logSHA256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "result": "passed",
+      "commandPreamble": [
+        "$ tsc --noEmit"
+      ],
+      "proof": [
+        "$ tsc --noEmit"
+      ]
+    },
+    {
+      "log": "js-final-build.log",
+      "logSHA256": "5928c215b6135d055df742ea1850b5819e7216b738ca9e3cd05f8582cd83a8f0",
+      "result": "passed",
+      "commandPreamble": [
+        "Using config file: electrobun.config.ts",
+        "Running postBuild script: desktop/scripts/install-mac-icon.ts",
+        "skipping codesign",
+        "skipping notarization"
+      ],
+      "proof": [
+        "Using config file: electrobun.config.ts",
+        "Running postBuild script: desktop/scripts/install-mac-icon.ts",
+        "skipping codesign",
+        "skipping notarization"
+      ]
+    },
+    {
+      "log": "launcher-polish-build.log",
+      "logSHA256": "56e8bb63fa57cc07965c017086e97f90af5e5d94d8f38eed7737c982e030b800",
+      "result": "passed",
+      "commandPreamble": [
+        "Using config file: electrobun.config.ts",
+        "skipping codesign",
+        "skipping notarization"
+      ],
+      "proof": [
+        "Using config file: electrobun.config.ts",
+        "skipping codesign",
+        "skipping notarization"
+      ]
+    },
+    {
+      "log": "client-ios-ui-tests.log",
+      "logSHA256": "6e570b6456660f87e2844d206bcb088cc3b4b757afa8d337009419cd44c88a07",
+      "result": "passed",
+      "commandPreamble": [
+        "Command line invocation:",
+        "    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project \"Noctweave Messaging Client.xcodeproj\" -scheme NoctweaveUITests_iOS -configuration Debug -destination \"platform=iOS Simulator,id=D5228FCE-9AE5-493C-B74E-41974435E58E\" -derivedDataPath \"/Users/luiz/Desktop/Projects/PICCP Project/.runtime/ui-fit-2026-09-07/builds/client-ios\" -resultBundlePath \"/Users/luiz/Desktop/Projects/PICCP Project/.runtime/ui-fit-2026-09-07/client-ios-ui-tests.xcresult\" CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES ARCHS=arm64 test",
+        "",
+        "Build settings from command line:",
+        "    ARCHS = arm64",
+        "    CODE_SIGNING_ALLOWED = NO",
+        "    ONLY_ACTIVE_ARCH = YES",
+        ""
+      ],
+      "proof": [
+        "Test Case '-[NoctweaveUITests_iOS.NoctweaveUITests_iOS testFreshInstallCannotBypassLegalOrPersonaOnboarding]' passed (17.138 seconds).",
+        "Test Case '-[NoctweaveUITests_iOS.NoctweaveUITests_iOS testPairingProgressivelyRevealsAlternateHandoffMethods]' passed (11.100 seconds).",
+        "Test Case '-[NoctweaveUITests_iOS.NoctweaveUITests_iOS testPhoneShellRestoresStableProductTabs]' passed (5.599 seconds).",
+        "Test Case '-[NoctweaveUITests_iOS.NoctweaveUITests_iOS testPrimaryTabsOpenExpectedDestinations]' passed (9.455 seconds).",
+        "Test Case '-[NoctweaveUITests_iOS.NoctweaveUITests_iOS testSecureRenderingExposesOneInteractiveTabSet]' passed (7.304 seconds).",
+        "Test Case '-[NoctweaveUITests_iOS.NoctweaveUITests_iOS testSettingsRowsNavigateAndAppSecuritySetupOpens]' passed (15.838 seconds).",
+        "Test Case '-[NoctweaveUITests_iOS.NoctweaveUITests_iOS testShellFitsPortraitAndLandscape]' passed (5.245 seconds).",
+        "Test Case '-[NoctweaveUITests_iOS.NoctweaveUITests_iOS testTopHeaderIsInsetInsteadOfRenderingAsAFullWidthSlab]' passed (4.125 seconds).",
+        "\t Executed 8 tests, with 0 failures (0 unexpected) in 75.804 (75.824) seconds",
+        "\t Executed 8 tests, with 0 failures (0 unexpected) in 75.804 (75.825) seconds",
+        "\t Executed 8 tests, with 0 failures (0 unexpected) in 75.804 (75.828) seconds",
+        "** TEST SUCCEEDED **"
+      ]
+    },
+    {
+      "log": "client-ipad-ui-tests.log",
+      "logSHA256": "2558164829b338101de7a6f20228016e9c35a5a6f2349a8c3333e354e164a6ba",
+      "result": "passed",
+      "commandPreamble": [
+        "Command line invocation:",
+        "    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project \"Noctweave Messaging Client.xcodeproj\" -scheme NoctweaveUITests_iOS -configuration Debug -destination \"platform=iOS Simulator,id=F5B21531-AED7-4E8B-B98C-2C09C53DA09C\" -parallel-testing-enabled NO \"-only-testing:NoctweaveUITests_iOS/NoctweaveUITests_iOS/testPairingProgressivelyRevealsAlternateHandoffMethods\" -derivedDataPath \"/Users/luiz/Desktop/Projects/PICCP Project/.runtime/ui-fit-2026-09-07/builds/client-ios\" -resultBundlePath \"/Users/luiz/Desktop/Projects/PICCP Project/.runtime/ui-fit-2026-09-07/client-ipad-ui-tests.xcresult\" CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES ARCHS=arm64 test",
+        "",
+        "Build settings from command line:",
+        "    ARCHS = arm64",
+        "    CODE_SIGNING_ALLOWED = NO",
+        "    ONLY_ACTIVE_ARCH = YES",
+        ""
+      ],
+      "proof": [
+        "Test Case '-[NoctweaveUITests_iOS.NoctweaveUITests_iOS testPairingProgressivelyRevealsAlternateHandoffMethods]' passed (14.774 seconds).",
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 14.774 (14.776) seconds",
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 14.774 (14.777) seconds",
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 14.774 (14.778) seconds",
+        "** TEST SUCCEEDED **"
+      ]
+    }
+  ],
+  "changedSources": [
+    {
+      "repository": "PICCP Project",
+      "file": "NoctweaveRelayServer/desktop/view/styles.css",
+      "sha256": "2cf2d49b2effd40381d8cac8527ea35287323ce5756ff802719804c7ec9bea58"
+    },
+    {
+      "repository": "NoctweaveJS",
+      "file": "client/groups.css",
+      "sha256": "0ce429af237ea887ad24d774b9450b75d031f430706793e0ed95a7a0c3d0f53f"
+    },
+    {
+      "repository": "NoctweaveJS",
+      "file": "client/styles.css",
+      "sha256": "7897c6477306890b5c1a9d10a212d6a1b180f6e63cc40f503944286b8a8cedb5"
+    },
+    {
+      "repository": "NoctweaveJS",
+      "file": "desktop/view/index.ts",
+      "sha256": "0dc43c40c78caa7b07c55d8fa2225ad7045cece7ad4ac8807511529fdc6b87ed"
+    },
+    {
+      "repository": "Noctweave Messaging Client",
+      "file": "Noctweave Messaging Client/MatureClientShell.swift",
+      "sha256": "dfaea9a3823abc053cffaaa725aba2e2816c7b2a1f03e794dcf3692110a8ce83"
+    },
+    {
+      "repository": "Noctweave Messaging Client",
+      "file": "Noctweave Messaging Client/PairingSheet.swift",
+      "sha256": "e5c3d9cccf25062af495a1c6748b92f716229b70ebbef41ad13318c3586c9a10"
+    },
+    {
+      "repository": "NoctCord",
+      "file": "Sources/NoctCordUI/NoctCordComponents.swift",
+      "sha256": "a56897f420692b82cb67423e473e0f5d82c5e582e5f975ca70ba63f3aeedb75e"
+    },
+    {
+      "repository": "NoctCord",
+      "file": "Sources/NoctCordUI/NoctCordUserSettings.swift",
+      "sha256": "c621659e6ffb1d4366aa5062f975cbe8a1685313e2a57ee086f86994c3e43ac7"
+    },
+    {
+      "repository": "NoctBoard",
+      "file": "Sources/NoctBoardUI/NoctBoardAuditConsole.swift",
+      "sha256": "a021c885a8b6df300623a6b01544a359e655806c7d05d7ae96e2f42d8928bfbe"
+    },
+    {
+      "repository": "NoctGallery",
+      "file": "NoctGallery/Views/GalleryView.swift",
+      "sha256": "9680fa12fed442fadbbf5a1e3ff7a1c37d16e2d9a1b10aa490c2ef4743d08bca"
+    }
+  ],
+  "browserStates": 48,
+  "groupMessageResult": "Encrypted group message published in isolated one-member local test group.",
+  "limits": [
+    "Native Relay isolated ad hoc profile: settings persistence failed; production signed persistence was not verified.",
+    "Simulator and local fixture UI review, not a physical-device or release-signing certification.",
+    "Eight iPhone UI tests passed before the final tablet rail and explicit picker-label adjustment; the final pairing test passed on iPad.",
+    "The initial generic client simulator build failed for x86_64; arm64 simulator build and tests passed."
+  ]
+}

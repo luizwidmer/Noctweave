@@ -1,0 +1,17 @@
+baseline-build.log
+** BUILD SUCCEEDED **
+
+fix-build.log
+** BUILD SUCCEEDED **
+
+welcome-fix-build.log
+** BUILD SUCCEEDED **
+
+mac-chat-tests.log
+Test Case '-[NoctweaveUITests.NoctweaveUITests testDeliveryReceiptsDoNotReplaceTheMessagePreviewOrCreateBubbles]' passed (11.413 seconds).
+Test Case '-[NoctweaveUITests.NoctweaveUITests testMatureShellRestoresProductNavigation]' passed (4.985 seconds).
+Test Case '-[NoctweaveUITests.NoctweaveUITests testTopHeaderIsInsetInsteadOfRenderingAsAFullWidthSlab]' passed (4.962 seconds).
+	 Executed 3 tests, with 0 failures (0 unexpected) in 21.360 (21.362) seconds
+	 Executed 3 tests, with 0 failures (0 unexpected) in 21.360 (21.362) seconds
+	 Executed 3 tests, with 0 failures (0 unexpected) in 21.360 (21.363) seconds
+** TEST SUCCEEDED **
