@@ -48,6 +48,7 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
 
     private let lock = NSLock()
     private var keys: [CacheKey: SymmetricKey] = [:]
+    private var retired = Set<CacheKey>()
 
     private init() {}
 
@@ -66,6 +67,7 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
         )
         lock.lock()
         defer { lock.unlock() }
+        guard !retired.contains(cacheKey) else { throw SecureStorageKeyProviderError.invalidKeyMaterial }
         if let cached = keys[cacheKey] {
             return cached
         }
@@ -88,6 +90,37 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
         lock.lock()
         keys.removeAll(keepingCapacity: false)
         lock.unlock()
+    }
+
+    /// Revoke this process's ability to recreate the key, then delete the exact local item.
+    /// Existing external copies or device backups are outside this provider's authority.
+    public func destroyKey(service: String, account: String, accessGroup: String? = nil,
+                           usesDataProtectionKeychain: Bool = false) throws {
+        let cacheKey = CacheKey(service: service, account: account, accessGroup: accessGroup,
+                                usesDataProtectionKeychain: usesDataProtectionKeychain)
+        lock.lock()
+        defer { lock.unlock() }
+        retired.insert(cacheKey)
+        keys.removeValue(forKey: cacheKey)
+        #if canImport(Security)
+        var query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service, kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: kCFBooleanFalse as Any]
+        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        #if os(macOS)
+        if usesDataProtectionKeychain { query[kSecUseDataProtectionKeychain as String] = kCFBooleanTrue }
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext as String] = context
+        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
+        #endif
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw SecureStorageKeyProviderError.unavailable(status: status)
+        }
+        #else
+        throw SecureStorageKeyProviderError.unavailable(status: -1)
+        #endif
     }
 
     #if canImport(Security)

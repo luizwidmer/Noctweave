@@ -33,6 +33,43 @@ final class AppLockSecurityKeySettingsTests: XCTestCase {
               publicKey: Data([4]) + Data(repeating: 1, count: 64), signatureCounter: 10)
     }
 
+    func testEveryVisibilityCombinationRoundTripsWithoutRemovingRequiredFactors() throws {
+        for mode in AppLockMode.allCases {
+            for mask in 0..<8 {
+                let hidden = Set(AppLockFactor.allCases.enumerated().compactMap { index, factor in
+                    mask & (1 << index) != 0 ? factor : nil
+                }).intersection(mode.requiredFactors)
+                var settings = AppLockSettings(mode: mode, securityKeys: mode.requiresSecurityKey ? [record()] : [],
+                                               hiddenUnlockFactors: hidden)
+                if mode.requiresPIN {
+                    settings.pinSalt = Data(repeating: 1, count: 16)
+                    settings.pinHash = Data(repeating: 2, count: 32)
+                }
+                let restored = try JSONDecoder().decode(AppLockSettings.self, from: JSONEncoder().encode(settings))
+                XCTAssertEqual(restored, settings)
+                XCTAssertEqual(restored.visibleUnlockFactors, mode.requiredFactors.subtracting(hidden.subtracting([.pin])))
+                for factor in mode.requiredFactors {
+                    XCTAssertFalse(restored.mode.accepts(completedFactors: mode.requiredFactors.subtracting([factor])),
+                                   "Hiding \(factor) must never authorize unlock without it")
+                }
+            }
+        }
+    }
+
+    func testVisibilityDefaultsToVisibleAndRejectsMalformedOrUnconfiguredFactors() throws {
+        let data = try JSONEncoder().encode(AppLockSettings())
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(object["hiddenUnlockFactors"])
+        XCTAssertTrue(try JSONDecoder().decode(AppLockSettings.self, from: data).hiddenUnlockFactors.isEmpty)
+        let invalidValues: [Any] = [NSNull(), true, ["unknown"], ["pin"], ["pin", "pin"]]
+        for invalid in invalidValues {
+            object["hiddenUnlockFactors"] = invalid
+            XCTAssertThrowsError(try JSONDecoder().decode(AppLockSettings.self,
+                from: JSONSerialization.data(withJSONObject: object)))
+        }
+        XCTAssertThrowsError(try JSONEncoder().encode(AppLockSettings(hiddenUnlockFactors: [.securityKey])))
+    }
+
     func testExistingSettingsKeepExactEncodingAndDecodeWithoutSecurityKeys() throws {
         let data = try JSONEncoder().encode(AppLockSettings())
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

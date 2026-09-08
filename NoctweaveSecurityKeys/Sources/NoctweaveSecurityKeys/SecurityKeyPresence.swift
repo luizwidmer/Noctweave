@@ -2,6 +2,9 @@
 import Foundation
 #if os(macOS)
 import IOKit
+import IOKit.hid
+#elseif os(iOS)
+import YubiKit
 #endif
 
 /// Temporary OS attachment identity, captured from the connection that verified the key.
@@ -16,6 +19,33 @@ public struct SecurityKeyPresence: Equatable, Sendable {
         true
         #else
         false
+        #endif
+    }
+
+    /// Discovery only: attachment never establishes credential ownership or grants access.
+    /// Tokens are ephemeral, stay local, and change across USB detach/attach events.
+    public static func attachedDeviceTokens() async -> [String] {
+        #if os(macOS)
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching(kIOHIDDeviceKey), &iterator) == KERN_SUCCESS else { return [] }
+        defer { IOObjectRelease(iterator) }
+        var result = Set<String>()
+        while case let service = IOIteratorNext(iterator), service != 0 {
+            defer { IOObjectRelease(service) }
+            let page = IORegistryEntryCreateCFProperty(service, kIOHIDPrimaryUsagePageKey as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber
+            let usage = IORegistryEntryCreateCFProperty(service, kIOHIDPrimaryUsageKey as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() as? NSNumber
+            guard page?.intValue == 0xF1D0, usage?.intValue == 1 else { continue }
+            var identity: UInt64 = 0
+            if IORegistryEntryGetRegistryEntryID(service, &identity) == KERN_SUCCESS, identity != 0 {
+                result.insert(String(identity))
+            }
+            if result.count == 32 { break }
+        }
+        return result.sorted()
+        #elseif os(iOS)
+        return (try? await USBSmartCardConnection.availableDevices().prefix(32).map { String(describing: $0) }.sorted()) ?? []
+        #else
+        return []
         #endif
     }
 

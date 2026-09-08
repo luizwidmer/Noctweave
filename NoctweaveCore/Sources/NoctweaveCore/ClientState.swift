@@ -968,7 +968,7 @@ public struct PrivacySettings: Codable, Equatable {
     public var isStructurallyValid: Bool { true }
 }
 
-public enum AppLockFactor: String, CaseIterable, Hashable {
+public enum AppLockFactor: String, Codable, CaseIterable, Hashable {
     case biometrics, pin, securityKey
 }
 
@@ -1000,6 +1000,16 @@ public enum AppLockMode: String, Codable, CaseIterable, Identifiable, Equatable 
     public var requiresPIN: Bool { requiredFactors.contains(.pin) }
     public var requiresBiometrics: Bool { requiredFactors.contains(.biometrics) }
     public var requiresSecurityKey: Bool { requiredFactors.contains(.securityKey) }
+
+    /// Ordinary unlocks always establish possession before biometrics, then the app PIN.
+    public var orderedFactors: [AppLockFactor] {
+        [.securityKey, .biometrics, .pin].filter { requiredFactors.contains($0) }
+    }
+
+    public func canAttempt(_ factor: AppLockFactor, completedFactors: Set<AppLockFactor>) -> Bool {
+        guard let index = orderedFactors.firstIndex(of: factor) else { return false }
+        return Set(orderedFactors.prefix(index)).isSubset(of: completedFactors)
+    }
 
     /// AND semantics: every configured factor must have succeeded in the current unlock attempt.
     public func accepts(completedFactors: Set<AppLockFactor>) -> Bool {
@@ -1318,6 +1328,8 @@ public struct AppLockSettings: Codable, Equatable {
     public var actionPlans: [AppLockActionPlan]
     public var securityKeys: [AppLockSecurityKeyRecordV1]
     public var requireSecurityKeyPresence: Bool
+    public var hiddenUnlockFactors: Set<AppLockFactor>
+    public var duressPlans: [AppLockDuressPlan]
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case mode
@@ -1328,6 +1340,8 @@ public struct AppLockSettings: Codable, Equatable {
         case actionPlans
         case securityKeys
         case requireSecurityKeyPresence
+        case hiddenUnlockFactors
+        case duressPlans
     }
 
     public init(
@@ -1338,7 +1352,9 @@ public struct AppLockSettings: Codable, Equatable {
         pinHash: Data? = nil,
         actionPlans: [AppLockActionPlan] = [],
         securityKeys: [AppLockSecurityKeyRecordV1] = [],
-        requireSecurityKeyPresence: Bool = false
+        requireSecurityKeyPresence: Bool = false,
+        hiddenUnlockFactors: Set<AppLockFactor> = [],
+        duressPlans: [AppLockDuressPlan] = []
     ) {
         self.mode = mode
         self.sessionTimeoutMinutes = sessionTimeoutMinutes
@@ -1348,6 +1364,8 @@ public struct AppLockSettings: Codable, Equatable {
         self.actionPlans = actionPlans
         self.securityKeys = securityKeys
         self.requireSecurityKeyPresence = requireSecurityKeyPresence
+        self.hiddenUnlockFactors = hiddenUnlockFactors
+        self.duressPlans = duressPlans
     }
 
     public init(from decoder: Decoder) throws {
@@ -1355,7 +1373,7 @@ public struct AppLockSettings: Codable, Equatable {
             decoder,
             keyedBy: CodingKeys.self,
             description: "App-lock settings",
-            optionalKeys: [.securityKeys, .requireSecurityKeyPresence]
+            optionalKeys: [.securityKeys, .requireSecurityKeyPresence, .hiddenUnlockFactors, .duressPlans]
         )
         mode = try container.decode(AppLockMode.self, forKey: .mode)
         sessionTimeoutMinutes = try container.decode(Int.self, forKey: .sessionTimeoutMinutes)
@@ -1367,6 +1385,12 @@ public struct AppLockSettings: Codable, Equatable {
             ? try container.decode([AppLockSecurityKeyRecordV1].self, forKey: .securityKeys) : []
         requireSecurityKeyPresence = container.contains(.requireSecurityKeyPresence)
             ? try container.decode(Bool.self, forKey: .requireSecurityKeyPresence) : false
+        let hidden = container.contains(.hiddenUnlockFactors)
+            ? try container.decode([AppLockFactor].self, forKey: .hiddenUnlockFactors) : []
+        hiddenUnlockFactors = Set(hidden)
+        duressPlans = container.contains(.duressPlans) ? try container.decode([AppLockDuressPlan].self, forKey: .duressPlans) : []
+        try requireValidClientStateDecoding(hidden.count == hiddenUnlockFactors.count,
+            key: .hiddenUnlockFactors, container: container, description: "Duplicate hidden unlock factors")
         try requireValidClientStateDecoding(
             isStructurallyValid,
             key: .mode,
@@ -1391,9 +1415,18 @@ public struct AppLockSettings: Codable, Equatable {
         try container.encode(actionPlans, forKey: .actionPlans)
         if !securityKeys.isEmpty { try container.encode(securityKeys, forKey: .securityKeys) }
         if requireSecurityKeyPresence { try container.encode(true, forKey: .requireSecurityKeyPresence) }
+        if !hiddenUnlockFactors.isEmpty {
+            try container.encode(hiddenUnlockFactors.sorted { $0.rawValue < $1.rawValue }, forKey: .hiddenUnlockFactors)
+        }
+        if !duressPlans.isEmpty { try container.encode(duressPlans, forKey: .duressPlans) }
     }
 
     public var isPinConfigured: Bool { pinSalt != nil && pinHash != nil }
+    /// Presentation only. Authentication always uses the complete mode.requiredFactors.
+    public var visibleUnlockFactors: Set<AppLockFactor> {
+        // Retain legacy saved PIN flags when decoding, but never conceal PIN entry.
+        mode.requiredFactors.subtracting(hiddenUnlockFactors.subtracting([.pin]))
+    }
 
     public var isStructurallyValid: Bool {
         let pinPairIsValid: Bool
@@ -1411,6 +1444,11 @@ public struct AppLockSettings: Codable, Equatable {
             && pinPairIsValid
             && modeHasRequiredPIN
             && (!requireSecurityKeyPresence || mode.requiresSecurityKey)
+            && hiddenUnlockFactors.isSubset(of: mode.requiredFactors)
+            && duressPlans.count <= 4
+            && Set(duressPlans.map(\.id)).count == duressPlans.count
+            && duressPlans.allSatisfy(\.isStructurallyValid)
+            && (duressPlans.isEmpty || mode != .off)
             && (!mode.requiresSecurityKey || !securityKeys.isEmpty)
             && securityKeys.count <= 8
             && Set(securityKeys.map(\.id)).count == securityKeys.count
@@ -1437,7 +1475,7 @@ private struct StrictClientStateCodingKey: CodingKey, Hashable {
     }
 }
 
-private func strictClientStateContainer<Key>(
+func strictClientStateContainer<Key>(
     _ decoder: Decoder,
     keyedBy keyType: Key.Type,
     description: String,
@@ -1458,7 +1496,7 @@ where Key: CodingKey & CaseIterable, Key.AllCases.Element == Key {
     return try decoder.container(keyedBy: keyType)
 }
 
-private func requireValidClientStateDecoding<Key>(
+func requireValidClientStateDecoding<Key>(
     _ isValid: Bool,
     key: Key,
     container: KeyedDecodingContainer<Key>,
@@ -1473,7 +1511,7 @@ private func requireValidClientStateDecoding<Key>(
     }
 }
 
-private func requireValidClientStateEncoding<Value>(
+func requireValidClientStateEncoding<Value>(
     _ isValid: Bool,
     value: Value,
     encoder: Encoder,

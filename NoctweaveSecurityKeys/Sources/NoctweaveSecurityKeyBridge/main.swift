@@ -24,7 +24,16 @@ struct SecurityKeyBridge {
                 return
             }
             guard let options = request["options"] as? [String: Any],
-                  request["pin"] == nil || request["pin"] is String else { throw SecurityKeyError.invalidResponse }
+                   request["pin"] == nil || request["pin"] is String else { throw SecurityKeyError.invalidResponse }
+            if operation == "watch-attached" {
+                guard options.isEmpty, request["pin"] == nil else { throw SecurityKeyError.invalidResponse }
+                let parent = getppid()
+                while getppid() == parent {
+                    write(["devices": await SecurityKeyPresence.attachedDeviceTokens()])
+                    try await Task.sleep(for: .milliseconds(500))
+                }
+                return
+            }
             if operation == "watch-presence" {
                 guard request["pin"] == nil, Set(options.keys) == ["registryEntryID"],
                       let text = options["registryEntryID"] as? String, let identity = UInt64(text),

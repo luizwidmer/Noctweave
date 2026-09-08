@@ -56,7 +56,9 @@ public actor ClientStateStore {
     private let lockFileURL: URL
     private let storeScopeDigest: Data
     private let protection: ClientStateStoreProtection
-    private let suppliedEncryptionKey: SymmetricKey?
+    private var suppliedEncryptionKey: SymmetricKey?
+    private let usesSuppliedEncryptionKey: Bool
+    private var encryptionMaterialDestroyed = false
     private let rollbackAnchorStore: (any ClientStateRollbackAnchorStore)?
     private let legacyStoreScopeDigest: Data?
     private let legacyRollbackAnchorStore: (any ClientStateRollbackAnchorStore)?
@@ -104,6 +106,7 @@ public actor ClientStateStore {
         }
         self.protection = protection
         self.suppliedEncryptionKey = encryptionKey
+        self.usesSuppliedEncryptionKey = encryptionKey != nil
         self.usesDataProtectionKeychain = usesDataProtectionKeychain
         self.encryptionKeyAccount = storageScopeIdentifier == nil
             ? "vault-key-v1"
@@ -894,16 +897,23 @@ public actor ClientStateStore {
     }
 
     private func readBoundedData(from url: URL) throws -> Data {
-        do {
-            return try SecureLocalFileIO.readBoundedRegularFile(
-                at: url,
-                maximumBytes: Self.maximumStoredBytes
-            )
-        } catch SecureLocalFileIOError.tooLarge {
-            throw ClientStateStoreError.stateTooLarge
-        } catch {
-            throw ClientStateStoreError.storageUnavailable
+        for attempt in 0..<3 {
+            do {
+                return try SecureLocalFileIO.readBoundedRegularFile(
+                    at: url,
+                    maximumBytes: Self.maximumStoredBytes
+                )
+            } catch SecureLocalFileIOError.changedDuringRead where attempt < 2 {
+                // Discard the entire unstable read. Each retry still requires a
+                // stable descriptor/version and then the normal AEAD/anchor checks.
+                continue
+            } catch SecureLocalFileIOError.tooLarge {
+                throw ClientStateStoreError.stateTooLarge
+            } catch {
+                throw ClientStateStoreError.storageUnavailable
+            }
         }
+        throw ClientStateStoreError.storageUnavailable
     }
 
     private func writePlaintextAtomically(_ data: Data) throws {
@@ -961,7 +971,32 @@ public actor ClientStateStore {
         }
     }
 
+    /// Terminal for this store instance: queued writers cannot recreate destroyed state.
+    /// Keeping ciphertext is meaningful only for encrypted stores.
+    public func destroyLocalEncryptionMaterial(preservingCiphertext: Bool) throws {
+        guard protection == .encrypted else { throw ClientStateStoreError.encryptionFailed }
+        // Legacy unscoped stores share a Keychain item. Never destroy another
+        // store's key as a side effect; those hosts must migrate to a stable scope.
+        guard usesSuppliedEncryptionKey || encryptionKeyAccount != "vault-key-v1" else {
+            throw ClientStateStoreError.storageUnavailable
+        }
+        encryptionMaterialDestroyed = true
+        suppliedEncryptionKey = nil
+        var failure: Error?
+        if !usesSuppliedEncryptionKey {
+            do {
+                try SecureStorageKeyProvider.shared.destroyKey(service: Self.secureStorageService,
+                    account: encryptionKeyAccount, usesDataProtectionKeychain: usesDataProtectionKeychain)
+            } catch { failure = error }
+        }
+        if !preservingCiphertext {
+            do { try eraseAllLocalState() } catch { failure = failure ?? error }
+        }
+        if let failure { throw failure }
+    }
+
     private func encryptionKey() throws -> SymmetricKey {
+        guard !encryptionMaterialDestroyed else { throw ClientStateStoreError.encryptionFailed }
         if let suppliedEncryptionKey {
             return suppliedEncryptionKey
         }
