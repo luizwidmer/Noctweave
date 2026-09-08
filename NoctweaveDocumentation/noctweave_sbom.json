@@ -6,6 +6,16 @@
       "type": "local-source"
     },
     {
+      "name": "NoctweaveSecurityKeys",
+      "source": "NoctweaveSecurityKeys",
+      "type": "local-source"
+    },
+    {
+      "name": "NoctweaveSecurityKeyBridge",
+      "source": "NoctweaveSecurityKeys/Sources/NoctweaveSecurityKeyBridge",
+      "type": "local-source"
+    },
+    {
       "name": "NoctweaveCLI",
       "source": "NoctweaveCore/Sources/NoctweaveCLI",
       "type": "local-source"
@@ -1004,6 +1014,18 @@
       "source": "NoctweaveCore/Vendor/liboqs.xcframework",
       "type": "vendored-binary",
       "version": "0.16.0"
+    },
+    {
+      "fileCount": 179,
+      "license": "Apache-2.0",
+      "name": "YubiKit Swift",
+      "patchFile": "NoctweaveSecurityKeys/Vendor/YubiKit/presence-accessor.patch",
+      "pinFile": "NoctweaveSecurityKeys/Vendor/YubiKit/upstream.json",
+      "revision": "de9c6f0259de1c3489403baae14411a2062248069b7a4b285998c50be6b6ffa6",
+      "source": "https://github.com/Yubico/yubikit-swift",
+      "type": "vendored-source",
+      "upstreamRevision": "f5a01653ec07530ffd300a02fc9818aa1298f13e",
+      "version": "1.3.0"
     }
   ],
   "generatedBy": "scripts/generate-sbom.py",
@@ -1016,7 +1038,8 @@
     "NoctweaveRelayServer/ReticulumBridge/requirements.txt",
     "NoctweaveRelayServer/package.json",
     "NoctweaveRelayServer/bun.lock",
-    "NoctweaveCore/Vendor/liboqs.xcframework"
+    "NoctweaveCore/Vendor/liboqs.xcframework",
+    "NoctweaveSecurityKeys/Vendor/YubiKit"
   ],
   "name": "Noctweave",
   "schema": "noctweave-sbom-v1"

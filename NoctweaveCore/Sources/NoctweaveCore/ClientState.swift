@@ -968,13 +968,43 @@ public struct PrivacySettings: Codable, Equatable {
     public var isStructurallyValid: Bool { true }
 }
 
+public enum AppLockFactor: String, CaseIterable, Hashable {
+    case biometrics, pin, securityKey
+}
+
 public enum AppLockMode: String, Codable, CaseIterable, Identifiable, Equatable {
     case off
     case biometrics
     case pinOnly
     case biometricsAndPin
+    case securityKey
+    case securityKeyAndPin
+    case biometricsAndSecurityKey
+    case biometricsPinAndSecurityKey
 
     public var id: String { rawValue }
+
+    public var requiredFactors: Set<AppLockFactor> {
+        switch self {
+        case .off: []
+        case .biometrics: [.biometrics]
+        case .pinOnly: [.pin]
+        case .biometricsAndPin: [.biometrics, .pin]
+        case .securityKey: [.securityKey]
+        case .securityKeyAndPin: [.securityKey, .pin]
+        case .biometricsAndSecurityKey: [.biometrics, .securityKey]
+        case .biometricsPinAndSecurityKey: [.biometrics, .pin, .securityKey]
+        }
+    }
+
+    public var requiresPIN: Bool { requiredFactors.contains(.pin) }
+    public var requiresBiometrics: Bool { requiredFactors.contains(.biometrics) }
+    public var requiresSecurityKey: Bool { requiredFactors.contains(.securityKey) }
+
+    /// AND semantics: every configured factor must have succeeded in the current unlock attempt.
+    public func accepts(completedFactors: Set<AppLockFactor>) -> Bool {
+        requiredFactors.isSubset(of: completedFactors)
+    }
 
     public var displayName: String {
         switch self {
@@ -982,6 +1012,10 @@ public enum AppLockMode: String, Codable, CaseIterable, Identifiable, Equatable 
         case .biometrics: "Biometrics"
         case .pinOnly: "PIN Only"
         case .biometricsAndPin: "Biometrics + PIN"
+        case .securityKey: "Security Key"
+        case .securityKeyAndPin: "Security Key + PIN"
+        case .biometricsAndSecurityKey: "Biometrics + Security Key"
+        case .biometricsPinAndSecurityKey: "Biometrics + PIN + Security Key"
         }
     }
 }
@@ -1226,6 +1260,55 @@ public struct AppLockActionPlan: Codable, Equatable, Identifiable {
     }
 }
 
+/// Local app-access credential. Never used for messaging, personas, or peer identity.
+public struct AppLockSecurityKeyRecordV1: Codable, Equatable, Identifiable {
+    public var id: UUID
+    public var name: String
+    public var credentialID: Data
+    public var publicKey: Data
+    public var signatureCounter: UInt32
+
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case id, name, credentialID, publicKey, signatureCounter
+    }
+
+    public init(id: UUID = UUID(), name: String, credentialID: Data, publicKey: Data, signatureCounter: UInt32) {
+        self.id = id
+        self.name = name
+        self.credentialID = credentialID
+        self.publicKey = publicKey
+        self.signatureCounter = signatureCounter
+    }
+
+    public var isStructurallyValid: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && name.utf8.count <= 128 && (1...1_024).contains(credentialID.count)
+            && publicKey.count == 65 && publicKey.first == 0x04
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try strictClientStateContainer(decoder, keyedBy: CodingKeys.self, description: "App-lock security key")
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        credentialID = try container.decode(Data.self, forKey: .credentialID)
+        publicKey = try container.decode(Data.self, forKey: .publicKey)
+        signatureCounter = try container.decode(UInt32.self, forKey: .signatureCounter)
+        try requireValidClientStateDecoding(isStructurallyValid, key: .credentialID, container: container,
+                                            description: "Invalid app-lock security key")
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        try requireValidClientStateEncoding(isStructurallyValid, value: self, encoder: encoder,
+                                            description: "Invalid app-lock security key")
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(credentialID, forKey: .credentialID)
+        try container.encode(publicKey, forKey: .publicKey)
+        try container.encode(signatureCounter, forKey: .signatureCounter)
+    }
+}
+
 public struct AppLockSettings: Codable, Equatable {
     public var mode: AppLockMode
     public var sessionTimeoutMinutes: Int
@@ -1233,6 +1316,8 @@ public struct AppLockSettings: Codable, Equatable {
     public var pinSalt: Data?
     public var pinHash: Data?
     public var actionPlans: [AppLockActionPlan]
+    public var securityKeys: [AppLockSecurityKeyRecordV1]
+    public var requireSecurityKeyPresence: Bool
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case mode
@@ -1241,6 +1326,8 @@ public struct AppLockSettings: Codable, Equatable {
         case pinSalt
         case pinHash
         case actionPlans
+        case securityKeys
+        case requireSecurityKeyPresence
     }
 
     public init(
@@ -1249,7 +1336,9 @@ public struct AppLockSettings: Codable, Equatable {
         lockScreenMessage: String = "",
         pinSalt: Data? = nil,
         pinHash: Data? = nil,
-        actionPlans: [AppLockActionPlan] = []
+        actionPlans: [AppLockActionPlan] = [],
+        securityKeys: [AppLockSecurityKeyRecordV1] = [],
+        requireSecurityKeyPresence: Bool = false
     ) {
         self.mode = mode
         self.sessionTimeoutMinutes = sessionTimeoutMinutes
@@ -1257,13 +1346,16 @@ public struct AppLockSettings: Codable, Equatable {
         self.pinSalt = pinSalt
         self.pinHash = pinHash
         self.actionPlans = actionPlans
+        self.securityKeys = securityKeys
+        self.requireSecurityKeyPresence = requireSecurityKeyPresence
     }
 
     public init(from decoder: Decoder) throws {
         let container = try strictClientStateContainer(
             decoder,
             keyedBy: CodingKeys.self,
-            description: "App-lock settings"
+            description: "App-lock settings",
+            optionalKeys: [.securityKeys, .requireSecurityKeyPresence]
         )
         mode = try container.decode(AppLockMode.self, forKey: .mode)
         sessionTimeoutMinutes = try container.decode(Int.self, forKey: .sessionTimeoutMinutes)
@@ -1271,6 +1363,10 @@ public struct AppLockSettings: Codable, Equatable {
         pinSalt = try container.decodeIfPresent(Data.self, forKey: .pinSalt)
         pinHash = try container.decodeIfPresent(Data.self, forKey: .pinHash)
         actionPlans = try container.decode([AppLockActionPlan].self, forKey: .actionPlans)
+        securityKeys = container.contains(.securityKeys)
+            ? try container.decode([AppLockSecurityKeyRecordV1].self, forKey: .securityKeys) : []
+        requireSecurityKeyPresence = container.contains(.requireSecurityKeyPresence)
+            ? try container.decode(Bool.self, forKey: .requireSecurityKeyPresence) : false
         try requireValidClientStateDecoding(
             isStructurallyValid,
             key: .mode,
@@ -1293,6 +1389,8 @@ public struct AppLockSettings: Codable, Equatable {
         try container.encode(pinSalt, forKey: .pinSalt)
         try container.encode(pinHash, forKey: .pinHash)
         try container.encode(actionPlans, forKey: .actionPlans)
+        if !securityKeys.isEmpty { try container.encode(securityKeys, forKey: .securityKeys) }
+        if requireSecurityKeyPresence { try container.encode(true, forKey: .requireSecurityKeyPresence) }
     }
 
     public var isPinConfigured: Bool { pinSalt != nil && pinHash != nil }
@@ -1307,16 +1405,17 @@ public struct AppLockSettings: Codable, Equatable {
         default:
             pinPairIsValid = false
         }
-        let modeHasRequiredPIN = switch mode {
-        case .pinOnly, .biometricsAndPin:
-            isPinConfigured
-        case .off, .biometrics:
-            true
-        }
+        let modeHasRequiredPIN = !mode.requiresPIN || isPinConfigured
         return (0...10_080).contains(sessionTimeoutMinutes)
             && lockScreenMessage.utf8.count <= 4_096
             && pinPairIsValid
             && modeHasRequiredPIN
+            && (!requireSecurityKeyPresence || mode.requiresSecurityKey)
+            && (!mode.requiresSecurityKey || !securityKeys.isEmpty)
+            && securityKeys.count <= 8
+            && Set(securityKeys.map(\.id)).count == securityKeys.count
+            && Set(securityKeys.map(\.credentialID)).count == securityKeys.count
+            && securityKeys.allSatisfy(\.isStructurallyValid)
             && actionPlans.count <= 64
             && Set(actionPlans.map(\.id)).count == actionPlans.count
             && actionPlans.allSatisfy(\.isStructurallyValid)
@@ -1341,13 +1440,14 @@ private struct StrictClientStateCodingKey: CodingKey, Hashable {
 private func strictClientStateContainer<Key>(
     _ decoder: Decoder,
     keyedBy keyType: Key.Type,
-    description: String
+    description: String,
+    optionalKeys: [Key] = []
 ) throws -> KeyedDecodingContainer<Key>
 where Key: CodingKey & CaseIterable, Key.AllCases.Element == Key {
     let strict = try decoder.container(keyedBy: StrictClientStateCodingKey.self)
     let actual = Set(strict.allKeys.map(\.stringValue))
     let expected = Set(Key.allCases.map(\.stringValue))
-    guard actual == expected else {
+    guard actual.isSubset(of: expected), expected.subtracting(optionalKeys.map(\.stringValue)).isSubset(of: actual) else {
         throw DecodingError.dataCorrupted(
             DecodingError.Context(
                 codingPath: decoder.codingPath,

@@ -189,6 +189,31 @@ def vendored_components():
                 "fileCount": len(files),
             }
         )
+    yubikit = ROOT / "NoctweaveSecurityKeys" / "Vendor" / "YubiKit"
+    if yubikit.exists():
+        metadata = json.loads(read_text(yubikit / "upstream.json"))
+        files = sorted([*yubikit.glob("Sources/**/*.swift"), *[
+            yubikit / name for name in ("Package.swift", "LICENSE", "UPSTREAM.md",
+                                        "upstream.json", "upstream-sha256.json", "presence-accessor.patch")
+        ]])
+        tree_digest = hashlib.sha256()
+        for path in files:
+            tree_digest.update(path.relative_to(ROOT).as_posix().encode("utf-8"))
+            tree_digest.update(b"\0")
+            tree_digest.update(sha256_file(path).encode("ascii"))
+            tree_digest.update(b"\0")
+        components.append({
+            "type": "vendored-source",
+            "name": metadata["name"],
+            "version": metadata["version"],
+            "revision": tree_digest.hexdigest(),
+            "upstreamRevision": metadata["revision"],
+            "source": metadata["repository"],
+            "license": metadata["license"],
+            "pinFile": str((yubikit / "upstream.json").relative_to(ROOT)),
+            "patchFile": str((yubikit / metadata["patch"]).relative_to(ROOT)),
+            "fileCount": len(files),
+        })
     return components
 
 
@@ -198,6 +223,16 @@ def workspace_components():
             "type": "local-source",
             "name": "NoctweaveCore",
             "source": "NoctweaveCore",
+        },
+        {
+            "type": "local-source",
+            "name": "NoctweaveSecurityKeys",
+            "source": "NoctweaveSecurityKeys",
+        },
+        {
+            "type": "local-source",
+            "name": "NoctweaveSecurityKeyBridge",
+            "source": "NoctweaveSecurityKeys/Sources/NoctweaveSecurityKeyBridge",
         },
         {
             "type": "local-source",
@@ -239,6 +274,7 @@ def make_sbom():
             "NoctweaveRelayServer/package.json",
             "NoctweaveRelayServer/bun.lock",
             "NoctweaveCore/Vendor/liboqs.xcframework",
+            "NoctweaveSecurityKeys/Vendor/YubiKit",
         ],
         "components": components,
     }
@@ -261,6 +297,8 @@ def cyclonedx_component(component):
         image_name = name or "unknown"
         image_version = component.get("version")
         purl = f"pkg:docker/{image_name}@{image_version}" if image_version else f"pkg:docker/{image_name}"
+    elif name == "YubiKit Swift":
+        purl = f"pkg:github/Yubico/yubikit-swift@{version}"
     elif name == "liboqs":
         purl = f"pkg:github/open-quantum-safe/liboqs@{version}"
 
@@ -293,6 +331,14 @@ def cyclonedx_component(component):
         payload["hashes"] = [{"alg": "SHA-256", "content": component["revision"]}]
     elif revision:
         payload["properties"] = [{"name": "noctweave:revision", "value": revision}]
+    if component.get("upstreamRevision"):
+        payload.setdefault("properties", []).append({
+            "name": "noctweave:upstreamRevision", "value": component["upstreamRevision"]
+        })
+    if component.get("patchFile"):
+        external_references.append({"type": "vcs", "url": f"file:{component['patchFile']}"})
+    if component.get("license"):
+        payload["licenses"] = [{"license": {"id": component["license"]}}]
     if external_references:
         payload["externalReferences"] = external_references
     return payload

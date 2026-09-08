@@ -1,0 +1,33 @@
+--- a/YubiKit/YubiKit/Connection/FIDO/HIDFIDOConnection.swift
++++ b/YubiKit/YubiKit/Connection/FIDO/HIDFIDOConnection.swift
+@@ -101,6 +101,12 @@
+         try await HIDFIDOConnection(device: device)
+     }
+ 
++    /// Noctweave addition: the OS registry identity of the device on this authenticated
++    /// connection. This is process-local presence state, never a persisted key identity.
++    public func connectedRegistryEntryID() async throws(FIDOConnectionError) -> UInt64 {
++        try await HIDConnectionManager.shared.registryEntryID(for: locationID)
++    }
++
+     /// Closes the connection to the YubiKey.
+     ///
+     /// - Parameter error: Optional error that caused the connection to close.
+@@ -196,6 +202,17 @@
+             }
+             /* Fix trace: self.trace(message: "found \(yubikeys.count) FIDO HID devices") */
+             return yubikeys
++        }
++    }
++
++    // Noctweave addition: resolve the actual open handle, never a name or vendor match.
++    func registryEntryID(for locationID: Int) async throws(FIDOConnectionError) -> UInt64 {
++        try await runloop.perform { () -> Result<UInt64, FIDOConnectionError> in
++            guard let state = self.openConnections[locationID] else { return .failure(.connectionLost) }
++            var identity: UInt64 = 0
++            guard IORegistryEntryGetRegistryEntryID(IOHIDDeviceGetService(state.device), &identity) == KERN_SUCCESS,
++                  identity != 0 else { return .failure(.connectionLost) }
++            return .success(identity)
+         }
+     }
+ 

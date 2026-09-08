@@ -1,0 +1,8 @@
+{
+  "license": "Apache-2.0",
+  "name": "YubiKit Swift",
+  "patch": "presence-accessor.patch",
+  "repository": "https://github.com/Yubico/yubikit-swift",
+  "revision": "f5a01653ec07530ffd300a02fc9818aa1298f13e",
+  "version": "1.3.0"
+}

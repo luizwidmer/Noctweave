@@ -13,6 +13,7 @@ xcuserdata/
 *.xcscmblueprint
 
 # Swift Package Manager
+.swiftpm/
 .build/
 Packages/
 Package.resolved
