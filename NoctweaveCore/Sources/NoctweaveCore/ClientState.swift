@@ -552,6 +552,98 @@ public struct ClientState: Codable, Equatable {
         (try? isStructurallyValidThrowing) == true
     }
 
+    /// Builds only the state allowed to survive a duress action. The caller must
+    /// durably stage this result, retire the old stores, and rotate storage keys.
+    public func replacementAfterDuress(plan: AppLockDuressPlan, password: String, usesNumericPIN: Bool = false) throws -> ClientState {
+        guard plan.isStructurallyValid, AppLockDuressPassword.matches(password, plan: plan) else {
+            throw ClientStateError.invalidState
+        }
+        let passwordRecord = usesNumericPIN ? try AppLockPINV2.makeRecord(pin: password) : try AppLockPasswordV1.makeRecord(password: password)
+        let protection = AppLockSettings(mode: .pinOnly, pinSalt: passwordRecord.salt,
+            pinHash: passwordRecord.encodedHash, hasCompletedSetup: true)
+        var replacement = try ClientState(displayName: plan.action == .decoy ? "Personal" : "Unnamed Persona",
+            appLock: protection)
+        guard plan.action == .decoy else { return replacement }
+
+        let kept = personas.compactMap { persona -> PersonaProfileV1? in
+            var filtered = persona
+            filtered.relationships = persona.relationships.filter {
+                plan.decoyChats.contains(.init(personaID: persona.id, kind: .relationship, chatID: $0.id))
+            }
+            filtered.groupRuntimes = persona.groupRuntimes.filter {
+                plan.decoyChats.contains(.init(personaID: persona.id, kind: .group, chatID: $0.groupId))
+            }
+            filtered.pendingGroupAdmissions = []
+            return filtered.relationships.isEmpty && filtered.groupRuntimes.isEmpty ? nil : filtered
+        }
+        if !kept.isEmpty {
+            replacement.personas = kept
+            replacement.activePersonaID = kept.contains { $0.id == activePersonaID } ? activePersonaID : kept[0].id
+        }
+        // Keep relay access only where it belongs to a retained chat or its
+        // persona's chosen home relay. Drop notes, sources and unrelated hosts.
+        var endpoints: [RelayEndpoint] = []
+        for persona in kept {
+            if let preferred = preferredRelayPreferenceID(forPersonaID: persona.id),
+               let relay = relayPreferences.first(where: { $0.id == preferred }) {
+                endpoints.append(relay.endpoint)
+            }
+            for relationship in persona.relationships {
+                endpoints += relationship.localReceiveRoutes.map(\.relay)
+                endpoints += relationship.localAdvertisedRoutes.routes.map(\.relay)
+                endpoints += relationship.peerIdentity.sendRoutes.routes.map(\.relay)
+                endpoints += relationship.pendingDeliveries.map(\.destinationRelay)
+                endpoints += relationship.pendingRouteRollovers.map(\.relay)
+                endpoints += relationship.pendingAttachmentUploads.map(\.relay)
+                endpoints += relationship.pendingAttachmentDownloads.map(\.relay)
+            }
+            for group in persona.groupRuntimes {
+                endpoints += group.inboundTransport.localRoutes.map { $0.localRoute.relay }
+                if let pending = group.inboundTransport.pendingRoute { endpoints.append(pending.relay) }
+                for entry in group.peerRouteCache.entries { endpoints += entry.announcement.routeSet.routes.map(\.relay) }
+                for operation in group.outboundTransportOperations {
+                    for destination in operation.destinationSnapshots { endpoints += destination.routeSet.routes.map(\.relay) }
+                }
+            }
+        }
+        replacement.relayPreferences = relayPreferences.filter { endpoints.contains($0.endpoint) }.map {
+            LocalRelayPreference(id: $0.id, name: $0.endpoint.host, endpoint: $0.endpoint, accessPassword: $0.accessPassword)
+        }
+        for persona in kept {
+            if let preferred = preferredRelayPreferenceID(forPersonaID: persona.id) {
+                replacement.preferredRelayPreferenceIDsByPersonaID[persona.id] = preferred
+            }
+        }
+        replacement.relayCertificatePins = relayCertificatePins.filter { pin in
+            endpoints.contains { $0.host == pin.host && $0.port == pin.port && $0.useTLS == pin.useTLS && $0.transport == pin.transport }
+        }
+        replacement.hasCompletedOnboarding = hasCompletedOnboarding
+        replacement.hasAcceptedPrivacyPolicy = hasAcceptedPrivacyPolicy
+        replacement.hasAcceptedTermsOfUse = hasAcceptedTermsOfUse
+        guard try replacement.isStructurallyValidThrowing else { throw ClientStateError.invalidState }
+        return replacement
+    }
+
+    /// Attachment files are retained only when referenced by a surviving event.
+    public var referencedLocalAttachmentIDs: Set<UUID> {
+        var result = Set<UUID>()
+        for persona in personas {
+            for relationship in persona.relationships {
+                for session in relationship.directSessions {
+                    result.formUnion(session.messages.compactMap { $0.attachment?.descriptor.id })
+                }
+            }
+            let contents = persona.relationships.flatMap { $0.events.map(\.content) }
+                + persona.groupRuntimes.flatMap { $0.events.map(\.content) }
+            for content in contents where content.type == .attachment {
+                if let descriptor = try? NoctweaveCoder.decode(AttachmentDescriptor.self, from: content.payload) {
+                    result.insert(descriptor.id)
+                }
+            }
+        }
+        return result
+    }
+
     /// Builds a new local state aggregate with onboarding still incomplete.
     /// Native clients and the CLI can then explicitly call
     /// `completeOnboarding(privacyPolicyAccepted:termsOfUseAccepted:)`.
@@ -1330,6 +1422,7 @@ public struct AppLockSettings: Codable, Equatable {
     public var requireSecurityKeyPresence: Bool
     public var hiddenUnlockFactors: Set<AppLockFactor>
     public var duressPlans: [AppLockDuressPlan]
+    public var hasCompletedSetup: Bool
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case mode
@@ -1342,6 +1435,7 @@ public struct AppLockSettings: Codable, Equatable {
         case requireSecurityKeyPresence
         case hiddenUnlockFactors
         case duressPlans
+        case hasCompletedSetup
     }
 
     public init(
@@ -1354,7 +1448,8 @@ public struct AppLockSettings: Codable, Equatable {
         securityKeys: [AppLockSecurityKeyRecordV1] = [],
         requireSecurityKeyPresence: Bool = false,
         hiddenUnlockFactors: Set<AppLockFactor> = [],
-        duressPlans: [AppLockDuressPlan] = []
+        duressPlans: [AppLockDuressPlan] = [],
+        hasCompletedSetup: Bool = false
     ) {
         self.mode = mode
         self.sessionTimeoutMinutes = sessionTimeoutMinutes
@@ -1366,6 +1461,7 @@ public struct AppLockSettings: Codable, Equatable {
         self.requireSecurityKeyPresence = requireSecurityKeyPresence
         self.hiddenUnlockFactors = hiddenUnlockFactors
         self.duressPlans = duressPlans
+        self.hasCompletedSetup = hasCompletedSetup
     }
 
     public init(from decoder: Decoder) throws {
@@ -1373,7 +1469,7 @@ public struct AppLockSettings: Codable, Equatable {
             decoder,
             keyedBy: CodingKeys.self,
             description: "App-lock settings",
-            optionalKeys: [.securityKeys, .requireSecurityKeyPresence, .hiddenUnlockFactors, .duressPlans]
+            optionalKeys: [.securityKeys, .requireSecurityKeyPresence, .hiddenUnlockFactors, .duressPlans, .hasCompletedSetup]
         )
         mode = try container.decode(AppLockMode.self, forKey: .mode)
         sessionTimeoutMinutes = try container.decode(Int.self, forKey: .sessionTimeoutMinutes)
@@ -1389,6 +1485,7 @@ public struct AppLockSettings: Codable, Equatable {
             ? try container.decode([AppLockFactor].self, forKey: .hiddenUnlockFactors) : []
         hiddenUnlockFactors = Set(hidden)
         duressPlans = container.contains(.duressPlans) ? try container.decode([AppLockDuressPlan].self, forKey: .duressPlans) : []
+        hasCompletedSetup = container.contains(.hasCompletedSetup) ? try container.decode(Bool.self, forKey: .hasCompletedSetup) : false
         try requireValidClientStateDecoding(hidden.count == hiddenUnlockFactors.count,
             key: .hiddenUnlockFactors, container: container, description: "Duplicate hidden unlock factors")
         try requireValidClientStateDecoding(
@@ -1419,6 +1516,7 @@ public struct AppLockSettings: Codable, Equatable {
             try container.encode(hiddenUnlockFactors.sorted { $0.rawValue < $1.rawValue }, forKey: .hiddenUnlockFactors)
         }
         if !duressPlans.isEmpty { try container.encode(duressPlans, forKey: .duressPlans) }
+        if hasCompletedSetup { try container.encode(true, forKey: .hasCompletedSetup) }
     }
 
     public var isPinConfigured: Bool { pinSalt != nil && pinHash != nil }

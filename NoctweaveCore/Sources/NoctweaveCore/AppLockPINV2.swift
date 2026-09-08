@@ -65,6 +65,13 @@ public enum AppLockPINV2 {
         return AppLockPINRecordV2(salt: salt, encodedHash: encoded)
     }
 
+    public static func isRecord(_ encodedHash: Data) -> Bool {
+        guard encodedHash.count == 41, encodedHash.prefix(magic.count) == magic else { return false }
+        var rounds: UInt32 = 0
+        for byte in encodedHash[magic.count..<(magic.count + 4)] { rounds = (rounds << 8) | UInt32(byte) }
+        return (minimumVerificationRounds...maximumVerificationRounds).contains(Int(rounds))
+    }
+
     public static func verify(pin: String, salt: Data, encodedHash: Data) -> Bool {
         guard let normalizedPIN = normalized(pin),
               (16...128).contains(salt.count),

@@ -31,7 +31,7 @@ public enum SecureStorageKeyProviderError: Error, Equatable, LocalizedError, Sen
     }
 }
 
-/// Loads each Keychain-backed symmetric key at most once per process.
+/// Loads each Keychain-backed symmetric key at most once per provider lifetime.
 ///
 /// Keychain reads fail closed rather than opening authentication UI during app
 /// startup. Keeping the resulting `SymmetricKey` in process memory also avoids
@@ -50,7 +50,9 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
     private var keys: [CacheKey: SymmetricKey] = [:]
     private var retired = Set<CacheKey>()
 
-    private init() {}
+    /// A new application session may use a fresh provider after a completed wipe.
+    /// Retired providers remain unusable by work belonging to the old session.
+    public init() {}
 
     public func loadOrCreateKey(
         service: String,
@@ -92,7 +94,7 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
         lock.unlock()
     }
 
-    /// Revoke this process's ability to recreate the key, then delete the exact local item.
+    /// Revoke this provider's ability to recreate the key, then delete the exact local item.
     /// Existing external copies or device backups are outside this provider's authority.
     public func destroyKey(service: String, account: String, accessGroup: String? = nil,
                            usesDataProtectionKeychain: Bool = false) throws {
@@ -100,6 +102,7 @@ public final class SecureStorageKeyProvider: @unchecked Sendable {
                                 usesDataProtectionKeychain: usesDataProtectionKeychain)
         lock.lock()
         defer { lock.unlock() }
+        guard !retired.contains(cacheKey) else { throw SecureStorageKeyProviderError.invalidKeyMaterial }
         retired.insert(cacheKey)
         keys.removeValue(forKey: cacheKey)
         #if canImport(Security)

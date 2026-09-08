@@ -6,15 +6,15 @@ Date: 2026-09-08. Scope: local app authentication and continuous USB presence. T
 
 | Application | Key unlock | Combined protection | Keep key connected |
 | --- | --- | --- | --- |
-| Native Noctweave, macOS | FIDO2 USB HID, user presence + verification | Any nonempty combination of biometrics, six-digit app PIN, and key | Implemented; exact verified USB attachment |
-| Native Noctweave, iOS/iPadOS | FIDO2 NFC on iPhone; SDK-supported USB smart-card readers | Same seven combinations, subject to device capability | Not offered; no continuous NFC/iOS contract |
+| Native Noctweave, macOS | FIDO2 USB HID, user presence + verification | Any nonempty combination of biometrics, app password, and key | Implemented; exact verified USB attachment |
+| Native Noctweave, iOS/iPadOS | FIDO2 NFC on iPhone; SDK-supported USB smart-card readers | Same combinations with a six-digit numeric app PIN, subject to device capability | Not offered; no continuous NFC/iOS contract |
 | NoctweaveJS, macOS desktop | FIDO2 PRF, through bundled native helper | Existing vault passphrase authorizes key management; ordinary unlock offers passphrase recovery | Implemented; passphrase-only unlock disabled while enabled |
 | NoctweaveJS, secure browser | WebAuthn PRF, browser + authenticator support required | Existing passphrase recovery | Not offered by WebAuthn |
 | NoctweaveJS, Linux/Windows desktop | Native hardware helper not implemented | Existing passphrase unlock | Not offered |
 
 The Relay, NoctCord focus shield, NoctGallery, NoctBoard, and Noctweb Browser/Lab do not have an equivalent authentication lock screen in the reviewed scope. This change does not invent new locks for them.
 
-Native modes are biometrics, PIN, key, biometrics + PIN, key + PIN, biometrics + key, and all three. They use AND semantics, never a silent OR fallback. The lock screen verifies biometrics, then the key, then the app PIN as required. The key's own FIDO2 PIN is separate from the app PIN. Partial progress expires, and a new lock/background or cancellation event invalidates in-flight completion. Changing existing protection requires every current factor again.
+Native modes are biometrics, password/PIN, key, or any combination. macOS uses an app password; iOS uses a six-digit numeric PIN. The security key has its own independent PIN on either platform. They use AND semantics, never a silent OR fallback. The lock screen verifies the key, then biometrics, then the app password/PIN as required. The key's own FIDO2 PIN is separate from the app credential. Partial progress expires, and a new lock/background or cancellation event invalidates in-flight completion. Changing existing protection requires every current factor again.
 
 Up to eight keys can be registered. Native enrollment requires a fresh assertion after creation and activation requires a recently verified key still included in the setup. Removing that key from the draft cannot transfer its proof to another key. Existing keys can be verified without creating a new credential. Changes take effect only when protection is saved.
 

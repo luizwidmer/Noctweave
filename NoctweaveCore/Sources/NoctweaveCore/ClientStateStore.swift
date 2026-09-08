@@ -59,11 +59,13 @@ public actor ClientStateStore {
     private var suppliedEncryptionKey: SymmetricKey?
     private let usesSuppliedEncryptionKey: Bool
     private var encryptionMaterialDestroyed = false
+    private var writesSuspended = false
     private let rollbackAnchorStore: (any ClientStateRollbackAnchorStore)?
     private let legacyStoreScopeDigest: Data?
     private let legacyRollbackAnchorStore: (any ClientStateRollbackAnchorStore)?
     private let usesDataProtectionKeychain: Bool
     private let encryptionKeyAccount: String
+    private let keyProvider: SecureStorageKeyProvider
 
     /// Creates a durable client-state store.
     ///
@@ -80,7 +82,8 @@ public actor ClientStateStore {
         rollbackAnchorStore: (any ClientStateRollbackAnchorStore)? = nil,
         storageScopeIdentifier: String? = nil,
         legacyRollbackAnchorStore: (any ClientStateRollbackAnchorStore)? = nil,
-        usesDataProtectionKeychain: Bool = false
+        usesDataProtectionKeychain: Bool = false,
+        keyProvider: SecureStorageKeyProvider = .shared
     ) {
         // Resolve a legitimate symlinked parent (for example /var -> /private/var)
         // without resolving the final state-file component. Resolving the full
@@ -108,6 +111,7 @@ public actor ClientStateStore {
         self.suppliedEncryptionKey = encryptionKey
         self.usesSuppliedEncryptionKey = encryptionKey != nil
         self.usesDataProtectionKeychain = usesDataProtectionKeychain
+        self.keyProvider = keyProvider
         self.encryptionKeyAccount = storageScopeIdentifier == nil
             ? "vault-key-v1"
             : "vault-key-v3-\(self.storeScopeDigest.base64URLEncodedString())"
@@ -157,6 +161,7 @@ public actor ClientStateStore {
     }
 
     public func load() throws -> ClientState? {
+        guard !encryptionMaterialDestroyed else { throw ClientStateStoreError.encryptionFailed }
         try ensurePrivateDirectory()
         return try withExclusiveFileLock {
             if protection == .insecurePlaintextForTesting {
@@ -201,6 +206,7 @@ public actor ClientStateStore {
         _ state: ClientState,
         replacing expectedState: ClientState?
     ) throws {
+        guard !encryptionMaterialDestroyed, !writesSuspended else { throw ClientStateStoreError.encryptionFailed }
         guard try state.isStructurallyValidThrowing else {
             throw ClientStateError.invalidState
         }
@@ -307,6 +313,15 @@ public actor ClientStateStore {
         }
     }
 
+    /// Atomically capture the latest persisted state and fence queued writers
+    /// before staging a destructive replacement. This store cannot resume writes.
+    public func suspendForLocalTransition() throws -> ClientState? {
+        guard !writesSuspended else { throw ClientStateStoreError.concurrentUpdate }
+        let snapshot = try load()
+        writesSuspended = true
+        return snapshot
+    }
+
     public func warmUpKeychain() throws {
         guard protection == .encrypted else { return }
         _ = try encryptionKey()
@@ -379,8 +394,40 @@ public actor ClientStateStore {
     /// tombstone, so replaying an older encrypted file remains detectable and a
     /// later fresh database starts at the next local generation.
     public func eraseAllLocalState() throws {
+        guard !encryptionMaterialDestroyed else { throw ClientStateStoreError.encryptionFailed }
+        try eraseLocalStateFiles(preservingCiphertext: false)
+    }
+
+    /// Distinguishes an intentional reset from unexplained file loss. This also
+    /// finishes an interrupted, anchored erase before onboarding can continue.
+    public func isAwaitingFreshState() throws -> Bool {
+        guard !encryptionMaterialDestroyed else { throw ClientStateStoreError.encryptionFailed }
+        guard protection == .encrypted, let rollbackAnchorStore else { return false }
+        try ensurePrivateDirectory()
+        return try withExclusiveFileLock {
+            if case .empty(let anchor) = try resolveEncryptedState(using: rollbackAnchorStore, scopeDigest: storeScopeDigest) {
+                return anchor?.kind == .erased
+            }
+            return false
+        }
+    }
+
+    private func eraseLocalStateFiles(preservingCiphertext: Bool) throws {
         try ensurePrivateDirectory()
         try withExclusiveFileLock {
+            let retiredDirectory = fileURL.appendingPathExtension("retired")
+            if preservingCiphertext {
+                for source in [fileURL, pendingFileURL] where FileManager.default.fileExists(atPath: source.path) {
+                    let ciphertext = try readBoundedData(from: source)
+                    try SecureLocalFileIO.ensurePrivateDirectory(at: retiredDirectory)
+                    let destination = retiredDirectory.appendingPathComponent(UUID().uuidString + ".nwstate")
+                    try SecureLocalFileIO.writeAtomicPrivateFile(ciphertext, to: destination,
+                        maximumBytes: Self.maximumStoredBytes, excludedFromBackup: true)
+                }
+            } else if FileManager.default.fileExists(atPath: retiredDirectory.path) {
+                try SecureLocalFileIO.ensurePrivateDirectory(at: retiredDirectory)
+                try FileManager.default.removeItem(at: retiredDirectory)
+            }
             if protection == .insecurePlaintextForTesting {
                 try removeStateFilesAndSync()
                 return
@@ -974,6 +1021,7 @@ public actor ClientStateStore {
     /// Terminal for this store instance: queued writers cannot recreate destroyed state.
     /// Keeping ciphertext is meaningful only for encrypted stores.
     public func destroyLocalEncryptionMaterial(preservingCiphertext: Bool) throws {
+        guard !encryptionMaterialDestroyed else { throw ClientStateStoreError.encryptionFailed }
         guard protection == .encrypted else { throw ClientStateStoreError.encryptionFailed }
         // Legacy unscoped stores share a Keychain item. Never destroy another
         // store's key as a side effect; those hosts must migrate to a stable scope.
@@ -985,12 +1033,21 @@ public actor ClientStateStore {
         var failure: Error?
         if !usesSuppliedEncryptionKey {
             do {
-                try SecureStorageKeyProvider.shared.destroyKey(service: Self.secureStorageService,
+                try keyProvider.destroyKey(service: Self.secureStorageService,
                     account: encryptionKeyAccount, usesDataProtectionKeychain: usesDataProtectionKeychain)
             } catch { failure = error }
         }
-        if !preservingCiphertext {
-            do { try eraseAllLocalState() } catch { failure = failure ?? error }
+        // Retained ciphertext is kept outside the active state slot. Its trusted
+        // tombstone lets the next session start onboarding with independent keys.
+        if failure == nil {
+            do { try eraseLocalStateFiles(preservingCiphertext: preservingCiphertext) } catch { failure = error }
+        } else if !preservingCiphertext {
+            // Remove recoverable files even if Keychain deletion failed, but do
+            // not advertise a completed reset or silently reuse that old key.
+            do {
+                try ensurePrivateDirectory()
+                try withExclusiveFileLock { try removeStateFilesAndSync() }
+            } catch { /* Preserve the original key-deletion failure. */ }
         }
         if let failure { throw failure }
     }
@@ -1000,7 +1057,7 @@ public actor ClientStateStore {
         if let suppliedEncryptionKey {
             return suppliedEncryptionKey
         }
-        return try SecureStorageKeyProvider.shared.loadOrCreateKey(
+        return try keyProvider.loadOrCreateKey(
             service: Self.secureStorageService,
             account: encryptionKeyAccount,
             usesDataProtectionKeychain: usesDataProtectionKeychain
