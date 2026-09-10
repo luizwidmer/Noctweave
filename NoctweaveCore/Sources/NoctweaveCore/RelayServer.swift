@@ -18,6 +18,7 @@ public final class RelayServer {
     public var onNoctwebNamespaceStateSnapshot:
         (@Sendable ([NoctwebNamespaceRecordV1]) async -> Void)?
 
+    private let workRegistry = RelayServerWorkRegistry()
     private let store: RelayStore
     private let opaqueRouteStore: OpaqueRouteRelayStoreV2
     private let noctwebHostStore: RelayNoctwebHostStore?
@@ -122,6 +123,7 @@ public final class RelayServer {
     }
 
     public func start(host: String, port: UInt16) throws {
+        guard !workRegistry.isRetired else { throw RelayNetworkError.connectionFailed }
         guard listener == nil else {
             return
         }
@@ -166,7 +168,7 @@ public final class RelayServer {
                 self?.localEndpoint?.port = boundPort
                 self?.onEvent?(.started(port: boundPort))
                 if let self {
-                    Task {
+                    self.launchOperation { [self] in
                         await self.activateConfiguredNoctwebNamespace()
                     }
                 }
@@ -223,6 +225,21 @@ public final class RelayServer {
         }
     }
 
+    /// Terminal shutdown for a host that is removing local data. Cancels accepted
+    /// connections and waits for all request and maintenance work to finish,
+    /// including host persistence callbacks. Create a new server after this call.
+    public func retireAndDrain() async {
+        let pending = workRegistry.retire()
+        stop()
+        for operation in pending { await operation.value }
+    }
+
+    @discardableResult
+    private func launchOperation(connection: NWConnection? = nil,
+                                 _ body: @escaping () async -> Void) -> Task<Void, Never> {
+        workRegistry.launch(connection: connection, body)
+    }
+
     public func stop() {
         coordinatorHeartbeatTaskLock.lock()
         coordinatorHeartbeatTask?.cancel()
@@ -238,7 +255,7 @@ public final class RelayServer {
             configuration.federationAllowList = allowList
         }
         startCoordinatorHeartbeatLoopIfNeeded()
-        Task { [weak self] in
+        launchOperation { [weak self] in
             await self?.activateConfiguredNoctwebNamespace()
         }
     }
@@ -264,7 +281,7 @@ public final class RelayServer {
             configuration.advertisedEndpoint = updated.advertisedEndpoint
         }
         startCoordinatorHeartbeatLoopIfNeeded()
-        Task { [weak self] in
+        launchOperation { [weak self] in
             await self?.activateConfiguredNoctwebNamespace()
         }
     }
@@ -276,7 +293,7 @@ public final class RelayServer {
     }
 
     private func handleTCP(connection: NWConnection) {
-        Task {
+        launchOperation(connection: connection) { [self] in
             do {
                 try await connection.awaitReady()
                 let line = try await connection.receiveLine(maxLength: RelayClient.maxResponseBytes)
@@ -320,7 +337,7 @@ public final class RelayServer {
     }
 
     private func handleHTTP(connection: NWConnection) {
-        Task {
+        launchOperation(connection: connection) { [self] in
             do {
                 try await connection.awaitReady()
                 let request = try await receiveHTTPMessage(from: connection)
@@ -2594,7 +2611,7 @@ public final class RelayServer {
         guard !coordinatorEndpoints().isEmpty else {
             return
         }
-        coordinatorHeartbeatTask = Task { [weak self] in
+        coordinatorHeartbeatTask = launchOperation { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
                 await self.activateConfiguredNoctwebNamespace()
@@ -3136,5 +3153,43 @@ actor RelayRequestRateLimiter {
     private func normalized(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return trimmed.isEmpty ? "unknown" : trimmed
+    }
+}
+
+/// Registration and retirement share one lock: a racing accept either belongs
+/// to the drain set or is canceled before its operation can run.
+final class RelayServerWorkRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var retired = false
+    private var work: [UUID: (Task<Void, Never>, NWConnection?)] = [:]
+
+    var isRetired: Bool { lock.lock(); defer { lock.unlock() }; return retired }
+
+    func launch(connection: NWConnection?, _ body: @escaping () async -> Void) -> Task<Void, Never> {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !retired else {
+            connection?.cancel()
+            return Task {}
+        }
+        let id = UUID()
+        let task = Task { [self] in
+            defer { remove(id) }
+            guard !Task.isCancelled else { return }
+            await body()
+        }
+        work[id] = (task, connection)
+        return task
+    }
+
+    private func remove(_ id: UUID) { lock.lock(); defer { lock.unlock() }; work[id] = nil }
+
+    func retire() -> [Task<Void, Never>] {
+        lock.lock()
+        retired = true
+        let pending = Array(work.values)
+        lock.unlock()
+        for (task, connection) in pending { task.cancel(); connection?.cancel() }
+        return pending.map { $0.0 }
     }
 }

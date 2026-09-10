@@ -731,3 +731,18 @@ scripts/run-tests.sh
 
 Also run the JavaScript type-check and any application-specific persistence,
 transport, and UI tests. Repository success is not an external security audit.
+
+
+### Terminal relay shutdown before local reset
+
+`await RelayServer.retireAndDrain()` cancels accepted connections and waits for
+registered request and maintenance tasks, including host persistence callbacks,
+to finish. It permanently retires that server instance; `start` subsequently
+throws. A host that purges its local database must drain its own tasks first,
+await this method, then delete files and scoped secrets. Create a fresh server
+instance only after cleanup succeeds. Ordinary `stop()` remains available for
+non-destructive listener shutdown.
+
+This API does not delete remote IPFS objects, other relays' data, or client state.
+A host must separately maintain durable reset intent and handle file or Keychain
+failures before reopening its application.

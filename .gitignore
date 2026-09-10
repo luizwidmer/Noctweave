@@ -54,6 +54,7 @@ relay_identity_v1.json
 coordinator_directory_signing_key
 
 # Local archives and exports
+ReleaseArtifacts/
 *.zip
 *.tar
 *.tar.gz
