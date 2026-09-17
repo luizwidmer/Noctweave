@@ -7,16 +7,24 @@ import Security
 public enum SecurityKeyApplication: String, Sendable {
     case noctweave
     case noctweaveJS
+    case noctGallery
 
     public var relyingPartyID: String {
         switch self {
         case .noctweave: "noctweave-app-lock.invalid"
         case .noctweaveJS: "noctweavejs-app-lock.invalid"
+        case .noctGallery: "noctgallery-app-lock.invalid"
         }
     }
 
     public var origin: String { "https://\(relyingPartyID)" }
-    public var displayName: String { self == .noctweave ? "Noctweave App Unlock" : "NoctweaveJS Vault Unlock" }
+    public var displayName: String {
+        switch self {
+        case .noctweave: "Noctweave App Unlock"
+        case .noctweaveJS: "NoctweaveJS Vault Unlock"
+        case .noctGallery: "Noct Gallery Unlock"
+        }
+    }
 }
 
 public struct SecurityKeyCredential: Codable, Equatable, Sendable, Identifiable {

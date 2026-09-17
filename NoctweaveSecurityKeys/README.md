@@ -9,7 +9,7 @@ The package and its separate desktop helper are AGPL-3.0-or-later. The protocol 
 - FIDO2/CTAP2 ES256 credentials with user presence and user verification required.
 - Native enrollment followed by a separate, fresh assertion before activation.
 - Up to eight registered keys, bounded strict CBOR and signature verification, challenge expiry, and counter replay detection.
-- macOS USB FIDO HID without vendor filtering; iPhone NFC FIDO smart cards; iOS USB smart-card support within YubiKit's supported reader list.
+- macOS USB FIDO HID without vendor filtering; iPhone NFC FIDO smart cards. The SDK's iOS USB smart-card path is not generic FIDO2 support: YubiKey's USB smart-card interface does not expose FIDO2. Noct Gallery offers NFC key unlock on compatible iPhones and does not advertise USB key unlock on iPad.
 - macOS continuous presence tied to the exact successfully authenticated USB attachment. Removal requires a new assertion; mere reconnection does not unlock.
 - A bounded stdin/stdout helper for NoctweaveJS FIDO2 PRF operations. PINs are never placed in arguments, environment variables, files, or application logs.
 
@@ -39,6 +39,6 @@ Browser WebAuthn and momentary NFC do not provide this continuous-presence contr
 
 `NoctweaveSecurityKeyBridge` accepts one JSON request of at most 65,536 bytes over inherited pipes. Public host requests are limited to `create` and `get`, with a fixed local RP/origin (`noctweavejs-app-lock.invalid`). Options are validated before hardware opens. The private host-only `watch-presence` request monitors an OS attachment identity returned by the preceding assertion. The renderer cannot supply that token; the host returns only a credential-bound presence status.
 
-The `.invalid` RP/origin is a local domain-separation constant, never a network service. Native Noctweave uses a separate `noctweave-app-lock.invalid` scope. Browser credentials use the actual secure browser origin and do not migrate between these scopes.
+The `.invalid` RP/origin is a local domain-separation constant, never a network service. Native Noctweave uses a separate `noctweave-app-lock.invalid` scope. Noct Gallery uses `noctgallery-app-lock.invalid`; credentials do not cross between these applications. Browser credentials use the actual secure browser origin and do not migrate between these scopes.
 
 See the [implementation and verification record](../NoctweaveDocumentation/security_key_app_unlock_2026-09-08.md) for application behavior, limitations, and test evidence.
