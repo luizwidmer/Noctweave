@@ -1,11 +1,42 @@
-# Application audit evidence — 21 September 2026
+<a id="application-audit-evidence--21-september-2026"></a>
 
-`validation.json` records the tested revisions, final modified source hashes,
-commands, outcomes, selected log excerpts, and SHA-256 hashes of detailed local
-logs. The logs remain in `.runtime/audit-2026-09-21/logs/` in the integration
-checkout. Commands in the matrix identify their working directory and use the
-recorded local Swift environment; invoke them through `rtk proxy` where required
-by the workspace.
+<h1 align="center">Application audit evidence</h1>
+
+<p align="center"><strong>Source snapshots and validation records · 21 September 2026</strong></p>
+
+<p align="center">
+  <a href="#overview">Overview</a> ·
+  <a href="#getting-started">Getting started</a> ·
+  <a href="#reference">Reference</a> ·
+  <a href="#related-documentation">Related docs</a>
+</p>
+
+## Overview
+
+This directory preserves the evidence index for the September 2026
+application audit. NoctBoard and Noct Gallery were excluded from that audit.
+The records distinguish exploit reproduction, remediation checks, skipped
+tests, and unverified deployment or hardware boundaries.
+
+## Getting started
+
+Read the [audit report](../app_security_audit_2026-09-21.md), then open the
+[validation matrix](validation.json). It records tested revisions, source
+hashes, commands, results, log excerpts, and SHA-256 hashes of local logs.
+Detailed logs remain in `.runtime/audit-2026-09-21/logs/` in the integration
+checkout.
+
+Commands in the matrix name their working directory and Swift environment.
+Use `rtk proxy` where the workspace requires it.
+
+## Reference
+
+| Read | For |
+| --- | --- |
+| [Validation matrix](validation.json) | Test outcomes, source revisions, and log hashes |
+| [Secret-scan inventory](secret-scan-inventory.json) | 472 tracked text files from the scan snapshot |
+| [Secret-scan triage](secret-scan-triage.json) | 18 reviewed matches without credential values |
+| [Navigation probe](navigation-rules-probe.cpp) | Native framework matcher checks |
 
 The Noct Cord regression tests are in `Tests/NoctCordCoreTests`,
 `NoctCordApplicationSecurityTests.swift`, and
@@ -28,6 +59,9 @@ verify their recorded hashes, and compile the probe with `xcrun clang++
 Run the resulting binary with assertions enabled. This validates native matching
 semantics, not a complete remote automatic-navigation attack chain.
 
-NoctBoard and Noct Gallery are excluded. The report and matrix explicitly retain
-skipped environment-gated tests, the interrupted full Noct Cord baseline, and
-the physical-device/Internet/dependency coverage limits.
+## Related documentation
+
+| Read | For |
+| --- | --- |
+| [Audit findings and coverage](../app_security_audit_2026-09-21.md) | Scope, remediation, and retained limitations |
+| [Repository overview](../../README.md) | Public integration surface and development setup |

@@ -1,115 +1,39 @@
 <p align="center">
-  <img src="docs/assets/NoctweaveLogo.svg" alt="Noctweave" width="720">
+  <img src="docs/assets/NoctweaveIcon.svg" alt="Noctweave icon" width="112">
 </p>
 
-<p align="center"><strong>Post-quantum messaging. Private by design. Future by default.</strong></p>
+<a id="noctweave"></a>
+
+<h1 align="center">Noctweave</h1>
+
+<p align="center"><strong>Build encrypted messaging on infrastructure you control.</strong></p>
 
 <p align="center">
-  <a href="#install-and-try-it">Install</a> ·
-  <a href="#use-the-tools">Use</a> ·
-  <a href="#optional-electrobun-launchers">Desktop apps</a> ·
-  <a href="#security-status">Security</a> ·
+  <a href="#overview">Overview</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#security-and-privacy">Security</a> ·
   <a href="#documentation">Documentation</a>
 </p>
 
-<p align="center">
-  <img alt="Multi-license" src="https://img.shields.io/badge/license-multi--license-5B9CFA">
-  <img alt="Swift 5.9" src="https://img.shields.io/badge/Swift-5.9-F05138">
-  <img alt="Node 20 or newer" src="https://img.shields.io/badge/Node-%3E%3D20-3DD5C5">
-  <img alt="Unreleased 1.0 candidate" src="https://img.shields.io/badge/status-1.0%20candidate-F2B84B">
-  <img alt="Unaudited" src="https://img.shields.io/badge/security-unaudited-E05D6F">
-</p>
+## Overview
 
-# Noctweave
+Noctweave is a self-hosted toolkit for encrypted messaging: a Swift protocol
+core and CLI, a Linux/Docker relay, and a separate JavaScript client.
+Clients encrypt messages and attachments before submission. Relays route and
+retain ciphertext without receiving relationship or group keys.
 
-Noctweave is a self-hosted toolkit for adding encrypted messaging to an
-application. It includes a Swift protocol core, a Linux/Docker relay, a working
-JavaScript protocol client and browser integration shell, and a headless CLI.
-Relays route and store encrypted packets; message plaintext and relationship or
-group keys stay with clients.
+| Detail | At a glance |
+| --- | --- |
+| Platform | Swift clients · Linux / Docker relay · browser / Node clients |
+| Built with | Swift · JavaScript · liboqs |
+| License | [Multiple licenses by component](LICENSE) |
 
-An optional bounded sidecar can carry the same exact relay envelopes over
-[Reticulum](https://reticulum.network/), including its radio, serial, local
-mesh, TCP, I2P, and custom interface carriers. Noctweave's post-quantum
-identity, session, ratchet, and capability layers remain unchanged.
+> **Status:** 1.0 candidate. Group and call profiles remain experimental; internal reviews do not constitute an independent external audit.
 
-The public libraries also include an experimental one-to-one call foundation:
-direct-v4 signaling, a fresh ML-KEM-768 call handshake, fixed-bucket
-AES-256-GCM media frames, and optional coturn discovery with short-lived TURN
-credentials. Capture, playback, and media transport remain application
-adapters rather than relay plaintext features.
+<a id="install-and-try-it"></a>
 
-The relay exposes the three-role Noctweave Net topology: `standard` relays
-carry existing private traffic, `passthrough` relays provide bounded one-hop
-HTTPS forwarding, and `host` relays store content-addressed Noctweave Net
-objects. Each relay has a persistent ML-DSA identity. Federated deployments can
-use signed, quorum-verified namespace snapshots to map unique Noctweb suffixes
-to authenticated relay endpoints without making DHT or peer discovery an
-authority.
-
-Standard relays also advertise four provisional app-neutral modules for
-low-latency applications: `nw.realtime-route@1`, `nw.shared-log@1`,
-`nw.ephemeral-presence@1`, and `nw.media-blobs@1`. They accept only
-capability-authorized opaque payloads, use no configured temporal bucketing,
-and have module-specific retention and size bounds. `nw.media-blobs@1` is
-distinct from the legacy `nw.blobs@1` attachment surface. See the
-[collaboration module specification](NoctweaveDocumentation/relay_collaboration_modules_v1.md).
-
-Operators may separately enable the experimental, default-off
-`nw.pairing-lobby@1` module. Two clients on that relay can compare a short
-badge, request contact, approve, and transfer the ordinary one-use pairing link
-inside a fresh PQ-encrypted disposable route. Listings contain no persona or
-relationship identity and expire within two minutes. See the
-[same-relay pairing specification](NoctweaveDocumentation/pairing_lobby_v1.md).
-
-Host-capable relays may additionally enable `nw.noctweb-data@1`, a bounded
-origin-scoped document service for stateful Noctweb sites. It supports public
-catalogs and signed per-site accounts for carts, profiles, and orders without
-exposing arbitrary SQL, server-side code, relay credentials, or global user
-identities to page JavaScript. See the
-[Noctweb data service specification](NoctweaveDocumentation/noctweb_data_service_v1.md).
-
-There are no hosted accounts, developer-operated relays, or required central
-notification services. You choose where every component runs.
-
-The supported public integration surface is `NoctweaveCore` (including
-`NoctweaveCLI`), `NoctweaveRelayServer`, the standalone
-[NoctweaveJS](https://github.com/luizwidmer/NoctweaveJS) repository, and the
-published protocol/API documentation. The native Noctweave client and macOS GUI
-relay are separate applications and are not integration dependencies.
-
-## Noctweave 1.0 Architecture
-
-This revision establishes the clean protocol origin for 1.0. It does not
-preserve pre-release identities, storage schemas, relay requests, or migration
-adapters.
-
-A persona is only a local UI container. Every pairwise relationship creates a
-fresh unlinkable ML-DSA/ML-KEM authority, one singular relationship endpoint,
-renewable prekeys, and private opaque routes. Pairing can use a short-lived
-relay rendezvous or carry the same authenticated transcript directly by QR or
-password-protected files. Relays see capability-authorized opaque packets,
-ordered route positions, and bounded retention—not accounts, global user IDs,
-contact graphs, or plaintext.
-
-When explicitly enabled by an operator, same-relay discovery can remove the
-manual invitation handoff. It publishes only fresh session keys and disposable
-request capabilities, requires explicit approval, and then feeds the unchanged
-one-use rendezvous flow. It does not publish persona labels or create relay
-accounts.
-
-The architecture also includes immutable typed events, exact-ciphertext retry
-intents, non-destructive cursor synchronization, make-before-break route sets,
-selective relationship-only continuity, experimental one-to-one call framing,
-explicit group roles and policy, and a strict modular relay envelope. There is
-deliberately no device/installation
-registry, recovery authority, shared self-sync identity, or portable live-key
-history model. See the
-[normative 1.0 architecture](NoctweaveDocumentation/noctweave_architecture_revision_v2.md).
-The implementation and verification history is summarized in the
-[architecture revision report](NoctweaveDocumentation/architecture_revision_status_report_2026-07-18.md).
-
-## Install And Try It
+## Quick start
 
 The quickest complete public smoke path uses Docker for the relay and the Node
 client to exercise health, capability discovery, and the full opaque-route
@@ -122,10 +46,10 @@ git clone https://github.com/luizwidmer/Noctweave.git
 cd Noctweave
 ```
 
-You need [Docker](https://www.docker.com/) and Node.js 20 or newer for this
+You need [Docker](https://www.docker.com/), Node.js 20+, and Bun 1.3+ for this
 smoke path. Swift builds `NoctweaveCore`, `NoctweaveCLI`, and
-`NoctweaveRelayServer`; Bun is only required for the optional Electrobun
-launchers.
+`NoctweaveRelayServer`. Bun installs the JavaScript dependencies and also
+builds the optional Electrobun launchers.
 
 ### 2. Start a relay
 
@@ -134,8 +58,8 @@ export NOCTWEAVE_ADMIN_TOKEN="$(openssl rand -hex 32)"
 
 docker build -t noctweave-relay NoctweaveRelayServer
 docker run --rm --name noctweave-relay \
-  -p 9339:9339 \
-  -p 9340:9340 \
+  -p 127.0.0.1:9339:9339 \
+  -p 127.0.0.1:9340:9340 \
   -p 127.0.0.1:9090:9090 \
   -e NOCTWEAVE_ADMIN_TOKEN \
   -v noctweave-relay-data:/data \
@@ -147,6 +71,9 @@ docker run --rm --name noctweave-relay \
   --rendezvous-transport true \
   --data-dir /data
 ```
+
+This example publishes all ports on host loopback. For network deployment,
+configure TLS and exposure using the [operator guide](NoctweaveRelayServer/README.md).
 
 The messaging endpoint is `http://127.0.0.1:9340`. Open the authenticated
 operator console at [http://127.0.0.1:9090/admin/](http://127.0.0.1:9090/admin/)
@@ -181,7 +108,9 @@ transport is available to integrations that supply that boundary.
 
 ![NoctweaveJS browser integration shell](docs/assets/NoctweaveJSClient.png)
 
-## Use The Tools
+<a id="use-the-tools"></a>
+
+## Features
 
 | I want to… | Start here |
 | --- | --- |
@@ -277,7 +206,92 @@ creation/admission/send/sync/maintenance/deletion, and destructive local
 persona burn. It does not publish reusable contact identities. See the
 [CLI usage guide](NoctweaveDocumentation/noctweave_cli_usage.md).
 
-## Optional Electrobun Launchers
+<a id="noctweave-10-architecture"></a>
+
+## Architecture
+
+An optional bounded sidecar can carry the same exact relay envelopes over
+[Reticulum](https://reticulum.network/), including its radio, serial, local
+mesh, TCP, I2P, and custom interface carriers. Noctweave's post-quantum
+identity, session, ratchet, and capability layers remain unchanged.
+
+The public libraries also include an experimental one-to-one call foundation:
+direct-v4 signaling, a fresh ML-KEM-768 call handshake, fixed-bucket
+AES-256-GCM media frames, and optional coturn discovery with short-lived TURN
+credentials. Capture, playback, and media transport remain application
+adapters rather than relay plaintext features.
+
+The relay exposes the three-role Noctweave Net topology: `standard` relays
+carry existing private traffic, `passthrough` relays provide bounded one-hop
+HTTPS forwarding, and `host` relays store content-addressed Noctweave Net
+objects. Each relay has a persistent ML-DSA identity. Federated deployments can
+use signed, quorum-verified namespace snapshots to map unique Noctweb suffixes
+to authenticated relay endpoints without making DHT or peer discovery an
+authority.
+
+Standard relays also advertise four provisional app-neutral modules for
+low-latency applications: `nw.realtime-route@1`, `nw.shared-log@1`,
+`nw.ephemeral-presence@1`, and `nw.media-blobs@1`. They accept only
+capability-authorized opaque payloads, use no configured temporal bucketing,
+and have module-specific retention and size bounds. `nw.media-blobs@1` is
+distinct from the legacy `nw.blobs@1` attachment surface. See the
+[collaboration module specification](NoctweaveDocumentation/relay_collaboration_modules_v1.md).
+
+Operators may separately enable the experimental, default-off
+`nw.pairing-lobby@1` module. Two clients on that relay can compare a short
+badge, request contact, approve, and transfer the ordinary one-use pairing link
+inside a fresh PQ-encrypted disposable route. Listings contain no persona or
+relationship identity and expire within two minutes. See the
+[same-relay pairing specification](NoctweaveDocumentation/pairing_lobby_v1.md).
+
+Host-capable relays may additionally enable `nw.noctweb-data@1`, a bounded
+origin-scoped document service for stateful Noctweb sites. It supports public
+catalogs and signed per-site accounts for carts, profiles, and orders without
+exposing arbitrary SQL, server-side code, relay credentials, or global user
+identities to page JavaScript. See the
+[Noctweb data service specification](NoctweaveDocumentation/noctweb_data_service_v1.md).
+
+There are no hosted accounts, developer-operated relays, or required central
+notification services. You choose where every component runs.
+
+The supported public integration surface is `NoctweaveCore` (including
+`NoctweaveCLI`), `NoctweaveRelayServer`, the standalone
+[NoctweaveJS](https://github.com/luizwidmer/NoctweaveJS) repository, and the
+published protocol/API documentation. The native Noctweave client and macOS GUI
+relay are separate applications and are not integration dependencies.
+
+This revision establishes the clean protocol origin for 1.0. It does not
+preserve pre-release identities, storage schemas, relay requests, or migration
+adapters.
+
+A persona is only a local UI container. Every pairwise relationship creates a
+fresh unlinkable ML-DSA/ML-KEM authority, one singular relationship endpoint,
+renewable prekeys, and private opaque routes. Pairing can use a short-lived
+relay rendezvous or carry the same authenticated transcript directly by QR or
+password-protected files. Relays see capability-authorized opaque packets,
+ordered route positions, and bounded retention—not accounts, global user IDs,
+contact graphs, or plaintext.
+
+When explicitly enabled by an operator, same-relay discovery can remove the
+manual invitation handoff. It publishes only fresh session keys and disposable
+request capabilities, requires explicit approval, and then feeds the unchanged
+one-use rendezvous flow. It does not publish persona labels or create relay
+accounts.
+
+The architecture also includes immutable typed events, exact-ciphertext retry
+intents, non-destructive cursor synchronization, make-before-break route sets,
+selective relationship-only continuity, experimental one-to-one call framing,
+explicit group roles and policy, and a strict modular relay envelope. There is
+deliberately no device/installation
+registry, recovery authority, shared self-sync identity, or portable live-key
+history model. See the
+[normative 1.0 architecture](NoctweaveDocumentation/noctweave_architecture_revision_v2.md).
+The implementation and verification history is summarized in the
+[architecture revision report](NoctweaveDocumentation/architecture_revision_status_report_2026-07-18.md).
+
+<a id="optional-electrobun-launchers"></a>
+
+## Desktop launchers
 
 Noctweave includes source-built [Electrobun](https://electrobun.dev/) launchers.
 Electrobun uses the operating system WebView instead of bundling Chromium.
@@ -306,16 +320,19 @@ bun install --frozen-lockfile
 bun run desktop:dev
 ```
 
-These public JavaScript launchers are convenience wrappers for local use and
-evaluation, not the proprietary native applications. No official prebuilt
-desktop binaries are published yet. The macOS launcher supplies the
-rollback-protected aggregate and per-relationship state authority required for
-durable messaging. Browser-only use is explicitly labeled as rollbackable;
-unsupported desktop hosts fail closed until they implement the same anchored
-boundary. See the [NoctweaveJS guide](https://github.com/luizwidmer/NoctweaveJS#readme) for its exact
-Keychain, journal, metadata, and full-host-rollback limitations.
+These source-built launchers are separate from the native SwiftUI apps.
+The JavaScript desktop client uses macOS Keychain, Linux Secret Service, or
+Windows Credential Manager for its host state anchors. An unavailable platform
+backend keeps persona creation disabled. Browser-only storage remains
+explicitly rollbackable.
 
-## What Is Included
+See the [NoctweaveJS guide](https://github.com/luizwidmer/NoctweaveJS#readme)
+for build availability, the durable journal, hardware-key requirements, and
+metadata and full-host-rollback limitations.
+
+<a id="what-is-included"></a>
+
+## Project structure
 
 ![Noctweave architecture](docs/assets/NoctweaveArchitecture.svg)
 
@@ -335,7 +352,9 @@ Keychain, journal, metadata, and full-host-rollback limitations.
 
 ![Noctweave message lifecycle](docs/assets/NoctweaveMessageFlow.svg)
 
-## Foundations And Dependencies
+<a id="foundations-and-dependencies"></a>
+
+## Dependencies
 
 Noctweave builds on established open-source components rather than maintaining
 custom cryptographic implementations or shipping a browser runtime:
@@ -356,7 +375,9 @@ custom cryptographic implementations or shipping a browser runtime:
 Exact versions, hashes, and supply-chain requirements are recorded in the
 [dependency and SBOM policy](NoctweaveDocumentation/dependency_sbom_and_release_policy.md).
 
-## Security Status
+<a id="security-status"></a>
+
+## Security and privacy
 
 Noctweave defines a normative 1.0 candidate. Implemented core modules remain
 provisional; group and one-to-one call profiles remain experimental; the
@@ -378,7 +399,13 @@ Review the [security requirements](NoctweaveDocumentation/security_requirements.
 [architecture revision report](NoctweaveDocumentation/architecture_revision_status_report_2026-07-18.md), and
 [roadmap](NoctweaveDocumentation/noctweave_roadmap.md) before production use.
 
-## Build And Test
+The September 2026 [application audit](NoctweaveDocumentation/app_security_audit_2026-09-21.md)
+records a separate, scoped review of client and operator applications,
+including fixes, executed attack tests, and coverage limits.
+
+<a id="build-and-test"></a>
+
+## Development
 
 ```sh
 swift build --package-path NoctweaveCore
@@ -444,6 +471,7 @@ Technical detail lives in focused documents:
 - [Whitepaper](NoctweaveDocumentation/noctweave_whitepaper.md)
 - [Visual identity](NoctweaveDocumentation/visual_identity.md)
 - [Application design system](NoctweaveDocumentation/visual_design_system.md)
+- [README style guide and templates](NoctweaveDocumentation/readme_style_guide.md)
 
 ## Contributing
 
@@ -460,6 +488,7 @@ Noctweave is a multi-license repository. The nearest license file governs:
 | Path | License |
 | --- | --- |
 | `NoctweaveCore/`, `NoctweaveRelayServer/` | `AGPL-3.0-or-later` |
+| `NoctweaveSecurityKeys/` | `AGPL-3.0-or-later`; vendored SDK notices apply |
 | `NoctweaveCore/COMMERCIAL-LICENSE.md` | Optional commercial terms for NoctweaveCore |
 | `NoctweaveDocumentation/`, `docs/assets/` | `CC-BY-SA-4.0` |
 

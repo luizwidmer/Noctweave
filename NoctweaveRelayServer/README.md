@@ -1,350 +1,53 @@
 <p align="center">
-  <img src="../docs/assets/NoctweaveRelayIcon.svg" alt="Noctweave Relay" width="160">
+  <img src="../docs/assets/NoctweaveRelayIcon.svg" alt="Noctweave relay icon" width="112">
 </p>
 
-# Noctweave Relay Server
+<a id="noctweave-relay-server"></a>
 
-Linux/Docker ciphertext relay for the clean Noctweave 1.0 protocol. It has no
-global identity service, identity directory, global inbox, endpoint registry,
-plaintext message API, or legacy request profile.
+<h1 align="center">Noctweave Relay Server</h1>
 
-## Protocol surface
+<p align="center"><strong>Ciphertext storage and routing for infrastructure you operate.</strong></p>
 
-All raw TCP, HTTP, WebSocket, and federation traffic uses the same exact relay
-envelope:
+<p align="center">
+  <a href="#overview">Overview</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#features">Features</a> ·
+  <a href="#security-and-privacy">Security</a> ·
+  <a href="#documentation">Documentation</a>
+</p>
 
-```text
-requestID, module, version, method, body, authToken
-```
+## Overview
 
-Responses repeat the complete operation tuple and contain exactly one success
-or error body. Missing/unknown fields, unsupported tuples, mismatched bodies,
-and uncorrelated responses fail closed.
+Run Noctweave's relay as a Linux service, Docker container, or local Swift
+executable. One protocol envelope serves messaging, optional collaboration
+modules, federation, and Noctweb hosting. Operators configure transport and
+retention; clients retain message keys and application authority.
 
-Implemented modules:
+| Detail | At a glance |
+| --- | --- |
+| Platform | Linux · Docker · local macOS development |
+| Built with | Swift · SQLite · liboqs |
+| License | [AGPL-3.0-or-later](LICENSE) |
 
-| Module | Version | Methods |
-| --- | ---: | --- |
-| `nw.core` | 2 | `health`, `info` |
-| `nw.opaque-route` | 2 | `create`, `renew`, `teardown`, `append`, `sync`, `commit` |
-| `nw.rendezvous-transport` | 2 | `register`, `append`, `sync`, `delete` |
-| `nw.blobs` | 1 | `upload`, `fetch` |
-| `nw.realtime-route` | 1 | `create`, `append`, `subscribe`, `sync`, `unsubscribe` |
-| `nw.shared-log` | 1 | `create`, `append`, `sync` |
-| `nw.ephemeral-presence` | 1 | `acquire`, `renew-lease`, `release`, `list` |
-| `nw.media-blobs` | 1 | `create`, `upload`, `fetch`, `release` |
-| `nw.pairing-lobby` | 1 | `acquire`, `release`, `list` (experimental; default off) |
-| `nw.ice-service` | 1 | `acquire` |
-| `nw.federation` | 1 | `register`, `list`, `namespace`, `claim`, `rotate`, `release` |
-| `nw.federation-forward` | 1 | `forward`, `deliver`, `get`, `resolve` |
-| `nw.open-discovery` | 1 | `publish-dht`, `list-dht` (experimental; open discovery only) |
-| `nw.net-passthrough` | 1 | `forward` |
-| `nw.net-host` | 1 | `put`, `bind`, `get`, `resolve`, `has`, `release` |
-| `nw.noctweb-data` | 1 | `create`, `register`, `put`, `get`, `list`, `delete` |
+> **Status:** Noctweave 1.0 candidate. Enable optional modules explicitly and review their trust boundaries before deployment.
 
-Every process selects one primary current role with `--relay-kind standard`,
-`--relay-kind passthrough`, or `--relay-kind host`. A standard relay may also
-advertise `nw.net-host@1` with `--net-host-enabled true`; this is capability
-co-location, not a fourth topology role. `info` advertises the exact enabled
-surface. Legacy federation-era kind strings remain decode-compatible but are
-rejected for new server startup.
+<a id="docker"></a>
 
-The four app-neutral collaboration modules above are standard-relay
-capabilities and require confidential transport; they are not advertised by
-passthrough or host roles. See
-[`relay_collaboration_modules_v1.md`](../NoctweaveDocumentation/relay_collaboration_modules_v1.md)
-for exact request fields, limits, persistence behavior, capability handling,
-and the distinction between `nw.blobs@1` and `nw.media-blobs@1`.
+## Quick start
 
-The pairing lobby is a separate standard-relay discovery module. It requires
-realtime routes and confidential transport and is never enabled implicitly.
-See [`pairing_lobby_v1.md`](../NoctweaveDocumentation/pairing_lobby_v1.md).
-
-## Build and test
+Run commands from the **Noctweave repository root**. This Docker example
+keeps published ports on host loopback. Open `http://127.0.0.1:9090/admin/`
+with the generated token once the container starts. Configure TLS and public
+exposure deliberately before accepting remote clients.
 
 ```sh
-swift build --package-path NoctweaveRelayServer
-swift test --package-path NoctweaveRelayServer
-```
+export NOCTWEAVE_ADMIN_TOKEN="$(openssl rand -hex 32)"
 
-Release build:
-
-```sh
-swift build -c release --package-path NoctweaveRelayServer
-```
-
-## Run
-
-```sh
-NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
-  --host 0.0.0.0 \
-  --port 9339 \
-  --http-port 9340 \
-  --data-dir /tmp/noctweave-relay
-```
-
-Use `--help` for the authoritative option list without opening storage or
-binding a listener.
-
-Use `--memory-only` only for disposable development. Normal operation stores
-route lifecycle, ordered packets/cursors, rendezvous frames, encrypted blob
-metadata, federation records, and enabled Noctweb site-data snapshots in
-`relay_store.sqlite`.
-
-Host-capable relays additionally store exact Noctweave Net object bytes under
-`/data/net-host`, a bounded metadata index, and a stable Ed25519 receipt key.
-The relay's persistent ML-DSA-65 identity is stored as
-`/data/relay_identity_v1.json` with owner-only permissions. Namespace records,
-including irreversible suffix tombstones, are stored transactionally in
-SQLite. Back up the data directory as one security boundary.
-
-## Noctweave Net relay roles
-
-Standard is the default and retains the existing Noctweave messaging surface.
-
-A passthrough relay requires authentication and at least one explicit public
-HTTPS destination:
-
-```sh
-export NOCTWEAVE_RELAY_PASSWORD="$(openssl rand -hex 32)"
-
-NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
-  --relay-kind passthrough \
-  --passthrough-allow-endpoint https://relay.example \
-  --http-port 9340 \
-  --memory-only
-```
-
-`nw.net-passthrough@1 forward` accepts one bounded opaque request and returns
-one bounded opaque response. It does not discover destinations, follow
-redirects, retain bodies, create recursive routes, or claim anonymity.
-
-A host relay stores SHA-256-addressed object bytes:
-
-```sh
-export NOCTWEAVE_RELAY_PASSWORD="$(openssl rand -hex 32)"
-
-NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
-  --host 127.0.0.1 \
-  --relay-kind host \
-  --http-port 9340 \
-  --data-dir /data
-```
-
-The same host service can be co-located on a standard relay. This example is
-solo; manual, curated, and open modes are also supported when a suffix and the
-corresponding federation policy are configured:
-
-```sh
-export NOCTWEAVE_RELAY_PASSWORD="$(openssl rand -hex 32)"
-
-NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
-  --host 127.0.0.1 \
-  --relay-kind standard \
-  --net-host-enabled true \
-  --http-port 9340 \
-  --data-dir /data
-```
-
-`nw.net-host@1` verifies object IDs before `put`, returns exact bytes and an
-Ed25519-signed hosting receipt from `get`, exposes bounded `has`, and requires
-an object-scoped 32-byte capability for `release`. Host receipts attest to
-storage acknowledgement, not publisher identity, consensus finality, content
-safety, or future availability. `get` and `has` are public by object ID so
-clients can retrieve a hosted site; `put` and `release` require the relay
-password, and private object bytes must already be encrypted by the client.
-
-Passthrough and every host-capable relay require
-`NOCTWEAVE_RELAY_PASSWORD` (or `--access-password`). Passthrough remains a solo,
-bounded forwarding role. Host and host-capable standard relays may join
-`manual`, `curated`, or `open` federation so their Noctweb objects can be
-resolved and fetched through authenticated federation routes.
-
-Those examples bind the browser/HTTP surface to loopback. For a public
-Publisher, terminate HTTPS at a reverse proxy on the same host, keep the plain
-backend listener unreachable from clients, and add both:
-
-```sh
---advertised-endpoint https://relay.example \
---trusted-reverse-proxy-tls true
-```
-
-Remote plaintext requests cannot load the Publisher or perform
-capability/auth-token-bearing bridge operations.
-
-### Noctweb Publisher
-
-When hosting is enabled and `--http-port` is set, the bridge serves the
-same-origin Page Publisher at `/noctweb/` only to direct loopback clients or
-through an operator-declared trusted TLS reverse proxy. This secure-context
-boundary is required because browser publisher keys use WebCrypto and write
-requests carry the relay password. The Publisher provides a focused
-Design/Code/Preview workflow, local autosave, sandboxed HTML and CSS
-preview, browser-held publication signing identity, and direct
-`nw.net-host@1` upload/release operations. The relay password is entered only
-for a write request and is not embedded in or persisted by the app.
-Every hosted revision keeps its independently encrypted release capability in
-bounded local history, so **Unhost all copies** can release older revisions as
-well as the current one.
-
-### Noctweb site data
-
-An operator can opt a host-capable relay into bounded stateful-site storage:
-
-```sh
-NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
-  --host 127.0.0.1 \
-  --relay-kind standard \
-  --net-host-enabled true \
-  --noctweb-data-enabled true \
-  --noctweb-data-database-creation-enabled true \
-  --publisher-password 'operator-managed-secret' \
-  --noctweb-relay-suffix .atelier \
-  --http-port 9340 \
-  --data-dir /data
-```
-
-The equivalent feature flags are `NOCTWEAVE_NOCTWEB_DATA_ENABLED=true` and
-`NOCTWEAVE_NOCTWEB_DATA_DATABASE_CREATION_ENABLED=true`. Database creation is
-separately default-off and fails closed without `NOCTWEAVE_PUBLISHER_PASSWORD`
-or the access-password fallback. Account registration is password-admitted as
-well. Disable the creation flag after provisioning if further databases are
-not expected. Gate changes and password rotations apply to every subsequent
-request, including traffic on already-open raw TCP connections. The module is
-disabled unless Noctweb hosting is enabled. Remote
-operations require TLS, HTTPS/WSS, or an explicitly trusted TLS-terminating
-reverse proxy; literal loopback remains available for local development.
-
-`nw.noctweb-data@1` provides finite document collections, cursor listing,
-compare-and-swap revisions, and idempotent mutation retries. A publisher's
-Ed25519 site authority creates the schema. Visitors use fresh per-origin
-ML-DSA-65 account authorities; pages never receive those private keys, relay
-passwords, or unrestricted database access. All record payloads must be
-canonical AES-256-GCM ciphertext, and every returned revision retains
-client-verifiable author provenance. The relay still observes routing metadata,
-sizes, timing, pseudonyms, and revisions. See the
-[full service and threat model](../NoctweaveDocumentation/noctweb_data_service_v1.md).
-
-Set `--noctweb-relay-suffix .example` (or
-`NOCTWEAVE_NOCTWEB_RELAY_SUFFIX`) to choose the human-facing relay namespace
-suffix. Every non-solo standard or host relay must set one. A solo host may
-omit it and use a local `r-…` Publisher fallback derived from its stable hosting
-receipt public key; that fallback is not federation namespace evidence.
-
-The publisher supports ordinary HTML, CSS, and JavaScript, including
-browser-ready compiled React bundles. The relay never builds or executes a
-site. A visitor retrieves exact hosted bytes, verifies publisher integrity,
-and runs active content only in a sandbox without the relay origin.
-The web editor's preview disables JavaScript because ordinary browser iframes
-cannot portably deny every network API to arbitrary scripts. Hosting preserves
-the JavaScript unchanged; use Noctweb Browser or Noctweb Lab to preview it with
-the native renderer's network isolation. Preview styles load from local data URLs
-without relaxing the editor's script policy or granting the frame its origin.
-
-The UI reports a revision as **Hosted**, not publisher-finalized. Publication
-content and head continuity remain signed by the publisher. In a federation,
-the displayed `noct://` address is resolved only after the Browser verifies the
-configured threshold of byte-identical, relay-signed namespace snapshots.
-
-## Authenticated federation and naming
-
-Each persistent relay advertises a signed ML-DSA identity claim. In a manual
-federation, a host-capable deployment can be started with:
-
-```sh
-NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
-  --host 0.0.0.0 \
-  --http-port 9340 \
-  --relay-kind standard \
-  --net-host-enabled true \
-  --noctweb-relay-suffix .atelier \
-  --federation-mode manual \
-  --federation-name private-mesh \
-  --federation-allow https://relay-b.example \
-  --advertised-endpoint https://relay-a.example \
-  --trusted-reverse-proxy-tls true \
-  --data-dir /data
-```
-
-Every peer must use the same mode and federation name. Manual peers are
-operator-selected and can be updated at runtime. Curated deployments configure
-coordinator endpoints and signing keys. Open deployments may use DHT/PEX to
-discover candidates, but clients still require an explicit namespace signer
-set and threshold.
-
-The namespace module exposes signed `namespace`, `claim`, `rotate`, and
-`release` operations. Accepted mutations are propagated to a bounded peer set.
-Offline operation never releases a suffix. Rotation requires a proof signed by
-both relay keys. Release is an irreversible tombstone.
-
-`nw.federation-forward@1` lets a standard home relay forward an unchanged
-encrypted opaque append to an authenticated destination relay. It also proxies
-Noctweb name resolution and object fetches to the namespace-selected host.
-Client-side relationship, namespace, destination identity, host receipt,
-object digest, and publisher verification remain mandatory.
-
-The operator console shows the persistent relay ID as read-only security state.
-An initial suffix or host-module change can be staged there, but activates only
-after restart because the namespace and host store are constructed at startup.
-Rotation and release of an active suffix still require signed lifecycle
-operations and are not ordinary live form edits.
-
-See
-[`federation_protocol_and_operations.md`](../NoctweaveDocumentation/federation_protocol_and_operations.md)
-for trust modes, quorum behavior, lifecycle rules, and security boundaries.
-
-## Calls through coturn
-
-Noctweave relays can advertise an external [coturn](https://github.com/coturn/coturn)
-service. The relay remains the authenticated control plane: `info` publishes
-canonical STUN/TURN URLs and `nw.ice-service@1 acquire` returns a short-lived
-TURN REST username and credential. coturn carries the actual UDP/TCP media
-traffic. The shared secret is never returned by the operator API or stored in
-`operator-config.json`.
-
-For a complete relay plus coturn deployment:
-
-```sh
-cd NoctweaveRelayServer
-cp .env.coturn.example .env
-openssl rand -hex 32  # copy to NOCTWEAVE_TURN_SHARED_SECRET
-docker compose --env-file .env -f docker-compose.coturn.yml up -d --build
-```
-
-The compose deployment builds the repository's digest-pinned
-`Dockerfile.coturn`, upgrades its runtime BIND packages, and runs coturn as
-`nobody:nogroup`. The relay, optional Caddy L4 proxy, and Reticulum bridge also
-use digest-pinned bases and dedicated non-root users. Re-run a current image,
-secret, and configuration scan whenever any base digest changes.
-
-Set `TURN_DOMAIN` to a public DNS name and `TURN_EXTERNAL_IP` to the public IP
-that reaches this host. Open TCP/UDP 3478 and the configured UDP relay range
-(49160–49200 by default). The relay's HTTP ports are loopback-bound for a local
-TLS reverse proxy. Ordinary HTTP proxying does not carry TURN; expose TURN
-ports directly or use a TURN-aware layer-4 deployment.
-
-For a separately managed coturn instance, configure the relay with:
-
-```sh
-export NOCTWEAVE_ICE_URLS='stun:turn.example.org:3478,turn:turn.example.org:3478?transport=udp,turn:turn.example.org:3478?transport=tcp'
-export NOCTWEAVE_TURN_REALM='noctweave'
-export NOCTWEAVE_TURN_SHARED_SECRET="$(openssl rand -hex 32)"
-```
-
-Use that exact shared secret as coturn's `static-auth-secret` with
-`use-auth-secret`. Credential acquisition is rejected over untrusted plaintext
-transport. HMAC-SHA1 is used only because the TURN REST convention requires
-it; Noctweave identities, sessions, messages, and calls retain their existing
-post-quantum and AEAD profiles.
-
-## Docker
-
-```sh
 docker build --pull --no-cache -t noctweave-relay NoctweaveRelayServer
 
 docker run --rm --name noctweave-relay \
-  -p 9339:9339 \
-  -p 9340:9340 \
+  -p 127.0.0.1:9339:9339 \
+  -p 127.0.0.1:9340:9340 \
   -p 127.0.0.1:9090:9090 \
   -e NOCTWEAVE_ADMIN_TOKEN \
   -v noctweave-relay-data:/data \
@@ -397,264 +100,24 @@ safe only while the host publishes the HTTP port to `127.0.0.1`; network
 exposure forces the assertion off. Do not set it manually for a publicly bound
 container port.
 
-## Transports
+## Features
 
-- raw TCP: one newline-delimited request and response per connection;
-- HTTP: `POST /relay`;
-- WebSocket: connect to `/relay`, then exchange exact JSON frames.
-- optional Reticulum: a separate client/server sidecar carries the exact same
-  request and response bytes over an authenticated Reticulum Link.
+| Capability | Purpose |
+| --- | --- |
+| Standard relay | Opaque routes, one-use rendezvous, and encrypted attachments. |
+| Passthrough relay | One bounded forwarding hop to an allowed public HTTPS endpoint. |
+| Host relay | Content-addressed Noctweb objects and signed hosting evidence. |
+| Collaboration modules | Capability-authorized realtime routes, logs, presence, and media blobs. |
+| Federation | Authenticated operator discovery and namespace policy in an explicit trust mode. |
+| Operator tools | An authenticated web console and optional desktop Docker launcher. |
 
-Reticulum support is intentionally outside the main relay process and image.
-The server bridge forwards only to one fixed HTTP(S) `/relay` endpoint; the
-client bridge exposes only a loopback HTTP endpoint, so existing Swift, CLI,
-and JavaScript clients need no wire-format changes. See the complete
-[`ReticulumBridge` guide](ReticulumBridge/README.md) and its separate upstream
-license notice. Reticulum's X25519/Ed25519 Link identity is a pinned transport
-address, not the relay's signed ML-DSA identity and not a post-quantum
-substitute.
+A standard relay can also advertise host capability; this does not introduce
+a fourth topology role. Discovery reports the exact enabled surface.
+[See the full module table](OPERATOR_REFERENCE.md#protocol-surface).
 
-There is no separate GET health or information route. Health and information
-are `nw.core@2` requests through the normal relay transport.
+<a id="security-and-operations"></a>
 
-HTTP relay requests require exactly one `Content-Type: application/json`
-header. Browser-originated HTTP and WebSocket requests must be same-origin;
-null, malformed, duplicate, cross-site, and loopback DNS-rebinding origins are
-rejected. Non-browser clients may omit `Origin`. The optional Reticulum client
-gateway is machine-only and rejects every browser `Origin` plus cross-site
-Fetch Metadata before forwarding exact bytes.
-
-Opaque-route and rendezvous capability operations require a confidential
-transport over both HTTP and WebSocket. Literal loopback, the launcher's
-explicit loopback-only container bridge, or an explicitly trusted TLS reverse
-proxy satisfy that gate. When nginx, Caddy, or another proxy owns HTTPS/WSS,
-start the relay with:
-
-```sh
---advertised-endpoint https://relay.example \
---trusted-reverse-proxy-tls true
-```
-
-This flag trusts the deployment boundary, not the mere presence of an
-`X-Forwarded-*` header. The plain backend listener must therefore be firewalled
-or bound so clients cannot bypass the trusted proxy. In this mode the relay may
-use one canonical, non-conflicting `X-Forwarded-For` or `CF-Connecting-IP`
-address for rate-limit attribution; duplicate, malformed, or conflicting
-values fall back to the proxy address. Leave the flag off for an exposed
-plaintext listener; forwarded headers are then ignored and capability-bearing
-operations fail closed.
-
-An open-federation DHT gateway bearer token is sent only to HTTPS endpoints or
-literal loopback HTTP endpoints. The native overlay likewise follows only
-public HTTPS HTTP-relay seeds and peer hints; private, special-use, plaintext,
-and unsupported endpoints fail closed.
-
-Example:
-
-```sh
-curl -sS http://127.0.0.1:9340/relay \
-  -H 'content-type: application/json' \
-  -d '{"requestID":"00000000-0000-0000-0000-000000000001","module":"nw.core","version":2,"method":"health","body":{},"authToken":null}'
-```
-
-## Opaque routes
-
-Routes are random capability-authorized ciphertext logs. Append, read,
-renewal, and teardown use distinct secrets. Sync is ordered and
-non-destructive; commit advances a route-local cursor after client processing.
-Expiry, quota, request bounds, monotonic revisions, and idempotency keep relay
-state bounded.
-
-The relay never receives a persona, contact name, relationship authority,
-direct ratchet, content relation, or plaintext. It can still observe source
-network metadata, request timing, route capability reuse, and ciphertext size.
-
-## Rendezvous transport
-
-Enable one-use contact transport explicitly:
-
-```sh
---rendezvous-transport true
-```
-
-The transport stores bounded opaque frames under expiring random capabilities.
-It does not learn the relationship introduction carried inside the encrypted
-rendezvous. It is only for pairwise contact establishment; it does not perform
-endpoint enrollment, group invitation, route rollover, or history transfer.
-
-## Same-relay pairing discovery
-
-Enable the optional lobby only when users should be able to discover other
-currently visible clients on this relay:
-
-```sh
---pairing-lobby true \
---realtime-routes true \
---rendezvous-transport true
-```
-
-The equivalent environment variable is
-`NOCTWEAVE_PAIRING_LOBBY=true`. The default is `false`. The module is removed
-from relay info and its operations return `unavailable` when disabled.
-
-Listings contain fresh session-only public keys and disposable route
-capabilities, not persona names or relationship material. They expire within
-120 seconds, are process-local, and are publicly enumerable to clients allowed
-to use the relay. Use relay access authentication and deployment rate limits
-on untrusted networks. Exact bounds and metadata exposure are documented in
-the [pairing lobby specification](../NoctweaveDocumentation/pairing_lobby_v1.md).
-
-## Encrypted blobs
-
-`nw.blobs` stores only encrypted attachment chunks. Disable it with:
-
-```sh
---attachments-enabled false
-```
-
-Inline SQLite is the default. Optional IPFS offload uses
-`--attachment-storage ipfs`, `--ipfs-api-endpoint`, and an optional
-`--ipfs-gateway-endpoint`. The relay verifies fetched byte count and digest.
-IPFS changes storage placement, not anonymity or cryptographic deletion.
-
-Every `nw.blobs@1 upload` body contains an attachment UUID, chunk index,
-encrypted payload, explicit nullable TTL, and a required base64-encoded
-32-byte `idempotencyKey`. The coordinate `(attachmentId, chunkIndex)` is
-immutable while retained:
-
-- the same idempotency key and canonical request body returns the original
-  chunk without extending its TTL, rewriting SQLite, or repeating an IPFS put;
-- a different key, encrypted payload, or requested TTL returns a non-retryable
-  `conflict`;
-- replacing content requires a fresh attachment UUID.
-
-The relay persists the key and canonical body digest only to enforce this
-retry boundary. It never receives attachment plaintext or its content key.
-
-## App-neutral realtime modules
-
-`nw.realtime-route@1` and `nw.shared-log@1` store ordered opaque records;
-realtime routes are short-lived and intentionally bypass the configured
-temporal-bucket schedule. `nw.ephemeral-presence@1` stores only expiring
-process-local leases and is never included in the durable SQLite snapshot.
-`nw.media-blobs@1` is the newer bounded encrypted-chunk lifecycle for
-application media and is persisted with the relay snapshot; it is not an
-alias for the legacy `nw.blobs@1` attachment API. All payloads must already be
-encrypted by the application and all capability values must remain secret.
-
-The modules are enabled only on a standard relay, with attachments enabled for
-media blobs. Their precise bounds and operation fields are maintained in the
-[module specification](../NoctweaveDocumentation/relay_collaboration_modules_v1.md).
-
-Each module can be independently enabled or disabled from the operator console,
-or at startup with:
-
-```sh
-NOCTWEAVE_REALTIME_ROUTES=true
-NOCTWEAVE_SHARED_LOGS=true
-NOCTWEAVE_EPHEMERAL_PRESENCE=true
-NOCTWEAVE_MEDIA_BLOBS=true
-NOCTWEAVE_PAIRING_LOBBY=false
-```
-
-The same settings are available as `--realtime-routes`, `--shared-logs`,
-`--ephemeral-presence`, and `--media-blobs`. A disabled module is removed from
-the signed capability manifest and its request paths return `unavailable`; the
-switch is not presentation-only.
-
-Optional decentralized wake policy is also shared with the native relay:
-
-```sh
-NOCTWEAVE_WAKE_ENABLED=true
-NOCTWEAVE_WAKE_MODE=longPoll
-NOCTWEAVE_WAKE_MIN_POLL_SECONDS=60
-NOCTWEAVE_WAKE_MAX_POLL_SECONDS=300
-NOCTWEAVE_WAKE_JITTER_PERMILLE=250
-NOCTWEAVE_WAKE_LONG_POLL_TIMEOUT_SECONDS=60
-```
-
-Wake advertises bounded client polling guidance over opaque routes. It does not
-provide centralized push delivery or guarantee background execution.
-Command-line deployments can use `--wake-mode`, `--wake-min-poll-seconds`,
-`--wake-max-poll-seconds`, `--wake-jitter-permille`, and
-`--wake-long-poll-timeout-seconds` for the same policy.
-
-## Federation
-
-Federation is operator-plane relay discovery and coordination. Clients obtain
-relay endpoints from relationship-encrypted peer route sets and normally
-submit ciphertext directly to the selected opaque route. As a bounded
-alternative, a standard home relay may receive the unchanged encrypted opaque
-append and perform exactly one authenticated `nw.federation-forward@1` hop; it
-never receives relationship keys or message plaintext.
-
-Modes are explicit and must not be mixed:
-
-- `solo`: no federation discovery or coordination;
-- `manual`: operator-maintained relay descriptors and allow list;
-- `curated`: coordinator policy, quorum, freshness, and optional signed
-  directory requirements;
-- `open`: bounded signed relay discovery records and optional peer hints.
-
-Configure `--advertised-endpoint` with an explicit public scheme and keep
-private/loopback federation destinations rejected unless running a deliberately
-isolated network. `NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN` authorizes only
-relay registration with a curated coordinator; it is not a message-routing or
-client credential.
-
-In `manual` mode, every allow-listed endpoint is a standard relay peer rather
-than a coordinator. The relay probes each peer's validated `info` response,
-requires matching manual mode and federation name when configured, and exposes
-only healthy peers through `nw.federation/list`. Adding or removing manual
-peers through the native app or operator console updates the live directory;
-the relay process does not need to restart.
-
-See
-[`federation_protocol_and_operations.md`](../NoctweaveDocumentation/federation_protocol_and_operations.md).
-
-## Operator console
-
-Set `NOCTWEAVE_ADMIN_TOKEN` (at least 32 random bytes recommended) and bind the
-admin listener to loopback/private management networking. The console may
-change non-secret operator policy; it cannot return relay passwords, admin
-tokens, coordinator registration tokens, or signing private keys. Runtime
-policy persists in `operator-config.json` with restrictive permissions.
-Listener addresses, database mode, request ceilings, and secret values remain
-process-owned startup configuration. Editable policy is validated and applied
-without silently changing those boundaries.
-
-The console follows the same operator grouping as the native relay: Relay
-Profile, Delivery, NoctCord, Noctweb, Storage, Federation, and Privacy.
-Presentation, timing, attachment retention, collaboration modules, wake policy,
-and federation peer policy apply live to new requests. Attachment backend,
-Noctweb host enablement, and suffix changes are explicitly marked
-restart-controlled. When the site data service is already active, its separate
-database-creation gate applies live to the next request; this permits immediate
-shutdown without restarting or preserving old TCP authority. Enabling Noctweb
-hosting at restart requires a separately supplied
-`NOCTWEAVE_PUBLISHER_PASSWORD`; secrets are never accepted by or returned to
-the browser console.
-
-## Optional privacy advertisements
-
-Hidden retrieval, onion packet, mixnet, open-DHT, and wake-related capability
-objects are experimental metadata. Enabling a flag is not a claim of global
-anonymity, traffic-analysis resistance, or deployment independence. Advertise
-only properties the surrounding deployment actually provides.
-
-## Common secrets
-
-Prefer environment variables:
-
-- `NOCTWEAVE_RELAY_PASSWORD`
-- `NOCTWEAVE_ADMIN_TOKEN`
-- `NOCTWEAVE_COORDINATOR_REGISTRATION_TOKEN`
-- `NOCTWEAVE_COORDINATOR_SIGNING_KEY`
-- `NOCTWEAVE_TURN_SHARED_SECRET`
-
-Keep each role separate and rotate it independently.
-
-## Security and operations
+## Security and privacy
 
 - terminate public client and federation-directory traffic with HTTPS/WSS or
   TLS;
@@ -670,3 +133,131 @@ See
 [`relay_ops_hardening_guide.md`](../NoctweaveDocumentation/relay_ops_hardening_guide.md)
 and the exact
 [`OpenAPI schema`](../NoctweaveDocumentation/noctweave_relay_openapi.yaml).
+
+<a id="build-and-test"></a>
+
+## Development
+
+From the repository root:
+
+```sh
+swift build --package-path NoctweaveRelayServer
+swift test --package-path NoctweaveRelayServer
+```
+
+Release build:
+
+```sh
+swift build -c release --package-path NoctweaveRelayServer
+```
+
+<a id="run"></a>
+
+### Run without Docker
+
+```sh
+NoctweaveRelayServer/.build/debug/NoctweaveRelayServer \
+  --host 127.0.0.1 \
+  --port 9339 \
+  --http-port 9340 \
+  --data-dir /tmp/noctweave-relay
+```
+
+Use `--help` for the authoritative option list without opening storage or
+binding a listener.
+
+Use `--memory-only` only for disposable development. Normal operation stores
+route lifecycle, ordered packets/cursors, rendezvous frames, encrypted blob
+metadata, federation records, and enabled Noctweb site-data snapshots in
+`relay_store.sqlite`.
+
+Host-capable relays additionally store exact Noctweave Net object bytes under
+`/data/net-host`, a bounded metadata index, and a stable Ed25519 receipt key.
+The relay's persistent ML-DSA-65 identity is stored as
+`/data/relay_identity_v1.json` with owner-only permissions. Namespace records,
+including irreversible suffix tombstones, are stored transactionally in
+SQLite. Back up the data directory as one security boundary.
+
+## Documentation
+
+| Read | For |
+| --- | --- |
+| [Operator reference](OPERATOR_REFERENCE.md) | Relay modules, flag examples, and workflows |
+| [Hardening guide](../NoctweaveDocumentation/relay_ops_hardening_guide.md) | TLS, secrets, persistence, and deployment |
+| [Reticulum bridge](ReticulumBridge/README.md) | Optional radio, serial, and mesh carrier |
+| [Protocol specification](../NoctweaveDocumentation/noctweave_protocol_spec_v1.md) | Wire and security requirements |
+| [OpenAPI schema](../NoctweaveDocumentation/noctweave_relay_openapi.yaml) | HTTP endpoint definitions |
+
+<details>
+<summary>Module and operations index</summary>
+
+<a id="protocol-surface"></a>
+
+**Protocol surface:** [Read the reference](OPERATOR_REFERENCE.md#protocol-surface).
+
+<a id="noctweave-net-relay-roles"></a>
+
+**Noctweave Net relay roles:** [Read the reference](OPERATOR_REFERENCE.md#noctweave-net-relay-roles).
+
+<a id="authenticated-federation-and-naming"></a>
+
+**Authenticated federation and naming:** [Read the reference](OPERATOR_REFERENCE.md#authenticated-federation-and-naming).
+
+<a id="calls-through-coturn"></a>
+
+**Calls through coturn:** [Read the reference](OPERATOR_REFERENCE.md#calls-through-coturn).
+
+<a id="transports"></a>
+
+**Transports:** [Read the reference](OPERATOR_REFERENCE.md#transports).
+
+<a id="opaque-routes"></a>
+
+**Opaque routes:** [Read the reference](OPERATOR_REFERENCE.md#opaque-routes).
+
+<a id="rendezvous-transport"></a>
+
+**Rendezvous transport:** [Read the reference](OPERATOR_REFERENCE.md#rendezvous-transport).
+
+<a id="same-relay-pairing-discovery"></a>
+
+**Same-relay pairing discovery:** [Read the reference](OPERATOR_REFERENCE.md#same-relay-pairing-discovery).
+
+<a id="encrypted-blobs"></a>
+
+**Encrypted blobs:** [Read the reference](OPERATOR_REFERENCE.md#encrypted-blobs).
+
+<a id="app-neutral-realtime-modules"></a>
+
+**App-neutral realtime modules:** [Read the reference](OPERATOR_REFERENCE.md#app-neutral-realtime-modules).
+
+<a id="federation"></a>
+
+**Federation:** [Read the reference](OPERATOR_REFERENCE.md#federation).
+
+<a id="operator-console"></a>
+
+**Operator console:** [Read the reference](OPERATOR_REFERENCE.md#operator-console).
+
+<a id="optional-privacy-advertisements"></a>
+
+**Optional privacy advertisements:** [Read the reference](OPERATOR_REFERENCE.md#optional-privacy-advertisements).
+
+<a id="common-secrets"></a>
+
+**Common secrets:** [Read the reference](OPERATOR_REFERENCE.md#common-secrets).
+
+<a id="noctweb-publisher"></a>
+
+**Noctweb Publisher:** [Read the reference](OPERATOR_REFERENCE.md#noctweb-publisher).
+
+<a id="noctweb-site-data"></a>
+
+**Noctweb site data:** [Read the reference](OPERATOR_REFERENCE.md#noctweb-site-data).
+
+</details>
+
+## License
+
+The relay is licensed under [AGPL-3.0-or-later](LICENSE). Other components
+and documentation in the parent repository have their own license files.

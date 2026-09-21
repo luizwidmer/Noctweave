@@ -1,35 +1,29 @@
-# Noctweave over Reticulum
+<a id="noctweave-over-reticulum"></a>
+
+<h1 align="center">Noctweave over Reticulum</h1>
+
+<p align="center"><strong>An optional carrier for the same encrypted relay envelopes.</strong></p>
+
+<p align="center">
+  <a href="#overview">Overview</a> ·
+  <a href="#getting-started">Getting started</a> ·
+  <a href="#reference">Reference</a> ·
+  <a href="#related-documentation">Related docs</a>
+</p>
+
+## Overview
 
 This optional sidecar carries the exact Noctweave relay request/response
 envelope over a Reticulum Link. It adds a network carrier; it does not alter
 Noctweave identity, session, ratchet, capability, federation, or storage
 semantics.
 
-## Security boundary
+This page is for relay operators and client integrators. Run the examples
+from the **Noctweave repository root**.
 
-- Noctweave ML-KEM-768, ML-DSA-65, AEAD, route capabilities, and replay rules
-  remain mandatory end to end.
-- Reticulum Link encryption is an additional lower transport layer. Its
-  X25519/Ed25519 identity is not a Noctweave relay identity and is not a
-  post-quantum identity.
-- The bridge never decrypts or logs message payloads. It validates only bounded
-  JSON framing and forwards exact request/response bytes.
-- Server mode accepts only one fixed `/relay` upstream. Loopback is the default;
-  any container/service hostname needs an exact `--allow-upstream-host` entry.
-- Client mode binds only `127.0.0.1`. Do not expose it as a LAN or public proxy.
-- Client mode is machine-only: `POST /relay` requires exactly one
-  `application/json` media type and rejects browser `Origin` plus cross-site
-  Fetch Metadata before any Reticulum request is created.
-- Reticulum can traverse very low-bandwidth links. Large encrypted attachments
-  may be impractical even though Link requests automatically use Resource
-  transfer when they exceed one packet.
+<a id="install"></a>
 
-Reticulum is an optional external dependency with its own non-OSI license. Read
-[`RETICULUM_LICENSE_NOTICE.md`](RETICULUM_LICENSE_NOTICE.md) before installing
-or redistributing it. `requirements.txt` also pins its complete installed
-Python dependency graph for reproducible builds.
-
-## Install
+## Getting started
 
 Use Python 3.9 or newer in an isolated environment:
 
@@ -42,7 +36,7 @@ Reticulum creates its own interface configuration. Follow the upstream
 [interface guide](https://reticulum.network/manual/interfaces.html) to select
 AutoInterface, TCP, RNode/LoRa, serial, I2P, or another carrier.
 
-## Expose a relay
+### Expose a relay
 
 Run the normal Noctweave relay with an HTTP listener on loopback:
 
@@ -66,7 +60,7 @@ The process prints a 32-character Reticulum destination hash. Persist the
 identity file; replacing it changes the destination. This transport identity
 is public routing material, not the relay's signed ML-DSA identity.
 
-## Connect a client
+### Connect a client
 
 On the client host, use the printed destination:
 
@@ -93,7 +87,33 @@ The bridge deliberately does not retry an uncertain request. Existing
 Noctweave exact-request/idempotency handling remains responsible for safe
 retry after transport failure.
 
-## Docker (Linux)
+## Reference
+
+### Security boundary
+
+- Noctweave ML-KEM-768, ML-DSA-65, AEAD, route capabilities, and replay rules
+  remain mandatory end to end.
+- Reticulum Link encryption is an additional lower transport layer. Its
+  X25519/Ed25519 identity is not a Noctweave relay identity and is not a
+  post-quantum identity.
+- The bridge never decrypts or logs message payloads. It validates only bounded
+  JSON framing and forwards exact request/response bytes.
+- Server mode accepts only one fixed `/relay` upstream. Loopback is the default;
+  any container/service hostname needs an exact `--allow-upstream-host` entry.
+- Client mode binds only `127.0.0.1`. Do not expose it as a LAN or public proxy.
+- Client mode is machine-only: `POST /relay` requires exactly one
+  `application/json` media type and rejects browser `Origin` plus cross-site
+  Fetch Metadata before any Reticulum request is created.
+- Reticulum can traverse very low-bandwidth links. Large encrypted attachments
+  may be impractical even though Link requests automatically use Resource
+  transfer when they exceed one packet.
+
+Reticulum is an optional external dependency with its own non-OSI license. Read
+[`RETICULUM_LICENSE_NOTICE.md`](RETICULUM_LICENSE_NOTICE.md) before installing
+or redistributing it. `requirements.txt` also pins its complete installed
+Python dependency graph for reproducible builds.
+
+### Docker (Linux)
 
 Build the optional sidecar independently from the main relay image:
 
@@ -112,7 +132,7 @@ starting point. It uses host networking so Reticulum interfaces and the
 loopback-only relay hop are explicit. Review `/config/config` before exposing a
 TCP, radio, serial, or other Reticulum interface.
 
-## Bounds
+### Bounds
 
 Defaults mirror the normal Noctweave client policy:
 
@@ -128,7 +148,7 @@ Defaults mirror the normal Noctweave client policy:
 Tune downward for radio links. Do not tune a bridge above the adjacent relay
 and client limits.
 
-## Test
+### Test
 
 The unit suite has no Reticulum runtime dependency:
 
@@ -137,3 +157,12 @@ python3 -m unittest discover \
   -s NoctweaveRelayServer/ReticulumBridge/tests \
   -p 'test_*.py'
 ```
+
+## Related documentation
+
+| Read | For |
+| --- | --- |
+| [Relay server](../README.md) | Build and operate the upstream relay |
+| [License notice](RETICULUM_LICENSE_NOTICE.md) | Reticulum dependency and redistribution terms |
+| [Dependency pins](requirements.txt) | Reproducible Python environment |
+| [Compose example](../docker-compose.reticulum.yml) | Linux host networking |
