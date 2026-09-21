@@ -23,6 +23,7 @@ test("relay desktop packages source and keeps Docker and admin boundaries explic
   }
   expect(wrapper).toMatch(/relay-icon\.icns/);
   expect(backend).toMatch(/clipboardWriteText/);
+  expect(backend).toContain('navigationRules: JSON.stringify(["^*", "views://mainview/index.html", "views://mainview/index.html#*"])');
   expect(backend).toContain("publisherPassword");
   expect(html).toContain("Build from source");
   expect(html).toContain("Enable Noctweb hosting and Publisher / Lab");

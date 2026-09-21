@@ -62,6 +62,9 @@ const desktopRPC = BrowserView.defineRPC<RelayDesktopRPC>({
 new BrowserWindow({
   title: "Noctweave Relay",
   url: "views://mainview/index.html",
+  // This view holds Docker and credential RPC. Only the bundled operator UI
+  // may navigate here; external consoles open in the system browser above.
+  navigationRules: JSON.stringify(["^*", "views://mainview/index.html", "views://mainview/index.html#*"]),
   rpc: desktopRPC,
   renderer: "native",
   sandbox: false,

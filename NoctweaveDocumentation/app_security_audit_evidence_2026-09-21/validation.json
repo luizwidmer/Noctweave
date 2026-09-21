@@ -1,0 +1,502 @@
+{
+  "audit_date": "2026-09-21",
+  "exported_at": "2026-09-21T16:39:25.743049+00:00",
+  "scope": [
+    "Native Noctweave Messaging",
+    "Native Noctweave Relay",
+    "NoctweaveJS browser/desktop",
+    "Docker relay launcher",
+    "Operator and publisher UIs",
+    "Noct Cord",
+    "Noctweb Browser/Lab/shared UI"
+  ],
+  "excluded": [
+    "NoctBoard",
+    "Noct Gallery"
+  ],
+  "status": "Confirmed scoped findings fixed; final affected checks pass with documented skips and reruns.",
+  "swift_test_environment": {
+    "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer",
+    "NOCTWEAVE_PACKAGE_PATH": "/Users/luiz/Desktop/Projects/PICCP Project/NoctweaveCore",
+    "CLANG_MODULE_CACHE_PATH": "/Users/luiz/Desktop/Projects/PICCP Project/.build/codex-module-cache"
+  },
+  "repositories": [
+    {
+      "repository": "PICCP Project",
+      "path": "/Users/luiz/Desktop/Projects/PICCP Project",
+      "head": "9a64f019101655d6cb5bc13b50a2e9c4c7394a7b",
+      "branch": "main",
+      "modified_source_files": [
+        {
+          "path": "NoctweaveRelayServer/desktop/bun/index.ts",
+          "sha256": "7e20786e9fc4297da29e95332e39e86c8b696cb383838e817e8afc0c3b73536c"
+        },
+        {
+          "path": "NoctweaveRelayServer/desktop/test/desktop-shell.test.ts",
+          "sha256": "ecf6175ef361dfcbe17827c1621e248628f032d59744d7dfc72fdd60229fc478"
+        }
+      ]
+    },
+    {
+      "repository": "NoctweaveJS",
+      "path": "/Users/luiz/Desktop/Projects/PICCP Project/NoctweaveJS",
+      "head": "1b8ecc6fe054e1844112b5d16f893a11d442f75e",
+      "branch": "main",
+      "modified_source_files": []
+    },
+    {
+      "repository": "Noctweave Messaging Client",
+      "path": "/Users/luiz/Desktop/Projects/PICCP Project/Noctweave Messaging Client",
+      "head": "f3b28db682fa026d613dd8bc077be4534325c315",
+      "branch": "main",
+      "modified_source_files": []
+    },
+    {
+      "repository": "Noctweave Relay",
+      "path": "/Users/luiz/Desktop/Projects/PICCP Project/Noctweave Relay",
+      "head": "27082765a48e0c6ae7ee89b16a15dfa28a24b042",
+      "branch": "main",
+      "modified_source_files": []
+    },
+    {
+      "repository": "NoctCord",
+      "path": "/Users/luiz/Desktop/Projects/NoctCord",
+      "head": "1d14a35cbe29ea41a73f9578920bbb1bd01bb646",
+      "branch": "main",
+      "modified_source_files": [
+        {
+          "path": "Sources/NoctCordCore/NoctCordEvent.swift",
+          "sha256": "2372940cd2265f32578d168667e9b54d727c83bad9bc6838f63da59cf4469b7c"
+        },
+        {
+          "path": "Sources/NoctCordCore/NoctCordProjection.swift",
+          "sha256": "5bfb1e66a296132a953aae7c9a374a9754417d90f915490aaccca4055de63187"
+        },
+        {
+          "path": "Sources/NoctCordUI/NoctCordTransportCoordinator.swift",
+          "sha256": "c8d367a25f9e8c1e11b48f489e79bcd4e5502177160b3df2af713ec0b2da3d36"
+        },
+        {
+          "path": "Tests/NoctCordCoreTests/NoctCordCoreTests.swift",
+          "sha256": "9717d140f86a9a2624e819005a955e02dbaa404787fd3ff36d5fdfce99815a3d"
+        },
+        {
+          "path": "Tests/NoctCordUITests/NoctCordApplicationSecurityTests.swift",
+          "sha256": "e44a250735510a0cc3b9eeab9b8a62d09ca280eafc37027dad1df73bc892d339"
+        },
+        {
+          "path": "Tests/NoctCordUITests/NoctCordTransportIntegrationTests.swift",
+          "sha256": "f389530900d7562a079887a378b78cab1b49c5b9eccd2e74cbf8b156aa9ebab2"
+        },
+        {
+          "path": "docs/roles-channels-and-bots.md",
+          "sha256": "8df55cd419bb7310a7bdb710bd74fe48ab2a735e44d939e60012245b1b99bf08"
+        }
+      ]
+    },
+    {
+      "repository": "noctweave-net",
+      "path": "/Users/luiz/Desktop/Projects/noctweave-net",
+      "head": "dda8e2e72cd539aab3613e1ed6faad8b0217e089",
+      "branch": "main",
+      "modified_source_files": [
+        {
+          "path": "apps/noctweb-lab/Tests/NoctwebLabAppTests/VerifiedWebsiteWebViewTests.swift",
+          "sha256": "c2d15a6c076b318735adee202981db4e0435c174a4bf512085cdbf1a2b7c06c0"
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "name": "Noct Cord final non-transport app suite",
+      "status": "passed",
+      "command": "cd NoctCord; swift test --disable-sandbox --skip-update --skip NoctCordTransportIntegrationTests",
+      "local_log": ".runtime/audit-2026-09-21/logs/cord-final-id-hardened.log",
+      "log_sha256": "aa4e7f261e2d1bf9a8148e842a93ab9e1ebe5164809ae7eb796e8569ce529fab",
+      "summary_excerpts": [
+        "\t Executed 19 tests, with 0 failures (0 unexpected) in 0.047 (0.048) seconds",
+        "\t Executed 2 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds",
+        "\t Executed 5 tests, with 0 failures (0 unexpected) in 0.005 (0.006) seconds",
+        "\t Executed 2 tests, with 0 failures (0 unexpected) in 0.436 (0.436) seconds",
+        "\t Executed 38 tests, with 0 failures (0 unexpected) in 0.028 (0.029) seconds",
+        "\t Executed 2 tests, with 0 failures (0 unexpected) in 0.029 (0.029) seconds",
+        "\t Executed 10 tests, with 0 failures (0 unexpected) in 0.556 (0.557) seconds",
+        "\t Executed 78 tests, with 0 failures (0 unexpected) in 1.103 (1.107) seconds",
+        "\t Executed 78 tests, with 0 failures (0 unexpected) in 1.103 (1.107) seconds"
+      ],
+      "tests": 78,
+      "passed": 78,
+      "failed": 0,
+      "skipped": 0
+    },
+    {
+      "name": "Noct Cord final live malicious member",
+      "status": "passed",
+      "command": "cd NoctCord; swift test --disable-sandbox --skip-update --filter NoctCordTransportIntegrationTests.testInvitationAdmissionSurvivesMaliciousMemberHistoryAndExchangesMessagesBothWays",
+      "local_log": ".runtime/audit-2026-09-21/logs/cord-live-final.log",
+      "log_sha256": "c9171cb7ea44c22bd98298319727c6c89f1256415a446616304d119cd747bc46",
+      "summary_excerpts": [
+        "[NoctCordIntegration] admission-space-created",
+        "[NoctCordIntegration] admission-request-prepared",
+        "[NoctCordIntegration] admission-request-approved",
+        "[NoctCordIntegration] admission-response-accepted",
+        "[NoctCordIntegration] admission-bootstrap-synchronized",
+        "[NoctCordIntegration] admission-owner-message-published",
+        "[NoctCordIntegration] admission-member-synchronized",
+        "[NoctCordIntegration] admission-member-message-published",
+        "[NoctCordIntegration] admission-owner-synchronized",
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 228.327 (228.327) seconds",
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 228.327 (228.327) seconds",
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 228.327 (228.328) seconds"
+      ],
+      "tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "attacks": [
+        "unauthorized administrator-role definition",
+        "forged bootstrap acknowledgement",
+        "maximum safe-integer clock"
+      ],
+      "verified": "All three correctly signed, group-encrypted attack events reach the owner's verified history; legitimate admission and encrypted messages in both directions succeed."
+    },
+    {
+      "name": "Original-source exploit reproduction",
+      "status": "expected_vulnerable_baseline",
+      "command": "swift test --package-path .runtime/audit-2026-09-21/cord-core --disable-sandbox (original Core sources plus malicious regression tests)",
+      "local_log": ".runtime/audit-2026-09-21/logs/cord-core-confirmed-before.log",
+      "log_sha256": "66d4f12fd57d592b7dab5cf415f913f27b5baf41ae28cbb277665e869034c962",
+      "summary_excerpts": [
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:656: error: -[NoctCordCoreTests.NoctCordCoreTests testMemberCannotExhaustCommunityClockWithAuthenticatedEvent] : XCTAssertEqual failed: (\"[]\") is not equal to (\"[9142CC67-88FA-49AC-AA4B-8F6F5041C7DC]\")",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:657: error: -[NoctCordCoreTests.NoctCordCoreTests testMemberCannotExhaustCommunityClockWithAuthenticatedEvent] : XCTAssertFalse failed",
+        "Test Case '-[NoctCordCoreTests.NoctCordCoreTests testMemberCannotExhaustCommunityClockWithAuthenticatedEvent]' failed (0.212 seconds).",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:639: error: -[NoctCordCoreTests.NoctCordCoreTests testReadOnlyMemberCannotEditPreviouslySentMessage] : XCTAssertEqual failed: (\"0\") is not equal to (\"1\")",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:640: error: -[NoctCordCoreTests.NoctCordCoreTests testReadOnlyMemberCannotEditPreviouslySentMessage] : XCTAssertEqual failed: (\"Optional(\"bypass\")\") is not equal to (\"Optional(\"original\")\")",
+        "Test Case '-[NoctCordCoreTests.NoctCordCoreTests testReadOnlyMemberCannotEditPreviouslySentMessage]' failed (0.001 seconds).",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:671: error: -[NoctCordCoreTests.NoctCordCoreTests testRejectedBootstrapDoesNotPartiallyMutateProjection] : XCTAssertNil failed: \"NoctCordChannel(id: 20000000-0000-0000-0000-000000000002, name: \"uncommitted\", isArchived: false, permissionOverrides: [:], messageIDs: [], attachmentIDs: [])\"",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:672: error: -[NoctCordCoreTests.NoctCordCoreTests testRejectedBootstrapDoesNotPartiallyMutateProjection] : XCTAssertFalse failed",
+        "Test Case '-[NoctCordCoreTests.NoctCordCoreTests testRejectedBootstrapDoesNotPartiallyMutateProjection]' failed (0.002 seconds).",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:618: error: -[NoctCordCoreTests.NoctCordCoreTests testRoleManagerCannotGrantExistingLowerRoleWithUnownedPermissions] : XCTAssertEqual failed: (\"0\") is not equal to (\"1\")",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:619: error: -[NoctCordCoreTests.NoctCordCoreTests testRoleManagerCannotGrantExistingLowerRoleWithUnownedPermissions] : XCTAssertFalse failed",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:620: error: -[NoctCordCoreTests.NoctCordCoreTests testRoleManagerCannotGrantExistingLowerRoleWithUnownedPermissions] : XCTAssertTrue failed",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:618: error: -[NoctCordCoreTests.NoctCordCoreTests testRoleManagerCannotGrantExistingLowerRoleWithUnownedPermissions] : XCTAssertEqual failed: (\"0\") is not equal to (\"1\")",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:619: error: -[NoctCordCoreTests.NoctCordCoreTests testRoleManagerCannotGrantExistingLowerRoleWithUnownedPermissions] : XCTAssertFalse failed",
+        "/Users/luiz/Desktop/Projects/PICCP Project/.runtime/audit-2026-09-21/cord-core/Tests/NoctCordCoreTests.swift:620: error: -[NoctCordCoreTests.NoctCordCoreTests testRoleManagerCannotGrantExistingLowerRoleWithUnownedPermissions] : XCTAssertTrue failed",
+        "Test Case '-[NoctCordCoreTests.NoctCordCoreTests testRoleManagerCannotGrantExistingLowerRoleWithUnownedPermissions]' failed (0.002 seconds).",
+        "\t Executed 37 tests, with 12 failures (0 unexpected) in 0.284 (0.287) seconds",
+        "\t Executed 37 tests, with 12 failures (0 unexpected) in 0.284 (0.287) seconds",
+        "\t Executed 37 tests, with 12 failures (0 unexpected) in 0.284 (0.288) seconds"
+      ],
+      "tests": 37,
+      "failing_test_cases": 4,
+      "failing_assertions": 12,
+      "findings": [
+        "APP-01",
+        "APP-02",
+        "APP-03",
+        "APP-05"
+      ],
+      "note": "The corrected, structurally valid clock fixture is used in this log. The earlier cord-core-before.log is superseded."
+    },
+    {
+      "name": "Bootstrap ID reuse reproduction",
+      "status": "expected_intermediate_remediation_failure",
+      "command": "cd NoctCord; swift test --disable-sandbox --skip-update --filter NoctCordApplicationSecurityTests.testBootstrapHistoryDoesNotTrustAnEventReusingANestedAcceptedID",
+      "local_log": ".runtime/audit-2026-09-21/logs/cord-bootstrap-id-before.log",
+      "log_sha256": "30a38493b03d756469e1b9ef5e1cec898abec0bafc45b944b21e82a40c2a0062",
+      "summary_excerpts": [
+        "/Users/luiz/Desktop/Projects/NoctCord/Tests/NoctCordUITests/NoctCordApplicationSecurityTests.swift:56: error: -[NoctCordUITests.NoctCordApplicationSecurityTests testBootstrapHistoryDoesNotTrustAnEventReusingANestedAcceptedID] : XCTAssertEqual failed: (\"[NoctCordCore.NoctCordEvent(version: 1, id: 986625A4-9CFB-46F4-BF7F-BF2FC546DC42, spaceID: 7B01E956-7A62-4C7F-9E2A-E8C1E92E1F53, author: NoctweaveCore.GroupScopedMemberHandleV2(rawValue: \"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\"), logicalCloc",
+        "/Users/luiz/Desktop/Projects/NoctCord/Tests/NoctCordUITests/NoctCordApplicationSecurityTests.swift:57: error: -[NoctCordUITests.NoctCordApplicationSecurityTests testBootstrapHistoryDoesNotTrustAnEventReusingANestedAcceptedID] : XCTAssertEqual failed: (\"[1BF5F582-B895-42B8-952A-EEFC0CC351A3]\") is not equal to (\"[]\")",
+        "Test Case '-[NoctCordUITests.NoctCordApplicationSecurityTests testBootstrapHistoryDoesNotTrustAnEventReusingANestedAcceptedID]' failed (0.183 seconds).",
+        "\t Executed 1 test, with 2 failures (0 unexpected) in 0.183 (0.183) seconds",
+        "\t Executed 1 test, with 2 failures (0 unexpected) in 0.183 (0.183) seconds",
+        "\t Executed 1 test, with 2 failures (0 unexpected) in 0.183 (0.184) seconds"
+      ],
+      "tests": 1,
+      "failing_test_cases": 1,
+      "failing_assertions": 2,
+      "finding": "APP-04",
+      "note": "Exposes an ID-only filter weakness during remediation. Exact accepted-event tracking fixes it; the final 78-test suite includes the passing regression."
+    },
+    {
+      "name": "Native messaging attachment sanitizer",
+      "status": "passed",
+      "command": "bash 'Noctweave Messaging Client/Scripts/run_attachment_sanitizer_tests.sh'",
+      "local_log": ".runtime/audit-2026-09-21/logs/client-sanitizer-permitted.log",
+      "log_sha256": "9bd74cdb6b7b8b372031b59f136f2b24eed2fc80bacf36afe3b5192fc4b5a22d",
+      "summary_excerpts": [
+        "Attachment sanitizer smoke tests passed."
+      ]
+    },
+    {
+      "name": "Native messaging storage and duress",
+      "status": "passed",
+      "command": "bash 'Noctweave Messaging Client/Scripts/run_attachment_storage_tests.sh'",
+      "local_log": ".runtime/audit-2026-09-21/logs/client-storage-permitted.log",
+      "log_sha256": "1d05e2fa9eef4c4271ae356c7e8eafd8441d96068e14151089c9bd65dc45b45d",
+      "summary_excerpts": [
+        "Attachment storage checks passed: scoped round trip, v1/v2 migration, old-key rejection, key erasure, late-writer rejection, cross-store isolation, and file wipe.",
+        "Duress transition checks passed: real Keychain rotation, selective attachment retention, durable new password, old-writer fencing, and restart after interrupted cleanup."
+      ],
+      "verified": "Scoped encrypted storage, migrations, old-key rejection, erasure, late-writer fencing, cross-store isolation; real isolated Keychain rotation and restart after interrupted cleanup."
+    },
+    {
+      "name": "Native messaging unlock presentation",
+      "status": "passed",
+      "command": "bash 'Noctweave Messaging Client/Scripts/run_unlock_presentation_tests.sh'",
+      "local_log": ".runtime/audit-2026-09-21/logs/client-lock-permitted.log",
+      "log_sha256": "acfa73ecdcccd770470ed18d7a4b0ba793f9d739a2f2179c408e0a60068f8dea",
+      "summary_excerpts": [
+        "Passed 19 unlock presentation checks."
+      ],
+      "checks": 19
+    },
+    {
+      "name": "Native relay signed app tests",
+      "status": "passed",
+      "command": "bash scripts/run-native-app-tests.sh relay",
+      "local_log": ".runtime/audit-2026-09-21/logs/native-relay-permitted.log",
+      "log_sha256": "8cc3fcaa444e2efea27b63c29798ce426b33f9b179c9acd71002f2f0beda595e",
+      "summary_excerpts": [
+        "\t Executed 6 tests, with 0 failures (0 unexpected) in 0.392 (0.395) seconds",
+        "\t Executed 2 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds",
+        "\t Executed 2 tests, with 0 failures (0 unexpected) in 0.006 (0.007) seconds",
+        "\t Executed 3 tests, with 0 failures (0 unexpected) in 4.685 (4.685) seconds",
+        "\t Executed 5 tests, with 0 failures (0 unexpected) in 0.003 (0.004) seconds",
+        "\t Executed 18 tests, with 0 failures (0 unexpected) in 5.088 (5.095) seconds",
+        "\t Executed 18 tests, with 0 failures (0 unexpected) in 5.088 (5.096) seconds",
+        "** TEST SUCCEEDED **"
+      ],
+      "tests": 18,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "signing": "Ad hoc unique test bundle; no developer signing identity."
+    },
+    {
+      "name": "NoctweaveJS initial suite",
+      "status": "one_environment_failure_retested",
+      "command": "cd NoctweaveJS; node --test",
+      "local_log": ".runtime/audit-2026-09-21/logs/js-tests.log",
+      "log_sha256": "fc513d8bb2cba20ade923a0e3b364d418d5d16095e372be3dd9bd7128e02a7a6",
+      "summary_excerpts": [
+        "\u2139 tests 242",
+        "\u2139 pass 241",
+        "\u2139 fail 1",
+        "\u2139 skipped 0"
+      ],
+      "tests": 242,
+      "passed": 241,
+      "failed": 1,
+      "note": "Development-server loopback test failed under the tool sandbox; the entire affected file passed in the permitted rerun below."
+    },
+    {
+      "name": "NoctweaveJS browser layout permitted rerun",
+      "status": "passed",
+      "command": "cd NoctweaveJS; node --test test/browser-layout.test.js",
+      "local_log": ".runtime/audit-2026-09-21/logs/js-browser-layout-permitted.log",
+      "log_sha256": "a63dc82cce718e0e266605708dc843358f0158007d87aafde918e5be0f02c077",
+      "summary_excerpts": [
+        "\u2139 tests 3",
+        "\u2139 pass 3",
+        "\u2139 fail 0",
+        "\u2139 skipped 0"
+      ],
+      "tests": 3,
+      "passed": 3,
+      "failed": 0,
+      "overlaps_initial_suite": true
+    },
+    {
+      "name": "NoctweaveJS desktop typecheck",
+      "status": "passed",
+      "command": "cd NoctweaveJS; bun run typecheck:desktop",
+      "local_log": ".runtime/audit-2026-09-21/logs/js-typecheck.log",
+      "log_sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "summary_excerpts": [],
+      "exit_code": 0
+    },
+    {
+      "name": "Docker launcher final tests",
+      "status": "passed",
+      "command": "cd NoctweaveRelayServer; bun test desktop/test",
+      "local_log": ".runtime/audit-2026-09-21/logs/launcher-tests-final.log",
+      "log_sha256": "4334b259c2c638a55be499c460b29c0000a693aa03a9888e714e807225d8900a",
+      "summary_excerpts": [
+        " 12 pass",
+        " 0 fail"
+      ],
+      "tests": 12,
+      "passed": 12,
+      "failed": 0
+    },
+    {
+      "name": "Docker launcher final typecheck",
+      "status": "passed",
+      "command": "cd NoctweaveRelayServer; bun run typecheck:desktop",
+      "local_log": ".runtime/audit-2026-09-21/logs/launcher-typecheck-final.log",
+      "log_sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "summary_excerpts": [],
+      "exit_code": 0
+    },
+    {
+      "name": "Pinned native navigation matcher",
+      "status": "passed",
+      "command": "Compile navigation-rules-probe.cpp against Electrobun v1.18.1 navigation_rules.h and glob_match.h, then execute the probe",
+      "local_log": ".runtime/audit-2026-09-21/logs/navigation-rules-probe.log",
+      "log_sha256": "6e76de6cd7e503023bb1346a8ad6a96f70c292dac6a39ff8a113116ac328910c",
+      "summary_excerpts": [
+        "14 native navigation policy checks passed (2 allowed, 12 blocked)."
+      ],
+      "checks": 14,
+      "allowed": 2,
+      "blocked": 12,
+      "note": "Native matcher probe; no complete remote automatic-navigation exploit was demonstrated."
+    },
+    {
+      "name": "Noctweb Lab",
+      "status": "passed",
+      "command": "cd noctweave-net/apps/noctweb-lab; swift test --disable-sandbox",
+      "local_log": ".runtime/audit-2026-09-21/logs/lab-tests-permitted.log",
+      "log_sha256": "e21a90bd63f8f6ad38b658792fe21913e7c75e90388d33ffb443a8b6282c4f36",
+      "summary_excerpts": [
+        "\t Executed 22 tests, with 0 failures (0 unexpected) in 0.121 (0.124) seconds",
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 0.001 (0.001) seconds",
+        "\t Executed 3 tests, with 2 tests skipped and 0 failures (0 unexpected) in 0.004 (0.005) seconds",
+        "\t Executed 42 tests, with 0 failures (0 unexpected) in 0.140 (0.145) seconds",
+        "\t Executed 3 tests, with 0 failures (0 unexpected) in 0.771 (0.772) seconds",
+        "\t Executed 71 tests, with 2 tests skipped and 0 failures (0 unexpected) in 1.037 (1.047) seconds",
+        "\t Executed 71 tests, with 2 tests skipped and 0 failures (0 unexpected) in 1.037 (1.048) seconds"
+      ],
+      "tests": 71,
+      "passed": 69,
+      "failed": 0,
+      "skipped": 2
+    },
+    {
+      "name": "Noctweb Lab actual WebKit attack probe",
+      "status": "passed",
+      "command": "cd noctweave-net/apps/noctweb-lab; swift test --disable-sandbox --filter VerifiedWebsiteWebViewTests.testProductionModuleBundleExecutesInsideVerifiedRuntime",
+      "local_log": ".runtime/audit-2026-09-21/logs/renderer-attacks.log",
+      "log_sha256": "620f972ad988b78551e5118e71f943152c22ea9b321b465fcc47a7e9ff643810",
+      "summary_excerpts": [
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 0.478 (0.478) seconds",
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 0.478 (0.478) seconds",
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 0.478 (0.480) seconds"
+      ],
+      "tests": 1,
+      "passed": 1,
+      "failed": 0,
+      "overlaps_lab_suite": true,
+      "verified": "Actual production module runtime, local fetch, blocked external fetch, main-frame WebRTC and synchronous fresh-iframe WebRTC constructor attempt."
+    },
+    {
+      "name": "Noctweb Browser",
+      "status": "passed",
+      "command": "cd noctweave-net/apps/noctweb-browser; swift test --disable-sandbox",
+      "local_log": ".runtime/audit-2026-09-21/logs/browser-tests-permitted.log",
+      "log_sha256": "7ac9ccca0508b4cd41f36770e22ddf6f98b9a0081549d8fd3913bfe981a00cf9",
+      "summary_excerpts": [
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 0.004 (0.004) seconds",
+        "\t Executed 13 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.058 (0.059) seconds",
+        "\t Executed 15 tests, with 0 failures (0 unexpected) in 0.011 (0.012) seconds",
+        "\t Executed 29 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.072 (0.075) seconds",
+        "\t Executed 29 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.072 (0.076) seconds"
+      ],
+      "tests": 29,
+      "passed": 28,
+      "failed": 0,
+      "skipped": 1
+    },
+    {
+      "name": "Noctweb shared UI",
+      "status": "passed",
+      "command": "cd noctweave-net/apps/noctweb-ui; swift test --disable-sandbox",
+      "local_log": ".runtime/audit-2026-09-21/logs/web-ui-tests-permitted.log",
+      "log_sha256": "a759c03562fb9ee4d4a3228529e7a830608f2d86a884f7a7641efd58a0068fa8",
+      "summary_excerpts": [
+        "\t Executed 1 test, with 0 failures (0 unexpected) in 0.001 (0.001) seconds",
+        "\t Executed 2 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds",
+        "\t Executed 3 tests, with 0 failures (0 unexpected) in 0.003 (0.004) seconds",
+        "\t Executed 3 tests, with 0 failures (0 unexpected) in 0.003 (0.005) seconds"
+      ],
+      "tests": 3,
+      "passed": 3,
+      "failed": 0
+    },
+    {
+      "name": "Operator console and publisher UI",
+      "status": "passed",
+      "command": "swift test --package-path NoctweaveRelayServer --disable-sandbox --skip-update --filter 'NoctwebPublisherWebUITests|OperatorWebUITests'",
+      "local_log": ".runtime/audit-2026-09-21/logs/operator-publisher-tests.log",
+      "log_sha256": "fdf6eb8584e781edd87825163e837afd6632a12371c3c4be31af0a9af12c0f6c",
+      "summary_excerpts": [
+        "\t Executed 7 tests, with 0 failures (0 unexpected) in 0.037 (0.038) seconds",
+        "\t Executed 20 tests, with 0 failures (0 unexpected) in 0.039 (0.041) seconds",
+        "\t Executed 27 tests, with 0 failures (0 unexpected) in 0.076 (0.078) seconds",
+        "\t Executed 27 tests, with 0 failures (0 unexpected) in 0.076 (0.079) seconds"
+      ],
+      "tests": 27,
+      "passed": 27,
+      "failed": 0
+    }
+  ],
+  "superseded_runs": [
+    {
+      "log": ".runtime/audit-2026-09-21/logs/cord-tests-permitted.log",
+      "sha256": "b4118f272d44cc8e6e21774135451b46bd197bc57942980ff9699171f742a529",
+      "status": "Intentionally interrupted after 1097 seconds; replaced by final targeted runs. Not a complete suite result."
+    }
+  ],
+  "secret_scan": {
+    "tool": {
+      "version": "v8.30.1",
+      "source": "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz",
+      "sha256": "b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"
+    },
+    "files": 472,
+    "findings": 18,
+    "confirmed_production_secrets": 0,
+    "inventory": "secret-scan-inventory.json",
+    "triage": "secret-scan-triage.json",
+    "scope": "Tracked text snapshot before final event-ID hardening; excludes Git history, binaries, symlinks, files above 5 MiB, untracked files, user data and the excluded apps."
+  },
+  "bun_dependency_audits": [
+    {
+      "log": ".runtime/audit-2026-09-21/logs/js-dependency-audit.json",
+      "sha256": "563f9c35615f08871ff26f0e89ebcbe1f454608c874b3b303189066bd42e6b6b",
+      "command": "bun audit --json",
+      "exit_code": 0,
+      "advisories": {}
+    },
+    {
+      "log": ".runtime/audit-2026-09-21/logs/launcher-dependency-audit.json",
+      "sha256": "563f9c35615f08871ff26f0e89ebcbe1f454608c874b3b303189066bd42e6b6b",
+      "command": "bun audit --json",
+      "exit_code": 0,
+      "advisories": {}
+    }
+  ],
+  "navigation_framework_sources": [
+    {
+      "filename": "navigation_rules.h",
+      "sha256": "4f8ff689db5e507b93cea0d7ea89a5b2968f89afda2434630c2c08d280be821d",
+      "source": "https://raw.githubusercontent.com/blackboardsh/electrobun/v1.18.1/package/src/native/shared/navigation_rules.h"
+    },
+    {
+      "filename": "glob_match.h",
+      "sha256": "2c5baa3aeb1618a9d0954c1168de6c54e1c27753368459e91d4b0751f8e2464d",
+      "source": "https://raw.githubusercontent.com/blackboardsh/electrobun/v1.18.1/package/src/native/shared/glob_match.h"
+    }
+  ],
+  "limitations": [
+    "Risk-directed source review, not exhaustive proof or certification.",
+    "No physical-device biometrics, hardware security key or capture testing.",
+    "No Internet TLS/federation/NAT hostile deployment or production release.",
+    "Three existing environment-gated Noctweb integration cases remain skipped.",
+    "Noct Cord full multi-scenario transport suite was not completed; the described adversarial admission/message scenario passed.",
+    "Swift tests used local NoctweaveCore; remote dependency pins were restored and are not independently certified.",
+    "No blanket Swift, native binary, operating-system or container dependency audit."
+  ]
+}
