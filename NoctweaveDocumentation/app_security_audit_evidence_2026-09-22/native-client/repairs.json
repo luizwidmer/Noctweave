@@ -1,0 +1,36 @@
+{
+  "workflow": "codex-maintainer",
+  "vulnerable_source_ref": "1e98801c2c5745ddb6a820e2f983d3855d8d4d86",
+  "trace_coordinate_system": "Trace file and line entries refer to the vulnerable Git ref. Local baseline-source snapshots retained in .runtime/audit-2026-09-22 have identical line coordinates. Evidence under .runtime is local ignored run output; new sanitizer tests are in the current worktree.",
+  "patch_ref": null,
+  "repairs": [
+    {
+      "fingerprint": "native-client/received-attachment/unsanitized-preview",
+      "status": "fixed_in_worktree",
+      "files": [
+        "Noctweave Messaging Client/AttachmentSanitizer.swift",
+        "Noctweave Messaging Client/ClientViewModel.swift",
+        "Noctweave Messaging Client/MatureClientShell.swift",
+        "SanitizerTests/AttachmentSanitizerSmokeTests.swift"
+      ],
+      "before": "Original actual preview struct retained one external PDF link annotation.",
+      "after": "Patched actual preview struct retained zero external annotations while preserving the safe page;19 focused sanitizer checks passed.",
+      "builds": [
+        "macOS build passed",
+        "arm64 iOS Simulator build passed"
+      ],
+      "reviewers": [
+        "/root/js_desktop_security",
+        "/root/net_security",
+        "/root"
+      ],
+      "limits": [
+        "No live peer send, URL activation, parser crash, exfiltration or physical-device execution.",
+        "Universal simulator build hit missing x86_64 liboqs slice; arm64-specific build passed."
+      ]
+    }
+  ],
+  "reproduce": "From the native-client repository: rtk proxy bash Scripts/run_attachment_sanitizer_tests.sh; use repository-local module caches.",
+  "local_evidence_directory": ".runtime/audit-2026-09-22/",
+  "cleanup": "Task-specific DerivedData removed after retaining logs."
+}

@@ -1,0 +1,110 @@
+{
+  "workflow": "codex-maintainer",
+  "patch_ref": null,
+  "repair_state": "Uncommitted source and tests",
+  "trace_coordinate_system": "Trace entries refer to the vulnerable Git commit; test evidence explicitly marked as a new fixture refers to the current patched worktree.",
+  "local_evidence_directory": "noctweave:.runtime/audit-2026-09-22/js-desktop/",
+  "repairs": [
+    {
+      "fingerprint": "noctcord/realtime-signaling/missing-durable-room-admission",
+      "repository": "noctcord",
+      "vulnerable_ref": "d1798644bfdaa32996d05cdf2826115e3a65c10a",
+      "status": "fixed_in_worktree",
+      "files": [
+        "Sources/NoctCordUI/NoctCordTransportCoordinator.swift",
+        "Tests/NoctCordUITests/NoctCordTransportIntegrationTests.swift"
+      ],
+      "source_sha256": {
+        "Sources/NoctCordUI/NoctCordTransportCoordinator.swift": "1b11f12a69893c37fc06b4b7845279406b754727d36b5811677359bdd27eba59",
+        "Tests/NoctCordUITests/NoctCordTransportIntegrationTests.swift": "00caa31e2bf725120823f37dd3cb60518eb8e2a8b98f8925f20087c82fda1e76"
+      },
+      "original_validation": {
+        "command": [
+          "swift",
+          "test",
+          "--disable-sandbox",
+          "--filter",
+          "NoctCordTransportIntegrationTests/testRealtimeRejectsUnjoinedAuthorWithValidCryptography"
+        ],
+        "log": "noctcord-realtime-baseline.log",
+        "result": "Owner/self test against original coordinator:1test,2expected rejection failures,4.652s. No original two-member execution.",
+        "fixture_source_retention": "The original owner/self test function was replaced by the stronger two-member test, and no exact source copy was saved. Retained evidence is the original failure log plus vulnerable coordinator source at the recorded Git ref; do not imply the old fixture source is retained."
+      },
+      "patched_validation": {
+        "command": [
+          "swift",
+          "test",
+          "--disable-sandbox",
+          "--filter",
+          "NoctCord(AttachmentSanitizerTests|AttachmentTransferTests|ApplicationSecurityTests|CoreTests|IdentityVaultTests|AppModelTests)|NoctCordTransportIntegrationTests/(testRealtimeAdmissionAcrossMembersRefreshesDurableJoin|testSingleMemberRoomCanPublishAndReadRealtimeSignal)"
+        ],
+        "launcher": "rtk proxy python3;240-second subprocess timeout; new process group; task-owned group only on timeout",
+        "cwd": "noctcord",
+        "safe_environment_overrides": {
+          "NOCTWEAVE_PACKAGE_PATH": "<noctweave-workspace>/NoctweaveCore",
+          "CLANG_MODULE_CACHE_PATH": "<noctweave-workspace>/.build/codex-module-cache",
+          "SWIFTPM_MODULECACHE_OVERRIDE": "<noctweave-workspace>/.build/codex-module-cache",
+          "DEVELOPER_DIR": "/Applications/Xcode.app/Contents/Developer"
+        },
+        "log": "noctcord-focused-final.log",
+        "exit_code": 0,
+        "test_count": 72,
+        "failures": 0,
+        "duration_seconds": 188.003,
+        "classes": {
+          "NoctCordAppModelTests": 19,
+          "NoctCordApplicationSecurityTests": 2,
+          "NoctCordAttachmentSanitizerTests": 7,
+          "NoctCordAttachmentTransferTests": 2,
+          "NoctCordCoreTests": 38,
+          "NoctCordIdentityVaultTests": 2,
+          "NoctCordTransportIntegrationTests": 2
+        },
+        "realtime_tests": {
+          "testRealtimeAdmissionAcrossMembersRefreshesDurableJoin": 181.741,
+          "testSingleMemberRoomCanPublishAndReadRealtimeSignal": 5.706
+        }
+      },
+      "independent_review": [
+        {
+          "reviewer": "/root/native_security",
+          "result": "No blocker; sender matches durable prerequisites, receiver rechecks current projection/signing/key state, and one-time sync handles stale joins."
+        },
+        {
+          "reviewer": "/root",
+          "result": "Final coordinator diff reviewed; no blocker."
+        }
+      ],
+      "workspace_preservation": {
+        "Package.resolved": "Restored byte-for-byte to HEAD after final matrix.",
+        "baseline_swap": "None; final authorization patch remains in workspace.",
+        "unrelated_changes": "Preserved parent sanitizer/AppModel/tests."
+      },
+      "limitations": [
+        "Original owner/self result is not original cross-principal execution. Cross-principal vulnerable path is source-inferred; patched cross-principal rejection is observed.",
+        "No live media interception or overcapacity live media session tested.",
+        "Broader inherited three-member test was stopped in slow Core admission/encoding; it had not reached realtime assertions. Logs and stack sample retained; no assertion weakened.",
+        "Tests use reviewed host tooling with local caches and dummy loopback data, not an isolated hostile-code sandbox."
+      ]
+    }
+  ],
+  "separate_hardening": [
+    {
+      "title": "Sanitize received images before preview caching",
+      "status": "implemented",
+      "files": [
+        "Sources/NoctCordUI/NoctCordAttachmentSanitizer.swift",
+        "Sources/NoctCordUI/NoctCordAppModel.swift",
+        "Tests/NoctCordUITests/NoctCordAttachmentSanitizerTests.swift"
+      ],
+      "before": "A temporary passthrough helper preserving original cache behavior failed both metadata-removal and oversized-header-rejection assertions.",
+      "after": "Seven sanitizer tests pass inside the final 72-test matrix.",
+      "reviewers": [
+        "/root/net_security",
+        "/root/native_security"
+      ],
+      "limit": "Source path plus bounded metadata fixtures; no observed OOM, native parser crash, or cross-user disclosure.",
+      "baseline_log": "noctweave:.runtime/audit-2026-09-22/cord-received-preview/baseline.log"
+    }
+  ]
+}

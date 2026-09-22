@@ -1,0 +1,27 @@
+{
+  "workflow": "codex-maintainer",
+  "vulnerable_source_ref": "d70558f9e1b88c20359c45cd13c1484e8c8a6406",
+  "patch_ref": null,
+  "repairs": [
+    {
+      "related_finding": "native-relay/managed-turn/private-peer-permission",
+      "status": "fixed_in_worktree",
+      "files": [
+        "NoctweaveRelayServer/coturn/entrypoint.sh",
+        "NoctweaveRelayServer/OPERATOR_REFERENCE.md"
+      ],
+      "strategy": "Deny private/special peer destinations in generated managed TURN configuration; exclusive mktemp for private configuration.",
+      "validation": "Actual Docker entrypoint output tested with native bundled coturn permission protocol; Linux runtime not tested.",
+      "reviewers": [
+        "/root/net_security",
+        "/root"
+      ]
+    }
+  ],
+  "counting": "The shared TURN finding is counted once in native-relay/findings.json. This root has no additional distinct confirmed finding.",
+  "other_checks": [
+    "Relay desktop TypeScript and12 tests pass",
+    "Bun audit reports no vulnerabilities",
+    "Shared WebAuthn controls source-reviewed; no physical key test"
+  ]
+}

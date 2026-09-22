@@ -1,0 +1,134 @@
+[
+  {
+    "repository": "noctweave",
+    "local_ignored_file": ".runtime/audit-2026-09-22/js-desktop/baseline-group-companion-tests.log",
+    "bytes": 3827,
+    "sha256": "80afa5b0bb4b622a841cfa0a44b431dabd4ea3755466c5ca7c585976f355a9b2"
+  },
+  {
+    "repository": "noctweave",
+    "local_ignored_file": ".runtime/audit-2026-09-22/js-desktop/baseline-browser-server-security.log",
+    "bytes": 1080,
+    "sha256": "0529ecbd28e3f899581c4037d60f7f823fcf2917f24066a46a35362f7c54a02b"
+  },
+  {
+    "repository": "noctweave",
+    "local_ignored_file": ".runtime/audit-2026-09-22/js-desktop/node-tests-bounded-concurrency.log",
+    "bytes": 22355,
+    "sha256": "eb5c3526f61a0aac56939ca0d257bb0fa99bc4a9c4ddceff12ed31a2f1f7617a"
+  },
+  {
+    "repository": "noctweave",
+    "local_ignored_file": ".runtime/audit-2026-09-22/js-desktop/noctcord-realtime-baseline.log",
+    "bytes": 2001,
+    "sha256": "40746b9261f40ea0f35d2621114f40e46b1fb9b64c17a2425ec237bc855f156f"
+  },
+  {
+    "repository": "noctweave",
+    "local_ignored_file": ".runtime/audit-2026-09-22/js-desktop/noctcord-focused-final.log",
+    "bytes": 20967,
+    "sha256": "47079676d6f1d66696c32f3fed99878792f11166d22841898f4aeeb2d1cdda0d"
+  },
+  {
+    "repository": "noctweave",
+    "local_ignored_file": ".runtime/audit-2026-09-22/cord-received-preview/baseline.log",
+    "bytes": 3379,
+    "sha256": "2ff80d581258fe90a6cfd8622ec3ae70b557f6b543a94ceaa19bce6d40e1bb0c"
+  },
+  {
+    "repository": "noctweave",
+    "local_ignored_file": ".runtime/audit-2026-09-22/dependencies/js.log",
+    "bytes": 74,
+    "sha256": "29175c7b93253d53d21d86f4c9d2225a41a4302d724236540265b26d393cb6c3"
+  },
+  {
+    "repository": "noctweave",
+    "local_ignored_file": ".runtime/audit-2026-09-22/dependencies/relay-desktop.log",
+    "bytes": 74,
+    "sha256": "29175c7b93253d53d21d86f4c9d2225a41a4302d724236540265b26d393cb6c3"
+  },
+  {
+    "repository": "native-client",
+    "local_ignored_file": ".runtime/audit-2026-09-22/baseline-preview-test.log",
+    "bytes": 62,
+    "sha256": "a666e8de6e7a6daacbbfa59a59c0da4d2ad1d74b5194a0b9374a85e0c77d5b98"
+  },
+  {
+    "repository": "native-client",
+    "local_ignored_file": ".runtime/audit-2026-09-22/patched-preview-test.log",
+    "bytes": 97,
+    "sha256": "426292613ff75630c84c8b275477510bb826868fe55c16bfbfa55125928a6ab6"
+  },
+  {
+    "repository": "native-client",
+    "local_ignored_file": ".runtime/audit-2026-09-22/sanitizer-tests.log",
+    "bytes": 41,
+    "sha256": "9bd74cdb6b7b8b372031b59f136f2b24eed2fc80bacf36afe3b5192fc4b5a22d"
+  },
+  {
+    "repository": "native-client",
+    "local_ignored_file": ".runtime/audit-2026-09-22/macos-final-build.log",
+    "bytes": 32350,
+    "sha256": "0a58f7ee11107fb4290f01fe0f6b62784d3f4c1e99aaa8a1ef878a1b5ce56703"
+  },
+  {
+    "repository": "native-client",
+    "local_ignored_file": ".runtime/audit-2026-09-22/ios-arm64-build.log",
+    "bytes": 224693,
+    "sha256": "392a879526ded32a43171cccbb66de17996dc9073a8b13c3678292eb448b95d2"
+  },
+  {
+    "repository": "native-relay",
+    "local_ignored_file": ".runtime/audit-2026-09-22/relay-xctest.log",
+    "bytes": 332956,
+    "sha256": "ddbd96b904578d2858e2228e915a517eedf1f3267a172698d4a498511b993c06"
+  },
+  {
+    "repository": "native-relay",
+    "local_ignored_file": ".runtime/audit-2026-09-22/turn-policy-final.log",
+    "bytes": 1182,
+    "sha256": "80c44e1aeaff36d099141e6726cb7cb5e632a8e9801e2b65f801da4181d83e60"
+  },
+  {
+    "repository": "native-relay",
+    "local_ignored_file": ".runtime/audit-2026-09-22/baseline.conf.json",
+    "bytes": 376,
+    "sha256": "a44a5d926a8b64b65d6c7db02afc830412d27862d4c23a7f0258c093ea13704d"
+  },
+  {
+    "repository": "noctweave-net",
+    "local_ignored_file": ".build/security-audit-2026-09-22/browser-pinned.log",
+    "bytes": 19997,
+    "sha256": "41d9d88eed81c93f2872a788a2eea18f510be2292b7bea2d295c92e9d682c4aa"
+  },
+  {
+    "repository": "noctweave-net",
+    "local_ignored_file": ".build/security-audit-2026-09-22/lab.log",
+    "bytes": 21629,
+    "sha256": "9c500011138d16abfad81d822da03e24105ce1b77e77a55067ca3ab863ae1056"
+  },
+  {
+    "repository": "noctweave-net",
+    "local_ignored_file": ".build/security-audit-2026-09-22/lab-webkit-host.log",
+    "bytes": 1118,
+    "sha256": "3621409f74518fef983531d08b7e99558c45a24e310e101c74af423620374777"
+  },
+  {
+    "repository": "noctweave-net",
+    "local_ignored_file": ".build/security-audit-2026-09-22/ui.log",
+    "bytes": 2380,
+    "sha256": "a3c7410105c9c46f0e676083ecf3437b379cbb00b090e66784f0f4e5e8c6806b"
+  },
+  {
+    "repository": "noctweave",
+    "local_ignored_file": ".runtime/audit-2026-09-22/final-delta-scan/scanner.log",
+    "bytes": 81,
+    "sha256": "f4a327c2370916d71b884ebaf9ed044b244263898abe643b4145766bd43055aa"
+  },
+  {
+    "repository": "noctweave",
+    "local_ignored_file": ".runtime/audit-2026-09-22/final-delta-scan/findings.json",
+    "bytes": 1626,
+    "sha256": "abfd908acc7d66274fa4acee8ee571faee24d95eaeed0e1d5ff0d82402dfff7b"
+  }
+]

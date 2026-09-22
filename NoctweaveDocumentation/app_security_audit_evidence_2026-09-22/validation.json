@@ -1,0 +1,167 @@
+{
+  "workflow": "codex-maintainer",
+  "checks": [
+    {
+      "scope": "NoctweaveJS Node suite",
+      "passed": 247,
+      "failed": 0,
+      "skipped": 0,
+      "command": "rtk proxy node --test --test-concurrency=2",
+      "note": "Earlier DOM10s timeout under heavy CPU contention; unchanged isolated case and final aggregate passed."
+    },
+    {
+      "scope": "JS desktop",
+      "typecheck": "passed",
+      "security_key_tests_passed": 5,
+      "limits": "No physical security key; no Windows/Linux credential store execution."
+    },
+    {
+      "scope": "Docker relay desktop",
+      "typecheck": "passed",
+      "passed": 12,
+      "limits": "No signed desktop runtime or Linux container runtime check."
+    },
+    {
+      "scope": "Native messaging",
+      "sanitizer_checks_passed": 19,
+      "preview_regression": "Original actual preview retains1 external action; patched retains0 and safe page.",
+      "builds": {
+        "macOS": "passed",
+        "iOS_simulator_arm64": "passed",
+        "iOS_simulator_universal": "blocked by pre-existing unavailable x86_64 liboqs slice"
+      },
+      "limits": "Builds only; no actual simulator/device interaction, PDF action activation or parser crash."
+    },
+    {
+      "scope": "Native relay",
+      "signed_xctests_passed": 19,
+      "turn_permission_policy": "Native and Docker-rendered config passed against native bundled coturn4.17.2",
+      "limits": "No peer traffic or private-service response; Linux coturn4.15.0 runtime untested."
+    },
+    {
+      "scope": "NoctCord focused matrix",
+      "passed": 72,
+      "failed": 0,
+      "dependency_mode": "Local public NoctweaveCore; lockfile restored",
+      "preexisting_three_member_test": "Incomplete: stopped slow admission/encoding before realtime assertions",
+      "limits": "No full suite or media interception claim; original baseline owner/self evidence distinguished from repaired two-member evidence."
+    },
+    {
+      "scope": "Noctweb Browser",
+      "tests": 36,
+      "failed": 0,
+      "skipped": 1,
+      "dependency_ref": "f8351b0412ec7f46c8fd18b4a5034d7a72f18d8f",
+      "independent_focused_rerun_passed": 7
+    },
+    {
+      "scope": "Noctweb Lab aggregate",
+      "tests": 71,
+      "passed": 68,
+      "failed": 1,
+      "skipped": 2,
+      "failure": "Platform sandbox renderer startup failure",
+      "dependency_mode": "Local public NoctweaveCore",
+      "separate_failed_test_rerun": {
+        "passed": 1,
+        "environment": "Narrow macOS renderer-service escalation",
+        "note": "Not a clean aggregate rerun"
+      }
+    },
+    {
+      "scope": "Noctweb shared UI",
+      "passed": 3
+    },
+    {
+      "scope": "Bun dependency advisories",
+      "checks_passed": 2,
+      "reported_vulnerabilities": 0,
+      "limits": "Only two Bun lockfiles; native/OS/container dependency coverage incomplete."
+    },
+    {
+      "scope": "Gitleaks tracked current text snapshot",
+      "files": 1115,
+      "matches": 84,
+      "untriaged_matches": 0,
+      "confirmed_production_secrets": 0,
+      "limits": "No Git history, binary files, symlinks or ignored user data."
+    }
+  ],
+  "independent_reviews": [
+    {
+      "reviewer": "/root/native_security",
+      "scope": "JS source/repair claims; Cord signaling source; received-image repair; seven proposed records and consolidated report"
+    },
+    {
+      "reviewer": "/root/js_desktop_security",
+      "scope": "Native receiver sanitation/preview repair"
+    },
+    {
+      "reviewer": "/root/net_security",
+      "scope": "JS/native findings; received-image repair; final changed-file scope"
+    },
+    {
+      "reviewer": "/root",
+      "scope": "Net source/repair claims and independent seven-test rerun; native/Cord source diffs and log verification"
+    }
+  ],
+  "excluded_apps": [
+    "NoctBoard",
+    "NoctGallery"
+  ],
+  "unperformed": [
+    "Production probing",
+    "Physical security keys and real biometrics",
+    "Microphone/camera/media interception",
+    "Linux TURN container runtime",
+    "Complete NoctCord suite",
+    "Full fuzz campaign",
+    "Exhaustive source coverage",
+    "Independent cryptographic primitive audit"
+  ],
+  "schema_validation": [
+    {
+      "file": "native-client/findings.json",
+      "result": "PASS: 1 findings valid",
+      "exit_code": 0
+    },
+    {
+      "file": "native-relay/findings.json",
+      "result": "PASS: 1 findings valid",
+      "exit_code": 0
+    },
+    {
+      "file": "noctcord/findings.json",
+      "result": "PASS: 1 findings valid",
+      "exit_code": 0
+    },
+    {
+      "file": "noctweave/findings.json",
+      "result": "PASS: 0 findings valid",
+      "exit_code": 0
+    },
+    {
+      "file": "noctweave-net/findings.json",
+      "result": "PASS: 3 findings valid",
+      "exit_code": 0
+    },
+    {
+      "file": "js-client/findings.json",
+      "result": "PASS: 2 findings valid",
+      "exit_code": 0
+    }
+  ],
+  "final_scope_checks": {
+    "branches_and_heads": "All six remain original main and starting HEAD",
+    "source_hashes": "All26 changed/new source,test,related documentation hashes match run.json",
+    "whitespace": "Six tracked diffs and untracked text passed",
+    "dependency_lockfiles": "No changed lockfiles",
+    "report_links": "All local report and evidence-index links resolve",
+    "delta_secret_scan": "44 changed/new files;2 synthetic test secrets;0 production secrets confirmed"
+  },
+  "final_independent_report_review": {
+    "reviewer": "/root/native_security",
+    "result": "No blocking issue or inflated impact claim;8 findings and2 hardening changes consistent; source coordinates, report links, source hashes and retained logs checked.",
+    "not_performed": "Reviewer did not rerun tests."
+  }
+}

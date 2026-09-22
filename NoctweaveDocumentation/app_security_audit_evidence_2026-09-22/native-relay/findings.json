@@ -1,0 +1,93 @@
+[
+  {
+    "verdict": "confirmed",
+    "fingerprint": "native-relay/managed-turn/private-peer-permission",
+    "title": "Managed TURN credentials authorize private-network peer permissions",
+    "description": "Native relay HEAD be6222991e6b0d3c7a5de92e0ebe05666683e6d8 generated no private-peer ACL. The bundled coturn accepted CREATE_PERMISSION for RFC1918 and CGNAT addresses under a synthetic valid TURN credential. The same absent rules existed in the root Docker entrypoint; its generated patched configuration was checked with the native helper, not the Linux image. The Docker source baseline is root HEAD d70558f9e1b88c20359c45cd13c1484e8c8a6406.",
+    "root_cause": "TURN authentication was present, but the managed call transport configuration did not limit peer destination address ranges. Credential holders could obtain permissions for addresses on the operator LAN.",
+    "intended_behavior": "Credentials for public call transport must not grant permissions to relay toward private, loopback, link-local or special-purpose address space. Intentional private-network TURN deployments require explicit external operator configuration.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "Noctweave Relay/ManagedCoturnService.swift",
+        "line": 118,
+        "scope": "ManagedCoturnConfiguration.configurationText",
+        "description": "Generates authenticated TURN config without destination deny rules."
+      },
+      {
+        "kind": "sink",
+        "file": "Noctweave Relay/ManagedCoturnService.swift",
+        "line": 271,
+        "scope": "ManagedCoturnService.start",
+        "description": "Passes the generated file to the bundled coturn process. The test exercised its native CREATE_PERMISSION protocol."
+      }
+    ],
+    "evidence": [
+      {
+        "file": ".runtime/audit-2026-09-22/baseline.conf.json",
+        "line": 1,
+        "description": "Baseline native policy accepted 10.0.0.1,172.16.0.1,192.168.0.1,100.64.0.1. Link-local was already denied by helper defaults."
+      },
+      {
+        "file": ".runtime/audit-2026-09-22/turn-policy-final.log",
+        "line": 1,
+        "description": "Patched native and Docker-generated policies reject RFC1918/CGNAT/link-local, IPv6 loopback/ULA/link-local and IPv4-mapped10/8; global IPv4/IPv6 controls succeed."
+      },
+      {
+        "file": "Scripts/test_managed_coturn_peer_policy.py",
+        "line": 1,
+        "description": "Reproducible loopback-only native helper probe; creates permissions but sends no peer traffic."
+      },
+      {
+        "file": ".runtime/audit-2026-09-22/baseline-source/NoctweaveRelayServer/coturn/entrypoint.sh",
+        "line": 12,
+        "description": "Related Docker entrypoint at root d70558f9e1b88c20359c45cd13c1484e8c8a6406 independently omitted destination denies; patched rendered policy was tested with the bundled macOS helper, not the Linux image."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "Attacker holds a valid, nonexpired TURN credential."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "Managed TURN is running with the generated configuration."
+      },
+      {
+        "kind": "network_routing",
+        "description": "Reaching an actual private service would additionally require the operator host to route to that service. This was not tested."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Use an issued TURN credential to request private peer permissions.",
+      "payloads": [
+        "Authenticated STUN CREATE_PERMISSION requests for 10.0.0.1,172.16.0.1,192.168.0.1 and 100.64.0.1.",
+        "Patched negative checks also include 169.254.169.254,::1,::ffff:10.0.0.1,fc00::1 and fe80::1; positive controls 1.1.1.1 and 2001:4860:4860::8888."
+      ],
+      "instructions": [
+        "Run python3 Scripts/test_managed_coturn_peer_policy.py on macOS with Xcode. It compiles actual native configuration, copies and ad-hoc signs only a disposable helper copy, and binds listeners to 127.0.0.1/::1.",
+        "For original behavior, run the preserved turn-permission-probe.py baseline.conf in the ignored evidence directory.",
+        "The script sends ALLOCATE and CREATE_PERMISSION messages only; it never issues SEND, CHANNEL_BIND, or a connection to a peer address."
+      ],
+      "observed_result": "Baseline private permissions returned success 0x108. Patched restricted permissions return 403; global IPv4 and IPv6 controls return success. Both native and actual Docker-entrypoint-generated configurations pass against the bundled macOS helper. No private target responses or Linux container runtime behavior was tested."
+    },
+    "remediation": {
+      "strategy": "Add explicit private/special destination deny ranges to native and Docker managed TURN configurations. Document private-network deployment as an explicit external service. Docker now creates its private config using exclusive mktemp rather than predictable redirection."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Requires a valid TURN credential and a reachable managed TURN instance."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Private-peer authorization enables unintended network reachability conditional on host routing; bounded test proved permission acceptance, not private-service response or data compromise."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Real bundled helper protocol responses establish the policy gap and fix, including IPv4-mapped IPv6 and positive controls. Linux image runtime remains outside validated coverage."
+    }
+  }
+]

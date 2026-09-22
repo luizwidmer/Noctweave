@@ -1,0 +1,107 @@
+[
+  {
+    "verdict": "confirmed",
+    "fingerprint": "native-client/received-attachment/unsanitized-preview",
+    "title": "Authenticated peer attachments bypass receiver preview sanitation",
+    "description": "At client HEAD 1e98801c2c5745ddb6a820e2f983d3855d8d4d86, a modified paired peer can submit an authenticated PDF with external URL actions. The recipient decrypts and saves its raw content, then passes it to PDFKit on opening. The original preview model preserved an external action. This demonstrates a missing receiver document boundary; it does not demonstrate automatic navigation, remote code execution, or network exfiltration.",
+    "root_cause": "The app relied on the honest sender sanitizing content before encryption. Receiver integrity checks authenticate bytes and their author but did not make the bytes safe for a privileged OS preview. Cached attachments had the same gap. Image sanitization also decoded pixels without preflight pixel/dimension limits.",
+    "intended_behavior": "Received and cached previews must use locally sanitized content regardless of the sender, remove active PDF annotations, and reject image dimension/pixel expansion before decoding.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "Noctweave Messaging Client/ClientViewModel.swift",
+        "line": 2304,
+        "scope": "downloadAttachment(message:relationshipID:)",
+        "description": "A valid paired sender controls descriptor and plaintext authenticated by the attachment crypto."
+      },
+      {
+        "kind": "propagation",
+        "file": "Noctweave Messaging Client/ClientViewModel.swift",
+        "line": 2405,
+        "scope": "downloadAttachment(message:relationshipID:)",
+        "description": "After descriptor digest verification, raw plaintext is saved directly as a sanitized attachment."
+      },
+      {
+        "kind": "propagation",
+        "file": "Noctweave Messaging Client/MatureClientShell.swift",
+        "line": 1246,
+        "scope": "MatureAttachmentPreview",
+        "description": "The presentation model retains raw cached bytes."
+      },
+      {
+        "kind": "sink",
+        "file": "Noctweave Messaging Client/MatureClientShell.swift",
+        "line": 1346,
+        "scope": "InMemoryPDFView.makeNSView",
+        "description": "Raw peer PDF bytes become an interactive PDFDocument."
+      }
+    ],
+    "evidence": [
+      {
+        "file": ".runtime/audit-2026-09-22/baseline-preview-test.log",
+        "line": 1,
+        "description": "Actual original preview struct retained one external annotation; regression exited1."
+      },
+      {
+        "file": ".runtime/audit-2026-09-22/patched-preview-test.log",
+        "line": 1,
+        "description": "Patched preview struct stripped annotations; regression exited0."
+      },
+      {
+        "file": ".runtime/audit-2026-09-22/sanitizer-tests.log",
+        "line": 1,
+        "description": "19 focused sanitizer checks pass, including safe content, PDF actions and pre-decode image budget rejection."
+      },
+      {
+        "file": ".runtime/audit-2026-09-22/preview-regression.swift",
+        "line": 1,
+        "description": "Synthetic external-action PDF sink reproducer. It never activates the URL."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "Attacker is a paired peer able to send valid encrypted attachments with a modified implementation."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "Recipient downloads and opens the attachment. Network behavior from a URL annotation additionally requires activation and was not exercised."
+      },
+      {
+        "kind": "data_state",
+        "description": "Previously downloaded unsanitized cached files reach the same preview path."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Control plaintext of a correctly encrypted peer attachment; bypass client-side outbound sanitizer.",
+      "payloads": [
+        "A one-page 200x200 PDF with a link annotation to https://example.invalid/no-network-request.",
+        "A valid compressed 7000x6000 1-bit grayscale PNG exceeds the 40 million pixel budget without requiring the test to decode its pixels."
+      ],
+      "instructions": [
+        "Compile baseline-preview.swift and preview-regression.swift with AttachmentSanitizer.swift using swiftc and a repository-local module cache.",
+        "Run baseline-preview-test; then compile/run patched-preview-test against the updated preview model.",
+        "Run Scripts/run_attachment_sanitizer_tests.sh to exercise the source sanitizer regressions."
+      ],
+      "observed_result": "Original actual preview model: one external annotation reaches PDFDocument, exit 1. Patched: zero annotations, exit 0; safe PDF page remains. 19 sanitizer regressions pass. No live peer-to-peer send, URL activation, decoder crash, or data exfiltration was performed."
+    },
+    "remediation": {
+      "strategy": "Sanitize decrypted downloads before encrypted local caching; sanitize previously cached data again at both preview entry points and render using the resulting canonical MIME. Share bounded image reencoding between send and receive paths."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Requires a malicious paired peer and recipient attachment opening."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Breaks the documented sanitized-preview boundary and retains attacker-controlled interactive actions and unbounded image decode inputs; more severe downstream exploitation was not shown."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Exact original and patched presentation structs were compiled against the same synthetic PDF; source traces connect authenticated receive to storage and both preview entry points. Independent reviewer agreed with the bounded impact."
+    }
+  }
+]

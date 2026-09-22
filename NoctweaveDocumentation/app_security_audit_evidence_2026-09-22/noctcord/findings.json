@@ -1,0 +1,111 @@
+[
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctcord/realtime-signaling/missing-durable-room-admission",
+    "title": "Realtime signaling accepts an active group signature without durable voice-room admission",
+    "description": "At vulnerable source d1798644bfdaa32996d05cdf2826115e3a65c10a, the realtime sender and receiver enforce room-key binding and active group signing credentials, but omit the voice-room authorization enforced for durable callSignalPosted events. A group member possessing the room signaling key and realtime append capability can submit a correctly signed and encrypted signal while absent from accepted voiceParticipants. The original local regression observed this policy bypass with an unjoined owner sending to its own transport; the cross-principal path is source-traced, not an observed original-source two-member execution. The repaired two-member test observes rejection of an unjoined author by a distinct admitted receiver and acceptance after the author durably joins. Media interception and a full-room capacity exploit were not executed.",
+    "root_cause": "Authentication of the group credential was treated as sufficient authorization for realtime room signaling. Neither sender nor receiver consulted the projected connectVoice permission and accepted durable room membership; durable events do consult both.",
+    "intended_behavior": "Only an active group member authorized to connectVoice and accepted as joined to the current, nonarchived room may emit realtime signaling. A receiver with stale group state should refresh durable membership once before rejecting a newly joined legitimate peer.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "Sources/NoctCordUI/NoctCordTransportCoordinator.swift",
+        "line": 1218,
+        "scope": "publishRealtimeCallSignal at vulnerable source d1798644bfdaa32996d05cdf2826115e3a65c10a",
+        "description": "A caller with local group authority can publish when callID, signaling keyID and route expiry match; accepted durable room membership is not checked."
+      },
+      {
+        "kind": "propagation",
+        "file": "Sources/NoctCordUI/NoctCordTransportCoordinator.swift",
+        "line": 1272,
+        "scope": "synchronizeRealtimeCallSignals at vulnerable source d1798644bfdaa32996d05cdf2826115e3a65c10a",
+        "description": "A raw relay append bypasses the honest sender API. The receiver opens the encrypted room payload and calls verifyRealtimeEnvelope."
+      },
+      {
+        "kind": "propagation",
+        "file": "Sources/NoctCordUI/NoctCordTransportCoordinator.swift",
+        "line": 1649,
+        "scope": "verifyRealtimeEnvelope at vulnerable source d1798644bfdaa32996d05cdf2826115e3a65c10a",
+        "description": "Verification requires an active matching member credential and a valid signature, but does not require connectVoice permission or joined state."
+      },
+      {
+        "kind": "sink",
+        "file": "Sources/NoctCordUI/NoctCordTransportCoordinator.swift",
+        "line": 1313,
+        "scope": "Accepted realtime signal at vulnerable source d1798644bfdaa32996d05cdf2826115e3a65c10a",
+        "description": "A valid signed signal is returned as accepted signaling even when the author is absent from the durable room participant set."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "Sources/NoctCordCore/NoctCordProjection.swift",
+        "line": 620,
+        "description": "At vulnerable source d1798644bfdaa32996d05cdf2826115e3a65c10a, durable callSignalPosted explicitly requires connectVoice, a nonarchived room, the current signaling key and voiceParticipants[roomID][author].isJoined. Room admission itself checks maxParticipants at lines602-604."
+      },
+      {
+        "file": "Sources/NoctCordUI/NoctCordTransportCoordinator.swift",
+        "line": 1310,
+        "description": "Original receiver lacks a local-author special case: all active credential signatures take the same acceptance path. Original owner/self test logged two failed rejection assertions in noctcord-realtime-baseline.log; this log is retained in the parent ignored evidence directory."
+      },
+      {
+        "file": "Tests/NoctCordUITests/NoctCordTransportIntegrationTests.swift",
+        "line": 378,
+        "description": "Explicitly NEW regression fixture in the repaired worktree, not evidence that these lines existed at the vulnerable ref. It creates distinct owner and receiver principals, performs real encrypted .join raw relay append while the author is unjoined, verifies the receiver rejects it, then durably joins and verifies the stale receiver refreshes and accepts. Passed in noctcord-focused-final.log (181.741s)."
+      },
+      {
+        "file": "Sources/NoctCordMedia/NoctCordMediaDriver.swift",
+        "line": 178,
+        "description": "Source trace only at vulnerable ref: the media entry point trusts transport authentication. Its accept function checks target room, sender identity, recipient, structure and replay at line250, without durable membership. No actual media interception was demonstrated."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "Attacker must possess an active group-scoped signing credential; an unauthenticated relay client cannot forge the accepted group signature."
+      },
+      {
+        "kind": "authorization_role",
+        "description": "Attacker is a group member lacking accepted joined state for this room. The observed original baseline uses the owner role; the shared credential verification path supports the source-inferred ordinary-member case."
+      },
+      {
+        "kind": "data_state",
+        "description": "Attacker needs the current room signaling key and realtime route/append capabilities from group-distributed room state; the route must remain valid."
+      },
+      {
+        "kind": "network_routing",
+        "description": "The attacker can append to the room realtime relay route and an honest joined participant is polling that route."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An authenticated group member uses a modified client to append room-encrypted, correctly signed signaling without first obtaining an accepted durable voice-room join.",
+      "payloads": [
+        "A NoctCordMediaSignalEnvelope with .join, matching roomID, attacker sender ID and sequence1, sealed through NoctCordCallSignalCrypto.seal, enclosed in NoctCordRealtimeSignedSignalEnvelopeV1 signed by the group credential, then room-encrypted through NoctCordRealtimeSignalWire.seal."
+      ],
+      "instructions": [
+        "Use an in-process ephemeral loopback relay and disposable group credentials. Create a group and live voice room, retaining the room key and route capabilities. Do not publish a durable join for the sending author.",
+        "Call publishRealtimeCallSignal with a genuinely encrypted .join and then append a separately identified signed/encrypted record through appendRealtimeRouteV1 to exercise a modified-client path.",
+        "The original-source owner/self regression called synchronizeRealtimeCallSignals on that same owner and expected rejection. Both sender and receiver rejection assertions failed; preserve this limited result rather than relabeling it as cross-principal media execution.",
+        "The repaired regression testRealtimeAdmissionAcrossMembersRefreshesDurableJoin instead uses a distinct admitted receiver. Assert that the unjoined author produces no accepted signals; publish the author durable join without manually syncing the receiver, and assert its next realtime sync refreshes and accepts the legitimate signal."
+      ],
+      "observed_result": "Original source: one owner/self regression, two expected rejection failures,4.652s (noctcord-realtime-baseline.log). Repaired source: distinct-receiver raw-append rejection and stale durable-join refresh both passed in one181.741s test, with single-member positive control5.706s. The final focused matrix passed72/72. Original cross-principal execution, overcapacity media participation and eavesdropping remain unobserved."
+    },
+    "remediation": {
+      "strategy": "Reuse the complete room projection at sender and receiver. Require current nonarchived room, matching signaling key, connectVoice permission and accepted durable joined state before accepting the active signed credential. On the receiver, refresh durable group state at most once per bounded sync call when authorization initially fails, then fail closed. Preserve cursor progression and existing record/page limits. The implementation and two-member regression are present in the uncommitted worktree."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Requires an active group credential plus room key and append capability, and intentional modified-client signaling."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Bypasses a room-specific signaling authorization boundary within a group. Source shows that this also omits the durable capacity gate, but neither an overcapacity live media session nor intercepted audio was demonstrated."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The missing sender/receiver policy checks are source-confirmed, real crypto and relay behavior reproduced the original owner/self bypass, and the repaired cross-principal regression plus independent native-agent source review passed. The broader original cross-principal media consequence remains explicitly inferred."
+    }
+  }
+]

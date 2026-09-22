@@ -1,0 +1,151 @@
+{
+  "workflow": "codex-maintainer",
+  "repository": "noctweave-net",
+  "vulnerable_source_ref": "12caca919f5c056bf0f1660014b906f791b3c83f",
+  "branch": "main",
+  "initial_worktree": "clean",
+  "trace_coordinate_system": "Every finding.trace entry refers to the vulnerable commit above, not the patched worktree. Every finding.evidence entry explicitly identifies a current regression fixture.",
+  "patch_ref": null,
+  "repair_state": "Uncommitted source and test changes; no branch, commit, or push actions performed.",
+  "independent_reviewer": "/root",
+  "independent_validation": "Parent reported independent source review and successful rerun of all seven focused tests. Author did not act as independent reviewer for these findings.",
+  "repairs": [
+    {
+      "fingerprint": "noctweb-browser/restoration/capability-url-persistence",
+      "status": "fixed",
+      "current_fix_anchors": [
+        {
+          "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+          "line": 68
+        },
+        {
+          "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+          "line": 78
+        },
+        {
+          "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+          "line": 83
+        }
+      ],
+      "pre_fix": "Two tests, six failed assertions; plaintext query/fragment and legacy token persistence.",
+      "post_fix": "Two tests pass."
+    },
+    {
+      "fingerprint": "noctweb-browser/resolver/passthrough-check-after-io",
+      "status": "fixed_known_policy",
+      "current_fix_anchors": [
+        {
+          "file": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+          "line": 27
+        },
+        {
+          "file": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+          "line": 137
+        },
+        {
+          "file": "apps/noctweb-browser/Sources/NoctwebBrowser/DevelopmentNoctwebResolver.swift",
+          "line": 64
+        }
+      ],
+      "pre_fix": "Two nonzero-request assertions failed for known visitor/federation passthrough.",
+      "post_fix": "Known-policy counter, signed hosted no-fetch, and federation-direct positive regressions pass.",
+      "limits": [
+        "Development adapter uses the reviewed shared guard but has no separate injected-network counter fixture.",
+        "Publisher routing directive is carried in the fetched envelope and remains unknown before first retrieval under the current protocol; final authenticated policy guard remains."
+      ]
+    },
+    {
+      "fingerprint": "noctweb-browser/verification/namespace-as-content-finality",
+      "status": "fixed",
+      "current_fix_anchors": [
+        {
+          "file": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+          "line": 120
+        }
+      ],
+      "pre_fix": "Signed namespace fixture without content-finality evidence returned finalized.",
+      "post_fix": "Returns hostedPreview; publisher evidence and request count remain valid.",
+      "severity_note": "Rated low for observed trust-display error; higher impact requires an independently demonstrated downstream consequence."
+    }
+  ],
+  "separate_hardening": [
+    {
+      "title": "Clear all tab trust state after relay/profile revocation",
+      "status": "implemented",
+      "vulnerable_source_anchor": {
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+        "line": 475
+      },
+      "current_fix_anchor": {
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+        "line": 521
+      },
+      "regression_fixture": {
+        "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/FederatedResolverSecurityTests.swift",
+        "line": 72
+      },
+      "pre_fix": "Two-tab fixture produced four failures after Forget Relay.",
+      "post_fix": "All tabs lose old rendered content, addresses, navigation stacks, pending resolution, and trust state; connection generation invalidates stale completions.",
+      "classification_reason": "No concrete continued authority or cross-authority action was demonstrated; excluded from confirmed findings."
+    }
+  ],
+  "validation": [
+    {
+      "scope": "Browser full package, pinned Noctweave f8351b0412ec7f46c8fd18b4a5034d7a72f18d8f",
+      "result": "36 tests, 1 opt-in live skip, 0 failures",
+      "log": "browser-pinned.log"
+    },
+    {
+      "scope": "Lab full package against local public NoctweaveCore",
+      "result": "71 tests: 68 passed, 2 opt-in live skips, 1 sandbox WebKit startup failure",
+      "log": "lab.log"
+    },
+    {
+      "scope": "Exact failed already-built Lab WebKit test with narrow macOS renderer-service escalation",
+      "result": "1 passed",
+      "log": "lab-webkit-host.log"
+    },
+    {
+      "scope": "Shared UI",
+      "result": "3 passed",
+      "log": "ui.log"
+    }
+  ],
+  "focused_reproduction_command": "rtk proxy swift test --package-path apps/noctweb-browser --scratch-path apps/noctweb-browser/.build/task-test --disable-sandbox --skip-update --force-resolved-versions --skip-build --filter 'FederatedResolverSecurityTests|NoctwebBrowserAppTests.testCapabilityLikeRenderedURLsNeverEnterRestorationState|NoctwebBrowserAppTests.testPreviouslyPersistedCapabilityURLIsRemovedOnLoad'",
+  "reproduction_environment": "Run from repo root with NOCTWEAVE_PACKAGE_PATH absent for pinned dependencies. Repository-local caches; normal platform sandbox, not hostile-code isolation. Above command assumes the reviewed test binary is already built. No live relay calls.",
+  "changed_paths": [
+    "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+    "apps/noctweb-browser/Sources/NoctwebBrowser/DevelopmentNoctwebResolver.swift",
+    "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+    "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/NoctwebBrowserAppTests.swift",
+    "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/FederatedResolverSecurityTests.swift",
+    "docs/noctweb-access.md"
+  ],
+  "new_untracked_tests": [
+    "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/FederatedResolverSecurityTests.swift"
+  ],
+  "dependency_notes": "Both Browser and Lab Package.resolved files restored byte-for-byte to baseline after local override rewrites; no dependency upgrades remain.",
+  "scope_limits": [
+    "Risk-directed partial source audit, not exhaustive coverage.",
+    "No NoctBoard/NoctGallery audit or edits.",
+    "No live relays, physical devices, real keys/biometrics, release signing, production deployment, or App Store transactions.",
+    "Lab aggregate sandbox failure and separate elevated focused success are reported distinctly."
+  ],
+  "schema_note": "findings.json validated separately with installed report-schema.json and validate-findings.cjs; structural validity does not prove coverage.",
+  "auxiliary_vulnerable_paths": [
+    {
+      "fingerprint": "noctweb-browser/resolver/passthrough-check-after-io",
+      "file": "apps/noctweb-browser/Sources/NoctwebBrowser/DevelopmentNoctwebResolver.swift",
+      "entrypoint_line": 54,
+      "direct_fetch_line": 77,
+      "late_policy_line": 115,
+      "evidence_type": "source review; not separately instrumented for dispatch counting"
+    },
+    {
+      "fingerprint": "noctweb-browser/restoration/capability-url-persistence",
+      "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+      "load_line": 58,
+      "evidence_type": "legacy record restoration; current fixture NoctwebBrowserAppTests.swift:83"
+    }
+  ]
+}

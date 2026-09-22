@@ -1,0 +1,88 @@
+{
+  "workflow": "codex-maintainer",
+  "patch_ref": null,
+  "repair_state": "Uncommitted source and tests",
+  "trace_coordinate_system": "Trace entries refer to the vulnerable Git commit; test evidence explicitly marked as a new fixture refers to the current patched worktree.",
+  "local_evidence_directory": "noctweave:.runtime/audit-2026-09-22/js-desktop/",
+  "repairs": [
+    {
+      "fingerprint": "noctweavejs/dev-server/private-static-files",
+      "repository": "noctweavejs",
+      "vulnerable_ref": "c14aee7ad0c43c88526cbf8de5a296c5d6b7d4dd",
+      "status": "fixed_in_worktree",
+      "files": [
+        "examples/browser-client/server.js",
+        "test/browser-server-security.test.js",
+        "README.md"
+      ],
+      "source_sha256": {
+        "examples/browser-client/server.js": "240c0c989ff90f03a662a5eb48c4189420116a4b18cc9539037abb8850ad2ef2",
+        "test/browser-server-security.test.js": "04e7fa1b424bbc5fd32be1b32c62c52cd87aca357f5e0c6e344843410f14057c"
+      },
+      "original_validation": {
+        "log": "baseline-browser-server-security.log",
+        "result": "Actual Git-baseline loopback server returned200 for a synthetic0600 private-state file; regression failed as expected."
+      },
+      "patched_validation": {
+        "command": [
+          "node",
+          "--test",
+          "--test-concurrency=2"
+        ],
+        "cwd": "noctweavejs",
+        "log": "node-tests-bounded-concurrency.log",
+        "result": "247 tests passed,0 failed,0 skipped;289s."
+      },
+      "independent_review": {
+        "reviewer": "/root/native_security",
+        "result": "No blocker. Allowlist covers current browser assets. Stable symlink rejection is not a race-proof ancestor openat walk; do not claim defense against concurrent same-user ancestor renames."
+      },
+      "limitations": [
+        "Loopback development context. No remote-webpage attack, DNS rebinding or decryption demonstrated."
+      ]
+    },
+    {
+      "fingerprint": "noctweavejs/group-companion/admission-group-preflight",
+      "repository": "noctweavejs",
+      "vulnerable_ref": "c14aee7ad0c43c88526cbf8de5a296c5d6b7d4dd",
+      "status": "fixed_in_worktree",
+      "files": [
+        "examples/browser-client/group-companion.js",
+        "test/group-companion.test.js",
+        "README.md"
+      ],
+      "source_sha256": {
+        "examples/browser-client/group-companion.js": "28d3215a69f860dccb6c1b1ecfd471bb8a1c544cc592d91d7a7f2261b12110fe",
+        "test/group-companion.test.js": "698e21dec7cffe7ebd536e99a165262cdcbdf496de6176004d67d08157bd5abb"
+      },
+      "original_validation": {
+        "log": "baseline-group-companion-tests.log",
+        "result": "Git-baseline source with controlled CLI stub:4pass,3expected failures. Demonstrated wrong-target side-effect dispatch, not full cryptographic member mutation."
+      },
+      "patched_validation": {
+        "commands": [
+          [
+            "node",
+            "--test",
+            "test/group-companion.test.js"
+          ],
+          [
+            "node",
+            "--test",
+            "--test-concurrency=2"
+          ]
+        ],
+        "cwd": "noctweavejs",
+        "log": "node-tests-bounded-concurrency.log",
+        "result": "Focused7/7 and final aggregate247/247 passed."
+      },
+      "independent_review": {
+        "reviewer": "/root/native_security",
+        "result": "No blocker; independently traced actual Core CLI to request.groupID as mutation target before response check."
+      },
+      "limitations": [
+        "Controlled CLI dispatch fixture plus real source trace; no full unauthorized group admission committed."
+      ]
+    }
+  ]
+}

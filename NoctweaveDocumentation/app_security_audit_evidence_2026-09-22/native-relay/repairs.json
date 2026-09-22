@@ -1,0 +1,32 @@
+{
+  "workflow": "codex-maintainer",
+  "vulnerable_source_ref": "be6222991e6b0d3c7a5de92e0ebe05666683e6d8",
+  "trace_coordinate_system": "Trace entries refer to the vulnerable native Git ref; the related Docker baseline-source evidence refers to the separate root Git ref recorded in the finding. Other .runtime evidence is local ignored output.",
+  "patch_ref": null,
+  "repairs": [
+    {
+      "fingerprint": "native-relay/managed-turn/private-peer-permission",
+      "status": "fixed_in_native_and_root_worktrees",
+      "files": [
+        "Noctweave Relay/ManagedCoturnService.swift",
+        "Noctweave RelayTests/ManagedCoturnConfigurationTests.swift",
+        "README.md",
+        "Scripts/test_managed_coturn_peer_policy.py"
+      ],
+      "before": "Bundled helper accepted RFC1918/CGNAT CREATE_PERMISSION with a synthetic valid credential.",
+      "after": "Explicit native and Docker-generated policy rejects private/special IPv4 and IPv6 permission requests with403; nonprivate controls succeed.",
+      "reviewers": [
+        "/root/net_security",
+        "/root"
+      ],
+      "limits": [
+        "Permission requests only; no SEND, CHANNEL_BIND, target connection or private target response.",
+        "Both configuration variants exercised using native bundled coturn4.17.2. Linux image coturn4.15.0 runtime untested."
+      ]
+    }
+  ],
+  "validation": "19 signed XCTest cases pass; loopback-only actual helper policy probes pass.",
+  "reproduce": "From native-relay repository: rtk proxy python3 Scripts/test_managed_coturn_peer_policy.py (macOS with Xcode; disposable helper and fixture configuration).",
+  "local_evidence_directory": ".runtime/audit-2026-09-22/",
+  "cleanup": "Task-specific DerivedData removed; XCTest result bundle retained in ignored evidence."
+}

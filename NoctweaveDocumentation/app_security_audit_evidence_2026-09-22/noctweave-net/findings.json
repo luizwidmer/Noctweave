@@ -1,0 +1,290 @@
+[
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweb-browser/resolver/passthrough-check-after-io",
+    "title": "Known passthrough requirements are enforced after direct relay requests",
+    "description": "Both hosted resolvers perform direct relay I/O before evaluating a known visitor or federation passthrough requirement. Rejecting the publication afterward cannot retract the navigation request already sent through the unsupported direct transport.",
+    "root_cause": "RoutingPolicyResolver and the unsupported-adapter guard run after namespace, name, and hosted-object retrieval instead of preflighting policy already available from the profile and visitor selection.",
+    "intended_behavior": "When available policy requires an unsupported passthrough transport, reject before sending any relay request. Retain policy precedence and the final check of the authenticated publisher directive.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+        "line": 10,
+        "scope": "FederatedNoctwebResolver.resolve",
+        "description": "Receives the selected profile and visitor route directive before any network operation."
+      },
+      {
+        "kind": "propagation",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+        "line": 22,
+        "scope": "FederatedNoctwebResolver.resolve",
+        "description": "Parses and selects the direct bootstrap endpoint while the known route directive remains unenforced."
+      },
+      {
+        "kind": "sink",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+        "line": 31,
+        "scope": "FederatedNoctwebResolver.resolve",
+        "description": "Starts namespace retrieval before the route guard at line 83; signed name and hosted-object requests subsequently use the same unsupported direct retrieval path."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/FederatedResolverSecurityTests.swift",
+        "line": 10,
+        "description": "Current request-counter regression covers visitor passthrough with open federation policy and federation passthrough with a direct visitor preference."
+      },
+      {
+        "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/FederatedResolverSecurityTests.swift",
+        "line": 42,
+        "description": "Current fully signed in-process fixture verifies that visitor passthrough emits no namespace, name, or hosted-object requests."
+      },
+      {
+        "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/FederatedResolverSecurityTests.swift",
+        "line": 58,
+        "description": "Current positive fixture preserves explicit federation-direct precedence over visitor passthrough."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "user_interaction",
+        "description": "The user navigates with visitor passthrough selected, or uses a profile that requires federation passthrough."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "No passthrough adapter is available, and no higher-priority known direct directive overrides the requirement."
+      },
+      {
+        "kind": "network_routing",
+        "description": "A direct request reaches the selected relay or its network path; the bounded tests count dispatch without contacting a live relay."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An observer at the directly contacted relay or its network path sees a request the selected route policy should have prevented.",
+      "payloads": [
+        "visitor=passthrough, federation=open",
+        "visitor=direct, federation=passthrough"
+      ],
+      "instructions": [
+        "Use the isolated request sender in testPassthroughRequirementRejectsBeforeAnyRelayRequest, incrementing a counter and throwing before external I/O.",
+        "Resolve the development welcome address under each supplied policy combination and inspect the request counter.",
+        "Run the signed hosted fixture to cover a successful retrieval path, and the explicit federation-direct positive case to check precedence."
+      ],
+      "observed_result": "Before repair, each of the two known passthrough combinations dispatched a request, producing two failed zero-request assertions. Repaired fixtures dispatch zero requests, while explicit federation direct still resolves. Development adapter ordering is source-confirmed and repaired with the same shared guard, but was not separately instrumented for a network-count regression."
+    },
+    "remediation": {
+      "strategy": "Run a shared known-policy preflight before I/O in both hosted resolvers, preserving federation-direct precedence. Keep the authenticated publisher-policy check after verification; the current protocol carries that previously unknown directive inside the fetched envelope."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Requires an explicit unsupported passthrough route selection and navigation."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "A prohibited direct request exposes navigation metadata to that route before the user sees rejection; the reproduction establishes dispatch, not a live traffic correlation attack."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Original operation ordering and pre-fix counter failures establish the boundary error; signed positive and negative fixtures pass after repair and were independently rerun by the parent."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweb-browser/restoration/capability-url-persistence",
+    "title": "Capability-bearing URLs persist in plaintext restoration state",
+    "description": "Browser publication-local navigation preserves URL queries and fragments in the selected tab and writes the complete address to UserDefaults. This bypasses the capability filtering used for history and bookmarks, leaving private URL material in persistent settings and restoring it on the next launch.",
+    "root_cause": "BrowserAppModel.persist copies selectedTab.address into lastAddress, while BrowserPersistenceStore.save and load encode and decode that field without rejecting capability-like queries or fragments.",
+    "intended_behavior": "Queries and fragments may be used during an open publication session but must not survive in persistent browser restoration state; legacy leaked restoration addresses must be removed on load.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+        "line": 679,
+        "scope": "BrowserAppModel.handleRenderedNavigation",
+        "description": "Accepts an in-publication renderer navigation, including its query and fragment."
+      },
+      {
+        "kind": "propagation",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+        "line": 730,
+        "scope": "BrowserAppModel.handleRenderedNavigation",
+        "description": "Stores the canonical address in the selected tab and then calls persist."
+      },
+      {
+        "kind": "propagation",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+        "line": 916,
+        "scope": "BrowserAppModel.persist",
+        "description": "Copies the entire selected-tab address into persistent lastAddress."
+      },
+      {
+        "kind": "sink",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+        "line": 68,
+        "scope": "BrowserPersistenceStore.save",
+        "description": "JSON-encodes the unsanitized state and stores it in UserDefaults."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/NoctwebBrowserAppTests.swift",
+        "line": 51,
+        "description": "Current regression fixture drives publication-local navigation with dummy query and fragment tokens; lines 77-78 require both absence from saved bytes and a blank restoration URL."
+      },
+      {
+        "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/NoctwebBrowserAppTests.swift",
+        "line": 83,
+        "description": "Current regression fixture seeds a legacy UserDefaults record with a dummy capability token and verifies immediate removal from the model and stored bytes."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "user_interaction",
+        "description": "A user opens a publication and navigates to a URL containing sensitive query or fragment material."
+      },
+      {
+        "kind": "data_state",
+        "description": "A capability or other private value is carried in that URL component."
+      },
+      {
+        "kind": "environmental_dependency",
+        "description": "Subsequent disclosure requires access to the application settings or a copy of them; the reproduction establishes persistence, not remote retrieval."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "A reader of persisted application settings can recover URL material intended to remain within the current session.",
+      "payloads": [
+        "?cap=private-query-token",
+        "#private-fragment-token",
+        "noct://welcome.local-dev/?cap=old-private-token"
+      ],
+      "instructions": [
+        "Use an isolated UserDefaults suite and the development publication fixture from testCapabilityLikeRenderedURLsNeverEnterRestorationState.",
+        "Invoke handleRenderedNavigation for the fixture publication with each dummy suffix, flush persistence, and inspect only that suite's saved state.",
+        "Seed a separate isolated suite with the dummy legacy lastAddress and instantiate the model, then inspect the model and rewritten state."
+      ],
+      "observed_result": "Before repair, the two regressions produced six failed assertions: new query/fragment tokens remained in JSON and a legacy token remained stored and restored. The repaired regressions pass. No exfiltration or capability replay was attempted."
+    },
+    "remediation": {
+      "strategy": "Sanitize restoration addresses at the persistence boundary on every save and load. Replace query/fragment/invalid addresses with the blank URL and immediately rewrite legacy records; keep normal in-session navigation intact."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "A private URL must be visited and the resulting settings later accessed."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "The concrete consequence is durable plaintext storage of private URL material outside the intended ephemeral session; no remote read or takeover is demonstrated."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Original save/load source and two behavioral regressions establish persistence and legacy restoration; the independent parent reviewer reran the repaired focused tests."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweb-browser/verification/namespace-as-content-finality",
+    "title": "Namespace consensus is displayed as publication finality",
+    "description": "A valid consensus namespace snapshot causes any otherwise valid hosted publication to be labeled Consensus-finalized publication even though no content-finality certificate was checked. The snapshot establishes suffix ownership, not consensus over that publication head.",
+    "root_cause": "FederatedNoctwebResolver maps namespace.isConsensusVerified directly to the publication verification state finalized, conflating two distinct trust assertions.",
+    "intended_behavior": "Hosted publication signature and storage verification should produce hostedPreview unless independent content-finality evidence is actually verified.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+        "line": 31,
+        "scope": "FederatedNoctwebResolver.resolve",
+        "description": "Resolves authenticated namespace ownership for the suffix."
+      },
+      {
+        "kind": "propagation",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+        "line": 46,
+        "scope": "FederatedNoctwebResolver.resolve",
+        "description": "Fetches hosted content and verifies publisher signature and name binding, without a content-finality certificate."
+      },
+      {
+        "kind": "propagation",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+        "line": 102,
+        "scope": "FederatedNoctwebResolver.resolve",
+        "description": "Promotes publication state to finalized solely from namespace.isConsensusVerified."
+      },
+      {
+        "kind": "sink",
+        "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserWindowView.swift",
+        "line": 397,
+        "scope": "BrowserWindowView.verificationLabel",
+        "description": "Displays Consensus-finalized publication for this state; the same state receives a green shield."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/FederatedResolverSecurityTests.swift",
+        "line": 111,
+        "description": "Current behavioral regression resolves a fully signed hosted fixture and requires hostedPreview rather than finalized."
+      },
+      {
+        "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/FederatedResolverSecurityTests.swift",
+        "line": 187,
+        "description": "Current fixture signs a real namespace snapshot for suffix ownership."
+      },
+      {
+        "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/FederatedResolverSecurityTests.swift",
+        "line": 196,
+        "description": "Current fixture creates a signed hosted publication without any content-finality certificate, then adds a valid host receipt and name binding."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "system_configuration",
+        "description": "The selected profile validates a consensus namespace snapshot."
+      },
+      {
+        "kind": "data_state",
+        "description": "The requested publication has valid publisher, host, and namespace signatures and bindings but no content-finality evidence."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "The user opens the hosted publication and relies on its verification indicator."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "A publisher with legitimate authority to publish under an authenticated hosted name can receive a stronger content trust label than the evidence supports.",
+      "payloads": [
+        "Signed namespace snapshot plus matching signed hosted publication, host receipt, and name binding; no content-finality certificate."
+      ],
+      "instructions": [
+        "Use HostedFixture.make to construct fresh local dummy signer keys, a signed namespace snapshot, publication, receipt, and name binding.",
+        "Resolve that fixture with the in-process request sender and inspect the returned verification state.",
+        "Confirm BrowserWindowView maps finalized to the publication-finality label; no live publisher or relay is needed."
+      ],
+      "observed_result": "The original resolver returned finalized and failed the hostedPreview assertion. The repaired resolver returns hostedPreview with the same valid publisher evidence and three successful fixture requests. This establishes a false trust display, not forged publisher authority or code execution."
+    },
+    "remediation": {
+      "strategy": "Keep hosted retrieval results in hostedPreview. Reserve finalized for a future path that independently verifies actual content-finality evidence."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "high",
+        "reason": "A valid hosted publication under a consensus-backed namespace deterministically receives the incorrect state."
+      },
+      "impact": {
+        "score": "low",
+        "reason": "Observed damage is misleading content-finality assurance in the trust display; no downstream authorization change, publisher forgery, or attacker action was demonstrated."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The signed fixture preserves all existing verification requirements while omitting content-finality evidence. Original-state failure and repaired pass are independently supported by parent source review and focused rerun."
+    }
+  }
+]

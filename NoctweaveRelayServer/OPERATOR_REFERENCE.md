@@ -285,6 +285,11 @@ that reaches this host. Open TCP/UDP 3478 and the configured UDP relay range
 TLS reverse proxy. Ordinary HTTP proxying does not carry TURN; expose TURN
 ports directly or use a TURN-aware layer-4 deployment.
 
+The bundled TURN configuration denies private, loopback, link-local, and other
+special peer-address ranges. A valid TURN credential does not grant access to
+the relay operator's LAN. Deployments that intentionally relay private-network
+peers need an independently configured external TURN service.
+
 For a separately managed coturn instance, configure the relay with:
 
 ```sh

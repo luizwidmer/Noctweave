@@ -1,0 +1,188 @@
+[
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweavejs/dev-server/private-static-files",
+    "title": "Loopback development server serves private checkout files",
+    "description": "At NoctweaveJS c14aee7ad0c43c88526cbf8de5a296c5d6b7d4dd, the development static handler served all repository-contained files and followed symlinks. An actual loopback server returned HTTP200 for a synthetic0600 .local/group-companion/client-state.json. This grants listener clients access to files the server process can read, irrespective of their filesystem permissions. No arbitrary remote webpage access or protected-state decryption was demonstrated.",
+    "root_cause": "Lexical containment within the whole repository was the only static file authorization check, followed by unbounded readFile with symlink following.",
+    "intended_behavior": "Publish only intended browser runtime assets; private state, repository metadata and paths outside the approved asset tree must remain inaccessible.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "examples/browser-client/server.js",
+        "line": 54,
+        "scope": "request handler",
+        "description": "Requests not routed to an API reach static serving after loopback Host validation."
+      },
+      {
+        "kind": "propagation",
+        "file": "examples/browser-client/server.js",
+        "line": 185,
+        "scope": "serveStatic",
+        "description": "The decoded pathname is joined to the entire checkout root."
+      },
+      {
+        "kind": "sink",
+        "file": "examples/browser-client/server.js",
+        "line": 201,
+        "scope": "serveStatic",
+        "description": "readFile returns private file content without an asset allowlist or symlink-target check."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "examples/browser-client/server.js",
+        "line": 29,
+        "description": "The companion state is stored below the same root that was served publicly."
+      },
+      {
+        "file": "examples/browser-client/server.js",
+        "line": 201,
+        "description": "At the vulnerable ref, readFile follows links and reads any lexically contained path."
+      },
+      {
+        "file": "test/browser-server-security.test.js",
+        "line": 10,
+        "description": "Current actual-server synthetic fixture confirms baseline HTTP200 for private state; patched server denies private paths, symlinks, non-files and oversize assets while serving legitimate assets."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "system_configuration",
+        "description": "The local browser development server is running."
+      },
+      {
+        "kind": "network_routing",
+        "description": "Attacker can issue requests to its127.0.0.1 listener, for example another local process or OS user."
+      },
+      {
+        "kind": "data_state",
+        "description": "A targeted readable file exists beneath the checkout, or an asset symlink points outside it. The reproduction uses only a synthetic0600 sentinel."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "A client of the developer's loopback HTTP listener requests a private checkout path without filesystem access to it.",
+      "payloads": [
+        "GET /.local/group-companion/client-state.json",
+        "GET /.git/config",
+        "GET /client/external.js where the asset is a symlink to a synthetic outside file"
+      ],
+      "instructions": [
+        "Run node --test test/browser-server-security.test.js against a saved copy of the original server in the test's temporary synthetic checkout.",
+        "The fixture creates private sentinel files, two symlinks and ordinary public assets; it binds only an temporary local fixture port.",
+        "Repeat against the fixed server; do not use real user files."
+      ],
+      "observed_result": "Original source returnedHTTP200 for synthetic private state and failed the regression. Patched source serves four positive-control assets, denies private/encoded paths and symlink targets, rejects non-regular and oversized assets, and passes the regression. Host/SOP controls mean remote-webpage read access is not established."
+    },
+    "remediation": {
+      "strategy": "Allowlist only actual browser source/assets and packaged WASM; reject hidden/traversal components and stable symlink targets; open no-follow/nonblocking, require regular files and cap reads at8MiB. Same-user concurrent ancestor renames are not claimed to be isolated by this development server."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Requires access to a running local development listener."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "A local listener client can retrieve files readable by the developer process, including accidental plaintext secrets; protected Core state remains encrypted."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Real loopback reproduction uses the Git baseline and synthetic private data; fixed positive/negative behavioral controls and independent source review passed."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "noctweavejs/group-companion/admission-group-preflight",
+    "title": "Wrong-group admission reaches the mutating CLI before selected-group authorization",
+    "description": "At NoctweaveJS c14aee7ad0c43c88526cbf8de5a296c5d6b7d4dd, an operator-selected group is checked only after group-link-add-member runs; a request for another group can therefore dispatch that group's membership mutation. The durable-Welcome recovery path can also report the selected group for a different target. The reproduction proves wrong-target CLI dispatch with a controlled stub; the real Core CLI source independently shows the request group controls the durable prepareGroupMemberAddition call. No full cryptographic membership mutation was executed in the reproduction.",
+    "root_cause": "The selected group was compared with the CLI output after invocation, while the request artifact rather than the selected group determined the authoritative mutation target.",
+    "intended_behavior": "Reject an admission artifact targeting any group other than the selected group before invoking a helper capable of persisting membership.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "examples/browser-client/server.js",
+        "line": 116,
+        "scope": "serveGroupCompanion",
+        "description": "URL-selected group and supplied requestLink are passed together to the companion."
+      },
+      {
+        "kind": "propagation",
+        "file": "examples/browser-client/group-companion.js",
+        "line": 132,
+        "scope": "acceptAdmissionRequest",
+        "description": "Only UUID/text bounds were checked before writing the request file."
+      },
+      {
+        "kind": "sink",
+        "file": "examples/browser-client/group-companion.js",
+        "line": 142,
+        "scope": "acceptAdmissionRequest",
+        "description": "The group-link-add-member command runs before the result group check at line158; Core derives the mutation group from the link."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "examples/browser-client/group-companion.js",
+        "line": 158,
+        "description": "At the recorded vulnerable ref, the target-group comparison follows the side-effecting CLI call."
+      },
+      {
+        "file": "examples/browser-client/group-companion.js",
+        "line": 147,
+        "description": "The original durable-Welcome recovery branch returns without checking the artifact target."
+      },
+      {
+        "file": "test/group-companion.test.js",
+        "line": 93,
+        "description": "Current regression fixture: original source invokes the fake CLI once for a wrong group; patched source invokes it zero times. Separate recovery and duplicate-key tests cover alternate paths."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authorization_role",
+        "description": "Victim CLI state must hold authority to admit a member in the artifact-targeted group."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "Victim selects group A and supplies an attacker-controlled, otherwise valid admission link for group B."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "Browser group-companion integration and native CLI are available."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "A prospective group member supplies a link for a different group than the operator believes is selected.",
+      "payloads": [
+        "selected group A: 3f770ad9-4cea-41f0-a626-6d9e04796484; bounded admission link with version1 and groupID57364e86-d934-4f1e-9816-e18d76658bdb"
+      ],
+      "instructions": [
+        "Run node --test test/group-companion.test.js against the saved Git-baseline companion with its CLI replaced by the fixture stub.",
+        "The stub records invocation and returns a different group, or writes a synthetic durable Welcome then fails maintenance.",
+        "Run the same fixture against the patched companion."
+      ],
+      "observed_result": "Original source fails3 of7 tests: wrong-target dispatch occurs before rejection and recovery accepts a wrong-group synthetic Welcome. Patched source passes7/7 with zero CLI invocations for mismatched or ambiguous links. This is dispatch-level evidence backed by Core source trace, not a live unauthorized membership change."
+    },
+    "remediation": {
+      "strategy": "Before any private-file write or CLI call, strictly decode bounded canonical base64/fatal UTF-8/duplicate-key-free JSON and bind version and group UUID to the selected group. Leave complete signature/admission validation to Core."
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Requires operator interaction and authority in both relevant contexts."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "A narrow group-admission authorization decision can be directed at the wrong group."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Behavioral baseline regression, actual Core mutation source trace, and independent native-agent review agree; full cryptographic group mutation was deliberately not run."
+    }
+  }
+]

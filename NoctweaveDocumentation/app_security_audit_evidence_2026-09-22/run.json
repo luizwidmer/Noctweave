@@ -1,0 +1,165 @@
+{
+  "workflow": "codex-maintainer",
+  "date": "2026-09-22",
+  "exclusions": [
+    "NoctBoard",
+    "NoctGallery"
+  ],
+  "coverage": "Risk-directed partial source coverage; see report table and separate repair records.",
+  "initial_worktrees": "All six clean",
+  "application_changes": "Uncommitted; no branch switches or app publication",
+  "repositories": [
+    {
+      "id": "noctweave",
+      "relative_location": ".",
+      "starting_ref": "d70558f9e1b88c20359c45cd13c1484e8c8a6406",
+      "branch": "main",
+      "changed_source_and_tests": [
+        {
+          "file": "NoctweaveRelayServer/OPERATOR_REFERENCE.md",
+          "sha256": "75e5f0b5ec3a4461a2854513df7bf8bff28e89f023e434fb2f4635b1441d5995"
+        },
+        {
+          "file": "NoctweaveRelayServer/coturn/entrypoint.sh",
+          "sha256": "a5aadffbf29b42fa4f0510951fc5ec856a049cc4fd5104f8501f542f1ab8f1e7"
+        }
+      ]
+    },
+    {
+      "id": "native-client",
+      "relative_location": "Noctweave Messaging Client",
+      "starting_ref": "1e98801c2c5745ddb6a820e2f983d3855d8d4d86",
+      "branch": "main",
+      "changed_source_and_tests": [
+        {
+          "file": "Noctweave Messaging Client/AttachmentSanitizer.swift",
+          "sha256": "2a3a1cc0c68b5eb8c8fcdb31f154c3d2cafd6817146221b07dbbafaba526c7ec"
+        },
+        {
+          "file": "Noctweave Messaging Client/ClientViewModel.swift",
+          "sha256": "21f1b72c12f10896db6f464ca36840aae1b81a4da885eec027a5d6c71fa468e8"
+        },
+        {
+          "file": "Noctweave Messaging Client/MatureClientShell.swift",
+          "sha256": "234d818d2fb4ed5eb6c59d53bdf373af25eb72412a4aae87cb53a764af6ffb37"
+        },
+        {
+          "file": "SanitizerTests/AttachmentSanitizerSmokeTests.swift",
+          "sha256": "ff283a4a24ba3381cd2b2a00415c72ca2f6264c81d05404362bf43044ae2bf4c"
+        }
+      ]
+    },
+    {
+      "id": "native-relay",
+      "relative_location": "Noctweave Relay",
+      "starting_ref": "be6222991e6b0d3c7a5de92e0ebe05666683e6d8",
+      "branch": "main",
+      "changed_source_and_tests": [
+        {
+          "file": "Noctweave Relay/ManagedCoturnService.swift",
+          "sha256": "df7e3477b6fbe48543bc73d9449bded8db850d668c4121c52d2fb20de29ba389"
+        },
+        {
+          "file": "Noctweave RelayTests/ManagedCoturnConfigurationTests.swift",
+          "sha256": "c3171003196fb4693def0088e0b113f52e2d4d141b254376a8ccc05e51a34f9e"
+        },
+        {
+          "file": "README.md",
+          "sha256": "0f66ee58f284fa62abcf91b429cff8f75dab94d3f7ae00940a27d48c256914c1"
+        },
+        {
+          "file": "Scripts/test_managed_coturn_peer_policy.py",
+          "sha256": "ac3a3655be08eded3c2b8430f4b5e201368a74cc71c9f2f678cf17d3c0f767d6"
+        }
+      ]
+    },
+    {
+      "id": "noctweavejs",
+      "relative_location": "NoctweaveJS",
+      "starting_ref": "c14aee7ad0c43c88526cbf8de5a296c5d6b7d4dd",
+      "branch": "main",
+      "changed_source_and_tests": [
+        {
+          "file": "README.md",
+          "sha256": "6fe12c27e91aba545c8c02a62db722336fdaa34b868507a4c48b3b672c8aa92e"
+        },
+        {
+          "file": "examples/browser-client/group-companion.js",
+          "sha256": "28d3215a69f860dccb6c1b1ecfd471bb8a1c544cc592d91d7a7f2261b12110fe"
+        },
+        {
+          "file": "examples/browser-client/server.js",
+          "sha256": "240c0c989ff90f03a662a5eb48c4189420116a4b18cc9539037abb8850ad2ef2"
+        },
+        {
+          "file": "test/browser-server-security.test.js",
+          "sha256": "04e7fa1b424bbc5fd32be1b32c62c52cd87aca357f5e0c6e344843410f14057c"
+        },
+        {
+          "file": "test/group-companion.test.js",
+          "sha256": "698e21dec7cffe7ebd536e99a165262cdcbdf496de6176004d67d08157bd5abb"
+        }
+      ]
+    },
+    {
+      "id": "noctcord",
+      "relative_location": "../NoctCord",
+      "starting_ref": "d1798644bfdaa32996d05cdf2826115e3a65c10a",
+      "branch": "main",
+      "changed_source_and_tests": [
+        {
+          "file": "Sources/NoctCordUI/NoctCordAppModel.swift",
+          "sha256": "cb6d3cc1c6dc1ca296be307d36d8d91f00255a92b9b07d7e23eaab89a3c112ff"
+        },
+        {
+          "file": "Sources/NoctCordUI/NoctCordAttachmentSanitizer.swift",
+          "sha256": "d69922929b0a50de8bb5e7d865dfc8d262af0eb5f87802085972c1c7012ea3e2"
+        },
+        {
+          "file": "Sources/NoctCordUI/NoctCordTransportCoordinator.swift",
+          "sha256": "1b11f12a69893c37fc06b4b7845279406b754727d36b5811677359bdd27eba59"
+        },
+        {
+          "file": "Tests/NoctCordUITests/NoctCordAttachmentSanitizerTests.swift",
+          "sha256": "007c7ddd534512f48b4546c633130901576de6f552243231b99298cba28d47df"
+        },
+        {
+          "file": "Tests/NoctCordUITests/NoctCordTransportIntegrationTests.swift",
+          "sha256": "00caa31e2bf725120823f37dd3cb60518eb8e2a8b98f8925f20087c82fda1e76"
+        }
+      ]
+    },
+    {
+      "id": "noctweave-net",
+      "relative_location": "../noctweave-net",
+      "starting_ref": "12caca919f5c056bf0f1660014b906f791b3c83f",
+      "branch": "main",
+      "changed_source_and_tests": [
+        {
+          "file": "apps/noctweb-browser/Sources/NoctwebBrowser/BrowserAppModel.swift",
+          "sha256": "63bcb8ec7000e4829efc65282d587d6fc0359787c63610fb91cac5c3ad5c22dd"
+        },
+        {
+          "file": "apps/noctweb-browser/Sources/NoctwebBrowser/DevelopmentNoctwebResolver.swift",
+          "sha256": "d300f71cb417791b516a23a710fa3cd9666df59da626b109f5bc19331af93786"
+        },
+        {
+          "file": "apps/noctweb-browser/Sources/NoctwebBrowser/FederatedNoctwebResolver.swift",
+          "sha256": "4815b2b152a7ced6c255cbeab4bc52fc11f8a32b9c53fc0b8cca9d6076e92bf1"
+        },
+        {
+          "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/FederatedResolverSecurityTests.swift",
+          "sha256": "3cd7443c1c974f775b7257c55db3fea64c593c2d8dc5be52b89f7790a587ffc2"
+        },
+        {
+          "file": "apps/noctweb-browser/Tests/NoctwebBrowserAppTests/NoctwebBrowserAppTests.swift",
+          "sha256": "8ad6d10d05a222419ff799b7bd977bba8b20d6ad680c651ec33c71725cc4dbdc"
+        },
+        {
+          "file": "docs/noctweb-access.md",
+          "sha256": "319fc2dec85cd0af062eac28c5bd84de44cb307d856c14fddf620df3f7f2e49b"
+        }
+      ]
+    }
+  ]
+}

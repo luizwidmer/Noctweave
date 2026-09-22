@@ -1,0 +1,26 @@
+{
+  "repository": "https://github.com/luizwidmer/security-audit-skill",
+  "upstream_ref": "c1c8a8c1471069fb0e188eeaff69b8e8db6564a8",
+  "validator_tests": {
+    "passed": 65,
+    "failed": 0
+  },
+  "frontmatter": "passed",
+  "references": "passed",
+  "independent_reviewer": "net_security",
+  "forward_scenarios": [
+    "owned multi-repo audit and tooling continuation",
+    "unknown downloaded suspicious build without sandbox",
+    "audit-only with unrelated historic commit request",
+    "Keychain sandbox failure"
+  ],
+  "review_result": "No safety blocker; upstream-only source-write wording clarified",
+  "installed_ref": "9dc8c18791f93ed1e2604c7e41a7cc754baff5d9",
+  "published_branch": "main",
+  "remote_equals_local": true,
+  "fork_worktree_clean": true,
+  "installed_files_verified": 22,
+  "latest_advisory_paragraph_review": "native_security found no blocker; explicit user approval suffices without repeated confirmation.",
+  "latest_frontmatter_validation": "passed using offline existing PyYAML environment",
+  "activation": "Available next turn; this run read and applied the installed maintainer workflow explicitly."
+}
