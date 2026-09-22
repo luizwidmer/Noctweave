@@ -36,7 +36,7 @@ swift test --package-path NoctweaveSecurityKeys
 swift build --package-path NoctweaveSecurityKeys -c release --product NoctweaveSecurityKeyBridge
 ```
 
-Commands above are from the parent checkout. The SDK snapshot builds offline without a package registry fetch. Physical iOS testing requires an appropriate signing profile; NFC apps also need their NFC permission and entitlement. Gallery's local browser flow needs neither an NFC entitlement nor an associated website. The smart-card entitlement applies to macOS, not iOS. Simulator builds cannot establish hardware compatibility.
+Commands above are from the parent checkout. The SDK snapshot builds offline without a package registry fetch. Physical iOS testing requires an appropriate signing profile; NFC apps also need their NFC permission and entitlement. The local browser flow needs neither an NFC entitlement nor an associated website; the messaging client retains NFC permissions only for earlier direct registrations. The smart-card entitlement applies to macOS, not iOS. Simulator builds cannot establish hardware compatibility.
 
 <a id="capabilities"></a>
 
@@ -46,7 +46,7 @@ Commands above are from the parent checkout. The SDK snapshot builds offline wit
 - Native enrollment followed by a separate, fresh assertion before activation.
 - Up to eight registered keys, bounded strict CBOR and signature verification, challenge expiry, and counter replay detection.
 - macOS USB FIDO HID without vendor filtering; optional iPhone NFC FIDO smart cards. The SDK's direct iOS USB smart-card path requires FIDO over CCID (YubiKey 5.8+), rather than generic HID.
-- Gallery's `LocalSecurityKey` uses standard browser FIDO2 through a loopback-only page and Apple's ephemeral authentication session. Challenges, ES256 verification and storage remain local; no domain association or hosted service is needed. Apple's system transport sheet may offer NFC even though Gallery has removed its own NFC path.
+- Gallery and the iOS messaging client use `LocalSecurityKey` for new registrations, standard browser FIDO2 through a loopback-only page and Apple's ephemeral authentication session. Challenges, ES256 verification and storage remain local; no domain association or hosted service is needed. Apple's system transport sheet may offer NFC even though Gallery has removed its own NFC path.
 - macOS continuous presence tied to the exact successfully authenticated USB attachment. Removal requires a new assertion; mere reconnection does not unlock.
 - A bounded stdin/stdout helper for NoctweaveJS FIDO2 PRF operations. PINs are never placed in arguments, environment variables, files, or application logs.
 
@@ -66,7 +66,9 @@ Browser WebAuthn and momentary NFC do not provide this continuous-presence contr
 
 `NoctweaveSecurityKeyBridge` accepts one JSON request of at most 65,536 bytes over inherited pipes. Public host requests are limited to `create` and `get`, with a fixed local RP/origin (`noctweavejs-app-lock.invalid`). Options are validated before hardware opens. The private host-only `watch-presence` request monitors an OS attachment identity returned by the preceding assertion. The renderer cannot supply that token; the host returns only a credential-bound presence status.
 
-The `.invalid` RP/origin is a local domain-separation constant, never a network service. Native Noctweave uses a separate `noctweave-app-lock.invalid` scope. Earlier Gallery registrations use `noctgallery-app-lock.invalid`. New Gallery registrations use RP `localhost` with the exact origin of a short-lived local listener, verified from its bound port. These credentials do not migrate between scopes. Localhost is a shared browser RP namespace, not an app-exclusive web domain: isolation relies on the app sandbox, private credential store, random session path, exact origin and cryptographic proof. A hostile OS or an attacker controlling Gallery's process is outside this access-control boundary.
+The `.invalid` RP/origin is a local domain-separation constant, never a network service. Native Noctweave uses a separate `noctweave-app-lock.invalid` scope. Earlier Gallery registrations use `noctgallery-app-lock.invalid`. New Gallery and iOS messaging registrations use RP `localhost` with the exact origin of a short-lived local listener, verified from its bound port. These credentials do not migrate between scopes. Localhost is a shared browser RP namespace, not an app-exclusive web domain: isolation relies on the app sandbox, private credential store, random session path, exact origin and cryptographic proof. A hostile OS or an attacker controlling an app's process is outside this access-control boundary.
+
+Use `LocalSecurityKey(app: .noctweave, brandImagePNG: ...)` in the iOS messaging client. The default profile remains `.noctGallery`. Profiles use fixed branding and distinct callback schemes (`noctweave-local-fido` and `noctgallery-local-fido`), registered by their host apps. The complete Register → Verify ceremony stays in one browser sheet. A fresh, natively verified assertion is required before returning a new credential. The callback alone never grants access.
 
 See the [implementation and verification record](../NoctweaveDocumentation/security_key_app_unlock_2026-09-08.md) for application behavior, limitations, and test evidence.
 
@@ -76,6 +78,7 @@ See the [implementation and verification record](../NoctweaveDocumentation/secur
 | --- | --- |
 | [Upstream source and patch](Vendor/YubiKit/UPSTREAM.md) | Pinned SDK provenance and the read-only presence accessor |
 | [Notices](NOTICE.md) | Dependency and attribution requirements |
+| [Messaging iOS local-flow migration](../NoctweaveDocumentation/security_key_messaging_ios_2026-09-22.md) | Compatibility, stored-key migration and current test evidence |
 | [Application verification record](../NoctweaveDocumentation/security_key_app_unlock_2026-09-08.md) | App behavior, tests, and hardware limits |
 
 ## License

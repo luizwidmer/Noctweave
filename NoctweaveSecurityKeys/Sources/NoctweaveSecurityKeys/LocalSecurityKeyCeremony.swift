@@ -10,6 +10,7 @@ enum LocalSecurityKeyReply {
 /// the phase change and verifies each response before issuing the next challenge.
 @MainActor
 final class LocalSecurityKeyCeremony {
+    let app: LocalSecurityKeyApp
     let isRegistration: Bool
     private(set) var options: Data
     private enum Phase {
@@ -22,21 +23,22 @@ final class LocalSecurityKeyCeremony {
     private var failure: Error?
     private let freshChallenge: () throws -> SecurityKeyChallenge
 
-    init(name: String, excluding credentials: [SecurityKeyCredential],
+    init(app: LocalSecurityKeyApp = .noctGallery, name: String, excluding credentials: [SecurityKeyCredential],
          freshChallenge: @escaping () throws -> SecurityKeyChallenge = SecurityKeyChallenge.fresh) throws {
         guard credentials.count < 8, credentials.allSatisfy(\.isStructurallyValid),
               Set(credentials.map(\.credentialID)).count == credentials.count,
               name.utf8.count <= 128, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw SecurityKeyError.invalidResponse
         }
+        self.app = app
         let challenge = try freshChallenge()
         self.freshChallenge = freshChallenge
         isRegistration = true
         phase = .registration(challenge, name, credentials)
         options = try JSONSerialization.data(withJSONObject: [
             "challenge": challenge.value.base64URL,
-            "rp": ["id": "localhost", "name": "Noct Gallery Unlock"],
-            "user": ["id": try secureRandomBytes(count: 32).base64URL, "name": "local-gallery", "displayName": "Noct Gallery"],
+            "rp": ["id": app.application.relyingPartyID, "name": app.application.displayName],
+            "user": ["id": try secureRandomBytes(count: 32).base64URL, "name": app.name, "displayName": app.name],
             "pubKeyCredParams": [["type": "public-key", "alg": -7]],
             "authenticatorSelection": ["authenticatorAttachment": "cross-platform", "residentKey": "discouraged", "userVerification": "required"],
             "attestation": "none", "timeout": 60_000, "hints": ["security-key"],
@@ -44,11 +46,12 @@ final class LocalSecurityKeyCeremony {
         ])
     }
 
-    init(credentials: [SecurityKeyCredential],
+    init(app: LocalSecurityKeyApp = .noctGallery, credentials: [SecurityKeyCredential],
          freshChallenge: @escaping () throws -> SecurityKeyChallenge = SecurityKeyChallenge.fresh) throws {
         guard (1...8).contains(credentials.count),
               credentials.allSatisfy({ $0.isStructurallyValid && $0.relyingPartyID == "localhost" }),
               Set(credentials.map(\.credentialID)).count == credentials.count else { throw SecurityKeyError.invalidResponse }
+        self.app = app
         let challenge = try freshChallenge()
         self.freshChallenge = freshChallenge
         isRegistration = false
@@ -68,7 +71,7 @@ final class LocalSecurityKeyCeremony {
             switch phase {
             case .registration(let challenge, let name, let credentials):
                 let provisional = try SecurityKeyVerifier.registration(responseJSON: response, challenge: challenge,
-                    application: .noctGalleryLocal, name: name, now: now, localPort: port)
+                    application: app.application, name: name, now: now, localPort: port)
                 guard !credentials.contains(where: { $0.credentialID == provisional.credentialID }) else {
                     throw SecurityKeyError.invalidResponse
                 }
@@ -79,7 +82,7 @@ final class LocalSecurityKeyCeremony {
                 return .next(options)
             case .assertion(let challenge, let credentials):
                 verified = try SecurityKeyVerifier.assertion(responseJSON: response, challenge: challenge,
-                    application: .noctGalleryLocal, credentials: credentials, now: now, localPort: port)
+                    application: app.application, credentials: credentials, now: now, localPort: port)
                 phase = .finished
                 return .complete
             case .finished: throw SecurityKeyError.invalidResponse

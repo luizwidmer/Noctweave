@@ -20,10 +20,10 @@ final class LocalSecurityKeyServer {
     private var connections: [UUID: NWConnection] = [:]
     private var connectionTimeouts: [UUID: Task<Void, Never>] = [:]
 
-    init(options: Data, registration: Bool, brandImagePNG: Data? = nil) throws {
+    init(options: Data, registration: Bool, brandImagePNG: Data? = nil, app: LocalSecurityKeyApp = .noctGallery) throws {
         token = try secureRandomBytes(count: 32).base64URL
         nonce = try secureRandomBytes(count: 32).base64URL
-        page = LocalSecurityKeyPage.html(options: options, registration: registration, token: token, nonce: nonce, brandImagePNG: brandImagePNG)
+        page = LocalSecurityKeyPage.html(options: options, registration: registration, token: token, nonce: nonce, brandImagePNG: brandImagePNG, app: app)
     }
 
     func start() async throws -> UInt16 {

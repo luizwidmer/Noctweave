@@ -3,7 +3,7 @@
 import AuthenticationServices
 import Foundation
 
-/// Gallery owns the local challenge and verifier. Apple's ephemeral browser supplies
+/// The app owns the local challenge and verifier. Apple's ephemeral browser supplies
 /// the external-key transport. Both enrollment steps stay in the same browser sheet.
 @MainActor
 public final class LocalSecurityKey: NSObject, ASWebAuthenticationPresentationContextProviding {
@@ -15,8 +15,10 @@ public final class LocalSecurityKey: NSObject, ASWebAuthenticationPresentationCo
     private var timeout: Task<Void, Never>?
     private var presentation: Task<Void, Never>?
     private let brandImagePNG: Data?
+    private let app: LocalSecurityKeyApp
 
-    public init(brandImagePNG: Data? = nil) {
+    public init(app: LocalSecurityKeyApp = .noctGallery, brandImagePNG: Data? = nil) {
+        self.app = app
         self.brandImagePNG = brandImagePNG
         super.init()
     }
@@ -29,12 +31,12 @@ public final class LocalSecurityKey: NSObject, ASWebAuthenticationPresentationCo
     public func register(name: String, excluding credentials: [SecurityKeyCredential],
                          anchor: ASPresentationAnchor) async throws -> SecurityKeyCredential {
         guard operationID == nil else { throw SecurityKeyError.busy }
-        return try await perform(LocalSecurityKeyCeremony(name: name, excluding: credentials), anchor: anchor)
+        return try await perform(LocalSecurityKeyCeremony(app: app, name: name, excluding: credentials), anchor: anchor)
     }
 
     public func authenticate(credentials: [SecurityKeyCredential], anchor: ASPresentationAnchor) async throws -> SecurityKeyCredential {
         guard operationID == nil else { throw SecurityKeyError.busy }
-        return try await perform(LocalSecurityKeyCeremony(credentials: credentials), anchor: anchor)
+        return try await perform(LocalSecurityKeyCeremony(app: app, credentials: credentials), anchor: anchor)
     }
 
     private func perform(_ ceremony: LocalSecurityKeyCeremony, anchor: ASPresentationAnchor) async throws -> SecurityKeyCredential {
@@ -43,7 +45,7 @@ public final class LocalSecurityKey: NSObject, ASWebAuthenticationPresentationCo
         operationID = operation
         defer { if operationID == operation { operationID = nil } }
         return try await withTaskCancellationHandler {
-            let server = try LocalSecurityKeyServer(options: ceremony.options, registration: ceremony.isRegistration, brandImagePNG: brandImagePNG)
+            let server = try LocalSecurityKeyServer(options: ceremony.options, registration: ceremony.isRegistration, brandImagePNG: brandImagePNG, app: app)
             server.handleResponse = { response, port in ceremony.respond(response, port: port) }
             self.server = server
             defer { server.close(); if self.server === server { self.server = nil } }
@@ -54,11 +56,12 @@ public final class LocalSecurityKey: NSObject, ASWebAuthenticationPresentationCo
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 self.continuation = continuation
                 self.anchor = anchor
-                let session = ASWebAuthenticationSession(url: url, callbackURLScheme: LocalSecurityKeyPage.callbackScheme) { [weak self] url, error in
+                let callbackScheme = app.callbackScheme
+                let session = ASWebAuthenticationSession(url: url, callbackURLScheme: callbackScheme) { [weak self] url, error in
                     Task { @MainActor in
                         guard let self, self.operationID == operation else { return }
                         guard error == nil, let url,
-                              url.absoluteString == "\(LocalSecurityKeyPage.callbackScheme)://complete/\(server.token)",
+                              url.absoluteString == "\(callbackScheme)://complete/\(server.token)",
                               server.result != nil else {
                             self.finish(.failure(error == nil ? SecurityKeyError.invalidResponse : SecurityKeyError.cancelled)); return
                         }
@@ -118,7 +121,7 @@ public final class LocalSecurityKey: NSObject, ASWebAuthenticationPresentationCo
 private enum LocalSecurityKeyError: Error, LocalizedError {
     case presentationUnavailable
     var errorDescription: String? {
-        "The local authentication sheet could not open. Close any other authentication sheet and try again. Gallery remains protected."
+        "The local authentication sheet could not open. Close any other authentication sheet and try again. The app remains protected."
     }
 }
 #endif

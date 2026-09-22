@@ -21,29 +21,30 @@ final class SecurityKeyVerifierTests: XCTestCase {
     }
 
     func testLocalAssertionRequiresExactListenerOriginAndLocalRelyingParty() throws {
-        let application = SecurityKeyApplication.noctGalleryLocal
-        let port: UInt16 = 49_152
-        let fixture = try assertion(application: application, clientOverride: ["origin": "http://localhost:\(port)"])
-        let verified = try SecurityKeyVerifier.assertion(responseJSON: fixture.json, challenge: fixture.challenge,
-            application: application, credentials: [fixture.credential], now: now, localPort: port)
-        XCTAssertEqual(verified.signatureCounter, 2)
-        for incorrectPort: UInt16? in [nil, 0, port + 1] {
-            XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: fixture.json, challenge: fixture.challenge,
-                application: application, credentials: [fixture.credential], now: now, localPort: incorrectPort))
+        for application: SecurityKeyApplication in [.noctGalleryLocal, .noctweaveLocal] {
+            let port: UInt16 = 49_152
+            let fixture = try assertion(application: application, clientOverride: ["origin": "http://localhost:\(port)"])
+            let verified = try SecurityKeyVerifier.assertion(responseJSON: fixture.json, challenge: fixture.challenge,
+                application: application, credentials: [fixture.credential], now: now, localPort: port)
+            XCTAssertEqual(verified.signatureCounter, 2)
+            for incorrectPort: UInt16? in [nil, 0, port + 1] {
+                XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: fixture.json, challenge: fixture.challenge,
+                    application: application, credentials: [fixture.credential], now: now, localPort: incorrectPort))
+            }
+            for origin in ["https://localhost:\(port)", "http://127.0.0.1:\(port)", "http://localhost.evil.test:\(port)",
+                           "http://localhost:\(port)/", "http://localhost", "null"] {
+                let bad = try assertion(application: application, clientOverride: ["origin": origin])
+                XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: bad.json, challenge: bad.challenge,
+                    application: application, credentials: [bad.credential], now: now, localPort: port))
+            }
+            let wrongRP = try assertion(application: application, rp: app.relyingPartyID,
+                clientOverride: ["origin": "http://localhost:\(port)"])
+            XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: wrongRP.json, challenge: wrongRP.challenge,
+                application: application, credentials: [wrongRP.credential], now: now, localPort: port))
+            let original = try assertion()
+            XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: original.json, challenge: original.challenge,
+                application: app, credentials: [original.credential], now: now, localPort: port))
         }
-        for origin in ["https://localhost:\(port)", "http://127.0.0.1:\(port)", "http://localhost.evil.test:\(port)",
-                       "http://localhost:\(port)/", "http://localhost", "null"] {
-            let bad = try assertion(application: application, clientOverride: ["origin": origin])
-            XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: bad.json, challenge: bad.challenge,
-                application: application, credentials: [bad.credential], now: now, localPort: port))
-        }
-        let wrongRP = try assertion(application: application, rp: app.relyingPartyID,
-            clientOverride: ["origin": "http://localhost:\(port)"])
-        XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: wrongRP.json, challenge: wrongRP.challenge,
-            application: application, credentials: [wrongRP.credential], now: now, localPort: port))
-        let original = try assertion()
-        XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: original.json, challenge: original.challenge,
-            application: app, credentials: [original.credential], now: now, localPort: port))
     }
 
     func testRejectsReplayedOrRegressedCounters() throws {

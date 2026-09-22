@@ -1364,19 +1364,24 @@ public struct AppLockActionPlan: Codable, Equatable, Identifiable {
 
 /// Local app-access credential. Never used for messaging, personas, or peer identity.
 public struct AppLockSecurityKeyRecordV1: Codable, Equatable, Identifiable {
+    public static let nativeRelyingPartyID = "noctweave-app-lock.invalid"
+    public static let localRelyingPartyID = "localhost"
     public var id: UUID
     public var name: String
+    public var relyingPartyID: String
     public var credentialID: Data
     public var publicKey: Data
     public var signatureCounter: UInt32
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
-        case id, name, credentialID, publicKey, signatureCounter
+        case id, name, credentialID, publicKey, signatureCounter, relyingPartyID
     }
 
-    public init(id: UUID = UUID(), name: String, credentialID: Data, publicKey: Data, signatureCounter: UInt32) {
+    public init(id: UUID = UUID(), name: String, credentialID: Data, publicKey: Data, signatureCounter: UInt32,
+                relyingPartyID: String = Self.nativeRelyingPartyID) {
         self.id = id
         self.name = name
+        self.relyingPartyID = relyingPartyID
         self.credentialID = credentialID
         self.publicKey = publicKey
         self.signatureCounter = signatureCounter
@@ -1386,12 +1391,17 @@ public struct AppLockSecurityKeyRecordV1: Codable, Equatable, Identifiable {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && name.utf8.count <= 128 && (1...1_024).contains(credentialID.count)
             && publicKey.count == 65 && publicKey.first == 0x04
+            && [Self.nativeRelyingPartyID, Self.localRelyingPartyID].contains(relyingPartyID)
     }
 
     public init(from decoder: Decoder) throws {
-        let container = try strictClientStateContainer(decoder, keyedBy: CodingKeys.self, description: "App-lock security key")
+        let container = try strictClientStateContainer(decoder, keyedBy: CodingKeys.self, description: "App-lock security key",
+                                                       optionalKeys: [.relyingPartyID])
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
+        // Never re-scope existing credentials: a missing field is the original native RP.
+        relyingPartyID = container.contains(.relyingPartyID)
+            ? try container.decode(String.self, forKey: .relyingPartyID) : Self.nativeRelyingPartyID
         credentialID = try container.decode(Data.self, forKey: .credentialID)
         publicKey = try container.decode(Data.self, forKey: .publicKey)
         signatureCounter = try container.decode(UInt32.self, forKey: .signatureCounter)
@@ -1408,6 +1418,10 @@ public struct AppLockSecurityKeyRecordV1: Codable, Equatable, Identifiable {
         try container.encode(credentialID, forKey: .credentialID)
         try container.encode(publicKey, forKey: .publicKey)
         try container.encode(signatureCounter, forKey: .signatureCounter)
+        // Preserve the exact representation of existing native registrations.
+        if relyingPartyID != Self.nativeRelyingPartyID {
+            try container.encode(relyingPartyID, forKey: .relyingPartyID)
+        }
     }
 }
 
@@ -1542,6 +1556,7 @@ public struct AppLockSettings: Codable, Equatable {
             && pinPairIsValid
             && modeHasRequiredPIN
             && (!requireSecurityKeyPresence || mode.requiresSecurityKey)
+            && (!requireSecurityKeyPresence || securityKeys.allSatisfy { $0.relyingPartyID == AppLockSecurityKeyRecordV1.nativeRelyingPartyID })
             && hiddenUnlockFactors.isSubset(of: mode.requiredFactors)
             && duressPlans.count <= 4
             && Set(duressPlans.map(\.id)).count == duressPlans.count

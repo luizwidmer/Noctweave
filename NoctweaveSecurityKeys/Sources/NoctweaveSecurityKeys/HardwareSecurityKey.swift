@@ -154,7 +154,7 @@ public actor HardwareSecurityKey {
 
     private func withClient<T: Sendable>(application: SecurityKeyApplication, transport: SecurityKeyTransport,
                                          operation: @Sendable (WebAuthn.Client) async throws -> T) async throws -> T {
-        guard allowedTransports.contains(transport), application != .noctGalleryLocal else { throw SecurityKeyError.unsupported }
+        guard allowedTransports.contains(transport), !application.usesLocalOrigin else { throw SecurityKeyError.unsupported }
         guard !active else { throw SecurityKeyError.busy }
         active = true
         lastVerifiedPresence = nil

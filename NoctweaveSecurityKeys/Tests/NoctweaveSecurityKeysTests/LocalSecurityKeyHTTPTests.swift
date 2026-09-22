@@ -4,6 +4,21 @@ import XCTest
 @testable import NoctweaveSecurityKeys
 
 final class LocalSecurityKeyHTTPTests: XCTestCase {
+    func testEachPageUsesItsAppBrandAndCallbackWithNoExternalResources() throws {
+        for app in LocalSecurityKeyApp.allCases {
+            let data = LocalSecurityKeyPage.html(options: Data("{}".utf8), registration: true, token: "session", nonce: "nonce", app: app)
+            let page = try XCTUnwrap(String(data: data, encoding: .utf8))
+            XCTAssertTrue(page.contains(app.name))
+            XCTAssertTrue(page.contains(app.callbackScheme + "://complete/"))
+            for other in LocalSecurityKeyApp.allCases where other != app {
+                XCTAssertFalse(page.contains(other.callbackScheme))
+            }
+            XCTAssertFalse(page.contains("https://"))
+            XCTAssertFalse(page.contains("http://"))
+            XCTAssertTrue(page.contains("navigator.credentials[ceremony]"))
+        }
+    }
+
     private let port: UInt16 = 49_152
     private let token = "random-session-token"
 

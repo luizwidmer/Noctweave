@@ -10,57 +10,63 @@ final class LocalSecurityKeyCeremonyTests: XCTestCase {
     private let port: UInt16 = 49_152
     private let id = Data(repeating: 9, count: 32)
 
-    private func enrollment() throws -> LocalSecurityKeyCeremony {
+    private func enrollment(app: LocalSecurityKeyApp = .noctGallery) throws -> LocalSecurityKeyCeremony {
         var sequence: UInt8 = 41
-        return try LocalSecurityKeyCeremony(name: "Test key", excluding: [], freshChallenge: {
+        return try LocalSecurityKeyCeremony(app: app, name: "Test key", excluding: [], freshChallenge: {
             sequence += 1
             return SecurityKeyChallenge(value: Data(repeating: sequence, count: 32), expiresAt: self.now.addingTimeInterval(60))
         })
     }
 
     func testRegistrationCannotFinishUntilFreshSignedProofAndCannotLoop() throws {
-        let key = P256.Signing.PrivateKey()
-        let ceremony = try enrollment()
-        XCTAssertThrowsError(try ceremony.result())
-        guard case .next(let next) = ceremony.respond(try registration(key), port: port, now: now) else {
-            return XCTFail("Valid registration did not advance to proof")
+        for app in LocalSecurityKeyApp.allCases {
+            let key = P256.Signing.PrivateKey()
+            let ceremony = try enrollment(app: app)
+            XCTAssertThrowsError(try ceremony.result())
+            guard case .next(let next) = ceremony.respond(try registration(key), port: port, now: now) else {
+                return XCTFail("Valid registration did not advance to proof")
+            }
+            XCTAssertThrowsError(try ceremony.result(), "A provisional key must never enable protection")
+            let options = try XCTUnwrap(JSONSerialization.jsonObject(with: next) as? [String: Any])
+            XCTAssertEqual(options["challenge"] as? String, Data(repeating: 43, count: 32).base64URL)
+            XCTAssertEqual(options["rpId"] as? String, "localhost")
+            XCTAssertNil(options["user"], "The second step must be assertion, not another registration")
+            guard case .complete = ceremony.respond(try assertion(key), port: port, now: now) else { return XCTFail("Proof restarted enrollment") }
+            let verified = try ceremony.result()
+            XCTAssertEqual(verified.credentialID, id)
+            XCTAssertEqual(verified.signatureCounter, 1)
+            XCTAssertEqual(verified.publicKey, key.publicKey.x963Representation)
+            guard case .complete = ceremony.respond(try assertion(key), port: port, now: now) else { return XCTFail("Replay restarted enrollment") }
+            XCTAssertThrowsError(try ceremony.result())
         }
-        XCTAssertThrowsError(try ceremony.result(), "A provisional key must never enable protection")
-        let options = try XCTUnwrap(JSONSerialization.jsonObject(with: next) as? [String: Any])
-        XCTAssertEqual(options["challenge"] as? String, Data(repeating: 43, count: 32).base64URL)
-        XCTAssertEqual(options["rpId"] as? String, "localhost")
-        XCTAssertNil(options["user"], "The second step must be assertion, not another registration")
-        guard case .complete = ceremony.respond(try assertion(key), port: port, now: now) else { return XCTFail("Proof restarted enrollment") }
-        let verified = try ceremony.result()
-        XCTAssertEqual(verified.credentialID, id)
-        XCTAssertEqual(verified.signatureCounter, 1)
-        XCTAssertEqual(verified.publicKey, key.publicKey.x963Representation)
-        guard case .complete = ceremony.respond(try assertion(key), port: port, now: now) else { return XCTFail("Replay restarted enrollment") }
-        XCTAssertThrowsError(try ceremony.result())
     }
 
     func testRepeatedRegistrationAndFirstChallengeCannotSatisfyProof() throws {
-        for repeatRegistration in [true, false] {
-            let key = P256.Signing.PrivateKey()
-            let ceremony = try enrollment()
-            _ = ceremony.respond(try registration(key), port: port, now: now)
-            let response = try repeatRegistration ? registration(key) : assertion(key, challengeByte: 42)
-            guard case .complete = ceremony.respond(response, port: port, now: now) else { return XCTFail("Invalid proof repeated enrollment") }
-            XCTAssertThrowsError(try ceremony.result())
+        for app in LocalSecurityKeyApp.allCases {
+            for repeatRegistration in [true, false] {
+                let key = P256.Signing.PrivateKey()
+                let ceremony = try enrollment(app: app)
+                _ = ceremony.respond(try registration(key), port: port, now: now)
+                let response = try repeatRegistration ? registration(key) : assertion(key, challengeByte: 42)
+                guard case .complete = ceremony.respond(response, port: port, now: now) else { return XCTFail("Invalid proof repeated enrollment") }
+                XCTAssertThrowsError(try ceremony.result())
+            }
         }
     }
 
     func testWrongKeyCancelledOrExpiredProofCannotRegisterCredential() throws {
         let key = P256.Signing.PrivateKey()
-        for (response, date) in [
-            (try assertion(P256.Signing.PrivateKey()), now),
-            (Data("{\"error\":\"NotAllowedError\"}".utf8), now),
-            (try assertion(key), now.addingTimeInterval(61))
-        ] {
-            let ceremony = try enrollment()
-            _ = ceremony.respond(try registration(key), port: port, now: now)
-            _ = ceremony.respond(response, port: port, now: date)
-            XCTAssertThrowsError(try ceremony.result())
+        for app in LocalSecurityKeyApp.allCases {
+            for (response, date) in [
+                (try assertion(P256.Signing.PrivateKey()), now),
+                (Data("{\"error\":\"NotAllowedError\"}".utf8), now),
+                (try assertion(key), now.addingTimeInterval(61))
+            ] {
+                let ceremony = try enrollment(app: app)
+                _ = ceremony.respond(try registration(key), port: port, now: now)
+                _ = ceremony.respond(response, port: port, now: date)
+                XCTAssertThrowsError(try ceremony.result())
+            }
         }
     }
 

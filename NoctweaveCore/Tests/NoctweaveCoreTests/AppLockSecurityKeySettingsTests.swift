@@ -2,6 +2,37 @@ import XCTest
 @testable import NoctweaveCore
 
 final class AppLockSecurityKeySettingsTests: XCTestCase {
+    func testEarlierKeysKeepTheirScopeAndExactEncoding() throws {
+        let key = record()
+        let data = try JSONEncoder().encode(key)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(object["relyingPartyID"])
+        XCTAssertEqual(try JSONDecoder().decode(AppLockSecurityKeyRecordV1.self, from: data).relyingPartyID,
+                       "noctweave-app-lock.invalid")
+    }
+
+    func testLocalKeyScopeAndCounterSurviveSettingsRoundTrip() throws {
+        var key = record()
+        key.relyingPartyID = "localhost"
+        let settings = AppLockSettings(mode: .securityKey, securityKeys: [key], hiddenUnlockFactors: [.securityKey])
+        let restored = try JSONDecoder().decode(AppLockSettings.self, from: JSONEncoder().encode(settings))
+        XCTAssertEqual(restored, settings)
+        XCTAssertEqual(restored.securityKeys[0].signatureCounter, 10)
+        XCTAssertFalse(restored.mode.accepts(completedFactors: [.pin, .biometrics]))
+        var requiringPresence = settings
+        requiringPresence.requireSecurityKeyPresence = true
+        XCTAssertThrowsError(try JSONEncoder().encode(requiringPresence))
+    }
+
+    func testInvalidKeyScopeCannotSilentlyBecomeAnEarlierRegistration() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record())) as? [String: Any])
+        for invalid: Any in [NSNull(), "", "noctgallery-app-lock.invalid", "localhost.evil.test", "http://localhost:49152", 1] {
+            object["relyingPartyID"] = invalid
+            XCTAssertThrowsError(try JSONDecoder().decode(AppLockSecurityKeyRecordV1.self,
+                from: JSONSerialization.data(withJSONObject: object)))
+        }
+    }
+
     func testEveryFactorCombinationRequiresAllItsChecks() {
         XCTAssertEqual(AppLockMode.allCases.count, 8)
         XCTAssertEqual(Set(AppLockMode.allCases.map(\.requiredFactors)).count, 8)
