@@ -6,10 +6,10 @@ public enum SecurityKeyVerifier {
     /// Registration is provisional until a separate, fresh assertion proves possession.
     public static func registration(responseJSON: Data, challenge: SecurityKeyChallenge,
                                     application: SecurityKeyApplication, name: String,
-                                    now: Date = Date()) throws -> SecurityKeyCredential {
+                                    now: Date = Date(), localPort: UInt16? = nil) throws -> SecurityKeyCredential {
         let response = try envelope(responseJSON)
         let inner = try responseBody(response)
-        try verifyClientData(inner, challenge: challenge, application: application, type: "webauthn.create", now: now)
+        try verifyClientData(inner, challenge: challenge, application: application, type: "webauthn.create", now: now, localPort: localPort)
         let id = try binary(response, "rawId", maximum: 1_024)
         let attestation = try binary(inner, "attestationObject")
         var parser = try BoundedCBOR(attestation)
@@ -39,7 +39,7 @@ public enum SecurityKeyVerifier {
     /// A positive counter must advance; authenticators that always return zero remain supported.
     public static func assertion(responseJSON: Data, challenge: SecurityKeyChallenge,
                                  application: SecurityKeyApplication, credentials: [SecurityKeyCredential],
-                                 now: Date = Date()) throws -> SecurityKeyCredential {
+                                 now: Date = Date(), localPort: UInt16? = nil) throws -> SecurityKeyCredential {
         guard (1...8).contains(credentials.count), credentials.allSatisfy(\.isStructurallyValid),
               Set(credentials.map(\.credentialID)).count == credentials.count,
               credentials.allSatisfy({ $0.relyingPartyID == application.relyingPartyID }) else {
@@ -48,7 +48,7 @@ public enum SecurityKeyVerifier {
         let response = try envelope(responseJSON)
         let inner = try responseBody(response)
         let clientData = try verifyClientData(inner, challenge: challenge, application: application,
-                                              type: "webauthn.get", now: now)
+                                              type: "webauthn.get", now: now, localPort: localPort)
         let id = try binary(response, "rawId", maximum: 1_024)
         guard var credential = credentials.first(where: { $0.credentialID == id }) else { throw SecurityKeyError.wrongKey }
         let authData = try binary(inner, "authenticatorData")
@@ -84,12 +84,14 @@ public enum SecurityKeyVerifier {
 
     @discardableResult
     private static func verifyClientData(_ response: [String: Any], challenge: SecurityKeyChallenge,
-                                         application: SecurityKeyApplication, type: String, now: Date) throws -> Data {
+                                         application: SecurityKeyApplication, type: String, now: Date,
+                                         localPort: UInt16?) throws -> Data {
+        let expectedOrigin = try application.verificationOrigin(localPort: localPort)
         guard challenge.value.count == 32, now < challenge.expiresAt,
               challenge.expiresAt.timeIntervalSince(now) <= 61 else { throw SecurityKeyError.expired }
         let bytes = try binary(response, "clientDataJSON", maximum: 8_192)
         guard let json = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
-              json["type"] as? String == type, json["origin"] as? String == application.origin,
+              json["type"] as? String == type, json["origin"] as? String == expectedOrigin,
               json["challenge"] as? String == challenge.value.base64URL,
               json["topOrigin"] == nil,
               json["crossOrigin"] == nil || (json["crossOrigin"] as? Bool == false) else {

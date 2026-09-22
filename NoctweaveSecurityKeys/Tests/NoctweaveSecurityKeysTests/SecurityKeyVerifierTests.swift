@@ -20,6 +20,32 @@ final class SecurityKeyVerifierTests: XCTestCase {
         XCTAssertEqual(try verify(fixture).signatureCounter, 0)
     }
 
+    func testLocalAssertionRequiresExactListenerOriginAndLocalRelyingParty() throws {
+        let application = SecurityKeyApplication.noctGalleryLocal
+        let port: UInt16 = 49_152
+        let fixture = try assertion(application: application, clientOverride: ["origin": "http://localhost:\(port)"])
+        let verified = try SecurityKeyVerifier.assertion(responseJSON: fixture.json, challenge: fixture.challenge,
+            application: application, credentials: [fixture.credential], now: now, localPort: port)
+        XCTAssertEqual(verified.signatureCounter, 2)
+        for incorrectPort: UInt16? in [nil, 0, port + 1] {
+            XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: fixture.json, challenge: fixture.challenge,
+                application: application, credentials: [fixture.credential], now: now, localPort: incorrectPort))
+        }
+        for origin in ["https://localhost:\(port)", "http://127.0.0.1:\(port)", "http://localhost.evil.test:\(port)",
+                       "http://localhost:\(port)/", "http://localhost", "null"] {
+            let bad = try assertion(application: application, clientOverride: ["origin": origin])
+            XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: bad.json, challenge: bad.challenge,
+                application: application, credentials: [bad.credential], now: now, localPort: port))
+        }
+        let wrongRP = try assertion(application: application, rp: app.relyingPartyID,
+            clientOverride: ["origin": "http://localhost:\(port)"])
+        XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: wrongRP.json, challenge: wrongRP.challenge,
+            application: application, credentials: [wrongRP.credential], now: now, localPort: port))
+        let original = try assertion()
+        XCTAssertThrowsError(try SecurityKeyVerifier.assertion(responseJSON: original.json, challenge: original.challenge,
+            application: app, credentials: [original.credential], now: now, localPort: port))
+    }
+
     func testRejectsReplayedOrRegressedCounters() throws {
         for counter: UInt32 in [0, 1] {
             XCTAssertThrowsError(try verify(assertion(previous: 1, counter: counter)))
@@ -132,8 +158,10 @@ final class SecurityKeyVerifierTests: XCTestCase {
     }
 
     private func assertion(previous: UInt32 = 1, counter: UInt32 = 2, flags: UInt8 = 5,
+                           application: SecurityKeyApplication? = nil,
                            rp: String? = nil, clientOverride: [String: Any] = [:],
                            corruptSignature: Bool = false, trailing: Data = Data()) throws -> Fixture {
+        let app = application ?? self.app
         let key = P256.Signing.PrivateKey()
         let challenge = SecurityKeyChallenge(value: Data(repeating: 42, count: 32), expiresAt: now.addingTimeInterval(60))
         let credential = SecurityKeyCredential(name: "Test key", relyingPartyID: app.relyingPartyID,

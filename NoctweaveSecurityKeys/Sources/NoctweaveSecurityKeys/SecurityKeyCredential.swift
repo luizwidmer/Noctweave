@@ -3,26 +3,39 @@ import CryptoKit
 import Foundation
 import Security
 
-/// These names scope local app access. They are never network endpoints or messaging identities.
+/// These names scope local app access, never messaging identities.
+/// Gallery's browser transport uses localhost; it never needs an associated website.
 public enum SecurityKeyApplication: String, Sendable {
     case noctweave
     case noctweaveJS
     case noctGallery
+    case noctGalleryLocal
 
     public var relyingPartyID: String {
         switch self {
         case .noctweave: "noctweave-app-lock.invalid"
         case .noctweaveJS: "noctweavejs-app-lock.invalid"
         case .noctGallery: "noctgallery-app-lock.invalid"
+        case .noctGalleryLocal: "localhost"
         }
     }
 
-    public var origin: String { "https://\(relyingPartyID)" }
+    public var origin: String { self == .noctGalleryLocal ? "http://localhost" : "https://\(relyingPartyID)" }
+
+    /// The port comes from the app's bound listener, never from a browser response.
+    func verificationOrigin(localPort: UInt16?) throws -> String {
+        if self == .noctGalleryLocal {
+            guard let localPort, localPort != 0 else { throw SecurityKeyError.invalidResponse }
+            return localPort == 80 ? origin : "\(origin):\(localPort)"
+        }
+        guard localPort == nil else { throw SecurityKeyError.invalidResponse }
+        return origin
+    }
     public var displayName: String {
         switch self {
         case .noctweave: "Noctweave App Unlock"
         case .noctweaveJS: "NoctweaveJS Vault Unlock"
-        case .noctGallery: "Noct Gallery Unlock"
+        case .noctGallery, .noctGalleryLocal: "Noct Gallery Unlock"
         }
     }
 }

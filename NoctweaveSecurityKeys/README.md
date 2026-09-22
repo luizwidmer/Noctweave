@@ -36,7 +36,7 @@ swift test --package-path NoctweaveSecurityKeys
 swift build --package-path NoctweaveSecurityKeys -c release --product NoctweaveSecurityKeyBridge
 ```
 
-Commands above are from the parent checkout. The SDK snapshot builds offline without a package registry fetch. Physical iOS testing requires the app's NFC/smart-card entitlements and an appropriate signing profile; Simulator builds cannot establish hardware compatibility.
+Commands above are from the parent checkout. The SDK snapshot builds offline without a package registry fetch. Physical iOS testing requires an appropriate signing profile; NFC apps also need their NFC permission and entitlement. Gallery's local browser flow needs neither an NFC entitlement nor an associated website. The smart-card entitlement applies to macOS, not iOS. Simulator builds cannot establish hardware compatibility.
 
 <a id="capabilities"></a>
 
@@ -45,7 +45,8 @@ Commands above are from the parent checkout. The SDK snapshot builds offline wit
 - FIDO2/CTAP2 ES256 credentials with user presence and user verification required.
 - Native enrollment followed by a separate, fresh assertion before activation.
 - Up to eight registered keys, bounded strict CBOR and signature verification, challenge expiry, and counter replay detection.
-- macOS USB FIDO HID without vendor filtering; iPhone NFC FIDO smart cards. The SDK's iOS USB smart-card path is not generic FIDO2 support: YubiKey's USB smart-card interface does not expose FIDO2. Noct Gallery offers NFC key unlock on compatible iPhones and does not advertise USB key unlock on iPad.
+- macOS USB FIDO HID without vendor filtering; optional iPhone NFC FIDO smart cards. The SDK's direct iOS USB smart-card path requires FIDO over CCID (YubiKey 5.8+), rather than generic HID.
+- Gallery's `LocalSecurityKey` uses standard browser FIDO2 through a loopback-only page and Apple's ephemeral authentication session. Challenges, ES256 verification and storage remain local; no domain association or hosted service is needed. Apple's system transport sheet may offer NFC even though Gallery has removed its own NFC path.
 - macOS continuous presence tied to the exact successfully authenticated USB attachment. Removal requires a new assertion; mere reconnection does not unlock.
 - A bounded stdin/stdout helper for NoctweaveJS FIDO2 PRF operations. PINs are never placed in arguments, environment variables, files, or application logs.
 
@@ -65,7 +66,7 @@ Browser WebAuthn and momentary NFC do not provide this continuous-presence contr
 
 `NoctweaveSecurityKeyBridge` accepts one JSON request of at most 65,536 bytes over inherited pipes. Public host requests are limited to `create` and `get`, with a fixed local RP/origin (`noctweavejs-app-lock.invalid`). Options are validated before hardware opens. The private host-only `watch-presence` request monitors an OS attachment identity returned by the preceding assertion. The renderer cannot supply that token; the host returns only a credential-bound presence status.
 
-The `.invalid` RP/origin is a local domain-separation constant, never a network service. Native Noctweave uses a separate `noctweave-app-lock.invalid` scope. Noct Gallery uses `noctgallery-app-lock.invalid`; credentials do not cross between these applications. Browser credentials use the actual secure browser origin and do not migrate between these scopes.
+The `.invalid` RP/origin is a local domain-separation constant, never a network service. Native Noctweave uses a separate `noctweave-app-lock.invalid` scope. Earlier Gallery registrations use `noctgallery-app-lock.invalid`. New Gallery registrations use RP `localhost` with the exact origin of a short-lived local listener, verified from its bound port. These credentials do not migrate between scopes. Localhost is a shared browser RP namespace, not an app-exclusive web domain: isolation relies on the app sandbox, private credential store, random session path, exact origin and cryptographic proof. A hostile OS or an attacker controlling Gallery's process is outside this access-control boundary.
 
 See the [implementation and verification record](../NoctweaveDocumentation/security_key_app_unlock_2026-09-08.md) for application behavior, limitations, and test evidence.
 

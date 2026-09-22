@@ -16,8 +16,12 @@ public actor HardwareSecurityKey {
     private var generation: UInt64 = 0
     private var connection: (any Connection)?
     private var lastVerifiedPresence: SecurityKeyPresence?
+    private let allowedTransports: Set<SecurityKeyTransport>
 
-    public init() {}
+    /// Apps can prohibit a transport before any connection or system prompt opens.
+    public init(allowedTransports: Set<SecurityKeyTransport> = [.usb, .nfc]) {
+        self.allowedTransports = allowedTransports
+    }
 
     public func verifiedPresence() -> SecurityKeyPresence? { lastVerifiedPresence }
 
@@ -150,6 +154,7 @@ public actor HardwareSecurityKey {
 
     private func withClient<T: Sendable>(application: SecurityKeyApplication, transport: SecurityKeyTransport,
                                          operation: @Sendable (WebAuthn.Client) async throws -> T) async throws -> T {
+        guard allowedTransports.contains(transport), application != .noctGalleryLocal else { throw SecurityKeyError.unsupported }
         guard !active else { throw SecurityKeyError.busy }
         active = true
         lastVerifiedPresence = nil
