@@ -67,7 +67,8 @@ Erasure advances an identity-free anchor tombstone, removes state, and prevents
 an older file from resurrecting. A later unrelated database advances from the
 next local generation. `.insecurePlaintextForTesting` and
 `VolatileClientStateRollbackAnchorStore` are bounded test facilities, not
-production rollback protection.
+production rollback protection. Release builds reject the plaintext protection
+mode on state load and save before accessing the state directory.
 
 Relationship mutations are serialized per relationship. A process-wide
 encrypted-state save gate merges each successful mutation against the latest
@@ -595,6 +596,12 @@ blob storage. A different key, payload, or requested TTL is a non-retryable
 conflict; replacement content requires a fresh attachment ID. Only after all
 required chunks are available should the application send the corresponding
 `AttachmentDescriptor` with `sendAttachment`.
+
+The built-in relay stores also bound the aggregate attachment index to 65,536
+chunk records and 256 MiB of inline encrypted chunk bytes. Storage pressure
+can therefore reject a new chunk before the per-ID limits are reached; handle
+the relay capacity error as a failed upload without discarding the local intent.
+External blob offload still consumes an index record per chunk.
 
 Receive integrations use `prepareAttachmentDownload`,
 `fetchAttachmentDownload`, and `retryPendingAttachmentDownloads`. The exact

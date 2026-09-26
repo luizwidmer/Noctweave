@@ -851,7 +851,16 @@ public enum DecentralizedWakePlanner {
         failureCount: Int = 0,
         now: Date = Date()
     ) -> DecentralizedWakePlan {
-        let policy = support ?? DecentralizedWakeSupport()
+        // Support fields are public and mutable after construction. Restore
+        // their documented bounds before multiplying backoff and jitter.
+        let supplied = support ?? DecentralizedWakeSupport()
+        let policy = DecentralizedWakeSupport(
+            mode: supplied.mode,
+            minPollIntervalSeconds: supplied.minPollIntervalSeconds,
+            maxPollIntervalSeconds: supplied.maxPollIntervalSeconds,
+            jitterPermille: supplied.jitterPermille,
+            longPollTimeoutSeconds: supplied.longPollTimeoutSeconds
+        )
         let boundedFailures = min(max(0, failureCount), 6)
         let base = min(
             policy.maxPollIntervalSeconds,

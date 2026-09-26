@@ -33,6 +33,8 @@ enum RelayStoreCurrentLimits {
     static let maximumActiveRendezvousRoutes = 2_048
     static let maximumAttachmentIDs = 4_096
     static let maximumAttachmentChunksPerID = 512
+    static let maximumAttachmentRecords = 65_536
+    static let maximumInlineAttachmentBytes = 256 * 1_024 * 1_024
     static let maximumFederationNodes = 10_000
     /// Retains bounded TOFU history across coordinator rotation. This is
     /// intentionally larger than the 16 concurrently configured coordinators.
@@ -114,6 +116,7 @@ final class RelayStore {
     private var lastFederationRegistrationByEndpoint: [String: Date] = [:]
     private var lastDurableSnapshot = RelayStoreSnapshot.empty
     private var persistenceFailuresRemainingForTesting = 0
+    private var attachmentRecordLimitForTesting: Int?
     private let federationRateWindowSeconds: TimeInterval = 60
     private let generalRequestRateWindowSeconds: TimeInterval = 60
     private let generalRequestMaxPerWindow = 240
@@ -222,6 +225,15 @@ final class RelayStore {
     func failNextPersistenceForTesting(_ count: Int = 1) {
         performSync {
             persistenceFailuresRemainingForTesting = max(0, count)
+        }
+    }
+
+    func limitAttachmentRecordsForTesting(_ count: Int) {
+        performSync {
+            attachmentRecordLimitForTesting = min(
+                max(0, count),
+                RelayStoreCurrentLimits.maximumAttachmentRecords
+            )
         }
     }
 
@@ -435,8 +447,9 @@ final class RelayStore {
                     bodyDigest: bodyDigest
                 )
             }
+            var nextAttachments = attachments
             if let attachmentKeyToEvict,
-               let evicted = attachments.removeValue(forKey: attachmentKeyToEvict) {
+               let evicted = nextAttachments.removeValue(forKey: attachmentKeyToEvict) {
                 deferredExternalDeletions.append(contentsOf: evicted.compactMap(\.external))
             }
             records.append(record)
@@ -449,7 +462,18 @@ final class RelayStore {
                 }
                 records = Array(records.suffix(maxAttachmentChunks))
             }
-            attachments[key] = records
+            nextAttachments[key] = records
+            guard attachmentStorageWithinLimits(
+                nextAttachments,
+                maximumRecords: attachmentRecordLimitForTesting
+                    ?? RelayStoreCurrentLimits.maximumAttachmentRecords
+            ) else {
+                if let newlyStoredExternal {
+                    deleteExternalAttachmentIfUnreferenced(newlyStoredExternal)
+                }
+                throw RelayStoreError.relayCapacityExceeded
+            }
+            attachments = nextAttachments
             do {
                 try saveLocked()
             } catch {
@@ -1684,10 +1708,12 @@ private struct RelayStoreSnapshot: Codable {
                 debugDescription: "Relay store attachment map exceeds its current bound"
             )
         }
+        var remainingRecords = RelayStoreCurrentLimits.maximumAttachmentRecords
         for key in attachments.allKeys {
             let records = try attachments.nestedUnkeyedContainer(forKey: key)
             guard records.count.map({
                 $0 <= RelayStoreCurrentLimits.maximumAttachmentChunksPerID
+                    && $0 <= remainingRecords
             }) == true else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .attachments,
@@ -1695,6 +1721,7 @@ private struct RelayStoreSnapshot: Codable {
                     debugDescription: "Relay store attachment record list exceeds its current bound"
                 )
             }
+            remainingRecords -= records.count ?? 0
         }
     }
 
@@ -1738,6 +1765,7 @@ private struct RelayStoreSnapshot: Codable {
                       && Set(records.map(\.chunkIndex)).count == records.count
                       && records.allSatisfy(\.isStructurallyValid)
               }),
+              attachmentStorageWithinLimits(attachments),
               federationNodes.count <= RelayStoreCurrentLimits.maximumFederationNodes,
               federationNodes.allSatisfy({ key, record in
                   key == federationNodeStorageKey(record.endpoint)
@@ -1859,6 +1887,26 @@ private struct AttachmentRecord: Codable {
     }
 }
 
+private func attachmentStorageWithinLimits(
+    _ attachments: [String: [AttachmentRecord]],
+    maximumRecords: Int = RelayStoreCurrentLimits.maximumAttachmentRecords
+) -> Bool {
+    var remainingRecords = maximumRecords
+    var remainingInlineBytes = RelayStoreCurrentLimits.maximumInlineAttachmentBytes
+    for records in attachments.values {
+        guard records.count <= remainingRecords else { return false }
+        remainingRecords -= records.count
+        for record in records {
+            guard let payload = record.payload else { continue }
+            for size in [payload.nonce.count, payload.ciphertext.count, payload.tag.count] {
+                guard size <= remainingInlineBytes else { return false }
+                remainingInlineBytes -= size
+            }
+        }
+    }
+    return true
+}
+
 func attachmentUploadBodyDigest(
     attachmentId: UUID,
     chunkIndex: Int,
@@ -1920,6 +1968,7 @@ private enum SQLiteRelayStateStoreError: Error, CustomStringConvertible {
 private enum SQLiteRelayStateStore {
     private static let tableName = "relay_runtime_state_v1"
     private static let schemaVersion = RelayStoreSnapshot.schemaVersion
+    private static let maximumSnapshotBytes = 512 * 1_024 * 1_024
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     static func loadState(at url: URL) throws -> RelayStoreSnapshot? {
@@ -1952,8 +2001,10 @@ private enum SQLiteRelayStateStore {
                 throw RelayStorePersistenceError.invalidCurrentState
             }
             let count = Int(sqlite3_column_bytes(statement, 1))
-            guard count > 0, let bytes = sqlite3_column_blob(statement, 1) else {
-                throw SQLiteRelayStateStoreError.corrupt("Missing runtime snapshot")
+            guard count > 0,
+                  count <= maximumSnapshotBytes,
+                  let bytes = sqlite3_column_blob(statement, 1) else {
+                throw SQLiteRelayStateStoreError.corrupt("Missing or oversized runtime snapshot")
             }
             let data = Data(bytes: bytes, count: count)
             let snapshot: RelayStoreSnapshot
@@ -1984,6 +2035,10 @@ private enum SQLiteRelayStateStore {
 
         try ensureSchema(in: database)
         let data = try RelayCodec.encoder(sortedKeys: true).encode(snapshot)
+        guard data.count <= maximumSnapshotBytes,
+              let dataLength = Int32(exactly: data.count) else {
+            throw SQLiteRelayStateStoreError.corrupt("Runtime snapshot exceeds SQLite blob limit")
+        }
         try execute("BEGIN IMMEDIATE TRANSACTION;", in: database)
         do {
             let sql = """
@@ -2007,7 +2062,7 @@ private enum SQLiteRelayStateStore {
                     statement,
                     2,
                     bytes.baseAddress,
-                    Int32(data.count),
+                    dataLength,
                     transient
                 )
             }

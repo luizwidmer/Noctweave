@@ -8,6 +8,11 @@ private enum RelayAttachmentRetentionLimits {
     static let maximumSeconds: TimeInterval = 2_592_000
 }
 
+private enum RelayAttachmentStorageLimits {
+    static let maximumRecords = 65_536
+    static let maximumInlineBytes = 256 * 1_024 * 1_024
+}
+
 public actor RelayStore {
     /// Keyed by a domain-separated route-capability digest. Values contain
     /// only digests of lane authorities; raw bearer material is never stored.
@@ -25,6 +30,7 @@ public actor RelayStore {
     private var lastFederationRegistrationByEndpoint: [String: Date] = [:]
     private var lastDurableSnapshot = RelayStoreSnapshot.empty
     private var persistenceFailuresRemainingForTesting = 0
+    private var attachmentRecordLimitForTesting: Int?
     private let maxAttachmentChunks = 512
     private let maxAttachmentChunkPayloadBytes = 128 * 1024
     private let maxAttachmentIds = 4_096
@@ -94,6 +100,13 @@ public actor RelayStore {
     /// failed attempt is consumed before an exact retry.
     func failNextPersistenceForTesting(_ count: Int = 1) {
         persistenceFailuresRemainingForTesting = max(0, count)
+    }
+
+    func limitAttachmentRecordsForTesting(_ count: Int) {
+        attachmentRecordLimitForTesting = min(
+            max(0, count),
+            RelayAttachmentStorageLimits.maximumRecords
+        )
     }
 
     public func createRealtimeRouteV1(_ request: RealtimeRouteCreateRequestV1) throws -> RealtimeRouteCreatedV1 {
@@ -531,8 +544,9 @@ public actor RelayStore {
                 bodyDigest: bodyDigest
             )
         }
+        var nextAttachments = attachments
         if let attachmentKeyToEvict,
-           let evicted = attachments.removeValue(forKey: attachmentKeyToEvict) {
+           let evicted = nextAttachments.removeValue(forKey: attachmentKeyToEvict) {
             deferredExternalDeletions.append(contentsOf: evicted.compactMap(\.external))
         }
         records.append(record)
@@ -545,7 +559,18 @@ public actor RelayStore {
             }
             records = Array(records.suffix(maxAttachmentChunks))
         }
-        attachments[key] = records
+        nextAttachments[key] = records
+        guard attachmentStorageWithinLimits(
+            nextAttachments,
+            maximumRecords: attachmentRecordLimitForTesting
+                ?? RelayAttachmentStorageLimits.maximumRecords
+        ) else {
+            if let newlyStoredExternal {
+                deleteExternalAttachmentIfUnreferenced(newlyStoredExternal)
+            }
+            throw RelayStoreError.relayCapacityExceeded
+        }
+        attachments = nextAttachments
         do {
             try saveToDisk()
         } catch {
@@ -858,6 +883,7 @@ public actor RelayStore {
                           record.isStructurallyValid
                       })
               }),
+              attachmentStorageWithinLimits(snapshot.attachments),
               snapshot.federationNodes.count <= maxFederationNodes,
               snapshot.federationNodes.values.allSatisfy({ record in
                   record.lastHeartbeatAt.timeIntervalSince1970.isFinite
@@ -1139,6 +1165,26 @@ private struct AttachmentRecord: Codable {
     }
 }
 
+private func attachmentStorageWithinLimits(
+    _ attachments: [String: [AttachmentRecord]],
+    maximumRecords: Int = RelayAttachmentStorageLimits.maximumRecords
+) -> Bool {
+    var remainingRecords = maximumRecords
+    var remainingInlineBytes = RelayAttachmentStorageLimits.maximumInlineBytes
+    for records in attachments.values {
+        guard records.count <= remainingRecords else { return false }
+        remainingRecords -= records.count
+        for record in records {
+            guard let payload = record.payload else { continue }
+            for size in [payload.nonce.count, payload.ciphertext.count, payload.tag.count] {
+                guard size <= remainingInlineBytes else { return false }
+                remainingInlineBytes -= size
+            }
+        }
+    }
+    return true
+}
+
 private struct AttachmentRecordCodingKey: CodingKey {
     let stringValue: String
     let intValue: Int?
@@ -1301,6 +1347,19 @@ private enum SQLiteRelayStateStore {
 
     private static func loadAttachments(in db: OpaquePointer) throws -> [String: [AttachmentRecord]] {
         var attachments: [String: [AttachmentRecord]] = [:]
+        try queryRows(
+            "SELECT COUNT(*), COALESCE(SUM(length(value)), 0) FROM relay_attachment_chunks;",
+            in: db
+        ) { statement in
+            let recordCount = sqlite3_column_int64(statement, 0)
+            let encodedBytes = sqlite3_column_int64(statement, 1)
+            guard recordCount >= 0,
+                  recordCount <= Int64(RelayAttachmentStorageLimits.maximumRecords),
+                  encodedBytes >= 0,
+                  encodedBytes <= 512 * 1_024 * 1_024 else {
+                throw SQLiteRelayStateStoreError.corrupt("attachment store exceeds its current bound")
+            }
+        }
         try queryRows("SELECT attachment_id, value FROM relay_attachment_chunks ORDER BY attachment_id, chunk_index;", in: db) { statement in
             let attachmentId = try readText(statement, column: 0, in: db)
             let record = try decode(AttachmentRecord.self, from: readBlob(statement, column: 1))
@@ -1554,8 +1613,11 @@ private enum SQLiteRelayStateStore {
     }
 
     private static func bindBlob(_ value: Data, to index: Int32, in statement: OpaquePointer, db: OpaquePointer) throws {
+        guard let length = Int32(exactly: value.count) else {
+            throw SQLiteRelayStateStoreError.corrupt("blob exceeds SQLite bind limit")
+        }
         let bindResult = value.withUnsafeBytes { buffer in
-            sqlite3_bind_blob(statement, index, buffer.baseAddress, Int32(buffer.count), transient)
+            sqlite3_bind_blob(statement, index, buffer.baseAddress, length, transient)
         }
         guard bindResult == SQLITE_OK else {
             throw SQLiteRelayStateStoreError.bind(lastError(in: db))

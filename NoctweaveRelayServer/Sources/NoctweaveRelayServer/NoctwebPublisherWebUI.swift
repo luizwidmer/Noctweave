@@ -368,6 +368,26 @@ struct NoctwebPublisherSurface {
         </main>
       </div>
 
+      <dialog id="vaultDialog" class="vault-dialog" aria-labelledby="vaultTitle">
+        <form id="vaultForm">
+          <div class="dialog-heading">
+            <div><p class="eyebrow">Local publisher vault</p><h2 id="vaultTitle">Unlock publisher</h2></div>
+          </div>
+          <p class="muted" id="vaultDescription">Enter your vault password to open local drafts and signing keys. It never goes to the relay.</p>
+          <label>Vault password
+            <input id="vaultPassword" type="password" minlength="12" maxlength="4096" autocomplete="off" required>
+          </label>
+          <label id="vaultConfirmField" hidden>Confirm vault password
+            <input id="vaultConfirm" type="password" minlength="12" maxlength="4096" autocomplete="off">
+          </label>
+          <p class="form-error" id="vaultError" role="alert"></p>
+          <div class="dialog-actions">
+            <button class="button danger" id="resetVaultButton" type="button">Erase local publisher data…</button>
+            <button class="button primary" id="vaultSubmit" type="submit">Unlock</button>
+          </div>
+        </form>
+      </dialog>
+
       <dialog id="hostDialog">
         <form method="dialog" id="hostForm">
           <div class="dialog-heading">
@@ -652,6 +672,9 @@ struct NoctwebPublisherSurface {
     .dialog-note { display: grid; gap: 5px; margin: 6px 0 16px; }
     .dialog-note span { color: var(--muted); font-size: 11px; line-height: 1.5; }
     .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    .vault-dialog { width: min(540px, calc(100% - 28px)); }
+    .vault-dialog .dialog-actions { align-items: center; flex-wrap: wrap; }
+    .vault-dialog #resetVaultButton { margin-right: auto; }
     .form-error { min-height: 18px; margin: 0; color: var(--danger); font-size: 12px; }
     .toast {
       position: fixed;
@@ -727,8 +750,11 @@ struct NoctwebPublisherSurface {
       const PUBLISHER_ID_DOMAIN = "org.noctweave.noctweb/publisher-id/v1";
       const RELEASE_DOMAIN = "org.noctweave.net/host-release/v1";
       const DB_NAME = "noctweb-publisher-v1";
-      const DB_VERSION = 1;
+      const DB_VERSION = 2;
       const PROJECT_KEY = "current";
+      const VAULT_ITERATIONS = 600000;
+      const VAULT_AAD = new TextEncoder().encode("noctweb-publisher-vault-v2");
+      const IDENTITY_AAD = new TextEncoder().encode("noctweb-publisher-identity-v2");
       const MAX_TRACKED_HOSTED_COPIES = 64;
       const encoder = new TextEncoder();
       const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -740,11 +766,18 @@ struct NoctwebPublisherSurface {
         "refreshPreviewButton", "resetButton", "hostButton", "publicationCard", "hostedHeading",
         "hostedDetail", "copyLinkButton", "unhostButton", "hostDialog", "hostForm",
         "dialogTitle", "dialogDescription", "passwordInput", "retentionField",
-        "retentionInput", "dialogError", "dialogSubmit", "toast", "appearanceSelect"
+        "retentionInput", "dialogError", "dialogSubmit", "toast", "appearanceSelect",
+        "vaultDialog", "vaultForm", "vaultTitle", "vaultDescription", "vaultPassword",
+        "vaultConfirmField", "vaultConfirm", "vaultError", "vaultSubmit", "resetVaultButton"
       ].map((id) => [id, document.getElementById(id)]));
 
       let config;
       let database;
+      let vaultKey;
+      let vaultState;
+      let vaultSalt;
+      let vaultCommittedCiphertext = null;
+      let vaultSaveChain = Promise.resolve();
       let project;
       let identity;
       let currentFile = "html";
@@ -755,19 +788,15 @@ struct NoctwebPublisherSurface {
       let previewURLs = [];
       let saveTimer;
       let toastTimer;
-      const appearanceKey = "noctweave.publisher.appearance";
-
       function applyShellTheme(value) {
         const theme = ["system", "light", "dark"].includes(value) ? value : "system";
         document.documentElement.dataset.theme = theme;
         elements.appearanceSelect.value = theme;
-        try { localStorage.setItem(appearanceKey, theme); } catch {}
       }
 
       function restoreShellTheme() {
-        let value = "system";
-        try { value = localStorage.getItem(appearanceKey) || value; } catch {}
-        applyShellTheme(value);
+        try { localStorage.removeItem("noctweave.publisher.appearance"); } catch {}
+        applyShellTheme("system");
       }
 
       const defaultProject = () => ({
@@ -792,10 +821,15 @@ struct NoctwebPublisherSurface {
 
       async function start() {
         restoreShellTheme();
+        bindVaultReset();
+        let openingVault = false;
         try {
           config = await fetchConfig();
+          openingVault = true;
           database = await openDatabase();
+          await unlockPublisherVault();
           project = await readRecord("projects", PROJECT_KEY) || defaultProject();
+          vaultState.project = project;
           if (typeof project.ctaEnabled !== "boolean") {
             project.ctaEnabled = Boolean(project.buttonText || project.buttonURL);
           }
@@ -816,7 +850,8 @@ struct NoctwebPublisherSurface {
           updatePreview();
         } catch (error) {
           console.error(error);
-          showToast(safeMessage(error, "Publisher could not start."));
+          if (openingVault) showVaultRecovery(error);
+          else showToast(safeMessage(error, "Publisher could not start."));
           elements.relayLabel.textContent = "Relay unavailable";
           elements.hostButton.disabled = true;
           return;
@@ -1032,32 +1067,82 @@ struct NoctwebPublisherSurface {
       }
 
       async function loadOrCreateIdentity(publicationID) {
-        const existing = await readRecord("identities", publicationID);
-        if (existing?.privateKey && existing?.publicKey && existing?.releaseVaultKey) return existing;
-        const signingKeys = await crypto.subtle.generateKey(
-          { name: "Ed25519" },
-          false,
-          ["sign", "verify"]
-        );
-        if (signingKeys.privateKey.extractable) {
-          throw new Error("Publisher private key must be non-extractable.");
+        let privateBytes;
+        let releaseBytes;
+        let publicBytes;
+        let publisherID;
+        try {
+          if (vaultState.identityEnvelope) {
+            const record = await openVaultJSON(
+              vaultState.identityEnvelope, vaultKey, IDENTITY_AAD
+            );
+            if (record?.publicationID !== publicationID) {
+              throw new Error("Publisher identity does not match this workspace.");
+            }
+            privateBytes = decodeBoundedBase64(record.privateKey, 256);
+            releaseBytes = decodeBoundedBase64(record.releaseKey, 32);
+            publicBytes = decodeBoundedBase64(record.publicKey, 32);
+            publisherID = record.publisherID;
+            record.privateKey = "";
+            record.releaseKey = "";
+          } else {
+            // Export only once into short-lived buffers for password-wrapped
+            // persistence, then use non-extractable keys for the live session.
+            const signingKeys = await crypto.subtle.generateKey(
+              { name: "Ed25519" }, true, ["sign", "verify"]
+            );
+            const releaseKey = await crypto.subtle.generateKey(
+              { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
+            );
+            privateBytes = new Uint8Array(await crypto.subtle.exportKey(
+              "pkcs8", signingKeys.privateKey
+            ));
+            releaseBytes = new Uint8Array(await crypto.subtle.exportKey(
+              "raw", releaseKey
+            ));
+            publicBytes = new Uint8Array(await crypto.subtle.exportKey(
+              "raw", signingKeys.publicKey
+            ));
+            publisherID = await makePublisherID(publicBytes);
+            vaultState.identityEnvelope = await sealVaultJSON({
+              publicationID,
+              privateKey: toBase64(privateBytes),
+              releaseKey: toBase64(releaseBytes),
+              publicKey: toBase64(publicBytes),
+              publisherID
+            }, vaultKey, IDENTITY_AAD);
+            await persistVault();
+          }
+          if (privateBytes.length === 0 || releaseBytes.length !== 32
+              || publicBytes.length !== 32
+              || publisherID !== await makePublisherID(publicBytes)) {
+            throw new Error("Publisher identity is invalid.");
+          }
+          const privateKey = await crypto.subtle.importKey(
+            "pkcs8", privateBytes, { name: "Ed25519" }, false, ["sign"]
+          );
+          const publicKey = await crypto.subtle.importKey(
+            "raw", publicBytes, { name: "Ed25519" }, false, ["verify"]
+          );
+          const challenge = encoder.encode("noctweb-publisher identity check");
+          const signature = await crypto.subtle.sign("Ed25519", privateKey, challenge);
+          if (!await crypto.subtle.verify("Ed25519", publicKey, signature, challenge)) {
+            throw new Error("Publisher signing key does not match its public key.");
+          }
+          const releaseVaultKey = await crypto.subtle.importKey(
+            "raw", releaseBytes, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]
+          );
+          if (privateKey.extractable || releaseVaultKey.extractable) {
+            throw new Error("Publisher keys must be non-extractable while in use.");
+          }
+          return {
+            publicationID, privateKey, publicKey: publicBytes.buffer.slice(0),
+            publisherID, releaseVaultKey
+          };
+        } finally {
+          privateBytes?.fill(0);
+          releaseBytes?.fill(0);
         }
-        const publicKey = new Uint8Array(await crypto.subtle.exportKey("raw", signingKeys.publicKey));
-        const publisherID = await makePublisherID(publicKey);
-        const releaseVaultKey = await crypto.subtle.generateKey(
-          { name: "AES-GCM", length: 256 },
-          false,
-          ["encrypt", "decrypt"]
-        );
-        const value = {
-          publicationID,
-          privateKey: signingKeys.privateKey,
-          publicKey: publicKey.buffer,
-          publisherID,
-          releaseVaultKey
-        };
-        await writeRecord("identities", value);
-        return value;
       }
 
       function updateIdentityUI() {
@@ -1114,6 +1199,7 @@ struct NoctwebPublisherSurface {
         if (hostedCopies.length >= MAX_TRACKED_HOSTED_COPIES) {
           throw new Error("Unhost tracked revisions before hosting another copy.");
         }
+        await persistProject();
         const publicKey = new Uint8Array(identity.publicKey);
         const revision = Number(project.revision || 0) + 1;
         const publicationID = project.publicationID.toLowerCase();
@@ -1587,50 +1673,275 @@ struct NoctwebPublisherSurface {
       function openDatabase() {
         return new Promise((resolve, reject) => {
           const request = indexedDB.open(DB_NAME, DB_VERSION);
-          request.onupgradeneeded = () => {
-            const db = request.result;
-            if (!db.objectStoreNames.contains("projects")) db.createObjectStore("projects");
-            if (!db.objectStoreNames.contains("identities")) db.createObjectStore("identities", { keyPath: "publicationID" });
-            if (!db.objectStoreNames.contains("publications")) db.createObjectStore("publications", { keyPath: "publicationID" });
+          let olderPlaintextStore = false;
+          request.onupgradeneeded = (event) => {
+            if (event.oldVersion > 0) {
+              olderPlaintextStore = true;
+              request.transaction.abort();
+              return;
+            }
+            request.result.createObjectStore("vault");
           };
           request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(new Error("Publisher local storage could not open."));
+          request.onerror = () => reject(new Error(olderPlaintextStore
+            ? "An older unencrypted publisher workspace is present. Erase its local data to create an encrypted vault."
+            : "Publisher local storage could not open."));
+          request.onblocked = () => reject(new Error(
+            "Close other publisher tabs, then reopen the encrypted vault."
+          ));
         });
       }
 
       function readRecord(store, key) {
-        return transactionRequest(store, "readonly", (objectStore) => objectStore.get(key));
+        if (store === "projects" && key === PROJECT_KEY) return vaultState.project;
+        if (store === "publications" && key === vaultState.project?.publicationID) {
+          return vaultState.publications;
+        }
+        return null;
       }
 
       function writeRecord(store, value) {
-        return transactionRequest(store, "readwrite", (objectStore) => {
-          if (store === "projects") return objectStore.put(value, PROJECT_KEY);
-          return objectStore.put(value);
-        });
+        if (store === "projects") vaultState.project = value;
+        else if (store === "publications" && value.publicationID === vaultState.project?.publicationID) {
+          vaultState.publications = value;
+        } else throw new Error("Publisher vault record is invalid.");
+        return persistVault();
       }
 
       function deleteRecord(store, key) {
-        return transactionRequest(store, "readwrite", (objectStore) => objectStore.delete(key));
+        if (store !== "publications" || key !== vaultState.project?.publicationID) {
+          throw new Error("Publisher vault record is invalid.");
+        }
+        vaultState.publications = null;
+        return persistVault();
       }
 
-      function transactionRequest(store, mode, action) {
+      function transactionRequest(mode, action) {
         return new Promise((resolve, reject) => {
-          const tx = database.transaction(store, mode);
-          const request = action(tx.objectStore(store));
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(new Error("Publisher local storage operation failed."));
+          const tx = database.transaction("vault", mode);
+          let result;
+          const request = action(tx.objectStore("vault"));
+          request.onsuccess = () => { result = request.result; };
+          tx.oncomplete = () => resolve(result);
+          tx.onerror = () => reject(new Error("Publisher vault operation failed."));
+          tx.onabort = () => reject(new Error("Publisher vault operation was interrupted."));
+        });
+      }
+
+      function decodeBoundedBase64(value, maximumBytes) {
+        if (typeof value !== "string" || value.length > Math.ceil(maximumBytes / 3) * 4 + 4) {
+          throw new Error("Publisher vault record is invalid.");
+        }
+        const decoded = fromBase64(value);
+        if (decoded.length > maximumBytes) throw new Error("Publisher vault record is invalid.");
+        return decoded;
+      }
+
+      async function deriveVaultKey(password, salt) {
+        const passwordBytes = encoder.encode(password);
+        try {
+          const material = await crypto.subtle.importKey(
+            "raw", passwordBytes, "PBKDF2", false, ["deriveKey"]
+          );
+          return await crypto.subtle.deriveKey(
+            { name: "PBKDF2", hash: "SHA-256", salt, iterations: VAULT_ITERATIONS },
+            material,
+            { name: "AES-GCM", length: 256 },
+            false,
+            ["encrypt", "decrypt"]
+          );
+        } finally {
+          passwordBytes.fill(0);
+        }
+      }
+
+      async function sealVaultJSON(value, key, aad) {
+        const plaintext = encoder.encode(JSON.stringify(value));
+        if (plaintext.length > 8 * 1024 * 1024) {
+          plaintext.fill(0);
+          throw new Error("Publisher vault exceeds its size limit.");
+        }
+        const nonce = randomBytes(12);
+        try {
+          const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: nonce, additionalData: aad }, key, plaintext
+          ));
+          return { nonce: toBase64(nonce), ciphertext: toBase64(ciphertext) };
+        } finally {
+          plaintext.fill(0);
+        }
+      }
+
+      async function openVaultJSON(value, key, aad) {
+        const nonce = decodeBoundedBase64(value?.nonce, 12);
+        const ciphertext = decodeBoundedBase64(value?.ciphertext, 8 * 1024 * 1024 + 16);
+        if (nonce.length !== 12 || ciphertext.length < 16) {
+          throw new Error("Publisher vault record is invalid.");
+        }
+        let plaintext;
+        try {
+          plaintext = new Uint8Array(await crypto.subtle.decrypt(
+            { name: "AES-GCM", iv: nonce, additionalData: aad }, key, ciphertext
+          ));
+          return JSON.parse(decoder.decode(plaintext));
+        } finally {
+          ciphertext.fill(0);
+          plaintext?.fill(0);
+        }
+      }
+
+      function persistVault() {
+        vaultSaveChain = vaultSaveChain.catch(() => {}).then(async () => {
+          if (!vaultKey || !vaultState || !vaultSalt) {
+            throw new Error("Publisher vault is locked.");
+          }
+          const sealed = await sealVaultJSON(vaultState, vaultKey, VAULT_AAD);
+          const record = {
+            version: 2,
+            salt: toBase64(vaultSalt),
+            nonce: sealed.nonce,
+            ciphertext: sealed.ciphertext
+          };
+          const expected = vaultCommittedCiphertext;
+          await new Promise((resolve, reject) => {
+            const tx = database.transaction("vault", "readwrite");
+            const store = tx.objectStore("vault");
+            let changedElsewhere = false;
+            const lookup = store.get(PROJECT_KEY);
+            lookup.onsuccess = () => {
+              if ((lookup.result?.ciphertext ?? null) !== expected) {
+                changedElsewhere = true;
+                tx.abort();
+                return;
+              }
+              store.put(record, PROJECT_KEY);
+            };
+            tx.oncomplete = () => {
+              vaultCommittedCiphertext = record.ciphertext;
+              resolve();
+            };
+            tx.onabort = () => reject(new Error(changedElsewhere
+              ? "Publisher vault changed in another tab. Reload before editing."
+              : "Publisher vault save was interrupted."));
+            tx.onerror = () => reject(new Error("Publisher vault could not be saved."));
+          });
+        });
+        return vaultSaveChain;
+      }
+
+      function bindVaultReset() {
+        elements.vaultDialog.addEventListener("cancel", (event) => event.preventDefault());
+        elements.resetVaultButton.addEventListener("click", async () => {
+          const warning = "Erase all local publisher drafts, signing keys and release capabilities? "
+            + "You may lose the ability to update or unhost already hosted copies. This cannot be undone.";
+          if (!window.confirm(warning)) return;
+          database?.close();
+          database = null;
+          elements.resetVaultButton.disabled = true;
+          try {
+            await new Promise((resolve, reject) => {
+              const request = indexedDB.deleteDatabase(DB_NAME);
+              request.onsuccess = resolve;
+              request.onerror = () => reject(new Error("Local publisher data could not be erased."));
+              request.onblocked = () => reject(new Error("Close other publisher tabs, then try erasing again."));
+            });
+            location.reload();
+          } catch (error) {
+            elements.vaultError.textContent = safeMessage(error, "Local publisher data could not be erased.");
+            elements.resetVaultButton.disabled = false;
+          }
+        });
+      }
+
+      function showVaultRecovery(error) {
+        elements.vaultTitle.textContent = "Publisher unavailable";
+        elements.vaultDescription.textContent = "The local vault could not open. Existing data was not replaced.";
+        elements.vaultError.textContent = safeMessage(error, "Publisher could not start.");
+        elements.vaultSubmit.disabled = true;
+        if (!elements.vaultDialog.open) elements.vaultDialog.showModal();
+      }
+
+      async function unlockPublisherVault() {
+        const stored = await transactionRequest("readonly", (store) => store.get(PROJECT_KEY));
+        const creating = stored === undefined;
+        elements.vaultTitle.textContent = creating ? "Create publisher vault" : "Unlock publisher";
+        elements.vaultDescription.textContent = creating
+          ? "Choose a local vault password to protect drafts, signing keys and release capabilities. It is not sent to the relay and cannot be recovered."
+          : "Enter your local vault password to open drafts and signing keys. It is not sent to the relay.";
+        elements.vaultSubmit.textContent = creating ? "Create vault" : "Unlock";
+        elements.vaultConfirmField.hidden = !creating;
+        elements.vaultConfirm.required = creating;
+        elements.vaultError.textContent = "";
+        elements.vaultDialog.showModal();
+        elements.vaultPassword.focus();
+        await new Promise((resolve) => {
+          let busy = false;
+          const onSubmit = async (event) => {
+            event.preventDefault();
+            if (busy) return;
+            busy = true;
+            elements.vaultSubmit.disabled = true;
+            const password = elements.vaultPassword.value;
+            const confirmation = elements.vaultConfirm.value;
+            elements.vaultPassword.value = "";
+            elements.vaultConfirm.value = "";
+            try {
+              if (password.length < 12 || (creating && password !== confirmation)) {
+                throw new Error(creating
+                  ? "Use at least 12 characters and enter the same password twice."
+                  : "Enter your vault password.");
+              }
+              const salt = creating
+                ? randomBytes(16)
+                : decodeBoundedBase64(stored?.salt, 16);
+              if (salt.length !== 16 || (!creating && stored.version !== 2)) {
+                throw new Error("Publisher vault record is invalid.");
+              }
+              const key = await deriveVaultKey(password, salt);
+              const state = creating
+                ? { version: 2, project: null, identityEnvelope: null, publications: null }
+                : await openVaultJSON(stored, key, VAULT_AAD);
+              if (state?.version !== 2 || !("project" in state)
+                  || !("identityEnvelope" in state) || !("publications" in state)) {
+                throw new Error("Publisher vault record is invalid.");
+              }
+              vaultKey = key;
+              vaultSalt = salt;
+              vaultState = state;
+              vaultCommittedCiphertext = creating ? null : stored.ciphertext;
+              if (creating) await persistVault();
+              elements.vaultForm.removeEventListener("submit", onSubmit);
+              elements.vaultDialog.close();
+              resolve();
+            } catch (error) {
+              vaultKey = undefined;
+              vaultState = undefined;
+              vaultCommittedCiphertext = null;
+              elements.vaultError.textContent = creating
+                ? safeMessage(error, "Vault could not be created.")
+                : "Password incorrect or vault data damaged.";
+            } finally {
+              busy = false;
+              elements.vaultSubmit.disabled = false;
+              elements.vaultPassword.focus();
+            }
+          };
+          elements.vaultForm.addEventListener("submit", onSubmit);
         });
       }
 
       function scheduleSave() {
         clearTimeout(saveTimer);
         elements.saveState.textContent = "Saving…";
-        saveTimer = setTimeout(() => persistProject().catch(console.error), 350);
+        saveTimer = setTimeout(() => persistProject().catch((error) => {
+          elements.saveState.textContent = "Save failed";
+          showToast(safeMessage(error, "Publisher vault could not be saved."));
+        }), 350);
       }
 
       async function persistProject() {
         await writeRecord("projects", project);
-        elements.saveState.textContent = "Saved locally";
+        elements.saveState.textContent = "Saved in vault";
       }
 
       function canonicalJSON(value) {

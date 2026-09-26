@@ -17,6 +17,9 @@ export default {
       }
     },
     copy: {
+      ...(process.platform === "darwin"
+        ? { ".runtime/desktop-build/launcher-key": "bin/launcher-key" }
+        : {}),
       "Dockerfile": "relay-source/Dockerfile",
       "Package.swift": "relay-source/Package.swift",
       "Package.resolved": "relay-source/Package.resolved",
@@ -43,6 +46,7 @@ export default {
     }
   },
   scripts: {
+    preBuild: "desktop/scripts/build-launcher-key.ts",
     postWrap: "desktop/scripts/install-mac-icon.ts"
   }
 } satisfies ElectrobunConfig;

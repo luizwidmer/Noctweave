@@ -21,6 +21,40 @@ final class RelayStorePersistenceAtomicityTests: XCTestCase {
         )
     }
 
+    func testAttachmentRecordBudgetRejectsNewChunkWithoutLosingExistingOne() async throws {
+        let store = RelayStore(storeURL: nil, temporalBucketSeconds: 0)
+        await store.limitAttachmentRecordsForTesting(1)
+        let attachmentID = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0x11, count: 12),
+            ciphertext: Data([0x22]),
+            tag: Data(repeating: 0x33, count: 16)
+        )
+        _ = try await store.storeAttachment(
+            attachmentId: attachmentID,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 300,
+            idempotencyKey: Data(repeating: 0x44, count: 32)
+        )
+        do {
+            _ = try await store.storeAttachment(
+                attachmentId: attachmentID,
+                chunkIndex: 1,
+                payload: payload,
+                ttlSeconds: 300,
+                idempotencyKey: Data(repeating: 0x55, count: 32)
+            )
+            XCTFail("Expected the aggregate attachment budget to reject a new chunk")
+        } catch RelayStoreError.relayCapacityExceeded {
+            // The first chunk remains available after the rejected write.
+        }
+        let retained = try await store.fetchAttachment(attachmentId: attachmentID, chunkIndex: 0)
+        let rejected = try await store.fetchAttachment(attachmentId: attachmentID, chunkIndex: 1)
+        XCTAssertNotNil(retained)
+        XCTAssertNil(rejected)
+    }
+
     func testExistingUnmarkedSQLiteStoreIsRejected() async throws {
         let fixture = try makeCorePersistentRelayFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }

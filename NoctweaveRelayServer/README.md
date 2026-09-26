@@ -83,6 +83,16 @@ bun install --frozen-lockfile
 bun run desktop:dev
 ```
 
+The launcher encrypts its complete local state, including the console token,
+publisher password, and settings. On macOS, a 32-byte device-only Keychain key
+protects the launcher record. Linux and Windows source builds require a
+separate, randomly generated 32-byte key supplied as 64 hexadecimal characters
+in `NOCTWEAVE_RELAY_DESKTOP_KEY_HEX` at each start; the launcher removes that
+variable from its process environment after reading it. An existing plaintext
+`launcher.json` is left untouched and rejected with a visible error. Preserve
+it separately and set up a fresh launcher state; there is no automatic
+plaintext migration in this unreleased launcher.
+
 New launcher profiles enable Noctweb hosting on the solo standard relay by
 default. The setup screen exposes this choice explicitly, the overview reports
 `nw.net-host@1`, and **Open Publisher / Lab** opens

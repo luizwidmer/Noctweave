@@ -8,6 +8,7 @@ import Glibc
 
 public enum ClientStateStoreError: Error, Equatable, Sendable {
     case encryptionFailed
+    case insecureProtectionUnavailable
     case stateTooLarge
     case rollbackAnchorUnavailable
     case rollbackDetected
@@ -162,6 +163,11 @@ public actor ClientStateStore {
 
     public func load() throws -> ClientState? {
         guard !encryptionMaterialDestroyed else { throw ClientStateStoreError.encryptionFailed }
+        #if !DEBUG
+        guard protection == .encrypted else {
+            throw ClientStateStoreError.insecureProtectionUnavailable
+        }
+        #endif
         try ensurePrivateDirectory()
         return try withExclusiveFileLock {
             if protection == .insecurePlaintextForTesting {
@@ -207,6 +213,11 @@ public actor ClientStateStore {
         replacing expectedState: ClientState?
     ) throws {
         guard !encryptionMaterialDestroyed, !writesSuspended else { throw ClientStateStoreError.encryptionFailed }
+        #if !DEBUG
+        guard protection == .encrypted else {
+            throw ClientStateStoreError.insecureProtectionUnavailable
+        }
+        #endif
         guard try state.isStructurallyValidThrowing else {
             throw ClientStateError.invalidState
         }

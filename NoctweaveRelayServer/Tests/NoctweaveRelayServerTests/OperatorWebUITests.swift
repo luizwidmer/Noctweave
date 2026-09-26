@@ -74,7 +74,7 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.css.contains(".quickActions"))
     }
 
-    func testOperatorShellProvidesPersistedAppearanceAndSemanticThemeTokens() {
+    func testOperatorShellProvidesInMemoryAppearanceAndSemanticThemeTokens() {
         XCTAssertFalse(OperatorWebUI.html.contains(#"name="color-scheme" content="dark""#))
         XCTAssertTrue(OperatorWebUI.html.contains(#"id="appearanceSelect"#))
         XCTAssertTrue(OperatorWebUI.html.contains(#"value="system"#))
@@ -85,7 +85,11 @@ final class OperatorWebUITests: XCTestCase {
         XCTAssertTrue(OperatorWebUI.css.contains("prefers-color-scheme:dark"))
         XCTAssertTrue(OperatorWebUI.css.contains("safe-area-inset-bottom"))
         XCTAssertTrue(OperatorWebUI.javascript.contains("noctweave.operator.appearance"))
-        XCTAssertTrue(OperatorWebUI.javascript.contains("localStorage"))
+        XCTAssertTrue(OperatorWebUI.javascript.contains("localStorage.removeItem"))
+        XCTAssertFalse(OperatorWebUI.javascript.contains("localStorage.setItem"))
+        XCTAssertFalse(OperatorWebUI.javascript.contains("localStorage.getItem"))
+        XCTAssertFalse(OperatorWebUI.javascript.contains("sessionStorage.setItem"))
+        XCTAssertFalse(OperatorWebUI.javascript.contains("sessionStorage.getItem"))
     }
 
     func testOperatorTokenAuthenticatorRequiresSingleBearerToken() {

@@ -177,6 +177,13 @@ offload is enabled:
 
 Disable `nw.blobs` when attachments are not needed.
 
+The built-in relay stores reject new attachment chunks when their combined
+index reaches 65,536 records or inline encrypted payload reaches 256 MiB.
+External blob offload avoids the inline payload budget but still uses index
+records. A capacity rejection leaves existing chunks intact; monitor capacity
+and expired-record pruning rather than assuming the per-attachment limit is
+the only bound.
+
 `nw.media-blobs@1` is separate from `nw.blobs@1`. Enable it only when the
 application needs its create/upload/fetch/release lifecycle, keep the 32-byte
 blob capability confidential, and ensure every chunk is encrypted before it

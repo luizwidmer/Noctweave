@@ -39,12 +39,10 @@ function applyAppearance(value: string): void {
   const theme = ["system", "light", "dark"].includes(value) ? value : "system";
   document.documentElement.dataset.theme = theme;
   appearanceSelect.value = theme;
-  try { localStorage.setItem(appearanceKey, theme); } catch {}
 }
 
-let savedAppearance = "system";
-try { savedAppearance = localStorage.getItem(appearanceKey) ?? savedAppearance; } catch {}
-applyAppearance(savedAppearance);
+try { localStorage.removeItem(appearanceKey); } catch {}
+applyAppearance("system");
 appearanceSelect.addEventListener("change", () => applyAppearance(appearanceSelect.value));
 
 function settingsFromForm(): RelayLauncherSettings {

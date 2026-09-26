@@ -141,11 +141,11 @@ enum OperatorWebUI {
 
     static let javascript = #"""
     const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-    let token=sessionStorage.getItem("noctweaveAdminToken")||"", state=null, initialConfig="";let initialObject=null;
+    let token="", state=null, initialConfig="";let initialObject=null;
     const form=$("#configForm"), login=$("#login"), app=$("#app"), saveBar=$("#saveBar"), appearance=$("#appearanceSelect");
-    const appearanceKey="noctweave.operator.appearance";
-    function applyAppearance(value){const theme=["system","light","dark"].includes(value)?value:"system";document.documentElement.dataset.theme=theme;appearance.value=theme;try{localStorage.setItem(appearanceKey,theme)}catch{}}
-    applyAppearance((()=>{try{return localStorage.getItem(appearanceKey)||"system"}catch{return "system"}})());
+    try{sessionStorage.removeItem("noctweaveAdminToken");localStorage.removeItem("noctweave.operator.appearance")}catch{}
+    function applyAppearance(value){const theme=["system","light","dark"].includes(value)?value:"system";document.documentElement.dataset.theme=theme;appearance.value=theme}
+    applyAppearance("system");
     appearance.addEventListener("change",()=>applyAppearance(appearance.value));
     const viewMeta={overview:["Operations","Overview"],general:["Relay","Relay Profile"],delivery:["Policy","Delivery"],noctcord:["Realtime","NoctCord"],noctweb:["Hosting","Noctweb"],storage:["Data","Storage"],federation:["Network","Federation"],advanced:["Experimental","Privacy research"]};
     function api(path,options={}){return fetch(path,{...options,headers:{"Authorization":`Bearer ${token}`,"Content-Type":"application/json",...(options.headers||{})},cache:"no-store"}).then(async r=>{const data=await r.json().catch(()=>({error:"Invalid server response"}));if(!r.ok)throw new Error(data.error||`HTTP ${r.status}`);return data})}
@@ -161,9 +161,9 @@ enum OperatorWebUI {
     function toggleMode(relayKind=state?.status?.bootstrap?.["Relay kind"]||"standard"){const federation=form.elements.federationMode.value!=="solo",open=form.elements.federationMode.value==="open",ipfs=form.elements.attachmentStorageMode.value==="ipfs",hidden=form.elements.hiddenRetrievalEnabled.checked,pir=form.elements.hiddenRetrievalMode.value==="replicatedXorPIR",onion=form.elements.onionTransportEnabled.checked,mixnet=form.elements.mixnetTransportEnabled.checked,wake=form.elements.wakeEnabled.checked,longPoll=form.elements.wakeMode.value==="longPoll",standard=relayKind==="standard";setVisible(".federationOnly",federation);setVisible(".soloOnly",!federation);setVisible(".openOnly",open);setVisible(".openPeerConditional",open);setConditional(".ipfsOnly",ipfs);setConditional(".ipfsConditional",ipfs);setConditional(".hiddenConditional",hidden);setConditional(".pirConditional",hidden&&pir);setConditional(".onionConditional",onion);setConditional(".mixnetConditional",mixnet);setConditional(".wakeConditional",wake);setConditional(".longPollConditional",wake&&longPoll);setConditional(".standardOnly",standard)}
     function restartSettingsChanged(next){return["attachmentStorageMode","ipfsAPIEndpoint","ipfsGatewayEndpoint","ipfsTimeoutSeconds","netHostEnabled","noctwebDataEnabled","noctwebRelaySuffix"].some(key=>next[key]!==initialObject?.[key])}
     function updateDirtyState(){const next=configFromForm(),dirty=JSON.stringify(next)!==initialConfig;saveBar.hidden=!dirty;if(dirty)$("#saveMessage").textContent=restartSettingsChanged(next)?"Storage or Noctweb host changes are saved now and activate after restart.":"Policy changes apply to new relay requests immediately.";toggleMode()}
-    async function load(){try{const data=await api("/admin/api/state");login.hidden=true;app.hidden=false;fill(data)}catch(e){token="";sessionStorage.removeItem("noctweaveAdminToken");login.hidden=false;app.hidden=true;$("#loginError").textContent=e.message}}
-    $("#loginForm").addEventListener("submit",e=>{e.preventDefault();token=$("#token").value;sessionStorage.setItem("noctweaveAdminToken",token);load()});
-    $("#logout").addEventListener("click",()=>{token="";sessionStorage.removeItem("noctweaveAdminToken");app.hidden=true;login.hidden=false;$("#token").value=""});
+    async function load(){try{const data=await api("/admin/api/state");login.hidden=true;app.hidden=false;$("#token").value="";fill(data)}catch(e){token="";login.hidden=false;app.hidden=true;$("#loginError").textContent=e.message}}
+    $("#loginForm").addEventListener("submit",e=>{e.preventDefault();token=$("#token").value;load()});
+    $("#logout").addEventListener("click",()=>{token="";app.hidden=true;login.hidden=false;$("#token").value=""});
     function showView(view){const button=$(`#navigation button[data-view="${view}"]`);if(!button||!viewMeta[view])return;$$('#navigation button').forEach(x=>x.classList.toggle("active",x===button));$$('.view').forEach(v=>v.classList.toggle("active",v.dataset.viewPanel===view));[$("#viewEyebrow").textContent,$("#viewTitle").textContent]=viewMeta[view];window.scrollTo({top:0,behavior:"smooth"})}
     $("#navigation").addEventListener("click",e=>{const b=e.target.closest("button[data-view]");if(b)showView(b.dataset.view)});
     $$("[data-jump-view]").forEach(button=>button.addEventListener("click",()=>showView(button.dataset.jumpView)));

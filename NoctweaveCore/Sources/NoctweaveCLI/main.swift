@@ -181,7 +181,7 @@ private struct CommandRunner {
                 "--poll-ms", "--state", "--plaintext",
             ]
         case "send":
-            return ["--relationship", "--text-file", "--state", "--plaintext"]
+            return ["--relationship", "--text-file", "--text-stdin", "--state", "--plaintext"]
         case "sync":
             return ["--relationship", "--max", "--state", "--plaintext"]
         case "maintain":
@@ -189,7 +189,7 @@ private struct CommandRunner {
         case "group-create":
             return ["--group", "--relay", "--state", "--plaintext"]
         case "group-send":
-            return ["--group", "--text-file", "--state", "--plaintext"]
+            return ["--group", "--text-file", "--text-stdin", "--state", "--plaintext"]
         case "group-sync":
             return ["--group", "--max", "--pages", "--state", "--plaintext"]
         case "group-maintain":
@@ -579,9 +579,7 @@ private struct CommandRunner {
 
     private func sendText(_ options: ParsedOptions) async throws {
         let relationshipID = try relationshipIdentifier(options)
-        let text = try readPrivateMessageText(
-            from: try required(options, "--text-file")
-        )
+        let text = try readPrivateMessageText(options: options)
         let result = try await headlessClient(options).sendText(
             text,
             relationshipID: relationshipID
@@ -678,11 +676,9 @@ private struct CommandRunner {
     }
 
     private func sendGroupText(_ options: ParsedOptions) async throws {
-        try options.requireOnly(["--group", "--text-file", "--state", "--plaintext"])
+        try options.requireOnly(["--group", "--text-file", "--text-stdin", "--state", "--plaintext"])
         let groupID = try uuidOption(options, "--group")
-        let text = try readPrivateMessageText(
-            from: try required(options, "--text-file")
-        )
+        let text = try readPrivateMessageText(options: options)
         let result = try await headlessClient(options).sendGroupText(
             groupID: groupID,
             text: text
@@ -1526,6 +1522,11 @@ private struct CommandRunner {
 
     private func stateStore(_ options: ParsedOptions) throws -> ClientStateStore {
         let plaintext = try options.bool("--plaintext") ?? false
+        #if !DEBUG
+        guard !plaintext else {
+            throw CLIError("--plaintext is unavailable in release builds.")
+        }
+        #endif
         return ClientStateStore(
             fileURL: try stateFileURL(options),
             protection: plaintext ? .insecurePlaintextForTesting : .encrypted
@@ -1809,18 +1810,61 @@ private struct CommandRunner {
         return value
     }
 
-    private func readPrivateMessageText(from path: String) throws -> String {
-        var data = try readBoundedRegularFile(
-            at: path,
-            maximumBytes: Self.maximumSensitiveInputBytes,
-            allowEmpty: false,
-            label: "Message input"
-        )
+    private func readPrivateMessageText(options: ParsedOptions) throws -> String {
+        let path = options.value("--text-file")
+        let usesStandardInput = try options.bool("--text-stdin")
+        guard (path != nil) != (usesStandardInput == true), usesStandardInput != false else {
+            throw CLIError("Supply exactly one of `--text-file` or `--text-stdin true`.")
+        }
+        var data: Data
+        if let path {
+            data = try readBoundedRegularFile(
+                at: path,
+                maximumBytes: Self.maximumSensitiveInputBytes,
+                allowEmpty: false,
+                label: "Message input"
+            )
+        } else {
+            data = try readBoundedStandardInput(
+                maximumBytes: Self.maximumSensitiveInputBytes,
+                label: "Message input"
+            )
+        }
         defer { data.wipeCLIOutputBuffer() }
         guard let value = String(data: data, encoding: .utf8), !value.isEmpty else {
-            throw CLIError("Message input file is not valid non-empty UTF-8 text.")
+            throw CLIError("Message input is not valid non-empty UTF-8 text.")
         }
         return value
+    }
+
+    /// A bounded pipe input lets the caller avoid a plaintext message file.
+    private func readBoundedStandardInput(maximumBytes: Int, label: String) throws -> Data {
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: min(64 * 1_024, maximumBytes + 1))
+        defer { buffer.withUnsafeMutableBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            memset(base, 0, raw.count)
+        } }
+        do {
+            while true {
+                let remaining = maximumBytes + 1 - data.count
+                guard remaining > 0 else { throw CLIError("\(label) exceeds the size limit.") }
+                let count = buffer.withUnsafeMutableBytes { raw -> Int in
+                    guard let base = raw.baseAddress else { return 0 }
+                    return read(STDIN_FILENO, base, min(raw.count, remaining))
+                }
+                if count < 0, errno == EINTR { continue }
+                guard count >= 0 else { throw CLIError("\(label) could not be read.") }
+                if count == 0 { break }
+                data.append(contentsOf: buffer[0..<count])
+                guard data.count <= maximumBytes else { throw CLIError("\(label) exceeds the size limit.") }
+            }
+            guard !data.isEmpty else { throw CLIError("\(label) is empty.") }
+            return data
+        } catch {
+            data.wipeCLIOutputBuffer()
+            throw error
+        }
     }
 
     /// Opens the final component with O_NOFOLLOW and reads only a regular file
@@ -2153,11 +2197,11 @@ private struct CommandRunner {
           pairing-invitation --offer-out <private-file> --invitation-out <share-file> [--lifetime seconds]
           pair-offer --offer-file <private-file> --participant-file <private-file> --relay <URL> [--wait-seconds n] [--poll-ms n]
           pair-accept --invitation-file <share-file> --participant-file <private-file> --relay <URL> [--wait-seconds n] [--poll-ms n]
-          send --relationship <uuid> --text-file <private-file>
+          send --relationship <uuid> (--text-file <private-file> | --text-stdin true)
           sync --relationship <uuid> [--max packets]
           maintain (--all true | --relationship <uuid>)
           group-create --group <stable-retry-uuid> --relay <url|host:port>
-          group-send --group <uuid> --text-file <private-file>
+          group-send --group <uuid> (--text-file <private-file> | --text-stdin true)
           group-sync --group <uuid> [--max packets-per-route] [--pages 1...64]
           group-maintain (--all true | --group <uuid>)
           group-resume --group <uuid> --operation <uuid>

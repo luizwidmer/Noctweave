@@ -50,7 +50,9 @@ test("relay desktop packages source and keeps Docker and admin boundaries explic
   expect(view).toContain("noctweave.desktop.appearance");
   expect(view).toContain("noctwebHostingEnabled");
   expect(view).toContain("openPublisher");
-  expect(view).toContain("localStorage");
+  expect(view).toContain("localStorage.removeItem(appearanceKey)");
+  expect(view).not.toContain("localStorage.setItem");
+  expect(view).not.toContain("localStorage.getItem");
   expect(relayIcon).toContain("Four solid control planes");
   expect(relayIcon).toContain("M34 34h96v70h-26v26H34V34Z");
   expect(relayIcon).not.toContain("extended encrypted routing corridors");

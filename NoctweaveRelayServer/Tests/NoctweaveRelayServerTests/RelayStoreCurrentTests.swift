@@ -31,6 +31,35 @@ final class RelayStoreCurrentTests: XCTestCase {
         )
     }
 
+    func testAttachmentRecordBudgetRejectsNewChunkWithoutLosingExistingOne() throws {
+        let store = RelayStore(fileURL: nil, temporalBucketSeconds: 0)
+        store.limitAttachmentRecordsForTesting(1)
+        let attachmentID = UUID()
+        let payload = EncryptedPayload(
+            nonce: Data(repeating: 0x11, count: 12),
+            ciphertext: Data([0x22]),
+            tag: Data(repeating: 0x33, count: 16)
+        )
+        _ = try store.storeAttachment(
+            attachmentId: attachmentID,
+            chunkIndex: 0,
+            payload: payload,
+            ttlSeconds: 300,
+            idempotencyKey: Data(repeating: 0x44, count: 32)
+        )
+        XCTAssertThrowsError(try store.storeAttachment(
+            attachmentId: attachmentID,
+            chunkIndex: 1,
+            payload: payload,
+            ttlSeconds: 300,
+            idempotencyKey: Data(repeating: 0x55, count: 32)
+        )) { error in
+            XCTAssertEqual(error as? RelayStoreError, .relayCapacityExceeded)
+        }
+        XCTAssertNotNil(try store.fetchAttachment(attachmentId: attachmentID, chunkIndex: 0))
+        XCTAssertNil(try store.fetchAttachment(attachmentId: attachmentID, chunkIndex: 1))
+    }
+
     func testAttachmentStorePreservesRequestedTTLAboveSixHoursAndCapsAtThirtyDays() throws {
         let blobStore = TTLRecordingAttachmentBlobStore()
         let store = RelayStore(

@@ -81,7 +81,8 @@ enum NoctwebNamespaceSQLiteStore {
         in database: OpaquePointer
     ) throws {
         let encoded = try RelayCodec.encoder(sortedKeys: true).encode(ledger)
-        guard encoded.count <= 16 * 1_024 * 1_024 else {
+        guard encoded.count <= 16 * 1_024 * 1_024,
+              let encodedLength = Int32(exactly: encoded.count) else {
             throw NoctwebNamespaceSQLiteError.corrupt
         }
         let sql = """
@@ -105,7 +106,7 @@ enum NoctwebNamespaceSQLiteStore {
                 statement,
                 1,
                 bytes.baseAddress,
-                Int32(encoded.count),
+                encodedLength,
                 transient
             )
         }

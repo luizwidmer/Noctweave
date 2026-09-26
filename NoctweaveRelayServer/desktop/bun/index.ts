@@ -3,11 +3,27 @@ import { join } from "node:path";
 import Electrobun, { BrowserView, BrowserWindow, PATHS } from "electrobun/bun";
 import type { RelayDesktopRPC, RelayLauncherSettings } from "../rpc.js";
 import { DockerRelayManager, validateSettings } from "./docker-relay.js";
+import { launcherKeyProvider } from "./launcher-key.js";
 import { LauncherStore } from "./launcher-store.js";
 
 const sourceDirectory = join(PATHS.RESOURCES_FOLDER, "app", "relay-source");
-const store = new LauncherStore();
-let state = await store.load();
+const store = new LauncherStore(
+  undefined,
+  launcherKeyProvider(join(PATHS.RESOURCES_FOLDER, "app", "bin", "launcher-key"))
+);
+let state: Awaited<ReturnType<typeof store.load>>;
+try {
+  state = await store.load();
+} catch (error) {
+  await Electrobun.Utils.showMessageBox({
+    type: "error",
+    title: "Protected launcher state unavailable",
+    message: "Noctweave Relay could not open its protected state.",
+    detail: error instanceof Error ? error.message : "An unknown storage error occurred.",
+    buttons: ["Quit"]
+  });
+  process.exit(1);
+}
 let manager = new DockerRelayManager(
   sourceDirectory,
   state.adminToken,
@@ -15,8 +31,9 @@ let manager = new DockerRelayManager(
 );
 
 async function updateSettings(settings: RelayLauncherSettings): Promise<void> {
-  state = { ...state, settings: validateSettings(settings) };
-  await store.save(state);
+  const candidate = { ...state, settings: validateSettings(settings) };
+  await store.save(candidate);
+  state = candidate;
 }
 
 const desktopRPC = BrowserView.defineRPC<RelayDesktopRPC>({

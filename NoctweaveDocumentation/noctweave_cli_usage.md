@@ -29,7 +29,8 @@ not infer acceptance from running a command or from a previous installation.
 State is encrypted by default. Without `--state`, the database lives at the
 platform's user Application Support location under
 `NoctweaveCLI/client-state.json`, not in the current working directory.
-`--plaintext true` is for disposable test fixtures only. `--state path`
+`--plaintext true` is available only in debug builds for disposable test fixtures;
+release builds reject it before touching state. `--state path`
 selects another state file; its parent must be owned by the current user and
 must not be group/other writable. The CLI creates a missing final state
 directory with mode `0700` but does not change an existing caller-owned
@@ -108,8 +109,12 @@ swift run --package-path NoctweaveCore NoctweaveCLI sync \
 ```
 
 Sending persists one logical event and exact encrypted route packets before
-publication. Message text is read from a file so plaintext does not appear in
-the process argument list. Sync commits a route cursor only after durable local
+publication. For callers that can supply a private pipe, replace `--text-file`
+with `--text-stdin true` on `send` or `group-send`. The two options are mutually
+exclusive; stdin must contain non-empty UTF-8 and is capped at 8 MiB. This
+avoids a plaintext message file and keeps text out of process arguments. The
+older file option remains available for manual workflows, but callers must
+manage that plaintext file themselves. Sync commits a route cursor only after durable local
 processing.
 
 Retry and route maintenance are explicit headless workflows:

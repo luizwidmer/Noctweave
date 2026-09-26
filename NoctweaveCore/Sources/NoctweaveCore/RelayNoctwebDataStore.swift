@@ -642,7 +642,10 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
         }
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601; encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(state)
-        guard data.count <= Self.maximumPersistedDatabaseBytes else { throw RelayNoctwebDataStoreError.capacityExceeded }
+        guard data.count <= Self.maximumPersistedDatabaseBytes,
+              let dataLength = Int32(exactly: data.count) else {
+            throw RelayNoctwebDataStoreError.capacityExceeded
+        }
         let replacedBytes = encodedBytesByDatabase[databaseID] ?? 0
         let otherBytes = encodedBytesByDatabase.values.reduce(0, +) - replacedBytes
         guard data.count <= NoctwebDataV1.maximumTotalDataBytes - otherBytes else {
@@ -677,7 +680,7 @@ public final class RelayNoctwebDataStore: @unchecked Sendable {
                 statement,
                 2,
                 bytes.baseAddress,
-                Int32(data.count),
+                dataLength,
                 Self.transient
             )
         }

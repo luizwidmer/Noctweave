@@ -75,6 +75,23 @@ final class DecentralizedWakeRouteTests: XCTestCase {
         XCTAssertTrue(nonfinite.isStructurallyValid)
     }
 
+    func testWakePlannerRenormalizesMutatedPublicLimitsBeforeArithmetic() {
+        var support = DecentralizedWakeSupport()
+        support.minPollIntervalSeconds = Int.max
+        support.maxPollIntervalSeconds = Int.max
+        support.jitterPermille = Int.max
+        let plan = DecentralizedWakePlanner.makePlan(
+            support: support,
+            routeID: routeID(1),
+            routeJitterSeed: Data(repeating: 33, count: 32),
+            relayIdentifier: "fixture-relay",
+            failureCount: Int.max
+        )
+        XCTAssertTrue((5...DecentralizedWakeSupport.absoluteMaximumPollIntervalSeconds)
+            .contains(plan.nextPollDelaySeconds))
+        XCTAssertEqual(plan.failureBackoffStep, 6)
+    }
+
     func testCycleDeduplicatesRoutesAndHealthyRouteIsNotDelayedByBackoff() throws {
         let healthySupport = DecentralizedWakeSupport(
             minPollIntervalSeconds: 30,

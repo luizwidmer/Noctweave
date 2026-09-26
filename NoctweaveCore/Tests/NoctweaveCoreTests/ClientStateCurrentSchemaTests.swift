@@ -4,6 +4,24 @@ import XCTest
 @_spi(Testing) @testable import NoctweaveCore
 
 final class ClientStateCurrentSchemaTests: XCTestCase {
+    #if !DEBUG
+    func testReleaseBuildRejectsPlaintextStateWithoutCreatingFiles() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("release-plaintext-\(UUID().uuidString)", isDirectory: true)
+        let store = ClientStateStore(
+            fileURL: root.appendingPathComponent("state.json"),
+            protection: .insecurePlaintextForTesting
+        )
+        do {
+            _ = try await store.load()
+            XCTFail("Release builds must reject plaintext state")
+        } catch {
+            XCTAssertEqual(error as? ClientStateStoreError, .insecureProtectionUnavailable)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+    }
+    #endif
+
     func testStateDecryptionPreservesKeyProviderAvailabilityFailure() throws {
         let key = SymmetricKey(data: Data(repeating: 0x41, count: 32))
         let aad = Data("state-aad".utf8)
