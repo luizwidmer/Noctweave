@@ -3,6 +3,15 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_DIR="$ROOT_DIR/NoctweaveCore"
+source "$ROOT_DIR/scripts/liboqs-runtime.sh"
+source "$ROOT_DIR/scripts/swiftpm-options.sh"
+
+# Build once, then exercise the actual product directly. Each invocation still
+# uses the same fresh private state and runs the complete CLI command handler.
+swift build --package-path "$CORE_DIR" "${NOCTWEAVE_SWIFT_BUILD_FLAGS[@]}" --product NoctweaveCLI
+CORE_BIN="$(swift build --package-path "$CORE_DIR" "${NOCTWEAVE_SWIFT_BUILD_FLAGS[@]}" --show-bin-path)"
+CLI="$CORE_BIN/NoctweaveCLI"
+test -x "$CLI"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/noctweave-cli.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
@@ -10,27 +19,27 @@ STATE_FILE="$WORK_DIR/state.json"
 OFFER_FILE="$WORK_DIR/offer.private.json"
 INVITATION_FILE="$WORK_DIR/invitation.share"
 
-swift run --package-path "$CORE_DIR" NoctweaveCLI help >"$WORK_DIR/help.txt"
-grep -q -- 'send --relationship <uuid> --text-file <private-file>' "$WORK_DIR/help.txt"
+"$CLI" help >"$WORK_DIR/help.txt"
+grep -Fq -- 'send --relationship <uuid> (--text-file <private-file> | --text-stdin true)' "$WORK_DIR/help.txt"
 grep -q -- 'safety-number --relationship <uuid>' "$WORK_DIR/help.txt"
 
-swift run --package-path "$CORE_DIR" NoctweaveCLI init \
+"$CLI" init \
   --display-name "CLI smoke persona" \
   --accept-privacy-policy true \
   --accept-terms-of-use true \
   --state "$STATE_FILE" \
   --plaintext true >"$WORK_DIR/init.json"
 
-swift run --package-path "$CORE_DIR" NoctweaveCLI status \
+"$CLI" status \
   --state "$STATE_FILE" \
   --plaintext true >"$WORK_DIR/status.json"
 
-swift run --package-path "$CORE_DIR" NoctweaveCLI maintain \
+"$CLI" maintain \
   --all true \
   --state "$STATE_FILE" \
   --plaintext true >"$WORK_DIR/maintenance.json"
 
-swift run --package-path "$CORE_DIR" NoctweaveCLI pairing-invitation \
+"$CLI" pairing-invitation \
   --offer-out "$OFFER_FILE" \
   --invitation-out "$INVITATION_FILE" \
   --lifetime 30 \

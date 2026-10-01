@@ -7,24 +7,26 @@ CORE_DIR="$ROOT_DIR/NoctweaveCore"
 JS_DIR="${NOCTWEAVE_JS_DIR:-$ROOT_DIR/NoctweaveJS}"
 
 source "$ROOT_DIR/scripts/liboqs-runtime.sh"
+source "$ROOT_DIR/scripts/swiftpm-options.sh"
 
 echo "Building public Core and CLI product paths..."
-swift build --package-path "$CORE_DIR"
+swift build --package-path "$CORE_DIR" "${NOCTWEAVE_SWIFT_BUILD_FLAGS[@]}"
 
 echo "Running Core XCTest suite..."
-swift test --package-path "$CORE_DIR"
+swift test --package-path "$CORE_DIR" "${NOCTWEAVE_SWIFT_BUILD_FLAGS[@]}"
 
 echo "Running public CLI acceptance suite (init, state, maintenance, pairing artifacts)..."
 "$ROOT_DIR/scripts/test-cli.sh"
 
 echo "Building public relay product path..."
-swift build --package-path "$RELAY_DIR"
+swift build --package-path "$RELAY_DIR" "${NOCTWEAVE_SWIFT_BUILD_FLAGS[@]}"
 
 echo "Running relay XCTest suite and product integration coverage..."
-swift test --package-path "$RELAY_DIR"
+swift test --package-path "$RELAY_DIR" "${NOCTWEAVE_SWIFT_BUILD_FLAGS[@]}"
 
 echo "Running relay process shutdown and restart checks..."
-python3 "$RELAY_DIR/scripts/test-shutdown.py" "$RELAY_DIR/.build/debug/NoctweaveRelayServer"
+RELAY_BIN="$(swift build --package-path "$RELAY_DIR" "${NOCTWEAVE_SWIFT_BUILD_FLAGS[@]}" --show-bin-path)"
+python3 "$RELAY_DIR/scripts/test-shutdown.py" "$RELAY_BIN/NoctweaveRelayServer"
 
 echo "Running optional Reticulum bridge unit suite..."
 python3 -m unittest discover \
@@ -33,7 +35,8 @@ python3 -m unittest discover \
 
 if command -v bun >/dev/null 2>&1 && [ -f "$RELAY_DIR/package.json" ]; then
   echo "Running public relay OperatorWebUI and Electrobun launcher TypeScript suite..."
-  (cd "$RELAY_DIR" && bun test desktop/test)
+  (cd "$RELAY_DIR" && bun test desktop/test desktop/checks)
+  (cd "$RELAY_DIR" && npm run typecheck:desktop)
 else
   echo "Bun or the public relay desktop package is unavailable; skipping Electrobun TypeScript checks."
 fi
@@ -41,6 +44,11 @@ fi
 if [ -f "$JS_DIR/package.json" ]; then
   echo "Running standalone NoctweaveJS protocol suite..."
   (cd "$JS_DIR" && npm test)
+
+  if command -v bun >/dev/null 2>&1 && [ -d "$JS_DIR/desktop/checks" ]; then
+    echo "Running standalone NoctweaveJS desktop build-runner checks..."
+    (cd "$JS_DIR" && bun test desktop/checks)
+  fi
 
   echo "Running standalone NoctweaveJS desktop type-check..."
   (cd "$JS_DIR" && npm run typecheck:desktop)

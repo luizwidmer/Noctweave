@@ -8,6 +8,7 @@ export default {
     description: "Source-built Noctweave relay operator launcher."
   },
   build: {
+    mainProcess: "bun",
     bun: {
       entrypoint: "desktop/bun/index.ts"
     },
@@ -28,8 +29,6 @@ export default {
       "desktop/view/index.html": "views/mainview/index.html",
       "desktop/view/styles.css": "views/mainview/styles.css"
     },
-    targets: "current",
-    useAsar: false,
     watch: ["desktop"],
     mac: {
       bundleCEF: false,
@@ -47,6 +46,7 @@ export default {
   },
   scripts: {
     preBuild: "desktop/scripts/build-launcher-key.ts",
+    postBuild: "desktop/scripts/install-mac-icon.ts",
     postWrap: "desktop/scripts/install-mac-icon.ts"
   }
 } satisfies ElectrobunConfig;

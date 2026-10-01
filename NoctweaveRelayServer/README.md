@@ -79,9 +79,20 @@ one desktop surface:
 
 ```sh
 cd NoctweaveRelayServer
-bun install --frozen-lockfile
+bun install --frozen-lockfile --ignore-scripts
+bun run desktop:prepare
 bun run desktop:dev
 ```
+
+The launcher pins Electrobun 2.0.2 and keeps its Bun main process. Preparation
+verifies the paired build tools and projects SDK aliases into the ignored
+`.hutch/devkit` directory; the TypeScript 7 configuration clears the generated
+SDK's legacy `baseUrl`. Run `bun run desktop:test`, `bun run typecheck:desktop`
+and `bun run desktop:build` for regression, type and fresh artifact checks.
+After preparation, `DASH_RELEASE_OFFLINE=1 bun run desktop:build` requires the
+cached tools. The archive checks require `tar` with Zstd support. Existing
+macOS signing/notarization settings remain disabled, so local packages are not
+notarized distribution builds.
 
 The launcher encrypts its complete local state, including the console token,
 publisher password, and settings. On macOS, a 32-byte device-only Keychain key

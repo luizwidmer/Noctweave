@@ -1,5 +1,7 @@
 {
+  "extends": "./.hutch/devkit/tsconfig.json",
   "compilerOptions": {
+    "baseUrl": null,
     "lib": ["ESNext", "DOM"],
     "module": "ESNext",
     "moduleResolution": "Bundler",

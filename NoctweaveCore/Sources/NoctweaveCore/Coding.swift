@@ -29,12 +29,14 @@ public enum NoctweaveCanonicalJSON {
 
     public static func canonicalize(_ data: Data) throws -> Data {
         do {
-            var preflight = JSONDecodePreflight(
-                data: data,
-                maximumNestingDepth: NoctweaveCoder.maximumJSONNestingDepth,
-                canonicalNumbersOnly: true
-            )
-            try preflight.validate()
+            try data.withUnsafeBytes { buffer in
+                var preflight = JSONDecodePreflight(
+                    bytes: buffer.bindMemory(to: UInt8.self),
+                    maximumNestingDepth: NoctweaveCoder.maximumJSONNestingDepth,
+                    canonicalNumbersOnly: true
+                )
+                try preflight.validate()
+            }
         } catch {
             throw Error.invalidJSON
         }
@@ -47,6 +49,7 @@ public enum NoctweaveCanonicalJSON {
         }
 
         var output = Data()
+        output.reserveCapacity(min(data.count, 64 * 1024))
         try append(value, to: &output)
         return output
     }
@@ -155,31 +158,45 @@ public enum NoctweaveCanonicalJSON {
     }
 
     private static func appendEscaped(_ value: String, to output: inout Data) {
-        output.append(0x22)
-        for scalar in value.unicodeScalars {
-            switch scalar.value {
-            case 0x22:
-                output.append(contentsOf: [0x5C, 0x22])
-            case 0x5C:
-                output.append(contentsOf: [0x5C, 0x5C])
-            case 0x08:
-                output.append(contentsOf: [0x5C, 0x62])
-            case 0x09:
-                output.append(contentsOf: [0x5C, 0x74])
-            case 0x0A:
-                output.append(contentsOf: [0x5C, 0x6E])
-            case 0x0C:
-                output.append(contentsOf: [0x5C, 0x66])
-            case 0x0D:
-                output.append(contentsOf: [0x5C, 0x72])
-            case 0x00 ... 0x1F:
-                let escape = String(format: "\\u%04x", scalar.value)
-                output.append(contentsOf: escape.utf8)
-            default:
-                output.append(contentsOf: String(scalar).utf8)
+        // Quotes, backslashes and C0 controls are single-byte UTF-8 values.
+        // Copy all other runs directly, including multibyte Unicode scalars.
+        // String.withUTF8 keeps the storage alive for every pointer append.
+        var string = value
+        string.withUTF8 { bytes in
+            output.append(0x22)
+            var runStart = 0
+            var index = 0
+            while index < bytes.count {
+                let byte = bytes[index]
+                if byte >= 0x20, byte != 0x22, byte != 0x5C {
+                    index += 1
+                    continue
+                }
+                if runStart < index {
+                    output.append(bytes.baseAddress!.advanced(by: runStart), count: index - runStart)
+                }
+                switch byte {
+                case 0x22: output.append(contentsOf: [0x5C, 0x22])
+                case 0x5C: output.append(contentsOf: [0x5C, 0x5C])
+                case 0x08: output.append(contentsOf: [0x5C, 0x62])
+                case 0x09: output.append(contentsOf: [0x5C, 0x74])
+                case 0x0A: output.append(contentsOf: [0x5C, 0x6E])
+                case 0x0C: output.append(contentsOf: [0x5C, 0x66])
+                case 0x0D: output.append(contentsOf: [0x5C, 0x72])
+                default:
+                    let digits: StaticString = "0123456789abcdef"
+                    output.append(contentsOf: [0x5C, 0x75, 0x30, 0x30,
+                                              digits.utf8Start[Int(byte >> 4)],
+                                              digits.utf8Start[Int(byte & 0x0F)]])
+                }
+                runStart = index + 1
+                index = runStart
             }
+            if runStart < bytes.count {
+                output.append(bytes.baseAddress!.advanced(by: runStart), count: bytes.count - runStart)
+            }
+            output.append(0x22)
         }
-        output.append(0x22)
     }
 }
 
@@ -210,11 +227,13 @@ public enum NoctweaveCoder {
 
     public static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do {
-            var preflight = JSONDecodePreflight(
-                data: data,
-                maximumNestingDepth: maximumJSONNestingDepth
-            )
-            try preflight.validate()
+            try data.withUnsafeBytes { buffer in
+                var preflight = JSONDecodePreflight(
+                    bytes: buffer.bindMemory(to: UInt8.self),
+                    maximumNestingDepth: maximumJSONNestingDepth
+                )
+                try preflight.validate()
+            }
         } catch let failure as JSONDecodePreflight.Failure {
             throw DecodingError.dataCorrupted(
                 .init(codingPath: [], debugDescription: failure.debugDescription)
@@ -242,17 +261,19 @@ private struct JSONDecodePreflight {
         }
     }
 
-    private let bytes: [UInt8]
+    // This parser is constructed and consumed synchronously inside the owning
+    // Data.withUnsafeBytes closure. The borrowed storage never escapes it.
+    private let bytes: UnsafeBufferPointer<UInt8>
     private let maximumNestingDepth: Int
     private let canonicalNumbersOnly: Bool
     private var index = 0
 
     init(
-        data: Data,
+        bytes: UnsafeBufferPointer<UInt8>,
         maximumNestingDepth: Int,
         canonicalNumbersOnly: Bool = false
     ) {
-        bytes = Array(data)
+        self.bytes = bytes
         self.maximumNestingDepth = maximumNestingDepth
         self.canonicalNumbersOnly = canonicalNumbersOnly
     }
@@ -352,6 +373,20 @@ private struct JSONDecodePreflight {
         var captured: [UInt8] = []
 
         while let byte = currentByte {
+            // Most persisted strings are long unescaped base64 keys. Scan one
+            // contiguous run without allocating or appending each character.
+            if byte >= 0x20, byte != 0x22, byte != 0x5C {
+                let start = index
+                var end = start + 1
+                while end < bytes.count {
+                    let next = bytes[end]
+                    if next < 0x20 || next == 0x22 || next == 0x5C { break }
+                    end += 1
+                }
+                if capturingValue { captured.append(contentsOf: bytes[start..<end]) }
+                index = end
+                continue
+            }
             index += 1
             switch byte {
             case 0x22:
@@ -523,7 +558,7 @@ private struct JSONDecodePreflight {
     }
 
     private mutating func consumeLiteral(_ literal: [UInt8]) throws {
-        guard index + literal.count <= bytes.count,
+        guard literal.count <= bytes.count - index,
               bytes[index ..< index + literal.count].elementsEqual(literal) else {
             throw Failure.invalidJSON
         }

@@ -10,14 +10,17 @@ DATA_DIR="${NOCTWEAVE_RELAY_DATA_DIR:-$ROOT_DIR/.relay-data}"
 MEMORY_ONLY="${NOCTWEAVE_RELAY_MEMORY_ONLY:-0}"
 
 cd "$SERVER_DIR"
+source "$ROOT_DIR/scripts/swiftpm-options.sh"
 
 if [[ "$BUILD_MODE" == "release" ]]; then
-  swift build -c release
-  BIN="$SERVER_DIR/.build/release/NoctweaveRelayServer"
+  CONFIGURATION=release
 else
-  swift build
-  BIN="$SERVER_DIR/.build/debug/NoctweaveRelayServer"
+  CONFIGURATION=debug
 fi
+swift build "${NOCTWEAVE_SWIFT_BUILD_FLAGS[@]}" -c "$CONFIGURATION"
+BIN_DIR="$(swift build "${NOCTWEAVE_SWIFT_BUILD_FLAGS[@]}" -c "$CONFIGURATION" --show-bin-path)"
+BIN="$BIN_DIR/NoctweaveRelayServer"
+test -x "$BIN"
 
 ARGS=("--host" "$HOST" "--port" "$PORT")
 if [[ "$MEMORY_ONLY" == "1" ]]; then

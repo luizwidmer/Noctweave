@@ -188,13 +188,20 @@ class ServerBridgeTests(unittest.TestCase):
 class ForwarderTests(unittest.TestCase):
     def setUp(self):
         self.server = bridge._ThreadingHTTPServer(("127.0.0.1", 0), _RelayHandler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        # The fixture needs no half-second idle shutdown poll. Requests still
+        # traverse the real HTTP server and handler on an isolated loopback port.
+        self.thread = threading.Thread(
+            target=self.server.serve_forever,
+            kwargs={"poll_interval": 0.01},
+            daemon=True,
+        )
         self.thread.start()
 
     def tearDown(self):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
+        self.assertFalse(self.thread.is_alive(), "test HTTP server did not stop")
 
     def test_forwards_exact_request_and_returns_exact_response(self):
         payload = b'{"requestID":"1","module":"nw.core","version":2,"method":"health","body":{},"authToken":null}'
@@ -224,13 +231,18 @@ class LocalGatewayTests(unittest.TestCase):
         self.client = _FakeClient()
         handler = bridge.make_client_gateway_handler(self.client)
         self.server = bridge._ThreadingHTTPServer(("127.0.0.1", 0), handler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.server.serve_forever,
+            kwargs={"poll_interval": 0.01},
+            daemon=True,
+        )
         self.thread.start()
 
     def tearDown(self):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
+        self.assertFalse(self.thread.is_alive(), "test HTTP server did not stop")
 
     def _request(self, method, path, body=None, headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
