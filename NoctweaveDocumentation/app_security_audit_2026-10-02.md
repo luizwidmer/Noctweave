@@ -9,13 +9,14 @@ root's starting commit and schema-validated findings. The previous
 [22 September audit](app_security_audit_2026-09-22.md) is the baseline for
 inherited repairs, not a source of new findings here.
 
-All roots started clean on `main`. Repairs are currently uncommitted and have
-not been pushed or deployed. No production relay, account, real credential,
+All roots started clean on `main`. The audited repairs were committed and pushed
+to the three edited repositories on `main`; no production deployment was
+performed. No production relay, account, real credential,
 physical security key, camera, microphone, or user message was used.
 
 ## Findings and repairs
 
-| Boundary | Original-source evidence | Repair in this worktree | Impact limit |
+| Boundary | Original-source evidence | Repair | Impact limit |
 | --- | --- | --- | --- |
 | First Noctweb namespace claim, Core and Linux relay | An unaffiliated self-signed identity with a matching mode/name acquired an unused durable suffix. Snapshot generation could also import directory identities into ownership without claim admission. | Solo claims bind to the local key and suffix; manual claims bind to an allowlisted live identity; curated claims require the configured signed coordinator quorum and a live identity. Snapshot reads no longer assign peer ownership. | Suffix ownership and availability were demonstrated. No plaintext access or forged peer key was shown. |
 | Manual federation delivery, Core and Linux relay | A self-signed outsider advertising an operator-allowed endpoint passed incoming federation membership checks and reached route storage. | Incoming delivery checks the live peer identity at the configured endpoint, including its signing key and advertised endpoint. | A valid route send capability is still required to append; the finding does not imply a route-secret bypass. |

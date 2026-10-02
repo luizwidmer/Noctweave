@@ -29,6 +29,12 @@ The public-root record contains six confirmed findings and two
 `needs_validation` candidates. The Lab record contains one
 `needs_validation` candidate.
 
+The repaired code and skill guidance were published on `main` as Noctweave
+`edd7f90a71e2f55dff1055fea7b686475d9af02f`, noctweave-net
+`29c8dffb5f92c1ae35a94bbabe23df04f9ec5b4d`, and security-audit-skill
+`fce2e9baf571b6cdf8253cce13f0d779d1afadc8`. Remote refs matched these
+commits after each push. This evidence status update follows those commits.
+
 The local ignored `.runtime/security-audit-2026-10-02/` directory contains
 disposable build output, bounded reproduction material, and run metadata. No
 production endpoints, user credentials, or real message data were used.

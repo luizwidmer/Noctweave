@@ -2,7 +2,7 @@
   {
     "fingerprint": "noctweave/federation/curated-endpoint-anchor",
     "starting_ref": "8dfb8a3021fba1fd35a0548ba1df754dbba69093",
-    "status": "fixed_in_worktree",
+    "status": "published_on_main",
     "changed_paths": [
       "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
       "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
@@ -12,12 +12,13 @@
     "before": "Source tracing found tuple-only signed-record matching followed by live probe and dispatch through caller-supplied endpoints, which could omit endorsed pins.",
     "after": "Core pin-consensus tests and a Linux loopback no-dispatch regression show endorsed pins retained through selection; Linux explicit pins fail closed before outbound I/O.",
     "review": "Independent source reviewer identified the pin loss; separate Core and Linux owners fixed their paths.",
-    "limitation": "No original-source adversarial TLS listener was run, so the finding remains needs_validation for demonstrated network impact."
+    "limitation": "No original-source adversarial TLS listener was run, so the finding remains needs_validation for demonstrated network impact.",
+    "published_ref": "edd7f90a71e2f55dff1055fea7b686475d9af02f"
   },
   {
     "fingerprint": "noctweave/federation/curated-quorum",
     "starting_ref": "8dfb8a3021fba1fd35a0548ba1df754dbba69093",
-    "status": "fixed_in_worktree",
+    "status": "published_on_main",
     "changed_paths": [
       "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
       "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
@@ -27,12 +28,13 @@
     "before": "Isolated original Core source accepted a one-of-two signed coordinator listing for claim, incoming delivery, and outgoing forward; Linux source merged directory records before member admission.",
     "after": "Patched local signed fixtures reject one-of-two and accept two-of-two with distinct signing keys; valid live peers remain admitted. Final package suite results are in the owner report.",
     "review": "The parent traced both implementations; independent skill_forward_test reviewer challenged signer provenance and mirror fallback. Core and Linux repairs had separate owners.",
-    "limitation": "The Linux outgoing curated route shares the tested membership helper but has no separate end-to-end forwarding fixture."
+    "limitation": "The Linux outgoing curated route shares the tested membership helper but has no separate end-to-end forwarding fixture.",
+    "published_ref": "edd7f90a71e2f55dff1055fea7b686475d9af02f"
   },
   {
     "fingerprint": "noctweave/federation/manual-identity",
     "starting_ref": "8dfb8a3021fba1fd35a0548ba1df754dbba69093",
-    "status": "fixed_in_worktree",
+    "status": "published_on_main",
     "changed_paths": [
       "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
       "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
@@ -42,12 +44,13 @@
     "before": "Forged self-signed source advertising an allowed tuple reached route storage; isolated original Core source failed authentication-rejection assertion.",
     "after": "Patched tests reject forged key, accept a real live peer with a dummy send capability, and try another allowed endpoint when the first has the wrong identity or is unavailable.",
     "review": "Parent and independent reviewer challenged endpoint binding, pin consumption, and alternate endpoint behavior; Core and Linux fixes were implemented separately.",
-    "limitation": "Linux outbound URLSession transport cannot verify an explicit TLS leaf fingerprint and now rejects such configured outbound endpoints before I/O."
+    "limitation": "Linux outbound URLSession transport cannot verify an explicit TLS leaf fingerprint and now rejects such configured outbound endpoints before I/O.",
+    "published_ref": "edd7f90a71e2f55dff1055fea7b686475d9af02f"
   },
   {
     "fingerprint": "noctweave/federation/stale-manual-policy",
     "starting_ref": "8dfb8a3021fba1fd35a0548ba1df754dbba69093",
-    "status": "fixed_in_worktree",
+    "status": "published_on_main",
     "changed_paths": [
       "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
       "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/NoctweaveNetRelayTests.swift"
@@ -55,12 +58,13 @@
     "before": "The original existing-channel loopback fixture reached route storage after the operator allowlist was emptied.",
     "after": "The same fixture rejects the revoked peer before storage; the handler also checks policy after asynchronous admission before incoming append and outgoing send.",
     "review": "Parent independently identified and traced the constructor/live-policy mismatch; relay_core authored and tested the fix.",
-    "limitation": "The regression revokes before sending the next request; it does not force a policy update during an in-flight network fetch."
+    "limitation": "The regression revokes before sending the next request; it does not force a policy update during an in-flight network fetch.",
+    "published_ref": "edd7f90a71e2f55dff1055fea7b686475d9af02f"
   },
   {
     "fingerprint": "noctweave/namespace/first-claim",
     "starting_ref": "8dfb8a3021fba1fd35a0548ba1df754dbba69093",
-    "status": "fixed_in_worktree",
+    "status": "published_on_main",
     "changed_paths": [
       "NoctweaveCore/Sources/NoctweaveCore/RelayServer.swift",
       "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
@@ -70,12 +74,13 @@
     "before": "Manual Linux claim returned success and stored dummy outsider ownership; isolated original Core solo test failed rejection and empty-ledger assertions. Both snapshot read paths could assign directory peers.",
     "after": "Outsider claims reject, live manual host and standard peers succeed, curated quorum applies, and snapshot reads do not import peers. Existing owners remain in snapshots while offline.",
     "review": "Parent traced all ledger writers and reviewed the fixes; independent skill_forward_test reviewer identified read-side import and multi-endpoint compatibility.",
-    "limitation": "Open mode remains permissionless by design; historical persisted claims are not auto reassigned."
+    "limitation": "Open mode remains permissionless by design; historical persisted claims are not auto reassigned.",
+    "published_ref": "edd7f90a71e2f55dff1055fea7b686475d9af02f"
   },
   {
     "fingerprint": "noctweave/operator/endpoint-anchor-roundtrip",
     "starting_ref": "8dfb8a3021fba1fd35a0548ba1df754dbba69093",
-    "status": "fixed_in_worktree",
+    "status": "published_on_main",
     "changed_paths": [
       "NoctweaveRelayServer/Sources/NoctweaveRelayServer/OperatorConfiguration.swift",
       "NoctweaveRelayServer/Tests/NoctweaveRelayServerTests/OperatorWebUITests.swift"
@@ -83,12 +88,13 @@
     "before": "An original-code test changing only operatorNote failed four assertions because form round-tripping stripped configured endpoint trust fields.",
     "after": "The same focused regression passes after merging matching current endpoint anchors, including case-insensitive hostname matching.",
     "review": "Independent reviewer traced the lossy form serializer; relay owner reproduced and repaired the effect.",
-    "limitation": "Anchors for a genuinely new endpoint still must come from startup configuration, because the URL-only form does not expose anchor editing."
+    "limitation": "Anchors for a genuinely new endpoint still must come from startup configuration, because the URL-only form does not expose anchor editing.",
+    "published_ref": "edd7f90a71e2f55dff1055fea7b686475d9af02f"
   },
   {
     "fingerprint": "noctweave/relay/coordinator-pin",
     "starting_ref": "8dfb8a3021fba1fd35a0548ba1df754dbba69093",
-    "status": "fixed_in_worktree",
+    "status": "published_on_main",
     "changed_paths": [
       "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayHandler.swift",
       "NoctweaveRelayServer/Sources/NoctweaveRelayServer/RelayStore.swift",
@@ -98,6 +104,7 @@
     "before": "Wrong-federation first .info persisted a dummy directory key; a concurrent store regression allowed a different key to replace an existing pin.",
     "after": "The handler checks coordinator identity and valid signed snapshot before new pinning; a configured directory key is honored; the store pins by atomic compare-or-set and rejects replacement.",
     "review": "Parent challenged first-contact and configured-key paths; relay_core reproduced the original effects and tested the repair.",
-    "limitation": "A first contact without configured key on unauthenticated transport retains TOFU exposure; existing pins require operator inspection."
+    "limitation": "A first contact without configured key on unauthenticated transport retains TOFU exposure; existing pins require operator inspection.",
+    "published_ref": "edd7f90a71e2f55dff1055fea7b686475d9af02f"
   }
 ]

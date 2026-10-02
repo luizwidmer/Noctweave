@@ -2,7 +2,7 @@
   {
     "fingerprint": "noctweb-lab:ancestor-symlink-import",
     "starting_ref": "6e77f94d847a60e18e92545275b5cb49c6857f47",
-    "status": "fixed_in_worktree",
+    "status": "published_on_main",
     "changed_paths": [
       "apps/noctweb-lab/Sources/NoctwebLab/Models/WebsiteProjectBuilder.swift",
       "apps/noctweb-lab/Tests/NoctwebLabAppTests/AppModelTests.swift"
@@ -10,6 +10,7 @@
     "strategy": "Keep the selected root directory descriptor open, traverse each relative component with openat and O_NOFOLLOW, and read only a verified bounded regular file.",
     "before": "A deterministic test-only ancestor swap made the original importer consume dummy-private-data from a sibling directory.",
     "after": "The same swap raises unreadableFile; four focused Lab import tests pass in a disposable local package copy. The signed-app sandbox impact remains unverified.",
-    "review": "Parent independently reviewed the patch and reran the focused import tests; js_apps authored the repair."
+    "review": "Parent independently reviewed the patch and reran the focused import tests; js_apps authored the repair.",
+    "published_ref": "29c8dffb5f92c1ae35a94bbabe23df04f9ec5b4d"
   }
 ]
